@@ -14,23 +14,33 @@
 
 use super::uri::{file_uri_relative_to_root, file_uris_match, path_from_file_uri};
 use crate::analysis::consumed_source::ConsumedRustSources;
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use tower_lsp_server::ls_types::{FileChangeType, FileEvent, LSPAny, Uri};
 
-/// `WatchKind.Change | WatchKind.Delete`: creations are never drift, so the
-/// client is not asked to report them.
-const WATCH_CHANGE_AND_DELETE: u32 = 2 | 4;
+/// `WatchKind.Change`: a rewrite of a source file. Creations are never drift,
+/// so the client is not asked to report them.
+const WATCH_CHANGE: u32 = 2;
+/// `WatchKind.Delete`.
+const WATCH_DELETE: u32 = 4;
 
-/// One root-anchored watcher for the source files a committed snapshot can
-/// refer to. Registered with the root diagnostics inputs so it follows root
+/// Root-anchored watchers for what a committed snapshot can refer to.
+/// Registered with the root diagnostics inputs so they follow root
 /// transitions. `absolute_root` is the glob-safe display form the caller
 /// already validated; it is used only when the client cannot anchor a
 /// `RelativePattern`.
+///
+/// Two registrations, so a source file never reaches the server twice for one
+/// deletion: source files are watched for changes, and every path under the
+/// root is watched for deletion. The deletion glob is not limited to source
+/// extensions because a folder deleted as one entry (`rm -rf src/nested`, a
+/// branch switch) is reported as the folder, not as the files it held, and a
+/// glob that matches only `*.rs` never sees it (#14099).
 pub(super) fn committed_source_watchers(
     root_uri: Option<&Uri>,
     absolute_root: &str,
 ) -> Vec<LSPAny> {
-    let extensions = ["rs", "py"]
+    let extensions = ["rs", "py", "pm", "pl", "t"]
         .iter()
         .chain(crate::analysis::TYPESCRIPT_SOURCE_EXTENSIONS)
         .chain(crate::analysis::JAVASCRIPT_SOURCE_EXTENSIONS)
@@ -38,11 +48,14 @@ pub(super) fn committed_source_watchers(
         .collect::<Vec<_>>()
         .join(",");
     let pattern = format!("**/*.{{{extensions}}}");
-    let glob = match root_uri {
+    let glob = |pattern: &str| match root_uri {
         Some(base) => serde_json::json!({"baseUri": base.as_str(), "pattern": pattern}),
         None => serde_json::json!(format!("{absolute_root}/{pattern}")),
     };
-    vec![serde_json::json!({"globPattern": glob, "kind": WATCH_CHANGE_AND_DELETE})]
+    vec![
+        serde_json::json!({"globPattern": glob(&pattern), "kind": WATCH_CHANGE}),
+        serde_json::json!({"globPattern": glob("**/*"), "kind": WATCH_DELETE}),
+    ]
 }
 
 /// The committed inputs one batch of watched-file events is checked against.
@@ -51,6 +64,27 @@ pub(super) struct CommittedSources<'a> {
     pub(super) consumed: &'a ConsumedRustSources,
     /// Every URI the committed snapshot carries diagnostics for.
     pub(super) diagnostic_uris: Vec<&'a Uri>,
+    /// Root-relative files that committed findings list as related tests.
+    pub(super) related_test_files: BTreeSet<PathBuf>,
+}
+
+/// The root-relative files that committed findings list as related tests. A
+/// file outside the root or an unnormalized path is dropped: it cannot be
+/// matched against a watched-file event under the root.
+pub(super) fn related_test_files<'a>(
+    root: &Path,
+    files: impl IntoIterator<Item = &'a Path>,
+) -> BTreeSet<PathBuf> {
+    files
+        .into_iter()
+        .filter_map(|file| {
+            let relative = file.strip_prefix(root).unwrap_or(file);
+            relative
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_)))
+                .then(|| relative.to_path_buf())
+        })
+        .collect()
 }
 
 /// Whether any event names a committed source whose saved bytes moved.
@@ -65,8 +99,14 @@ pub(super) struct CommittedSources<'a> {
 ///   committed diagnostics: `Changed` has nothing to compare against, and
 ///   `Deleted` must be confirmed by the file actually being gone.
 /// - A deleted directory drifts when it is gone and covered a committed
-///   source or a diagnostics URI. The registered source glob does not match
-///   a directory, so this only helps a client that reports one anyway.
+///   source or a diagnostics URI. The registered deletion glob covers every
+///   path under the root, so a folder deleted as one entry reaches here.
+/// - A test file that a committed finding lists as a related test, but whose
+///   bytes the snapshot never captured (a test the analysis matched without
+///   loading it as a consumed source), has nothing to compare against: a
+///   change drifts, and a deletion drifts once the file is confirmed gone.
+///   This is the repair loop where an agent rewrites a test the developer
+///   does not have open.
 /// - A committed source replaced by a link that resolves outside the root
 ///   drifts without its new target being read.
 pub(super) fn events_drift_committed_sources(
@@ -114,20 +154,27 @@ fn event_drifts_committed_source(
         .diagnostic_uris
         .iter()
         .any(|uri| file_uris_match(uri, &event.uri));
+    let is_related_test = committed.related_test_files.contains(&relative);
     if !deleted {
-        return carries_diagnostics;
+        return carries_diagnostics || is_related_test;
     }
-    // `symlink_metadata` so a dangling link left behind still reads as present
-    // (the event named the entry, not its target).
-    if std::fs::symlink_metadata(&path).is_ok() {
-        return false;
-    }
-    carries_diagnostics
+    // The delete watcher covers every path under the root, so most events
+    // (build output, editor scratch files) name nothing committed: answer that
+    // from memory first and touch the filesystem only for a covered path.
+    let covers_committed_input = carries_diagnostics
+        || is_related_test
+        || committed
+            .related_test_files
+            .iter()
+            .any(|file| file.starts_with(&relative))
         || committed.consumed.any_captured_below(&relative)
         || committed.diagnostic_uris.iter().any(|uri| {
             path_from_file_uri(uri)
                 .is_some_and(|stored| stored != path && stored.starts_with(&path))
-        })
+        });
+    // `symlink_metadata` so a dangling link left behind still reads as present
+    // (the event named the entry, not its target).
+    covers_committed_input && std::fs::symlink_metadata(&path).is_err()
 }
 
 #[cfg(test)]
@@ -185,10 +232,22 @@ mod tests {
         changes: &[FileEvent],
         open: &[Uri],
     ) -> bool {
+        drifts_with_tests(root, consumed, diagnostic_uris, &[], changes, open)
+    }
+
+    fn drifts_with_tests(
+        root: &Path,
+        consumed: &ConsumedRustSources,
+        diagnostic_uris: &[Uri],
+        related_tests: &[&str],
+        changes: &[FileEvent],
+        open: &[Uri],
+    ) -> bool {
         let committed = CommittedSources {
             root,
             consumed,
             diagnostic_uris: diagnostic_uris.iter().collect(),
+            related_test_files: related_tests.iter().map(PathBuf::from).collect(),
         };
         events_drift_committed_sources(&committed, changes, &|uri| {
             open.iter().any(|open| file_uris_match(open, uri))
@@ -305,6 +364,130 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn related_test_without_a_commitment_drifts_on_change_and_confirmed_delete()
+    -> Result<(), String> {
+        let root = temp_root("related-test")?;
+        std::fs::create_dir_all(root.0.join("tests")).map_err(|err| format!("mkdir: {err}"))?;
+        write(&root.0, "tests/end_to_end.rs", b"#[test] fn t() {}\n")?;
+        write(&root.0, "tests/other.rs", b"#[test] fn o() {}\n")?;
+        let sources = consumed(&[("src/lib.rs", b"pub fn f() {}\n")]);
+        let related = ["tests/end_to_end.rs"];
+        let changed = [event(
+            &root.0,
+            "tests/end_to_end.rs",
+            FileChangeType::CHANGED,
+        )?];
+        let unrelated = [event(&root.0, "tests/other.rs", FileChangeType::CHANGED)?];
+
+        // The snapshot captured no bytes for the test, so a change cannot be
+        // compared and refreshes; the same event for a test no committed
+        // finding lists does not, and neither does a creation.
+        assert!(drifts_with_tests(
+            &root.0,
+            &sources,
+            &[],
+            &related,
+            &changed,
+            &[]
+        ));
+        assert!(!drifts_with_tests(
+            &root.0,
+            &sources,
+            &[],
+            &related,
+            &unrelated,
+            &[]
+        ));
+        assert!(!drifts_with_tests(
+            &root.0,
+            &sources,
+            &[],
+            &[],
+            &changed,
+            &[]
+        ));
+        let created = [event(
+            &root.0,
+            "tests/end_to_end.rs",
+            FileChangeType::CREATED,
+        )?];
+        assert!(!drifts_with_tests(
+            &root.0,
+            &sources,
+            &[],
+            &related,
+            &created,
+            &[]
+        ));
+        // An open document stays with document sync.
+        assert!(!drifts_with_tests(
+            &root.0,
+            &sources,
+            &[],
+            &related,
+            &changed,
+            std::slice::from_ref(&changed[0].uri),
+        ));
+
+        // A delete event is confirmed against the filesystem, and a deleted
+        // folder covers the related tests below it.
+        let deleted = [event(
+            &root.0,
+            "tests/end_to_end.rs",
+            FileChangeType::DELETED,
+        )?];
+        let folder = [event(&root.0, "tests", FileChangeType::DELETED)?];
+        assert!(!drifts_with_tests(
+            &root.0,
+            &sources,
+            &[],
+            &related,
+            &deleted,
+            &[]
+        ));
+        std::fs::remove_dir_all(root.0.join("tests")).map_err(|err| format!("remove: {err}"))?;
+        assert!(drifts_with_tests(
+            &root.0,
+            &sources,
+            &[],
+            &related,
+            &deleted,
+            &[]
+        ));
+        assert!(drifts_with_tests(
+            &root.0,
+            &sources,
+            &[],
+            &related,
+            &folder,
+            &[]
+        ));
+        assert!(!drifts_with_tests(
+            &root.0,
+            &sources,
+            &[],
+            &[],
+            &folder,
+            &[]
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn related_test_files_are_root_relative_and_drop_escaping_paths() {
+        let root = Path::new("/work/repo");
+        let listed = [
+            "tests/a.rs",
+            "/work/repo/tests/b.rs",
+            "../c.rs",
+            "/else/d.rs",
+        ];
+        let files = related_test_files(root, listed.iter().map(Path::new));
+        let files: Vec<_> = files.iter().map(|file| file.to_string_lossy()).collect();
+        assert_eq!(files, ["tests/a.rs", "tests/b.rs"]);
+    }
+
     #[cfg(unix)]
     #[test]
     fn committed_source_replaced_by_an_outside_link_drifts() -> Result<(), String> {
@@ -334,8 +517,8 @@ mod tests {
         let root = std::env::temp_dir().join("ripr-watched-drift-watcher-root");
         let base = file_uri_for_path(&root)?;
         let anchored = committed_source_watchers(Some(&base), "/unused");
-        assert_eq!(anchored.len(), 1);
-        assert_eq!(anchored[0]["kind"], serde_json::json!(6));
+        assert_eq!(anchored.len(), 2);
+        assert_eq!(anchored[0]["kind"], serde_json::json!(2));
         assert_eq!(
             anchored[0]["globPattern"]["baseUri"],
             serde_json::json!(base.as_str())
@@ -343,13 +526,32 @@ mod tests {
         let pattern = anchored[0]["globPattern"]["pattern"]
             .as_str()
             .ok_or("anchored pattern must be a string")?;
-        assert!(pattern.starts_with("**/*.{rs,py"), "{pattern}");
+        assert!(pattern.starts_with("**/*.{rs,py,pm,pl,t"), "{pattern}");
+
+        // Deletions are watched on every path under the root, so a folder
+        // deleted as one entry is reported (#14099). Nothing is watched twice
+        // for the same kind of event.
+        assert_eq!(anchored[1]["kind"], serde_json::json!(4));
+        assert_eq!(
+            anchored[1]["globPattern"]["baseUri"],
+            serde_json::json!(base.as_str())
+        );
+        assert_eq!(
+            anchored[1]["globPattern"]["pattern"],
+            serde_json::json!("**/*")
+        );
 
         let plain = committed_source_watchers(None, "/work/repo");
-        assert_eq!(plain[0]["kind"], serde_json::json!(6));
+        assert_eq!(plain.len(), 2);
+        assert_eq!(plain[0]["kind"], serde_json::json!(2));
         assert_eq!(
             plain[0]["globPattern"],
             serde_json::json!(format!("/work/repo/{pattern}"))
+        );
+        assert_eq!(plain[1]["kind"], serde_json::json!(4));
+        assert_eq!(
+            plain[1]["globPattern"],
+            serde_json::json!("/work/repo/**/*")
         );
         Ok(())
     }
