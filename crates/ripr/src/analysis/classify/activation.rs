@@ -8246,7 +8246,10 @@ fn oriented_comparison_operands(
 /// text the bounded scanner cannot balance (with or without a connective)
 /// and a continuation line that starts with `&&` or `||`, has no single
 /// boundary here.
-fn changed_comparison_conjunct<'a>(expression: &'a str, before: Option<&str>) -> Option<&'a str> {
+fn changed_comparison_conjunct<'a>(
+    expression: &'a str,
+    before: Option<&str>,
+) -> Option<&'a str> {
     let operands = top_level_connective_operands(expression)?;
     if operands.len() == 1 {
         return Some(expression);
@@ -8254,12 +8257,22 @@ fn changed_comparison_conjunct<'a>(expression: &'a str, before: Option<&str>) ->
     let mut comparisons = operands
         .iter()
         .copied()
-        .filter(|operand| comparison_operands(operand).is_some());
+        .filter(|operand| comparison_operands(&mask_literal_bodies(operand)).is_some());
     let comparison = comparisons.next()?;
     if comparisons.next().is_some() {
         return None;
     }
-    let normalized = |text: &str| clean_operand(text).split_whitespace().collect::<String>();
+    let normalized = |text: &str| {
+        let cleaned = clean_operand(text);
+        let in_literal = literal_body_bytes(&cleaned);
+        cleaned
+            .char_indices()
+            .filter(|(at, character)| {
+                !character.is_whitespace() || in_literal.get(*at).copied().unwrap_or(false)
+            })
+            .map(|(_, character)| character)
+            .collect::<String>()
+    };
     let changed = normalized(comparison);
     if let Some(before) = before {
         let before_operands = top_level_connective_operands(before)?;
@@ -8271,6 +8284,71 @@ fn changed_comparison_conjunct<'a>(expression: &'a str, before: Option<&str>) ->
         }
     }
     Some(comparison)
+}
+
+/// `text` with every string and char literal body byte replaced by `x`, so a
+/// quoted operator (`s.starts_with('>')`, `s.contains("<")`) never reads as
+/// a comparison.
+fn mask_literal_bodies(text: &str) -> String {
+    let in_literal = literal_body_bytes(text);
+    let mut masked = String::with_capacity(text.len());
+    for (at, character) in text.char_indices() {
+        if in_literal.get(at).copied().unwrap_or(false) {
+            masked.push('x');
+        } else {
+            masked.push(character);
+        }
+    }
+    masked
+}
+
+/// Per byte of `text`, whether it sits inside a string or char literal's
+/// body (between, not on, the quotes). Uses the same bounded char-literal
+/// rule as [`top_level_connective_operands`]; an unterminated string marks
+/// the rest of the text.
+fn literal_body_bytes(text: &str) -> Vec<bool> {
+    let bytes = text.as_bytes();
+    let mut in_literal = vec![false; bytes.len()];
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'"' => {
+                let open = index;
+                index += 1;
+                while index < bytes.len() && bytes[index] != b'"' {
+                    if bytes[index] == b'\\' {
+                        index += 1;
+                    }
+                    index += 1;
+                }
+                let close = index.min(bytes.len());
+                for flag in &mut in_literal[open + 1..close] {
+                    *flag = true;
+                }
+            }
+            b'\'' => {
+                let body = if bytes.get(index + 1) == Some(&b'\\') {
+                    index + 3
+                } else {
+                    index + 2
+                };
+                if let Some(close) = bytes
+                    .get(body..)
+                    .and_then(|rest| rest.iter().take(10).position(|byte| *byte == b'\''))
+                    .filter(|close| bytes[index + 1] == b'\\' || *close < 4)
+                {
+                    let close = body + close;
+                    for flag in &mut in_literal[index + 1..close] {
+                        *flag = true;
+                    }
+                    index = close;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    in_literal
 }
 
 /// The operands of `expression` split at top-level `&&` and `||`, outside
@@ -9721,6 +9799,27 @@ mod tests {
         assert_eq!(conjunct("a && n > 1 // b || c", Some("a")), Some("n > 1"));
         assert_eq!(conjunct("n > 1 // a && b", None), Some("n > 1 // a && b"));
         assert_eq!(conjunct("a /* x || y */ && n > 1", None), None);
+        // A quoted operator is not a comparison, and whitespace inside a
+        // literal is part of its value.
+        assert_eq!(
+            conjunct(
+                "s.starts_with('>') && s.len() > 1",
+                Some("s.starts_with('>')")
+            ),
+            Some("s.len() > 1")
+        );
+        assert_eq!(
+            conjunct("s.contains(\"<\") && n > 1", Some("s.contains(\"<\")")),
+            Some("n > 1")
+        );
+        assert_eq!(
+            conjunct("label == \"ab\" && on", Some("label == \"a b\" && on")),
+            Some("label == \"ab\"")
+        );
+        assert_eq!(
+            conjunct("label  ==  \"a b\" && on", Some("label == \"a b\" && off")),
+            None
+        );
     }
 
     #[test]

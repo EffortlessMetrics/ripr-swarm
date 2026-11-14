@@ -183,7 +183,9 @@ exercised boundary from a missing one.
   split at the first comparison operator. `s.starts_with('-') && s.len() > 1`
   reads `s.len()` against `1`, not `s.starts_with('-') && s.len()`, which no
   input can equal. The connective scan skips brackets and string and char
-  literals. Two or more comparison operands, an operand the pre-edit text
+  literals, a quoted operator (`s.starts_with('>')`) is not a comparison,
+  and whitespace inside a literal stays significant when the pre-edit
+  operand is compared. Two or more comparison operands, an operand the pre-edit text
   already holds unchanged (`x > 1 && a` to `x > 1 && b`), an empty operand
   (including a continuation line that starts with `&&` or `||`), a block
   comment, or text the scan cannot balance, with or without a connective,
