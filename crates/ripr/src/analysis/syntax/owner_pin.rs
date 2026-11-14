@@ -4210,7 +4210,17 @@ pub(crate) fn unestablished_cfg_gates_of_fn(
 /// (none, or `cfg(test)`), `Some(true)` when at least one is a `cfg` ripr
 /// cannot evaluate and the rest are available, and `None` for a provably-off
 /// gate, any other attribute, or a declaration not found exactly once.
-pub(crate) fn module_declaration_unestablished_gate(source: &str, line: usize) -> Option<bool> {
+/// `declaration` is the edge's `mod name;` text: the module is matched by its
+/// name as well as its line, so a sibling `mod` on the same line does not
+/// make the gated one ambiguous.
+pub(crate) fn module_declaration_unestablished_gate(
+    source: &str,
+    line: usize,
+    declaration: &str,
+) -> Option<bool> {
+    let name = declaration
+        .strip_prefix("mod ")
+        .and_then(|rest| rest.strip_suffix(';'))?;
     let parse = parse_clean_source_file(source)?;
     let lines = LineIndex::new(source);
     let mut found = parse
@@ -4220,6 +4230,9 @@ pub(crate) fn module_declaration_unestablished_gate(source: &str, line: usize) -
         .filter_map(ast::Module::cast)
         .filter(|module| {
             module.item_list().is_none()
+                && module
+                    .name()
+                    .is_some_and(|module_name| module_name.text() == name)
                 && module
                     .mod_token()
                     .is_some_and(|token| lines.line(token.text_range().start()) == line)

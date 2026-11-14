@@ -98,6 +98,7 @@ fn owner_compiled_only_under_refused_declaration(
                 crate::analysis::syntax::module_declaration_unestablished_gate(
                     &facts.source,
                     edge.line,
+                    &edge.declaration,
                 )
             })
     };
