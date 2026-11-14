@@ -56,13 +56,14 @@ const GIT_IDENTITY: [(&str, &str); 6] = [
     ("GIT_COMMITTER_EMAIL", "agent-eval@example.invalid"),
     ("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z"),
 ];
-const ROUTES: [&str; 6] = [
+const ROUTES: [&str; 7] = [
     "cli-agent-loop",
     "cli-agent-find",
     "cli-human",
     "cli-json-terse",
     "agent-brief",
     "mcp",
+    "mcp-brief",
 ];
 
 #[derive(Debug, Default)]
@@ -520,18 +521,27 @@ fn unanswered_ids(input: &str, answered: &[i64]) -> Vec<i64> {
         .collect()
 }
 
+/// `RIPR_MCP_TEXT_CONTENT` for one MCP route: `None` keeps the server's
+/// lossless default, `Some("brief")` measures the opt-in text companion.
+type TextContent = Option<&'static str>;
+
 fn mcp_session(
     ripr: &Path,
     workspace: &Workspace,
     input: &str,
+    text_content: TextContent,
 ) -> Result<Vec<(i64, String, Value)>, String> {
+    // The registration docs/AGENT_QUICKSTART.md recommends.
+    let mut env = vec![("RIPR_MCP_TOOLS_LIST", "slim")];
+    if let Some(mode) = text_content {
+        env.push(("RIPR_MCP_TEXT_CONTENT", mode));
+    }
     let output = capture(
         ripr,
         &strings(&["mcp", "--stdio"]),
         &workspace.root,
         Some(input.as_bytes()),
-        // The registration docs/AGENT_QUICKSTART.md recommends.
-        &[("RIPR_MCP_TOOLS_LIST", "slim")],
+        &env,
     )?;
     let mut responses = Vec::new();
     for line in output.stdout.lines().filter(|line| !line.trim().is_empty()) {
@@ -567,10 +577,15 @@ fn mcp_session_problem(exit: Option<i32>, missing: &[i64]) -> Option<String> {
     }
 }
 
-fn route_mcp(ripr: &Path, workspace: &Workspace) -> Result<Vec<Step>, String> {
+fn route_mcp(
+    ripr: &Path,
+    workspace: &Workspace,
+    text_content: TextContent,
+) -> Result<Vec<Step>, String> {
     // A first session lists the gaps, so the measured session can read each
-    // one the way an agent would after seeing the list.
-    let listing = mcp_session(ripr, workspace, &mcp_requests(&[], true))?;
+    // one the way an agent would after seeing the list. Item ids come from
+    // `structuredContent`, which is the same in every text mode.
+    let listing = mcp_session(ripr, workspace, &mcp_requests(&[], true), None)?;
     let gap_ids: Vec<String> = listing
         .iter()
         .filter(|(id, _, _)| *id == 5)
@@ -582,7 +597,12 @@ fn route_mcp(ripr: &Path, workspace: &Workspace) -> Result<Vec<Step>, String> {
         .filter_map(|item| item.get("canonical_id").and_then(Value::as_str))
         .map(str::to_string)
         .collect();
-    let session = mcp_session(ripr, workspace, &mcp_requests(&gap_ids, false))?;
+    let session = mcp_session(
+        ripr,
+        workspace,
+        &mcp_requests(&gap_ids, false),
+        text_content,
+    )?;
     Ok(session
         .iter()
         .map(|(id, line, value)| {
@@ -625,7 +645,8 @@ fn run_route(ripr: &Path, workspace: &Workspace, route: &str) -> Result<Vec<Step
             "brief",
             &strings(&["agent", "brief", "--json", base[0], base[1]]),
         )?]),
-        "mcp" => route_mcp(ripr, workspace),
+        "mcp" => route_mcp(ripr, workspace, None),
+        "mcp-brief" => route_mcp(ripr, workspace, Some("brief")),
         other => Err(format!("unknown route {other}")),
     }
 }

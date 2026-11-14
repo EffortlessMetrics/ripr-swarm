@@ -500,7 +500,16 @@ official SDK transport:
   the gap-list `outcome`, which projects its kind, analysis status, clean value, and
   limitation count and up to five names. Missing values are marked absent.
   The opt-in `brief` gap list additionally carries its snapshot identity,
-  filtered count, page offset, and any next omission offset. These projections
+  filtered count, page offset, and any next omission offset. The opt-in
+  `brief` `ripr_get_gap` (#14327) projects one item's class, location, owner,
+  changed expression (plus `arm_result` when present), up to three missing
+  discriminators with their reasons (else the producer's `missing` prose),
+  up to three related tests, readiness, static limitation, source currentness
+  and the recommended next step, one line each. It discloses how many list
+  entries stay structured-only, separately from related-test matches the
+  producer counted but did not retain, marks absent values `?` or `none listed`
+  (an explicit `null` reads `none`), never clips identities, and falls back
+  to the digest when the document has no `item` object. These projections
   do not replace the full continuation arguments or evidence. The
   digest is a projection of the document and adds no fact. If a compact
   companion would make the admitted envelope exceed its cap, retain that JSON
@@ -776,6 +785,9 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
 - `crates/ripr/src/mcp/workspace.rs::tests::independent_omission_route_uses_filtered_end_and_respects_envelope` — a strict filtered subset binds the opposite-axis end and checks the envelope boundary.
 - `crates/ripr/tests/mcp_stdio.rs::independent_gap_pages_walk_both_axes_over_stdio` — a refreshed real workspace follows both opt-in routes in full, summary and brief modes, preserves structured output, and checks default and explicit-false compatibility.
 - `crates/ripr/src/mcp/protocol.rs::tests::compact_text_distinguishes_empty_outcomes_and_paging` — complete and no-scope empty results remain distinct in both compact modes, and brief reports snapshot and independent omission paging.
+- `crates/ripr/src/mcp/protocol.rs::tests::brief_gap_text_carries_the_test_author_facts_and_drops_bulk_evidence` — a brief `ripr_get_gap` text is exactly the owner, location, changed expression, missing discriminator, related-test, readiness and next-step lines, stays under a third of the JSON copy, leaves `structuredContent` whole, and joins an `arm_result` when present (#14327).
+- `crates/ripr/src/mcp/protocol.rs::tests::brief_gap_text_marks_absent_facts_bounds_lists_and_cannot_forge_lines` — absent facts read `?`/`none listed` and never become `repair_ready=true` or a `next:` line; long lists list three and disclose the rest; hostile strings cannot add lines; a gap document without an `item` object keeps the digest.
+- `crates/ripr/tests/mcp_stdio.rs::brief_get_gap_text_projects_the_served_document_over_stdio` — over real stdio, a `brief` session serves the same `ripr_get_gap` `structuredContent` as the default and its text names that document's class, location, owner and canonical id in under half the JSON copy's bytes.
 
 
 - `crates/ripr/src/mcp/workspace.rs::tests::omission_disclosure_pages_independently_of_items`

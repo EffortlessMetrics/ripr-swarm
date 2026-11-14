@@ -7,7 +7,8 @@
     {"answered":5,"route":"cli-human","scenarios":6,"tokens_to_answer":5405,"total_tokens":6515},
     {"answered":6,"route":"cli-json-terse","scenarios":6,"tokens_to_answer":25679,"total_tokens":25679},
     {"answered":6,"route":"agent-brief","scenarios":6,"tokens_to_answer":8704,"total_tokens":8704},
-    {"answered":6,"route":"mcp","scenarios":6,"tokens_to_answer":52117,"total_tokens":56773}
+    {"answered":6,"route":"mcp","scenarios":6,"tokens_to_answer":52117,"total_tokens":56773},
+    {"answered":6,"route":"mcp-brief","scenarios":6,"tokens_to_answer":35267,"total_tokens":36389}
   ],
   "scenarios": [
     {
@@ -99,6 +100,22 @@
           "tokens_to_answer": 8948,
           "total_bytes": 35817,
           "total_tokens": 8948
+        },
+        {
+          "answer_reached": true,
+          "failed_steps": 0,
+          "route": "mcp-brief",
+          "steps": [
+            {"bytes":1923,"exit":0,"step":"initialize","tokens":565},
+            {"bytes":11902,"exit":0,"step":"tools/list","tokens":4318},
+            {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
+            {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
+            {"bytes":2664,"exit":0,"step":"ripr_list_gaps","tokens":186},
+            {"bytes":5531,"exit":0,"step":"ripr_get_gap#1","tokens":416}
+          ],
+          "tokens_to_answer": 5936,
+          "total_bytes": 28040,
+          "total_tokens": 5936
         }
       ],
       "summary": "`>` becomes `>=` on a named threshold; tests use inputs far from it"
@@ -193,6 +210,23 @@
           "tokens_to_answer": 9151,
           "total_bytes": 45438,
           "total_tokens": 10903
+        },
+        {
+          "answer_reached": true,
+          "failed_steps": 0,
+          "route": "mcp-brief",
+          "steps": [
+            {"bytes":1923,"exit":0,"step":"initialize","tokens":565},
+            {"bytes":11902,"exit":0,"step":"tools/list","tokens":4318},
+            {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
+            {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
+            {"bytes":3014,"exit":0,"step":"ripr_list_gaps","tokens":232},
+            {"bytes":5552,"exit":0,"step":"ripr_get_gap#1","tokens":434},
+            {"bytes":5447,"exit":0,"step":"ripr_get_gap#2","tokens":405}
+          ],
+          "tokens_to_answer": 6000,
+          "total_bytes": 33858,
+          "total_tokens": 6405
         }
       ],
       "summary": "a too-long input now returns a new error variant; tests only check is_err"
@@ -286,6 +320,22 @@
           "tokens_to_answer": 7341,
           "total_bytes": 33759,
           "total_tokens": 8501
+        },
+        {
+          "answer_reached": true,
+          "failed_steps": 0,
+          "route": "mcp-brief",
+          "steps": [
+            {"bytes":1923,"exit":0,"step":"initialize","tokens":565},
+            {"bytes":11902,"exit":0,"step":"tools/list","tokens":4318},
+            {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
+            {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
+            {"bytes":2659,"exit":0,"step":"ripr_list_gaps","tokens":184},
+            {"bytes":4185,"exit":0,"step":"ripr_get_gap#1","tokens":330}
+          ],
+          "tokens_to_answer": 5518,
+          "total_bytes": 26689,
+          "total_tokens": 5848
         }
       ],
       "summary": "a default timeout changes value; the only test checks it is positive"
@@ -380,6 +430,23 @@
           "tokens_to_answer": 9165,
           "total_bytes": 45896,
           "total_tokens": 10909
+        },
+        {
+          "answer_reached": true,
+          "failed_steps": 0,
+          "route": "mcp-brief",
+          "steps": [
+            {"bytes":1923,"exit":0,"step":"initialize","tokens":565},
+            {"bytes":11902,"exit":0,"step":"tools/list","tokens":4318},
+            {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
+            {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
+            {"bytes":3205,"exit":0,"step":"ripr_list_gaps","tokens":266},
+            {"bytes":5595,"exit":0,"step":"ripr_get_gap#1","tokens":441},
+            {"bytes":5334,"exit":0,"step":"ripr_get_gap#2","tokens":387}
+          ],
+          "tokens_to_answer": 6041,
+          "total_bytes": 33979,
+          "total_tokens": 6428
         }
       ],
       "summary": "a constructor gains a long-flag spelling; tests assert another field"
@@ -470,6 +537,21 @@
           "tokens_to_answer": 7393,
           "total_bytes": 27570,
           "total_tokens": 7393
+        },
+        {
+          "answer_reached": true,
+          "failed_steps": 0,
+          "route": "mcp-brief",
+          "steps": [
+            {"bytes":1923,"exit":0,"step":"initialize","tokens":565},
+            {"bytes":11902,"exit":0,"step":"tools/list","tokens":4318},
+            {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
+            {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
+            {"bytes":2488,"exit":0,"step":"ripr_list_gaps","tokens":168}
+          ],
+          "tokens_to_answer": 5502,
+          "total_bytes": 22333,
+          "total_tokens": 5502
         }
       ],
       "summary": "a boundary change whose existing tests already pin below, equal and above"
@@ -564,6 +646,23 @@
           "tokens_to_answer": 10119,
           "total_bytes": 41934,
           "total_tokens": 10119
+        },
+        {
+          "answer_reached": true,
+          "failed_steps": 0,
+          "route": "mcp-brief",
+          "steps": [
+            {"bytes":1923,"exit":0,"step":"initialize","tokens":565},
+            {"bytes":11902,"exit":0,"step":"tools/list","tokens":4318},
+            {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
+            {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
+            {"bytes":3208,"exit":0,"step":"ripr_list_gaps","tokens":266},
+            {"bytes":4575,"exit":0,"step":"ripr_get_gap#1","tokens":342},
+            {"bytes":4301,"exit":0,"step":"ripr_get_gap#2","tokens":328}
+          ],
+          "tokens_to_answer": 6270,
+          "total_bytes": 31929,
+          "total_tokens": 6270
         }
       ],
       "summary": "three changed functions: two gaps and one change the tests already pin"

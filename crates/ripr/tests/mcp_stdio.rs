@@ -7947,3 +7947,91 @@ fn summary_text_mode_is_opt_in_and_keeps_structured_content_whole_over_stdio() -
     );
     Ok(())
 }
+
+/// #14327: over real stdio, `RIPR_MCP_TEXT_CONTENT=brief` turns the
+/// `ripr_get_gap` text into the gap's test-author lines, read from the same
+/// `structuredContent` the default session serves unchanged.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn brief_get_gap_text_projects_the_served_document_over_stdio() -> Result<(), String> {
+    let timeout = Duration::from_mins(1);
+    let root = install_gap_filter_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut observed: Vec<(Value, String)> = Vec::new();
+    for env in [&[][..], &[("RIPR_MCP_TEXT_CONTENT", "brief")][..]] {
+        let mut session = SequentialStdio::spawn_with_env(&root, env)?;
+        let refresh =
+            session.call_tool("refresh", "ripr_refresh", json!({}), Duration::from_mins(3))?;
+        structured_tool_success(&refresh, "refresh")?;
+        let list = session.call_tool("list", "ripr_list_gaps", json!({}), timeout)?;
+        let listed = structured_tool_success(&list, "list")?;
+        let first = listed["items"][0]["canonical_id"]
+            .as_str()
+            .ok_or_else(|| format!("list omitted its first canonical_id: {listed}"))?
+            .to_string();
+        let gap = session.call_tool(
+            "get",
+            "ripr_get_gap",
+            json!({ "canonical_id": first }),
+            timeout,
+        )?;
+        let document = structured_tool_success(&gap, "get gap")?;
+        let text = gap
+            .pointer("/result/content/0/text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("get gap lost its text content: {gap}"))?
+            .to_string();
+        observed.push((document, text));
+    }
+    let [(default_doc, default_text), (brief_doc, brief_text)] = observed.as_slice() else {
+        return Err("expected two sessions".to_string());
+    };
+    // Two sessions over one unchanged fixture: the snapshot id is a content
+    // hash, so equal documents mean the same snapshot, not a coincidence.
+    if brief_doc != default_doc {
+        return Err("structuredContent must be identical in full and brief modes".to_string());
+    }
+    let item = &default_doc["item"];
+    let field = |pointer: &str| -> Result<String, String> {
+        match item.pointer(pointer) {
+            Some(Value::String(text)) => Ok(text.clone()),
+            Some(Value::Number(number)) => Ok(number.to_string()),
+            other => Err(format!("served gap lacks {pointer}: {other:?}")),
+        }
+    };
+    let header = format!(
+        "ripr gap: {} {}:{} owner={}.",
+        field("/class")?,
+        field("/location/file")?,
+        field("/location/line")?,
+        field("/causal_attribution/owner")?,
+    );
+    let lines: Vec<&str> = brief_text.lines().collect();
+    if !lines.first().is_some_and(|line| line.starts_with(&header))
+        || !lines.iter().any(|line| {
+            line.starts_with("changed: ")
+                && field("/changed_behavior/after")
+                    .or_else(|_| field("/changed_behavior/expression"))
+                    .is_ok_and(|changed| line.contains(&changed))
+        })
+        || !lines.iter().any(|line| line.starts_with("missing: "))
+        || !lines
+            .iter()
+            .any(|line| line.starts_with("readiness: repair_ready="))
+        || !brief_text.contains(&field("/canonical_id")?)
+    {
+        return Err(format!(
+            "brief get_gap text is not the served gap's projection (want {header:?}):\n{brief_text}"
+        ));
+    }
+    if serde_json::from_str::<Value>(brief_text).is_ok()
+        || brief_text.len() * 2 > default_text.len()
+    {
+        return Err(format!(
+            "brief get_gap text must be a projection under half the JSON copy: {} vs {}",
+            brief_text.len(),
+            default_text.len()
+        ));
+    }
+    Ok(())
+}
