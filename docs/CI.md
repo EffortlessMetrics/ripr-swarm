@@ -120,6 +120,14 @@ A state word inside prose, such as a backticked quotation of a marker or "the ea
 review is superseded", is narration and is not read, because that scan ejected fully
 green queue entries after the whole run (#11566). The PR author can still
 self-attest (unchanged), and retractions posted as issue comments are not read.
+All three positive carriers (native approval, ready COMMENT, and description)
+first check outstanding trusted current-head negative COMMENT statements (#14578).
+Neutral replies do not clear them. Only the same reviewer's later explicit ready
+COMMENT or current trusted native approval on this head resolves their objection;
+another reviewer cannot resolve it, and a dismissed approval cannot resolve it.
+Native `CHANGES_REQUESTED` remains a separate veto until its native decisive
+state is superseded. Review timestamp and native ID order these statements,
+independently of input-page order; missing submission timestamps still refuse.
 A negated change/repair phrase is resolved work, not a blocker: `no code change
 needed`, `no changes needed` and `without a change` admit, while `Code change
 needed`, `A change is needed`, `Changes required` and `Repairs required` still

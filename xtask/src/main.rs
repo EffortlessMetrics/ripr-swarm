@@ -23607,28 +23607,29 @@ fn suspicious_runtime_file_names() -> Vec<String> {
 
 fn windows_absolute_path_tokens(line: &str) -> Vec<String> {
     let mut tokens = Vec::new();
-    // Every match needs a drive-letter colon; the std search is far cheaper
-    // than the byte loop below on the many lines that have none.
-    if !line.contains(':') {
-        return tokens;
-    }
     let bytes = line.as_bytes();
-    let mut index = 0;
-    while index + 2 < bytes.len() {
-        let token_boundary = index == 0 || is_local_context_token_delimiter(bytes[index - 1]);
+    let mut search_start = 0;
+    // A drive separator is necessary for every match. Search those separators
+    // directly instead of interpreting every byte of ordinary source lines.
+    while let Some(offset) = line[search_start..].find(':') {
+        let colon = search_start + offset;
+        search_start = colon + 1;
+        if colon == 0 || colon + 1 >= bytes.len() {
+            continue;
+        }
+        let start = colon - 1;
+        let token_boundary = start == 0 || is_local_context_token_delimiter(bytes[start - 1]);
         if token_boundary
-            && bytes[index].is_ascii_alphabetic()
-            && bytes[index + 1] == b':'
-            && (bytes[index + 2] == b'\\' || bytes[index + 2] == b'/')
+            && bytes[start].is_ascii_alphabetic()
+            && (bytes[colon + 1] == b'\\' || bytes[colon + 1] == b'/')
         {
-            let start = index;
-            index += 3;
-            while index < bytes.len() && !is_local_context_token_delimiter(bytes[index]) {
-                index += 1;
+            let mut end = colon + 2;
+            while end < bytes.len() && !is_local_context_token_delimiter(bytes[end]) {
+                end += 1;
             }
-            tokens.push(line[start..index].to_string());
-        } else {
-            index += 1;
+            tokens.push(line[start..end].to_string());
+            // Colons inside an already consumed path are part of that token.
+            search_start = end;
         }
     }
     tokens
