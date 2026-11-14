@@ -593,14 +593,12 @@ fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, CoreError> 
     );
     route_preview_only_empty_brief(&input.root, &config, &working_set, &mut selection);
     add_agent_brief_provenance_warning(&input.root, &mut selection);
-    output::agent_brief::render_agent_brief_json(
-        &input.root,
-        &input.mode,
-        &config,
-        &working_set,
-        &selection,
-    )
-    .map_err(CoreError::from)
+    let render = if options.line_ranges {
+        output::agent_brief::render_agent_brief_line_ranges_json
+    } else {
+        output::agent_brief::render_agent_brief_json
+    };
+    render(&input.root, &input.mode, &config, &working_set, &selection).map_err(CoreError::from)
 }
 
 /// #13791: an empty brief over a scope whose changed code is TypeScript or

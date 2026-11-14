@@ -15,9 +15,22 @@ use crate::output::agent_seam_packets;
 use serde_json::{Value, json};
 use std::path::Path;
 
+mod line_ranges;
+
 pub(crate) const AGENT_BRIEF_SCHEMA_VERSION: &str = "0.2";
 
 const WORKFLOW_DIR: &str = "target/ripr/workflow";
+
+#[derive(Clone, Copy)]
+enum WorkingSetEncoding {
+    Full,
+    LineRanges,
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static CHANGED_LINE_RECORDS_CONSTRUCTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 pub(crate) fn render_agent_brief_json(
     root: &Path,
@@ -26,6 +39,44 @@ pub(crate) fn render_agent_brief_json(
     working_set: &AgentBriefResolvedWorkingSet,
     selection: &AgentBriefSelection<'_>,
 ) -> Result<String, String> {
+    serde_json::to_string_pretty(&agent_brief_value(
+        root,
+        mode,
+        config,
+        working_set,
+        selection,
+        WorkingSetEncoding::Full,
+    ))
+    .map_err(|err| err.to_string())
+}
+
+pub(crate) fn render_agent_brief_line_ranges_json(
+    root: &Path,
+    mode: &Mode,
+    config: &RiprConfig,
+    working_set: &AgentBriefResolvedWorkingSet,
+    selection: &AgentBriefSelection<'_>,
+) -> Result<String, String> {
+    let mut value = agent_brief_value(
+        root,
+        mode,
+        config,
+        working_set,
+        selection,
+        WorkingSetEncoding::LineRanges,
+    );
+    value["rendering_profile"] = json!("agent-brief-line-ranges-v1");
+    serde_json::to_string(&value).map_err(|err| err.to_string())
+}
+
+fn agent_brief_value(
+    root: &Path,
+    mode: &Mode,
+    config: &RiprConfig,
+    working_set: &AgentBriefResolvedWorkingSet,
+    selection: &AgentBriefSelection<'_>,
+    encoding: WorkingSetEncoding,
+) -> Value {
     let (causal_projection, causal_projection_warning) = CausalDeltaArtifact::load_optional(root);
     let mut warnings = selection.warnings.clone();
     if let Some(warning) = causal_projection_warning {
@@ -43,7 +94,7 @@ pub(crate) fn render_agent_brief_json(
         "root": display_path(root),
         "mode": mode.as_str(),
         "config": config_json(config),
-        "working_set": working_set_json(working_set),
+        "working_set": working_set_json(working_set, encoding),
         "limits": {
             "requested": selection.requested,
             "returned": selection.returned,
@@ -96,7 +147,7 @@ pub(crate) fn render_agent_brief_json(
     {
         projection.insert_comparison_fields(object);
     }
-    serde_json::to_string_pretty(&value).map_err(|err| err.to_string())
+    value
 }
 
 fn config_json(config: &RiprConfig) -> Value {
@@ -107,16 +158,39 @@ fn config_json(config: &RiprConfig) -> Value {
     })
 }
 
-fn working_set_json(working_set: &AgentBriefResolvedWorkingSet) -> Value {
+fn working_set_json(
+    working_set: &AgentBriefResolvedWorkingSet,
+    encoding: WorkingSetEncoding,
+) -> Value {
+    let (location_field, locations) = match encoding {
+        WorkingSetEncoding::Full => (
+            "changed_lines",
+            Value::Array(
+                working_set
+                    .changed_lines
+                    .iter()
+                    .map(|line| {
+                        #[cfg(test)]
+                        CHANGED_LINE_RECORDS_CONSTRUCTED.with(|count| {
+                            count.set(count.get().saturating_add(1));
+                        });
+                        json!({
+                            "file": display_path(&line.file),
+                            "line": line.line,
+                        })
+                    })
+                    .collect(),
+            ),
+        ),
+        WorkingSetEncoding::LineRanges => (
+            "changed_line_ranges",
+            line_ranges::render(&working_set.changed_lines),
+        ),
+    };
     json!({
         "source": working_set.source.as_str(),
         "files": working_set.files.iter().map(|path| display_path(path)).collect::<Vec<_>>(),
-        "changed_lines": working_set.changed_lines.iter().map(|line| {
-            json!({
-                "file": display_path(&line.file),
-                "line": line.line,
-            })
-        }).collect::<Vec<_>>(),
+        (location_field): locations,
         "base": working_set.base.as_deref(),
         "diff": working_set.diff.as_ref().map(|path| display_path(path)),
         "seam_id": working_set.seam_id.as_deref(),
@@ -325,6 +399,105 @@ mod tests {
         std::fs::create_dir_all(&root)
             .map_err(|err| format!("create temp root {}: {err}", root.display()))?;
         Ok(root)
+    }
+
+    #[test]
+    fn line_range_profile_constructs_no_full_location_records() -> Result<(), String> {
+        let seams = vec![classified()];
+        let working_set = AgentBriefResolvedWorkingSet::diff(
+            "change.diff",
+            (1..=1000)
+                .map(|line| AgentBriefLine::new("src/pricing.rs", line))
+                .collect(),
+        );
+        let config = RiprConfig::default();
+        let selection = select_agent_brief_seams(
+            &seams,
+            &working_set,
+            1,
+            AgentBriefPolicy::from_config(&config),
+        );
+        assert_eq!(selection.top_seams.len(), 1);
+        CHANGED_LINE_RECORDS_CONSTRUCTED.with(|count| count.set(0));
+        let ranged = render_agent_brief_line_ranges_json(
+            Path::new("."),
+            &Mode::Draft,
+            &config,
+            &working_set,
+            &selection,
+        )?;
+        CHANGED_LINE_RECORDS_CONSTRUCTED.with(|count| {
+            assert_eq!(
+                count.get(),
+                0,
+                "range rendering must not construct discarded per-line JSON"
+            )
+        });
+        let full = render_agent_brief_json(
+            Path::new("."),
+            &Mode::Draft,
+            &config,
+            &working_set,
+            &selection,
+        )?;
+        CHANGED_LINE_RECORDS_CONSTRUCTED.with(|count| assert_eq!(count.get(), 1000));
+        let full: Value = serde_json::from_str(&full).map_err(|error| error.to_string())?;
+        let mut ranged: Value = serde_json::from_str(&ranged).map_err(|error| error.to_string())?;
+        assert_eq!(ranged["rendering_profile"], "agent-brief-line-ranges-v1");
+        ranged
+            .as_object_mut()
+            .ok_or("brief object")?
+            .remove("rendering_profile");
+        let locations = ranged["working_set"].as_object_mut().ok_or("working set")?;
+        assert_eq!(
+            locations.remove("changed_line_ranges"),
+            Some(json!([{"file":"src/pricing.rs","ranges":[[1,1000]]}]))
+        );
+        assert!(!locations.contains_key("changed_lines"));
+        locations.insert(
+            "changed_lines".to_string(),
+            full["working_set"]["changed_lines"].clone(),
+        );
+        assert_eq!(ranged, full);
+        Ok(())
+    }
+
+    #[test]
+    fn working_set_encoding_preserves_empty_singleton_and_ordered_records() -> Result<(), String> {
+        for lines in [
+            Vec::new(),
+            vec![AgentBriefLine::new("雪 /a,\".rs", 8)],
+            vec![
+                AgentBriefLine::new("雪 /a,\".rs", 3),
+                AgentBriefLine::new("雪 /a,\".rs", 4),
+                AgentBriefLine::new("雪 /a,\".rs", 4),
+                AgentBriefLine::new("雪 /a,\".rs", 2),
+                AgentBriefLine::new("b.rs", 9),
+                AgentBriefLine::new("雪 /a,\".rs", 5),
+            ],
+        ] {
+            let working_set = AgentBriefResolvedWorkingSet::diff("change.diff", lines);
+            let full = working_set_json(&working_set, WorkingSetEncoding::Full);
+            let mut ranged = working_set_json(&working_set, WorkingSetEncoding::LineRanges);
+            let groups = ranged
+                .as_object_mut()
+                .ok_or("working set")?
+                .remove("changed_line_ranges")
+                .ok_or("ranges")?;
+            let mut decoded = Vec::new();
+            for group in groups.as_array().ok_or("groups")? {
+                for pair in group["ranges"].as_array().ok_or("pairs")? {
+                    let start = pair[0].as_u64().ok_or("start")?;
+                    let end = pair[1].as_u64().ok_or("end")?;
+                    for line in start..=end {
+                        decoded.push(json!({"file":group["file"],"line":line}));
+                    }
+                }
+            }
+            ranged["changed_lines"] = Value::Array(decoded);
+            assert_eq!(ranged, full);
+        }
+        Ok(())
     }
 
     #[test]

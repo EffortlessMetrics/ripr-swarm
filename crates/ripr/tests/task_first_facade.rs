@@ -7114,6 +7114,8 @@ fn status_attempt_with_a_malformed_id_names_status_not_agent_status() -> Result<
     Ok(())
 }
 
+#[path = "task_first_facade/brief_line_ranges.rs"]
+mod brief_line_ranges;
 /// #11584: `ripr repair --json` prints the packet envelope with the additive
 /// `repair_attempt.attempt_id` on stdout and nothing but that document; a
 /// repeated start prints the existing attempt's status document; without
