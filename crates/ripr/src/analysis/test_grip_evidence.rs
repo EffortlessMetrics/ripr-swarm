@@ -631,13 +631,22 @@ impl<'index> EvidencePass<'index> {
             return self.incomplete_evidence(seams);
         }
         let processed = AtomicUsize::new(0);
+        // Schedule heavyweight seams first (LPT) so a single high-fanout seam
+        // does not start near the end of the pass and create a Rayon tail
+        // stall (#5363); `out` is still sorted by `seam_id` below.
+        let mut ordered_seams: Vec<&RepoSeam> = seams.iter().collect();
+        ordered_seams.sort_by(|a, b| {
+            estimated_seam_cost(b, context)
+                .cmp(&estimated_seam_cost(a, context))
+                .then_with(|| a.id().as_str().cmp(b.id().as_str()))
+        });
         // Each worker holds a run memo scope for its share of the seams, so a
         // pure per-source product (the shadow check's item-syntax scan of a
         // test body) is computed once per distinct source on that worker, not
         // once per (seam, test, oracle) ask (#13577).
-        let mut out: Vec<TestGripEvidence> = seams
+        let mut out: Vec<TestGripEvidence> = ordered_seams
             .par_iter()
-            .map_init(crate::analysis::syntax::run_memo::enter, |_scope, seam| {
+            .map_init(crate::analysis::syntax::run_memo::enter, |_scope, &seam| {
                 cancellation::with_optional_token(token.as_ref(), || {
                     crate::analysis::committed_source::with_overlay(overlay.clone(), || {
                         cancellation::checkpoint().ok()?;
@@ -861,6 +870,30 @@ fn credited_related_tests<'a>(
             view
         })
         .collect()
+}
+
+/// Cheap lock-free cost estimate for LPT scheduling before `par_iter()` (#5363).
+fn estimated_seam_cost(seam: &RepoSeam, context: &CompactGripContext<'_>) -> (usize, usize) {
+    let owner_name = seam.owner().rsplit("::").next().unwrap_or(seam.owner());
+    let candidate_tests = context
+        .tests_by_call_name
+        .get(owner_name)
+        .map_or(0, Vec::len)
+        + context
+            .tests_by_helper_owner_call_name
+            .get(owner_name)
+            .map_or(0, Vec::len)
+        + context
+            .tests_by_target_affinity_owner_call_name
+            .get(owner_name)
+            .map_or(0, Vec::len)
+        + crate::analysis::classify::module_stem(seam.file())
+            .and_then(|stem| context.tests_by_file_stem.get(&stem))
+            .map_or(0, Vec::len);
+    let line_span = seam
+        .source_lines()
+        .map_or(1, |(start, end)| end.saturating_sub(start).saturating_add(1));
+    (candidate_tests, line_span)
 }
 
 fn evidence_for_seam_with_context(
