@@ -1195,7 +1195,11 @@ verify=complete|outcome=O|findings=N|exposed=N
   holds two arms, or when the line's head is not the probe's head. The
   match-arm `flow_sinks[].text` in JSON and the human `Changed behavior`,
   propagation and local-flow evidence lines carry the same result; the probe
-  expression, finding ids and classes do not change.
+  expression, finding ids and classes do not change. The same rule names the
+  result in MCP `ripr_get_gap` as `changed_behavior.arm_result` (present
+  only when read; `expression` stays the head) and in the editor hover's
+  changed expression and line-findings heading; LSP diagnostic data keeps the
+  head (#14683).
 - 5 gap lines are printed, plus one more per 8 gaps, up to 10 (#13081): top
   triage gap first, then the remaining gaps in finding order; `+M more gaps not
   shown` states the exact remainder. The `open=` form (unconfirmed findings)

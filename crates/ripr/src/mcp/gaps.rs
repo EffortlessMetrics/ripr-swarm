@@ -905,6 +905,23 @@ fn gap_evidence_core(
             })
         })
         .collect::<Vec<_>>();
+    let mut changed_behavior = json!({
+        "expression": finding.probe.expression,
+        "before": finding.probe.before,
+        "after": finding.probe.after,
+        "delta_kind": finding.probe.delta.as_str(),
+        "probe_family": finding.probe.family.as_str(),
+        "expected_sinks": finding.probe.expected_sinks,
+    });
+    // #14420: a head-only match arm (`Size::Medium =>`) also names the result
+    // the flow model read on its line (`450`), the value a test must pin.
+    // Present only when read, so other gaps keep their bytes.
+    if let (Some(result), Some(object)) = (
+        crate::output::flow_sink_line::head_only_arm_result(finding),
+        changed_behavior.as_object_mut(),
+    ) {
+        object.insert("arm_result".to_string(), Value::from(result));
+    }
     let source_currentness = serde_json::to_value(finding.source_currentness)
         .map_err(|error| format!("serialize source currentness: {error}"))?;
     let static_limitation = finding
@@ -938,14 +955,7 @@ fn gap_evidence_core(
             "line": finding.probe.location.line,
             "column": finding.probe.location.column,
         },
-        "changed_behavior": {
-            "expression": finding.probe.expression,
-            "before": finding.probe.before,
-            "after": finding.probe.after,
-            "delta_kind": finding.probe.delta.as_str(),
-            "probe_family": finding.probe.family.as_str(),
-            "expected_sinks": finding.probe.expected_sinks,
-        },
+        "changed_behavior": changed_behavior,
         "causal_attribution": canonical_gap,
         "discriminator_availability": activation,
         "related_tests_total": finding.related_tests_total(),
@@ -3300,6 +3310,50 @@ mod tests {
             "an out-of-root file must keep its full stable spelling, got: {}",
             item.file
         );
+        Ok(())
+    }
+
+    /// #14420: `ripr_get_gap` names a head-only arm's result beside its
+    /// head, so an agent sees the value a test must pin. The field is absent
+    /// when the flow model read none, and the expression stays the head.
+    #[test]
+    fn get_gap_names_a_head_only_arm_result() -> Result<(), String> {
+        let mut finding = finding()?;
+        finding.probe.family = crate::domain::ProbeFamily::MatchArm;
+        finding.probe.expression = "Size::Medium =>".to_string();
+        let line = finding.probe.location.line;
+        finding.flow_sinks = vec![crate::domain::FlowSinkFact {
+            kind: crate::domain::FlowSinkKind::MatchArm,
+            text: "450".to_string(),
+            line,
+            owner: None,
+        }];
+        let root = Path::new("repo");
+        let core = gap_evidence_core(&finding, "gap:test:1", root, &ready_readiness())?;
+        if core["changed_behavior"]["arm_result"] != "450"
+            || core["changed_behavior"]["expression"] != "Size::Medium =>"
+        {
+            return Err(format!(
+                "arm result not named: {}",
+                core["changed_behavior"]
+            ));
+        }
+
+        // A sink on another line was not read for this head.
+        let mut elsewhere = finding.clone();
+        elsewhere.flow_sinks[0].line = line + 1;
+        let core = gap_evidence_core(&elsewhere, "gap:test:1", root, &ready_readiness())?;
+        if core["changed_behavior"].get("arm_result").is_some() {
+            return Err(format!("off-line sink named: {}", core["changed_behavior"]));
+        }
+
+        // A non-arm probe never carries the field.
+        let mut predicate = finding;
+        predicate.probe.family = crate::domain::ProbeFamily::Predicate;
+        let core = gap_evidence_core(&predicate, "gap:test:1", root, &ready_readiness())?;
+        if core["changed_behavior"].get("arm_result").is_some() {
+            return Err(format!("non-arm probe named: {}", core["changed_behavior"]));
+        }
         Ok(())
     }
 }

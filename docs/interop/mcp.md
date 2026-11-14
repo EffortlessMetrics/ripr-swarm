@@ -639,7 +639,8 @@ input selection, which reads saved tracked edits on a dirty tree.
 `ripr_get_gap` (and the equivalent resource `ripr://gap/{canonical_id}`)
 returns one canonical item's complete bounded evidence bound to its snapshot
 identity: identity and location, the changed behavior (expression,
-before/after, delta kind, probe family), causal attribution (canonical gap
+before/after, delta kind, probe family, and for a head-only match arm the
+`arm_result` its line names, #14683), causal attribution (canonical gap
 owner, behavior kind, probe kind, normalized discriminator), discriminator
 availability and the producer's observed/missing evidence, related tests with
 oracle kind and strength, the nonnegative `related_tests_total` before the
