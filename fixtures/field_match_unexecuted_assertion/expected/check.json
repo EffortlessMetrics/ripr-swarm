@@ -37,7 +37,7 @@
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: selected"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
-        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: Some(ms) =>"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: ms as u64"},
         "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
@@ -48,11 +48,11 @@
         {"stage":"observe","state":"no","confidence":"medium"},
         {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach charge: selected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: Some(ms) =>", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches match arm result: Some(ms) => (line 4)", "related test src/lib.rs:10 selected uses no oracle", "source assertion argument value 1001 at line 11", "source function argument value lease = 1001 at line 11", "source function argument value lease = 600 at line 11"],
+      "evidence_path": ["reach yes: Related tests appear to reach charge: selected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: ms as u64", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches match arm result: ms as u64 (line 4)", "related test src/lib.rs:10 selected uses no oracle", "source assertion argument value 1001 at line 11", "source function argument value lease = 1001 at line 11", "source function argument value lease = 600 at line 11"],
       "flow_sinks": [
-        {"kind":"match_arm","text":"Some(ms) =>","line":4}
+        {"kind":"match_arm","text":"ms as u64","line":4}
       ],
-      "evidence": ["Changed behavior appears to influence match arm result: Some(ms) =>", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: selected"],
+      "evidence": ["Changed behavior appears to influence match arm result: ms as u64", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: selected"],
       "missing": ["No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
       "assertion_texts": {
         "11": "assert_eq!(charge(&Lease { elapsed: Some(1001), timeout: 600 }), 1001);"

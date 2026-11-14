@@ -859,6 +859,7 @@ const PORTABLE_TESTS: &[&str] = &[
     "per_command_help_renders_the_catalog_example",
     "help_all_rejects_trailing_arguments",
     "help_all_flag_pair_is_rejected_outside_check",
+    "help_route_typos_name_the_route_that_works",
 ];
 
 #[test]

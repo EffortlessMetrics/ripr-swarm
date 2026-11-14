@@ -1183,6 +1183,19 @@ verify=complete|outcome=O|findings=N|exposed=N
   `open=` rows still print and still count), and for exposed or
   static-limited preview findings. It never adds to
   `gaps=`: preview and reach-limited evidence stays advisory.
+- `CHANGED EXPRESSION` is the probe expression. For a match-arm probe that
+  carries only the arm head (`Size::Medium =>`), it is followed by the arm's
+  result when the flow model read one from the head's own line
+  (`Size::Medium => 450`, #14420), so the row names the value a test must
+  pin. The read fails closed and leaves the head alone when the result holds
+  a brace (a block, struct literal or closure body), starts or continues on
+  another line (no trailing `,` and the match does not close on the next
+  line), holds an unterminated string, an `Err(..)` or a `/* */` comment,
+  has unbalanced brackets or is longer than 60 characters, when the line
+  holds two arms, or when the line's head is not the probe's head. The
+  match-arm `flow_sinks[].text` in JSON and the human `Changed behavior`,
+  propagation and local-flow evidence lines carry the same result; the probe
+  expression, finding ids and classes do not change.
 - 5 gap lines are printed, plus one more per 8 gaps, up to 10 (#13081): top
   triage gap first, then the remaining gaps in finding order; `+M more gaps not
   shown` states the exact remainder. The `open=` form (unconfirmed findings)
@@ -1820,11 +1833,31 @@ format and each carrying the same typed identity and repair route:
   requested-input echo and retry the human format prints; a stdin diff has
   no replayable retry, so `next=` is absent there.
 
-Machine formats without an honest refusal shape yet (`repo-sarif`,
-`badge-plus`, `repo-badge-*`, `shields`, `repo-seams-*`,
-`repo-exposure-summary-json`) write nothing to stdout and put the prose
-diagnostic on stderr for now; that gap is a named limitation, not a clean
-result.
+- `--format json-terse` renders the same check JSON refusal envelope as
+  `json`, through the terse pass (`rendering: "terse"`, minified) (#14499).
+- `--format check-findings-json` renders the same check JSON refusal
+  envelope as `json`. It carries no `artifact` identity: a refused run has
+  no snapshot, so a verify that requires one rejects it (#14499).
+- `--format badge-shields`, `badge-plus-shields`, `repo-badge-shields` and
+  `repo-badge-plus-shields` render the Shields endpoint with exactly its four
+  fields: the family's `label` (`ripr` or `ripr+`), `message: "refused:
+  <identity>"` and `color: "lightgrey"` (#14499).
+- `--format badge-plus-json`, `repo-badge-json` and `repo-badge-plus-json`
+  render the same degraded badge as `badge-json` under their own `kind` and
+  `scope`; the repo badges use the `canonical_actionable_gap` basis (#14499).
+- `--format repo-sarif` and `repo-sarif-compact` render the same refusal run
+  as `sarif`, with `run.properties.scope: "repo_seam"` (#14499).
+- `--format repo-seams-json` renders its own envelope: `schema_version`,
+  `scope: "repo"`, `run_status: "refused"`, one `limitations[]` entry with
+  the typed `category`, `repair_route` and message, and an empty `seams`
+  array, with no `artifact` identity (#14499).
+- `--format repo-exposure-summary-json` renders the summary's own envelope
+  with `run_status: "refused"`, the same `limitations[]` entry, zeroed
+  `metrics` and an empty `top_files` array (#14499).
+
+The prose formats (`human`, `human-full`, `repo-seams-md`,
+`repo-exposure-md`) write nothing to stdout and keep the diagnostic on
+stderr.
 
 Whether the analysis ran is implicit per identity, not a separate field.
 `suppression_policy_invalid` is the one identity where classification ran to

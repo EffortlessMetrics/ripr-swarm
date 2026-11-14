@@ -5691,6 +5691,67 @@ fn check_badge_json_refusal_emits_the_degraded_badge() -> Result<(), String> {
     Ok(())
 }
 
+/// #14499: on a refused run, every machine format a program parses prints a
+/// non-empty refusal document naming the typed identity, and none echoes
+/// `ripr.toml` content; the prose formats keep stdout empty.
+#[test]
+fn check_refusal_sweep_every_machine_format_prints_a_document() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-refusal-sweep", 1)?;
+    let root_arg = root.display().to_string();
+    std::fs::write(root.join("ripr.toml"), "[canary_table_14499]\n")
+        .map_err(|err| err.to_string())?;
+    let machine = [
+        "agent",
+        "json",
+        "json-compact",
+        "json-terse",
+        "check-findings-json",
+        "github",
+        "missed-txt",
+        "sarif",
+        "sarif-compact",
+        "badge-json",
+        "badge-shields",
+        "badge-plus-json",
+        "badge-plus-shields",
+        "repo-badge-json",
+        "repo-badge-shields",
+        "repo-badge-plus-json",
+        "repo-badge-plus-shields",
+        "repo-seams-json",
+        "repo-exposure-json",
+        "repo-exposure-summary-json",
+        "repo-sarif",
+        "repo-sarif-compact",
+        "agent-seam-packets-json",
+    ];
+    for format in machine {
+        let output = run_ripr(&["check", "--format", format, "--root", &root_arg]);
+        let stdout =
+            assert_machine_refusal_basics(&output).map_err(|err| format!("{format}: {err}"))?;
+        if !stdout.contains("config_invalid") {
+            return Err(format!("{format} must name config_invalid:\n{stdout}"));
+        }
+        if stdout.contains("canary_table_14499") {
+            return Err(format!(
+                "{format} must not echo ripr.toml content:\n{stdout}"
+            ));
+        }
+        if !matches!(format, "agent" | "github" | "missed-txt") {
+            serde_json::from_str::<serde_json::Value>(&stdout)
+                .map_err(|err| format!("{format} refusal must parse as JSON: {err}\n{stdout}"))?;
+        }
+    }
+    for format in ["human", "human-full", "repo-seams-md", "repo-exposure-md"] {
+        let output = run_ripr(&["check", "--format", format, "--root", &root_arg]);
+        if output.status.code() != Some(2) || !output.stdout.is_empty() {
+            return Err(format!("{format} keeps its refusal on stderr: {output:?}"));
+        }
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// #14452: `check --format agent` on a refused run prints the agent
 /// format's refusal record on stdout instead of zero bytes an agent could
 /// read as a clean run, keeping config file content off stdout.
@@ -11160,9 +11221,9 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
 /// missing diff file exits 2, like the diff-scoped formats. #7332 changed
 /// what the two JSON repo formats write on that refusal: `repo-exposure-json`
 /// and `agent-seam-packets-json` render their format's refusal document
-/// (`run_status: "refused"`) on stdout instead of zero bytes, while
-/// `repo-sarif` still has no honest refusal shape and stays empty. A
-/// resolvable base keeps working.
+/// (`run_status: "refused"`) on stdout instead of zero bytes, and since
+/// #14499 `repo-sarif` renders the refusal SARIF run (scope `repo_seam`,
+/// `run.properties.run_status: "refused"`). A resolvable base keeps working.
 #[test]
 fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -11203,10 +11264,15 @@ fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
                 String::from_utf8_lossy(&output.stderr)
             );
             if format == "repo-sarif" {
-                assert!(
-                    output.stdout.is_empty(),
-                    "{format} {bad:?} wrote stdout on a failed invocation"
+                // #14499: the refusal SARIF run, never zero bytes.
+                let sarif: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+                let run = &sarif["runs"][0];
+                assert_eq!(
+                    run["properties"]["run_status"], "refused",
+                    "{format} {bad:?}"
                 );
+                assert_eq!(run["properties"]["scope"], "repo_seam", "{format} {bad:?}");
+                assert_eq!(run["results"], serde_json::json!([]), "{format} {bad:?}");
             } else {
                 // #7332: the JSON repo formats carry their refusal document
                 // on stdout rather than zero bytes.
