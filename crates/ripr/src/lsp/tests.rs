@@ -16722,10 +16722,13 @@ fn lsp_fixture_render(
         &fixture_root,
         &crate::config::RiprConfig::default(),
     )?;
+    // The owner's tail `if`/`else` branch values are `return_value` seams too
+    // (#14385); the fixture's golden pins the predicate-boundary seam.
+    seams.retain(|seam| seam.seam.kind().as_str() == "predicate_boundary");
     seams.sort_by(|left, right| left.seam.id().as_str().cmp(right.seam.id().as_str()));
     if seams.len() != 1 {
         return Err(format!(
-            "expected one {fixture} classified seam, got {}",
+            "expected one {fixture} predicate_boundary classified seam, got {}",
             seams.len()
         ));
     }

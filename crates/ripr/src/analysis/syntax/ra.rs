@@ -4365,6 +4365,152 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
         Ok(())
     }
 
+    /// #14385: a tail `if`/`else` returns each branch block's tail value, so
+    /// each one on its own line is a `return_value` shape; a value on its
+    /// `if`'s condition line, a statement `if`, a tail `if` without `else`, and
+    /// a nested `match` value get none.
+    #[test]
+    fn tail_if_branch_values_are_return_value_shapes() -> Result<(), Box<dyn Error>> {
+        let text = r#"
+pub fn discount(total: u32) -> u32 {
+    if total >= 100 {
+        total / 10
+    } else if total >= 50 {
+        total / 20
+    } else {
+        0
+    }
+}
+
+pub fn inline(total: u32) -> u32 {
+    if total >= 100 { total / 10 } else { 0 }
+}
+
+pub fn nested(total: u32, vip: bool) -> u32 {
+    if vip {
+        if total > 10 { 3 } else { 2 }
+    } else {
+        match total { 0 => 0, _ => 1 }
+    }
+}
+
+pub fn statement(total: u32) -> u32 {
+    if total > 1 {
+        log(total / 2)
+    }
+    7
+}
+
+pub fn no_else(total: u32) {
+    if total > 1 {
+        log(total / 3)
+    }
+}
+
+pub fn split_condition(total: u32, vip: bool) -> u32 {
+    if vip
+        && total > 1 { 4 } else { 5 }
+}
+
+pub fn newline_keyword(total: u32, vip: bool) -> u32 {
+    if vip {
+        if
+            total > 10 { 3 } else { 2 }
+    } else {
+        match
+            total { 0 => 0, _ => 1 }
+    }
+}
+
+pub fn fallible(total: u32) -> Result<u32, Error> {
+    if total > 1 {
+        Ok(total)
+    } else {
+        Err(Error::Small)
+    }
+}
+
+pub fn early(total: u32) -> u32 {
+    if total > 1 {
+        total
+    } else {
+        return 5
+    }
+}
+
+pub fn wide(input: &str, depth: usize) -> bool {
+    if depth == 0 {
+        input.len() > 3
+    } else {
+        depth > 1 && input.is_empty()
+    }
+}
+
+pub fn wrapped(input: &str, depth: usize) -> bool {
+    if depth == 0 {
+        (input.len() > 3)
+    } else {
+        !(depth > 1)
+    }
+}
+"#;
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), text)?;
+        let all_return_shapes = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::ReturnValue)
+            .map(|shape| (shape.start_line, shape.text.as_str()))
+            .collect::<Vec<_>>();
+        // `early`: a `return` branch tail already has its return-expression
+        // shape, so the branch walk adds no second one over the same line.
+        let early = all_return_shapes
+            .iter()
+            .filter(|(line, _)| (60..66).contains(line))
+            .map(|(line, _)| *line)
+            .collect::<Vec<_>>();
+        if early != [62, 64] {
+            return Err(format!("unexpected early-return shapes: {all_return_shapes:?}").into());
+        }
+        // `wide`, `wrapped`: a comparison or boolean branch value, bare,
+        // parenthesized or negated, is the predicate probe's subject, so it
+        // gets no second return-value row.
+        if all_return_shapes.iter().any(|(line, _)| *line >= 66) {
+            return Err(format!(
+                "predicate branch value got a return shape: {all_return_shapes:?}"
+            )
+            .into());
+        }
+        let return_shapes = all_return_shapes
+            .into_iter()
+            .filter(|(line, _)| *line < 60)
+            .collect::<Vec<_>>();
+        // `newline_keyword`: a nested `if`/`match` branch tail whose keyword
+        // ends its line is still control flow, so it gets no shape (Devin
+        // review on #14392); its inner values sit on condition lines.
+        let expected = [
+            (4, "total / 10"),
+            (6, "total / 20"),
+            (8, "0"),
+            (28, "7"),
+            (54, "Ok(total)"),
+            (56, "Err(Error::Small)"),
+        ];
+        if return_shapes != expected {
+            return Err(format!("unexpected return probe shapes: {return_shapes:?}").into());
+        }
+        // An own-line error branch value also carries its error-path shape.
+        let error_shapes = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::ErrorPath)
+            .map(|shape| (shape.start_line, shape.text.as_str()))
+            .collect::<Vec<_>>();
+        if error_shapes != [(56, "Err(Error::Small)")] {
+            return Err(format!("unexpected error probe shapes: {error_shapes:?}").into());
+        }
+        Ok(())
+    }
+
     #[test]
     fn ra_adapter_handles_parser_errors() -> Result<(), Box<dyn Error>> {
         let root = temp_dir("ra_parser_error")?;
