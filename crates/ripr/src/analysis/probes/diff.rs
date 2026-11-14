@@ -4886,6 +4886,31 @@ mod tests {
         );
     }
 
+    /// #14722: a comparison outside the header whose text also appears
+    /// inside it (in a string literal) is not the header's carrier: its text
+    /// is not unique on the line, so it owns no cut of the edit.
+    #[test]
+    fn a_same_text_comparison_outside_the_header_does_not_carry_the_edit() {
+        let probes = shapes_probes(
+            "let marker = x > 0; match tag(\"x > 0\", after()) {",
+            "let marker = x > 0; match tag(\"x > 0\", before()) {",
+            &[
+                (ProbeShapeKind::Predicate, "x > 0"),
+                (ProbeShapeKind::MatchArm, "match tag(\"x > 0\", after())"),
+            ],
+            "",
+        );
+
+        let header = probes
+            .iter()
+            .find(|probe| probe.family == ProbeFamily::StaticUnknown);
+        assert_eq!(
+            header.and_then(|probe| probe.before.as_deref()),
+            Some("match tag(\"x > 0\", before())"),
+            "{probes:?}"
+        );
+    }
+
     /// #14722: an arm edit on a line that also holds the header keeps its
     /// match-arm probe, and an unchanged header never becomes a probe of
     /// its own.
