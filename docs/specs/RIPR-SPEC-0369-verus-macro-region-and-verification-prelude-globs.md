@@ -183,6 +183,21 @@ grouped paths whose bound name is not established. Unrelated absolute imports
 do not shadow the module. This does not relax unresolved-include placement refusal or
 hide public macro imports in the module being globbed.
 
+Std's `thread_local!` and `compile_error!` (bare or `std::`) are not
+item-position macros that refuse the local glob (#14116): their expansions
+declare no module, as the module-tree scan already reads them. The call still
+refuses when its tokens spell the module name, when the file may bind the
+macro's name, or for a `std::` call the name `std` (a same-named
+`macro_rules!` or `macro` at any depth, since a nested `#[macro_export]` one
+lands in the crate root's scope; a top-level same-named `mod` or
+`extern crate` alias, import of that name, or any `#[macro_use]` item), or
+when the file has another top-level glob. `core::` and `::std::` spellings
+keep the refusal. Without this, a file holding `mod inner; use
+inner::*;` beside a `thread_local!` lost the `assert_eq!` credit of every test
+in it. As in the module-tree scan, a shadowing macro or crate name from
+outside the file is not modeled: an `extern crate dep as std;` at the crate
+root, or a `std` or `thread_local` the globbed module itself re-exports.
+
 The rule reads the glob with 2018 path semantics at the top level of any file
 and does not consult the edition. In a 2015-edition crate a non-root file's
 `mod name; pub use name::*;` names a crate-root item instead, so a crate-root
