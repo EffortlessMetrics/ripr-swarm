@@ -24,10 +24,11 @@ mod tests {
     }
 
     #[test]
-    fn real_ripr_reports_version_when_configured() {
+    fn real_ripr_reports_version_when_configured() -> Result<(), String> {
         if let Ok(bin) = std::env::var("RIPR_BIN") {
-            let v = ripr_version(&bin).expect("version");
+            let v = ripr_version(&bin)?;
             assert!(v.starts_with("ripr"), "unexpected version output: {v}");
         }
+        Ok(())
     }
 }
