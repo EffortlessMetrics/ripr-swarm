@@ -370,6 +370,30 @@ suite('Standard LSP compatibility probe', () => {
     assert.strictEqual(selected, 1);
   });
 
+  test('passes configured serverArgs instead of hardcoded lsp --stdio', async function () {
+    this.timeout(25_000);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-lsp-args-'));
+    temporaryRoots.push(root);
+    const argsRecord = path.join(root, 'argv.json');
+    const script = path.join(root, 'server.js');
+    fs.writeFileSync(
+      script,
+      `require('fs').writeFileSync(${JSON.stringify(argsRecord)}, JSON.stringify(process.argv.slice(2)));\n` +
+      fakeServerSource('valid', advertisedCapabilities)
+    );
+    const command = process.platform === 'win32' ? path.join(root, 'ripr.cmd') : path.join(root, 'ripr');
+    const useShell = process.platform === 'win32';
+    if (process.platform === 'win32') {
+      fs.writeFileSync(command, `@echo off\r\n"${process.execPath}" "${script}" %*\r\nexit /b %errorlevel%\r\n`);
+    } else {
+      fs.writeFileSync(command, `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`, { mode: 0o755 });
+    }
+    const customArgs = ['custom-subcommand', '--stdio'];
+    const result = await probeStandardLspCompatibility(command, useShell, fakeProbeTimeoutMs, undefined, customArgs);
+    assert.strictEqual(result.status, 'compatible', JSON.stringify(result));
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(argsRecord, 'utf8')), customArgs);
+  });
+
   function descendantPidPath(prefix: string): string {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
     temporaryRoots.push(root);

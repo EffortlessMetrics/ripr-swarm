@@ -493,6 +493,44 @@ suite('Server resolver stale PATH version (#13638)', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test('configured serverPath probes with win32 shell semantics, forwards serverArgs, and preserves needsShell', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-resolver-shell-'));
+    const configured = path.join(root, process.platform === 'win32' ? 'ripr.cmd' : 'ripr');
+    const customArgs = ['custom-lsp', '--stdio'];
+    let observedUseShell: boolean | undefined;
+    let observedArgs: readonly string[] | undefined;
+    const runtime: ServerResolverRuntime = {
+      probeCandidate: async (command, source, detail, useShell, installationState = 'unmanaged', serverArgs) => {
+        observedUseShell = useShell;
+        observedArgs = serverArgs;
+        return {
+          command,
+          source,
+          detail,
+          installationState,
+          compatibilityResult: compatibleLspEvidence
+        };
+      }
+    };
+    try {
+      const result = await resolveServer(
+        stubContext(root),
+        { ...config(), serverPath: configured, serverArgs: customArgs },
+        stubOutput(),
+        runtime
+      );
+      assert.ok('command' in result, JSON.stringify(result));
+      if (!('command' in result)) {
+        return;
+      }
+      assert.strictEqual(observedUseShell, process.platform === 'win32');
+      assert.deepStrictEqual(observedArgs, customArgs);
+      assert.strictEqual(result.needsShell, process.platform === 'win32' ? true : undefined);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 function stubContext(root: string): vscode.ExtensionContext {

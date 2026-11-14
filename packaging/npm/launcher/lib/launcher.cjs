@@ -162,7 +162,10 @@ function detectLinuxLibc(reportProvider = process.report) {
 
 function selectPlatform(platforms, options = {}) {
   const nodePlatform = options.platform || process.platform;
-  const nodeArch = options.arch || process.arch;
+  const rawArch = options.arch || process.arch;
+  // Windows on ARM64 has no native release target; Windows 11 on ARM runs
+  // x64 binaries through built-in emulation, matching editors/vscode/src/platform.ts.
+  const nodeArch = nodePlatform === "win32" && rawArch === "arm64" ? "x64" : rawArch;
   const libc = nodePlatform === "linux" ? options.libc || detectLinuxLibc(options.reportProvider) : null;
   if (nodePlatform === "linux" && libc !== "glibc") {
     throw new LauncherError(

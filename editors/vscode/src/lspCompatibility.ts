@@ -266,14 +266,15 @@ export async function probeStandardLspCompatibility(
   command: string,
   useShell = false,
   timeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
-  onInitializeCapabilities?: (capabilities: Readonly<Record<string, unknown>>) => void
+  onInitializeCapabilities?: (capabilities: Readonly<Record<string, unknown>>) => void,
+  serverArgs: readonly string[] = ['lsp', '--stdio']
 ): Promise<LspCompatibilityResult> {
   return new Promise((resolve) => {
     let settled = false;
     let phase: 'initialize' | 'shutdown' | 'exit' = 'initialize';
     let evidence: Omit<LspCompatibilityEvidence, 'processResult'> | undefined;
     let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
-    const child = spawnProbeProcess(command, ['lsp', '--stdio'], useShell);
+    const child = spawnProbeProcess(command, serverArgs, useShell);
 
     const finish = (result: LspCompatibilityResult): void => {
       if (settled) {
