@@ -1,6 +1,7 @@
 use super::report::{
-    FRESH_REVIEW_SUMMARY_HEADLINE, NO_ANALYSIS_YET, review_summary_before_analysis_artifact,
-    review_summary_is_fresh_early_state, reviewer_summary_headline_markdown,
+    FRESH_REVIEW_SUMMARY_HEADLINE, NO_ANALYSIS_YET, non_advisory_receipt_reason,
+    review_summary_before_analysis_artifact, review_summary_is_fresh_early_state,
+    reviewer_summary_headline_markdown,
 };
 use super::types::AgentReviewSummaryReport;
 use crate::output::markdown::{PowershellForm, command_shell_disclosure, powershell_form};
@@ -46,6 +47,11 @@ pub(crate) fn render_agent_review_summary_markdown(report: &AgentReviewSummaryRe
         } else {
             rendered.push_str("Receipt: unavailable or invalid.\n");
         }
+    }
+    if let Some(reason) = non_advisory_receipt_reason(&report.static_movement, &report.surfaces) {
+        rendered.push_str(&format!(
+            "Receipt: {reason}; the movement above is not review evidence.\n"
+        ));
     }
     match &report.analysis_outcome {
         Some(outcome) => rendered.push_str(&format!(
