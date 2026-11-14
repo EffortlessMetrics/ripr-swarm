@@ -5,4 +5,6 @@
   group, so the weekly Monday run acquires a runner instead of queueing for 24
   hours and being cancelled. It authenticates the Droid action with the job's
   own `GITHUB_TOKEN` rather than OIDC, which is required on a hosted runner now
-  that `id-token: write` remains dropped (#14641).
+  that `id-token: write` remains dropped (#14641). `check-droid-review-config`
+  now rejects a self-hosted `runs-on` or a missing `github_token`, so neither
+  repair can silently regress.
