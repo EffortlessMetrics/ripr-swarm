@@ -279,3 +279,59 @@ fn distinct_or_non_consecutive_hidden_rows_stay_separate() {
     assert_eq!(rendered.matches("    - ").count(), 3, "{rendered}");
     assert!(!rendered.contains(" (x"), "{rendered}");
 }
+
+#[test]
+fn hidden_rows_state_a_long_shared_reason_once() {
+    // #14308 item 3: rows that differ only by file repeated a long limit
+    // sentence on every row. The first row states it; later rows point up.
+    const LONG: &str = "An integration test may reach this change through a crate public API ripr cannot fully trace";
+    let findings = (0..3)
+        .map(|index| {
+            let mut finding = sample_finding();
+            finding.id = format!("finding-{index}");
+            finding.probe.location =
+                SourceLocation::new(PathBuf::from(format!("src/f{index}.rs")), 7, 1);
+            finding.source_currentness = SourceCurrentness::BaseDeleted;
+            finding.missing = vec![LONG.to_string()];
+            finding
+        })
+        .collect();
+    let rendered = render(&bounded_output_with_findings(findings));
+    assert_eq!(rendered.matches("    - ").count(), 3, "{rendered}");
+    assert_eq!(rendered.matches(LONG).count(), 1, "{rendered}");
+    assert_eq!(
+        rendered.matches("; reason: same as above\n").count(),
+        2,
+        "{rendered}"
+    );
+    let stated = rendered.find(LONG).unwrap_or(usize::MAX);
+    let pointer = rendered.find("same as above").unwrap_or(0);
+    assert!(
+        stated < pointer,
+        "the reason must be stated first: {rendered}"
+    );
+}
+
+#[test]
+fn hidden_rows_keep_a_short_shared_reason_on_every_row() {
+    // A short reason costs about as much as the pointer, so it stays whole.
+    let findings = (0..3)
+        .map(|index| {
+            let mut finding = sample_finding();
+            finding.id = format!("finding-{index}");
+            finding.probe.location =
+                SourceLocation::new(PathBuf::from(format!("src/f{index}.rs")), 7, 1);
+            finding.source_currentness = SourceCurrentness::BaseDeleted;
+            finding
+        })
+        .collect();
+    let rendered = render(&bounded_output_with_findings(findings));
+    assert_eq!(
+        rendered
+            .matches("; reason: missing strong oracle\n")
+            .count(),
+        3,
+        "{rendered}"
+    );
+    assert!(!rendered.contains("same as above"), "{rendered}");
+}

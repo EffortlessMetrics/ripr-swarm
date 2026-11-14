@@ -49,9 +49,9 @@ Hidden:
   5 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:3 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
     - ./src/lib.rs:17 (unknown: propagation unclear); kind: predicate; reason: No clear propagation path from changed behavior to an observable sink
-    - ./src/lib.rs:22 (unknown: propagation unclear); kind: predicate; reason: No clear propagation path from changed behavior to an observable sink
-    - ./src/lib.rs:27 (unknown: propagation unclear); kind: predicate; reason: No clear propagation path from changed behavior to an observable sink
-    - ./src/lib.rs:32 (unknown: propagation unclear); kind: predicate; reason: No clear propagation path from changed behavior to an observable sink
+    - ./src/lib.rs:22 (unknown: propagation unclear); kind: predicate; reason: same as above
+    - ./src/lib.rs:27 (unknown: propagation unclear); kind: predicate; reason: same as above
+    - ./src/lib.rs:32 (unknown: propagation unclear); kind: predicate; reason: same as above
   Hidden classes:
     exposed = tests appear to notice the change
     unknown: propagation unclear = ripr could not follow the change through an opaque boundary

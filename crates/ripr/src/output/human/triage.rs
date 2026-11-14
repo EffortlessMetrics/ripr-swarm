@@ -815,7 +815,10 @@ pub(crate) fn render_human_triage(
         // Identical consecutive rows (same location, class, kind and reason)
         // collapse to one row with a repeat count so a diff with many
         // equivalent base-side findings stays scannable.
-        let mut previous: Option<(String, usize)> = None;
+        let mut previous: Option<(String, usize, String)> = None;
+        // #14308 item 3: a long reason the row above already printed is
+        // written once; later rows say `same as above`.
+        let mut last_reason: Option<String> = None;
         for row_members in hidden_rows(&triage.omitted) {
             // #14299: one row stands for every omitted finding that shares
             // file, owner, class, currentness and reason. Members that also
@@ -827,11 +830,12 @@ pub(crate) fn render_human_triage(
             let Some(finding) = members.first().copied() else {
                 continue;
             };
+            let reason = hidden_finding_reason(finding);
             if let Some(row) = grouped_hidden_row(&output.root, &members, label_currentness) {
-                if let Some((prev, count)) = previous.take() {
-                    push_hidden_row(out, &prev, count);
+                if let Some((prev, count, prev_reason)) = previous.take() {
+                    push_hidden_row(out, &prev, count, &prev_reason, &mut last_reason);
                 }
-                out.push_str(&row);
+                push_hidden_row(out, &row, 1, &reason, &mut last_reason);
                 continue;
             }
             let repeat = members.len();
@@ -848,7 +852,7 @@ pub(crate) fn render_human_triage(
                 finding.class.plain_label_with_stage(),
                 currentness,
                 super::evidence_lines::plain_probe_family(&finding.probe.family),
-                hidden_finding_reason(finding)
+                reason
             ));
             if offers_test_stub(finding)
                 && let Some(FindingDrillIn::Commands(navigation)) = drill_in
@@ -874,17 +878,17 @@ pub(crate) fn render_human_triage(
                 }
             }
             match previous.as_mut() {
-                Some((prev, count)) if *prev == row => *count += repeat,
+                Some((prev, count, _)) if *prev == row => *count += repeat,
                 _ => {
-                    if let Some((prev, count)) = previous.take() {
-                        push_hidden_row(out, &prev, count);
+                    if let Some((prev, count, prev_reason)) = previous.take() {
+                        push_hidden_row(out, &prev, count, &prev_reason, &mut last_reason);
                     }
-                    previous = Some((row, repeat));
+                    previous = Some((row, repeat, reason));
                 }
             }
         }
-        if let Some((prev, count)) = previous.take() {
-            push_hidden_row(out, &prev, count);
+        if let Some((prev, count, prev_reason)) = previous.take() {
+            push_hidden_row(out, &prev, count, &prev_reason, &mut last_reason);
         }
         if let Some(command) = stub_template {
             out.push_str("  Write a test for a listed row, replacing TEST_ID with its Test id:\n");
@@ -2533,9 +2537,32 @@ pub(super) fn is_preview_limited(finding: &Finding) -> bool {
         .is_some_and(|status| status.as_str() == "preview")
 }
 
+/// #14308 item 3: reasons at most this long print on every row, because
+/// `same as above` would save little and the row reads better whole.
+const HIDDEN_REASON_REPEAT_MIN_BYTES: usize = 40;
+
 /// Append a hidden-finding block, annotating its first line with a repeat
-/// count when identical consecutive rows were collapsed.
-fn push_hidden_row(out: &mut String, row: &str, count: usize) {
+/// count when identical consecutive rows were collapsed. A reason longer than
+/// [`HIDDEN_REASON_REPEAT_MIN_BYTES`] that the row printed just above already
+/// stated prints as `same as above`.
+fn push_hidden_row(
+    out: &mut String,
+    row: &str,
+    count: usize,
+    reason: &str,
+    last_reason: &mut Option<String>,
+) {
+    let stated = format!("; reason: {reason}\n");
+    let shown = if reason.len() > HIDDEN_REASON_REPEAT_MIN_BYTES
+        && last_reason.as_deref() == Some(reason)
+        && row.contains(&stated)
+    {
+        row.replacen(&stated, "; reason: same as above\n", 1)
+    } else {
+        row.to_string()
+    };
+    *last_reason = Some(reason.to_string());
+    let row = shown.as_str();
     if count <= 1 {
         out.push_str(row);
         return;
