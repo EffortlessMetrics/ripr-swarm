@@ -133,6 +133,25 @@ actual run/subject, return to Draft and resume only after the changed prerequisi
 or subject is verified; do not relabel that run as proof for the local tree or
 re-apply `merge-ready` merely to refresh it.
 
+For a future instrumented legacy pull-request Rust gate or shard job, the
+job-steps API is intended to expose a checkout observation immediately after
+checkout. The local
+`.agents/skills/finish-pr/scripts/checkout_observation.py` reader verifies that
+observation against the selected PR, run, attempt and job, the GitHub commit
+object, and independently reviewed caller and leaf workflow blob identities.
+Supply the reviewed head, base and integration tree, plus the reviewed blob IDs
+for `routed-rust.yml` and the applicable `rust-gates.yml` or
+`rust-test-shards.yml`; do not derive those trusted values from the observation.
+Run the reader from independently reviewed source. It checks the live PR head
+and latest request before and after the observation; these separate reads are not
+atomic, cannot exclude a later change and cannot authorize landing. Its output
+describes one successful job only; it is not a Result check, source review, merge
+authorization, or proof of other jobs. Native `merge_group` observations are
+explicitly unavailable until authenticated queue-subject binding is established;
+this legacy reader does not qualify a queue entry. Missing, failed, ambiguous or
+unsupported evidence is not a pass. Older runs without the observation remain
+unestablished by this route.
+
 A new head or material finding returns the candidate to Draft for one joined
 repair/proof/review wave. Preserve unaffected evidence.
 

@@ -1239,7 +1239,7 @@ kind = "merge_guard_script"
 owner = "ci/merge-flow"
 surface = "ci"
 classification = "tooling"
-reason = "Stdlib Python helper that refuses an expected-head squash without exact-head successful Result evidence (#11781); read-only gh api except the single expected-head merge."
+reason = "Stdlib Python finish-pr helpers for exact-head merge guarding and read-only checkout observation; gh reads and the guard's expected-head merge are the only remote operations."
 covered_by = ["cargo test -p xtask --test guarded_merge_selftest"]
 
 [[allow]]
@@ -1248,7 +1248,7 @@ kind = "merge_guard_test"
 owner = "ci/merge-flow"
 surface = "ci"
 classification = "test"
-reason = "Fake-API unittest suite for the exact-head merge guard (#11781); run through the Rust wrapper test so CI executes it."
+reason = "Finish-pr guard and checkout-observation controls, including fake API and disposable Git fixtures; both suites run through the Rust wrapper in CI."
 covered_by = ["cargo test -p xtask --test guarded_merge_selftest"]
 
 [[allow]]

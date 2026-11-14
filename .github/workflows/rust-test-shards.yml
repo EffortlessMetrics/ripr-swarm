@@ -42,6 +42,30 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # Record the checkout itself before any candidate code runs. These are
+      # diagnostic observations; consumers must authenticate the workflow source.
+      - name: Capture checkout observation
+        id: checkout_observation
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse --verify 'HEAD^{commit}')"
+          tree="$(git rev-parse --verify 'HEAD^{tree}')"
+          parents="$(git show -s --format=%P HEAD)"
+          read -r -a parent_array <<< "$parents"
+          if [ "${#parent_array[@]}" -gt 3 ]; then parents=unsupported; else parents="${parents// /,}"; fi
+          [ -n "$parents" ] || parents=none
+          printf 'commit=%s\ntree=%s\nparents=%s\n' "$commit" "$tree" "$parents" >> "$GITHUB_OUTPUT"
+
+      - name: 'Checkout source v1 commit=${{ steps.checkout_observation.outputs.commit }} tree=${{ steps.checkout_observation.outputs.tree }}'
+        run: ':'
+
+      - name: 'Checkout parents v1 ${{ steps.checkout_observation.outputs.parents }}'
+        run: ':'
+
+      - name: 'Checkout origin v1 repo=${{ github.repository }} workflow=${{ github.workflow_sha }} run=${{ github.run_id }} attempt=${{ github.run_attempt }} job=${{ github.job }}'
+        run: ':'
+
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95
         with:
           toolchain: 1.95.0
