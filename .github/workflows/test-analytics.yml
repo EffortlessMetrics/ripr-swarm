@@ -113,6 +113,18 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      # #12916: build the default-feature candidate binary once into its
+      # private target dir and share it with every guide test process.
+      # Without this each nextest process rebuilt it against the shared
+      # --all-features target dir (207-273s per guide test in run
+      # 42511871092). The helper in xtask/tests/common/ripr_help.rs uses
+      # the same arguments and target dir when the variable is unset.
+      - name: Prepare the shared guide candidate binary
+        run: |
+          cargo build -p ripr --bin ripr --locked --offline --jobs 1 --target-dir target/guide-candidate
+          test -f target/guide-candidate/debug/ripr
+          echo "RIPR_GUIDE_CANDIDATE_BINARY=$PWD/target/guide-candidate/debug/ripr" >> "$GITHUB_ENV"
+
       - name: Run Rust tests with JUnit output (shard ${{ matrix.shard }} of 4)
         env:
           # The suite binary is built --all-features; keep the fixture corpus's
