@@ -307,7 +307,12 @@ pub(crate) struct OracleSemantics {
 /// after this function returns before using or publishing the vector.
 #[cfg(test)]
 pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<TestGripEvidence> {
-    EvidencePass::new(index).evidence_for(seams)
+    let pass = EvidencePass::new(index);
+    let mut out = pass.evidence_for(seams);
+    if !pass.finalize_filesystem_currentness() {
+        EvidencePass::withdraw_target_bearing_evidence(&mut out);
+    }
+    out
 }
 
 /// [`evidence_for_seams`] plus the pass's limitations: the one pass-wide
@@ -402,6 +407,7 @@ pub(crate) struct EvidencePass<'index> {
     context: Option<CompactGripContext<'index>>,
     /// The whole-index tables are paid once per pass, not per stage.
     shared_tables_warmed: std::sync::Once,
+    pass_filesystem: Arc<crate::analysis::facts::EvidencePassFilesystemCurrentness>,
     /// #11524: the shared-table warm panicked, so the memos it fills may be
     /// incomplete. Once set, no seam reads them; every seam gets the fail-closed
     /// stand-in instead.
@@ -418,9 +424,13 @@ pub(crate) struct EvidencePass<'index> {
 
 impl<'index> EvidencePass<'index> {
     pub(crate) fn new(index: &'index RustIndex) -> Self {
+        let pass_filesystem =
+            Arc::new(crate::analysis::facts::EvidencePassFilesystemCurrentness::new());
         let context_started = Instant::now();
         trace_latency_phase("evidence_context", "start", Duration::ZERO);
-        let context = CompactGripContext::try_new(index).ok();
+        let context =
+            CompactGripContext::try_new_with_pass_filesystem(index, Arc::clone(&pass_filesystem))
+                .ok();
         trace_latency_phase(
             "evidence_context",
             &format!(
@@ -432,6 +442,7 @@ impl<'index> EvidencePass<'index> {
         Self {
             context,
             shared_tables_warmed: std::sync::Once::new(),
+            pass_filesystem,
             warm_failed: std::sync::atomic::AtomicBool::new(false),
             incomplete_scope: std::sync::Mutex::new(IncompleteScope::default()),
             #[cfg(test)]
@@ -589,6 +600,58 @@ impl<'index> EvidencePass<'index> {
     pub(crate) fn clear_window_memos(&self) {
         if let Some(context) = &self.context {
             context.clear_window_memos();
+        }
+    }
+
+    /// Recapture every path admitted during this pass and emit the latency
+    /// receipt naming `pass_capture_terminal` granularity (#4292).
+    pub(crate) fn finalize_filesystem_currentness(&self) -> bool {
+        let Some(context) = self.context.as_ref() else {
+            return true;
+        };
+        let Some(authority) = context.index.workspace_authority.as_ref() else {
+            return true;
+        };
+        let terminal_started = Instant::now();
+        let ok = self.pass_filesystem.terminal_generation_matches(authority);
+        if ok {
+            trace_latency_phase(
+                "evidence_filesystem_currentness",
+                &format!(
+                    "granularity=pass_capture_terminal distinct_paths={}",
+                    self.pass_filesystem.tracked_path_count()
+                ),
+                terminal_started.elapsed(),
+            );
+        } else {
+            trace_latency_phase(
+                "evidence_filesystem_currentness",
+                "stale_generation",
+                terminal_started.elapsed(),
+            );
+        }
+        ok
+    }
+
+    /// Remove target-bearing repair facts when publication-boundary recapture
+    /// fails (#4292).
+    pub(crate) fn withdraw_target_bearing_evidence(evidence: &mut [TestGripEvidence]) {
+        for entry in evidence {
+            entry.related_tests = entry
+                .related_tests
+                .iter()
+                .map(|related| {
+                    if related.test_target.is_none() {
+                        Arc::clone(related)
+                    } else {
+                        let mut stripped = (**related).clone();
+                        stripped.test_target = None;
+                        Arc::new(stripped)
+                    }
+                })
+                .collect();
+            entry.missing_discriminators.clear();
+            entry.new_test_target = None;
         }
     }
 
@@ -5770,7 +5833,12 @@ fn test_target_evidence_memo<'a>(
             let valid = context
                 .indexed_source_digest(&test.file)
                 .is_some_and(|digest| {
-                    authority.validates_target_digest(&test.file, seam.file(), &digest)
+                    authority.validates_target_digest_with_pass(
+                        &test.file,
+                        seam.file(),
+                        &digest,
+                        context.pass_filesystem_currentness(),
+                    )
                 });
             validated_targets.insert(test.file.as_path(), valid);
             valid
