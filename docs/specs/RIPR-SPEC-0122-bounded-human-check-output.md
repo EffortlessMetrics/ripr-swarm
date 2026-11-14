@@ -217,11 +217,14 @@ every row is listed (#14233).
 
 Omitted findings that share file, owner, class, currentness label and reason
 (findings with no resolved owner never group)
-print as one row that names the line span, the count, the owner and the
-kinds, for example:
+print as one row that names the members' lines, the count, the owner and the
+kinds. The lines print as their consecutive runs (`3, 5` or `10-12, 15`)
+when there are at most three runs, so a row never names a line that no member
+is on; more runs print the covering span with the distinct line count
+(`1078-1241 (31 lines)`) (#14682). For example:
 
 ```text
-- src/lib.rs:1078-1241 (weak, lower-priority candidate); 44 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
+- src/lib.rs:1078-1241 (31 lines) (weak, lower-priority candidate); 44 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
 ```
 
 Members that share line and kind keep the single

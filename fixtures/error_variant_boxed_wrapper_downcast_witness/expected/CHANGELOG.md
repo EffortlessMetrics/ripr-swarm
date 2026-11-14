@@ -781,3 +781,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (57)
+
+Reason:
+RIPR-SPEC-0122: grouped Hidden rows name their members' line runs instead of a covering range (#14682)
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/human.txt`

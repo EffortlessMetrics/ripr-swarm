@@ -574,3 +574,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_form_parity_err_guard (44)
+
+Reason:
+RIPR-SPEC-0122: grouped Hidden rows name their members' line runs instead of a covering range (#14682)
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_err_guard --reason "..."`
+
+Updated:
+- `expected/human.txt`
