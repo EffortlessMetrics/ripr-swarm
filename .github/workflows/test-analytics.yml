@@ -113,6 +113,21 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      # #12916: build the default-feature fixture binary once into its
+      # private target dir and share it with every fixture/dogfood test
+      # process in this partition. Without this each nextest process paid
+      # its own candidate-binary build and serialized on that target's
+      # Cargo lock (139-241s per test in run 42511871092). This is the same
+      # private target `build_default_isolated` uses in-process
+      # (target/fixture-variants/default, selected by
+      # RIPR_FIXTURE_BINARY_ISOLATE in the test step below); the in-test
+      # Cargo invocation stays as the fingerprint freshness validator, so
+      # no stamp file or skip is introduced.
+      - name: Prepare the shared fixture candidate binary
+        run: |
+          cargo build -p ripr --bin ripr --locked --offline --jobs 1 --target-dir target/fixture-variants/default
+          test -f target/fixture-variants/default/debug/ripr
+
       - name: Run Rust tests with JUnit output (shard ${{ matrix.shard }} of 4)
         env:
           # The suite binary is built --all-features; keep the fixture corpus's
