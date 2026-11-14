@@ -157,6 +157,18 @@ already carries a modeled-family probe whose `before` is that literal
 keep verification refused for code no test can reach. An equal literal
 deleted with no replacement keeps its own probe.
 
+A changed line that lies wholly inside a statement (`let`, expression
+statement or item) of a block nested in a multi-line returned expression is a
+statement of that block, not part of the returned value (#14192). Examples are
+`let doubled = item * 2;` inside `with(|| { .. })`, inside
+`Box::pin(async move { .. })`, or inside an `async { .. }` tail. The
+`return_value` and `error_path` shapes of the outer expression do not select
+it, so it reads the families the same statement reads in a function body or a
+plain `if` tail block. A `return` on that line keeps its own narrower shape.
+The nested block's own tail expression, a method-chain link and an argument
+line are part of the returned value and keep the outer shape. A shape or line
+the parse cannot place keeps the earlier selection.
+
 ## Required Evidence
 
 Parser-confirmed Rust where clauses and generic type/lifetime bounds without

@@ -233,11 +233,26 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             })
     };
     let mut selected = Vec::<(ParserProbeShape<'a>, Option<(u8, bool, usize)>)>::new();
+    // #14192: parsed at most once per changed line, and only when a
+    // multi-line returned-value shape spans it.
+    let mut parsed: Option<Option<ra_ap_syntax::Parse<ast::SourceFile>>> = None;
     for shape in &facts.probe_shapes {
         if shape.start_line() > line || line > shape.end_line() {
             continue;
         }
         let family = family_for_probe_shape(shape.kind);
+        if matches!(family, ProbeFamily::ReturnValue | ProbeFamily::ErrorPath)
+            && shape.start_line < line
+            && line < shape.end_line
+            && parsed
+                .get_or_insert_with(|| {
+                    crate::analysis::syntax::parse_clean_source_file_memoized(&facts.source)
+                })
+                .as_ref()
+                .is_some_and(|parse| line_is_nested_statement(&facts.source, parse, shape, line))
+        {
+            continue;
+        }
         let unsafe_boundary = shape.kind == ProbeShapeKind::UnsafeBoundary;
         if unsafe_boundary && !unsafe_boundary_owns_changed_line(facts, shape, line) {
             continue;
@@ -302,6 +317,66 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             .then(left.text.cmp(right.text))
     });
     selected.into_iter().map(|(shape, _)| shape).collect()
+}
+
+/// #14192: whether the changed `line` lies wholly inside a statement (`let`,
+/// expression statement or item) of a block nested in the returned
+/// expression `shape` spans: `let doubled = item * 2;` inside
+/// `with(|| { .. })`, `Box::pin(async move { .. })` or an `async { .. }` tail.
+/// Such a line is a statement of its own block, not part of the returned
+/// value, so the outer `return_value` / `error_path` shape does not apply to
+/// it; a `return` on it keeps its own narrower shape. A nested block's tail
+/// expression, a method-chain link and an argument line are not statements
+/// and keep the outer shape. Any shape or line the parse cannot place keeps
+/// today's selection.
+fn line_is_nested_statement(
+    source: &str,
+    parse: &ra_ap_syntax::Parse<ast::SourceFile>,
+    shape: &ProbeShapeFact,
+    line: usize,
+) -> bool {
+    let Some(line_range) = source_line_byte_range(source, line) else {
+        return false;
+    };
+    let Some(text) = source.get(line_range.clone()) else {
+        return false;
+    };
+    let leading = text.len() - text.trim_start().len();
+    let trailing = text.len() - text.trim_end().len();
+    if text.trim().is_empty() {
+        return false;
+    }
+    let (Ok(content_start), Ok(content_end), Ok(shape_start), Ok(shape_end)) = (
+        u32::try_from(line_range.start + leading),
+        u32::try_from(line_range.end - trailing),
+        u32::try_from(shape.start_byte),
+        u32::try_from(shape.end_byte),
+    ) else {
+        return false;
+    };
+    let shape_range = ra_ap_syntax::TextRange::new(shape_start.into(), shape_end.into());
+    let content = ra_ap_syntax::TextRange::new(content_start.into(), content_end.into());
+    if shape_range.is_empty() || !shape_range.contains_range(content) {
+        return false;
+    }
+    let root = parse.tree();
+    let ra_ap_syntax::NodeOrToken::Node(outer) = root.syntax().covering_element(shape_range) else {
+        return false;
+    };
+    if outer.text_range() != shape_range {
+        return false;
+    }
+    outer
+        .descendants()
+        .filter_map(ast::Stmt::cast)
+        .any(|statement| {
+            statement.syntax().text_range().contains_range(content)
+                && statement
+                    .syntax()
+                    .parent()
+                    .and_then(ast::StmtList::cast)
+                    .is_some()
+        })
 }
 
 /// A line-only diff cannot identify which bytes changed when code outside an
