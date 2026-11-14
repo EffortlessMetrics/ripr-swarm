@@ -592,10 +592,16 @@ falls back to the expression when `before` or `after` is absent and adds `arm
 result: <result>` when the document carries `changed_behavior.arm_result`.
 `missing` falls back to the producer's `missing` prose when no discriminator is
 listed, and says `missing: none listed` when neither exists. A gap with no
-related test says `test: none related`. An absent value is `?`, and an absent
-`next` step is left out rather than written. Observed values, evidence prose,
-causal attribution beyond the owner, and links stay in `structuredContent`
-only. Measured with `cargo xtask agent-eval` (routes `mcp` and `mcp-brief`),
+related test says `test: none related`, and a document with neither the
+related-test array nor its count says `test: ?`. An absent value is `?`, an
+explicit `null` (`static_limitation`, a test's `miss`) is `none`, and an absent
+`next` step is left out rather than written. Identities (`canonical_id`,
+`snapshot_id`, file paths) are escaped but never clipped, so they can be passed
+back to a tool. Other strings are clipped at 200 characters like the digest.
+The following stay in `structuredContent` only: observed values, evidence
+prose, the producer's `missing` prose when discriminators are listed, causal
+attribution beyond the owner, `delta_kind`, `expected_sinks`, each test's `why`
+and relation, `repair_boundary`, `claim_boundary`, `limitations`, and links. Measured with `cargo xtask agent-eval` (routes `mcp` and `mcp-brief`),
 the eight `ripr_get_gap` reads across the six scenarios cost 12,294 estimated
 tokens as JSON and 3,083 as `brief`, and every scenario is still answered.
 

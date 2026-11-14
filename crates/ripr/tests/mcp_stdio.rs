@@ -7986,6 +7986,8 @@ fn brief_get_gap_text_projects_the_served_document_over_stdio() -> Result<(), St
     let [(default_doc, default_text), (brief_doc, brief_text)] = observed.as_slice() else {
         return Err("expected two sessions".to_string());
     };
+    // Two sessions over one unchanged fixture: the snapshot id is a content
+    // hash, so equal documents mean the same snapshot, not a coincidence.
     if brief_doc != default_doc {
         return Err("structuredContent must be identical in full and brief modes".to_string());
     }
@@ -8006,7 +8008,12 @@ fn brief_get_gap_text_projects_the_served_document_over_stdio() -> Result<(), St
     );
     let lines: Vec<&str> = brief_text.lines().collect();
     if !lines.first().is_some_and(|line| line.starts_with(&header))
-        || !lines.iter().any(|line| line.starts_with("changed: "))
+        || !lines.iter().any(|line| {
+            line.starts_with("changed: ")
+                && field("/changed_behavior/after")
+                    .or_else(|_| field("/changed_behavior/expression"))
+                    .is_ok_and(|changed| line.contains(&changed))
+        })
         || !lines.iter().any(|line| line.starts_with("missing: "))
         || !lines
             .iter()
