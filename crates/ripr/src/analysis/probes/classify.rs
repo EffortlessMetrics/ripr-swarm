@@ -245,9 +245,7 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             && shape.start_line < line
             && line < shape.end_line
             && parsed
-                .get_or_insert_with(|| {
-                    crate::analysis::syntax::parse_clean_source_file_memoized(&facts.source)
-                })
+                .get_or_insert_with(|| last_file_parse(&facts.source))
                 .as_ref()
                 .is_some_and(|parse| line_is_nested_statement(&facts.source, parse, shape, line))
         {
@@ -317,6 +315,29 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             .then(left.text.cmp(right.text))
     });
     selected.into_iter().map(|(shape, _)| shape).collect()
+}
+
+thread_local! {
+    /// #14192: the last whole-file parse [`line_is_nested_statement`] read.
+    /// A diff visits one file's changed lines in a row, and a large file is
+    /// past the shared memo's size cap, so one entry keyed by the full text
+    /// saves a parse per changed line.
+    static LAST_FILE_PARSE: std::cell::RefCell<Option<(String, Option<ra_ap_syntax::Parse<ast::SourceFile>>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn last_file_parse(source: &str) -> Option<ra_ap_syntax::Parse<ast::SourceFile>> {
+    LAST_FILE_PARSE.with(|last| {
+        let mut last = last.borrow_mut();
+        if let Some((text, parse)) = last.as_ref()
+            && text == source
+        {
+            return parse.clone();
+        }
+        let parse = parse_clean_source_file(source);
+        *last = Some((source.to_string(), parse.clone()));
+        parse
+    })
 }
 
 /// #14192: whether the changed `line` lies wholly inside a statement (`let`,
