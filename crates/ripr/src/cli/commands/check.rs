@@ -527,16 +527,7 @@ fn parse_git_timeout_from(
     source: &str,
     value: &str,
 ) -> Result<Option<std::time::Duration>, String> {
-    let secs: u64 = value.parse().map_err(|_parse_err| {
-        format!("{source} requires a non-negative integer (seconds); got {value:?}")
-    })?;
-    let timeout = std::time::Duration::from_secs(secs);
-    if std::time::Instant::now().checked_add(timeout).is_none() {
-        return Err(format!(
-            "{source} is too large for the platform deadline; got {secs} seconds; pass a smaller number of seconds"
-        ));
-    }
-    Ok((secs > 0).then_some(timeout))
+    crate::app::parse_git_timeout_seconds(source, value)
 }
 
 /// `--timeout` / `RIPR_CHECK_TIMEOUT`: the whole-run analysis wall-clock
@@ -572,14 +563,7 @@ pub(super) fn git_timeout_from_env(
     if explicit {
         return Ok(None);
     }
-    match env_value {
-        Ok(value) => parse_git_timeout_from("RIPR_GIT_TIMEOUT", &value).map(Some),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        // Present but unreadable is still a misconfiguration (#4374).
-        Err(std::env::VarError::NotUnicode(_)) => {
-            Err("RIPR_GIT_TIMEOUT must be valid UTF-8".to_string())
-        }
-    }
+    crate::app::git_timeout_from_env_value(env_value)
 }
 
 /// Record one argv output selection, refusing a second one that disagrees
@@ -697,18 +681,10 @@ pub(super) fn machine_refusal_document(
 ) -> Option<Result<String, String>> {
     let notice = error.refusal_notice(&crate::config::config_error_summary);
     match format {
-        OutputFormat::Json | OutputFormat::JsonCompact => {
-            let display = error.to_string();
-            let rendered = match output::limited_check::render_diff_scope_limited_check_json(
-                envelope_input,
-                &display,
-            ) {
-                Ok(Some(rendered)) => Ok(rendered),
-                Ok(None) => output::limited_check::render_check_failure_json(envelope_input, error),
-                Err(render) => Err(render),
-            };
-            Some(rendered.map(|document| output::compact_json::finish(document, &format)))
-        }
+        OutputFormat::Json | OutputFormat::JsonCompact => Some(
+            check_json_refusal(envelope_input, error)
+                .map(|document| output::compact_json::finish(document, &format)),
+        ),
         // SARIF: a schema-valid run whose only signal is a
         // tool-configuration notification — uploadable to code scanning,
         // which an empty stream is not.
@@ -741,10 +717,90 @@ pub(super) fn machine_refusal_document(
         OutputFormat::AgentSeamPacketsJson => {
             Some(Ok(output::agent_seam_packets::render_refusal_json(&notice)))
         }
+        // json-terse and check-findings-json (#14499): the same check JSON
+        // refusal envelope. check-findings-json carries no artifact identity,
+        // so a verify that requires a snapshot still rejects it.
+        OutputFormat::JsonTerse => Some(
+            check_json_refusal(envelope_input, error)
+                .and_then(|document| output::json::render_terse(&document)),
+        ),
+        OutputFormat::CheckFindingsJson => Some(check_json_refusal(envelope_input, error)),
+        // Every other badge family: the same degraded badge under its own
+        // kind and scope, in its own native or Shields projection.
+        OutputFormat::BadgeShields
+        | OutputFormat::BadgePlusJson
+        | OutputFormat::BadgePlusShields
+        | OutputFormat::RepoBadgeJson
+        | OutputFormat::RepoBadgeShields
+        | OutputFormat::RepoBadgePlusJson
+        | OutputFormat::RepoBadgePlusShields => {
+            use output::badge::{BadgeKind, BadgeScope};
+            let kind = match format {
+                OutputFormat::BadgePlusJson
+                | OutputFormat::BadgePlusShields
+                | OutputFormat::RepoBadgePlusJson
+                | OutputFormat::RepoBadgePlusShields => BadgeKind::RiprPlus,
+                _ => BadgeKind::Ripr,
+            };
+            let scope = if format.is_repo_scope() {
+                BadgeScope::Repo
+            } else {
+                BadgeScope::Diff
+            };
+            let summary = output::badge::refusal_badge_summary_for(&notice, kind, scope);
+            let shields = matches!(
+                format,
+                OutputFormat::BadgeShields
+                    | OutputFormat::BadgePlusShields
+                    | OutputFormat::RepoBadgeShields
+                    | OutputFormat::RepoBadgePlusShields
+            );
+            Some(Ok(if shields {
+                output::badge::render_shields_json(&summary)
+            } else {
+                output::badge::render_native_json(&summary)
+            }))
+        }
+        OutputFormat::RepoSarif => Some(Ok(output::sarif::render_repo_refusal_sarif(
+            &notice,
+            &envelope_input.root,
+            envelope_input.base.as_deref(),
+        ))),
+        OutputFormat::RepoSarifCompact => {
+            Some(Ok(output::sarif::render_repo_refusal_sarif_compact(
+                &notice,
+                &envelope_input.root,
+                envelope_input.base.as_deref(),
+            )))
+        }
+        OutputFormat::RepoSeamsJson => Some(Ok(output::repo_seams::render_refusal_json(&notice))),
+        OutputFormat::RepoExposureSummaryJson => {
+            Some(Ok(output::repo_exposure::render_summary_refusal_json(
+                &notice,
+                &envelope_input.root,
+                envelope_input.base.as_deref(),
+                envelope_input.mode.as_str(),
+            )))
+        }
         // Agent: the format's own refused stop/verify record, never zero
         // bytes an agent could read as an empty result (#14452).
         OutputFormat::Agent => Some(Ok(output::human::render_agent_refusal(&notice, None))),
         _ => None,
+    }
+}
+
+/// The check JSON refusal envelope every JSON-family `check` format shares:
+/// a scope-guard refusal keeps its frozen `diff_scope_oversized` /
+/// `repo_scope_oversized` document, and every other failure gets the typed
+/// refusal (#14499 review: the guard runs first for every JSON format).
+fn check_json_refusal(envelope_input: &CheckInput, error: &CoreError) -> Result<String, String> {
+    match output::limited_check::render_diff_scope_limited_check_json(
+        envelope_input,
+        &error.to_string(),
+    ) {
+        Ok(Some(rendered)) => Ok(rendered),
+        Ok(None) => output::limited_check::render_check_failure_json(envelope_input, error),
+        Err(render) => Err(render),
     }
 }
 

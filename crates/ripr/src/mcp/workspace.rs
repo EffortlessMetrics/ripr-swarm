@@ -133,7 +133,37 @@ pub(crate) struct GapListFilter {
 }
 
 impl GapListFilter {
+    /// Narrowed membership: every explicit dimension, plus the default
+    /// exposure exclusion (#14327). With no `class` filter, an `exposed` item
+    /// the shared seam gate refused as already gripped
+    /// ([`SEAM_ALREADY_GRIPPED`](crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED):
+    /// its existing tests already check the seam)
+    /// is left out of the walked set. Only that positive cause omits: an
+    /// `exposed` item that is repair-ready, or unready for any other reason
+    /// (a truncated seam inventory, withheld worktree evidence, an ambiguous
+    /// or unfound seam, a finding-level gate), stays listed, because missing
+    /// or limited evidence never becomes a no-action conclusion. Omitted
+    /// items are counted by [`Self::default_excluded_exposed`] and disclosed
+    /// in the document, never silently dropped. Any explicit `class`
+    /// (including `exposed`) matches exactly that class.
     fn matches(&self, item: &GapItem) -> bool {
+        self.matches_dimensions(item) && !self.excludes_exposed_by_default(item)
+    }
+
+    fn excludes_exposed_by_default(&self, item: &GapItem) -> bool {
+        self.class.is_none()
+            && item.class() == crate::domain::ExposureClass::Exposed.as_str()
+            && item.repair_readiness.ineligibility
+                == Some(crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED)
+    }
+
+    /// Items the default exposure exclusion removed: they satisfy every
+    /// other filter dimension but are `exposed` with no explicit `class`.
+    fn default_excluded_exposed(&self, item: &GapItem) -> bool {
+        self.matches_dimensions(item) && self.excludes_exposed_by_default(item)
+    }
+
+    fn matches_dimensions(&self, item: &GapItem) -> bool {
         if let Some(class) = self.class.as_deref()
             && item.class() != class
         {
@@ -221,6 +251,9 @@ struct GapListScope<'a> {
     requested: Option<&'a str>,
     filter: &'a GapListFilter,
     filtered: usize,
+    /// Selected items the default exposure exclusion left out (#14327); zero
+    /// whenever the caller named a `class`.
+    exposed_omitted: usize,
     /// Filtered items reached only by an unevaluated proof harness (#12921).
     proof_harness_only: usize,
 }
@@ -895,6 +928,12 @@ impl WorkspaceSession {
         // `selected` count stays the full stored selection so the document
         // never lies about what filtering removed.
         let filtered = selected_items.len();
+        let exposed_omitted = snapshot
+            .items
+            .iter()
+            .filter(|item| selected_ids.contains(item.canonical_id.as_str()))
+            .filter(|item| filter.default_excluded_exposed(item))
+            .count();
         let proof_harness_only = selected_items
             .iter()
             .filter(|item| item.is_proof_harness_only())
@@ -915,6 +954,7 @@ impl WorkspaceSession {
                 requested,
                 filter,
                 filtered,
+                exposed_omitted,
                 proof_harness_only,
             };
             self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
@@ -932,6 +972,7 @@ impl WorkspaceSession {
                 requested,
                 filter: &GapListFilter::default(),
                 filtered,
+                exposed_omitted,
                 proof_harness_only,
             };
             self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
@@ -1022,6 +1063,7 @@ impl WorkspaceSession {
                 requested,
                 filter,
                 filtered,
+                exposed_omitted,
                 proof_harness_only,
             };
             let probe = self.gap_list_document(
@@ -1082,6 +1124,7 @@ impl WorkspaceSession {
             requested,
             filter,
             filtered,
+            exposed_omitted,
             proof_harness_only,
         };
         let document = self.gap_list_document(snapshot, &scope, items, &page)?;
@@ -1266,6 +1309,16 @@ impl WorkspaceSession {
         // never test coverage; absent when zero.
         if scope.proof_harness_only > 0 {
             document["proof_harness_only"] = json!(scope.proof_harness_only);
+        }
+        // Additive (#14327): with no `class` filter the list leaves out
+        // `exposed` items refused as `seam_already_gripped`. Disclose the
+        // count and the route; absent when zero or when `class` was named.
+        // `total`, `eligible`, `selected` and `outcome` still describe the
+        // whole snapshot; only `filtered` and `items` narrow.
+        if scope.exposed_omitted > 0 {
+            document["exposed_omitted"] = json!(scope.exposed_omitted);
+            document["exposed_route"] =
+                json!("call ripr_list_gaps with class: \"exposed\" to list them");
         }
         Ok(document)
     }
@@ -2076,6 +2129,16 @@ impl SessionProfile {
     }
 }
 
+/// Recovery for an invalid `RIPR_GIT_TIMEOUT` in the MCP server's environment
+/// (#14386). The value is process environment, so only a restart reads a fix.
+const MCP_GIT_TIMEOUT_RECOVERY: &str = "set RIPR_GIT_TIMEOUT in the MCP server's environment to a whole number of seconds (0 disables the deadline) or remove it, then restart the server and retry ripr_refresh";
+
+/// The per-invocation git deadline every MCP refresh path runs with:
+/// `RIPR_GIT_TIMEOUT` when set, else the `ripr check` default (#14386).
+pub(crate) fn mcp_git_timeout() -> Result<Option<std::time::Duration>, String> {
+    crate::app::env_or_default_git_timeout(std::env::var("RIPR_GIT_TIMEOUT"))
+}
+
 /// Run one bounded analysis through the shared check authority and bind it
 /// into a snapshot. This is the only bridge from the session to the
 /// producer: read-only static analysis, identical to what `ripr check` and
@@ -2111,10 +2174,17 @@ pub(crate) fn run_check(
                 ),
             )
         })?;
+        // `RIPR_GIT_TIMEOUT` from the server's environment bounds each git
+        // invocation like it does for `ripr check`, through the same parser
+        // and default (#14386); an invalid value refuses, never a silent
+        // default.
+        let git_timeout = mcp_git_timeout().map_err(|error| {
+            AttemptFailure::new(CODE_CONFIG_INVALID, error, MCP_GIT_TIMEOUT_RECOVERY)
+        })?;
         let mut input = crate::app::CheckInput {
             root: PathBuf::from(root),
             base: base.map(str::to_string),
-            git_timeout: Some(crate::app::default_cli_git_timeout()),
+            git_timeout,
             ..Default::default()
         };
         // The repo's `[analysis]` table (mode, include_unchanged_tests) goes
@@ -2144,7 +2214,7 @@ pub(crate) fn run_check(
         // say they agree.
         if let Some(reason) =
             committed_over_uncommitted_refusal(&output, &findings_sources, &inventory, || {
-                dirty_rust_routed_paths(Path::new(root))
+                dirty_rust_routed_paths(Path::new(root), git_timeout)
             })
         {
             let admission = super::repair_admission::SeamAdmission::withheld(
@@ -2401,10 +2471,15 @@ fn committed_over_uncommitted_refusal(
 /// The dirty tracked and untracked Rust-routed paths of the checkout, from the
 /// same committed-source probe the committed findings producer uses. Gitignored
 /// files are excluded (see the comment below).
-fn dirty_rust_routed_paths(root: &Path) -> Result<Vec<String>, String> {
-    let overlay =
-        crate::analysis::committed_source::probe(root, Some(crate::app::default_cli_git_timeout()))
-            .map_err(|error| error.to_string())?;
+///
+/// `git_timeout` is the deadline `run_check` already resolved for the findings
+/// producer, so the probe and the check run under one value (#14386).
+fn dirty_rust_routed_paths(
+    root: &Path,
+    git_timeout: Option<std::time::Duration>,
+) -> Result<Vec<String>, String> {
+    let overlay = crate::analysis::committed_source::probe(root, git_timeout)
+        .map_err(|error| error.to_string())?;
     let Some(overlay) = overlay else {
         return Ok(Vec::new());
     };
@@ -3153,6 +3228,12 @@ mod tests {
     /// #7464 filter proof: distinct files, classes, languages, and
     /// commit-time repair readiness. No analysis runs.
     fn session_with_varied_findings() -> Result<WorkspaceSession, String> {
+        session_with_varied_findings_plus(Vec::new())
+    }
+
+    fn session_with_varied_findings_plus(
+        extra: Vec<crate::domain::Finding>,
+    ) -> Result<WorkspaceSession, String> {
         let mut ready = gaps::test_finding()?;
         ready.id = "finding:test:ready".to_string();
         if let Some(gap) = ready.canonical_gap.as_mut() {
@@ -3188,7 +3269,8 @@ mod tests {
         unlocalized.class = crate::domain::ExposureClass::NoStaticPath;
         unlocalized.language = None;
 
-        let findings = vec![ready, exposed_python, unready, unlocalized];
+        let mut findings = vec![ready, exposed_python, unready, unlocalized];
+        findings.extend(extra);
         let output = crate::app::CheckOutput {
             value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
@@ -3486,6 +3568,131 @@ mod tests {
         assert_eq!(analyzed_language_label(&no_language), "source");
         Ok(())
     }
+    /// #14327: with no `class` filter the list leaves out `exposed` items the
+    /// shared seam gate refused as `seam_already_gripped` and discloses them as
+    /// `exposed_omitted`. An `exposed` item refused for limited evidence (a
+    /// truncated seam inventory) and a repair-ready `exposed` item stay listed;
+    /// an explicit class lists them all, and whole-snapshot counts do not
+    /// shrink.
+    #[test]
+    fn default_gap_list_omits_exposed_and_discloses_the_count() -> Result<(), String> {
+        let exposed_unready = |name: &str, line: usize| -> Result<crate::domain::Finding, String> {
+            let mut finding = gaps::test_finding()?;
+            finding.id = format!("finding:test:exposed-{name}");
+            finding.canonical_gap = None;
+            finding.probe.id = crate::domain::ProbeId(format!("probe:test:exposed-{name}"));
+            finding.probe.location = crate::domain::SourceLocation::new("src/checkout.rs", line, 1);
+            finding.class = crate::domain::ExposureClass::Exposed;
+            Ok(finding)
+        };
+        let mut session = session_with_varied_findings_plus(vec![
+            exposed_unready("gripped", 40)?,
+            exposed_unready("truncated", 50)?,
+        ])?;
+        // Bind the shared seam gate's verdicts the way commit does
+        // (`RepairReadiness::with_seam_verdict`): no analysis runs here.
+        let snapshot = session
+            .last_good
+            .as_mut()
+            .and_then(Arc::get_mut)
+            .ok_or("fixture snapshot must be uniquely owned")?;
+        for (id, code) in [
+            (
+                "finding:test:exposed-gripped",
+                crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+            ),
+            (
+                "finding:test:exposed-truncated",
+                crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED,
+            ),
+        ] {
+            let item = snapshot
+                .items
+                .iter_mut()
+                .find(|item| item.finding_id == id)
+                .ok_or_else(|| format!("fixture lost {id}"))?;
+            assert!(!item.repair_ready(), "precondition: {id} starts unready");
+            item.repair_readiness.ineligibility = Some(code);
+        }
+        let list = |filter: &GapListFilter| {
+            session
+                .list_gaps(
+                    None,
+                    GapListWindow::default(),
+                    filter,
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| failure.detail)
+        };
+        let default = list(&GapListFilter::default())?;
+        let mut ids = gap_ids(&default)?;
+        ids.sort();
+        assert_eq!(
+            ids,
+            vec![
+                "finding:test:exposed-truncated".to_string(),
+                "finding:test:unready".to_string(),
+                "gap:test:exposed-python".to_string(),
+                "gap:test:ready".to_string(),
+                "gap:test:unlocalized".to_string(),
+            ],
+            "{default}"
+        );
+        assert_eq!(default["exposed_omitted"], json!(1), "{default}");
+        assert!(
+            default["exposed_route"]
+                .as_str()
+                .is_some_and(|route| route.contains("class: \"exposed\"")),
+            "{default}"
+        );
+        assert_eq!(default["filtered"], json!(5), "{default}");
+        assert_eq!(default["selected"], json!(6), "{default}");
+        assert_eq!(default["total"], json!(6), "{default}");
+        assert_eq!(default["page"]["returned"], json!(5), "{default}");
+        assert_eq!(default["filters"]["class"], Value::Null, "{default}");
+
+        let exposed = list(&GapListFilter {
+            class: Some("exposed".to_string()),
+            ..Default::default()
+        })?;
+        let mut ids = gap_ids(&exposed)?;
+        ids.sort();
+        assert_eq!(
+            ids,
+            vec![
+                "finding:test:exposed-gripped".to_string(),
+                "finding:test:exposed-truncated".to_string(),
+                "gap:test:exposed-python".to_string(),
+            ],
+            "{exposed}"
+        );
+        assert!(exposed.get("exposed_omitted").is_none(), "{exposed}");
+        assert!(exposed.get("exposed_route").is_none(), "{exposed}");
+        assert_eq!(exposed["filtered"], json!(3), "{exposed}");
+
+        // Another explicit class neither lists nor counts exposed items.
+        let weak = list(&GapListFilter {
+            class: Some("weakly_exposed".to_string()),
+            ..Default::default()
+        })?;
+        assert!(weak.get("exposed_omitted").is_none(), "{weak}");
+
+        // The count follows the other dimensions: this file holds the one
+        // gripped exposed item, so a file-narrowed default still discloses it.
+        let narrowed = list(&GapListFilter {
+            file: Some("src/limits.rs".to_string()),
+            ..Default::default()
+        })?;
+        assert!(narrowed.get("exposed_omitted").is_none(), "{narrowed}");
+        let checkout = list(&GapListFilter {
+            file: Some("src/checkout.rs".to_string()),
+            ..Default::default()
+        })?;
+        assert_eq!(checkout["exposed_omitted"], json!(1), "{checkout}");
+        assert_eq!(checkout["filtered"], json!(3), "{checkout}");
+        Ok(())
+    }
+
     /// dimensions combine conjunctively, and `offset`/`limit` page the
     /// narrowed set — while `selected` stays the full stored-selection count
     /// and `filters` echoes the request.
@@ -5956,6 +6163,386 @@ mod tests {
         {
             return Err(format!("complete-clean must stay undisclosed: {completed}"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn failure_detail_bound_is_exact_character_counted_and_marks_truncation() {
+        let exact = "x".repeat(MAX_FAILURE_DETAIL_CHARS);
+        assert_eq!(bounded_detail(exact.clone()), exact);
+        let over = "x".repeat(MAX_FAILURE_DETAIL_CHARS + 1);
+        let truncated = bounded_detail(over);
+        assert_eq!(
+            truncated,
+            format!("{}…", "x".repeat(MAX_FAILURE_DETAIL_CHARS))
+        );
+        // The bound counts characters, not bytes: a multibyte detail at the
+        // character limit is whole, and one more character truncates cleanly.
+        let wide = "é".repeat(MAX_FAILURE_DETAIL_CHARS);
+        assert_eq!(bounded_detail(wide.clone()), wide);
+        let wide_over = bounded_detail("é".repeat(MAX_FAILURE_DETAIL_CHARS + 1));
+        assert_eq!(wide_over.chars().count(), MAX_FAILURE_DETAIL_CHARS + 1);
+        assert!(wide_over.ends_with('…'));
+        assert!(wide_over.starts_with(&wide));
+    }
+
+    #[test]
+    fn failure_recovery_bound_is_exact_byte_counted_and_never_truncated() {
+        let exact = "r".repeat(MAX_FAILURE_RECOVERY_BYTES);
+        assert_eq!(bounded_recovery(exact.clone()), exact);
+        assert_eq!(
+            bounded_recovery("r".repeat(MAX_FAILURE_RECOVERY_BYTES + 1)),
+            RECOVERY_TOO_LONG
+        );
+        // Bytes, not characters: 2049 two-byte characters are 4098 bytes.
+        assert_eq!(
+            bounded_recovery("é".repeat(MAX_FAILURE_RECOVERY_BYTES / 2 + 1)),
+            RECOVERY_TOO_LONG
+        );
+        let kept = "é".repeat(MAX_FAILURE_RECOVERY_BYTES / 2);
+        assert_eq!(bounded_recovery(kept.clone()), kept);
+        // The constructor applies both bounds and the value block carries the
+        // typed code, the bounded text and the (default empty) data object.
+        let failure = AttemptFailure::new(
+            CODE_ANALYSIS_FAILED,
+            "d".repeat(MAX_FAILURE_DETAIL_CHARS + 1),
+            "r".repeat(MAX_FAILURE_RECOVERY_BYTES + 1),
+        );
+        let value = failure.value();
+        assert_eq!(value["code"], CODE_ANALYSIS_FAILED);
+        assert_eq!(value["recovery"], RECOVERY_TOO_LONG);
+        assert_eq!(value["data"], json!({}));
+        assert!(
+            value["detail"]
+                .as_str()
+                .is_some_and(|detail| detail.ends_with('…'))
+        );
+        let with_data = failure.with_data(json!({"current_snapshot_id": "snapshot:x"}));
+        assert_eq!(
+            with_data.value()["data"]["current_snapshot_id"],
+            "snapshot:x"
+        );
+    }
+
+    #[test]
+    fn available_root_serves_the_resolved_root_and_names_a_restart_otherwise() -> Result<(), String>
+    {
+        let root = PathBuf::from("resolved-root");
+        assert_eq!(available_root(Some(&root)), Ok(root.as_path()));
+        let Err(failure) = available_root(None) else {
+            return Err("an unresolved root must not yield a path".to_string());
+        };
+        assert_eq!(failure.code, CODE_WORKSPACE_UNAVAILABLE);
+        assert!(
+            failure
+                .recovery
+                .contains("restart the server with `ripr mcp --stdio --root <repository>`"),
+            "{}",
+            failure.recovery
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn document_byte_measure_counts_compact_utf8_bytes() -> Result<(), String> {
+        let value = json!({"a": "é"});
+        // `{"a":"é"}` is nine characters and ten bytes: the wire cap is bytes.
+        assert_eq!(document_bytes(&value).map_err(|f| f.detail)?, 10);
+        assert_eq!(
+            document_bytes(&value).map_err(|f| f.detail)?,
+            value.to_string().len()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_document_admits_exactly_the_wire_cap_and_refuses_one_byte_more() -> Result<(), String>
+    {
+        let cap = crate::mcp::MAX_RESPONSE_BYTES;
+        // `{"k":""}` is eight bytes of framing around the padded value.
+        let at_cap = json!({"k": "x".repeat(cap - 8)});
+        assert_eq!(document_bytes(&at_cap).map_err(|f| f.detail)?, cap);
+        assert_eq!(
+            bounded_document(at_cap.clone(), "unused").map_err(|f| f.detail)?,
+            at_cap
+        );
+        let over = json!({"k": "x".repeat(cap - 7)});
+        let Err(failure) = bounded_document(over, "narrow the read") else {
+            return Err("a document one byte over the cap was accepted".to_string());
+        };
+        assert_eq!(failure.code, CODE_RESULT_TOO_LARGE);
+        assert_eq!(failure.recovery, "narrow the read");
+        assert_eq!(
+            failure.detail,
+            format!(
+                "document is {} bytes; the MCP response bound is {cap}",
+                cap + 1
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn committed_withheld_remedy_routes_each_reason_to_its_own_recovery() {
+        let head = committed_withheld_remedy(COMMITTED_HEAD_MOVED_REASON);
+        assert!(head.starts_with("Run ripr_refresh again once the repository head settles"));
+        let unestablished = format!("{COMMITTED_DIRTY_LIST_UNESTABLISHED} (git failed)");
+        let list = committed_withheld_remedy(&unestablished);
+        assert!(list.contains("check that git can read the repository"));
+        let dirty = committed_withheld_remedy(
+            "uncommitted Rust source or test files (src/h.rs) are read by the seam inventory and the committed findings never saw them",
+        );
+        assert!(dirty.starts_with("Commit the uncommitted Rust source or test files"));
+        assert!(dirty.contains("source `worktree`"));
+        // The head reason is matched exactly, not as a prefix.
+        let extended = format!("{COMMITTED_HEAD_MOVED_REASON} again");
+        assert!(committed_withheld_remedy(&extended).starts_with("Commit the uncommitted"));
+        let distinct = [head, list, dirty];
+        assert_eq!(
+            distinct
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            3
+        );
+    }
+
+    #[test]
+    fn card_withheld_details_embed_the_reason_and_their_own_recovery() {
+        let committed = committed_card_withheld_detail("reason-alpha");
+        assert!(committed.contains("analyzed committed content"));
+        assert!(committed.contains("(reason-alpha)"));
+        assert!(committed.contains("repair readiness and cards are withheld"));
+        assert!(committed.ends_with(committed_withheld_remedy("reason-alpha")));
+        let moved = committed_card_withheld_detail(COMMITTED_HEAD_MOVED_REASON);
+        assert!(moved.ends_with("Run ripr_refresh again once the repository head settles"));
+        let worktree = worktree_card_withheld_detail("reason-beta");
+        assert!(worktree.contains("saved tracked-worktree edits"));
+        assert!(worktree.contains("(reason-beta)"));
+        assert!(worktree.contains("repair readiness and cards are withheld"));
+        assert!(
+            worktree
+                .contains("run ripr_refresh with source `committed` for committed repair cards")
+        );
+        assert!(!worktree.contains("analyzed committed content"));
+        assert!(!committed.contains("saved tracked-worktree edits"));
+    }
+
+    #[test]
+    fn refresh_retry_arguments_name_only_the_requested_source_and_base() -> Result<(), String> {
+        let parse = |text: String| serde_json::from_str::<Value>(&text).map_err(|e| e.to_string());
+        assert_eq!(
+            parse(refresh_retry_arguments(None, RefreshSource::Committed))?,
+            json!({"source": "committed"})
+        );
+        assert_eq!(
+            parse(refresh_retry_arguments(Some("b"), RefreshSource::Committed))?,
+            json!({"source": "committed", "base": "b"})
+        );
+        assert_eq!(
+            parse(refresh_retry_arguments(None, RefreshSource::Worktree))?,
+            json!({"source": "worktree"})
+        );
+        assert_eq!(
+            parse(refresh_retry_arguments(Some("b"), RefreshSource::Worktree))?,
+            json!({"source": "worktree", "base": "b"})
+        );
+        Ok(())
+    }
+
+    fn typed_failure(
+        error: crate::core_error::CoreError,
+        base: Option<&str>,
+        source: RefreshSource,
+    ) -> AttemptFailure {
+        let failure = check_failure(&error, Path::new("typed-root"), base, source);
+        assert_eq!(failure.code, CODE_ANALYSIS_FAILED);
+        assert!(
+            failure
+                .detail
+                .starts_with("shared check authority failed: "),
+            "{}",
+            failure.detail
+        );
+        failure
+    }
+
+    #[test]
+    fn committed_check_failures_route_by_typed_identity_and_requested_base() {
+        use crate::core_error::CoreError;
+        let committed = RefreshSource::Committed;
+        let unset = typed_failure(CoreError::base_unresolvable("no base"), None, committed);
+        assert!(unset.recovery.contains("(the detail names candidates)"));
+        // #13096: an omitted source no longer means committed, so the
+        // committed retry names its source explicitly.
+        assert!(
+            unset
+                .recovery
+                .contains(r#"{"base":"<ref>","source":"committed"}"#)
+        );
+        assert!(!unset.recovery.contains("worktree"));
+        let given = typed_failure(
+            CoreError::base_unresolvable("bad base"),
+            Some("gone"),
+            committed,
+        );
+        assert!(given.recovery.contains("a different `base`"));
+        // Omitting only `base` keeps the committed source.
+        assert!(
+            given
+                .recovery
+                .contains(r#"omit only `base` to use the default branch: {"source":"committed"}"#)
+        );
+        assert!(!given.recovery.contains("(the detail names candidates)"));
+        for base in [None, Some("b")] {
+            let unusable = typed_failure(
+                CoreError::repository_root_unusable("no repo"),
+                base,
+                committed,
+            );
+            assert!(
+                unusable
+                    .recovery
+                    .starts_with("restart the server with `ripr mcp --stdio --root <repository>`")
+            );
+            assert!(unusable.recovery.contains("then retry ripr_refresh"));
+        }
+        // Any other typed identity keeps the generic, source-bound retry.
+        let other = typed_failure(
+            CoreError::config_invalid("bad config"),
+            Some("b"),
+            committed,
+        );
+        assert!(other.recovery.starts_with("retry ripr_refresh with "));
+        assert!(other.recovery.contains("run `"));
+        assert!(!other.recovery.contains("(the detail names candidates)"));
+        assert!(!other.recovery.contains("restart the server"));
+    }
+
+    #[test]
+    fn worktree_check_failures_carry_the_worktree_source_in_every_retry() -> Result<(), String> {
+        use crate::core_error::CoreError;
+        let worktree = RefreshSource::Worktree;
+        let unset = typed_failure(CoreError::base_unresolvable("no base"), None, worktree);
+        assert!(
+            unset
+                .recovery
+                .contains(r#"{"base":"<ref>","source":"worktree"}"#)
+        );
+        let given = typed_failure(
+            CoreError::base_unresolvable("bad base"),
+            Some("gone"),
+            worktree,
+        );
+        assert!(
+            given
+                .recovery
+                .contains(r#"{"base":"<ref>","source":"worktree"}"#)
+        );
+        // Omitting only `base` keeps the worktree source.
+        assert!(
+            given
+                .recovery
+                .contains(r#"default branch: {"source":"worktree"}"#)
+        );
+        assert!(!given.recovery.contains("gone"));
+        let unusable = typed_failure(
+            CoreError::repository_root_unusable("no repo"),
+            Some("kept"),
+            worktree,
+        );
+        assert!(
+            unusable
+                .recovery
+                .starts_with("restart the server with `ripr mcp --stdio --root <repository>`")
+        );
+        assert!(
+            unusable
+                .recovery
+                .ends_with(r#"retry ripr_refresh with {"base":"kept","source":"worktree"}"#),
+            "{}",
+            unusable.recovery
+        );
+        let other = typed_failure(CoreError::config_invalid("bad config"), None, worktree);
+        assert!(other.recovery.contains("--worktree --json"));
+        Ok(())
+    }
+
+    #[test]
+    fn diagnostic_reason_vocabulary_is_the_exact_wire_spelling() {
+        let overflow = [
+            (
+                DiagnosticOverflowReason::DocumentItemLimit,
+                "document_item_limit",
+            ),
+            (
+                DiagnosticOverflowReason::WorkspaceItemLimit,
+                "workspace_item_limit",
+            ),
+            (
+                DiagnosticOverflowReason::SerializedByteLimit,
+                "serialized_byte_limit",
+            ),
+            (
+                DiagnosticOverflowReason::InlineDetailLimit,
+                "inline_detail_limit",
+            ),
+        ];
+        for (reason, wire) in overflow {
+            assert_eq!(overflow_reason_as_str(reason), wire);
+        }
+        let omitted = [
+            (OmittedDiagnosticReason::ProfileFiltered, "profile_filtered"),
+            (
+                OmittedDiagnosticReason::DocumentItemLimit,
+                "document_item_limit",
+            ),
+            (
+                OmittedDiagnosticReason::WorkspaceItemLimit,
+                "workspace_item_limit",
+            ),
+            (
+                OmittedDiagnosticReason::SerializedByteLimit,
+                "serialized_byte_limit",
+            ),
+        ];
+        for (reason, wire) in omitted {
+            assert_eq!(omitted_reason_as_str(reason), wire);
+        }
+    }
+
+    #[test]
+    fn worktree_custody_fails_closed_on_missing_findings_or_unobserved_head() -> Result<(), String>
+    {
+        use crate::domain::LanguageId::Rust;
+        // Agreeing digests and an observed matching head establish a commitment.
+        let (out, findings, inventory) = refusal_inputs(Rust, Some("head-a"), b"a", b"a")?;
+        let commitment = worktree_custody(&out, &findings, &inventory)?;
+        assert!(!commitment.is_empty());
+        // No findings: nothing was bound, so no commitment is claimed.
+        let (mut none, findings, inventory) = refusal_inputs(Rust, Some("head-a"), b"a", b"a")?;
+        none.findings.clear();
+        let Err(reason) = worktree_custody(&none, &findings, &inventory) else {
+            return Err("an empty refresh must not claim custody".to_string());
+        };
+        assert!(reason.contains("no findings"), "{reason}");
+        // Unlike the committed path, an unobserved producer head is a refusal.
+        let (out, findings, inventory) = refusal_inputs(Rust, None, b"a", b"a")?;
+        let Err(reason) = worktree_custody(&out, &findings, &inventory) else {
+            return Err("an unobserved head must not establish custody".to_string());
+        };
+        assert!(reason.contains("or was not observed"), "{reason}");
+        // A moved head refuses even though the source digests agree.
+        let (out, findings, inventory) = refusal_inputs(Rust, Some("head-b"), b"a", b"a")?;
+        if worktree_custody(&out, &findings, &inventory).is_ok() {
+            return Err("a moved head must not establish custody".to_string());
+        }
+        // Moved source bytes refuse and name the owner's path.
+        let (out, findings, inventory) = refusal_inputs(Rust, Some("head-a"), b"a", b"b")?;
+        let Err(reason) = worktree_custody(&out, &findings, &inventory) else {
+            return Err("moved source must not establish custody".to_string());
+        };
+        assert!(reason.contains("src/lib.rs"), "{reason}");
         Ok(())
     }
 }

@@ -3,7 +3,7 @@
 //! annotated, so the pin is its peeled commit, not its tag-object SHA.
 //! 035fceb3 hard-codes 1.95.0 for both generated 1.95 and 1.95.0 refs and
 //! declares no toolchain input; stable/v1 and both taiki variants consume inputs.
-#[path = "../test_support.rs"]
+#[path = "../../test_support.rs"]
 mod test_support;
 
 use std::collections::BTreeMap;

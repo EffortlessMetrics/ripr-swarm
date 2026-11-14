@@ -13,7 +13,7 @@ Start here:
   File: ./src/lib.rs:4
   Static exposure: exposed (severity: info, confidence 1.00)
   Gap ID (for scripts): gap:rust:src/lib.rs:reason:match_arm:match_arm:none
-  Changed behavior: None =>
+  Changed behavior: None => 0
   Related test: tests/reason.rs:4 none_arm_returns_zero
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion yes
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

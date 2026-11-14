@@ -9380,14 +9380,12 @@ fn workspace_status_report_paths() -> serde_json::Value {
     })
 }
 
-/// Bounded harness-registry disclosure for `collect_workspace_status`.
-/// Preserves the three documented states: Null when the repository has no
-/// registrations, `available: false` for a limited run that did not
-/// compute harness facts, and the registration summaries when facts are
-/// complete (#3605).
 /// Reason token for the owner opt-out disclosure on workspace status (#14136):
 /// the shared `owner_mutants_skip` token when findings were withheld, otherwise
-/// `null`, so a status reader never sees a reason without a count.
+/// `null`, so a status reader never sees a reason without a count. The token is
+/// fixed because the LSP check input supplies no suppression policy, so the
+/// withheld set is exactly the owner opt-outs; a policy file in the editor
+/// would need its own reason (#14610).
 fn owner_opt_out_reason(withheld: usize) -> serde_json::Value {
     if withheld == 0 {
         serde_json::Value::Null
@@ -9400,6 +9398,11 @@ fn owner_opt_out_reason(withheld: usize) -> serde_json::Value {
     }
 }
 
+/// Bounded harness-registry disclosure for `collect_workspace_status`.
+/// Preserves the three documented states: Null when the repository has no
+/// registrations, `available: false` for a limited run that did not
+/// compute harness facts, and the registration summaries when facts are
+/// complete (#3605).
 fn workspace_status_harness_summary(snapshot: &AnalysisSnapshot) -> serde_json::Value {
     match &snapshot.harness_facts {
         crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered => serde_json::Value::Null,
