@@ -121,10 +121,9 @@ jobs:
           {
             echo "### PR Staleness Watchdog (alert-only)"
             echo ""
-            echo "Dark = no \`$REQUIRED_CHECK\` check run and no queued or in-progress merge-ready routed-rust.yml"
-            echo "run on a merge-ready PR head SHA (#4937, #4986). In flight = the run exists but has not"
-            echo "reached its result job yet; leave it alone. This sweep never dispatches: the remedy for a"
-            echo "dark head is to remove and re-apply the merge-ready label, which requests qualification again."
+            echo "Dark = no \`$REQUIRED_CHECK\` check run and no queued or in-progress merge-ready routed-rust.yml run on a"
+            echo "merge-ready PR head SHA (#4937, #4986). In flight = the run exists but has not reached its result job yet;"
+            echo "leave it alone. This sweep never dispatches: the remedy for a dark head is to remove and re-apply the merge-ready label."
             echo "First check before re-applying: merge conflicts (#7079). A conflicting (\`dirty\`) PR has no merge"
             echo "ref, so no pull_request run can exist: merge main into the branch first."
             echo "Mergeability is read once per head; an \`unknown\` head is counted as unreadable and re-read by"
@@ -301,3 +300,4 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Open PRs scanned: $scanned; in-flight qualifications: $in_progress; dark merge-ready heads reported: $dark; conflicts reported on the PR: $reported; conflict statuses cleared: $cleared; re-apply notices: $told." >> "$GITHUB_STEP_SUMMARY"
           echo "Unreadable mergeability: $unreadable head(s) deferred to the next sweep; conflict notices are unavailable for them (#14636)." >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Watchdog sweep totals::scanned=$scanned in_flight=$in_progress dark=$dark unreadable=$unreadable conflicts_reported=$reported cleared=$cleared reapply_notices=$told"
