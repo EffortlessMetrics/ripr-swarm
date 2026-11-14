@@ -392,11 +392,13 @@ pub(crate) fn attach_agent_brief_arm_results(root: &Path, selection: &mut AgentB
         if seam.kind() != crate::analysis::seams::SeamKind::MatchArm {
             continue;
         }
-        let source = sources
-            .entry(seam.file().to_path_buf())
-            .or_insert_with(|| std::fs::read_to_string(root.join(seam.file())).ok());
-        selected.arm_result = source
-            .as_deref()
+        if !sources.contains_key(seam.file()) {
+            let content = std::fs::read_to_string(root.join(seam.file())).ok();
+            sources.insert(seam.file().to_path_buf(), content);
+        }
+        selected.arm_result = sources
+            .get(seam.file())
+            .and_then(|source| source.as_deref())
             .and_then(|source| crate::analysis::match_arm_seam_result(seam, source));
     }
 }

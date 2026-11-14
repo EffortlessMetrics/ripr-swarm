@@ -18389,6 +18389,11 @@ Field contract:
   `changed_test_for_related_seam`, `changed_assertion_near_related_test`,
   `same_file_seam`, `explicit_seam_id`, or `repo_actionable_fallback`.
 - `top_seams[].packet_ref` — pointer to the full agent seam packet.
+- `top_seams[].arm_result` — optional. Present only on a match-arm seam whose
+  `expression` is a single arm head (`Size::Medium =>`) and whose result sits on
+  the same line in the current file. It names the value a test must pin, for
+  example `"450"`. `expression` stays the head, and the key is omitted when no
+  result can be read (#14683).
 - `top_seams[].verification` — before/after static evidence commands and an
   optional focused test command. The snapshot and verify commands are anchored
   at the analyzed root, so they run from any directory; both snapshot commands
