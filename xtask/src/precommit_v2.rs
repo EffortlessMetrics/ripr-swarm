@@ -1971,6 +1971,7 @@ mod tests {
 
     #[test]
     fn check_fast_impact_plan_accepts_noncanonical_root() -> Result<(), String> {
+        let _cwd_guard = crate::acquire_test_cwd_read_guard();
         // Regression (#14644 D): `check-fast` passes `.` as its root, while
         // package-root loading strips canonical parents from it.
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");

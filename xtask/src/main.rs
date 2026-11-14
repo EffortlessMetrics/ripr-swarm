@@ -1133,9 +1133,14 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
                     || f == "Cargo.toml"
                     || f.ends_with("/Cargo.toml")
                     || (f.ends_with(".rs")
-                        && ["crates/ripr/", "xtask/", "tools/repo-policy/"]
-                            .iter()
-                            .any(|root| f.starts_with(root)))
+                        && [
+                            "crates/ripr/",
+                            "crates/ripr-contract/",
+                            "xtask/",
+                            "tools/repo-policy/",
+                        ]
+                        .iter()
+                        .any(|root| f.starts_with(root)))
             }),
         workflow: files.iter().any(|f| f.starts_with(".github/workflows/")),
         policy: files
@@ -1261,6 +1266,8 @@ mod check_fast_selector_tests {
             "crates/ripr/tests/cli_smoke/workflow_directory.rs",
             "crates/ripr/build.rs",
             "crates/ripr/examples/check_diff.rs",
+            "crates/ripr-contract/src/lib.rs",
+            "crates/ripr-contract/tests/contract.rs",
             "xtask/src/main.rs",
             "xtask/tests/spec_format_determinism.rs",
             "xtask/examples/mandatory_partitions.rs",
