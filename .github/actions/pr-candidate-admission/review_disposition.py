@@ -93,6 +93,15 @@ STATE_LINE = re.compile(
     r"|^[ \t]*\|(?:.*\|)?[ \t*_`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.]*\|",
     re.IGNORECASE,
 )
+# #14603: VERDICT is a typed decision field, not a growing list of blocker words.
+# Its whole value must be APPROVE with an optional short or full head SHA. BLOCK,
+# ABSTAIN, empty, mixed and unrecognized values are all negative. An APPROVE field
+# constrains a separate ready marker; it never becomes an attestation carrier itself.
+VERDICT_FIELD = re.compile(
+    STATE_LINE_PREFIX + r"verdict[ \t*_`]*:[ \t]*(?P<value>.*)$",
+    re.IGNORECASE,
+)
+POSITIVE_VERDICT_VALUE = re.compile(r"approve(?:[ \t]+[0-9a-f]{7,40})?[ \t]*", re.IGNORECASE)
 # Retraction and blocker phrases for body prose after the marker (and for fenced text,
 # which must not be able to hide one). Best effort: free prose cannot be enumerated, so
 # the closed control is the marker line plus later native reviews superseding this one.
@@ -261,6 +270,14 @@ def positive_line(line: str) -> bool:
     return not STATE_TOKEN.search(tail) and tail_allowed(tail)
 
 
+def verdict_disposition(line: str) -> bool | None:
+    """Return an explicit verdict's disposition, or None when the line has no field."""
+    match = VERDICT_FIELD.match(normalize_body(line))
+    if match is None:
+        return None
+    return POSITIVE_VERDICT_VALUE.fullmatch(match.group("value")) is not None
+
+
 def strip_negated_change(line: str) -> str:
     """Remove a negated change/repair phrase only when it is resolved work.
 
@@ -295,6 +312,9 @@ def negation_hit(line: str) -> bool:
     Only an unrefuted statement-position phrase is removed, so a genuine blocker
     elsewhere on the same line still refuses.
     """
+    verdict = verdict_disposition(line)
+    if verdict is not None:
+        return not verdict
     return bool(NEGATION.search(strip_negated_change(line)))
 
 
@@ -314,11 +334,14 @@ def comment_body_ready(body: str) -> bool:
         return False
     if any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced):
         return False
-    return all(
-        positive_line(line)
-        or not (STATE_LINE.match(line) or negation_hit(line))
-        for line in substantive[1:]
-    )
+    for line in substantive[1:]:
+        verdict = verdict_disposition(line)
+        if verdict is not None:
+            if not verdict:
+                return False
+        elif not positive_line(line) and (STATE_LINE.match(line) or negation_hit(line)):
+            return False
+    return True
 
 
 def comment_body_negative(body: str) -> bool:
@@ -336,7 +359,9 @@ def comment_body_negative(body: str) -> bool:
     # A prose line that names a state and retracts or blocks it still speaks: another
     # reviewer's "the earlier REVIEW_READY is withdrawn" must not read as chatter.
     return any(
-        STATE_LINE.match(line) or (STATE_MENTION.search(line) and negation_hit(line))
+        verdict_disposition(line) is False
+        or STATE_LINE.match(line)
+        or (STATE_MENTION.search(line) and negation_hit(line))
         for line in visible
     ) or any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced)
 
@@ -746,6 +771,20 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY - head 314f6893124dc719aabe2a4da3df6d5bf5f33ef5\n\n- One-line delta.\n\nThe earlier `SOURCE_REVIEW_READY` at c0d7341941 is superseded by this exact-head attestation.", True),
         ("REVIEW_READY\nThe previous run quoted `SOURCE_REVIEW_READY` in a later line and was refused.", True),
         ("REVIEW_READY\nThe admission script reads the review disposition from the first line.", True),
+        # #14603: an explicit verdict field is a closed decision, not another prose
+        # vocabulary. Only APPROVE with an optional head annotation is positive.
+        ("SOURCE_REVIEW_READY\nVERDICT: BLOCK 1cc13d3de7941b83f2488853e120fbdfd3d9cee5", False),
+        ("SOURCE_REVIEW_READY\n  VERDICT: ABSTAIN 1cc13d3d", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE", True),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5", True),
+        ("SOURCE_REVIEW_READY\nVERDICT: MAYBE", False),
+        ("SOURCE_REVIEW_READY\nVERDICT:", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE / BLOCK", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d — no blocking findings on this head.", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d\nNo blocking findings on this head.", True),
+        ("SOURCE_REVIEW_READY\n- **Verdict:** ABSTAIN", False),
+        ("SOURCE_REVIEW_READY\n```\nVERDICT: BLOCK\n```", False),
+        ("SOURCE_REVIEW_READY\nThe earlier verdict: BLOCK was cleared.", True),
     ]
     for body, expected in cases:
         actual = comment_body_ready(body)
@@ -813,6 +852,9 @@ def self_test() -> None:
         ("| REPAIR_REQUIRED | fix oracle |", False),
         ("| REPAIR_REQUIRED |", False),
         ("The earlier `SOURCE_REVIEW_READY` was for the previous head.", True),
+        ("VERDICT: BLOCK 1cc13d3de7941b83f2488853e120fbdfd3d9cee5", False),
+        ("VERDICT: ABSTAIN", False),
+        ("VERDICT: APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5", True),
     ):
         assert reviews_allow_source_attestation(
             [
