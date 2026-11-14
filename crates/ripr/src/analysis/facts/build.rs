@@ -885,7 +885,7 @@ fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
 /// underscores. `None` when the manifest is missing, unparseable, declares no
 /// package, or moves the library root (`[lib] path` other than `src/lib.rs`),
 /// so every consumer under-credits.
-fn manifest_library_name(root: &Path) -> Option<String> {
+pub(in crate::analysis) fn manifest_library_name(root: &Path) -> Option<String> {
     let text = crate::bounded_input::read_metadata_toml(root.join("Cargo.toml")).ok()?;
     let value = text.parse::<toml::Table>().ok()?;
     let package = value
