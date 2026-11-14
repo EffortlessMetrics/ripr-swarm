@@ -900,7 +900,7 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
         return check_fast_failure_report(&error, &child_diagnostics, |body| {
             write_report(
                 "check-fast.md",
-                &format!("{body}\n{}", selection.diagnostic()),
+                &check_fast_failure_body(body, selection.diagnostic(), &impact_disclosure),
             )
         });
     }
@@ -1059,6 +1059,14 @@ fn check_fast_diagnostics(diagnostics: &[run::CommandDiagnostic]) -> String {
             .collect::<Vec<_>>()
             .join("\n"),
     )
+}
+
+fn check_fast_failure_body(body: &str, diagnostic: &str, impact_disclosure: &str) -> String {
+    if impact_disclosure.is_empty() {
+        format!("{body}\n{diagnostic}")
+    } else {
+        format!("{body}\n{diagnostic}\n{impact_disclosure}")
+    }
 }
 
 fn check_fast_failure_report(
@@ -1234,6 +1242,14 @@ mod check_fast_selector_tests {
         );
         assert_eq!(rows.len(), 2);
         Ok(())
+    }
+
+    #[test]
+    fn check_fast_failure_body_carries_impact_disclosure() {
+        let with = check_fast_failure_body("body", "diag", "Impact plan: widened");
+        assert!(with.contains("Impact plan: widened"), "{with}");
+        let without = check_fast_failure_body("body", "diag", "");
+        assert_eq!(without, "body\ndiag");
     }
 
     #[test]
