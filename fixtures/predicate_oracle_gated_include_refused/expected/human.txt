@@ -1,0 +1,54 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/predicate_oracle_gated_include_refused/input
+
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 1 reached but not noticed, 0 no test path, 1 unclear. 2 found, 0 suppressed by your settings
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+Start here:
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  File: ./src/lib.rs:5
+  Static exposure: unrevealed (severity: warning, confidence 0.79)
+  Why unrevealed: a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`
+  Not credited: `assert_eq!` in pins at src/frag.rs:5: `mod python;` at src/lib.rs:2 is gated by a `cfg` ripr cannot evaluate, or nested
+  Gap ID (for scripts): gap:rust:src/lib.rs:gate:return_value:return_value:11<=value
+  Changed behavior: 11 <= value
+  Missing check (1 of 2): No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  Related test: src/frag.rs:4 pins (assertion inert: this test's assertion has a shape that can keep it from running as a standard check here)
+  Next step: ripr did not credit the `assert_eq!` in pins at src/frag.rs:5; the "not credited" note
+    says why. That shape can keep the assertion from checking the change, so this is not a static
+    limit: make the check run on every default test run, as the standard `assert_eq!`, in a test
+    expected to pass
+  Evidence: reach yes · infection yes · propagation yes · observation no · assertion no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: Related tests appear to reach gate: pins
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 7 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/predicate_oracle_gated_include_refused/input --diff <cwd>/fixtures/predicate_oracle_gated_include_refused/diff.patch --mode fast probe:src_lib.rs:return_value:49b2862c
+  ripr context --root <cwd>/fixtures/predicate_oracle_gated_include_refused/input --diff <cwd>/fixtures/predicate_oracle_gated_include_refused/diff.patch --mode fast --at probe:src_lib.rs:return_value:49b2862c
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that checks the changed return value; safe test target; new test proposal blocked: package has no established tests/ layout; follow the Next step above, then rerun `ripr check`
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/predicate_oracle_gated_include_refused/input --at src/lib.rs:5 --kind return_value
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:5 (unknown: static analysis limited); kind: predicate; reason: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse,…
+  Hidden classes:
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
