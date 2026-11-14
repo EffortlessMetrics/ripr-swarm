@@ -197,6 +197,44 @@ fn latency_trace_line_with_token(
     )
 }
 
+/// Nearest-rank percentiles of a set of durations, in whole milliseconds
+/// (#9575). Measurement only: the summary describes durations a caller
+/// already paid; computing it changes no scheduling or result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DurationPercentiles {
+    pub(crate) count: usize,
+    pub(crate) p50_ms: u64,
+    pub(crate) p90_ms: u64,
+    pub(crate) p99_ms: u64,
+    pub(crate) max_ms: u64,
+    pub(crate) mean_ms: u64,
+}
+
+/// Summarize `durations` as nearest-rank percentiles. `None` for an empty
+/// set, so an unmeasured phase cannot masquerade as all-zero percentiles.
+pub(crate) fn duration_percentiles(durations: &[Duration]) -> Option<DurationPercentiles> {
+    if durations.is_empty() {
+        return None;
+    }
+    let mut sorted: Vec<Duration> = durations.to_vec();
+    sorted.sort_unstable();
+    let nearest_rank = |percent: u64| -> u64 {
+        // ceil(percent / 100 * n), clamped to 1..=n, as a 1-based rank.
+        let n = sorted.len() as u64;
+        let rank = (percent * n).div_ceil(100).clamp(1, n);
+        sorted[(rank - 1) as usize].as_millis() as u64
+    };
+    let total_ms: u128 = sorted.iter().map(|d| d.as_millis()).sum();
+    Some(DurationPercentiles {
+        count: sorted.len(),
+        p50_ms: nearest_rank(50),
+        p90_ms: nearest_rank(90),
+        p99_ms: nearest_rank(99),
+        max_ms: sorted[sorted.len() - 1].as_millis() as u64,
+        mean_ms: (total_ms / sorted.len() as u128) as u64,
+    })
+}
+
 /// Why a resource number is not a measurement.
 ///
 /// Each variant names what actually went wrong, so a reader can tell an absent
@@ -724,6 +762,53 @@ mod tests {
             ),
             "ripr_repo_exposure_latency phase=file_fact_cache \
              status=start_files_42_production_7 duration_ms=0"
+        );
+    }
+
+    #[test]
+    fn duration_percentiles_use_nearest_rank_and_report_no_empty_summary() {
+        use super::duration_percentiles;
+        assert_eq!(duration_percentiles(&[]), None);
+        let ms = |values: &[u64]| {
+            values
+                .iter()
+                .map(|value| Duration::from_millis(*value))
+                .collect::<Vec<_>>()
+        };
+        use super::DurationPercentiles;
+        assert_eq!(
+            duration_percentiles(&ms(&[7])),
+            Some(DurationPercentiles {
+                count: 1,
+                p50_ms: 7,
+                p90_ms: 7,
+                p99_ms: 7,
+                max_ms: 7,
+                mean_ms: 7,
+            })
+        );
+        // Deliberately unsorted: the summary sorts before ranking.
+        assert_eq!(
+            duration_percentiles(&ms(&[100, 10, 90, 20, 80, 30, 70, 40, 60, 50])),
+            Some(DurationPercentiles {
+                count: 10,
+                p50_ms: 50,
+                p90_ms: 90,
+                p99_ms: 100,
+                max_ms: 100,
+                mean_ms: 55,
+            })
+        );
+        assert_eq!(
+            duration_percentiles(&ms(&[4, 1, 3, 2])),
+            Some(DurationPercentiles {
+                count: 4,
+                p50_ms: 2,
+                p90_ms: 4,
+                p99_ms: 4,
+                max_ms: 4,
+                mean_ms: 2,
+            })
         );
     }
 

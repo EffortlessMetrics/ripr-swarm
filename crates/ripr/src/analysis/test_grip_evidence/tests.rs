@@ -2760,6 +2760,75 @@ fn below_case() {
 }
 
 #[test]
+fn evidence_cost_trace_collection_does_not_change_evidence_bytes() -> Result<(), String> {
+    // #9575: the per-seam cost trace is measurement only. Evidence with
+    // collection on must serialize byte-identically to evidence with it
+    // off, in the same order.
+    let prod = PathBuf::from("src/pricing.rs");
+    let prod_src = r#"
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+"#;
+    let tests = PathBuf::from("tests/pricing_tests.rs");
+    let tests_src = r#"
+#[test]
+fn boundary_case() {
+    assert_eq!(discounted_total(100, 100), 90);
+}
+#[test]
+fn below_case() {
+    assert_eq!(discounted_total(50, 100), 50);
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    if seams.is_empty() {
+        return Err("fixture produced no seams".to_string());
+    }
+    let off = EvidencePass::new(&index).evidence_for_traced(&seams, false);
+    let on = EvidencePass::new(&index).evidence_for_traced(&seams, true);
+    let off_bytes = serde_json::to_string(&off).map_err(|err| err.to_string())?;
+    let on_bytes = serde_json::to_string(&on).map_err(|err| err.to_string())?;
+    if off_bytes != on_bytes {
+        return Err("cost trace collection changed evidence bytes".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn seam_cost_trace_aggregates_occupancy_window_and_tokens() {
+    let record = |seam_id: &str, ms: u64, worker: Option<usize>| SeamCostRecord {
+        seam_id: seam_id.to_string(),
+        duration: Duration::from_millis(ms),
+        worker,
+    };
+    let records = vec![
+        record("src/a.rs::first", 10, Some(1)),
+        record("src/a.rs::second", 30, Some(0)),
+        record("src/b.rs::third seam", 20, Some(1)),
+        record("src/b.rs::fourth", 40, None),
+    ];
+    let occupancy = worker_occupancy(&records);
+    assert_eq!(occupancy.len(), 3);
+    // Busiest first; the two 30ms workers tie-break by worker index.
+    assert_eq!(occupancy[0], (None, 1, Duration::from_millis(40)));
+    assert_eq!(occupancy[1], (Some(0), 1, Duration::from_millis(30)));
+    assert_eq!(occupancy[2], (Some(1), 2, Duration::from_millis(30)));
+    assert_eq!(
+        trace_token("src/b.rs::third seam", 96),
+        "src/b.rs::third_seam"
+    );
+    assert_eq!(trace_token("abcdef", 3), "abc");
+    let trace = SeamCostTrace::default();
+    trace.record("src/a.rs::first", Duration::from_millis(5), Some(0));
+    trace.record("src/a.rs::second", Duration::from_millis(6), Some(0));
+    let stored = trace.records();
+    assert_eq!(stored.len(), 2);
+    assert_eq!(stored[1].seam_id, "src/a.rs::second");
+}
+
+#[test]
 fn evidence_pass_scans_each_test_body_once_not_once_per_oracle_ask() -> Result<(), String> {
     // The seam pass asks the shadow check about the same test bodies again and
     // again (per seam, stage and oracle). A worker's run memo must absorb the

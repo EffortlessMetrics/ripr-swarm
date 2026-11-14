@@ -59,6 +59,49 @@ impl Product {
 
 type Key = (Product, [u8; 32]);
 
+/// Scoped memo consultations by outcome (#9575). Measurement only: the
+/// counters never feed a memo decision, so hit/miss behavior is identical
+/// whether or not a caller reads them. Calls outside a scope consult no
+/// entry and are not counted.
+static MEMO_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static MEMO_MISSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Cumulative scoped hit/miss counts since process start. Callers that
+/// measure one pass snapshot before and after and report the delta.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct MemoStats {
+    pub(crate) hits: u64,
+    pub(crate) misses: u64,
+}
+
+impl MemoStats {
+    /// Counts added since `earlier` (saturating, so a wrapped or foreign
+    /// snapshot cannot underflow).
+    pub(crate) fn since(self, earlier: MemoStats) -> MemoStats {
+        MemoStats {
+            hits: self.hits.saturating_sub(earlier.hits),
+            misses: self.misses.saturating_sub(earlier.misses),
+        }
+    }
+}
+
+pub(crate) fn memo_stats() -> MemoStats {
+    use std::sync::atomic::Ordering;
+    MemoStats {
+        hits: MEMO_HITS.load(Ordering::Relaxed),
+        misses: MEMO_MISSES.load(Ordering::Relaxed),
+    }
+}
+
+fn record_memo_outcome(hit: bool) {
+    use std::sync::atomic::Ordering;
+    if hit {
+        MEMO_HITS.fetch_add(1, Ordering::Relaxed);
+    } else {
+        MEMO_MISSES.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 #[derive(Default)]
 struct Memo {
     depth: usize,
@@ -133,8 +176,10 @@ pub(crate) fn memoize_with<T: Clone + 'static>(
     crate::analysis::probe_read_trace::memo(product.name(), &key.1);
     let cached = MEMO.with(|memo| memo.borrow().entries.get(&key).cloned());
     if let Some(value) = cached.as_ref().and_then(|value| value.downcast_ref::<T>()) {
+        record_memo_outcome(true);
         return value.clone();
     }
+    record_memo_outcome(false);
     let value = compute();
     MEMO.with(|memo| {
         memo.borrow_mut()
@@ -200,6 +245,15 @@ pub(crate) fn memoize_many<T: Clone + Send + 'static>(
         .filter(|(_, key)| recall(key).is_none() && seen.insert(**key))
         .map(|(position, _)| position)
         .collect();
+    // Each distinct unseen key is one miss; every other consulted key —
+    // already stored, or a repeat of a key this call is about to store —
+    // is served from the scope and counts as a hit (#9575).
+    for _ in 0..missing.len() {
+        record_memo_outcome(false);
+    }
+    for _ in missing.len()..keys.len() {
+        record_memo_outcome(true);
+    }
     let missing_sources: Vec<&str> = missing.iter().map(|position| sources[*position]).collect();
     let computed = run(&missing_sources);
     MEMO.with(|memo| {
@@ -352,6 +406,35 @@ mod tests {
             seen.iter().all(|id| *id == caller),
             "a pool worker computes in line instead of fanning out"
         );
+    }
+
+    #[test]
+    fn memo_stats_count_scoped_hits_and_misses_only() {
+        // Deltas, not absolutes: parallel tests share the process counters,
+        // and other activity can only add to a delta. Calls outside a scope
+        // return before any counter is touched (see `memoize_with`), so
+        // only the scoped sequence below is asserted.
+        let calls = Cell::new(0);
+        let before = super::memo_stats();
+        {
+            let _scope = enter();
+            counted(&calls, Product::SourceNamings, 41, "scoped-9575");
+            counted(&calls, Product::SourceNamings, 41, "scoped-9575");
+            counted(&calls, Product::SourceNamings, 41, "scoped-other-9575");
+            let batch = super::memoize_many(
+                Product::SourceNamings,
+                &["scoped-9575", "batch-9575", "batch-9575"],
+                |source| source.len(),
+            );
+            assert_eq!(batch.len(), 3);
+        }
+        let delta = super::memo_stats().since(before);
+        // Serial: 1 miss + 1 hit + 1 miss. Batch: "scoped-9575" hits under
+        // the plain key only if discriminator/extra match — it does not
+        // (serial used discriminator 41), so the batch pays 2 misses and
+        // the repeated text is 1 hit.
+        assert!(delta.misses >= 4, "misses: {delta:?}");
+        assert!(delta.hits >= 2, "hits: {delta:?}");
     }
 
     #[test]
