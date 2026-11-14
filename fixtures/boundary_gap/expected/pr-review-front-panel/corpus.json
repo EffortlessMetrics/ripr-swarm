@@ -319,9 +319,9 @@
     },
     {
       "id": "missing_proof_and_guidance",
-      "scenario": "unreadable assistant proof together with an unusable PR guidance input",
+      "scenario": "unreadable assistant proof together with a malformed PR guidance input",
       "inputs": {
-        "pr_guidance": "fixtures/boundary_gap/input/missing-pr-guidance.json",
+        "pr_guidance": "fixtures/boundary_gap/input/malformed-pr-guidance.json",
         "assistant_proof": "target/ripr/reports/test-oracle-assistant-proof.json"
       },
       "expected_report": "fixtures/boundary_gap/expected/pr-review-front-panel/missing-proof-and-guidance/pr-review-front-panel.json",
@@ -341,15 +341,15 @@
       "reason": "The Missing input line must name the assistant proof, the input that promoted the panel, even when an optional guidance warning comes first."
     },
     {
-      "id": "missing_receipt_with_valid_proof",
-      "scenario": "first-action names a missing receipt while the assistant proof is present and valid",
+      "id": "unusable_receipt_with_valid_proof",
+      "scenario": "first-action names a missing receipt while the assistant proof is present and valid and the receipt input is malformed",
       "inputs": {
         "first_action": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/first-useful-action.json",
         "assistant_proof": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/assistant-proof.json",
-        "receipt": "fixtures/boundary_gap/input/missing-agent-receipt.json"
+        "receipt": "fixtures/boundary_gap/input/malformed-agent-receipt.json"
       },
-      "expected_report": "fixtures/boundary_gap/expected/pr-review-front-panel/missing-receipt-with-valid-proof/pr-review-front-panel.json",
-      "expected_markdown": "fixtures/boundary_gap/expected/pr-review-front-panel/missing-receipt-with-valid-proof/pr-review-front-panel.md",
+      "expected_report": "fixtures/boundary_gap/expected/pr-review-front-panel/unusable-receipt-with-valid-proof/pr-review-front-panel.json",
+      "expected_markdown": "fixtures/boundary_gap/expected/pr-review-front-panel/unusable-receipt-with-valid-proof/pr-review-front-panel.md",
       "expected": {
         "status": "incomplete",
         "top_issue_state": "missing_required_input",

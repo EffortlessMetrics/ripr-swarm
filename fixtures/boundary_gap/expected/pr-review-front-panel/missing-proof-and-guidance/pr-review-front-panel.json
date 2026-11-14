@@ -6,7 +6,7 @@
   "root": ".",
   "generated_at": "2026-05-09T12:00:00Z",
   "inputs": {
-    "pr_guidance": "fixtures/boundary_gap/input/missing-pr-guidance.json",
+    "pr_guidance": "fixtures/boundary_gap/input/malformed-pr-guidance.json",
     "first_action": null,
     "assistant_proof": "target/ripr/reports/test-oracle-assistant-proof.json",
     "assistant_health": null,
@@ -87,9 +87,9 @@
   ],
   "warnings": [
     {
-      "kind": "missing_optional_input",
-      "message": "Optional PR guidance input is unreadable: H:/Code/OpenBot/ripr-swarm-wt-14628/fixtures/boundary_gap/input/missing-pr-guidance.json does not exist",
-      "source_artifact": "fixtures/boundary_gap/input/missing-pr-guidance.json"
+      "kind": "malformed_input",
+      "message": "Optional PR guidance input is malformed: EOF while parsing an object at line 1 column 48",
+      "source_artifact": "fixtures/boundary_gap/input/malformed-pr-guidance.json"
     },
     {
       "kind": "missing_required_input",

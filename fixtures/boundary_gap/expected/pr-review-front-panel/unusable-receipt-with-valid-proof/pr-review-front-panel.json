@@ -17,7 +17,7 @@
     "recommendation_calibration": null,
     "mutation_calibration": null,
     "coverage_frontier": null,
-    "receipt": "fixtures/boundary_gap/input/missing-agent-receipt.json"
+    "receipt": "fixtures/boundary_gap/input/malformed-agent-receipt.json"
   },
   "summary": {
     "status": "incomplete",
@@ -73,7 +73,7 @@
     {
       "group": "start_here",
       "label": "PR review front panel",
-      "path": "fixtures/boundary_gap/expected/pr-review-front-panel/missing-receipt-with-valid-proof/pr-review-front-panel.md",
+      "path": "fixtures/boundary_gap/expected/pr-review-front-panel/unusable-receipt-with-valid-proof/pr-review-front-panel.md",
       "available": true,
       "required": true
     },
@@ -94,9 +94,9 @@
   ],
   "warnings": [
     {
-      "kind": "missing_optional_input",
-      "message": "Optional receipt input is unreadable: H:/Code/OpenBot/ripr-swarm-wt-14628/fixtures/boundary_gap/input/missing-agent-receipt.json does not exist",
-      "source_artifact": "fixtures/boundary_gap/input/missing-agent-receipt.json"
+      "kind": "malformed_input",
+      "message": "Optional receipt input is malformed: EOF while parsing an object at line 1 column 50",
+      "source_artifact": "fixtures/boundary_gap/input/malformed-agent-receipt.json"
     },
     {
       "kind": "missing_required_input",
