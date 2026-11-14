@@ -11,6 +11,7 @@ fn main() -> Result<(), String> {
         "Cargo.lock",
         "rust-toolchain.toml",
         "tools/repo-policy",
+        "xtask/src/policy/user_text.rs",
     ] {
         println!("cargo:rerun-if-changed={}", root.join(path).display());
     }

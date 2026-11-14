@@ -6,6 +6,8 @@ pub fn source_identity(root: &Path) -> Result<String, String> {
         root.join("Cargo.toml"),
         root.join("Cargo.lock"),
         root.join("rust-toolchain.toml"),
+        // Shared source is compiled into repo-policy, not the xtask package.
+        root.join("xtask/src/policy/user_text.rs"),
     ];
     collect(&root.join("tools/repo-policy"), &mut paths)?;
     paths.sort();

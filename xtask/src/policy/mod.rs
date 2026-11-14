@@ -28,6 +28,7 @@ mod product_copy;
 pub(crate) mod proof_packs;
 mod release_selection;
 mod release_targets;
+#[path = "user_text_frontdoor.rs"]
 mod user_text;
 
 pub(crate) use release_targets::{CandidateAuthoritySnapshot, capture_candidate_authority};

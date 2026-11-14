@@ -74,6 +74,7 @@ impl Fixture {
             ("tools/repo-policy/src/main.rs", PROBE),
             ("tools/repo-policy/tests/frontdoor.rs", FRONTDOOR),
             ("tools/repo-policy/identity.txt", name),
+            ("xtask/src/policy/user_text.rs", "shared matcher source"),
         ] {
             let path = root.join(path);
             if let Some(parent) = path.parent() {
@@ -219,7 +220,7 @@ fn verify_run(root: &Path, output: &Output, cached: bool) -> Result<PathBuf, Str
         .lines()
         .filter_map(|line| line.strip_prefix("cargo:rerun-if-changed="))
         .collect();
-    assert_eq!(watched.len(), 4);
+    assert_eq!(watched.len(), 5);
     // Check B watches after its behavioral oracle. This lets an independent
     // relative-watch mutant reach B's stale executable instead of failing A
     // merely because of its watch spelling.
@@ -229,6 +230,7 @@ fn verify_run(root: &Path, output: &Output, cached: bool) -> Result<PathBuf, Str
             "Cargo.lock",
             "rust-toolchain.toml",
             "tools/repo-policy",
+            "xtask/src/policy/user_text.rs",
         ]) {
             assert!(
                 Path::new(path).is_absolute(),
@@ -294,6 +296,14 @@ fn cached_production_build_script_binds_the_current_backdated_worktree() -> Resu
     // conceal the preserved-mtime regression this fixture must discriminate.
     assert!(harness.starts_with(fixture.0.join("serialized-target")));
     fs::remove_file(harness).map_err(|e| e.to_string())?;
+    verify_run(&b, &fixture.cargo(&b, &args)?, true)?;
+    // The shared matcher is outside the package directory. Changing only it
+    // must invalidate Cargo's cached stamp, not merely fail at runtime.
+    fs::write(
+        b.join("xtask/src/policy/user_text.rs"),
+        "changed shared matcher source",
+    )
+    .map_err(|e| e.to_string())?;
     verify_run(&b, &fixture.cargo(&b, &args)?, true)?;
     Ok(())
 }

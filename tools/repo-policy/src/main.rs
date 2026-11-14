@@ -16,6 +16,13 @@ fn main() {
             repo_policy::verify_executable_identity()
                 .and_then(|()| repo_policy::executable_files::check())
         }),
+        Some("check-user-text") => Some(|| {
+            repo_policy::verify_executable_identity().and_then(|()| {
+                repo_policy::user_text::check_foreign_tree(
+                    &std::env::args().skip(2).collect::<Vec<_>>(),
+                )
+            })
+        }),
         Some("preflight") => Some(repo_policy::preflight),
         Some("verify-preflight") => Some(|| {
             repo_policy::verify_preflight(std::path::Path::new(
@@ -30,7 +37,7 @@ fn main() {
         (_, Some(command)) => repo_policy::enter_workspace_root()
             .and_then(|()| command())
             .map(|()| 0),
-        (_, None) => Err("usage: cargo policy check-workflows | check-agent-skills | check-executable-files | preflight | verify-preflight | python-wheel-applicability <event> <base-sha> <head-sha> | capture-coverage-failure | run-coverage".into()),
+        (_, None) => Err("usage: cargo policy check-workflows | check-agent-skills | check-executable-files | check-user-text --tree <path> | preflight | verify-preflight | python-wheel-applicability <event> <base-sha> <head-sha> | capture-coverage-failure | run-coverage".into()),
     };
     let code = match result {
         Ok(code) => code,
