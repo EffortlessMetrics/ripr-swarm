@@ -560,7 +560,7 @@ fn route_not_ready_reason(
             ""
         };
         label.push_str(&format!(
-            ": write the boundary test by hand — `ripr agent stub{root_flag} --at {at} --kind predicate` writes a fill-in skeleton for the changed comparison{module_note}; the boundary input is prefilled when it derives, otherwise fill the todo!() values, then rerun `ripr repair`"
+            ": write the boundary test by hand, or run `ripr agent stub{root_flag} --at {at} --kind predicate` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
     // #10701: a changed return value or error with no test ripr can
@@ -5582,6 +5582,16 @@ pub(crate) mod tests {
             "{}",
             refusal.reason
         );
+        // #14308: the route names the stub once, in the same short shape as
+        // the return-value route.
+        let printed_root = shell_arg(&bound_root(&root.to_string_lossy()));
+        assert!(
+            refusal.reason.contains(&format!(
+                "or run `ripr agent stub --root {printed_root} --at src/pricing.rs:88 --kind predicate` for a fill-in skeleton"
+            )) && refusal.reason.ends_with("the stub adds one), then rerun `ripr repair`"),
+            "{}",
+            refusal.reason
+        );
 
         // Discriminating negatives: a different target blocker names no
         // route and carries no module note.
@@ -6097,9 +6107,7 @@ pub(crate) mod tests {
                 "ripr agent stub --root {printed_root} --at src/pricing.rs:88 --kind predicate"
             )) && refusal
                 .reason
-                .contains("writes a fill-in skeleton for the changed comparison")
-                && refusal.reason.contains("prefilled when it derives")
-                && refusal.reason.contains("then rerun `ripr repair`"),
+                .contains("--kind predicate` for a fill-in skeleton, then rerun `ripr repair`"),
             "{}",
             refusal.reason
         );
