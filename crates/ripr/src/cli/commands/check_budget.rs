@@ -290,6 +290,39 @@ mod tests {
     }
 
     #[test]
+    fn budget_worker_shares_the_callers_disclosure_run() {
+        // #14700: the analysis runs on the budget worker thread, so the
+        // caller's disclosure run must be installed there too, or a family
+        // printed by the worker would be printed again by the caller.
+        let run = crate::analysis::IndexDisclosureRun::default();
+        let caller = std::thread::current().id();
+        let worker_run = run.clone();
+        let result = run.scope(|| {
+            run_with_budget(
+                Some(Duration::from_secs(30)),
+                None,
+                || {},
+                move || {
+                    let on_worker = std::thread::current().id() != caller;
+                    let shared = crate::analysis::IndexDisclosureRun::current()
+                        .is_some_and(|current| current.is_same_run(&worker_run));
+                    Ok((on_worker, shared))
+                },
+            )
+        });
+        assert_eq!(result, Ok((true, true)));
+
+        // Without a caller run, the worker has none either.
+        let result = run_with_budget(
+            Some(Duration::from_secs(30)),
+            None,
+            || {},
+            || Ok(crate::analysis::IndexDisclosureRun::current().is_none()),
+        );
+        assert_eq!(result, Ok(true));
+    }
+
+    #[test]
     fn disabled_budget_runs_inline() {
         let caller = std::thread::current().id();
         let result = run_with_budget(

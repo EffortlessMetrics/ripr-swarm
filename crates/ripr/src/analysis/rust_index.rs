@@ -319,6 +319,13 @@ impl IndexDisclosureRun {
         work()
     }
 
+    /// Whether `self` and `other` are the same run, for tests that check a
+    /// run crosses a thread boundary.
+    #[cfg(test)]
+    pub(crate) fn is_same_run(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+
     fn admit(&self, family: IndexLimitFamily) -> bool {
         match self.0.lock() {
             Ok(mut disclosed) => disclosed.insert(family),
