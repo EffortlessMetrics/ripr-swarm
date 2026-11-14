@@ -1299,6 +1299,174 @@ fn deleted_guard_block_reads_a_conjunction_past_an_unreadable_conjunct() -> Resu
     Ok(())
 }
 
+// #11889 residual: a guard that also names a local (`seq_index is None and
+// start < 0` in more-itertools `iter_index`) is read through its
+// parameter-only conjuncts. One of them provably false keeps every observed
+// input out of the deleted block, whatever the local was.
+#[test]
+fn deleted_guard_block_reads_a_parameter_conjunct_beside_a_local() -> Result<(), String> {
+    let removed = vec![
+        line(3, 3, "    if result is not None and total > 1000:"),
+        line(4, 3, "        result = total - 50"),
+    ];
+    let classes = deleted_guard_classes(
+        "local-conjunct",
+        DISCOUNT_NEW,
+        DISCOUNT_TESTS,
+        removed.clone(),
+    )?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    assert_eq!(classes[0].1, ExposureClass::WeaklyExposed, "{classes:?}");
+    // Positive control: an input that satisfies the parameter conjunct may
+    // enter the block, so the deletion keeps its credit.
+    let tests =
+        format!("{DISCOUNT_TESTS}\n\ndef test_big():\n    assert apply_discount(2000) == 1950\n");
+    let classes = deleted_guard_classes("local-conjunct-entered", DISCOUNT_NEW, &tests, removed)?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    assert_eq!(classes[0].1, ExposureClass::Exposed, "{classes:?}");
+    Ok(())
+}
+
+#[test]
+fn deleted_guard_block_refuses_a_walrus_that_can_rebind_a_kept_parameter() -> Result<(), String> {
+    let removed = vec![
+        line(3, 3, "    if (total := 2000) and result is not None and total > 1000:"),
+        line(4, 3, "        result = total - 50"),
+    ];
+    let classes = deleted_guard_classes(
+        "walrus-rebinds-kept-parameter",
+        DISCOUNT_NEW,
+        DISCOUNT_TESTS,
+        removed,
+    )?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    assert_eq!(classes[0].1, ExposureClass::Exposed, "{classes:?}");
+    Ok(())
+}
+
+#[test]
+fn deleted_guard_block_refuses_a_mutating_call_beside_a_parameter_truthiness_check()
+-> Result<(), String> {
+    let removed = vec![
+        line(3, 3, "    if fill(total) and total:"),
+        line(4, 3, "        result = total - 50"),
+    ];
+    let classes = deleted_guard_classes(
+        "call-mutates-kept-parameter",
+        DISCOUNT_NEW,
+        DISCOUNT_TESTS,
+        removed,
+    )?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    assert_eq!(classes[0].1, ExposureClass::Exposed, "{classes:?}");
+    Ok(())
+}
+
+// What the parameter-only reading must not exclude on: a guard over locals or
+// module constants alone, a parameter conjunct that holds, and `or` or a
+// conditional expression, where dropping an operand can turn a true guard
+// false.
+#[test]
+fn deleted_guard_block_beside_a_local_fails_open_without_a_false_parameter_conjunct()
+-> Result<(), String> {
+    for (label, guard) in [
+        ("local-only", "    if result > 1000:"),
+        (
+            "local-and-true-parameter",
+            "    if result is not None and total < 5000:",
+        ),
+        (
+            "local-or-parameter",
+            "    if result is None or total > 1000:",
+        ),
+        (
+            "or-inside-a-conjunct",
+            "    if (result or total > 1000) and total > 1000 or vip is None:",
+        ),
+        (
+            "conditional-expression",
+            "    if (result if total > 1000 else True) and total > 1000:",
+        ),
+        (
+            "constant-and-true-parameter",
+            "    if total > LIMIT and total < 5000:",
+        ),
+    ] {
+        let removed = vec![line(3, 3, guard), line(4, 3, "        result = total - 50")];
+        let classes = deleted_guard_classes(label, DISCOUNT_NEW, DISCOUNT_TESTS, removed)?;
+        assert_eq!(classes.len(), 1, "{label}: {classes:?}");
+        assert_eq!(classes[0].1, ExposureClass::Exposed, "{label}: {classes:?}");
+    }
+    Ok(())
+}
+
+// An early exit keeps a row off the deleted line by HOLDING, which a partial
+// conjunction cannot show: `total < 1000 and flag` leaves through the exit
+// only when the local is truthy too.
+#[test]
+fn deleted_line_after_an_early_exit_naming_a_local_fails_open() -> Result<(), String> {
+    let exits = |condition: &str| {
+        format!(
+            "def apply_discount(total, vip=False):\n    result = total\n    flag = total > 5\n    if {condition}:\n        return result\n    return result\n"
+        )
+    };
+    let removed = || vec![line(6, 6, "    result = total - 50")];
+    let classes = deleted_guard_classes(
+        "exit-local",
+        &exits("total < 1000 and flag"),
+        DISCOUNT_TESTS,
+        removed(),
+    )?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    assert_eq!(classes[0].1, ExposureClass::Exposed, "{classes:?}");
+    // Control: the same exit over the parameter alone is read whole.
+    let classes = deleted_guard_classes(
+        "exit-parameter",
+        &exits("total < 1000"),
+        DISCOUNT_TESTS,
+        removed(),
+    )?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    assert_eq!(classes[0].1, ExposureClass::WeaklyExposed, "{classes:?}");
+    Ok(())
+}
+
+#[test]
+fn parameter_only_guard_keeps_what_an_old_side_read_may_evaluate() {
+    use super::guard_activation::parameter_only_guard;
+    let params = vec!["total".to_string(), "start".to_string()];
+    for (condition, expected) in [
+        ("total > 1000", Some("total > 1000")),
+        (
+            "total > 1000 or start < 0",
+            Some("total > 1000 or start < 0"),
+        ),
+        ("seq_index is None and start < 0", Some("start < 0")),
+        (
+            "start < 0 and seq_index is None and total > 1",
+            Some("start < 0 and total > 1"),
+        ),
+        ("(seq_index is None) and (start < 0)", Some("(start < 0)")),
+        ("seq_index is None", None),
+        ("total > LIMIT", None),
+        ("seq_index is None or start < 0", None),
+        ("(seq_index or start < 0) and total > 1", None),
+        ("seq_index and start < 0 or total > 1", None),
+        ("(seq_index if start < 0 else total) and start < 0", None),
+        ("fill(total) and total > 1000", None),
+        ("fill(total) and total", None),
+        ("(total := 2000) and total > 1000", None),
+        ("any(x for x in total) and start < 0", None),
+        ("(lambda: seq_index)() and start < 0", None),
+    ] {
+        assert_eq!(
+            parameter_only_guard(condition, &params).as_deref(),
+            expected,
+            "{condition}"
+        );
+    }
+}
+
 // A guard dropped while part of its body is kept (dedented) leaves that part
 // running for every input, so the removal is not a deletion of an unentered
 // block: the header gets no old-side view and the existing verdict stands.

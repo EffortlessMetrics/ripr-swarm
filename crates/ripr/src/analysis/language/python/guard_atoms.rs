@@ -25,7 +25,8 @@ use super::PythonOwner;
 use super::arm_activation::{ScalarKind, builtin_names_intact, scalar_kind};
 use super::boundary::{CallRow, canonical_decimal, literal_elements, resolve_operand};
 use super::guard_activation::{
-    compare_literal_values, condition_holds, keyword_outside_quotes, parameter_rebound_before,
+    compare_literal_values, condition_holds, conjunct_has_call_or_walrus, keyword_outside_quotes,
+    parameter_rebound_before,
 };
 use super::module_constants::{PythonModuleConstant, mentions_identifier};
 
@@ -48,6 +49,17 @@ pub(super) fn guard_condition_holds(
     {
         return None;
     }
+    let conjuncts = split_top_level(condition, " and ");
+    // A call or walrus can mutate a parameter used by another conjunct, so a
+    // partial truth value cannot exclude the row (#14273). The two call-shaped
+    // atoms above are evaluated explicitly and do not discard that fact.
+    if conjuncts.iter().any(|conjunct| {
+        conjunct_has_call_or_walrus(conjunct)
+            && !conjunct.starts_with("isinstance(")
+            && !conjunct.starts_with("len(")
+    }) {
+        return None;
+    }
     let reader = Reader {
         owner,
         condition_line,
@@ -55,7 +67,6 @@ pub(super) fn guard_condition_holds(
         constants,
         owner_source,
     };
-    let conjuncts = split_top_level(condition, " and ");
     if conjuncts.iter().all(|conjunct| {
         let conjunct = conjunct.trim();
         // Plain comparisons keep the existing reader unchanged.
@@ -409,7 +420,7 @@ fn literal_display(text: &str) -> Option<Vec<String>> {
 
 /// Splits `text` at every top-level occurrence of `separator`, outside quotes
 /// and brackets.
-fn split_top_level<'a>(text: &'a str, separator: &str) -> Vec<&'a str> {
+pub(super) fn split_top_level<'a>(text: &'a str, separator: &str) -> Vec<&'a str> {
     let mut parts = Vec::new();
     let mut last = 0;
     let mut position = 0;

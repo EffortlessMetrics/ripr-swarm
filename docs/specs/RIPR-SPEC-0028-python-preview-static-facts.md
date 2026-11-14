@@ -1892,6 +1892,20 @@ cannot evaluate no longer hides a false one (`vip and total > 1000`); this
 also applies to live guarded lines and only moves a verdict from `exposed` to
 `weakly_exposed`.
 
+A deleted guard that also names a local or a module constant is read through
+its parameter-only `and` conjuncts (#11889 residual): in
+`if seq_index is None and start < 0:` the conjunct `start < 0` is evaluated
+and `seq_index is None` is dropped, so a row with `start = 0` is excluded
+whatever the local held. Names other than owner parameters resolve on the new
+side and stay untrusted, so a guard over them alone, or one whose parameter
+conjuncts all hold or cannot be read, keeps the existing verdict. A guard
+holding `or`, a conditional expression, a `lambda` or a comprehension is read
+whole (parameters only) or not at all: dropping an operand there can turn a
+true guard false. An early exit or an `if`/`elif` chain condition keeps a row
+off the line by holding, which a partial conjunction cannot show, so those are
+read only when the whole condition names parameters alone. The reported guard
+text stays the whole condition.
+
 ## Metrics
 
 In addition to the cross-language metrics in RIPR-SPEC-0026, the Python
