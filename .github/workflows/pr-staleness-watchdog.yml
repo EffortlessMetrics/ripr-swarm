@@ -294,7 +294,7 @@ jobs:
                 case "$status" in
                   0) told=$((told + 1)); disposition="$disposition; re-apply notice posted" ;;
                   2) disposition="$disposition; re-apply notice already posted" ;;
-                  3) dark=$((dark - 1)); in_progress=$((in_progress + 1)); disposition="in flight (a merge-ready run became visible; do not re-apply the label)" ;;
+                  3) dark=$((dark - 1)); in_progress=$((in_progress + 1)); disposition="in flight (a merge-ready run became visible; do not re-apply the label)$unreadable_note" ;;
                   4) dark=$((dark - 1)); disposition="skip: request withdrawn or moved before write" ;;
                   *) disposition="$disposition; re-apply notice failed" ;;
                 esac
