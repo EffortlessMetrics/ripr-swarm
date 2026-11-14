@@ -9416,6 +9416,26 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
             "mod global;\ncompile_error!(global);\nuse global::*;\n",
             false,
         ),
+        (
+            "mod global;\nstd::compile_error!(\"unsupported\");\nuse global::*;\n",
+            true,
+        ),
+        (
+            "mod global;\nextern crate dep as std;\nstd::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nuse dep::{self as std};\nstd::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nuse dep::r#std;\nstd::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nextern crate dep as thread_local;\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
         // Another item or import may bind the root under a `cfg` the scan
         // does not evaluate, or the module may hold files it cannot see.
         (

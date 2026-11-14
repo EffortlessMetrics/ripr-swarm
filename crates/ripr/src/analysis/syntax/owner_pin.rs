@@ -815,8 +815,9 @@ fn std_item_macro_leaves_root_unbound(call: &ast::MacroCall, file: SyntaxNode, r
         .chars()
         .filter(|ch| !ch.is_whitespace())
         .collect();
-    // `core` exports neither macro under that path, so `core::` (like a
-    // leading `::`) is refused; a `std::` call also needs `std` itself unbound.
+    // `core::thread_local!` does not exist and `core::compile_error!` is
+    // refused conservatively, as is a leading `::`; a `std::` call also needs
+    // `std` itself unbound.
     let qualified = spelled.strip_prefix("std::");
     let callee = qualified.unwrap_or(&spelled);
     if !super::module_tree::ITEM_MACROS_WITHOUT_MODULES.contains(&callee) {
