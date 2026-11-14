@@ -16,12 +16,13 @@ use std::path::{Path, PathBuf};
 use ra_ap_syntax::ast::{self, HasAttrs, HasModuleItem, HasName};
 use ra_ap_syntax::{AstNode, Edition, SourceFile};
 
-/// `cargo test -p <package> --lib <module path>`, with optional lock flags and
-/// nothing else.
+/// `cargo test -p <package> --lib <module path>`, with optional lock flags,
+/// optional `--features` and nothing else.
 #[derive(Debug, PartialEq, Eq)]
 struct LibrarySelector {
     package: String,
     module_path: Vec<String>,
+    features: Vec<String>,
 }
 
 fn parse_library_selector(command: &str) -> Option<LibrarySelector> {
@@ -32,12 +33,23 @@ fn parse_library_selector(command: &str) -> Option<LibrarySelector> {
     let mut package = None;
     let mut filter = None;
     let mut lib = false;
+    let mut features: Vec<String> = Vec::new();
     while let Some(word) = words.next() {
         match word {
             "-p" | "--package" if package.is_none() => {
                 package = Some(words.next().filter(|value| !value.starts_with('-'))?);
             }
             "--lib" if !lib => lib = true,
+            "--features" | "-F" => {
+                let value = words.next().filter(|value| !value.starts_with('-'))?;
+                features.extend(
+                    value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_string),
+                );
+            }
             "--locked" | "--offline" => {}
             positional if !positional.starts_with('-') && filter.is_none() => {
                 filter = Some(positional);
@@ -61,6 +73,7 @@ fn parse_library_selector(command: &str) -> Option<LibrarySelector> {
     Some(LibrarySelector {
         package: package?.to_string(),
         module_path,
+        features,
     })
 }
 
@@ -109,15 +122,22 @@ fn attribute_text(attr: &ast::Attr) -> String {
 }
 
 /// The value of one whitespace-free `cfg` predicate in a test build on this
-/// host, or `None` when it is not understood here. Only `test` and the host
-/// family and operating system are understood, alone or under `not(..)`:
+/// host, or `None` when it is not understood here. Only `test`, the host
+/// family and operating system, and `feature = ".."` against the features the
+/// selector itself enables are understood, alone or under `not(..)`:
 /// selectors are resolved for the host that runs the local build.
-fn host_cfg_value(predicate: &str) -> Option<bool> {
+fn host_cfg_value(predicate: &str, features: &[String]) -> Option<bool> {
     if let Some(inner) = predicate
         .strip_prefix("not(")
         .and_then(|rest| rest.strip_suffix(')'))
     {
-        return host_cfg_value(inner).map(|value| !value);
+        return host_cfg_value(inner, features).map(|value| !value);
+    }
+    if let Some(name) = predicate
+        .strip_prefix("feature=\"")
+        .and_then(|rest| rest.strip_suffix('"'))
+    {
+        return Some(features.iter().any(|feature| feature == name));
     }
     match predicate {
         "test" => Some(true),
@@ -172,7 +192,7 @@ fn is_inert_attribute(text: &str) -> bool {
 /// [`host_cfg_value`]) and every other attribute is inert (see
 /// [`is_inert_attribute`]); `None` otherwise, including for a `cfg_attr`, a
 /// `#[path]` or an attribute macro, which can change what is built.
-fn presence_in_test_build<T: HasAttrs>(item: &T) -> Option<bool> {
+fn presence_in_test_build<T: HasAttrs>(item: &T, features: &[String]) -> Option<bool> {
     let mut present = true;
     for text in item.attrs().map(|attr| attribute_text(&attr)) {
         if text.starts_with("#[cfg_attr") || text.starts_with("#[path") {
@@ -182,7 +202,7 @@ fn presence_in_test_build<T: HasAttrs>(item: &T) -> Option<bool> {
             .strip_prefix("#[cfg(")
             .and_then(|rest| rest.strip_suffix(")]"))
         {
-            present &= host_cfg_value(predicate)?;
+            present &= host_cfg_value(predicate, features)?;
         } else if text.starts_with("#[cfg") || !is_inert_attribute(&text) {
             return None;
         }
@@ -196,7 +216,7 @@ fn is_test_function(function: &ast::Fn) -> bool {
         .any(|attr| attribute_text(&attr) == "#[test]")
 }
 
-fn parse_items(path: &Path) -> Option<Vec<ast::Item>> {
+fn parse_items(path: &Path, features: &[String]) -> Option<Vec<ast::Item>> {
     let text = std::fs::read_to_string(path).ok()?;
     let parse = SourceFile::parse(&text, Edition::Edition2024);
     if !parse.errors().is_empty() {
@@ -206,7 +226,7 @@ fn parse_items(path: &Path) -> Option<Vec<ast::Item>> {
     // The file's inner attributes apply to the whole module. A file whose
     // module is not built here, or whose attributes are not understood, is
     // not resolved: the build-and-list path decides.
-    if presence_in_test_build(&tree) != Some(true) {
+    if presence_in_test_build(&tree, features) != Some(true) {
         return None;
     }
     Some(tree.items().collect())
@@ -221,11 +241,16 @@ fn parse_items(path: &Path) -> Option<Vec<ast::Item>> {
 /// or another test attribute such as `#[tokio::test]`) on any item, a nested
 /// file module (`mod deeper;`, not read here), and a macro invocation or
 /// definition (it can expand to tests).
-fn collect_tests(items: &[ast::Item], prefix: &str, tests: &mut Vec<String>) -> Option<()> {
+fn collect_tests(
+    items: &[ast::Item],
+    prefix: &str,
+    tests: &mut Vec<String>,
+    features: &[String],
+) -> Option<()> {
     for item in items {
         // Every item, not only tests and modules: an attribute macro on any
         // item can expand to tests, so it refuses the selector.
-        if !presence_in_test_build(item)? {
+        if !presence_in_test_build(item, features)? {
             continue;
         }
         match item {
@@ -236,11 +261,16 @@ fn collect_tests(items: &[ast::Item], prefix: &str, tests: &mut Vec<String>) -> 
                 let name = module.name()?;
                 let list = module.item_list()?;
                 // An inline module's inner attributes sit under its item list.
-                if !presence_in_test_build(&list)? {
+                if !presence_in_test_build(&list, features)? {
                     continue;
                 }
                 let nested = list.items().collect::<Vec<_>>();
-                collect_tests(&nested, &format!("{prefix}::{}", name.text()), tests)?;
+                collect_tests(
+                    &nested,
+                    &format!("{prefix}::{}", name.text()),
+                    tests,
+                    features,
+                )?;
             }
             ast::Item::MacroCall(_) | ast::Item::MacroRules(_) | ast::Item::MacroDef(_) => {
                 return None;
@@ -258,7 +288,7 @@ pub(crate) fn resolve_in_source(root: &Path, command: &str) -> Option<Vec<String
     let library = library_root(root, &selector.package)?;
     // Children of `lib.rs` live beside it.
     let mut child_directory = library.parent()?.to_path_buf();
-    let mut items = parse_items(&library)?;
+    let mut items = parse_items(&library, &selector.features)?;
     for segment in &selector.module_path {
         let mut declared = items.iter().filter_map(|item| match item {
             ast::Item::Module(module)
@@ -272,26 +302,35 @@ pub(crate) fn resolve_in_source(root: &Path, command: &str) -> Option<Vec<String
         });
         let module = declared.next()?;
         // Two declarations of one name are cfg alternatives; not understood.
-        if declared.next().is_some() || presence_in_test_build(&module) != Some(true) {
+        if declared.next().is_some()
+            || presence_in_test_build(&module, &selector.features) != Some(true)
+        {
             return None;
         }
         child_directory.push(segment);
         items = match module.item_list() {
-            Some(list) if presence_in_test_build(&list) == Some(true) => list.items().collect(),
+            Some(list) if presence_in_test_build(&list, &selector.features) == Some(true) => {
+                list.items().collect()
+            }
             Some(_) => return None,
             None => {
                 let file = child_directory.with_extension("rs");
                 let directory_module = child_directory.join("mod.rs");
                 match (file.is_file(), directory_module.is_file()) {
-                    (true, false) => parse_items(&file)?,
-                    (false, true) => parse_items(&directory_module)?,
+                    (true, false) => parse_items(&file, &selector.features)?,
+                    (false, true) => parse_items(&directory_module, &selector.features)?,
                     _ => return None,
                 }
             }
         };
     }
     let mut tests = Vec::new();
-    collect_tests(&items, &selector.module_path.join("::"), &mut tests)?;
+    collect_tests(
+        &items,
+        &selector.module_path.join("::"),
+        &mut tests,
+        &selector.features,
+    )?;
     (!tests.is_empty()).then_some(tests)
 }
 
@@ -365,6 +404,7 @@ mod tests {
         let expected = Some(LibrarySelector {
             package: "a".to_string(),
             module_path: vec!["outer".to_string(), "tests".to_string()],
+            features: Vec::new(),
         });
         for accepted in [
             "cargo test -p a --lib outer::tests",
@@ -375,6 +415,15 @@ mod tests {
                 format!("not accepted: {accepted}"),
             )?;
         }
+        require(
+            parse_library_selector("cargo test -p a --features x --lib outer::tests")
+                == Some(LibrarySelector {
+                    package: "a".to_string(),
+                    module_path: vec!["outer".to_string(), "tests".to_string()],
+                    features: vec!["x".to_string()],
+                }),
+            "feature selector not accepted",
+        )?;
         for refused in [
             "cargo test -p a outer::tests",
             "cargo test -p a --lib",
@@ -382,7 +431,6 @@ mod tests {
             "cargo test -p a --lib outer::tests other",
             "cargo test -p a -p b --lib outer::tests",
             "cargo test -p a --lib --test t outer::tests",
-            "cargo test -p a --lib --features x outer::tests",
             "cargo test -p a --lib outer::tests -- --ignored",
             "cargo test -p a --lib outer::",
             "cargo test -p a --lib outer::te-sts",
@@ -424,10 +472,9 @@ mod tests {
         // of the list, so the selector is not resolved at all.
         let nested_file =
             "#[cfg(test)]\nmod tests {\n    #[test]\n    fn first() {}\n    mod deeper;\n}\n";
-        // An unconditional test beside a test or module under a condition this
-        // walk does not evaluate: the build may list all of them, so a list of
-        // the unconditional one alone could be partial.
-        let mixed_test = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[cfg(feature = \"x\")]\n    #[test]\n    fn unix_only() {}\n}\n";
+        // An unconditional test beside a module under a condition this walk
+        // does not evaluate: the build may list all of them, so a list of the
+        // unconditional one alone could be partial.
         let mixed_module = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[cfg(any(unix, windows))]\n    mod nested {\n        #[test]\n        fn nested_test() {}\n    }\n}\n";
         let mixed_nested = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    mod nested {\n        #[test]\n        fn plain() {}\n        #[cfg_attr(unix, ignore)]\n        #[cfg(not(feature = \"x\"))]\n        #[test]\n        fn unix_only() {}\n    }\n}\n";
         let other_attribute = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[tokio::test]\n    async fn other() {}\n}\n";
@@ -450,7 +497,6 @@ mod tests {
             ("gated-test", gated_test),
             ("broken", broken),
             ("nested-file", nested_file),
-            ("mixed-test", mixed_test),
             ("mixed-module", mixed_module),
             ("mixed-nested", mixed_nested),
             ("other-attribute", other_attribute),
@@ -491,6 +537,36 @@ mod tests {
             )
             .is_none(),
             "an unknown package resolved",
+        )
+    }
+
+    /// `feature = ".."` is evaluated against the features the selector itself
+    /// enables: without `--features` the gated items are absent, with it they
+    /// are listed. This is what lets a feature-gated module (for example
+    /// `analysis::scip` behind `scip-admission`) resolve from source.
+    #[test]
+    fn feature_conditions_follow_the_selector_features() -> Result<(), String> {
+        let inner = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[cfg(feature = \"x\")]\n    #[test]\n    fn feature_only() {}\n    #[cfg(not(feature = \"x\"))]\n    #[test]\n    fn no_feature() {}\n}\n";
+        let workspace = layout("feature-conditions", inner)?;
+        let without = resolve_in_source(workspace.root(), SELECTOR);
+        require(
+            without
+                == Some(vec![
+                    "outer::inner::tests::always".to_string(),
+                    "outer::inner::tests::no_feature".to_string(),
+                ]),
+            format!("wrong resolution without features: {without:?}"),
+        )?;
+        let with = resolve_in_source(
+            workspace.root(),
+            "cargo test -p a --features x --lib outer::inner::tests",
+        );
+        require(
+            with == Some(vec![
+                "outer::inner::tests::always".to_string(),
+                "outer::inner::tests::feature_only".to_string(),
+            ]),
+            format!("wrong resolution with features: {with:?}"),
         )
     }
 
@@ -558,7 +634,7 @@ mod tests {
         // a Unix host includes; a resolved list must include it too.
         let admission = resolve_in_source(
             root,
-            "cargo test -p ripr --lib analysis::scip::admission::tests",
+            "cargo test -p ripr --features scip-admission --lib analysis::scip::admission::tests",
         )
         .ok_or("the admission selector does not resolve")?;
         let gated =
