@@ -2122,7 +2122,7 @@ fn explicit_store_pair_scopes(policy: &EditCagePolicy) -> Vec<&CagePathRule> {
 fn writable_path_components_are_safe_in(
     root: &Path,
     relative: &str,
-    _explicit_store_scopes: &[&CagePathRule],
+    explicit_store_scopes: &[&CagePathRule],
 ) -> Result<bool, String> {
     let mut current = root.to_path_buf();
     for component in relative.split('/') {
