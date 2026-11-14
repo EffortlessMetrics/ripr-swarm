@@ -5,5 +5,6 @@
   `unknown`. `mergeable_state` is not resolved for heads in the merge queue
   (63 of 102 eligible heads were queued and read `unknown`, which alone exceeded
   the 10-minute job cap and cancelled 136 consecutive runs). An unreadable head
-  is classified and counted in the sweep summary and re-read by the next sweep;
-  conflict notices are stated as unavailable for it rather than implied (#14636).
+  is classified as deferred, not dark, and counted in the sweep summary and
+  re-read by the next sweep; conflict notices are stated as unavailable for it
+  rather than implied (#14636).

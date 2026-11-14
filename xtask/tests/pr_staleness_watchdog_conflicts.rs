@@ -117,6 +117,7 @@ struct Outcome {
     successes: usize,
     summary: String,
     log: String,
+    stdout: String,
 }
 
 fn run_block() -> Result<String, String> {
@@ -349,6 +350,7 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
         successes: count("state=success"),
         summary: fs::read_to_string(&summary_path).unwrap_or_default(),
         log: log.clone(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
     };
     let _ = fs::remove_dir_all(&dir);
     Ok(outcome)
@@ -584,6 +586,45 @@ fn a_head_whose_mergeability_is_unreadable_is_deferred_not_retried() -> Result<(
             .contains("Unreadable mergeability: 1 head(s) deferred to the next sweep"),
         "{}",
         outcome.summary
+    );
+    // An unreadable head is deferred, not dark: the row must not carry the
+    // re-apply remedy, which cannot create a merge ref for a conflicted head.
+    assert!(
+        outcome.summary.contains(
+            "deferred to the next sweep; check mergeability before re-applying merge-ready"
+        ),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        !outcome.summary.contains("DARK; re-apply merge-ready"),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        outcome
+            .summary
+            .contains("dark merge-ready heads reported: 0"),
+        "{}",
+        outcome.summary
+    );
+    // The warning names the deferral and the mergeability check, not a push.
+    assert!(
+        outcome.stdout.contains("Unreadable merge-ready PR head"),
+        "{}",
+        outcome.stdout
+    );
+    assert!(
+        outcome
+            .stdout
+            .contains("Check mergeability before re-applying merge-ready"),
+        "{}",
+        outcome.stdout
+    );
+    assert!(
+        !outcome.stdout.contains("pushed after the request"),
+        "{}",
+        outcome.stdout
     );
     // One live read per head: the in-sweep retry loop is gone.
     let reads = outcome

@@ -136,7 +136,7 @@ jobs:
             echo "dark-head remedy: remove and re-apply merge-ready to request admission and qualification,"
             echo "then enqueue through the native queue route. For a conflict, merge main in first (#7079)."
             echo "Mergeability is read once per head; a queued head reads \`unknown\` on every poll, so it is"
-            echo "counted as unreadable and conflict notices are unavailable for it (#14636)."
+            echo "counted as unreadable and deferred to the next sweep; conflict notices are unavailable for it (#14636)."
             echo ""
             echo "| PR | head | mergeable_state | disposition |"
             echo "| --- | --- | --- | --- |"
@@ -233,8 +233,7 @@ jobs:
               # unreadable head, which alone exceeded the job cap once 63 heads stayed unknown (#14636).
               live="$(gh api "repos/$REPOSITORY/pulls/$number" --jq '[(.mergeable_state // "unknown"), .head.sha, .base.ref, .state, (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring), (.head.repo.full_name // "-")] | join(" ")')"
               read -r mergeable_state live_head live_base live_state live_draft live_requested live_repo <<<"$live"
-              # Eligibility can be withdrawn after the list snapshot. Use the same
-              # live read as mergeability, without adding a per-PR API request.
+              # Eligibility can be withdrawn after the list snapshot; use the same live read as mergeability.
               if [ "$live_state" != "open" ] || [ "$live_draft" != "false" ] || [ "$live_requested" != "true" ] || [ "$live_repo" != "$REPOSITORY" ]; then
                 echo "| #$number | \`$head_sha\` | \`$mergeable_state\` | skip: request withdrawn since listing |" >> "$GITHUB_STEP_SUMMARY"
                 continue
@@ -253,13 +252,14 @@ jobs:
                   dark=$((dark + 1)); dark_counted=1
                   disposition="DARK (conflicted); merge main into \`$head_ref\`, re-apply merge-ready for qualification, then enqueue through the native queue route"
                   echo "::warning title=Dark conflicted PR head::PR #$number head ${head_sha:0:8} is mergeable_state=dirty, so no pull_request run can exist (no merge ref); merge main into $head_ref and resolve conflicts first, then re-apply merge-ready for qualification and enqueue through the native queue route after qualification is green."
+                elif [ "$mergeable_state" = "unknown" ]; then
+                  disposition="deferred to the next sweep; check mergeability before re-applying merge-ready (\`$head_ref\`)$unreadable_note"
+                  echo "::warning title=Unreadable merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run, and its mergeability is unreadable; the next sweep re-reads it. Check mergeability before re-applying merge-ready."
                 else
-                  dark=$((dark + 1)); dark_counted=1
+                  dark=$((dark + 1)); dark_counted=1; [ $(($(date +%s) - $(date -d "$updated_at" +%s))) -lt 600 ] || dark_kind="push"
                   # Quiet for 10 minutes after any PR activity: a label just applied has not run yet.
-                  # An unreadable head may be a conflict, so neither the row nor the warning may blame a push (#14636).
-                  [ "$mergeable_state" = "unknown" ] || [ $(($(date +%s) - $(date -d "$updated_at" +%s))) -lt 600 ] || dark_kind="push"
-                  if [ "$mergeable_state" = "unknown" ]; then disposition="deferred to the next sweep; check mergeability before re-applying merge-ready (\`$head_ref\`)$unreadable_note"; else disposition="DARK; re-apply merge-ready for qualification, then enqueue through the native queue route (\`$head_ref\`)$unreadable_note"; fi
-                  if [ "$mergeable_state" = "unknown" ]; then echo "::warning title=Unreadable merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run, and its mergeability is unreadable; the next sweep re-reads it, so check mergeability before re-applying merge-ready."; else echo "::warning title=Dark merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run (pushed after the request, or the label event was dropped); remove and re-apply merge-ready for qualification, then enqueue through the native queue route after qualification is green."; fi
+                  disposition="DARK; re-apply merge-ready for qualification, then enqueue through the native queue route (\`$head_ref\`)$unreadable_note"
+                  echo "::warning title=Dark merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run (pushed after the request, or the label event was dropped); remove and re-apply merge-ready for qualification, then enqueue through the native queue route after qualification is green."
                 fi
               fi
               ours="$(ours_state "$head_sha")"
