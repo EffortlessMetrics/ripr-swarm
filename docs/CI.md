@@ -2967,6 +2967,7 @@ clearing action here and in their detail text.
 | `base_ref_missing` | PR evidence has no base ref. | Refresh the exact PR evidence with its base ref and retry. |
 | `base_sha_unresolved` | Live base SHA cannot be resolved. | Resolve the tip of the named base and retry with the exact evidence. |
 | `cut_packet_read_failed` | Base hard-cut packet cannot be read except for confirmed absence. | Restore the base packet read and retry; confirmed absence alone uses the inactive template. |
+| `cut_packet_invalid` | Base hard-cut packet or its PR snapshot is invalid. | Repair the base packet with a packet-only control update that lands inactive (`cut_packet_repair`), or correct the PR snapshot/expected head named in the detail, then retry. |
 | `generated_paths_read_failed` | Base `.gitattributes` cannot be read. | Restore that file's read path and retry with exact base evidence. |
 | `base_moved_during_evaluation` | Base moves during admission, except two verified inactive packets. | Re-read the current base and PR head and retry with immutable identities. |
 | `candidate_result_invalid` | Candidate decision is missing or malformed. | Refresh PR/head inputs and retry the explicit event; do not reinterpret the invalid result. |
