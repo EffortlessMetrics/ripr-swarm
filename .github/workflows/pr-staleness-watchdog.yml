@@ -45,15 +45,21 @@ name: PR Staleness Watchdog
 #   routed-rust.yml's own untrusted-PR guard.
 #
 # - Mergeability is read once per head, never retried in-sweep (#14636).
-#   GitHub computes `mergeable_state` lazily and leaves quiet heads at
-#   `unknown` indefinitely, so an in-sweep retry cost 10 s of sleep per
-#   unreadable head and alone exceeded the job cap once 63 of 102 eligible
-#   heads stayed `unknown`. A head whose mergeability is still unreadable is
-#   classified `mergeability unreadable`, counted in the sweep summary, and
-#   left for the next sweep to read again, so the bound is one interval.
+#   `mergeable_state` is unavailable for every head in the merge queue: a
+#   queued head reads `unknown` on every poll, so an in-sweep retry spent 10 s
+#   of sleep per queued head and alone exceeded the job cap once 63 of 102
+#   eligible heads were queued. A non-queued head that reads `unknown` is the
+#   lazy first read after the base moved and resolves on its own, so the next
+#   sweep sees it. A head whose mergeability is still unreadable is classified
+#   `mergeability unreadable`, counted in the sweep summary, and left for the
+#   next sweep, so the bound is one interval.
 #   Conflict detection needs `mergeable_state == "dirty"`, so **conflict
-#   notices are unavailable for those heads**: the summary says so per head
-#   and in its totals, and no conflict is implied to be covered.
+#   notices are unavailable for those heads** — and a queued head is the worst
+#   place to lose that signal, because it is about to merge. The summary says
+#   so per head and in its totals, and no conflict is implied to be covered.
+#   The queue's own `removed_from_merge_queue` event with
+#   `reason=merge_conflict` is the only signal that exists for a queued head;
+#   watching it is a separate change, not part of this one.
 #
 # - The one write is the conflict report (#10136). A merge-ready PR that is
 #   `dirty` and whose head has no `merge-ready conflict` failure from this
@@ -126,8 +132,8 @@ jobs:
             echo "leave it alone. This sweep never dispatches: the remedy for a dark head is to remove and re-apply the merge-ready label."
             echo "First check before re-applying: merge conflicts (#7079). A conflicting (\`dirty\`) PR has no merge"
             echo "ref, so no pull_request run can exist: merge main into the branch first."
-            echo "Mergeability is read once per head; an \`unknown\` head is counted as unreadable and re-read by"
-            echo "the next sweep, and conflict notices are unavailable for it (#14636)."
+            echo "Mergeability is read once per head; a queued head reads \`unknown\` on every poll, so it is counted"
+            echo "as unreadable and conflict notices are unavailable for it (#14636)."
             echo ""
             echo "| PR | head | mergeable_state | disposition |"
             echo "| --- | --- | --- | --- |"
