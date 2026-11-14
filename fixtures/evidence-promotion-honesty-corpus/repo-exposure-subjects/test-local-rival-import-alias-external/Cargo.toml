@@ -1,0 +1,10 @@
+[package]
+name = "test_local_rival_import_alias_external_subject"
+version = "0.0.0"
+edition = "2024"
+
+[lib]
+name = "test_local_rival_import_alias_external_subject"
+path = "src/lib.rs"
+
+[workspace]

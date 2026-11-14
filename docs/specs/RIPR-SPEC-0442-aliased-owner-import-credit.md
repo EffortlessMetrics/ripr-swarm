@@ -140,7 +140,8 @@ read the test's assertions and the owner's body.
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_bin_target_imports_a_library_module_then_owner_gets_no_related_test`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_bin_only_package_imports_its_own_module_then_owner_keeps_related_test`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_the_crate_root_redirects_the_module_with_path_then_owner_gets_no_related_test`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_indexed_packages_when_alias_names_a_sibling_package_then_owner_gets_no_related_test`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_integration_test_when_owner_is_imported_under_an_alias_then_owner_keeps_related_test`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_scoped_binding_shadows_it_then_owner_takes_no_value_from_it`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_free_and_an_associated_owner_share_the_name_then_associated_takes_no_value`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_qualified_call_shares_the_alias_then_owner_takes_no_value_from_it`
 - `fixtures/evidence-promotion-honesty-corpus/corpus.json` `report_digest_required`
-  report fixtures move with the honesty-corpus follow-up.
+  report fixtures `rust-repo-exposure-alias-crate` and
+  `rust-repo-exposure-alias-external`
 
 ## Implementation Mapping
 

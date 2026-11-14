@@ -262,7 +262,9 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-neutral.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-test-local-rival-bare-use.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-test-local-rival-glob-use.json",
-    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json"
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-alias-crate.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-alias-external.json"
   ],
   "cases": [
     {
