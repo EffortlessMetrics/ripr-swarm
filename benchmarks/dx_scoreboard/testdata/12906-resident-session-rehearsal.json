@@ -1,0 +1,1090 @@
+{
+  "schema_version": "ripr-resident-session-rehearsal-summary-v1",
+  "purpose": "Bounded instrument functional rehearsal; not a product performance budget or baseline",
+  "analyzer": {
+    "candidate_sha": "f4a4d5217269b2214d51b603014e4901c4de2138",
+    "candidate_tree": "b4de2aabe3aa8bbe9bd9d059b87048538c7c5b5a",
+    "payload_sha256": "6a8b45485afc0538045d170dc1c43444359356e8e24d3cbc981a41d2885028d6",
+    "rustc": "1.95.0",
+    "workflow_run_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/42980170082",
+    "build_job_id": 130388787658,
+    "artifact_id": 13838011428,
+    "artifact_sha256": "627ad694f27ffc90b4141c4dadfe2530258828bfaad6853b0b8164da60854b81",
+    "wheel_sha256": "e6401721f61a86f0d38f117f9b1fac440d5c1a8b33e7d1e8be366a0c460b73f8",
+    "compatibility": "Local Linux execution observed; no portable manylinux floor qualified"
+  },
+  "instrument": {
+    "rustc": "1.99.1",
+    "binary_sha256": "4a70f4bc26b4e61d541302deff043da127f51dd76f414c12a57f8a792688a29e",
+    "source_blobs": {
+      "xtask/examples/resident_session.rs": "7adc2f2d932219be4dc6163dbee26983aa70ec102f9103d0265ee64700f94e1b",
+      "xtask/src/reports/dx_scoreboard/measure/resident_session.rs": "af00311b7ed754425b2177215a745965efaf9936bf8905fb00ed19a6faee916e",
+      "xtask/src/reports/dx_scoreboard/measure/resident_session/transport.rs": "f4eb20824ef5dc182a5107ae31b8e647034856b994538b62dc9fbcb29a4da8c1"
+    },
+    "command": "resident_session <verified-analyzer> <new-evidence-directory>",
+    "ambient_cargo_rustc": "1.99.1",
+    "host_class": "managed Linux x86_64; shared host, unrelated occupancy not inventoried"
+  },
+  "cleanup_mutation_witness": {
+    "mutation": "Replace process-group SIGKILL in the actual Session termination path with primary-child kill only. Leave the five-second grandchild ceiling unchanged.",
+    "command": "resident_session --self-test",
+    "native_exit": 1,
+    "observed_error": "owned control cleanup exceeded two seconds",
+    "source_restored": true,
+    "restored_control_native_exit": 0,
+    "restored_tests_passed": 12,
+    "scope": "Instrument teardown only; no analyzer or escaped-descendant guarantee."
+  },
+  "summary": {
+    "lsp": {
+      "completed_operations": 27,
+      "fresh_parity_comparisons": 27,
+      "same_state_retained_growth_bytes": [
+        2383872,
+        2375680,
+        2723840
+      ],
+      "growth_min_bytes": 2375680,
+      "growth_max_bytes": 2723840,
+      "growth_population_stddev_bytes": 162227.8012507926,
+      "sample_count": 3,
+      "quantile_policy": "No p95 estimate; with three repeats the maximum remains labelled sample maximum."
+    },
+    "mcp": {
+      "completed_operations": 27,
+      "fresh_parity_comparisons": 27,
+      "same_state_retained_growth_bytes": [
+        1355776,
+        1130496,
+        1150976
+      ],
+      "growth_min_bytes": 1130496,
+      "growth_max_bytes": 1355776,
+      "growth_population_stddev_bytes": 101715.04247979581,
+      "sample_count": 3,
+      "quantile_policy": "No p95 estimate; with three repeats the maximum remains labelled sample maximum."
+    }
+  },
+  "retained_full_receipt": {
+    "url": "https://github.com/EffortlessMetrics/ripr-swarm/blob/a1d031580d760b242e44ae3325ab170c6579cb90/benchmarks/dx_scoreboard/testdata/12906-resident-session-rehearsal.json",
+    "retention_ref": "refs/heads/evidence/12906-resident-rehearsal-a1d03158",
+    "commit": "a1d031580d760b242e44ae3325ab170c6579cb90",
+    "sha256": "315196d03da85ef1b2e21c51da7cf569864aa8b59dea56f5211292c5033af727",
+    "contents": "Complete raw sampled RSS arrays, fixture identities, operation witnesses and controls. Preserved unchanged; this summary selects reviewable observations rather than minifying the raw data."
+  },
+  "measurement_contract": {
+    "workload": "resident-rust-boundary-v1",
+    "size_tier": "synthetic_small",
+    "host_os": "linux",
+    "host_arch": "x86_64",
+    "instrument": "sampled Linux /proc/PID/status VmRSS; direct server only; bytes",
+    "sample_interval_ms": 20,
+    "settle_ms": 100,
+    "session_deadline_ms": 180000,
+    "cache_regime": "fresh private disk cache per surface; reused by resident and references; new reference process per operation",
+    "configuration": {
+      "base": "fixture base_sha",
+      "cache_capacity": "analyzer default; no capacity override",
+      "lsp_check_mode": "instant",
+      "lsp_diagnostic_profile": "full",
+      "mcp_source": "worktree"
+    },
+    "concurrency": "one resident subject; one fresh reference after each resident sample window; unrelated host work is not inventoried",
+    "cpu": "not measured; elapsed wall time is not CPU",
+    "limitations": [
+      "Not heap or aggregate descendant memory",
+      "Sampled peaks may miss between-sample peaks",
+      "Fresh reference processes warm the shared disk cache between operations",
+      "Fixed small workload does not establish large-workspace budgets",
+      "Transport teardown/reopen is exercised; request cancellation and interrupted refresh supersession are not established"
+    ]
+  },
+  "fixture_states": {
+    "initial": {
+      "Cargo.toml": "866daab25e788d124b0b8d5af8484568014142cea546ba44f5a301ce4a6dd011",
+      "src/lib.rs": "b574706c32626ad076fa7f88eef2e9480b56aeb0c0adeff0d0968c40cfac85ae",
+      "tests/boundary.rs": "f022d520ceb8ffac71bca77352066a14eb9956278262f1c06304bab2c2428387"
+    },
+    "production_edit": {
+      "Cargo.toml": "866daab25e788d124b0b8d5af8484568014142cea546ba44f5a301ce4a6dd011",
+      "src/lib.rs": "c336de685b78dd26dd6308fde45e8ee73fc6e3d828d0905033c321e3277bc962",
+      "tests/boundary.rs": "f022d520ceb8ffac71bca77352066a14eb9956278262f1c06304bab2c2428387"
+    },
+    "test_only_edit": {
+      "Cargo.toml": "866daab25e788d124b0b8d5af8484568014142cea546ba44f5a301ce4a6dd011",
+      "src/lib.rs": "c336de685b78dd26dd6308fde45e8ee73fc6e3d828d0905033c321e3277bc962",
+      "tests/boundary.rs": "d6194ae6dee3079178371b3020906df8d29e70d0f109ba826d396557ee75552f"
+    }
+  },
+  "runs": [
+    {
+      "base_sha": "0871bfc45cd46c3c77021678dece3e2dddfac733",
+      "status": "observed",
+      "owned_cleanup_control": {
+        "observations": [
+          {
+            "cleanup_elapsed_ms": 0.19967100000000002,
+            "descendant_terminal": true,
+            "mode": "actual_finish",
+            "pipe_threads_joined": true,
+            "primary_only_negative_control": null,
+            "primary_reaped": true,
+            "same_group_and_live_before_cleanup": true
+          },
+          {
+            "cleanup_elapsed_ms": 0.354303,
+            "descendant_terminal": true,
+            "mode": "primary_only_then_actual_finish",
+            "pipe_threads_joined": true,
+            "primary_only_negative_control": {
+              "descendant_terminal": false,
+              "pipe_threads_finished": false,
+              "primary_reaped": true,
+              "status": "rejected_as_expected"
+            },
+            "primary_reaped": true,
+            "same_group_and_live_before_cleanup": true
+          }
+        ],
+        "scope": "synthetic same-group grandchild inheriting stdin/stdout; terminal means absent or zombie, not descendant reaping; no escaped-descendant claim",
+        "status": "observed"
+      },
+      "run_identifier": "rehearsal-08",
+      "retained_state_negative_control": {
+        "baseline": {
+          "observation_elapsed_ms": 100.997028,
+          "request_elapsed_ms": 0.839113,
+          "retained_rss_bytes": 1867776,
+          "sample_count": 8,
+          "sampled_peak_rss_bytes": 1867776
+        },
+        "retained": {
+          "observation_elapsed_ms": 204.44126300000002,
+          "request_elapsed_ms": 104.238971,
+          "retained_rss_bytes": 35426304,
+          "sample_count": 13,
+          "sampled_peak_rss_bytes": 35426304
+        },
+        "scope": "separate synthetic measured child, not RIPR",
+        "status": "rejected_as_expected",
+        "threshold_bytes": 16777216
+      },
+      "surfaces": [
+        {
+          "cleanup": "owned process group signaled and primary reaped; no escaped-descendant claim",
+          "same_state_retained_growth_bytes": 2383872,
+          "stale_result_negative_control": "rejected",
+          "surface": "lsp",
+          "rows": [
+            {
+              "operation": "initial_load",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 143.74794799999998,
+                "request_elapsed_ms": 43.571887,
+                "retained_rss_bytes": 32714752,
+                "sample_count": 30,
+                "sampled_peak_rss_bytes": 32714752
+              },
+              "retained_delta_from_initial_bytes": null,
+              "raw_operation_sha256": "e49e6550601bf556258e0669b63b44a3bdf3fc3cabda0357c818ee32650c209c"
+            },
+            {
+              "operation": "unchanged_request",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 118.26800399999999,
+                "request_elapsed_ms": 18.119633,
+                "retained_rss_bytes": 33624064,
+                "sample_count": 21,
+                "sampled_peak_rss_bytes": 33624064
+              },
+              "retained_delta_from_initial_bytes": 909312,
+              "raw_operation_sha256": "7d255a6cf9863ccae349ee948cbd62669f6fc6ab8d4ae6f426d24f938754ae01"
+            },
+            {
+              "operation": "production_edit",
+              "fixture_state": "production_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 124.98273999999999,
+                "request_elapsed_ms": 24.830202999999997,
+                "retained_rss_bytes": 33886208,
+                "sample_count": 21,
+                "sampled_peak_rss_bytes": 33886208
+              },
+              "retained_delta_from_initial_bytes": 1171456,
+              "raw_operation_sha256": "3ca49f4564116d159b4a57dea57f1c5689b3549af1de685924605b3e7dd12703"
+            },
+            {
+              "operation": "test_only_edit",
+              "fixture_state": "test_only_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 124.74490300000001,
+                "request_elapsed_ms": 24.599526,
+                "retained_rss_bytes": 34873344,
+                "sample_count": 21,
+                "sampled_peak_rss_bytes": 34873344
+              },
+              "retained_delta_from_initial_bytes": 2158592,
+              "raw_operation_sha256": "576212ef38d60f3325fcd79624904b4c214ebe3fa0408116d3adcad4f545fdc4"
+            },
+            {
+              "operation": "restore_initial",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 117.096274,
+                "request_elapsed_ms": 16.913411999999997,
+                "retained_rss_bytes": 34955264,
+                "sample_count": 21,
+                "sampled_peak_rss_bytes": 34955264
+              },
+              "retained_delta_from_initial_bytes": 2240512,
+              "raw_operation_sha256": "787981d4d4d0008ffd7e3da45525c45c5bdbc6d14ce73c9ff3d51869ce5b71eb"
+            },
+            {
+              "operation": "second_production_edit",
+              "fixture_state": "production_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 123.194475,
+                "request_elapsed_ms": 22.97551,
+                "retained_rss_bytes": 35045376,
+                "sample_count": 21,
+                "sampled_peak_rss_bytes": 35045376
+              },
+              "retained_delta_from_initial_bytes": 2330624,
+              "raw_operation_sha256": "b9ec3514d28a6de8891e7b03e3746f3829137c6378972c621d5560faefeb659c"
+            },
+            {
+              "operation": "second_restore_initial",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 120.16726899999999,
+                "request_elapsed_ms": 20.004157000000003,
+                "retained_rss_bytes": 35098624,
+                "sample_count": 21,
+                "sampled_peak_rss_bytes": 35098624
+              },
+              "retained_delta_from_initial_bytes": 2383872,
+              "raw_operation_sha256": "cdd79ebe6049960129a7ea52abfac418abe5b3f14e3084328f3ea50598d90203"
+            },
+            {
+              "operation": "process_restart",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 123.157591,
+                "request_elapsed_ms": 22.985695,
+                "retained_rss_bytes": 32501760,
+                "sample_count": 29,
+                "sampled_peak_rss_bytes": 32501760
+              },
+              "retained_delta_from_initial_bytes": -212992,
+              "raw_operation_sha256": "1a03b2dd4e1a7ef9695745341ab8fc807eea75c0901b2e5ab674948cdcd71a62"
+            },
+            {
+              "operation": "idle_settle",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 1014.2367720000001,
+                "request_elapsed_ms": 14.076128,
+                "retained_rss_bytes": 32669696,
+                "sample_count": 66,
+                "sampled_peak_rss_bytes": 32669696
+              },
+              "retained_delta_from_initial_bytes": -45056,
+              "raw_operation_sha256": "b14e38146f38a8e85c6bc58b13b339e43f65db622ec56f22ae650a83b6347561"
+            }
+          ]
+        },
+        {
+          "cleanup": "owned process group signaled and primary reaped; no escaped-descendant claim",
+          "same_state_retained_growth_bytes": 1355776,
+          "stale_result_negative_control": "rejected",
+          "surface": "mcp",
+          "rows": [
+            {
+              "operation": "initial_load",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 136.38467300000002,
+                "request_elapsed_ms": 36.182211,
+                "retained_rss_bytes": 34394112,
+                "sample_count": 18,
+                "sampled_peak_rss_bytes": 34394112
+              },
+              "retained_delta_from_initial_bytes": null,
+              "raw_operation_sha256": "52d3b6b87ba27ff74d9d6a8578276f62069ab9992f1aad29e57168b73dc7853e"
+            },
+            {
+              "operation": "unchanged_request",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 121.086898,
+                "request_elapsed_ms": 20.935603,
+                "retained_rss_bytes": 34828288,
+                "sample_count": 14,
+                "sampled_peak_rss_bytes": 34828288
+              },
+              "retained_delta_from_initial_bytes": 434176,
+              "raw_operation_sha256": "a14d4ff0868b9dd1631c6edfb5c7dbb65fd2561a77ca042a9c2ac70c70697ba7"
+            },
+            {
+              "operation": "production_edit",
+              "fixture_state": "production_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 128.659604,
+                "request_elapsed_ms": 28.502534999999998,
+                "retained_rss_bytes": 35266560,
+                "sample_count": 15,
+                "sampled_peak_rss_bytes": 35266560
+              },
+              "retained_delta_from_initial_bytes": 872448,
+              "raw_operation_sha256": "f487e189342171d417dffe80261b7f7912e1e21382df00385b6e9997a7a7c2fc"
+            },
+            {
+              "operation": "test_only_edit",
+              "fixture_state": "test_only_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 125.901872,
+                "request_elapsed_ms": 25.56379,
+                "retained_rss_bytes": 35426304,
+                "sample_count": 15,
+                "sampled_peak_rss_bytes": 35426304
+              },
+              "retained_delta_from_initial_bytes": 1032192,
+              "raw_operation_sha256": "a2102e16d121dfd82dc82c47a3b31165a3ba9056a24dba359fd045269cf69a1b"
+            },
+            {
+              "operation": "restore_initial",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 117.510413,
+                "request_elapsed_ms": 17.330821,
+                "retained_rss_bytes": 35561472,
+                "sample_count": 14,
+                "sampled_peak_rss_bytes": 35561472
+              },
+              "retained_delta_from_initial_bytes": 1167360,
+              "raw_operation_sha256": "6377459b78abe52b055d52740d62775c40b88ab8c3ed0a2f7b55059156415603"
+            },
+            {
+              "operation": "second_production_edit",
+              "fixture_state": "production_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 118.574004,
+                "request_elapsed_ms": 18.433360999999998,
+                "retained_rss_bytes": 35680256,
+                "sample_count": 14,
+                "sampled_peak_rss_bytes": 35680256
+              },
+              "retained_delta_from_initial_bytes": 1286144,
+              "raw_operation_sha256": "47648be303d8539027652f2d1990cc56990213237ca0c9deaa334d394938585d"
+            },
+            {
+              "operation": "second_restore_initial",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 118.5543,
+                "request_elapsed_ms": 18.367551,
+                "retained_rss_bytes": 35749888,
+                "sample_count": 14,
+                "sampled_peak_rss_bytes": 35749888
+              },
+              "retained_delta_from_initial_bytes": 1355776,
+              "raw_operation_sha256": "4bd63c151a70048a044592adb3c8d22ebf755e02e1b52642f4cb8d88020da3c7"
+            },
+            {
+              "operation": "process_restart",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 128.152329,
+                "request_elapsed_ms": 28.008616,
+                "retained_rss_bytes": 34013184,
+                "sample_count": 18,
+                "sampled_peak_rss_bytes": 34013184
+              },
+              "retained_delta_from_initial_bytes": -380928,
+              "raw_operation_sha256": "b263fc835c8ef2354eca310be0c5b0390ee34a07de7b8a93d794c3fa561426f5"
+            },
+            {
+              "operation": "idle_settle",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 1022.229791,
+                "request_elapsed_ms": 22.08579,
+                "retained_rss_bytes": 34226176,
+                "sample_count": 60,
+                "sampled_peak_rss_bytes": 34226176
+              },
+              "retained_delta_from_initial_bytes": -167936,
+              "raw_operation_sha256": "1a2fe02793c1d497981e72d9f53bea08e29e79a372a1253362fbe7c097389698"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "base_sha": "3f482ec223ec4173f2956dcf191cff9ea788cddf",
+      "status": "observed",
+      "owned_cleanup_control": {
+        "observations": [
+          {
+            "cleanup_elapsed_ms": 0.213752,
+            "descendant_terminal": true,
+            "mode": "actual_finish",
+            "pipe_threads_joined": true,
+            "primary_only_negative_control": null,
+            "primary_reaped": true,
+            "same_group_and_live_before_cleanup": true
+          },
+          {
+            "cleanup_elapsed_ms": 0.35743800000000003,
+            "descendant_terminal": true,
+            "mode": "primary_only_then_actual_finish",
+            "pipe_threads_joined": true,
+            "primary_only_negative_control": {
+              "descendant_terminal": false,
+              "pipe_threads_finished": false,
+              "primary_reaped": true,
+              "status": "rejected_as_expected"
+            },
+            "primary_reaped": true,
+            "same_group_and_live_before_cleanup": true
+          }
+        ],
+        "scope": "synthetic same-group grandchild inheriting stdin/stdout; terminal means absent or zombie, not descendant reaping; no escaped-descendant claim",
+        "status": "observed"
+      },
+      "run_identifier": "rehearsal-09",
+      "retained_state_negative_control": {
+        "baseline": {
+          "observation_elapsed_ms": 100.859851,
+          "request_elapsed_ms": 0.720945,
+          "retained_rss_bytes": 1970176,
+          "sample_count": 8,
+          "sampled_peak_rss_bytes": 1970176
+        },
+        "retained": {
+          "observation_elapsed_ms": 204.86673,
+          "request_elapsed_ms": 104.616407,
+          "retained_rss_bytes": 35528704,
+          "sample_count": 13,
+          "sampled_peak_rss_bytes": 35528704
+        },
+        "scope": "separate synthetic measured child, not RIPR",
+        "status": "rejected_as_expected",
+        "threshold_bytes": 16777216
+      },
+      "surfaces": [
+        {
+          "cleanup": "owned process group signaled and primary reaped; no escaped-descendant claim",
+          "same_state_retained_growth_bytes": 2375680,
+          "stale_result_negative_control": "rejected",
+          "surface": "lsp",
+          "rows": [
+            {
+              "operation": "initial_load",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 132.569678,
+                "request_elapsed_ms": 32.390713,
+                "retained_rss_bytes": 32522240,
+                "sample_count": 30,
+                "sampled_peak_rss_bytes": 32522240
+              },
+              "retained_delta_from_initial_bytes": null,
+              "raw_operation_sha256": "1be2f14d233ad9f08f2125ab6b5c08f79cfd0353f1668cfb4174dc8c869b3eb6"
+            },
+            {
+              "operation": "unchanged_request",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 118.92731099999999,
+                "request_elapsed_ms": 18.680773000000002,
+                "retained_rss_bytes": 33316864,
+                "sample_count": 21,
+                "sampled_peak_rss_bytes": 33316864
+              },
+              "retained_delta_from_initial_bytes": 794624,
+              "raw_operation_sha256": "58e50d181d6e23ac4d3c7e1a0c3d3bab132fb83cbb71aff36133cab8538383f1"
+            },
+            {
+              "operation": "production_edit",
+              "fixture_state": "production_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 119.754587,
+                "request_elapsed_ms": 19.441920000000003,
+                "retained_rss_bytes": 33579008,
+                "sample_count": 21,
+                "sampled_peak_rss_bytes": 33579008
+              },
+              "retained_delta_from_initial_bytes": 1056768,
+              "raw_operation_sha256": "19a29e95fde2399d8c3881a0d0ad96fc24111485d1d495347e70a567264249fa"
+            },
+            {
+              "operation": "test_only_edit",
+              "fixture_state": "test_only_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 129.163176,
+                "request_elapsed_ms": 28.991906,
+                "retained_rss_bytes": 34693120,
+                "sample_count": 22,
+                "sampled_peak_rss_bytes": 34693120
+              },
+              "retained_delta_from_initial_bytes": 2170880,
+              "raw_operation_sha256": "abc6b3ee17ec4c5c83c9fd70d5162662a26ed065aaee7d1f8f6d59d8b9938417"
+            },
+            {
+              "operation": "restore_initial",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 117.51804,
+                "request_elapsed_ms": 17.38288,
+                "retained_rss_bytes": 34775040,
+                "sample_count": 21,
+                "sampled_peak_rss_bytes": 34775040
+              },
+              "retained_delta_from_initial_bytes": 2252800,
+              "raw_operation_sha256": "e2cadc39a3403c7713ac9e091a5cedb03495bbffd59809e04275ff52cb1c9592"
+            },
+            {
+              "operation": "second_production_edit",
+              "fixture_state": "production_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 115.436114,
+                "request_elapsed_ms": 15.157089000000001,
+                "retained_rss_bytes": 34840576,
+                "sample_count": 21,
+                "sampled_peak_rss_bytes": 34840576
+              },
+              "retained_delta_from_initial_bytes": 2318336,
+              "raw_operation_sha256": "8805a44175fdf586afaca4e4c0f893912365fbf554a534c631c16285de6b784b"
+            },
+            {
+              "operation": "second_restore_initial",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 121.095997,
+                "request_elapsed_ms": 20.925532999999998,
+                "retained_rss_bytes": 34897920,
+                "sample_count": 21,
+                "sampled_peak_rss_bytes": 34897920
+              },
+              "retained_delta_from_initial_bytes": 2375680,
+              "raw_operation_sha256": "bd22be8bba42636f40dcddcc3e4ebe52826a73c2ac68bcc8414d667a779d488e"
+            },
+            {
+              "operation": "process_restart",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 127.557484,
+                "request_elapsed_ms": 27.308808,
+                "retained_rss_bytes": 32776192,
+                "sample_count": 29,
+                "sampled_peak_rss_bytes": 32776192
+              },
+              "retained_delta_from_initial_bytes": 253952,
+              "raw_operation_sha256": "1f3f86ff69c987f68aec91a760283da8ea0ae6f76541a42693b57aa57dae1a70"
+            },
+            {
+              "operation": "idle_settle",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 1016.261224,
+                "request_elapsed_ms": 16.133703999999998,
+                "retained_rss_bytes": 32948224,
+                "sample_count": 66,
+                "sampled_peak_rss_bytes": 32948224
+              },
+              "retained_delta_from_initial_bytes": 425984,
+              "raw_operation_sha256": "70802548522396d2a6646bb8a82bd6e5eba7e52d1f0cb3bafb0ba947525d0819"
+            }
+          ]
+        },
+        {
+          "cleanup": "owned process group signaled and primary reaped; no escaped-descendant claim",
+          "same_state_retained_growth_bytes": 1130496,
+          "stale_result_negative_control": "rejected",
+          "surface": "mcp",
+          "rows": [
+            {
+              "operation": "initial_load",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 135.98664399999998,
+                "request_elapsed_ms": 35.7432,
+                "retained_rss_bytes": 34152448,
+                "sample_count": 18,
+                "sampled_peak_rss_bytes": 34152448
+              },
+              "retained_delta_from_initial_bytes": null,
+              "raw_operation_sha256": "46f59db46d6c29983a7dad79d14bb8ecd96b4a060c9bc053d7e3cd6f4a327727"
+            },
+            {
+              "operation": "unchanged_request",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 119.142164,
+                "request_elapsed_ms": 18.989367,
+                "retained_rss_bytes": 34410496,
+                "sample_count": 14,
+                "sampled_peak_rss_bytes": 34410496
+              },
+              "retained_delta_from_initial_bytes": 258048,
+              "raw_operation_sha256": "65a960d66b9a6a5f903fd88e00014b77b870083d97356efa4a8d165a4f5af777"
+            },
+            {
+              "operation": "production_edit",
+              "fixture_state": "production_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 130.648878,
+                "request_elapsed_ms": 28.918687,
+                "retained_rss_bytes": 34717696,
+                "sample_count": 15,
+                "sampled_peak_rss_bytes": 34717696
+              },
+              "retained_delta_from_initial_bytes": 565248,
+              "raw_operation_sha256": "8c71f4cfba5b261a9c86646e1cdbedff6d594f2b26d8ddf198c55f3e64d34372"
+            },
+            {
+              "operation": "test_only_edit",
+              "fixture_state": "test_only_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 126.407562,
+                "request_elapsed_ms": 26.250129,
+                "retained_rss_bytes": 34963456,
+                "sample_count": 15,
+                "sampled_peak_rss_bytes": 34963456
+              },
+              "retained_delta_from_initial_bytes": 811008,
+              "raw_operation_sha256": "94da2dae40708cae07d8044bada75cfe6382bb90cca4763aaf542b214ab8fb8c"
+            },
+            {
+              "operation": "restore_initial",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 118.573767,
+                "request_elapsed_ms": 18.414262,
+                "retained_rss_bytes": 35057664,
+                "sample_count": 14,
+                "sampled_peak_rss_bytes": 35057664
+              },
+              "retained_delta_from_initial_bytes": 905216,
+              "raw_operation_sha256": "e111397444745127c8f60445ea19631f93a27e79edb5fe050e9d1afaf0df40d9"
+            },
+            {
+              "operation": "second_production_edit",
+              "fixture_state": "production_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 117.90044800000001,
+                "request_elapsed_ms": 17.744981,
+                "retained_rss_bytes": 35094528,
+                "sample_count": 14,
+                "sampled_peak_rss_bytes": 35094528
+              },
+              "retained_delta_from_initial_bytes": 942080,
+              "raw_operation_sha256": "65d0d462052c78bd27853bce688fcd38ace3925b509787ecfe640cda5744964f"
+            },
+            {
+              "operation": "second_restore_initial",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 121.43497,
+                "request_elapsed_ms": 21.276148000000003,
+                "retained_rss_bytes": 35282944,
+                "sample_count": 14,
+                "sampled_peak_rss_bytes": 35282944
+              },
+              "retained_delta_from_initial_bytes": 1130496,
+              "raw_operation_sha256": "b85e22eb6249b0d283ef4876040fa18dfc95ed1d35c5f73b4ca481d1f94bd3da"
+            },
+            {
+              "operation": "process_restart",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 129.60670599999997,
+                "request_elapsed_ms": 29.429085,
+                "retained_rss_bytes": 34017280,
+                "sample_count": 18,
+                "sampled_peak_rss_bytes": 34017280
+              },
+              "retained_delta_from_initial_bytes": -135168,
+              "raw_operation_sha256": "af912e8cd2c06c65a0a2087758ab6ba42fcacda299bf981420001167619668bf"
+            },
+            {
+              "operation": "idle_settle",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 1020.1679660000001,
+                "request_elapsed_ms": 19.925424,
+                "retained_rss_bytes": 34500608,
+                "sample_count": 59,
+                "sampled_peak_rss_bytes": 34500608
+              },
+              "retained_delta_from_initial_bytes": 348160,
+              "raw_operation_sha256": "350b1c12297886914b6916bde494b5c291771bdd5a50bf117a4ac5c5f1bd0a6d"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "base_sha": "e3c2f9e5083543de553f27d7dfaa5fd58e94371a",
+      "status": "observed",
+      "owned_cleanup_control": {
+        "observations": [
+          {
+            "cleanup_elapsed_ms": 0.185029,
+            "descendant_terminal": true,
+            "mode": "actual_finish",
+            "pipe_threads_joined": true,
+            "primary_only_negative_control": null,
+            "primary_reaped": true,
+            "same_group_and_live_before_cleanup": true
+          },
+          {
+            "cleanup_elapsed_ms": 0.324208,
+            "descendant_terminal": true,
+            "mode": "primary_only_then_actual_finish",
+            "pipe_threads_joined": true,
+            "primary_only_negative_control": {
+              "descendant_terminal": false,
+              "pipe_threads_finished": false,
+              "primary_reaped": true,
+              "status": "rejected_as_expected"
+            },
+            "primary_reaped": true,
+            "same_group_and_live_before_cleanup": true
+          }
+        ],
+        "scope": "synthetic same-group grandchild inheriting stdin/stdout; terminal means absent or zombie, not descendant reaping; no escaped-descendant claim",
+        "status": "observed"
+      },
+      "run_identifier": "rehearsal-10",
+      "retained_state_negative_control": {
+        "baseline": {
+          "observation_elapsed_ms": 100.934097,
+          "request_elapsed_ms": 0.762789,
+          "retained_rss_bytes": 1966080,
+          "sample_count": 8,
+          "sampled_peak_rss_bytes": 1966080
+        },
+        "retained": {
+          "observation_elapsed_ms": 209.06651300000001,
+          "request_elapsed_ms": 108.847697,
+          "retained_rss_bytes": 35524608,
+          "sample_count": 13,
+          "sampled_peak_rss_bytes": 35524608
+        },
+        "scope": "separate synthetic measured child, not RIPR",
+        "status": "rejected_as_expected",
+        "threshold_bytes": 16777216
+      },
+      "surfaces": [
+        {
+          "cleanup": "owned process group signaled and primary reaped; no escaped-descendant claim",
+          "same_state_retained_growth_bytes": 2723840,
+          "stale_result_negative_control": "rejected",
+          "surface": "lsp",
+          "rows": [
+            {
+              "operation": "initial_load",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 131.896878,
+                "request_elapsed_ms": 31.68646,
+                "retained_rss_bytes": 32071680,
+                "sample_count": 30,
+                "sampled_peak_rss_bytes": 32071680
+              },
+              "retained_delta_from_initial_bytes": null,
+              "raw_operation_sha256": "e07c756be84fdb3c42a6f4cf5fde4a92585760195703c8bd19f77f83397539b9"
+            },
+            {
+              "operation": "unchanged_request",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 118.952073,
+                "request_elapsed_ms": 18.773076,
+                "retained_rss_bytes": 33148928,
+                "sample_count": 21,
+                "sampled_peak_rss_bytes": 33148928
+              },
+              "retained_delta_from_initial_bytes": 1077248,
+              "raw_operation_sha256": "5d01a3a344c63f6bdd20782756853a0cf75121094ee99cd0af695ab3b0280723"
+            },
+            {
+              "operation": "production_edit",
+              "fixture_state": "production_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 127.339816,
+                "request_elapsed_ms": 27.149119,
+                "retained_rss_bytes": 33398784,
+                "sample_count": 21,
+                "sampled_peak_rss_bytes": 33398784
+              },
+              "retained_delta_from_initial_bytes": 1327104,
+              "raw_operation_sha256": "36f054d229ce1393818545f5080db861e4816c0d4b5e48ab4d12c54cbd1fcfc3"
+            },
+            {
+              "operation": "test_only_edit",
+              "fixture_state": "test_only_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 130.00937000000002,
+                "request_elapsed_ms": 29.807510999999998,
+                "retained_rss_bytes": 34439168,
+                "sample_count": 22,
+                "sampled_peak_rss_bytes": 34439168
+              },
+              "retained_delta_from_initial_bytes": 2367488,
+              "raw_operation_sha256": "65e4eb0f4a0fb6cfa1fe16eeabaf4c4956cf677c1a8fc83e006758e8f127b612"
+            },
+            {
+              "operation": "restore_initial",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 121.13813900000001,
+                "request_elapsed_ms": 20.898917,
+                "retained_rss_bytes": 34656256,
+                "sample_count": 21,
+                "sampled_peak_rss_bytes": 34656256
+              },
+              "retained_delta_from_initial_bytes": 2584576,
+              "raw_operation_sha256": "4a9b9bc03747ecc695601af374367c8fdb4f41ffdae589278c994d1cb23aeb74"
+            },
+            {
+              "operation": "second_production_edit",
+              "fixture_state": "production_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 119.28714599999999,
+                "request_elapsed_ms": 19.141231,
+                "retained_rss_bytes": 34734080,
+                "sample_count": 21,
+                "sampled_peak_rss_bytes": 34734080
+              },
+              "retained_delta_from_initial_bytes": 2662400,
+              "raw_operation_sha256": "cbba1ad86772f17b97554a8b034987c20935c14bfaecff1c8a2e27a17703a58f"
+            },
+            {
+              "operation": "second_restore_initial",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 119.791366,
+                "request_elapsed_ms": 19.605305,
+                "retained_rss_bytes": 34795520,
+                "sample_count": 21,
+                "sampled_peak_rss_bytes": 34795520
+              },
+              "retained_delta_from_initial_bytes": 2723840,
+              "raw_operation_sha256": "3f9d4b4a901e9872505a7a80c43d4f783771ae359411752a51b8e3b1eecf04f3"
+            },
+            {
+              "operation": "process_restart",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 133.508225,
+                "request_elapsed_ms": 33.291807999999996,
+                "retained_rss_bytes": 32530432,
+                "sample_count": 30,
+                "sampled_peak_rss_bytes": 32530432
+              },
+              "retained_delta_from_initial_bytes": 458752,
+              "raw_operation_sha256": "a3f13c20dac96624c1db71d115e3d52ce836969271f9c20e07f6e008385a4fff"
+            },
+            {
+              "operation": "idle_settle",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 1025.815087,
+                "request_elapsed_ms": 25.596470999999998,
+                "retained_rss_bytes": 32677888,
+                "sample_count": 66,
+                "sampled_peak_rss_bytes": 32677888
+              },
+              "retained_delta_from_initial_bytes": 606208,
+              "raw_operation_sha256": "5a1bb9824103ee150f13aa26aafd0181d49d029a066c4338e1ef69d6b3db2203"
+            }
+          ]
+        },
+        {
+          "cleanup": "owned process group signaled and primary reaped; no escaped-descendant claim",
+          "same_state_retained_growth_bytes": 1150976,
+          "stale_result_negative_control": "rejected",
+          "surface": "mcp",
+          "rows": [
+            {
+              "operation": "initial_load",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 139.152192,
+                "request_elapsed_ms": 38.906591999999996,
+                "retained_rss_bytes": 34127872,
+                "sample_count": 18,
+                "sampled_peak_rss_bytes": 34127872
+              },
+              "retained_delta_from_initial_bytes": null,
+              "raw_operation_sha256": "b6ecd5f15f0e6309403ed96482f645b3c4ea836b5a02daee2f59f8361c2cbd46"
+            },
+            {
+              "operation": "unchanged_request",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 121.459468,
+                "request_elapsed_ms": 21.248829999999998,
+                "retained_rss_bytes": 34365440,
+                "sample_count": 14,
+                "sampled_peak_rss_bytes": 34365440
+              },
+              "retained_delta_from_initial_bytes": 237568,
+              "raw_operation_sha256": "fb708b182ab6823467f895762ff45247c9cf0141dc72184349828ab02104f488"
+            },
+            {
+              "operation": "production_edit",
+              "fixture_state": "production_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 128.199335,
+                "request_elapsed_ms": 27.971256,
+                "retained_rss_bytes": 34725888,
+                "sample_count": 15,
+                "sampled_peak_rss_bytes": 34725888
+              },
+              "retained_delta_from_initial_bytes": 598016,
+              "raw_operation_sha256": "225dbc13254f509e7350facf3f356d7102d4feed1289437c99781383b49f977e"
+            },
+            {
+              "operation": "test_only_edit",
+              "fixture_state": "test_only_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 129.01903000000001,
+                "request_elapsed_ms": 28.762438000000003,
+                "retained_rss_bytes": 34918400,
+                "sample_count": 15,
+                "sampled_peak_rss_bytes": 34918400
+              },
+              "retained_delta_from_initial_bytes": 790528,
+              "raw_operation_sha256": "f7bd4a89f17498d99dcfe89a47c3a58b64f97ae6f398b7f185036b8a48951e22"
+            },
+            {
+              "operation": "restore_initial",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 130.049212,
+                "request_elapsed_ms": 29.806494999999998,
+                "retained_rss_bytes": 35049472,
+                "sample_count": 15,
+                "sampled_peak_rss_bytes": 35049472
+              },
+              "retained_delta_from_initial_bytes": 921600,
+              "raw_operation_sha256": "ae19b46e465c4e4b0579c6fcdbc1b56a4f5a3b155e4c6fa2732edb135327e983"
+            },
+            {
+              "operation": "second_production_edit",
+              "fixture_state": "production_edit",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 122.62639899999999,
+                "request_elapsed_ms": 22.379281000000002,
+                "retained_rss_bytes": 35168256,
+                "sample_count": 15,
+                "sampled_peak_rss_bytes": 35168256
+              },
+              "retained_delta_from_initial_bytes": 1040384,
+              "raw_operation_sha256": "87920a2f433a6c1e1fb5f4ee7772209f2add03c5c6135b75d3d2bce58498bd55"
+            },
+            {
+              "operation": "second_restore_initial",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 124.400071,
+                "request_elapsed_ms": 24.189893,
+                "retained_rss_bytes": 35278848,
+                "sample_count": 15,
+                "sampled_peak_rss_bytes": 35278848
+              },
+              "retained_delta_from_initial_bytes": 1150976,
+              "raw_operation_sha256": "01faf0ab7d404f3f86fac73101f199e3df37ad2977b1f4114b0225c7a306464b"
+            },
+            {
+              "operation": "process_restart",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 141.779514,
+                "request_elapsed_ms": 41.514114,
+                "retained_rss_bytes": 34193408,
+                "sample_count": 18,
+                "sampled_peak_rss_bytes": 34193408
+              },
+              "retained_delta_from_initial_bytes": 65536,
+              "raw_operation_sha256": "328759202a6dc16284b345158cbb3a2eece65726046d602e1864d4dac8287b95"
+            },
+            {
+              "operation": "idle_settle",
+              "fixture_state": "initial",
+              "parity": "equal",
+              "memory": {
+                "observation_elapsed_ms": 1020.954342,
+                "request_elapsed_ms": 20.807159,
+                "retained_rss_bytes": 34422784,
+                "sample_count": 59,
+                "sampled_peak_rss_bytes": 34422784
+              },
+              "retained_delta_from_initial_bytes": 294912,
+              "raw_operation_sha256": "5fdc64d8b1ae4b4abc1f59a8aecea8575491e8a22ad0fa390dab1ce8f1798b4d"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

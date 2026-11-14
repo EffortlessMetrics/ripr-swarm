@@ -31,6 +31,7 @@ proptest = "1"
 # The UB receipt reporter can disable it without changing its source or tests.
 default = ["automation"]
 automation = [
+    "resident-session",
     "dep:bigdecimal",
     "dep:home",
     "dep:num-bigint",
@@ -51,11 +52,18 @@ automation = [
 # the dedicated Perl lane (`--features perl-identity`) so the shared workspace
 # test graph keeps the shipped `ripr` feature set.
 perl-identity = ["automation", "ripr/lang-perl"]
+# Standalone opt-in resident-session instrument; never builds the analyzer.
+resident-session = ["dep:sha2", "dep:rustix"]
 
 [[bin]]
 name = "xtask"
 path = "src/main.rs"
 required-features = ["automation"]
+
+[[example]]
+name = "resident_session"
+test = true
+required-features = ["resident-session"]
 
 [[example]]
 name = "contabo_product_proof"

@@ -593,3 +593,98 @@ It pins the actual retained regression, 58/203 to 74/203 (+16/203, above the
 unchanged 0.02 margin), separately from 55/162 added abstentions and the whole
 129/365 value. It is a regression-test witness, not a new baseline. The repair
 does not make that gate green or change analyzer classifications (#7553).
+
+## Bounded resident sessions (#12906)
+
+The opt-in resident-session instrument lives beside the existing scoreboard
+instruments. It builds without the analyzer dependency graph and never builds,
+downloads or installs the selected analyzer:
+
+```sh
+cargo run --locked -p xtask --no-default-features --features resident-session \
+  --example resident_session -- /absolute/path/to/ripr /new/evidence/directory
+```
+
+Use an already qualified executable appropriate to the question. Its full
+SHA-256 is recorded and checked again at completion. The evidence directory
+must not exist. It retains the small generated Rust repository, cache directories,
+per-operation resident/reference snapshots and `resident-session.json`.
+A failed rehearsal exits nonzero and writes `status: failed`; it is not a
+partial performance pass. Compare runs only with the same workload, fixture
+file hashes, host class, effective analyzer/configuration and cache regime.
+
+This first bounded slice requests explicit analysis on LSP and MCP. Each
+resident process observes initial load, an unchanged request, a real predicate
+edit, a test-only assertion edit, two returns to the initial source state,
+process teardown/restart and one second of idle settling. A fresh server runs
+against the identical saved state after each measured operation. Nonempty
+initial subjects, internally bound current snapshots, complete small-fixture
+lists and equal full semantic projections are required. MCP additionally reads
+every selected item through snapshot-bound `ripr_get_gap` (at most 16). An
+inline-detail omission must be recovered by that full-evidence read; any item
+omission, other overflow or failed detail read refuses the measurement. Only independently
+validated session-generation strings, the generation-sensitive complete-evidence
+digest (after checking current status/list agreement), and the document pull
+`resultId` token are normalized. Full raw snapshots remain in each operation
+receipt; diagnostic payloads and canonical finding identities are compared. Both predicate and test-only edits must change semantic collections. Replaying
+prior findings with the current response metadata must fail the same parity
+check; a changed input hash alone cannot satisfy the negative control. No claim is made about
+request cancellation, interrupted refresh supersession, didSave scheduling or
+large-workspace residency; those remain #12906 follow-ons and the existing
+implementation owners retain their work.
+
+Linux `VmRSS` is sampled on the exact resident server PID at 20 ms intervals
+while requests run and during a fixed 100 ms settling interval. Each row
+retains raw samples, sample count, sampled operation peak and settled current
+RSS in bytes. Initial-load and restart observations include initialization.
+Request wall time and total observation wall time (including settling) are
+separate fields; each row also reports its retained-RSS delta from the first. These are direct-process resident observations, not allocated
+heap, lifetime `VmHWM`, CPU, or aggregate descendant memory. Between-sample
+peaks can be missed. Reference processes are not sampled as resident work;
+they reuse the surface's private disk cache and therefore warm that cache
+between measured operations. The report does not call later operations cold.
+No universal memory or latency guarantee is inferred from this tiny fixture.
+
+The whole run has a fixed 180-second deadline, a 1 GiB direct-child RSS limit
+and a 3 GiB host available-memory reserve. It refuses on unsupported platforms
+or unavailable observations. These are instrument safety bounds, not product
+budgets. Child groups are signaled and primary children reaped on exit; this
+is not a claim about descendants that deliberately escape their group.
+
+Run the measurement control without RIPR:
+
+```sh
+cargo run --locked -p xtask --no-default-features --features resident-session \
+  --example resident_session -- --self-test
+cargo test --locked -p xtask --no-default-features --features resident-session \
+  --example resident_session
+```
+
+The control starts a separate synthetic measured child, records settled RSS,
+then touches and retains 32 MiB in that same PID. The retained-growth evaluator
+must reject it against a 16 MiB control threshold. Allocating memory in the
+driver cannot satisfy this control. This proves the observer/control path,
+not that a real RIPR session leaks or meets a memory target.
+
+A second synthetic control starts an owned same-group grandchild inheriting
+stdin/stdout, then exercises the actual `Session::finish` path. Within two
+seconds the primary must be reaped, the grandchild terminal (absent or zombie,
+not a descendant-reaping claim), and both pipe threads joined. A deliberately
+wrong primary-only termination must fail that same predicate while the
+still-live grandchild retains stdout; actual group cleanup then repairs it.
+The control grandchild also has a five-second lifetime ceiling. This qualifies
+only the instrument's owned same-group teardown path, not escaped descendants,
+Windows containment, or analyzer cancellation.
+
+The retained [three-run summary](testdata/12906-resident-session-rehearsal.json)
+uses an exact-source Linux CI wheel payload without another analyzer build. All
+54 operation/reference comparisons completed, including semantic changes in
+both production and test-only edits. The summary retains per-operation memory
+observations, fixture states, operation witnesses, source/binary digests and
+negative-control results. The [complete sampled-memory receipt](https://github.com/EffortlessMetrics/ripr-swarm/blob/a1d031580d760b242e44ae3325ab170c6579cb90/benchmarks/dx_scoreboard/testdata/12906-resident-session-rehearsal.json)
+is preserved unchanged at that commit, retained by the dedicated
+`evidence/12906-resident-rehearsal-a1d03158` branch. Its SHA-256 is recorded in
+the summary. This separates verbose raw evidence from the reviewable source
+change; the instrument still writes every raw sample and full operation receipt.
+These small-fixture observations qualify the instrument path only. They do
+not add a scoreboard baseline or establish a memory/latency product budget.
