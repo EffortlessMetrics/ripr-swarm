@@ -51,8 +51,8 @@ name: PR Staleness Watchdog
 #   eligible heads were queued. A non-queued head that reads `unknown` is the
 #   lazy first read after a base push and resolves on its own, so the next
 #   sweep sees it. A head whose mergeability is still unreadable is classified
-#   `mergeability unreadable`, counted in the sweep summary, and left for the
-#   next sweep, so the bound is one interval.
+#   `mergeability unreadable`, counted in the sweep summary, and re-read by the
+#   next sweep, so each sweep defers a head at most once per interval.
 #   Conflict detection needs `mergeable_state == "dirty"`, so **conflict
 #   notices are unavailable for those heads** — and a queued head is the worst
 #   place to lose that signal, because it is about to merge. The summary says
