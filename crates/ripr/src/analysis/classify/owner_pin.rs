@@ -1244,7 +1244,10 @@ impl OwnerPinSyntax {
                     .as_ref()
                     .filter(|(path, site)| {
                         path != &test.file
-                            && matches!(&site.kind, MacroBindingKind::ForeignGlob(_))
+                            && matches!(
+                                &site.kind,
+                                MacroBindingKind::ForeignGlob(import) if import.starts_with("use ")
+                            )
                     })
                     .and_then(|_| self.target_roots(index).workspace_include.clone());
                 AssertionRefusal::MacroBinding {
@@ -3364,9 +3367,7 @@ impl TargetRoots {
             match include_limitation_reach(index, limitation, &src_dirs) {
                 IncludeReach::Workspace => {
                     include_reaches_workspace = true;
-                    if workspace_include.is_none() {
-                        workspace_include = Some(limitation.clone());
-                    }
+                    workspace_include.get_or_insert_with(|| limitation.clone());
                 }
                 IncludeReach::Roots(roots) => tainted.extend(roots),
             }
@@ -4072,14 +4073,14 @@ impl AssertionRefusal {
                     if let (Some(limitation), MacroBindingKind::ForeignGlob(import)) =
                         (placement_include, &site.kind)
                     {
-                        format!(
+                        return format!(
                             "`{import}` at {place} could not be confined to its module because placement is unavailable, so it may bring in a different `{name}!`; first include limitation: `{}` at {} ({})",
                             limitation.expression,
                             at(&limitation.parent, limitation.line),
                             limitation.reason_code
-                        )
-                    } else {
-                        match &site.kind {
+                        );
+                    }
+                    match &site.kind {
                         MacroBindingKind::Unparsed => format!(
                             "{} did not parse cleanly, so it may redefine `{name}!`",
                             crate::analysis::stable_path_text(path)
@@ -4122,7 +4123,6 @@ impl AssertionRefusal {
                         } => format!(
                             "the body of `{macro_name}!` at {place} carries `{binding}`, which its expansion may apply, bringing in a different `{name}!`"
                         ),
-                        }
                     }
                 }
             },

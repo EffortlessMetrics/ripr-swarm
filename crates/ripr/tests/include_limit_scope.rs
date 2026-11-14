@@ -361,6 +361,15 @@ fn a_fragment_symlinked_out_of_the_repository_is_not_read() -> Result<(), String
 #[test]
 fn the_refusal_names_the_include_that_makes_placement_unavailable() -> Result<(), String> {
     let repo = TempRepo::create(&[
+        (
+            "src/lib.rs",
+            "pub mod a;\npub mod aa;\npub mod b;\npub mod gen;\n",
+        ),
+        (
+            "src/aa.rs",
+            "pub mod inert { include!(\"generated/plain.rs\"); }\n",
+        ),
+        ("src/generated/plain.rs", PLAIN),
         ("src/b.rs", &own_unit()),
         ("src/gen.rs", NESTED),
         ("src/generated/g.rs", "mod y;\n"),
@@ -384,6 +393,30 @@ fn the_refusal_names_the_include_that_makes_placement_unavailable() -> Result<()
     ] {
         assert!(refusal.contains(expected), "{expected:?} missing from {refusal:?}");
     }
+
+    // A public glob is unconfined regardless of placement, so it keeps its
+    // direct explanation instead of borrowing the include's.
+    let public = TempRepo::create(&[
+        (
+            "src/a.rs",
+            "pub use rayon::prelude::*;\npub fn twice(x: i32) -> i32 { x * 2 }\n",
+        ),
+        ("src/b.rs", &own_unit()),
+        ("src/gen.rs", NESTED),
+        ("src/generated/g.rs", "mod y;\n"),
+    ])?
+    .finding()?;
+    assert_eq!(public.class, ExposureClass::StaticUnknown);
+    let public = public
+        .evidence
+        .iter()
+        .find(|line| line.starts_with("assertion not credited: "))
+        .ok_or_else(|| "premise: the public glob keeps its refusal".to_string())?;
+    assert!(
+        public.contains("`pub use rayon::prelude::*;` at src/a.rs:1 glob-imports"),
+        "{public:?}"
+    );
+    assert!(!public.contains("first include limitation"), "{public:?}");
 
     Ok(())
 }
