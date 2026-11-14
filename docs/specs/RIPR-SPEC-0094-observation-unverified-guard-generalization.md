@@ -903,6 +903,12 @@ weak.
 Static evidence only: the assertion's polarity is not checked against either
 version's value.
 
+Known limit: a `field_construction` probe on a nested or unrelated struct
+literal whose field shares its name with a field of the owner's returned
+record (`Opts { inner: Inner { big: pred }, big: true }`) is credited by
+`assert!(opts(10).big)`, exactly as `assert_eq!(opts(10).big, true)` already
+was. The field rule matches the field by name, not by literal identity.
+
 Proof: `a_bare_assert_on_the_kept_field_is_a_field_pin` in
 `owner_value_sink.rs`, plus `a_bare_assert_on_the_changed_bool_field_is_exposed`
 and `a_bare_assert_on_anything_else_stays_weak` in

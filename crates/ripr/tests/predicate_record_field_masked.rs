@@ -123,6 +123,14 @@ fn a_read_of_the_changed_field_or_the_whole_record_stays_exposed() -> Result<(),
             "{body}: {predicate}"
         );
     }
+    // The field_construction finding has its own field-value recognizer,
+    // which credits a direct read of the field; `.clone().big` and a
+    // whole-record comparison are outside it and read weak before and after
+    // this change.
+    for body in &OBSERVING[..2] {
+        let field = finding(body, "field_construction")?;
+        assert_eq!(field["classification"], "exposed", "{body}: {field}");
+    }
     Ok(())
 }
 
