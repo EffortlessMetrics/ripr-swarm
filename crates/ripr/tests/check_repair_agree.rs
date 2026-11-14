@@ -1107,11 +1107,15 @@ fn weak_assertion_gap_start_offered_by_check_starts() -> Result<(), String> {
 
 /// #14084: when check already reads the finding as unclear, its limitation
 /// guidance is the whole story; the withheld seam adds no second advisory.
+/// The comparison sits in parentheses, an operand shape the boundary reader
+/// does not bind, so the finding stays unclear. (A plain
+/// `member && total >= 120` reads its `total == 120` boundary since #9637
+/// and is no longer unclear.)
 #[test]
 fn unclear_finding_on_a_withheld_seam_adds_no_repair_advisory() -> Result<(), String> {
     let repo = Repo::create(
-        "pub fn discount(total: u32, member: bool) -> u32 {\n    if member && total >= 100 {\n        total - 10\n    } else {\n        total\n    }\n}\n",
-        "pub fn discount(total: u32, member: bool) -> u32 {\n    if member && total >= 120 {\n        total - 10\n    } else {\n        total\n    }\n}\n",
+        "pub fn discount(total: u32, member: bool) -> u32 {\n    if member && (total >= 100) {\n        total - 10\n    } else {\n        total\n    }\n}\n",
+        "pub fn discount(total: u32, member: bool) -> u32 {\n    if member && (total >= 120) {\n        total - 10\n    } else {\n        total\n    }\n}\n",
         "use ar::discount;\n\n#[test]\nfn runs() {\n    let _ = discount(200, true);\n}\n",
     )?;
     let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
