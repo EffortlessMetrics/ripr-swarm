@@ -181,6 +181,18 @@ impl FocusedRunRecord {
         Ok(bytes)
     }
 
+    /// The counts status and the finish summary report for this record
+    /// (#14079): the same reading `read_retained_focused_run` gives back
+    /// from the retained text.
+    pub(crate) fn reported(&self) -> crate::output::agent_receipt::ReportedTestRun {
+        crate::output::agent_receipt::ReportedTestRun {
+            file: self.file.clone(),
+            ran: self.counted(),
+            passed: self.passed,
+            failed: self.failed,
+        }
+    }
+
     pub(crate) fn summary(&self) -> String {
         format!(
             "{} test(s) ran in `{}` ({} passed, {} failed)",
@@ -190,6 +202,36 @@ impl FocusedRunRecord {
             self.failed
         )
     }
+}
+
+/// Read back a retained focused run record for status (#14079). The record
+/// is the canonical text the finish committed for `attempt_id`; a record of
+/// another schema, kind or attempt, or one whose counts do not parse, reads
+/// as absent, so status never reports a run it cannot attribute.
+pub(crate) fn read_retained_focused_run(
+    record: &str,
+    attempt_id: &str,
+) -> Option<crate::output::agent_receipt::ReportedTestRun> {
+    let value: Value = serde_json::from_str(record).ok()?;
+    let text = |key: &str| value.get(key).and_then(Value::as_str);
+    let count = |key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_u64)
+            .and_then(|count| usize::try_from(count).ok())
+    };
+    if text("schema_version") != Some(FOCUSED_RUN_SCHEMA_VERSION)
+        || text("kind") != Some(FOCUSED_RUN_RECORD_KIND)
+        || text("attempt_id") != Some(attempt_id)
+    {
+        return None;
+    }
+    Some(crate::output::agent_receipt::ReportedTestRun {
+        file: text("file")?.to_string(),
+        ran: value.get("ran_tests").and_then(Value::as_array)?.len(),
+        passed: count("passed")?,
+        failed: count("failed")?,
+    })
 }
 
 /// Validate a caller-supplied focused result against the attempt's scope.
@@ -437,6 +479,56 @@ fn executable_test_names(file: &str, source: &str) -> Result<BTreeSet<String>, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #14079: status reads a retained record back as the counts the finish
+    /// recorded, and reads a record of another attempt, another kind, or
+    /// without parseable counts as absent.
+    #[test]
+    fn a_retained_record_reads_back_only_for_its_own_attempt_and_kind() -> Result<(), String> {
+        let record = FocusedRunRecord {
+            schema_version: FOCUSED_RUN_SCHEMA_VERSION,
+            kind: FOCUSED_RUN_RECORD_KIND,
+            attempt_id: "attempt-1".to_string(),
+            head: "abc123".to_string(),
+            file: "tests/math.rs".to_string(),
+            module: None,
+            ran_tests: vec!["adds".to_string(), "subtracts".to_string()],
+            passed: 1,
+            failed: 1,
+            uncounted_ran: 3,
+            claim: "caller-supplied",
+        };
+        let text = String::from_utf8(record.render()?).map_err(|error| error.to_string())?;
+        let reading = read_retained_focused_run(&text, "attempt-1");
+        assert_eq!(reading, Some(record.reported()));
+        let reading = reading.ok_or("the record did not read back")?;
+        assert_eq!(
+            (
+                reading.file.as_str(),
+                reading.ran,
+                reading.passed,
+                reading.failed
+            ),
+            ("tests/math.rs", 2, 1, 1)
+        );
+        assert_eq!(read_retained_focused_run(&text, "attempt-2"), None);
+        assert_eq!(
+            read_retained_focused_run(
+                &text.replace(FOCUSED_RUN_RECORD_KIND, FOCUSED_RUN_INPUT_KIND),
+                "attempt-1"
+            ),
+            None
+        );
+        assert_eq!(
+            read_retained_focused_run(
+                &text.replace("\"failed\": 1", "\"failed\": \"1\""),
+                "attempt-1"
+            ),
+            None
+        );
+        assert_eq!(read_retained_focused_run("not json", "attempt-1"), None);
+        Ok(())
+    }
 
     const SOURCE: &str = "#[test]\nfn adds() {}\n\n#[test]\nfn subtracts() {}\n\nfn helper() {}\n";
 

@@ -1097,3 +1097,339 @@ fn inline_proposal_only_item_is_ready_and_confined_like_the_cli_cage() -> Result
     );
     Ok(())
 }
+
+/// What the caller reports about its own run of the focused test at finish.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReportedRun {
+    /// The agent passes no `--test-result`.
+    None,
+    /// The agent reports the new test ran and passed.
+    Passed,
+    /// The agent reports the new test ran and failed.
+    Failed,
+}
+
+/// The last line of a `check --format agent` report: its `verify=` record.
+fn agent_check_verify_line(fixture: &Fixture, worktree: bool) -> Result<String, String> {
+    let mut command = ripr();
+    command
+        .current_dir(&fixture.0)
+        .args(["check", "--quiet", "--format", "agent", "--base", "main"]);
+    if worktree {
+        command.arg("--worktree");
+    }
+    let output = command.output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "agent check failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .last()
+        .map(str::to_string)
+        .ok_or_else(|| "agent check printed nothing".to_string())
+}
+
+/// #14079: the six-step agent contract, end to end through the portable CLI
+/// and the MCP server on one repository, for each thing a caller can report
+/// about its own test run.
+///
+/// 1. both surfaces identify the one gap;
+/// 2. both hand out one bounded unit naming the one test file, and edit
+///    nothing;
+/// 3. the caller makes one test change inside that file;
+/// 4. the finish re-records static evidence as `improved`, and both surfaces
+///    read the gap as noticed afterwards;
+/// 5. execution stays a separate axis: the receipt records that ripr ran
+///    nothing, and the caller's reported run (passed, failed or absent) is
+///    read back as exactly that, never as the static result and never as
+///    "none recorded" once one was recorded;
+/// 6. the result is durable: a new MCP server process reads the same attempt,
+///    receipt state and digest-bound retained evidence.
+#[test]
+fn six_step_agent_contract_holds_through_cli_and_mcp() -> Result<(), String> {
+    for reported in [ReportedRun::None, ReportedRun::Passed, ReportedRun::Failed] {
+        six_step_agent_contract(reported).map_err(|error| format!("{reported:?}: {error}"))?;
+    }
+    Ok(())
+}
+
+fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
+    use sha2::{Digest as _, Sha256};
+    const TEST_FILE: &str = "tests/p.rs";
+    const NEW_TEST: &str = "discounted_total_boundary_discriminator";
+    let weak = "#[test]\nfn below() { assert_eq!(discounted_total(50,100),50); }\n#[test]\nfn above() { assert_eq!(discounted_total(10000,100),9990); }\n";
+    let fixture = Fixture::rust("six-step", Some(weak))?;
+    let read = |path: &str| std::fs::read(fixture.0.join(path)).map_err(|e| format!("{path}: {e}"));
+    let run = |args: &[&str]| {
+        ripr()
+            .current_dir(&fixture.0)
+            .args(args)
+            .output()
+            .map_err(|e| e.to_string())
+    };
+    let stdout_json = |output: &std::process::Output| -> Result<Value, String> {
+        serde_json::from_slice(&output.stdout).map_err(|e| {
+            format!(
+                "stdout is not JSON ({e}): {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+        })
+    };
+    let production_before = read("src/lib.rs")?;
+    let test_before = read(TEST_FILE)?;
+
+    // 1. Gap identified, by the CLI and by MCP.
+    let verify = agent_check_verify_line(&fixture, false)?;
+    assert!(
+        verify.starts_with("verify=refused|") && verify.contains("reason=gaps_remain"),
+        "{verify}"
+    );
+    let mut mcp = Mcp::spawn(&fixture.0)?;
+    let refresh = mcp.tool("ripr_refresh", json!({}))?;
+    assert_eq!(refresh["attempt"]["state"], "completed", "{refresh}");
+    let gaps = mcp.tool("ripr_list_gaps", json!({}))?;
+    let items = gaps["items"].as_array().ok_or("gap list omitted items")?;
+    assert_eq!(items.len(), 1, "{gaps}");
+    assert_eq!(items[0]["class"], "weakly_exposed", "{gaps}");
+    assert_eq!(items[0]["repair_packet_ready"], true, "{gaps}");
+    let canonical_id = items[0]["canonical_id"].clone();
+
+    // 2. One bounded unit: the same single test file on both surfaces, no
+    //    command route from MCP, and no edit by either.
+    let prepare = mcp.tool(
+        "ripr_prepare_repair",
+        json!({ "canonical_id": canonical_id }),
+    )?;
+    assert_eq!(prepare["repair_packet_ready"], true, "{prepare}");
+    assert_eq!(
+        prepare["allowed_edit_surface"],
+        json!([TEST_FILE]),
+        "{prepare}"
+    );
+    assert_eq!(prepare["command_routes"], json!([]), "{prepare}");
+    let start = run(&["repair", "--root", ".", "--base", "main", "--json"])?;
+    assert!(
+        start.status.success(),
+        "{}",
+        String::from_utf8_lossy(&start.stderr)
+    );
+    let packet = stdout_json(&start)?;
+    let id = packet["repair_attempt"]["attempt_id"]
+        .as_str()
+        .ok_or_else(|| format!("repair --json omitted the attempt id: {packet}"))?
+        .to_string();
+    let manifest_path = fixture
+        .0
+        .join("target/ripr/repair-attempts")
+        .join(&id)
+        .join("attempt.json");
+    let manifest = |label: &str| -> Result<Value, String> {
+        let bytes = std::fs::read(&manifest_path).map_err(|e| format!("{label}: {e}"))?;
+        serde_json::from_slice(&bytes).map_err(|e| format!("{label}: {e}"))
+    };
+    assert_eq!(manifest("after start")?["state"], "awaiting_edit");
+    let waiting = mcp.tool("ripr_get_receipt_status", json!({ "receipt_id": id }))?;
+    assert_eq!(waiting["status"], "awaiting_edit", "{waiting}");
+    assert_eq!(
+        read("src/lib.rs")?,
+        production_before,
+        "ripr edited production"
+    );
+    assert_eq!(read(TEST_FILE)?, test_before, "ripr edited the test file");
+
+    // 3. One test change, inside the one allowed file.
+    let mut edited = test_before.clone();
+    edited.extend_from_slice(
+        format!("#[test]\nfn {NEW_TEST}() {{ assert_eq!(discounted_total(100, 100), 100); }}\n")
+            .as_bytes(),
+    );
+    std::fs::write(fixture.0.join(TEST_FILE), &edited).map_err(|e| e.to_string())?;
+
+    // 4. Finish: static evidence is re-recorded. The caller's own test run,
+    //    when it reports one, is a claim bound to this attempt and HEAD.
+    let result_file = fixture.0.with_extension("focused-result.json");
+    let mut finish = vec![
+        "agent",
+        "repair",
+        "--root",
+        ".",
+        "--attempt",
+        &id,
+        "--phase",
+        "after",
+    ];
+    let result_arg = result_file.display().to_string();
+    if reported != ReportedRun::None {
+        let head = ripr_fixture_head(&fixture)?;
+        let event = if reported == ReportedRun::Passed {
+            "ok"
+        } else {
+            "failed"
+        };
+        let document = json!({
+            "schema_version": "0.1",
+            "kind": "focused_test_result",
+            "attempt_id": id,
+            "head": head,
+            "test_file": TEST_FILE,
+            "libtest_events": [
+                {"type": "test", "event": "started", "name": NEW_TEST},
+                {"type": "test", "event": event, "name": NEW_TEST}
+            ]
+        });
+        std::fs::write(&result_file, document.to_string()).map_err(|e| e.to_string())?;
+        finish.extend(["--test-result", &result_arg]);
+    }
+    let finished = run(&finish)?;
+    let _ = std::fs::remove_file(&result_file);
+    let finish_stdout = String::from_utf8_lossy(&finished.stdout).to_string();
+    assert!(
+        finished.status.success(),
+        "{finish_stdout}\n{}",
+        String::from_utf8_lossy(&finished.stderr)
+    );
+    assert!(finish_stdout.contains("improved"), "{finish_stdout}");
+    let receipt = mcp.tool("ripr_get_receipt_status", json!({ "receipt_id": id }))?;
+    assert_eq!(receipt["status"], "improved", "{receipt}");
+    let verify = agent_check_verify_line(&fixture, true)?;
+    assert!(
+        verify.starts_with("verify=complete|") && verify.ends_with("findings=1|exposed=1"),
+        "{verify}"
+    );
+    let refresh = mcp.tool("ripr_refresh", json!({ "source": "worktree" }))?;
+    assert_eq!(refresh["attempt"]["state"], "completed", "{refresh}");
+    let gaps = mcp.tool("ripr_list_gaps", json!({}))?;
+    assert_eq!(gaps["items"][0]["class"], "exposed", "{gaps}");
+    assert_eq!(gaps["items"].as_array().map(Vec::len), Some(1), "{gaps}");
+
+    // 5. Execution is a separate axis. ripr ran nothing in every variant;
+    //    the static movement is `improved` in every variant, a reported
+    //    failure included; and the caller's report reads back as itself.
+    let verification = &receipt["receipt"]["document"]["verification"];
+    assert_eq!(verification["status"], "verification_not_run", "{receipt}");
+    assert_eq!(verification["commands_run"], json!([]), "{receipt}");
+    let status = stdout_json(&run(&[
+        "agent",
+        "status",
+        "--root",
+        ".",
+        "--attempt",
+        &id,
+        "--json",
+    ])?)?;
+    assert_eq!(
+        status["attempt"]["receipt"]["movement"], "improved",
+        "{status}"
+    );
+    assert_eq!(
+        status["attempt"]["receipt"]["verification_status"], "verification_not_run",
+        "{status}"
+    );
+    let test_run = &status["test_run"];
+    let aggregate = run(&["status", "--root", "."])?;
+    let aggregate = String::from_utf8_lossy(&aggregate.stdout).to_string();
+    let counts = |passed: u64, failed: u64| {
+        format!(
+            "reported by the caller, not run by ripr: 1 test(s) ran in `{TEST_FILE}` ({passed} passed, {failed} failed)"
+        )
+    };
+    match reported {
+        ReportedRun::None => {
+            assert_eq!(test_run["status"], "not_recorded", "{status}");
+            assert!(test_run.get("passed").is_none(), "{status}");
+            for text in [&aggregate, &finish_stdout] {
+                assert!(text.contains("Test run: none recorded."), "{text}");
+                assert!(!text.contains("reported by the caller"), "{text}");
+            }
+        }
+        ReportedRun::Passed | ReportedRun::Failed => {
+            let (passed, failed) = if reported == ReportedRun::Passed {
+                (1, 0)
+            } else {
+                (0, 1)
+            };
+            assert_eq!(test_run["status"], "caller_reported", "{status}");
+            assert_eq!(test_run["file"], TEST_FILE, "{status}");
+            assert_eq!(test_run["ran"], 1, "{status}");
+            assert_eq!(test_run["passed"], passed, "{status}");
+            assert_eq!(test_run["failed"], failed, "{status}");
+            let next_step = test_run["next_step"].as_str().unwrap_or_default();
+            assert_eq!(
+                next_step.contains("failing test"),
+                reported == ReportedRun::Failed,
+                "{status}"
+            );
+            for text in [&aggregate, &finish_stdout] {
+                assert!(text.contains(&counts(passed, failed)), "{text}");
+                assert!(!text.contains("none recorded"), "{text}");
+                assert_eq!(
+                    text.contains("The reported run has a failing test"),
+                    reported == ReportedRun::Failed,
+                    "{text}"
+                );
+            }
+        }
+    }
+
+    // 6. Durable: a new server process, with no session state, reads the
+    //    same attempt and receipt state, and every retained terminal file
+    //    still matches the bytes the manifest binds.
+    drop(mcp);
+    let mut restarted = Mcp::spawn(&fixture.0)?;
+    let listing = restarted.tool("ripr_list_repair_attempts", json!({}))?;
+    let rows = listing["items"].as_array().ok_or("listing omitted items")?;
+    assert_eq!(rows.len(), 1, "{listing}");
+    assert_eq!(rows[0]["attempt_id"], id.as_str(), "{listing}");
+    assert_eq!(rows[0]["validation"], "valid", "{listing}");
+    assert_eq!(rows[0]["receipt_status"], "improved", "{listing}");
+    let attempt = restarted.tool("ripr_get_repair_attempt", json!({ "attempt_id": id }))?;
+    assert_eq!(attempt["origin"], "durable_store", "{attempt}");
+    assert_eq!(attempt["terminal_receipt"], "issued", "{attempt}");
+    let finished_manifest = manifest("after finish")?;
+    let terminal = finished_manifest["terminal_artifacts"]
+        .as_array()
+        .ok_or("manifest omitted terminal_artifacts")?;
+    let mut roles = Vec::new();
+    for artifact in terminal {
+        let path = artifact["path"].as_str().ok_or("terminal artifact path")?;
+        let bytes = read(path)?;
+        assert_eq!(artifact["bytes"], bytes.len() as u64, "{artifact}");
+        assert_eq!(
+            artifact["sha256"],
+            format!("sha256:{:x}", Sha256::digest(&bytes)),
+            "{artifact}"
+        );
+        roles.push(artifact["role"].as_str().unwrap_or_default().to_string());
+    }
+    roles.sort();
+    let mut expected_roles = vec!["agent_receipt", "agent_verify"];
+    if reported != ReportedRun::None {
+        expected_roles.push("focused_test_result");
+    }
+    assert_eq!(roles, expected_roles, "{finished_manifest}");
+    assert_eq!(read("src/lib.rs")?, production_before, "production changed");
+    assert_eq!(
+        read(TEST_FILE)?,
+        edited,
+        "the test file changed after the edit"
+    );
+    Ok(())
+}
+
+/// The fixture repository's HEAD, read from its git metadata without another
+/// process: `.git/HEAD` names the branch ref the fixture committed on.
+fn ripr_fixture_head(fixture: &Fixture) -> Result<String, String> {
+    let git = fixture.0.join(".git");
+    let head = std::fs::read_to_string(git.join("HEAD")).map_err(|e| e.to_string())?;
+    let reference = head
+        .trim()
+        .strip_prefix("ref: ")
+        .ok_or_else(|| format!("fixture HEAD is not a branch ref: {head}"))?;
+    std::fs::read_to_string(git.join(reference))
+        .map(|sha| sha.trim().to_string())
+        .map_err(|e| format!("read {reference}: {e}"))
+}

@@ -836,6 +836,25 @@ closed. Staleness at bind time and at verdict time is covered by the
 edit-cage unit tests; the real-binary tests cover the bound, created-file
 credit and the out-of-cage refusal.
 
+## Amendment (#14079): a recorded focused test result is read back, not reported as absent
+
+A finish that retained a caller-reported focused result (#13203 B) reports it
+on the test-run axis. The finish summary, `ripr status` and `ripr agent status`
+(default and `--attempt`, Markdown and JSON) say `Test run: reported by the
+caller, not run by ripr: N test(s) ran in <file> (P passed, F failed)`, and the
+JSON `test_run` object carries `status: "caller_reported"` with `file`, `ran`,
+`passed` and `failed`. A reported failure is named with its next step; it is
+never presented as a pass and never hidden behind `none recorded`. An attempt
+with no retained result keeps `Test run: none recorded` / `not_recorded`.
+
+The reading comes from the record the finish committed in the attempt
+manifest, and only when the `focused_test_result` terminal binding names
+exactly those bytes and the record is for this attempt. The two axes stay
+separate: the receipt's `verification.status` remains `verification_not_run`
+(ripr ran nothing), and static movement is whatever the static comparison
+found, so a reported failure can sit beside `improved`. The receipt-owned
+`next:` line is unchanged. MCP documents do not project the record yet.
+
 ## Amendment (#13203 B): a caller-supplied focused test result is validated and recorded
 
 ripr does not run `cargo test` (ADR 0022 keeps execution authority outside
@@ -1112,6 +1131,10 @@ is not decided here.
 - `crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons` (#12861)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt` (#12867)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_refused_field_seam_names_the_stub_or_why_there_is_none` (#12959)
+- `crates/ripr/tests/mcp_cli_repair_parity.rs::six_step_agent_contract_holds_through_cli_and_mcp` (#14079: gap, one unit, one test edit, re-recorded static evidence, the caller's run as a separate axis, durable read-back from a new MCP process)
+- `crates/ripr/src/app/focused_run.rs::tests::a_retained_record_reads_back_only_for_its_own_attempt_and_kind` (#14079)
+- `crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::repair_summary_reports_a_recorded_caller_run_instead_of_none_recorded` (#14079)
+- `crates/ripr/src/app/agent_status/test_run.rs::tests::a_reported_run_is_read_back_with_its_counts_and_a_failure_is_named` (#14079)
 - `crates/ripr/tests/proposal_only_repair_start.rs::integration_proposal_only_seam_starts_with_the_proposed_file_as_its_cage` (#13203)
 - `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_only_seam_starts_confined_to_its_governed_module` (#13203)
 - `crates/ripr/tests/proposal_only_repair_start.rs::seam_without_any_proposal_still_refuses` (#13203)

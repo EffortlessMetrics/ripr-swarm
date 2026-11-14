@@ -27,7 +27,7 @@ canonical packet stays behind the card's explicit detail route and
 
 ## Governed Python sequence
 
-The after phase's `--test-result` option accepts a caller-run `cargo test` result for Rust test files only. A Python or TypeScript attempt that passes it is refused up front; finish those attempts without the flag.
+The after phase's `--test-result` option accepts a caller-run `cargo test` result for Rust test files only. A Python or TypeScript attempt that passes it is refused up front; finish those attempts without the flag. Once a compliant finish records the result, the finish summary, `ripr status` and `ripr agent status` report it as `Test run: reported by the caller, not run by ripr: N test(s) ran in <file> (P passed, F failed)` and name a reported failure; without one they say `Test run: none recorded`. The static movement is unaffected: a reported failure still reads `improved` when the static grip improved.
 
 Start with an accepted repair-trust selection manifest and its selected row ID
 ([RIPR-SPEC-0176](specs/RIPR-SPEC-0176-python-repair-trust-attempts.md)).

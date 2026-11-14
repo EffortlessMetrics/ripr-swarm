@@ -35,6 +35,8 @@ use serde_json::Value;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub(crate) mod test_run;
+
 pub(crate) const AGENT_STATUS_SCHEMA_VERSION: &str = "0.1";
 
 /// Unresolved seam placeholder a status command embeds when no seam id is
@@ -581,7 +583,7 @@ fn attempt_receipt(
     match load_attempt_terminal_receipt(root, manifest) {
         AttemptTerminalReceipt::Issued { path, value } => AgentStatusAttemptReceipt::Issued {
             path,
-            reading: AgentReceiptReading::from_value(&value),
+            reading: test_run::issued_reading(manifest, &value),
         },
         AttemptTerminalReceipt::Unavailable { path, reason } => {
             AgentStatusAttemptReceipt::Unavailable { path, reason }
@@ -2575,7 +2577,7 @@ pub(crate) fn render_agent_status_json(report: &AgentStatusReport) -> Result<Str
         "repair_attempts": report.repair_attempts.iter().map(agent_status_repair_attempt_json).collect::<Vec<_>>(),
         "missing_commands": report.missing_commands.iter().map(agent_status_command_json).collect::<Vec<_>>(),
         "next_command": next_command,
-        "test_run": report.unrun_test_receipt().map(test_not_run_json),
+        "test_run": report.unrun_test_receipt().map(test_run::test_run_json),
         "warnings": report.warnings.iter().map(agent_status_warning_json).collect::<Vec<_>>()
     });
     serde_json::to_string_pretty(&value)
@@ -2602,10 +2604,7 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         None => rendered.push_str("Seam: unknown\n"),
     }
     if let Some(reading) = report.unrun_test_receipt() {
-        rendered.push_str(&format!(
-            "Test run: none recorded. {}\n",
-            test_not_run_next_step(reading)
-        ));
+        rendered.push_str(&format!("{}\n", test_run::test_run_line(reading)));
     }
 
     if !nothing_started {
@@ -3685,7 +3684,7 @@ pub(crate) fn render_agent_attempt_status_json(
         "canonical_next_action": report.canonical_next_action.as_ref().map(|action| {
             crate::output::next_action::render_next_action_json_value(action)
         }),
-        "test_run": report.test_run.as_ref().map(test_not_run_json),
+        "test_run": report.test_run.as_ref().map(test_run::test_run_json),
         "claim_boundary": report.claim_boundary,
         "limitations": report.limitations,
         "non_claims": report.non_claims,
@@ -3780,10 +3779,7 @@ pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusRe
     }
 
     if let Some(reading) = &report.test_run {
-        rendered.push_str(&format!(
-            "\nTest run: none recorded. {}\n",
-            test_not_run_next_step(reading)
-        ));
+        rendered.push_str(&format!("\n{}\n", test_run::test_run_line(reading)));
     }
 
     rendered.push_str("\n## Claim Boundary\n\n");
@@ -7938,6 +7934,7 @@ mod tests {
             analysis_outcome_error: None,
             verification_status: None,
             test_changed: None,
+            reported_test_run: None,
         }
     }
 

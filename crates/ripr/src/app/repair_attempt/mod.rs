@@ -6,6 +6,7 @@
 //! that exact attempt. Store location is owned by [`store`]: before, status,
 //! and after resolve one store identity instead of joining a hardcoded path.
 
+pub(crate) mod retained_run;
 mod store;
 
 use crate::agent::loop_commands::{bound_root, display_path, root_path_display, shell_arg};
