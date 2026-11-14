@@ -45,7 +45,7 @@ suite('Explicit full-development coordinator', function () {
       'editors/vscode/test', 'editors/vscode/src', 'editors/vscode/out/test',
       'editors/vscode/node_modules/typescript/bin', 'editors/vscode/node_modules/@vscode/test-electron',
       'editors/vscode/node_modules/.bin']) fs.mkdirSync(path.join(root, directory), { recursive: true });
-    for (const relative of ['test/developerSetup.cjs', 'test/hostDiagnostics.ts', 'src/lspCompatibility.ts']) {
+    for (const relative of ['test/developerSetup.cjs', 'test/hostDiagnostics.ts', 'src/lspCompatibility.ts', 'src/packetJson.ts']) {
       fs.copyFileSync(path.join(editorSource, relative), path.join(editor, relative));
     }
     const npmCandidates = [process.env.npm_execpath
