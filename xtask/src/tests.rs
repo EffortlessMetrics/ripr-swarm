@@ -54026,6 +54026,77 @@ fn reusable_rust_workflow_text() -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))
 }
 
+/// Split a workflow into `(job name, job lines)` pairs. Only the two-space
+/// keys directly under `jobs:` start a job; deeper keys stay in the body.
+fn workflow_jobs(workflow: &str) -> Vec<(String, Vec<&str>)> {
+    let mut jobs = Vec::new();
+    let mut in_jobs = false;
+    let mut current: Option<(String, Vec<&str>)> = None;
+    for line in workflow.lines() {
+        if line.trim_end() == "jobs:" {
+            in_jobs = true;
+            continue;
+        }
+        if !in_jobs {
+            continue;
+        }
+        let is_job_key =
+            line.starts_with("  ") && !line.starts_with("   ") && line.trim_end().ends_with(':');
+        if is_job_key {
+            if let Some(job) = current.take() {
+                jobs.push(job);
+            }
+            current = Some((line.trim().trim_end_matches(':').to_string(), Vec::new()));
+            continue;
+        }
+        if let Some((_, body)) = current.as_mut() {
+            body.push(line);
+        }
+    }
+    if let Some(job) = current {
+        jobs.push(job);
+    }
+    jobs
+}
+
+/// #14638: sccache cannot cache incremental compilation units, so every job
+/// that enables sccache must also set `CARGO_INCREMENTAL: 0`. A future job that
+/// turns sccache on without it fails here instead of silently losing the cache.
+#[test]
+fn sccache_jobs_disable_incremental_compilation() -> Result<(), String> {
+    let workflow = reusable_rust_workflow_text()?;
+    let jobs = workflow_jobs(&workflow);
+    assert!(!jobs.is_empty(), "no jobs parsed from rust-gates.yml");
+    let mut sccache_jobs = 0;
+    for (name, body) in jobs {
+        let enables_sccache = body.iter().any(|line| {
+            matches!(
+                line.trim(),
+                "RUSTC_WRAPPER: sccache" | "RUSTC_WRAPPER: \"sccache\""
+            )
+        });
+        if !enables_sccache {
+            continue;
+        }
+        sccache_jobs += 1;
+        let disables_incremental = body.iter().any(|line| {
+            matches!(
+                line.trim(),
+                "CARGO_INCREMENTAL: 0" | "CARGO_INCREMENTAL: \"0\""
+            )
+        });
+        assert!(
+            disables_incremental,
+            "job {name} enables sccache without CARGO_INCREMENTAL: 0"
+        );
+    }
+    assert!(
+        sccache_jobs > 0,
+        "expected at least one sccache-enabled job in rust-gates.yml"
+    );
+    Ok(())
+}
+
 /// Returns an error unless `lines` mention `cargo xtask precommit` exactly
 /// once as a bare invocation line. A commented-out (`# cargo xtask
 /// precommit`) or otherwise decorated mention does not count as an

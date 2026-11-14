@@ -131,6 +131,34 @@ mod tests {
         assert!(matches!(COMMIT_DIRTY, "true" | "false"));
     }
     #[test]
+    fn dev_builds_do_not_bake_a_source_digest() {
+        // #14638: a baked digest changes on every source edit, which defeats
+        // sccache for dev and test builds. Only a build that asked for
+        // persisted analysis caches may bake one.
+        if option_env!("RIPR_PERSISTED_CACHE") == Some("1") {
+            return;
+        }
+        assert!(
+            SOURCE_DIGEST.is_empty(),
+            "dev/test builds must not bake a source digest, got {SOURCE_DIGEST:?}"
+        );
+    }
+
+    #[test]
+    fn persisted_cache_builds_bake_a_source_digest() {
+        // The other half of #14638: when a build opts into persisted analysis
+        // caches, the digest is still baked so two dirty trees cannot share
+        // cache entries.
+        if option_env!("RIPR_PERSISTED_CACHE") != Some("1") {
+            return;
+        }
+        assert!(
+            !SOURCE_DIGEST.is_empty(),
+            "a persisted-cache build must bake a source digest"
+        );
+    }
+
+    #[test]
     fn cache_identity_binds_the_build_not_only_the_version() {
         assert_eq!(
             render_cache_identity("0.11.0", Some(SHA), false, Some("ignored")),
@@ -172,11 +200,17 @@ mod tests {
         let identity = cache_identity();
         assert!(identity.starts_with(concat!(env!("CARGO_PKG_VERSION"), "+")));
         assert_eq!(identity, cache_identity());
-        // build.rs records a digest exactly when no clean commit describes
-        // this build.
+        // build.rs bakes a digest only for a persisted-cache build that no
+        // clean commit describes (#14638); every other build leaves it empty
+        // so a source edit does not change the compile-time environment.
         let described_by_commit = commit().is_some() && !commit_dirty();
-        assert_eq!(SOURCE_DIGEST.is_empty(), described_by_commit);
-        if !described_by_commit {
+        let persisted_cache_build = option_env!("RIPR_PERSISTED_CACHE") == Some("1");
+        if described_by_commit || !persisted_cache_build {
+            assert!(
+                SOURCE_DIGEST.is_empty(),
+                "unexpected source digest {SOURCE_DIGEST:?}"
+            );
+        } else {
             assert!(
                 SOURCE_DIGEST.len() == 16
                     && SOURCE_DIGEST.bytes().all(|byte| byte.is_ascii_hexdigit()),

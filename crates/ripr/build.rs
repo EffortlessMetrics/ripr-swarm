@@ -21,8 +21,11 @@ use std::process::{Command, Stdio};
 
 #[path = "src/build_commit_record.rs"]
 mod build_commit_record;
+#[path = "src/source_digest.rs"]
+mod source_digest;
 
 use build_commit_record::{is_full_commit_id, parse_cargo_vcs_info};
+use source_digest::{CRATE_SOURCES, WORKSPACE_INPUTS};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -40,13 +43,26 @@ fn main() {
     });
     let (commit, dirty) = identity.unwrap_or_default();
     // A commit identifies a clean build's code. A dirty or commit-less build
-    // is identified by its sources instead, so persisted analysis caches
-    // never serve one such build's results to another.
-    let source_digest = if commit.is_empty() || dirty {
+    // is identified by its sources instead, so persisted analysis caches never
+    // serve one such build's results to another. Baking that digest changes a
+    // compile-time environment variable on every source edit, which defeats
+    // sccache for dev and test builds, so it is opt-in: only a build that will
+    // read or write persisted analysis caches sets `RIPR_PERSISTED_CACHE=1`.
+    // Without it the digest stays empty and `build_identity` uses a
+    // per-process identity, so nothing persisted is reused.
+    let persisted_cache = std::env::var("RIPR_PERSISTED_CACHE").ok();
+    let source_digest = if source_digest::should_bake(persisted_cache.as_deref(), &commit, dirty) {
         manifest_dir
             .as_deref()
             .map(Path::new)
-            .and_then(source_digest)
+            .and_then(|dir| {
+                let files = source_digest::source_files(dir)?;
+                for file in &files {
+                    println!("cargo:rerun-if-changed={}", file.display());
+                }
+                let root = source_digest::workspace_root(dir);
+                source_digest::digest_files(&root, &files)
+            })
             .unwrap_or_default()
     } else {
         String::new()
@@ -55,68 +71,6 @@ fn main() {
     println!("cargo:rustc-env=RIPR_BUILD_COMMIT_DIRTY={dirty}");
     println!("cargo:rustc-env=RIPR_BUILD_SOURCE_DIGEST={source_digest}");
 }
-
-/// FNV-1a over the crate sources and the nearest workspace manifest and
-/// lockfile: each file's path relative to that workspace root, its length and
-/// its bytes, in sorted path order. `None` when any input cannot be read, so
-/// an unreadable source never yields a digest that another build could share.
-fn source_digest(dir: &Path) -> Option<String> {
-    let root = dir
-        .ancestors()
-        .find(|ancestor| ancestor.join("Cargo.lock").is_file())
-        .unwrap_or(dir);
-    let mut files = Vec::new();
-    for source in CRATE_SOURCES {
-        let path = dir.join(source);
-        println!("cargo:rerun-if-changed={}", path.display());
-        collect_files(&path, &mut files)?;
-    }
-    for input in ["Cargo.toml", "Cargo.lock"] {
-        let path = root.join(input);
-        if path.is_file() {
-            println!("cargo:rerun-if-changed={}", path.display());
-            files.push(path);
-        }
-    }
-    files.sort();
-    files.dedup();
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    let mut feed = |bytes: &[u8]| {
-        for byte in bytes {
-            hash ^= u64::from(*byte);
-            hash = hash.wrapping_mul(0x0100_0000_01b3);
-        }
-    };
-    for file in &files {
-        let bytes = fs::read(file).ok()?;
-        let relative = file.strip_prefix(root).unwrap_or(file);
-        feed(relative.to_string_lossy().replace('\\', "/").as_bytes());
-        feed(&[0]);
-        feed(&(bytes.len() as u64).to_le_bytes());
-        feed(&bytes);
-    }
-    Some(format!("{hash:016x}"))
-}
-
-fn collect_files(path: &Path, files: &mut Vec<PathBuf>) -> Option<()> {
-    let metadata = fs::metadata(path).ok()?;
-    if metadata.is_file() {
-        files.push(path.to_path_buf());
-    } else if metadata.is_dir() {
-        for entry in fs::read_dir(path).ok()? {
-            collect_files(&entry.ok()?.path(), files)?;
-        }
-    }
-    Some(())
-}
-
-/// Crate sources that decide whether the built binary differs from the
-/// commit, relative to the manifest directory.
-const CRATE_SOURCES: [&str; 4] = ["src", "Cargo.toml", "build.rs", "vendor"];
-
-/// Repository-root Cargo inputs a workspace member inherits: the package
-/// version, lints and profiles, the lockfile, and Cargo configuration.
-const WORKSPACE_INPUTS: [&str; 3] = ["Cargo.toml", "Cargo.lock", ".cargo"];
 
 fn checkout_identity(dir: &Path) -> Option<(String, bool)> {
     git(dir, &["ls-files", "--error-unmatch", "--", "Cargo.toml"])?;

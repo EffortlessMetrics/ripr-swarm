@@ -224,6 +224,9 @@ jobs:
         env:
           CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
           RUSTC_WRAPPER: sccache
+          # sccache cannot cache incremental units, so every sccache-enabled
+          # job must build without them (#14638).
+          CARGO_INCREMENTAL: 0
           SCCACHE_DIR: /mnt/ci-cache/sccache
           SCCACHE_CACHE_SIZE: 15G
           CARGO_TARGET_DIR: /mnt/ci-scratch/target/${{ github.run_id }}-${{ github.run_attempt }}
@@ -232,6 +235,7 @@ jobs:
           {
             echo "CARGO_HOME=$CARGO_HOME"
             echo "RUSTC_WRAPPER=$RUSTC_WRAPPER"
+            echo "CARGO_INCREMENTAL=$CARGO_INCREMENTAL"
             echo "SCCACHE_DIR=$SCCACHE_DIR"
             echo "SCCACHE_CACHE_SIZE=$SCCACHE_CACHE_SIZE"
             echo "CARGO_TARGET_DIR=$CARGO_TARGET_DIR"

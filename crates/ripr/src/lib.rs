@@ -73,6 +73,10 @@ mod ripr_error;
 mod build_commit_record;
 // Build commit identity for `ripr --version` and `ripr doctor`.
 mod build_identity;
+// Source digest shared with build.rs; the crate unit-tests it and the build
+// script bakes it only for persisted-cache builds (#14638).
+#[cfg(test)]
+mod source_digest;
 // Staged RepairAttempt edit-cage contract. #3163 connects the repository
 // baseline/delta producer before any public receipt projection consumes it.
 #[cfg_attr(
