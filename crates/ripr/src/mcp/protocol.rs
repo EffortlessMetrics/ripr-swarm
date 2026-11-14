@@ -629,10 +629,13 @@ fn gap_brief_text(document: &Value, item: &Value) -> String {
             text(changed.and_then(|changed| changed.get("expression")))
         ),
     };
-    if let Some(result) = changed.and_then(|changed| changed.get("arm_result"))
-        && result.is_string()
+    // Any present, non-null result is shown (a non-string as its compact
+    // JSON) rather than silently dropped; the projection never fails a read.
+    if let Some(result) = changed
+        .and_then(|changed| changed.get("arm_result"))
+        .filter(|result| !result.is_null())
     {
-        changed_line.push_str(&format!("; arm result: {}", text(Some(result))));
+        changed_line.push_str(&format!("; arm result: {}", nullable(Some(result))));
     }
     changed_line.push_str(&format!(
         "; probe: {}",
@@ -2765,8 +2768,17 @@ mod tests {
         // A match-arm result, when the producer reads one, joins the line.
         let mut arm = document;
         arm["item"]["changed_behavior"]["arm_result"] = json!("450");
-        if !brief_text_of(arm)?.contains("; arm result: 450; probe: predicate") {
+        if !brief_text_of(arm.clone())?.contains("; arm result: 450; probe: predicate") {
             return Err("an arm result in the document must reach the brief".into());
+        }
+        // A non-string result is shown as JSON, a null one is left out.
+        arm["item"]["changed_behavior"]["arm_result"] = json!(450);
+        if !brief_text_of(arm.clone())?.contains("; arm result: 450; probe: predicate") {
+            return Err("a non-string arm result must not be dropped".into());
+        }
+        arm["item"]["changed_behavior"]["arm_result"] = Value::Null;
+        if brief_text_of(arm)?.contains("arm result") {
+            return Err("a null arm result must not be rendered".into());
         }
         Ok(())
     }
