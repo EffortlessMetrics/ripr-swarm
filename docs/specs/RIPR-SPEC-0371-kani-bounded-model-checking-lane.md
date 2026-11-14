@@ -65,12 +65,54 @@ unreachable would read as a pass.
   filesystem effects) is not forced through a harness. A smaller pure core is
   proved, or the limit is recorded; a pass is never fabricated.
 
+### Domain decision obligations (#12109 / #11912)
+
+The feedback, executed-control, causal-delta and probe harness input domains
+use constructor lists whose wildcard-free matches are generated from the same
+declaration. Adding a variant or omitting a listed constructor must fail to
+compile in both ordinary tests and Kani builds; duplicate constructors are
+rejected. This guard does not fabricate enum values or depend on numeric
+discriminants, variant counts, or a separately maintained match.
+
+Feedback judgment expectations are explicit per reason, preserving the five
+meanings in SPEC-0179. Useful actions, limitations, correct targets and
+discriminators, and clear explanations are useful. Wrong targets/discriminators,
+false actionability, duplicates, already-covered items, incorrect causal
+attribution and stale results are incorrect. Missing context, ambiguity and
+unclear explanations are unclear. Command failures, overly broad routes,
+slowness, noise and unsupported workflows are expensive. Intentional defensive
+code, intentional low grip and preferred manual review mean intentional
+no-action. `Other` has an unclear default and requires a note; receipt validation
+still requires an explicit judgment override.
+
+The SPEC-0183 scalar `claims_satisfaction` predicate accepts both `Passed` and
+`Substituted`, and rejects each other state. Both directions are checked, with
+separate reachable witnesses for both positive states and every refusal state.
+This is a claim-state predicate, not evidence admission: the surrounding packet
+validator still decides whether an actual pass or substitute is acceptable.
+The outcome partition also checks both directions: ordinary positive tests,
+review prose, structural discrimination, a command that never exercised its
+subject, and `NotExecuted` are unexecuted substitutes. Failed-before/passed-after
+and rejected-wrong-implementation observations are not. `InstrumentUnavailable`
+is separately represented and also is not classified as an unexecuted
+substitute. This distinction does not by itself establish admissibility; a
+declared, artifact-backed substitute remains separately validated.
+
+Ordinary tests call the same production predicates over the complete guarded
+domains. Literal expected behavior is independent of the production predicates.
+Each symbolic constructor gets a reachability witness. Native verification,
+ordinary execution, and wrong-implementation/compile-refusal controls must be
+reported separately, bound to their actual source and tool configuration.
+Fixed identity strings and other bounds of existing harnesses remain unchanged;
+this does not establish packet validation, full-program behavior, or a full-lane
+qualification.
+
 ### The command
 
 `cargo xtask kani [--allow-empty] [--harness <name>] [--default-unwind <n>]
-[--timeout-secs <n>] [--harness-timeout-secs <n>]` discovers the harnesses under `crates/ripr/src`, runs
-`cargo kani -p ripr` once for them (Kani compiles the whole library, so a
-run per harness would multiply the build) and writes `target/ripr/reports/kani.md` with one
+[--timeout-secs <n>] [--harness-timeout-secs <n>]` discovers harnesses under `crates/ripr/src` and `crates/ripr-contract/src`, runs
+`cargo kani` once per owning package (`ripr` and `ripr-contract`) for them,
+with one shared whole-run deadline and writes `target/ripr/reports/kani.md` with one
 row per harness. Each row is exactly one of:
 
 - `VERIFIED`: Kani reported a successful verification and every `cover!` was
@@ -106,8 +148,9 @@ checkouts; the CI lane never passes it.
 ### The lane
 
 `.github/workflows/kani.yml` is advisory and not a required check. It runs
-nightly, on dispatch and when `merge-ready` is applied to a pull request that
-touches ripr source, with `kani-verifier` pinned to an exact version. See
+nightly and on explicit dispatch, with `kani-verifier` pinned to an exact
+version. The ordinary PR/`merge-ready` subscription is retired under #4842;
+proof still covers both owning packages, `ripr` and `ripr-contract`. See
 [CI](../CI.md#advisory-kani-lane).
 
 ## What a proof does and does not claim
@@ -140,7 +183,7 @@ It does not claim:
 
 ## Known Limits
 
-- Kani compiles the whole `ripr` library; a run takes minutes and several GB of
+- Kani compiles each owning library; a run takes minutes and several GB of
   memory.
 - Harness discovery is textual (`#[kani::proof` followed by `fn name`) and
   rejects duplicate names in the selected inventory. It does not establish

@@ -304,6 +304,20 @@ fn no_changed_files_in_range(output: &CheckOutput) -> bool {
         })
 }
 
+/// True when the range held no changed files because the compared base
+/// already contains `HEAD` (#14265): the branch is behind its base or merged
+/// into it, so the diff from their merge base is empty by construction.
+fn head_already_in_base(output: &CheckOutput) -> bool {
+    output
+        .analysis_outcome
+        .as_ref()
+        .is_some_and(|outcome| outcome.counts.changed_file_count == 0)
+        && output
+            .analyzed_revisions
+            .as_ref()
+            .is_some_and(crate::output::analyzed_revisions::head_is_contained_in_base)
+}
+
 /// #13036: a range with changed files but no checkable behavior is usually a
 /// tests-only diff (the agent committed its tests, then used the commit before
 /// them as the base). Say so and name the fix, without claiming which it is.
@@ -340,6 +354,11 @@ fn no_findings_line(output: &CheckOutput) -> &'static str {
         // no behavior; say what was not checked instead of "No findings".
         // #13036: an empty diff is a different cause from "no analyzable
         // language"; name the real one so the reader looks at the base.
+        // #14265: a base that already contains HEAD is a third cause; name
+        // it so the reader looks at which branch they are on, not at languages.
+        _ if no_source_examined(output) && head_already_in_base(output) => {
+            "Nothing to check: HEAD is already contained in the comparison base, so the diff from their merge base is empty (no changed files) and ripr examined no behavior.\n"
+        }
         _ if no_source_examined(output) && no_changed_files_in_range(output) => {
             "Nothing to check: the diff against the comparison base is empty (no changed files), so ripr examined no behavior.\n"
         }
@@ -796,13 +815,28 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
             // #10691: the preview-language note below names the real recovery
             // (the `ripr.toml` block to add), so the default view drops the
             // stage/kind-flavoured Limitation line and keeps one plain pointer.
-            match limitation.affected_items {
-                Some(count) => out.push_str(&format!(
-                    "  Not analyzed: {count} changed file(s) in a language ripr is not set up to analyze (see the note below).\n"
-                )),
-                None => out.push_str(
-                    "  Not analyzed: changed files in a language ripr is not set up to analyze (see the note below).\n",
-                ),
+            // #14152: that pointer is only true when such a note follows. No
+            // note is written without a preview advisory, and none covers
+            // Rust switched off in `[languages]`, so those print the
+            // producer's own recovery instead of pointing at nothing.
+            let note_follows = !output.preview_language_advisories.is_empty()
+                && !limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(crate::analysis::is_rust_excluded_by_config_detail);
+            let subject = match limitation.affected_items {
+                Some(count) => format!("{count} changed file(s)"),
+                None => "changed files".to_string(),
+            };
+            if note_follows {
+                out.push_str(&format!(
+                    "  Not analyzed: {subject} in a language ripr is not set up to analyze (see the note below).\n"
+                ));
+            } else {
+                out.push_str(&format!(
+                    "  Not analyzed: {subject} in a language ripr is not set up to analyze.\n  Fix: {}\n",
+                    limitation.recovery.detail
+                ));
             }
             continue;
         }
@@ -982,6 +1016,12 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
             "the line budget of {budget} changed line(s) ({budget_env}={budget}); \
              the first selected file alone exceeded it and was analyzed whole"
         ),
+        crate::analysis::PartialDiffStopReason::FileExceedsAnalysisLimit => format!(
+            "the changed-line limit ({}); every enabled-language file that fits was selected \
+             and {} file(s) that each exceed their language's limit on their own were left out",
+            scope.over_limit_envs().join(", "),
+            scope.over_limit_files.len()
+        ),
     };
     out.push_str(&format!(
         "Partial scope: run state {} — analysis stopped at {stopped_at}; \
@@ -1011,6 +1051,15 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
         // The raw path stays on the scope record for identities/JSON; only
         // the terminal-facing display is escaped (#2142 review).
         out.push_str(&format!("  selected: {}\n", escape_terminal_display(file)));
+    }
+    for file in &scope.over_limit_files {
+        out.push_str(&format!(
+            "  over limit (not analyzed): {} ({} changed lines over {}={})\n",
+            escape_terminal_display(&file.path),
+            file.changed_lines,
+            file.limit_env,
+            file.limit
+        ));
     }
     for disclosure in &scope.budget_disclosures {
         out.push_str(&format!("  budget: {disclosure}\n"));
@@ -1616,6 +1665,15 @@ mod sections;
 mod shared;
 mod triage;
 
+/// The agent-format refusal record for a refused check run (#14452).
+/// `retry` is a timed run's bounded replay command, when one exists.
+pub(crate) fn render_agent_refusal(
+    notice: &crate::core_error::RefusalNotice,
+    retry: Option<&str>,
+) -> String {
+    agent::render_refusal(notice, retry)
+}
+
 /// `ripr check --format agent` (#11580): the compact agent projection of the
 /// human triage. Library callers without navigation get bare finding ids.
 pub(crate) fn render_agent_with_config_and_navigation(
@@ -1714,6 +1772,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -1769,6 +1829,8 @@ mod tests {
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: base.map(|base| crate::analysis::AnalyzedRevisions {
                 base_ref: base.to_string(),
                 base_commit: Some("1a2b3c4d5e6f".to_string()),
@@ -1811,6 +1873,62 @@ mod tests {
             assert!(rendered.contains("analysis incomplete"));
             assert!(rendered.contains("this is not a clean result"));
             assert!(!rendered.contains("ripr checked no changed behavior"));
+        }
+        Ok(())
+    }
+
+    /// #14265: a base that already contains HEAD (a branch behind its base,
+    /// or merged into it) gets its own headline in both human forms. The
+    /// three neighbouring states keep theirs: base commit equal to HEAD
+    /// (#13036), the same commits read through the working tree, and a
+    /// range that did change files.
+    #[test]
+    fn a_base_that_already_contains_head_names_that_cause_in_the_headline() -> Result<(), String> {
+        const CONTAINED: &str = "Nothing to check: HEAD is already contained in the comparison base, so the diff from their merge base is empty (no changed files) and ripr examined no behavior.\n";
+        const EMPTY_DIFF: &str = "Nothing to check: the diff against the comparison base is empty";
+        const NO_LANGUAGE: &str =
+            "Nothing to check: no changed source file in a language ripr analyzes was available";
+        let config = RiprConfig::default();
+        let no_scope = crate::analysis_outcome::AnalysisOutcomeKind::NoScope;
+        let behind = |working_tree: bool| crate::analysis::AnalyzedRevisions {
+            base_ref: "origin/main".to_string(),
+            base_commit: Some("9f8e7d6c5b4a".to_string()),
+            merge_base_commit: Some("1a2b3c4d5e6f".to_string()),
+            loaded_diff_origin: None,
+            head_commit: Some("1a2b3c4d5e6f".to_string()),
+            working_tree,
+        };
+
+        let mut contained = empty_range_output(Some("origin/main"), no_scope, 0)?;
+        contained.analyzed_revisions = Some(behind(false));
+        let same_commit = empty_range_output(Some("origin/main"), no_scope, 0)?;
+        let mut working_tree = contained.clone();
+        working_tree.analyzed_revisions = Some(behind(true));
+        // A docs-only range: files changed, none in an analyzed language.
+        let mut changed_files = empty_range_output(
+            Some("origin/main"),
+            crate::analysis_outcome::AnalysisOutcomeKind::NoChangedLines,
+            1,
+        )?;
+        changed_files.analyzed_revisions = Some(behind(false));
+
+        for (label, output, headline) in [
+            ("contained", &contained, CONTAINED),
+            ("same commit", &same_commit, EMPTY_DIFF),
+            ("working tree", &working_tree, NO_LANGUAGE),
+            ("changed files", &changed_files, NO_LANGUAGE),
+        ] {
+            for rendered in [
+                render_with_config(output, &config),
+                render_full_with_config(output, &config),
+            ] {
+                assert!(rendered.contains(headline), "{label}: {rendered}");
+                for other in [CONTAINED, EMPTY_DIFF, NO_LANGUAGE] {
+                    if other != headline {
+                        assert!(!rendered.contains(other), "{label}: {rendered}");
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -2016,6 +2134,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let loaded = RiprConfig {
@@ -2063,6 +2183,8 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                file_fact_cache: None,
+
                 analyzed_revisions: None,
             };
 
@@ -2095,6 +2217,8 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
             untracked_working_tree_source_paths: vec![
                 "src/new.rs".to_string(),
@@ -2150,6 +2274,8 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
             untracked_working_tree_source_paths: vec!["src/\u{1b}[31mevil.rs".to_string()],
             ignored_working_tree_source_paths: Vec::new(),
@@ -2190,6 +2316,8 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
@@ -2231,6 +2359,8 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: vec![
@@ -2281,6 +2411,8 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
             untracked_working_tree_source_paths: vec!["src/new.rs".to_string()],
             ignored_working_tree_source_paths: vec!["src/ignored_gen.rs".to_string()],
@@ -2341,6 +2473,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2409,6 +2543,8 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2460,6 +2596,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2560,6 +2698,8 @@ mod tests {
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         })
     }
@@ -2611,9 +2751,10 @@ mod tests {
     }
 
     /// #10691: a changed language with no analyzer renders one plain
-    /// `Not analyzed:` pointer on the bounded surface (the preview-language
-    /// note carries the `ripr.toml` recovery); the full surface keeps the
-    /// glossed kind/stage/recovery tokens.
+    /// `Not analyzed:` line on the bounded surface, without the kind/stage
+    /// tokens; the full surface keeps the glossed kind/stage/recovery tokens.
+    /// #14152: this output has no preview advisory, so no note follows and
+    /// the line carries the producer's recovery instead of pointing at one.
     #[test]
     fn bounded_adapter_unavailable_limitation_is_one_plain_pointer() -> Result<(), String> {
         use crate::analysis_outcome::{
@@ -2642,10 +2783,11 @@ mod tests {
         let rendered = render(&output);
         assert!(
             rendered.contains(
-                "  Not analyzed: 1 changed file(s) in a language ripr is not set up to analyze (see the note below).\n"
+                "  Not analyzed: 1 changed file(s) in a language ripr is not set up to analyze.\n  Fix: Enable the python preview adapter and re-run the analysis.\n"
             ),
             "{rendered}"
         );
+        assert!(!rendered.contains("see the note below"), "{rendered}");
         for leaked in [
             "Limitation:",
             "language_adapter_unavailable",
@@ -2886,6 +3028,8 @@ mod tests {
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         })
     }
@@ -2963,6 +3107,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let config = crate::config::RiprConfig::default();
@@ -3124,6 +3270,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -3173,6 +3321,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let config = crate::config::RiprConfig::default();
@@ -3607,6 +3757,8 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                file_fact_cache: None,
+
                 analyzed_revisions: None,
             };
             let rendered = render(&output);
@@ -3656,6 +3808,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -3705,6 +3859,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4114,7 +4270,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "    - … and 5 more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
+                "    - … and 5 more omitted finding(s): 5 weak; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
             ),
             "{rendered}"
         );
@@ -4122,6 +4278,114 @@ mod tests {
             rendered.lines().count() < 150,
             "the default surface stays bounded with many findings"
         );
+    }
+
+    /// On a diff with more omitted findings than the `Hidden:` window, the
+    /// window names the gap-class findings rather than the first files in
+    /// path order, keeps file and line order among the rows it names, and the
+    /// remainder line says which classes fell outside it.
+    #[test]
+    fn hidden_block_window_names_gap_findings_before_already_noticed_ones() {
+        let mut findings = Vec::new();
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/a_selected.rs", 1, 1);
+        findings.push(selected);
+        // 24 already-noticed findings in the alphabetically first files.
+        for index in 0..24 {
+            let mut finding = sample_finding();
+            finding.id = format!("exposed-{index}");
+            finding.class = ExposureClass::Exposed;
+            finding.probe.location = SourceLocation::new(format!("src/b{index:02}.rs"), 1, 1);
+            findings.push(finding);
+        }
+        // Three gaps in files that sort after every one of them.
+        for index in 0..3 {
+            let mut finding = sample_finding();
+            finding.id = format!("late-gap-{index}");
+            finding.probe.location = SourceLocation::new(format!("src/z{index}.rs"), 7, 1);
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        let rows: Vec<&str> = rendered
+            .lines()
+            .filter(|line| line.starts_with("    - src/"))
+            .collect();
+        assert_eq!(rows.len(), 20, "the window stays bounded:\n{rendered}");
+        for index in 0..3 {
+            assert!(
+                rows.iter()
+                    .any(|row| row.starts_with(&format!("    - src/z{index}.rs:7 (weak)"))),
+                "gap in src/z{index}.rs is named:\n{rendered}"
+            );
+        }
+        // The first 17 already-noticed rows fill the rest of the window, and
+        // the named rows keep the report's file order (gaps last here).
+        assert!(rows[0].starts_with("    - src/b00.rs:1 "), "{rendered}");
+        assert!(rows[16].starts_with("    - src/b16.rs:1 "), "{rendered}");
+        assert!(rows[17].starts_with("    - src/z0.rs:7 "), "{rendered}");
+        assert!(!rendered.contains("    - src/b17.rs:"), "{rendered}");
+        let exposed_label = ExposureClass::Exposed.plain_label_with_stage();
+        assert!(
+            rendered.contains(&format!(
+                "    - … and 7 more omitted finding(s): 7 {exposed_label}; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
+            )),
+            "{rendered}"
+        );
+    }
+
+    /// The remainder line counts every finding outside the window by class,
+    /// including findings that share an id with a listed row.
+    #[test]
+    fn hidden_block_remainder_names_each_unlisted_class_by_position() {
+        let mut findings = Vec::new();
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/a_selected.rs", 1, 1);
+        findings.push(selected);
+        // 20 gaps fill the window; every other finding reuses one of their ids.
+        for index in 0..20 {
+            let mut finding = sample_finding();
+            finding.id = "shared-id".to_string();
+            finding.probe.location = SourceLocation::new(format!("src/g{index:02}.rs"), 1, 1);
+            findings.push(finding);
+        }
+        for index in 0..2 {
+            let mut finding = sample_finding();
+            finding.id = "shared-id".to_string();
+            finding.class = ExposureClass::StaticUnknown;
+            finding.probe.location = SourceLocation::new(format!("src/u{index}.rs"), 1, 1);
+            findings.push(finding);
+        }
+        for index in 0..4 {
+            let mut finding = sample_finding();
+            finding.id = "shared-id".to_string();
+            finding.class = ExposureClass::Exposed;
+            finding.probe.location = SourceLocation::new(format!("src/x{index}.rs"), 1, 1);
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        let remainder = rendered
+            .lines()
+            .find(|line| line.contains("more omitted finding(s)"))
+            .unwrap_or_default();
+        let exposed = format!("4 {}", ExposureClass::Exposed.plain_label_with_stage());
+        let unknown = format!(
+            "2 {}",
+            ExposureClass::StaticUnknown.plain_label_with_stage()
+        );
+        assert!(
+            remainder.contains("… and 6 more omitted finding(s): "),
+            "{rendered}"
+        );
+        assert!(remainder.contains(&exposed), "{rendered}");
+        assert!(remainder.contains(&unknown), "{rendered}");
+        assert!(!rendered.contains("    - src/u0.rs:"), "{rendered}");
+        assert!(!rendered.contains("    - src/x0.rs:"), "{rendered}");
     }
 
     #[test]
@@ -4378,6 +4642,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4427,6 +4693,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4501,6 +4769,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4557,6 +4827,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4591,6 +4863,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4759,6 +5033,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: Some(crate::analysis::AnalyzedRevisions {
                 base_ref: "main".to_string(),
                 base_commit: Some("1a2b3c4d5e6f".to_string()),
@@ -4954,6 +5230,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -5122,6 +5400,46 @@ mod tests {
     // propagation the class marks unknown, and unknown-class limitation
     // prose renders under the Analyzer limit label — while a real
     // missing discriminator keeps its own label.
+    #[test]
+    fn digest_window_skips_a_stage_detail_that_repeats_the_missing_line() -> Result<(), String> {
+        // #14308: the infection detail restates the Missing check value word
+        // for word; the window shows the fact once and the next detail instead.
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::InfectionUnknown;
+        let repeated =
+            "Changed boundary input is unresolved, so ripr cannot establish the boundary inputs";
+        finding.ripr.infect = stage(StageState::Unknown, Confidence::Low, repeated);
+        finding.missing = vec![format!("{repeated}.")];
+        finding.activation.missing_discriminators = Vec::new();
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        if digest.matches(repeated).count() != 1 {
+            return Err(format!("the repeated sentence must render once:\n{digest}"));
+        }
+        if digest.contains("    - infection unknown:") {
+            return Err(format!(
+                "the restating detail must leave the window:\n{digest}"
+            ));
+        }
+        if !digest.contains("    - reach ") {
+            return Err(format!("the window keeps the other details:\n{digest}"));
+        }
+        // Control: a detail that differs keeps its slot.
+        finding.missing = vec!["Some other missing evidence".to_string()];
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        if !digest.contains("    - infection unknown:") && !digest.contains("more detail line") {
+            return Err(format!("a distinct detail must stay reachable:\n{digest}"));
+        }
+        Ok(())
+    }
+
     #[test]
     fn propagation_unknown_wording_is_honest() -> Result<(), String> {
         let mut finding = sample_finding();
@@ -5942,6 +6260,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -6050,6 +6370,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6100,6 +6422,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6221,6 +6545,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6295,6 +6621,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6353,6 +6681,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6429,6 +6759,8 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         unbound_repo_root(super::render_full_with_config_and_navigation(
@@ -6544,6 +6876,8 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6596,6 +6930,8 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6643,8 +6979,12 @@ mod tests {
                 stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
                 next_file_changed_lines: Some(60),
                 whole_diff_budgets: None,
+                over_limit_files: Vec::new(),
+                line_budget_limits: Vec::new(),
                 partition_identity: "c".repeat(64),
             }),
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6700,6 +7040,7 @@ mod tests {
             PartialDiffStopReason::FileBudget => (1, 30, Some(30)),
             PartialDiffStopReason::LineBudget => (7, 35, Some(30)),
             PartialDiffStopReason::LineBudgetExceededOnFirstFile => (7, 60, None),
+            PartialDiffStopReason::FileExceedsAnalysisLimit => (7, 35, None),
         };
         CheckOutput {
             value_origins: Default::default(),
@@ -6735,8 +7076,12 @@ mod tests {
                 stop_reason,
                 next_file_changed_lines,
                 whole_diff_budgets: None,
+                over_limit_files: Vec::new(),
+                line_budget_limits: Vec::new(),
                 partition_identity: "c".repeat(64),
             }),
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -6848,8 +7193,12 @@ mod tests {
                 stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
                 next_file_changed_lines: Some(60),
                 whole_diff_budgets: None,
+                over_limit_files: Vec::new(),
+                line_budget_limits: Vec::new(),
                 partition_identity: "c".repeat(64),
             }),
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9004,6 +9353,39 @@ mod tests {
         assert!(!rendered.contains("(observation_unverified)"), "{rendered}");
     }
 
+    /// #14038: the literal evidence lines are skipped once flow, related-test
+    /// or source-value rows exist, which used to drop the one line saying why
+    /// an assertion was not credited from the full report and `explain`.
+    #[test]
+    fn evidence_path_keeps_the_assertion_not_credited_reason_beside_flow_rows() {
+        let note = format!(
+            "{}`assert_eq!` in checks_weight at tests/w.rs:3: the assertion is inside an `if` branch",
+            crate::domain::ASSERTION_NOT_CREDITED_PREFIX
+        );
+        let mut finding = sample_finding();
+        assert!(!finding.flow_sinks.is_empty(), "fixture has a flow sink");
+        let path = |finding: &Finding| {
+            super::evidence_lines::evidence_path_lines(
+                finding,
+                super::evidence_lines::JsonPointerWording::CheckFlag,
+            )
+        };
+        assert!(!path(&finding).iter().any(|line| line == &note));
+        finding.evidence = vec!["unrelated literal evidence".to_string(), note.clone()];
+        let lines = path(&finding);
+        assert_eq!(
+            lines.iter().filter(|line| *line == &note).count(),
+            1,
+            "{lines:?}"
+        );
+        assert!(
+            !lines
+                .iter()
+                .any(|line| line == "unrelated literal evidence"),
+            "only the not-credited reason is kept beside the other rows: {lines:?}"
+        );
+    }
+
     pub(super) fn bounded_output_with_findings(findings: Vec<Finding>) -> CheckOutput {
         let count = findings.len();
         CheckOutput {
@@ -9032,6 +9414,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -9204,6 +9588,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9258,6 +9644,7 @@ mod tests {
                 ignored_working_tree_source_paths: Vec::new(),
                 unlinked_python_tests: None,
                 owner_opt_outs: Vec::new(),
+                file_fact_cache: None,
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
@@ -9338,6 +9725,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9390,6 +9779,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9436,6 +9827,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9480,6 +9873,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9577,6 +9972,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9656,6 +10053,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let rendered = render(&output);
@@ -9732,6 +10131,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9789,6 +10190,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9831,6 +10234,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9875,6 +10280,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9922,6 +10329,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9974,6 +10383,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -10129,6 +10540,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let flat = |output: &CheckOutput| {
@@ -10196,6 +10609,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10255,6 +10670,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10318,6 +10735,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10413,6 +10832,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10461,6 +10882,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10503,6 +10926,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10542,6 +10967,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10578,6 +11005,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10619,6 +11048,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10659,6 +11090,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10711,6 +11144,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10780,6 +11215,8 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                file_fact_cache: None,
+
                 analyzed_revisions: None,
             })
         };

@@ -701,9 +701,8 @@ pub(super) fn durable_receipt_document(
 }
 
 /// How an agent re-checks its own test edit. ripr never runs the tests; the
-/// default `ripr_refresh` analyses the committed diff and does not see an
-/// uncommitted edit, so the re-check names `source: "worktree"` (audit
-/// finding 2).
+/// re-check names `source: "worktree"` (audit finding 2) so it reads the saved
+/// edit explicitly instead of relying on the default selection (#13096).
 ///
 /// The re-check must analyse the same scope as the snapshot the agent read, so
 /// it carries that snapshot's explicit base (#13196). A snapshot analysed
@@ -720,7 +719,7 @@ pub(super) fn verify_after_editing_tests(base: Option<&str>) -> Value {
             "tool": "ripr_refresh",
             "arguments": arguments,
         },
-        "note": "run the project's tests yourself (ripr executes nothing); the default ripr_refresh analyses the committed diff and does not see an uncommitted edit",
+        "note": "run the project's tests yourself (ripr executes nothing); source worktree reads your saved test edit",
     })
 }
 
@@ -759,8 +758,8 @@ fn refusal_next(
         ),
         "worktree_source_not_committed" => (
             "commit_then_refresh",
-            "a saved-worktree snapshot is never repair-ready; commit the edit and run ripr_refresh with the default committed source",
-            json!({ "tool": "ripr_refresh", "arguments": {} }),
+            "a saved-worktree snapshot is never repair-ready; commit the edit and run ripr_refresh with source committed",
+            json!({ "tool": "ripr_refresh", "arguments": { "source": "committed" } }),
             Value::Null,
         ),
         // A producer readiness fact is read from the committed source and
@@ -1361,6 +1360,8 @@ pub(super) mod tests {
             owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         })
     }
@@ -1381,6 +1382,7 @@ pub(super) mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: Default::default(),
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1575,6 +1577,7 @@ pub(super) mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: Default::default(),
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         };
         for index in 0..MAX_SUPERSEDED_TOMBSTONES + 10 {
@@ -1608,6 +1611,7 @@ pub(super) mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: Default::default(),
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         };
         let total = MAX_SUPERSEDED_TOMBSTONES + 10;
@@ -2640,7 +2644,8 @@ pub(super) mod tests {
             RECEIPT_FIXTURE_SEAM,
             &retained_packet_path,
             Some(finished.repair_attempt_id.as_str()),
-        )?;
+        )
+        .map_err(|error| error.message())?;
         let reading = AgentReceiptReading::from_value(&receipt);
         if reading.status.as_deref() != Some(case.producer_status)
             || reading.movement.as_deref() != Some(case.movement)

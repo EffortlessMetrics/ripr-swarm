@@ -886,12 +886,15 @@ fn push_empty_scope_marker(
         && snapshot_serves_empty_scope_marker(snapshot)
         && super::uri::file_uri_relative_to_root(&snapshot.root, uri).is_some()
     {
-        diagnostics.push(empty_scope_diagnostic(snapshot));
+        diagnostics.extend(empty_scope_marker_payload(snapshot));
     }
 }
 
-/// True when the snapshot is an empty-scope outcome with no row of any kind,
-/// the one state in which its documents carry the empty-scope marker.
+/// True when the snapshot's outcome is an empty scope (#13441) or incomplete
+/// (#13562) and the snapshot holds no row of any kind, the one state in which
+/// its documents carry a scope marker. A complete outcome, a snapshot with a
+/// finding, gap row or stored marker, and a snapshot with no typed outcome
+/// never carry one, so the scope markers and the stored markers cannot stack.
 pub(super) fn snapshot_serves_empty_scope_marker(snapshot: &AnalysisSnapshot) -> bool {
     snapshot.diagnostic_count() == 0
         && snapshot.findings.is_empty()
@@ -899,16 +902,17 @@ pub(super) fn snapshot_serves_empty_scope_marker(snapshot: &AnalysisSnapshot) ->
         && snapshot
             .analysis_outcome
             .as_ref()
-            .is_some_and(|outcome| outcome.kind.is_empty_scope())
+            .is_some_and(|outcome| outcome.kind.is_empty_scope() || !outcome.kind.is_complete())
 }
 
-/// True for the served-not-stored empty-scope marker (#13441). It is never
-/// line-local evidence and never part of the committed baseline.
+/// True for a served-not-stored scope marker: the empty-scope marker (#13441)
+/// or the incomplete-analysis marker (#13562, `data.kind` `incomplete_analysis`).
+/// It is never line-local evidence and never part of the committed baseline.
 pub(super) fn is_empty_scope_marker(diagnostic: &Diagnostic) -> bool {
     diagnostic
         .data
         .as_ref()
-        .is_some_and(|data| data["kind"] == "empty_scope")
+        .is_some_and(|data| data["kind"] == "empty_scope" || data["kind"] == "incomplete_analysis")
         && diagnostic.code
             == Some(NumberOrString::String(
                 super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
@@ -919,7 +923,45 @@ pub(super) fn is_empty_scope_marker(diagnostic: &Diagnostic) -> bool {
 /// (not just presence) lets a committed snapshot whose marker text changed
 /// (a different base or empty-scope cause) be re-served.
 pub(super) fn empty_scope_marker_payload(snapshot: &AnalysisSnapshot) -> Option<Diagnostic> {
-    snapshot_serves_empty_scope_marker(snapshot).then(|| empty_scope_diagnostic(snapshot))
+    if !snapshot_serves_empty_scope_marker(snapshot) {
+        return None;
+    }
+    let outcome = snapshot.analysis_outcome.as_ref()?;
+    if outcome.kind.is_empty_scope() {
+        return Some(empty_scope_diagnostic(snapshot));
+    }
+    // The incomplete-analysis marker (#13562) shares the governed
+    // `ripr-diagnostic-language-not-analyzed` code (the analysis did not cover
+    // its scope, so an empty list is not a clean result). The wording reuses the
+    // plain labels and producer-owned recovery text the human `check`
+    // limitation lines print, so the marker cannot drift from `ripr check`. The
+    // scoping decision and wording are owned by
+    // `AnalysisOutcome::incomplete_scope_sentence`; this only frames it as the
+    // Information marker.
+    let sentence = outcome.incomplete_scope_sentence()?;
+    let limitations = outcome
+        .limitations
+        .iter()
+        .filter(|limitation| !limitation.kind.is_advisory_disclosure())
+        .map(|limitation| limitation.kind.as_str())
+        .collect::<Vec<_>>();
+    Some(Diagnostic {
+        range: Range::default(),
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!("ripr: {sentence} This is a static advisory, not runtime evidence."),
+        data: Some(serde_json::json!({
+            "delivery_eligible": true,
+            "kind": "incomplete_analysis",
+            "not_analyzed_reason": "analysis_incomplete",
+            "outcome_kind": outcome.kind.as_str(),
+            "limitations": limitations,
+        })),
+        ..Default::default()
+    })
 }
 
 /// The marker for an empty analysis scope. Shares the governed
@@ -1030,6 +1072,10 @@ pub(super) fn quarantine_withdrawal_diagnostic(reason: DocumentStalenessReason) 
             "undo_or_revert",
             "Undo the edit or revert the file so ripr receives the full document again.",
         ),
+        DocumentStalenessReason::DocumentStoreLimitReached => (
+            "close_other_documents_then_reopen",
+            "Close other open files, then reopen this file so ripr can track it.",
+        ),
         DocumentStalenessReason::NoAnalyzedSavedContent => (
             "save_then_refresh",
             "Save the file if it is new, then refresh (`ripr.refresh`) so ripr can restore them.",
@@ -1066,6 +1112,10 @@ pub(super) fn withdrawn_quarantine_diagnostics(reason: DocumentStalenessReason) 
 pub(super) enum AnalysisPendingRecovery {
     /// Configuration valid, root admitted: the ordinary cold-start state.
     SaveOrRefresh,
+    /// Configuration valid, root admitted, and an analysis attempt is queued
+    /// or running (#14447): asking the user to save or refresh to start
+    /// analysis would be wrong while one is already under way.
+    AnalysisRunning,
     /// Configuration invalid: `refresh_diagnostics` returns before
     /// analysis until the configuration is repaired.
     FixConfiguration,
@@ -1078,6 +1128,7 @@ impl AnalysisPendingRecovery {
     pub(super) fn recovery_id(&self) -> &'static str {
         match self {
             Self::SaveOrRefresh => "save_or_refresh",
+            Self::AnalysisRunning => "analysis_running",
             Self::FixConfiguration => "fix_configuration",
             Self::RootBlocked(route) => route,
         }
@@ -1086,6 +1137,7 @@ impl AnalysisPendingRecovery {
     fn route_text(&self) -> &'static str {
         match self {
             Self::SaveOrRefresh => "Save a file or run `ripr.refresh` to start analysis.",
+            Self::AnalysisRunning => "Results replace this marker when it finishes.",
             Self::FixConfiguration => {
                 "Fix the workspace configuration and reload it; analysis cannot start until the configuration is valid."
             }
@@ -1126,6 +1178,12 @@ fn analysis_pending_diagnostic_for(
     let message = if withdrawn {
         format!(
             "ripr analysis is paused and previously reported findings are withdrawn — \
+             this is not evidence of a clean workspace. {}",
+            recovery.route_text()
+        )
+    } else if recovery == AnalysisPendingRecovery::AnalysisRunning {
+        format!(
+            "ripr analysis is in progress, so no findings are reported yet — \
              this is not evidence of a clean workspace. {}",
             recovery.route_text()
         )
@@ -1239,11 +1297,15 @@ pub(super) fn workspace_diagnostic_result_id(snapshot: &AnalysisSnapshot) -> Str
             .unwrap_or_else(|| "no-base".to_string()),
     ];
     // #13441: the served empty-scope marker is not a stored document, so its
-    // payload joins the workspace identity directly; otherwise a marker, a
+    // complete normalized diagnostic (message, severity, code and `data`, as
+    // document ids fold theirs) joins the workspace identity directly; otherwise a marker, a
     // changed marker and no marker could share one identity.
     if let Some(marker) = empty_scope_marker_payload(snapshot) {
         parts.push("empty-scope-marker".to_string());
-        parts.push(marker.message);
+        parts.push(normalized_diagnostic_payload_digest(
+            &snapshot.root,
+            std::slice::from_ref(&marker),
+        ));
     }
     for uri in snapshot.diagnostics_by_uri.keys() {
         parts.push(normalized_document_uri(&snapshot.root, uri));
@@ -1546,6 +1608,28 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
                 );
             }
         };
+    // #14136: the findings `ripr check` withholds (an owner that carries
+    // `#[mutants::skip]`, or a suppression policy) are not projected into the
+    // editor either. The id set is the shared `withheld_finding_ids` owner, not
+    // an LSP-side matcher; the disclosure count stays on the snapshot.
+    let withheld_ids: std::collections::BTreeSet<String> = output
+        .withheld_finding_ids()
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let owner_opt_out_findings = output.owner_opt_outs.len();
+    // A withheld finding that carries a static limit still limits the run: the
+    // analysis was incomplete for that owner, so the status stays `limited`
+    // rather than reading `full` just because the finding is not shown.
+    let mut visible_findings = Vec::new();
+    let mut withheld_static_limits = Vec::new();
+    for finding in output.findings {
+        if !withheld_ids.contains(&finding.id) {
+            visible_findings.push(finding);
+        } else if finding.static_limit_kind.is_some() {
+            withheld_static_limits.push(finding);
+        }
+    }
     let root = output.root;
     let base = output.base;
     let analysis_outcome = output.analysis_outcome;
@@ -1577,7 +1661,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // already excluded. The suppressed count stays on the snapshot as the
     // typed safety net against anchor-model divergence (#2130).
     let (findings, out_of_scope_test_file_findings) =
-        partition_out_of_scope_test_file_findings(&root, config.repo_config(), output.findings);
+        partition_out_of_scope_test_file_findings(&root, config.repo_config(), visible_findings);
 
     // Typed component-outcome authority (#1997, RIPR-SPEC-0141): every
     // optional analysis component records one bounded outcome on the
@@ -1708,8 +1792,9 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // state, scope, deferral, and the typed component outcomes (#1939,
     // #1997). A degraded optional component makes the run `limited` — never
     // a silent `full`.
+    let status_findings = run_status_findings(&findings, &withheld_static_limits);
     let run_status = derive_run_status_with_outcome(
-        &findings,
+        &status_findings,
         &gap_artifact_report.rejections,
         &gap_artifact_report.artifacts,
         defer_seam_inventory,
@@ -1783,7 +1868,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // requires visible, bounded advisory evidence rather than a silent zero.
     if should_project_gap_records(
         run_status,
-        &findings,
+        &status_findings,
         &gap_artifact_report.artifacts,
         &component_outcomes,
         gap_ledger.as_ref().map(|(_, records)| records.as_slice()),
@@ -1853,6 +1938,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         partial_scope,
         component_outcomes,
         out_of_scope_test_file_findings,
+        owner_opt_out_findings,
         unavailable_adapter,
         language_view,
         rust_diagnostic_origins: origins,
@@ -2399,6 +2485,21 @@ pub(super) fn language_not_analyzed_diagnostic(
 /// and no other component degraded. This keeps preview diagnostics visible
 /// while preserving the fail-closed suppression policy for stale, rejected,
 /// incomplete, partial, and operationally degraded runs.
+/// Findings the run status is derived from: the projected findings plus any
+/// withheld finding that carries a static limit (#14136). Borrowed when
+/// nothing was withheld.
+fn run_status_findings<'a>(
+    projected: &'a [Finding],
+    withheld_static_limits: &[Finding],
+) -> std::borrow::Cow<'a, [Finding]> {
+    if withheld_static_limits.is_empty() {
+        return std::borrow::Cow::Borrowed(projected);
+    }
+    let mut all = projected.to_vec();
+    all.extend_from_slice(withheld_static_limits);
+    std::borrow::Cow::Owned(all)
+}
+
 fn should_project_gap_records(
     run_status: &str,
     findings: &[Finding],
@@ -2589,6 +2690,7 @@ fn git_timeout_limited_diagnostics(
         partial_scope: None,
         component_outcomes,
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -2696,6 +2798,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         partial_scope: None,
         component_outcomes,
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -4668,8 +4771,10 @@ fn lsp_message(finding: &Finding) -> String {
     // The recommended next step is generic ("add boundary tests ..."); the
     // Problems panel row is the only text many editors show, so name the
     // concrete missing input or value the witness already carries.
+    // The check leads (#14465): a Problems row cut to its first words then
+    // still shows what to test rather than the generic step.
     let base = match missing_check_suffix(finding, &base) {
-        Some(suffix) => format!("{base} {suffix}"),
+        Some(check) => format!("{check} {base}"),
         None => base,
     };
     if finding
@@ -4677,12 +4782,26 @@ fn lsp_message(finding: &Finding) -> String {
         .as_ref()
         .is_some_and(|status| status.as_str() == "preview")
     {
+        // The Problems panel row is often the only text shown, so say
+        // "preview" once: the producer's own step usually opens with
+        // "Python preview:" or "TypeScript preview advisory:" already. The
+        // TypeScript producer also serves JavaScript findings, so its prefix
+        // is stripped for those too.
+        // Hover keeps the full preview boundary (syntax-first, advisory).
         let language = finding
             .language
-            .as_ref()
-            .map(|language| language.as_str())
-            .unwrap_or("preview-language");
-        let mut message = format!("{language} preview evidence (syntax-first, advisory): {base}");
+            .map(|language| language.display_name())
+            .unwrap_or("Preview-language");
+        let step = [
+            format!("{language} preview advisory: "),
+            format!("{language} preview: "),
+            "TypeScript preview advisory: ".to_string(),
+            "TypeScript preview: ".to_string(),
+        ]
+        .iter()
+        .find_map(|prefix| base.strip_prefix(prefix.as_str()))
+        .unwrap_or(&base);
+        let mut message = format!("{language} preview (advisory): {step}");
         if let Some(static_limit_kind) = &finding.static_limit_kind {
             message.push_str(&format!(" Static limit: {}.", static_limit_kind.as_str()));
         }
@@ -6527,6 +6646,30 @@ mod diagnostic_policy_tests {
     };
     use crate::output::gap_decision_ledger::{GapAnchor, GapRepairRoute, ProjectionEligibility};
 
+    #[test]
+    fn withheld_static_limit_keeps_the_run_limited() -> Result<(), String> {
+        let mut limited = policy_finding();
+        limited.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
+        let withheld = vec![limited];
+        let projected: Vec<Finding> = Vec::new();
+        let none: Vec<Finding> = Vec::new();
+        let borrowed = run_status_findings(&projected, &none);
+        let widened = run_status_findings(&projected, &withheld);
+        let status = |findings: &[Finding]| {
+            derive_run_status_with_outcome(findings, &[], &[], false, false, &[], None)
+        };
+        if status(&borrowed) != "full" {
+            return Err(format!("control run is not full: {}", status(&borrowed)));
+        }
+        if status(&widened) != "limited" {
+            return Err(format!(
+                "withheld static limit did not limit the run: {}",
+                status(&widened)
+            ));
+        }
+        Ok(())
+    }
+
     fn policy_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
@@ -6786,7 +6929,7 @@ mod diagnostic_policy_tests {
         let message = lsp_message(&finding);
         assert_eq!(
             message,
-            "Add boundary tests for the changed threshold. Missing check: `age == 18`."
+            "Missing check: `age == 18`. Add boundary tests for the changed threshold."
         );
 
         // A step that already quotes the value is not repeated.
@@ -6812,7 +6955,7 @@ mod diagnostic_policy_tests {
         assert_eq!(with_value(&mut finding, "   ".to_string()), "Add a test.");
         assert_eq!(
             with_value(&mut finding, " age == 18 ".to_string()),
-            "Add a test. Missing check: `age == 18`."
+            "Missing check: `age == 18`. Add a test."
         );
         // The 80-character limit counts characters, not bytes.
         assert_eq!(
@@ -6822,11 +6965,11 @@ mod diagnostic_policy_tests {
         );
         assert_eq!(
             with_value(&mut finding, "x".repeat(80)),
-            format!("Add a test. Missing check: `{}`.", "x".repeat(80))
+            format!("Missing check: `{}`. Add a test.", "x".repeat(80))
         );
         assert_eq!(
             with_value(&mut finding, "é".repeat(40)),
-            format!("Add a test. Missing check: `{}`.", "é".repeat(40))
+            format!("Missing check: `{}`. Add a test.", "é".repeat(40))
         );
         // Values that would break the Markdown code span are left out.
         assert_eq!(with_value(&mut finding, "a`b".to_string()), "Add a test.");
@@ -6870,8 +7013,8 @@ mod diagnostic_policy_tests {
         ];
         assert_eq!(
             lsp_message(&finding),
-            "Add boundary tests for below, equal, and above the changed threshold. \
-             Missing check: `n == 0`."
+            "Missing check: `n == 0`. \
+             Add boundary tests for below, equal, and above the changed threshold."
         );
 
         // Without a boundary input the first check is still named.
@@ -6880,7 +7023,7 @@ mod diagnostic_policy_tests {
             crate::domain::DiscriminatorShape::Other,
         )];
         assert!(
-            lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
+            lsp_message(&finding).starts_with("Missing check: `PriceError::Negative`. "),
             "{}",
             lsp_message(&finding)
         );
@@ -6896,7 +7039,7 @@ mod diagnostic_policy_tests {
             fact("n == 0", crate::domain::DiscriminatorShape::Boundary),
         ];
         assert!(
-            lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
+            lsp_message(&finding).starts_with("Missing check: `PriceError::Negative`. "),
             "{}",
             lsp_message(&finding)
         );
@@ -9228,6 +9371,7 @@ mod delivery_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),

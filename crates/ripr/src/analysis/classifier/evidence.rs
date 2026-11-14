@@ -5,9 +5,9 @@ use crate::analysis::classify::{
     WrapperEntryPairing, activation_and_boundary_input, assertion_compares_hand_built_field,
     assertion_observes_collection_argument, assertion_observes_scope_end, assertion_out_parameter,
     assertion_pins_pushed_collection_count, body_contains_owner_call, call_parameter_names,
-    callee_is_unique, chain_entry_pin_admits, chain_forwards_to_observed_hops,
-    chain_passes_effect_target_to_observed_hops, classify, confidence_score,
-    constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
+    call_text_may_call_free_function, callee_is_unique, chain_entry_pin_admits,
+    chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
+    confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
     direct_collection_mutation_receiver, error_path_arm_probe, expected_operand_value,
     fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
@@ -503,6 +503,11 @@ impl ClassifiedProbeEvidence {
             &mut gathered,
             &mut flow_sinks,
         );
+        crate::analysis::classify::refine_slice_counter_boundary(
+            context,
+            pin_syntax,
+            &mut gathered,
+        );
         let mut activation = gathered.activation;
         // #3731 review (F11, G1): the changed owner's package scope, computed
         // once — the cross-package same-name defeats compare each related
@@ -591,6 +596,7 @@ impl ClassifiedProbeEvidence {
             OwnerInputs {
                 owner: context.owner_fn,
                 literal_length_boundary: gathered.literal_length_boundary.as_ref(),
+                slice_counter_boundary: gathered.slice_counter_boundary.as_ref(),
             },
             owner_has_other_callers,
             assertion_macros_rebound,
@@ -957,6 +963,7 @@ impl ClassifiedProbeEvidence {
         // gates still do not build the graph.
         let owner_reach = std::cell::OnceCell::new();
         let pushed_path = std::cell::OnceCell::<Option<String>>::new();
+        let assigned_path = std::cell::OnceCell::<Option<String>>::new();
         let owner_locals = context
             .owner_fn
             .map(owner_local_binding_names)
@@ -1359,6 +1366,56 @@ impl ClassifiedProbeEvidence {
                             })
                     })
                 },
+                assigned_field_observed: &|test, assertion| {
+                    // RIPR-SPEC-0228 (#14407): the one exact-read rule for a
+                    // changed field assignment, shared with activation and the
+                    // repository seam. The path depends only on the owner and
+                    // probe, so it is computed once per probe.
+                    context.owner_fn.is_some_and(|owner| {
+                        assigned_path
+                            .get_or_init(|| {
+                                crate::analysis::classify::assigned_field_of(
+                                    owner,
+                                    context.probe,
+                                    context.index,
+                                )
+                            })
+                            .as_deref()
+                            .is_some_and(|path| {
+                                // Only a receiver built by a visible struct
+                                // literal, with a literal seed that differs
+                                // from the expected literal and no other
+                                // pre-call use, has a pre-call field value
+                                // reveal can tell apart (#14407).
+                                crate::analysis::classify::owner_writes_field_only_at_probe(
+                                    &owner.body,
+                                    path,
+                                ) && crate::analysis::classify::test_binds_owner_type(
+                                    owner,
+                                    test,
+                                    context.index,
+                                ) && crate::analysis::classify::assigned_field_seed_is_visible(
+                                    test,
+                                    &owner.name,
+                                    path,
+                                    crate::analysis::classify::owner_plain_written_value(
+                                        &owner.body,
+                                        path,
+                                    )
+                                    .as_deref(),
+                                    assertion,
+                                ) && crate::analysis::classify::assigned_field_read_confirms(
+                                    owner,
+                                    path,
+                                    test,
+                                    assertion,
+                                    context.index,
+                                ) && !crate::analysis::classify::workspace_has_visible_non_plain_drop(
+                                    context.index,
+                                )
+                            })
+                    })
+                },
                 out_parameter_read: &|test, assertion| {
                     context.owner_fn.and_then(|owner| {
                         assertion_out_parameter(owner, context.index, test, assertion, pin_syntax)
@@ -1564,6 +1621,21 @@ impl ClassifiedProbeEvidence {
             && !guard_side_flip_paired
             && !gathered
                 .literal_length_boundary
+                .as_ref()
+                .is_some_and(|boundary| {
+                    context.owner_fn.is_some_and(|owner| {
+                        boundary.pairs(
+                            context.probe,
+                            owner,
+                            &test_summaries,
+                            context.index,
+                            &assertion_admitted,
+                            &owner_pin_admits,
+                        )
+                    })
+                })
+            && !gathered
+                .slice_counter_boundary
                 .as_ref()
                 .is_some_and(|boundary| {
                     context.owner_fn.is_some_and(|owner| {
@@ -1928,7 +2000,18 @@ impl ClassifiedProbeEvidence {
                         ) else {
                             continue;
                         };
-                        let calls_owner = body_contains_owner_call(&assertion.text, owner_name);
+                        // #6929: a free-function owner is called only by a bare or
+                        // module-qualified spelling; `Other::parse(..)` names an
+                        // associated function that merely shares the name.
+                        let calls_owner = body_contains_owner_call(&assertion.text, owner_name)
+                            && context.owner_fn.is_none_or(|owner| {
+                                owner.impl_context
+                                    != crate::analysis::facts::FunctionImplContext::Free
+                                    || call_text_may_call_free_function(
+                                        &assertion.text,
+                                        &owner.name,
+                                    )
+                            });
                         let macro_name = OwnerPinSyntax::assertion_macro_name(&assertion.text)
                             .filter(|name| matches!(name.as_str(), "assert_eq" | "assert"))
                             .unwrap_or_default();

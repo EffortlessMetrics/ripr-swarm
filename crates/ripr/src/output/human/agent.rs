@@ -138,16 +138,22 @@ fn render_report(
         .as_ref()
         .is_some_and(|start| start.command.is_some());
     let unconfirmed = unconfirmed_gap_count(&triage, &gaps, incomplete);
+    // #14338: one printed row per distinct row. `gaps` stays whole for every
+    // membership decision (limits, stop, next), so a folded finding is never
+    // re-listed as a non-gap and verification still counts every probe.
+    let rows = fold_identical_gap_rows(&output.root, &gaps);
     let mut out = header_line(
         output,
         &considered,
         HeaderCounts {
-            gaps: gaps.len(),
+            gaps: rows.len(),
+            folded: gaps.len() - rows.len(),
             unconfirmed,
             repairable: startable,
         },
     );
     out.push_str(&incomplete_lines);
+    let unanalyzed = render_unanalyzed_changes(&mut out, output);
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
         // #13658: a `no_scope` outcome (empty or unparseable --diff) read
@@ -156,7 +162,9 @@ fn render_report(
             out.push_str("stop=nothing was in scope; zero findings is not a clean result (nothing was parsed or analyzed)\n");
             return out;
         }
-        out.push_str(if incomplete {
+        out.push_str(if unanalyzed {
+            "stop=changes were not analyzed, so zero findings is not a clean result; see `unanalyzed=`\n"
+        } else if incomplete {
             "stop=analysis incomplete; zero findings is not a clean result\n"
         } else if super::no_source_examined(output) {
             // #13658: an empty diff (or one with no analyzable
@@ -185,7 +193,7 @@ fn render_report(
                 &considered,
                 &limited,
                 drill_in,
-                &terminal_line(&triage, output, drill_in),
+                &guard_clean_claim(terminal_line(&triage, output, drill_in), unanalyzed),
                 repair_start
                     .as_ref()
                     .and_then(|start| start.command.as_deref()),
@@ -196,7 +204,10 @@ fn render_report(
                 "stop=analysis incomplete; retained findings are advisory, not a complete result\n",
             );
         } else {
-            out.push_str(&terminal_line(&triage, output, drill_in));
+            out.push_str(&guard_clean_claim(
+                terminal_line(&triage, output, drill_in),
+                unanalyzed,
+            ));
         }
         push_limits(&mut out, &considered, &[]);
         if let Some(next) = next {
@@ -207,8 +218,8 @@ fn render_report(
     }
 
     let mut tests: Vec<TestRef> = Vec::new();
-    let budget = gap_line_budget(gaps.len());
-    for finding in gaps.iter().take(budget) {
+    let budget = gap_line_budget(rows.len());
+    for finding in rows.iter().take(budget) {
         let test_ref =
             strongest_test(finding).map(|test| intern_test(&mut tests, &output.root, test));
         out.push_str(&gap_line(&output.root, finding, test_ref, true));
@@ -218,10 +229,10 @@ fn render_report(
     for (index, test) in tests.iter().enumerate() {
         out.push_str(&format!("t{}={}\n", index + 1, test.line));
     }
-    if gaps.len() > budget {
+    if rows.len() > budget {
         out.push_str(&format!(
             "+{} more gaps not shown; `--format json` lists all\n",
-            gaps.len() - budget
+            rows.len() - budget
         ));
     }
     push_limits(&mut out, &considered, &gaps);
@@ -280,10 +291,66 @@ fn render_incomplete_analysis(out: &mut String, output: &CheckOutput) -> bool {
     true
 }
 
+/// Replace a `done=` terminal with a `stop=` when unread changes exist, so no
+/// `done=` can follow an `unanalyzed=` line.
+fn guard_clean_claim(line: String, blocked: bool) -> String {
+    if blocked && line.starts_with("done=") {
+        "stop=changes were not analyzed, so no clean claim is made; see `unanalyzed=`\n".to_string()
+    } else {
+        line
+    }
+}
+
+/// Name saved edits this run did not read, before any terminal claim. The
+/// human and GitHub surfaces already disclose them; without this line an agent
+/// reading only `--format agent` sees `done=` over files ripr never analyzed.
+/// Paths are escaped like every other agent field. Returns whether the
+/// disclosed state blocks a clean claim: the stop derives from the shared
+/// verification owner's refusals, not from whether a line was written, because
+/// gitignored source is disclosed but deliberately never refuses completion.
+fn render_unanalyzed_changes(out: &mut String, output: &CheckOutput) -> bool {
+    // Same gate as the human render: untracked files matter on a working-tree
+    // read or an unanalyzed-edits run; gitignored files matter on any read.
+    let untracked_relevant = output.unanalyzed_working_tree
+        || crate::output::analyzed_revisions::is_working_tree_read(output);
+    let no_paths: &[String] = &[];
+    let untracked = if untracked_relevant {
+        output.untracked_working_tree_source_paths.as_slice()
+    } else {
+        no_paths
+    };
+    let ignored = &output.ignored_working_tree_source_paths;
+    use crate::app::check_verification::VerificationRefusal::{
+        UnanalyzedWorkingTree, UntrackedSourceExcluded,
+    };
+    let refusals = output.verification().refusals;
+    let mut blocks = false;
+    if output.unanalyzed_working_tree {
+        out.push_str(
+            "unanalyzed=uncommitted_edits|fix=rerun with --worktree to include staged and unstaged tracked edits\n",
+        );
+        blocks |= refusals.contains(&UnanalyzedWorkingTree);
+    }
+    if !untracked.is_empty() {
+        out.push_str(&format!(
+            "unanalyzed=untracked|files={}|fix=git add -N PATH (or stage it), then rerun `ripr check --worktree`\n",
+            field(&crate::output::analyzed_revisions::name_paths(untracked, |path| path.to_string()))
+        ));
+        blocks |= refusals.contains(&UntrackedSourceExcluded);
+    }
+    if !ignored.is_empty() {
+        out.push_str(&format!(
+            "unanalyzed=gitignored|files={}|fix=git add -f -N PATH (or stage it with -f), then rerun `ripr check --worktree`\n",
+            field(&crate::output::analyzed_revisions::name_paths(ignored, |path| path.to_string()))
+        ));
+    }
+    blocks
+}
+
 /// A weakly exposed preview finding whose producer recorded both a missing
-/// discriminator and a contributing weak related test. Guided repair being
-/// unavailable for preview languages does not mean the test-side action is
-/// absent. Requires the established discriminator, never limitation prose.
+/// discriminator and a contributing weak related test. Preview status does
+/// not decide repair availability. Requires the established discriminator,
+/// never limitation prose.
 fn preview_leaves_test_side_open(finding: &Finding) -> bool {
     triage::is_preview_limited(finding)
         && !triage::is_static_limited(finding)
@@ -293,6 +360,51 @@ fn preview_leaves_test_side_open(finding: &Finding) -> bool {
         )
         && !finding.activation.missing_discriminators.is_empty()
         && triage::weak_assertion_row(finding).is_some()
+}
+
+/// The agent-format record for a refused `ripr check` run (#14452): the
+/// same typed identity, repair route and machine-safe message every other
+/// machine format renders from one [`RefusalNotice`], in the format's own
+/// `stop=` / `next=` / `verify=` vocabulary instead of zero bytes. `next=`
+/// appears only when the remedy states one command that runs as-is
+/// (`output::refusal::runnable_command`): a conditional remedy, placeholders,
+/// or flags or env named outside the command stay prose on `stop=`. A timed
+/// run's bounded retry (`retry`, from the stashed timeout projection) is the
+/// replayable command and takes that slot, so the recovery the JSON envelope
+/// and human stderr offer reaches the agent record too.
+///
+/// [`RefusalNotice`]: crate::core_error::RefusalNotice
+pub(super) fn render_refusal(
+    notice: &crate::core_error::RefusalNotice,
+    retry: Option<&str>,
+) -> String {
+    let message = notice
+        .message
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut out = format!(
+        "#ripr agent static-advisory refused run_status={} repair_route={}\nstop={}\n",
+        notice.identity,
+        notice.repair_route,
+        super::terminal_safe(message)
+    );
+    // A command spanning lines (a root or diff path holding a line break) is
+    // not one runnable line and could forge record lines, so it is withheld.
+    if let Some(command) = retry
+        .or_else(|| crate::output::refusal::runnable_command(&notice.remedy))
+        .filter(|command| !command.contains(['\n', '\r', '\u{85}', '\u{2028}', '\u{2029}']))
+    {
+        out.push_str(&format!(
+            "next={}\n",
+            super::terminal_safe(command.to_string())
+        ));
+    }
+    out.push_str(&format!(
+        "verify=refused|outcome=refused|findings=0|exposed=0|reason={}\n",
+        notice.identity
+    ));
+    out
 }
 
 /// `ripr explain --format agent` (#12104): the one-finding counterpart of
@@ -344,12 +456,11 @@ pub(super) fn render_finding(
             weak_row,
         )
     } else if preview_leaves_test_side_open(finding) {
-        // #13277: preview evidence is advisory and has no governed repair
-        // route, which is not the same as "nothing more is fixable". The
-        // producer-owned discriminator and related test are shown; nothing
-        // is inferred or promoted.
+        // #13277: preview evidence remains advisory. The producer-owned
+        // discriminator and related test are shown; this projection does
+        // not decide repair availability or infer stronger evidence.
         (
-            "open=preview-language evidence is advisory and offers no guided repair, but a related test asserts too weakly to notice this change; tests may still help; static advisory, not runtime proof",
+            "open=preview-language evidence is advisory, but a related test asserts too weakly to notice this change; tests may still help; static advisory, not runtime proof",
             weak_row,
         )
     } else if finding.class == ExposureClass::Exposed && !triage::is_static_limited(finding) {
@@ -642,8 +753,10 @@ fn unconfirmed_gap_count(triage: &HumanTriage<'_>, gaps: &[&Finding], incomplete
 
 /// The header's gap facts, each owned by the body path that prints it.
 struct HeaderCounts {
-    /// Confirmed test-side gaps (`gaps=`).
+    /// Confirmed test-side gaps (`gaps=`), counting identical rows once.
     gaps: usize,
+    /// Gap findings folded into an identical row (`folded_gaps=`, #14338).
+    folded: usize,
     /// Listed gaps the static evidence cannot confirm (`unconfirmed_gaps=`).
     unconfirmed: usize,
     /// A guided repair start the agent can run now (`repairable=1`).
@@ -661,6 +774,11 @@ fn header_line(output: &CheckOutput, considered: &[&Finding], counts: HeaderCoun
         considered.len(),
         counts.gaps,
     );
+    if counts.folded > 0 {
+        // #14338: say how many findings share a printed row, so `gaps=`
+        // (one test to write per row) still reconciles with `findings=`.
+        line.push_str(&format!(" folded_gaps={}", counts.folded));
+    }
     if counts.unconfirmed > 0 {
         // #13803: `gaps=` counts confirmed gaps only; a listed preview-only
         // or reach-limited gap is counted here so the header agrees with
@@ -753,6 +871,16 @@ fn terminal_line(
                         .to_string()
                 }
             }
+        }
+        // #14423: on the base branch the empty range is the base compared
+        // with itself; name the last-commit rerun the human view prints
+        // instead of leaving REV to be guessed.
+        NextActionCheckCase::ScopeMissing if triage::last_commit_retry_applies(output) => {
+            format!(
+                "stop=nothing was analyzed: HEAD is at the comparison base `{}`, so the diff is empty; to check the last commit run `{}`\n",
+                output.base.as_deref().unwrap_or_default(),
+                triage::last_commit_retry_command(output, Some("agent"))
+            )
         }
         NextActionCheckCase::ScopeMissing => {
             "stop=nothing was analyzed (no scope); pass --base REV, --diff FILE or --worktree\n"
@@ -923,6 +1051,80 @@ fn intern_test(tests: &mut Vec<TestRef>, root: &Path, test: &RelatedTest) -> usi
     }
     tests.push(TestRef { key, line });
     tests.len()
+}
+
+/// Gap findings with one row each, in triage order (#14338). Two findings
+/// fold only when everything their records would print agrees except the
+/// id: class, location, expression, `missing=`, the strongest related test
+/// (its full `tN=` line) and the `stages=` row, compared unclipped. Then
+/// one test closes both, so a second row would only make an agent plan a
+/// second test. The first finding in triage order keeps the row, so the top
+/// gap and `next=` are unchanged; any difference keeps the rows separate
+/// (fail closed).
+fn fold_identical_gap_rows<'a>(root: &Path, gaps: &[&'a Finding]) -> Vec<&'a Finding> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut rows = Vec::with_capacity(gaps.len());
+    for finding in gaps {
+        let key = gap_row_key(root, finding);
+        if !seen.contains(&key) {
+            seen.push(key);
+            rows.push(*finding);
+        }
+    }
+    rows
+}
+
+/// What a gap's records say, without its id (see `fold_identical_gap_rows`).
+/// Built from the unclipped values, and from every missing discriminator
+/// value rather than the one printed, so two findings that differ past the field
+/// budget or in a later missing value never fold.
+fn gap_row_key(root: &Path, finding: &Finding) -> String {
+    // Every missing discriminator value; the `missing` prose only when it is
+    // the fallback `missing=` prints, since its wording differs by probe
+    // family ("no exact error variant" vs "no strong discriminator") for
+    // one value.
+    // Each fact also keys its shape, flow sink and drafted boundary call: one
+    // value asserted at two different sinks, or drafted against two different
+    // calls, is two tests.
+    let missing: Vec<String> = if finding.activation.missing_discriminators.is_empty() {
+        finding.missing.clone()
+    } else {
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .map(|fact| {
+                format!(
+                    "{:?} {:?} {:?} {:?}",
+                    fact.value, fact.shape, fact.flow_sink, fact.drafted_boundary
+                )
+            })
+            .collect()
+    };
+    let test = strongest_test(finding).map(|test| {
+        format!(
+            "{}:{} {} {} {:?} {:?}",
+            repository_display_path(root, &test.file),
+            test.line,
+            test.name,
+            test.oracle_kind.as_str(),
+            test.oracle,
+            test.miss.map(|miss| miss.as_str())
+        )
+    });
+    let stages = crate::output::stage_rows::stage_rows_agent_line(
+        &crate::output::stage_rows::evidence_stage_rows(finding),
+    );
+    format!(
+        "{}\n{}:{}\n{:?}\n{:?}\n{:?}\n{}",
+        finding.class.as_str(),
+        repository_display_path(root, &finding.probe.location.file),
+        finding.probe.location.line,
+        finding.probe.expression,
+        missing,
+        test,
+        stages
+    )
 }
 
 fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missing: bool) -> String {

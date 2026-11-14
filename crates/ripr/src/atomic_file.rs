@@ -16,7 +16,16 @@ static TEMP_FILE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 /// only for commands whose output is entirely redirected by that variable;
 /// report-only writers use [`ensure_report_output_contained`].
 pub(crate) fn ensure_default_output_contained(root: &Path) -> Result<(), String> {
-    ensure_default_output_contained_with(root, std::env::var("RIPR_CACHE_DIR").ok().as_deref())
+    let cache_dir_env = std::env::var("RIPR_CACHE_DIR").ok();
+    ensure_default_output_contained_with(root, cache_dir_env.as_deref())?;
+    // An explicit `RIPR_CACHE_DIR` waives the check above, so the default tree
+    // self-ignores only once it is established as contained on its own.
+    if cache_dir_env.is_none_or(|value| value.trim().is_empty())
+        || ensure_default_output_contained_with(root, None).is_ok()
+    {
+        register_self_ignoring_output_root(root);
+    }
+    Ok(())
 }
 
 /// [`ensure_default_output_contained`] for commands that never write to the
@@ -25,7 +34,136 @@ pub(crate) fn ensure_default_output_contained(root: &Path) -> Result<(), String>
 /// `target` / `target/ripr/*` link check for the reports and review artifacts
 /// these commands still write under the workspace.
 pub(crate) fn ensure_report_output_contained(root: &Path) -> Result<(), String> {
-    ensure_default_output_contained_with(root, None)
+    ensure_default_output_contained_with(root, None)?;
+    register_self_ignoring_output_root(root);
+    Ok(())
+}
+
+/// Repository-relative default output tree that ignores itself.
+pub(crate) const DEFAULT_OUTPUT_ROOT: &str = "target/ripr";
+
+/// Contents of `target/ripr/.gitignore`. `*` covers the file itself, so
+/// ripr's whole output tree stays out of `git status` with no step from the
+/// user, the way `.pytest_cache` and `.ruff_cache` ignore themselves.
+pub(crate) const DEFAULT_OUTPUT_ROOT_GITIGNORE: &str =
+    "# Created by ripr: everything under target/ripr is ripr's own disposable output.\n*\n";
+
+/// `{root}/target/ripr` trees a workspace output guard has established as contained
+/// in this process, in lexical absolute form. Writes below one of them mark it
+/// self-ignoring ([`mark_self_ignoring_output_root`]). Presence of the ignore
+/// file is re-checked on each such write (one `lstat`), so a tree deleted and
+/// recreated inside a long-lived LSP or MCP process is marked again.
+static SELF_IGNORING_OUTPUT_ROOTS: std::sync::Mutex<Vec<std::path::PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
+
+fn self_ignoring_output_roots() -> std::sync::MutexGuard<'static, Vec<std::path::PathBuf>> {
+    match SELF_IGNORING_OUTPUT_ROOTS.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+/// Lexical absolute form used to match guarded roots against write paths:
+/// relative paths are joined to the current directory and `.` components
+/// dropped, without touching the filesystem.
+fn lexical_absolute(path: &Path) -> Option<std::path::PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+    Some(
+        absolute
+            .components()
+            .filter(|component| !matches!(component, std::path::Component::CurDir))
+            .collect(),
+    )
+}
+
+/// Record that `{root}/target/ripr` is contained and is ripr's to mark, and
+/// mark it now when it already exists (a tree an older ripr left unignored).
+/// Creating nothing here keeps a command that refuses after its guard from
+/// leaving a `target/` behind; a missing tree is marked by the first write
+/// that creates it.
+fn register_self_ignoring_output_root(root: &Path) {
+    if !root.is_dir() {
+        return;
+    }
+    let Some(tree) = lexical_absolute(&root.join(DEFAULT_OUTPUT_ROOT)) else {
+        return;
+    };
+    write_self_ignore_file(&tree);
+    let mut roots = self_ignoring_output_roots();
+    if !roots.contains(&tree) {
+        roots.push(tree);
+    }
+}
+
+/// Called after an atomic write created `dir`: when `dir` lies in a guarded
+/// `target/ripr` tree, give that tree its self-ignore file. Matching is
+/// lexical; a writer that spells the tree differently from its guard (another
+/// symlinked spelling of the same directory) is simply not matched, and the
+/// next guard call marks the then-existing tree.
+fn mark_self_ignoring_output_root(dir: &Path) {
+    if self_ignoring_output_roots().is_empty() {
+        return;
+    }
+    let Some(dir) = lexical_absolute(dir) else {
+        return;
+    };
+    let tree = self_ignoring_output_roots()
+        .iter()
+        .find(|tree| dir.starts_with(tree))
+        .cloned();
+    if let Some(tree) = tree {
+        write_self_ignore_file(&tree);
+    }
+}
+
+/// Make ripr's default output tree (`{root}/target/ripr`) ignore itself.
+///
+/// Python and TypeScript projects do not ignore Cargo's `target/`
+/// convention, so without this the first `ripr check` left `?? target/` in
+/// `git status`, one `git add -A` away from committing ripr's reports, and
+/// every run asked the user to edit their `.gitignore`. The repository's own
+/// `.gitignore` is never touched.
+///
+/// Best effort and idempotent: only an existing real directory is marked,
+/// the file is created exclusively (`create_new`, which also refuses to
+/// follow a link planted at that name) and never rewritten, so a user's own
+/// file there is kept. Any failure (a read-only checkout, a race with another
+/// ripr process) leaves the tree as it was; the doctor and first-check ignore
+/// probes ask git directly, so they still report an uncovered tree honestly.
+///
+/// Returns whether an ignore file (ripr's or the user's) is now present.
+fn write_self_ignore_file(tree: &Path) -> bool {
+    let is_real_dir =
+        std::fs::symlink_metadata(tree).is_ok_and(|metadata| metadata.file_type().is_dir());
+    if !is_real_dir {
+        return false;
+    }
+    let ignore = tree.join(".gitignore");
+    if std::fs::symlink_metadata(&ignore).is_ok() {
+        return true;
+    }
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&ignore)
+    else {
+        return false;
+    };
+    if file
+        .write_all(DEFAULT_OUTPUT_ROOT_GITIGNORE.as_bytes())
+        .is_err()
+    {
+        // A partial ignore file is worse than none: drop it so the next
+        // write retries cleanly.
+        drop(file);
+        let _ = std::fs::remove_file(&ignore);
+        return false;
+    }
+    true
 }
 
 /// Guard for report writers that take no `--root` (`evidence-health`, `zero`,
@@ -221,6 +359,57 @@ pub(crate) fn write(path: &Path, bytes: &[u8], label: &str) -> Result<(), String
     write_with_sync(path, bytes, label, true, ErrorPathPolicy::Include)
 }
 
+/// Cache directories whose mutation is currently suppressed, one entry per
+/// live [`CacheMutationSuppressed`] guard. Keyed by directory so a read-only
+/// caller for one workspace never changes what a concurrent caller for another
+/// workspace's cache may write.
+static SUPPRESSED_CACHE_DIRS: std::sync::Mutex<Vec<std::path::PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// While held, no cache write, sweep, prune or build-use marker under the
+/// guarded cache directory happens. A read-only command such as
+/// `ripr agent status` holds it so the seam inventory it needs cannot rewrite
+/// or prune files an attempt's bound verdict already lists (#13945). Reads are
+/// unaffected: a cold cache just recomputes, so suppression costs time, never
+/// correctness.
+pub(crate) struct CacheMutationSuppressed {
+    dir: std::path::PathBuf,
+}
+
+impl CacheMutationSuppressed {
+    pub(crate) fn under(dir: &Path) -> Self {
+        let mut dirs = match SUPPRESSED_CACHE_DIRS.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        dirs.push(dir.to_path_buf());
+        Self {
+            dir: dir.to_path_buf(),
+        }
+    }
+}
+
+impl Drop for CacheMutationSuppressed {
+    fn drop(&mut self) {
+        let mut dirs = match SUPPRESSED_CACHE_DIRS.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(index) = dirs.iter().position(|dir| *dir == self.dir) {
+            dirs.remove(index);
+        }
+    }
+}
+
+/// Whether `path` lies under a cache directory some live guard protects.
+pub(crate) fn cache_mutation_suppressed(path: &Path) -> bool {
+    let dirs = match SUPPRESSED_CACHE_DIRS.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    dirs.iter().any(|dir| path.starts_with(dir))
+}
+
 /// Atomically replace an expendable cache entry without forcing a physical
 /// flush for every entry. Rename still prevents readers from observing a
 /// partial file; the cache may be recomputed after a power loss.
@@ -229,6 +418,9 @@ pub(crate) fn write(path: &Path, bytes: &[u8], label: &str) -> Result<(), String
 /// spellings so bounded diagnostics remain portable across checkout/cache
 /// roots and safe to retain in public receipts.
 pub(crate) fn write_cache(path: &Path, bytes: &[u8], label: &str) -> Result<(), String> {
+    if cache_mutation_suppressed(path) {
+        return Ok(());
+    }
     write_with_sync(path, bytes, label, false, ErrorPathPolicy::Omit)?;
     if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
         sweep_stale_temp_files_once(dir);
@@ -237,6 +429,9 @@ pub(crate) fn write_cache(path: &Path, bytes: &[u8], label: &str) -> Result<(), 
 }
 
 pub(crate) fn sweep_stale_temp_files_once(dir: &Path) {
+    if cache_mutation_suppressed(dir) {
+        return;
+    }
     let first_visit = {
         let mut swept = match SWEPT_DIRECTORIES.lock() {
             Ok(guard) => guard,
@@ -330,6 +525,9 @@ pub(crate) fn write_cache_streamed(
     label: &str,
     fill: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
 ) -> Result<(), String> {
+    if cache_mutation_suppressed(path) {
+        return Ok(());
+    }
     replace_with(path, false, fill)
         .map_err(|failure| map_replace_failure(failure, label, ErrorPathPolicy::Omit))?;
     if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
@@ -445,6 +643,7 @@ fn publish_with(
         .filter(|parent| !parent.as_os_str().is_empty());
     let dir = parent.unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(dir).map_err(|err| fail(Stage::CreateDirectory, dir, err))?;
+    mark_self_ignoring_output_root(dir);
     if path.file_name().is_none() {
         let err = std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name");
         return Err(fail(Stage::NoFileName, path, err));
@@ -844,6 +1043,35 @@ mod tests {
         );
         assert_eq!(kept.map_err(|err| format!("read target: {err}"))?, b"keep");
         Ok(())
+    }
+
+    #[test]
+    fn cache_mutation_suppression_is_scoped_to_its_directory_and_guard() -> Result<(), String> {
+        let root = isolated_dir("suppressed-cache");
+        let guarded = root.join("guarded");
+        let sibling = root.join("sibling");
+        {
+            let _suppressed = super::CacheMutationSuppressed::under(&guarded);
+            super::write_cache(&guarded.join("entry.json"), b"{}", "test")?;
+            super::write_cache_streamed(&guarded.join("streamed.json"), "test", |file| {
+                std::io::Write::write_all(file, b"{}")
+            })?;
+            assert!(
+                !guarded.exists(),
+                "a suppressed cache directory must not be created or written"
+            );
+            super::write_cache(&sibling.join("entry.json"), b"{}", "test")?;
+            assert!(
+                sibling.join("entry.json").is_file(),
+                "another directory stays writable"
+            );
+        }
+        super::write_cache(&guarded.join("entry.json"), b"{}", "test")?;
+        assert!(
+            guarded.join("entry.json").is_file(),
+            "dropping the guard restores writes"
+        );
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())
     }
 
     #[test]

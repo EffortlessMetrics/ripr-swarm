@@ -54,7 +54,11 @@ pub(crate) use python::{
     PythonAdapter, PythonFileFactStore, detect_python_test_framework, detect_python_test_frameworks,
 };
 #[cfg(all(test, feature = "lang-python"))]
-pub(crate) use python::{python_direct_and_advisory_finding, python_miss_matrix_findings};
+pub(crate) use python::{
+    python_direct_and_advisory_finding, python_miss_matrix_findings,
+    python_module_fstring_reader_finding, python_module_reader_assertion_parses,
+    python_module_string_reader_finding, python_module_value_without_import_identity,
+};
 #[cfg(test)]
 pub(crate) use router::UNANALYZED_SOURCE_LANGUAGES_FOR_TESTS;
 pub(crate) use router::{
@@ -65,14 +69,14 @@ pub(crate) use router::{
 #[cfg(test)]
 pub(crate) use rust::with_forced_diff_limit_env;
 pub(crate) use rust::{
-    DIFF_SCOPE_OVERSIZED_PREFIX, GeneratedRustSources, RustAdapter, changed_let_binding,
-    diff_changed_rust_line_limit, diff_limit_env, is_diff_scope_oversized,
-    is_generated_rust_file_with_patterns, mask_rust_char_literals, mask_rust_comments_and_strings,
-    positive_limit_from_env,
+    DIFF_CHANGED_RUST_LINE_LIMIT_ENV, DIFF_SCOPE_OVERSIZED_PREFIX, GeneratedRustSources,
+    RustAdapter, changed_let_binding, diff_changed_rust_line_limit, diff_limit_env,
+    is_diff_scope_oversized, is_generated_rust_file_with_patterns, mask_rust_char_literals,
+    mask_rust_comments_and_strings, positive_limit_from_env, select_partial_diff_scope,
 };
 pub use rust::{
-    PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
-    PartialDiffStopReason,
+    OverLimitFile, PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION,
+    PartialDiffScope, PartialDiffStopReason,
 };
 #[cfg(feature = "lang-typescript")]
 pub(crate) use typescript::TypeScriptAdapter;

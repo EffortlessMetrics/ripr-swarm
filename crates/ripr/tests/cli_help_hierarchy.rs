@@ -852,6 +852,31 @@ fn group_help_preserves_explicit_errors_and_gate_flag_alias() -> Result<(), Stri
             assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
             assert_contains(args[0], &String::from_utf8_lossy(&output.stderr), error)?;
         }
+        // #14086: a gate flag typo is answered from the subcommand that
+        // parsed it. `gate evaluate` used to offer `gate check`'s `--base`,
+        // which it rejects, and `gate check` offered nothing.
+        for (args, suggestion) in [
+            (["gate", "check", "--bse", "x"], Some("--base")),
+            (["gate", "check", "--timeout", "5"], Some("--timeout-ms")),
+            (["gate", "check", "--out-m", "x"], Some("--out-md")),
+            (["gate", "check", "--pr-guidanc", "x"], None),
+            (["gate", "evaluate", "--mde", "x"], Some("--mode")),
+            (["gate", "evaluate", "--bse", "x"], None),
+            (["gate", "evaluate", "--hed", "x"], None),
+        ] {
+            let output = run_ripr_in(&args, Some(root))?;
+            assert_eq!(output.status.code(), Some(2), "{args:?}: {output:?}");
+            assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            match suggestion {
+                Some(flag) => assert_contains(
+                    "gate flag typo",
+                    &stderr,
+                    &format!("Did you mean `{flag}`?"),
+                )?,
+                None => assert!(!stderr.contains("Did you mean"), "{args:?}: {stderr}"),
+            }
+        }
         let alias = run_ripr_in(&["gate", "--pr-guidance"], Some(root))?;
         let explicit = run_ripr_in(&["gate", "evaluate", "--pr-guidance"], Some(root))?;
         assert_eq!(alias.status.code(), Some(2));

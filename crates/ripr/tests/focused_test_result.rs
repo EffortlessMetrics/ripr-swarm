@@ -124,7 +124,7 @@ fn after_with_receipt_surface_transition(
         &shim,
         r##"#!/bin/sh
 case "$*" in
-  *"diff --no-renames --no-ext-diff --name-only -z "*)
+  *"diff --no-renames --no-ext-diff --no-relative --name-only -z "*)
     if [ ! -e "$RIPR_TEST_MARKER" ]; then
       printf '\n// receipt surface transition\n' >> "$RIPR_TEST_TARGET" || exit 90
       : > "$RIPR_TEST_MARKER"
@@ -249,6 +249,23 @@ fn receipt_surface_decision_is_not_mislabeled_as_publication_failure() -> Result
             "{text}"
         );
         assert!(!text.contains("fix the publication error"), "{text}");
+        // The refusal is recorded beside the committed verdict, so `ripr agent
+        // status` can repeat why the attempt ended (#14083 T2). Exit 3 alone
+        // holds when the record is routed to the resumable authority, which
+        // refuses the write and leaves only a stderr note.
+        let recorded = manifest(root, &attempt)?;
+        let reason = recorded
+            .pointer("/last_after_refusal/reason")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            reason.contains("outside trusted edit surface"),
+            "focused={has_result}: refusal reason not recorded: {recorded:#}\n{text}"
+        );
+        assert!(
+            !text.contains("refusal narration was not persisted"),
+            "focused={has_result}: {text}"
+        );
         assert!(
             !terminal_roles(&manifest(root, &attempt)?)
                 .iter()
@@ -625,14 +642,17 @@ fn result_document(attempt: &str, head: &str, file: &str, events: Value) -> Valu
 
 fn existing_edited_attempt(label: &str) -> Result<(Fixture, Attempt), String> {
     let fixture = fixture(label)?;
+    let existing = "use proposal_fixture::discounted_total;\n#[test] fn above() { assert_eq!(discounted_total(200, 100), 190); }\n";
+    write(&fixture.root, PROPOSED_FILE, existing)?;
+    commit_all(&fixture.root, "existing related test")?;
+    let attempt = begin(&fixture.root)?;
+    // The external-file cage admits only insertion: keep every existing byte.
+    let inserted = NEW_TEST.replacen("use proposal_fixture::discounted_total;\n\n", "\n", 1);
     write(
         &fixture.root,
         PROPOSED_FILE,
-        "use proposal_fixture::discounted_total;\n#[test] fn above() { assert_eq!(discounted_total(200, 100), 190); }\n",
+        &format!("{existing}{inserted}"),
     )?;
-    commit_all(&fixture.root, "existing related test")?;
-    let attempt = begin(&fixture.root)?;
-    write(&fixture.root, PROPOSED_FILE, NEW_TEST)?;
     Ok((fixture, attempt))
 }
 

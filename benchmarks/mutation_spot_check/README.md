@@ -71,7 +71,7 @@ read-only permissions and no secrets, and uploads that crate's receipt and
 scores them together through `--mutants-out`, and uploads the scoreboard receipt
 as the `mutation-spot-check` artifact (its `cargo_mutants_args` and
 `mutant_timeout_secs` read `null`, as for any supplied `--mutants-out`; the
-per-crate `spot-<name>` receipts keep them). It runs weekly and on
+per-crate `spot-<name>` receipts keep them). It runs only on explicit
 `workflow_dispatch` (optionally limited to a comma-separated `repos` list). It is
 advisory: it never writes the default branch, and its numbers gate nothing.
 
@@ -124,6 +124,24 @@ other keys are unaffected):
   Python/TypeScript agreement stays `not_established` in this criterion (both are scored separately by the synthetic-diff method), so `replaces` is unreachable until a corpus exists (fail-closed). A `replaces`
   verdict is not suite adequacy; scope is Rust on the recorded crates.
 
+The span join scores Rust mutants against repo-exposure seams, which is not
+the path a developer meets: `ripr check --diff`. With `--rust-diff-mode`, each
+cargo-mutants mutant is also applied from its own recorded diff to a scratch
+copy of the checkout and run through `ripr check --diff`, using the same
+verdict join as TypeScript and Python (`agreement_method:
+synthetic_diff_verdict`, capped by `--max-mutants`). A recorded diff that no
+longer matches the checkout is refused by the same `mutants.out` preflight as
+the span join; `recorded_diff_mismatch` is the per-mutant guard if a diff still
+fails to apply. A Rust run keeps the checkout's own `ripr.toml`. A
+mutant with no recorded diff (cargo-mutants before 27) is
+`recorded_diff_missing`; a hunk that only deletes lines is
+`deletion_only_mutant`, because it has no new line to read a verdict from. The
+result is additive and never changes a span-join figure: a
+`rust_diff_mode_verdict` section with its own `repos` entries, and
+`recall_of_missed.by_language.rust_diff_mode`, which stays
+`insufficient_sample` below 30 scored claim pairs. `--rederive-summaries`
+re-derives it from that section's per-repo tables.
+
 All are advisory, bound to the recorded revisions, and not suite adequacy. To
 refresh a recorded receipt without re-running mutation testing:
 `cargo xtask mutation-spot-check --rederive-summaries metrics/public-proof/mutation-spot-check.json`.
@@ -175,8 +193,8 @@ join rule. The report is advisory and is not a suite adequacy measure.
 ## TypeScript: real Stryker mutants (synthetic-diff verdict join)
 
 The hosted run installs with `--no-package-lock`, so transitive dependencies
-resolve fresh each week; the receipt records the package revision and Stryker
-version but not resolved dependency versions, so weekly results can drift for
+resolve fresh on each run; the receipt records the package revision and Stryker
+version but not resolved dependency versions, so results can drift for
 reasons outside ripr. The lane is advisory.
 
 `ripr check --format repo-exposure-json` lists no seams for TypeScript (or
@@ -239,7 +257,7 @@ method, not the span-join agreement it is defined over). A mutated line is not a
 analysis is a syntax-first preview, so the figures say how often a diff-time
 verdict agrees with a real mutant, not suite adequacy.
 
-`.github/workflows/mutation-spot-check-typescript.yml` runs it weekly on the
+`.github/workflows/mutation-spot-check-typescript.yml` runs it on demand on the
 pinned packages of `corpus-typescript.json` (Stryker 9.6.1 with the vitest
 runner), uploads the receipt and a per-package Stryker exit-status file, and
 ends with a step that fails the job when the receipt is missing or a package
@@ -279,8 +297,8 @@ are never scored. One run scores one synthetic language: `--stryker-report` and
 receipt, exclusions and claim boundary is as for TypeScript, with
 `language: "python"` and `recall_of_missed.by_language.python`.
 
-`.github/workflows/mutation-spot-check-python.yml` runs it on demand and
-weekly on the pinned packages of `corpus-python.json` (cosmic-ray 8.8.0, local
+`.github/workflows/mutation-spot-check-python.yml` runs it on explicit demand
+on the pinned packages of `corpus-python.json` (cosmic-ray 8.8.0, local
 distributor, pytest). Third-party code (the packages and cosmic-ray) runs only
 there, never in an agent sandbox. **That workflow and corpus have not run**:
 no package is confirmed to install, pass its baseline or finish a session, and

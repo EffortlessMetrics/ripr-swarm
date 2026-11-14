@@ -29,6 +29,7 @@ mod blind_journey_execute;
 mod branch_inventory;
 mod cache;
 mod cache_payload_tamper_recovery;
+mod cargo_job_cap;
 mod check_fast_cli;
 mod check_fast_selector;
 mod cli_exit_contract;
@@ -662,11 +663,17 @@ fn check_identity_registry() -> Result<(), String> {
     identity_registry::check_identity_registry()
 }
 
-fn precommit() -> Result<(), String> {
-    precommit_policy(false)
+/// Local `precommit` policy leg. `coverage` comes from the precommit change
+/// set: a diff that cannot change any test-valued `covered_by` listing skips
+/// the test-binary builds that enumeration needs (#13705).
+fn precommit(coverage: policy::CoverageEnumeration) -> Result<(), String> {
+    precommit_policy(false, coverage)
 }
 
-fn precommit_policy(collect_all: bool) -> Result<(), String> {
+fn precommit_policy(
+    collect_all: bool,
+    coverage: policy::CoverageEnumeration,
+) -> Result<(), String> {
     ensure_reports_dir()?;
     let preflight_receipt = std::env::var_os("RIPR_POLICY_PREFLIGHT_RECEIPT");
     // CI rejects stale/partial proof before compilation-bearing file policy.
@@ -690,7 +697,7 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
     // the remaining checks run and the instrument failure is returned before
     // any passing report is published.
     let mut deferred = None;
-    check_file_policy_deferring(&mut deferred)?;
+    check_file_policy_deferring(&mut deferred, coverage)?;
     let remaining = precommit_policy_remaining(collect_all, preflight_receipt);
     finish_precommit_policy(deferred, remaining, collect_all)
 }
@@ -703,8 +710,11 @@ const PRECOMMIT_INSTRUMENT_PREFIX: &str =
 
 /// `check_file_policy`, except that an instrument failure (cargo lock wait or
 /// timeout) is stored in `deferred` instead of returned.
-fn check_file_policy_deferring(deferred: &mut Option<String>) -> Result<(), String> {
-    match check_file_policy() {
+fn check_file_policy_deferring(
+    deferred: &mut Option<String>,
+    coverage: policy::CoverageEnumeration,
+) -> Result<(), String> {
+    match policy::check_file_policy_with(coverage) {
         Err(error) if policy::is_covered_by_instrument_failure(&error) => {
             *deferred = Some(error);
             Ok(())
@@ -14769,12 +14779,29 @@ mod architecture_rule_tests {
 
     #[test]
     fn output_cli_back_edge_rule_rejects_a_production_import_and_allows_only_the_scoped_test_path()
-    {
-        const OUTPUT_CLI: &str =
-            "crates/ripr/src/output/**|crate::cli|output must not import CLI adapters";
-        const SCOPED: &str = "!crates/ripr/src/output/first_pr.rs|crate::cli|#5193: test wrapper";
+    -> Result<(), String> {
+        let policy_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../policy/architecture.txt");
+        let records =
+            super::read_pipe_records(super::path_to_utf8(&policy_path, "architecture policy")?, 3)?;
+        let required_paths = [
+            "crates/ripr/src/output/**",
+            "!crates/ripr/src/output/first_pr.rs",
+        ];
+        let records = records
+            .into_iter()
+            .filter(|record| {
+                required_paths.contains(&record[0].as_str()) && record[1] == "crate::cli"
+            })
+            .collect::<Vec<_>>();
+        for path in required_paths {
+            assert!(
+                records.iter().any(|record| record[0] == path),
+                "policy/architecture.txt must retain {path}|crate::cli"
+            );
+        }
         let violations = architecture_rule_violations(
-            &[record(OUTPUT_CLI), record(SCOPED)],
+            &records,
             &[
                 (
                     "crates/ripr/src/output/first_pr/options.rs".to_string(),
@@ -14791,6 +14818,7 @@ mod architecture_rule_tests {
             violations[0].contains("first_pr/options.rs"),
             "{violations:?}"
         );
+        Ok(())
     }
 }
 
@@ -18761,6 +18789,10 @@ fn check_lint_policy() -> Result<(), String> {
         &ledger_text,
         &no_panic::today_date_string(),
     ));
+    match policy::workspace_lint_inheritance_violations() {
+        Ok(member_violations) => violations.extend(member_violations),
+        Err(error) => violations.push(error),
+    }
 
     finish_policy_report(
         PolicyReportSpec {
@@ -18774,6 +18806,7 @@ fn check_lint_policy() -> Result<(), String> {
                 "When promoting a planned lint, move the ledger entry from `[[planned]]` to `[[active.<group>]]` and add the matching `Cargo.toml` line in the same PR.",
                 "Keep `policy/clippy-debt.toml` rows unique, complete, and not already active, planned, or present in Cargo.toml. A past `target` must be renewed or the debt paid.",
                 "Document `[[active.<group>]]` family blocks in `docs/CLIPPY_POLICY.md` so the public surface stays in sync.",
+                "Every Cargo workspace member must opt in with `[lints] workspace = true`; remove member-local lint tables that replace or override the shared policy.",
             ],
             rerun_command: "cargo xtask check-lint-policy",
             exception_template: None,
@@ -23945,6 +23978,15 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     {
         return Some(
             "Fixture workspaces may contain TypeScript / JavaScript / Python source as analyzed inputs for the Campaign 27 preview adapters (RIPR-SPEC-0027 / RIPR-SPEC-0028).",
+        );
+    }
+
+    if path.starts_with("examples/")
+        && (path.ends_with(".ts") || path.ends_with(".py"))
+        && (path.contains("/project/") || path.contains("/strengthened/"))
+    {
+        return Some(
+            "Starter example projects are analyzed inputs that users run `ripr check` on (#14151); the Python and TypeScript examples must stay in their own language to show the preview adapters honestly.",
         );
     }
 

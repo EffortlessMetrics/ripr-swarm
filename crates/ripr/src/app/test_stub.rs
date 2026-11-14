@@ -172,16 +172,38 @@ pub(crate) fn resolve_test_stub(
     selector: &TestStubSelector,
 ) -> Result<TestStubResolution, TestStubError> {
     match selector {
-        // A seam id is repo-wide, so it is looked up in the full inventory.
+        // A seam id is repo-wide, so it is located by the uncapped seam walk
+        // and then classified with its own file, the same file-scoped
+        // classification `ripr check` validates the printed command against
+        // (#14369). The capped workspace inventory held only a prefix of a
+        // large repository, so a changed seam past it was "not found" after a
+        // repo-wide evidence walk.
         TestStubSelector::SeamId(id) => {
-            let (classified, _) = analysis::inventory_classified_seams_at_with_config(root, config)
+            let not_found = || TestStubError::NotFound(format!("seam_id {id} was not found"));
+            let location = analysis::locate_seam_file_at_with_config(root, config, id)
+                .map_err(TestStubError::Operational)?
+                .ok_or_else(not_found)?;
+            let scoped =
+                analysis::inventory_file_guidance_at_with_config(root, config, &location.file)
+                    .map_err(TestStubError::Operational)?;
+            scoped
+                .require_complete_evidence("test stub")
                 .map_err(TestStubError::Operational)?;
-            let entry = classified
+            let entry = scoped
+                .classified
                 .iter()
                 .find(|entry| entry.seam.id().as_str() == id)
-                .ok_or_else(|| TestStubError::NotFound(format!("seam_id {id} was not found")))?;
+                .ok_or_else(not_found)?;
             let source = read_owner_source(root, &entry.seam)?;
-            Ok(resolution_for(root, config, entry, source))
+            let mut resolution = resolution_for(root, config, entry, source);
+            // `ripr agent repair --phase before` still reads the capped
+            // workspace inventory, so a repair start for a seam past the cap
+            // would be refused: the route cannot be established, so it is
+            // omitted (RIPR-SPEC-0287) while the stub itself stands.
+            if !location.within_inventory_limit {
+                resolution.next_repair = None;
+            }
+            Ok(resolution)
         }
         TestStubSelector::At { file, line, kind } => {
             let mut seam_index = None;
@@ -550,10 +572,32 @@ fn narrowed_ambiguity(
             narrowed = true;
         }
     }
-    validate_ambiguity(root, config, candidates, narrowed, reason, || {
-        analysis::inventory_classified_seams_at_with_config(root, config)
-            .map(|(classified, _)| classified)
-    })
+    // Every candidate came from one `--at` line, so the file's own classified
+    // seams hold them all. Classifying the whole workspace here cost a cold
+    // repo-wide evidence walk per ambiguous finding (about 16 minutes on
+    // ripr-swarm, #14369); the file-scoped classification is the one
+    // `inventory_entry_facts` already trusts, and it fails closed when its
+    // evidence is incomplete.
+    let scoped = scoped_file(root, file);
+    validate_ambiguity(
+        root,
+        config,
+        candidates,
+        narrowed,
+        reason,
+        || match scoped {
+            Some(relative) => {
+                // The complete file-scope inventory reuses its result, so
+                // several ambiguous findings in one file classify it once.
+                let scoped =
+                    analysis::inventory_file_guidance_at_with_config(root, config, &relative)?;
+                scoped.require_complete_evidence("test stub")?;
+                Ok(scoped.classified)
+            }
+            None => analysis::inventory_classified_seams_at_with_config(root, config)
+                .map(|(classified, _)| classified),
+        },
+    )
 }
 
 /// The validation half of `narrowed_ambiguity`, with the classified inventory
@@ -1473,13 +1517,7 @@ fn inventory_entry_facts(
     #[cfg(test)]
     INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.set(count.get() + 1));
     let relative = scoped_file(root, file)?;
-    let scoped = analysis::inventory_diff_scoped_classified_seams_at_with_config(
-        root,
-        config,
-        &[relative],
-        &[],
-    )
-    .ok()?;
+    let scoped = analysis::inventory_file_guidance_at_with_config(root, config, &relative).ok()?;
     // Disclosure only: a failed warm's stand-in class is not a real class.
     scoped.require_complete_evidence("test stub").ok()?;
     scoped
@@ -1895,6 +1933,59 @@ pub(crate) fn run_command(
     }
 }
 
+/// The native command that runs one named Rust test in `test_file` (#14320),
+/// spelled exactly as `ripr agent stub` spells its run command: an
+/// integration file runs as `--test TARGET NAME` once its cargo target name
+/// is established and plain. `None` for everything else, including inline
+/// module tests: whether a by-name run reaches an inline file depends on
+/// `[lib] test`, `cfg` and feature gates, and `#[path]` resolution that a
+/// static walk cannot settle, so no command is offered rather than one that
+/// runs 0 tests and exits 0.
+pub(crate) fn focused_test_run_command(
+    root: &Path,
+    test_file: &str,
+    test_name: &str,
+) -> Option<String> {
+    let spelled = test_file.replace('\\', "/");
+    let file = PathBuf::from(spelled.strip_prefix("./").unwrap_or(&spelled));
+    let plain_name = !test_name.is_empty()
+        && test_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !plain_name || file.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
+        return None;
+    }
+    let integration = RustTestStub {
+        placement: TestStubPlacement::ExistingIntegrationFile { file },
+        test_name: test_name.to_string(),
+        text: String::new(),
+        already_present: false,
+        fill_ins: Vec::new(),
+        derived_inputs: Vec::new(),
+    };
+    let manifest = package_manifest_for(root, &integration)?;
+    let target = match integration_target_lookup(root, &manifest, &integration) {
+        // A manifest `[[test]] name` is printed into a copyable command, so
+        // only a plain cargo target name is offered; anything else fails
+        // closed instead of being run by the developer's shell.
+        TargetLookup::Name(name)
+            if !name.starts_with('-')
+                && !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') =>
+        {
+            name
+        }
+        _ => return None,
+    };
+    let manifest = root.join(&manifest);
+    // A literal `\` in a Unix checkout root is part of the path, so the
+    // manifest renders natively, as the repair start command renders it.
+    let manifest = root_path_display(manifest.strip_prefix(".").unwrap_or(&manifest));
+    run_command(&shell_arg(&manifest), &integration, Some(&target))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2099,16 +2190,74 @@ mod tests {
                 .map(|seam| seam.id().as_str().to_string())
                 .collect::<Vec<_>>();
             assert!(ids.len() >= 2, "precondition, one seam per field: {ids:?}");
+            let workspace = analysis::WORKSPACE_CLASSIFIED_INVENTORIES.with(std::cell::Cell::get);
             let decision = narrowed_ambiguity(
                 &root,
                 &config,
                 "src/lib.rs",
                 "y: 3",
                 "several seams".to_string(),
-                ids,
+                ids.clone(),
                 &mut index,
             );
+            // A second ambiguous finding in the same file reuses the file's
+            // complete classified inventory instead of rebuilding the
+            // workspace index (#14369 review).
+            let (again, rebuilds) = analysis::index_build_probe::observe(|| {
+                narrowed_ambiguity(
+                    &root,
+                    &config,
+                    "src/lib.rs",
+                    "y: 3",
+                    "several seams".to_string(),
+                    ids.clone(),
+                    &mut index,
+                )
+            });
+            assert_eq!(again, decision, "the reused decision is the same");
+            assert_eq!(
+                rebuilds, 0,
+                "a repeated ambiguity reuses the file inventory"
+            );
+            // The printed `--seam-id` command, run as printed, must produce
+            // the same seam's stub; it is located by the uncapped seam walk
+            // (#14369). The seam-cap case runs as a subprocess in
+            // `agent_stub_compiles`, since the cap is process-wide.
+            let executed = match &decision {
+                StubRouteDecision::SeamStub { seam_id } => {
+                    let located = analysis::SEAM_FILE_LOCATIONS.with(std::cell::Cell::get);
+                    let resolved = resolve_test_stub(
+                        &root,
+                        &config,
+                        &TestStubSelector::SeamId(seam_id.clone()),
+                    );
+                    let walks = analysis::SEAM_FILE_LOCATIONS.with(std::cell::Cell::get) - located;
+                    Some((walks, resolved))
+                }
+                _ => None,
+            };
+            let workspace =
+                analysis::WORKSPACE_CLASSIFIED_INVENTORIES.with(std::cell::Cell::get) - workspace;
             let _ = std::fs::remove_dir_all(&root);
+            // #14369: candidates from one file are validated, and the seam id
+            // then resolved, against that file's classified seams, never a
+            // whole-workspace inventory.
+            assert_eq!(
+                workspace, 0,
+                "a file-scoped ambiguity must not classify the whole workspace"
+            );
+            if let (StubRouteDecision::SeamStub { seam_id }, Some((walks, resolved))) =
+                (&decision, executed)
+            {
+                assert_eq!(walks, 1, "a seam id is located by the uncapped seam walk");
+                let resolution = resolved.map_err(|error| format!("{error:?}"))?;
+                assert_eq!(&resolution.seam_id, seam_id, "the printed seam resolves");
+                assert!(
+                    resolution.outcome.is_ok() && resolution.weak_oracle_guidance.is_none(),
+                    "the printed seam-id command yields a stub: {:?}",
+                    resolution.outcome
+                );
+            }
             Ok(decision)
         };
         let decision = decide("narrow-weak", &weak)?;
@@ -2424,6 +2573,145 @@ mod tests {
             Some("cargo test --manifest-path crates/a/Cargo.toml --test owner owner_boundary")
         );
         assert_eq!(run_command("crates/a/Cargo.toml", &integration, None), None);
+        Ok(())
+    }
+
+    #[test]
+    fn focused_test_run_command_names_the_target_or_refuses() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-focused-run-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"price\"\nedition = \"2021\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        // Inline module files (declared or not) and bench files get no
+        // command: only an established integration target is exact.
+        std::fs::create_dir_all(root.join("src/tests")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(root.join("benches")).map_err(|error| error.to_string())?;
+        for (path, text) in [
+            ("src/lib.rs", "pub fn f() {}\n#[cfg(test)]\nmod tests;\n"),
+            ("src/tests/mod.rs", "mod pricing;\n"),
+            ("src/tests/pricing.rs", "#[test]\nfn equal_threshold() {}\n"),
+            ("src/stray.rs", "#[test]\nfn t() {}\n"),
+            ("tests/pricing.rs", "#[test]\nfn equal_threshold() {}\n"),
+            ("benches/pricing.rs", "#[test]\nfn t() {}\n"),
+        ] {
+            std::fs::write(root.join(path), text).map_err(|error| error.to_string())?;
+        }
+        let manifest = shell_arg(&root_path_display(&root.join("Cargo.toml")));
+        assert_eq!(focused_test_run_command(&root, "src/stray.rs", "t"), None);
+        assert_eq!(
+            focused_test_run_command(&root, "tests/pricing.rs", "equal_threshold"),
+            Some(format!(
+                "cargo test --manifest-path {manifest} --test pricing equal_threshold"
+            ))
+        );
+        // A `./` spelling names the same target.
+        assert_eq!(
+            focused_test_run_command(&root, "./tests/pricing.rs", "equal_threshold"),
+            Some(format!(
+                "cargo test --manifest-path {manifest} --test pricing equal_threshold"
+            ))
+        );
+        assert_eq!(
+            focused_test_run_command(&root, "src/lib.rs", "equal_threshold"),
+            None
+        );
+        // No exact command: a non-identifier name, a non-Rust file, or a
+        // file outside any package.
+        assert_eq!(
+            focused_test_run_command(&root, "tests/pricing.rs", "a b; rm"),
+            None
+        );
+        assert_eq!(
+            focused_test_run_command(&root, "tests/test_pricing.py", "test_x"),
+            None
+        );
+        let orphan = root.join("orphan");
+        std::fs::create_dir_all(orphan.join("tests")).map_err(|error| error.to_string())?;
+        assert_eq!(
+            focused_test_run_command(&orphan, "tests/pricing.rs", "t"),
+            None
+        );
+        // A `tests` directory under `src/` is an inline module file of the
+        // library, not an integration target (#14320 review), so it gets no
+        // `--test` command either.
+        assert_eq!(
+            focused_test_run_command(&root, "src/tests/pricing.rs", "equal_threshold"),
+            None
+        );
+        assert_eq!(
+            focused_test_run_command(&root, "benches/pricing.rs", "t"),
+            None
+        );
+        // A manifest target name with shell syntax is never printed.
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"price\"\nedition = \"2021\"\n\n[[test]]\nname = \"p;touch x\"\npath = \"tests/pricing.rs\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            focused_test_run_command(&root, "tests/pricing.rs", "t"),
+            None
+        );
+        // `autotests = false` without an entry leaves the target unnamed.
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"price\"\nedition = \"2021\"\nautotests = false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            focused_test_run_command(&root, "tests/pricing.rs", "t"),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn focused_test_run_command_keeps_a_literal_backslash_unix_root() -> Result<(), String> {
+        // A literal `\` is part of a Unix directory name and must survive
+        // into the printed manifest path (#14320 review).
+        let root = std::env::temp_dir()
+            .join(format!(
+                "ripr-focused-root-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|error| error.to_string())?
+                    .as_nanos()
+            ))
+            .join(if cfg!(unix) { "team\\repo" } else { "repo" });
+        std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"price\"\nedition = \"2021\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("tests/pricing.rs"),
+            "#[test]\nfn equal_threshold() {}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let command = focused_test_run_command(&root, "tests/pricing.rs", "equal_threshold")
+            .ok_or("an established integration target must get a command")?;
+        assert!(
+            command.ends_with(" --test pricing equal_threshold"),
+            "{command}"
+        );
+        if cfg!(unix) {
+            assert!(command.contains("team\\repo"), "{command}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
 
@@ -2822,6 +3110,28 @@ mod tests {
         .map(|entry| entry.seam.id().as_str().to_string())
         .ok_or("fixture must classify a seam")?;
         assert!(inventory_entry_facts(&control, &config, "src/lib.rs", &seam_id).is_some());
+        // #14369: the seam-id stub and the ambiguity validator classify the
+        // file too, so they get the same guard; unarmed, both see the seam.
+        let by_id = TestStubSelector::SeamId(seam_id.clone());
+        let healthy =
+            resolve_test_stub(&control, &config, &by_id).map_err(|error| format!("{error:?}"))?;
+        assert!(healthy.outcome.is_ok(), "{:?}", healthy.outcome.err());
+        let ambiguity = |root: &Path| {
+            narrowed_ambiguity(
+                root,
+                &config,
+                "src/lib.rs",
+                "x >= 100",
+                "several seams".to_string(),
+                vec![seam_id.clone()],
+                &mut None,
+            )
+        };
+        let decision = ambiguity(&control);
+        assert!(
+            !matches!(decision, StubRouteDecision::Withheld { .. }),
+            "unarmed, the candidate is validated: {decision:?}"
+        );
         let _ = std::fs::remove_dir_all(&control);
 
         for point in [1u8, 2u8] {
@@ -2837,6 +3147,28 @@ mod tests {
                 }
                 other => return Err(format!("point {point}: expected refusal: {other:?}")),
             }
+            let by_id_refused = {
+                let _armed = WarmPanicGuard::arm(point);
+                resolve_test_stub(&root, &config, &by_id)
+            };
+            let decision = {
+                let _armed = WarmPanicGuard::arm(point);
+                ambiguity(&root)
+            };
+            match by_id_refused {
+                Err(TestStubError::Operational(message)) => {
+                    assert!(message.contains("test stub refused"), "{message}");
+                }
+                other => {
+                    return Err(format!(
+                        "point {point}: expected seam-id refusal: {other:?}"
+                    ));
+                }
+            }
+            assert!(
+                matches!(decision, StubRouteDecision::Withheld { .. }),
+                "point {point}: stand-in seams must not validate a route: {decision:?}"
+            );
             let facts = {
                 let _armed = WarmPanicGuard::arm(point);
                 let stand_in = analysis::inventory_diff_scoped_classified_seams_at_with_config(

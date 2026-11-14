@@ -80,7 +80,9 @@ pub(crate) fn probes_for_file_with_relations(
     );
     // Old-side line numbers of this file's removed lines whose positional
     // replacement is a guard-only arm edit, one entry per such edit: that
-    // edit's predicate already carries the old guard as `before`.
+    // edit's predicate already carries the old guard as `before`. #7945: also
+    // the old lines of a multi-line `&&`/`||` chain that an added predicate
+    // carries whole as `before` (`family_before`).
     let mut guard_edit_counterparts = Vec::<usize>::new();
     let mut skip_added = structural_lines_covered_by_run(&changed.added_lines);
     let mut skip_removed = structural_lines_covered_by_run(&changed.removed_lines);
@@ -507,11 +509,13 @@ pub(crate) fn probes_for_file_with_relations(
                     new_side_line: shape.start_line,
                     text: canonical_text.clone(),
                 };
-                let before = removed_before(
+                let before = family_before(
+                    &shape.family,
                     shape.start_line,
                     &canonical_text,
                     changed,
                     &added_run_starts,
+                    &mut guard_edit_counterparts,
                 );
                 // #5312 (widening #6995): a canonical shape's `after` is the
                 // parser shape, not the whole line, so cut the same span from
@@ -578,8 +582,15 @@ pub(crate) fn probes_for_file_with_relations(
                 {
                     continue;
                 }
-                let before = removed_before(added.new_side_line, text, changed, &added_run_starts)
-                    .map(|line| arm_before(&shape.family, line, changed, old_source));
+                let before = family_before(
+                    &shape.family,
+                    added.new_side_line,
+                    text,
+                    changed,
+                    &added_run_starts,
+                    &mut guard_edit_counterparts,
+                )
+                .map(|line| arm_before(&shape.family, line, changed, old_source));
                 probes.push(SeededProbe::from_probe(build_probe(
                     &build_context,
                     added,
@@ -637,8 +648,15 @@ pub(crate) fn probes_for_file_with_relations(
             {
                 continue;
             }
-            let before = removed_before(added.new_side_line, text, changed, &added_run_starts)
-                .map(|line| arm_before(&family, line, changed, old_source));
+            let before = family_before(
+                &family,
+                added.new_side_line,
+                text,
+                changed,
+                &added_run_starts,
+                &mut guard_edit_counterparts,
+            )
+            .map(|line| arm_before(&family, line, changed, old_source));
             let mut seeded = SeededProbe::from_probe(build_probe(
                 &build_context,
                 added,
@@ -751,6 +769,21 @@ pub(crate) fn probes_for_file_with_relations(
             {
                 continue;
             }
+            // #14325: a removed bare literal (`1200`, `"v1",`, `true`) carries
+            // no behavior beyond its value. When the added line that the
+            // block pairing names as THIS removed line's replacement already
+            // has a modeled-family probe whose `before` is this text, that
+            // probe judges the replaced value, so a second, base-side
+            // static-unknown catch-all would only keep verification refused
+            // for code no test can reach any more. Pairing is by line
+            // identity, not text: an equal literal deleted elsewhere in the
+            // file keeps its own probe.
+            if family == ProbeFamily::StaticUnknown
+                && let Some(literal) = bare_literal_body(text)
+                && replaced_literal_is_paired(removed, text, literal, changed, &probes)
+            {
+                continue;
+            }
             // #9183: a deleted field declaration with no replacement is type
             // syntax in the old source, not a deleted construction. The
             // replacement checks above ran on the lexical family, so an
@@ -777,6 +810,96 @@ pub(crate) fn probes_for_file_with_relations(
     dedup_probe_ids(&mut probes);
 
     probes
+}
+
+/// Whether an added line that `replaced_line_counterpart` pairs with
+/// `removed` carries a non-static-unknown probe whose `before` is the
+/// removed text, or its literal body when the parser cut `before` to the
+/// literal's span (a trailing `,`/`;`). The `nearby_removed_line` fallback
+/// is not a pairing, so an unpaired deletion fails closed.
+fn replaced_literal_is_paired(
+    removed: &ChangedLine,
+    text: &str,
+    literal: &str,
+    changed: &ChangedFile,
+    probes: &[SeededProbe],
+) -> bool {
+    changed.added_lines.iter().any(|added| {
+        changed
+            .replaced_line_counterpart(added.new_side_line)
+            .is_some_and(|counterpart| counterpart.line == removed.line)
+            && probes.iter().any(|seeded| {
+                seeded.probe.family != ProbeFamily::StaticUnknown
+                    && seeded.probe.location.line == added.new_side_line
+                    && seeded
+                        .probe
+                        .before
+                        .as_deref()
+                        .is_some_and(|before| before == text || before == literal)
+            })
+    })
+}
+
+/// True when a trimmed changed line is one literal and nothing else: a
+/// number (sign, digits, `_`, one fractional `.`, type suffix), `true`/`false`,
+/// or one quoted string/char (no raw or byte prefix), optionally followed by
+/// a single `,` or `;`. Anything with an operator, call, path or second
+/// token is not bare, so the removed-side probe stays (fail closed).
+#[cfg(test)]
+fn is_bare_literal_line(text: &str) -> bool {
+    bare_literal_body(text).is_some()
+}
+
+/// The literal of a bare-literal line without its trailing `,`/`;`, or
+/// `None` when the line is not one bare literal (see `is_bare_literal_line`).
+fn bare_literal_body(text: &str) -> Option<&str> {
+    let body = text
+        .strip_suffix(',')
+        .or_else(|| text.strip_suffix(';'))
+        .unwrap_or(text)
+        .trim_end();
+    if body.is_empty() {
+        return None;
+    }
+    if body == "true" || body == "false" {
+        return Some(body);
+    }
+    if let Some(open) = body.chars().next()
+        && (open == '"' || open == '\'')
+    {
+        let mut escaped = false;
+        for (index, character) in body.char_indices().skip(1) {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == open {
+                return (index + character.len_utf8() == body.len()).then_some(body);
+            }
+        }
+        return None;
+    }
+    let digits = body.strip_prefix('-').unwrap_or(body);
+    // At most one `.`, and only before a digit or at the end (`2.5`, `1.`),
+    // so a method on a literal (`1.max`, `1.0.abs`) is not bare.
+    let mut dots = digits.match_indices('.');
+    let fractional = match (dots.next(), dots.next()) {
+        (None, _) => true,
+        (Some((index, _)), None) => digits[index + 1..]
+            .chars()
+            .next()
+            .is_none_or(|next| next.is_ascii_digit()),
+        (Some(_), Some(_)) => false,
+    };
+    let numeric = fractional
+        && digits
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_digit())
+        && digits.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '.'
+        });
+    numeric.then_some(body)
 }
 
 /// Which changed lines of one diff side are structural delimiters
@@ -2583,6 +2706,113 @@ fn removed_before(
         .or_else(|| nearby_removed_line(added_new_side_line, added, changed, added_run_starts))
 }
 
+/// A probe's `before` text for its family. A predicate whose old side
+/// continues one `&&`/`||` chain across removed lines reads that whole
+/// chain (`removed_connective_block`); everything else reads
+/// `removed_before`.
+///
+/// The chain's old lines go to `represented`: the predicate now holds them
+/// as its old side, so probing each again as deleted behavior would read one
+/// operand of the chain (`if other > 0`) as a predicate of its own and
+/// credit an input at that operand's boundary (#7945).
+fn family_before(
+    family: &ProbeFamily,
+    added_new_side_line: usize,
+    added: &str,
+    changed: &ChangedFile,
+    added_run_starts: &std::collections::BTreeMap<usize, usize>,
+    represented: &mut Vec<usize>,
+) -> Option<String> {
+    if *family == ProbeFamily::Predicate
+        && let Some((block, chain_lines)) =
+            removed_connective_block(added_new_side_line, changed, added_run_starts)
+    {
+        represented.extend(chain_lines);
+        return Some(block);
+    }
+    removed_before(added_new_side_line, added, changed, added_run_starts)
+}
+
+/// The whole old side of a replacement block whose removed lines continue
+/// one `&&`/`||` chain across lines (rustfmt's `if a` / `&& b` / `{`), with
+/// the old-side numbers of the chain's lines: each line that starts or ends
+/// with a connective and the neighbour it continues. `None` unless the block
+/// removes at least two consecutive old lines, one of them starts or ends
+/// with a connective, and the block is one statement head: outside strings
+/// and comments it holds no `;`, no `}` and at most one `{`.
+///
+/// #7945: pairing names one removed line as a predicate's `before`, which
+/// hides an operand on another line from `same_connectives`, so a dropped
+/// conjunct kept the surviving comparison's boundary credit. The lines are
+/// joined into the chain's one-line spelling so the shape cut and the
+/// connective comparison read it as they read a one-line edit. A block
+/// holding a comment keeps its line breaks instead, so a `//` comment cannot
+/// swallow the lines after it; such a block is never cut and is compared
+/// whole.
+///
+/// A block holding more than one statement head (`if a &&` / `b { return
+/// 1; }` / `if points < 100 {`) is not read whole: its connectives belong to
+/// several predicates, and one predicate's old `&&` could stand in for an
+/// operand another predicate gained. Such a block keeps the single-line
+/// pairing of `removed_before`, and its lines keep their own probes.
+fn removed_connective_block(
+    added_new_side_line: usize,
+    changed: &ChangedFile,
+    added_run_starts: &std::collections::BTreeMap<usize, usize>,
+) -> Option<(String, Vec<usize>)> {
+    let run_start = added_run_start(added_new_side_line, added_run_starts);
+    let block = changed
+        .removed_lines
+        .iter()
+        .filter(|line| line.new_side_line == run_start)
+        .collect::<Vec<_>>();
+    if block.len() < 2
+        || block
+            .windows(2)
+            .any(|pair| pair[1].line != pair[0].line + 1)
+    {
+        return None;
+    }
+    let source = block
+        .iter()
+        .map(|line| line.text.trim())
+        .collect::<Vec<_>>()
+        .join("\n");
+    // Masked, so a connective inside a string or comment is not one. Masking
+    // keeps byte offsets and line breaks.
+    let masked = crate::analysis::extract::mask_comments_and_strings(&source);
+    if masked.contains([';', '}']) || masked.matches('{').count() > 1 {
+        return None;
+    }
+    let masked = masked.lines().map(str::trim).collect::<Vec<_>>();
+    let leads = |line: &str| line.starts_with("&&") || line.starts_with("||");
+    let trails = |line: &str| line.ends_with("&&") || line.ends_with("||");
+    let mut chain_lines = Vec::new();
+    for (at, removed) in block.iter().enumerate() {
+        let line = masked.get(at).copied().unwrap_or_default();
+        let next = masked.get(at + 1).copied().unwrap_or_default();
+        let previous = at
+            .checked_sub(1)
+            .and_then(|previous| masked.get(previous).copied())
+            .unwrap_or_default();
+        if leads(line) || trails(line) || leads(next) || trails(previous) {
+            chain_lines.push(removed.line);
+        }
+    }
+    if chain_lines.is_empty() {
+        return None;
+    }
+    // Raw text, so a `//` inside a string keeps the line breaks too: that
+    // only forgoes the cut.
+    let commented = source.contains("//") || source.contains("/*");
+    let block = if commented {
+        source
+    } else {
+        source.replace('\n', " ")
+    };
+    Some((block, chain_lines))
+}
+
 /// A match-arm probe's whole old line, with an uncut arm head joined to
 /// its body (`with_old_arm_body`); any other family's line as it was.
 fn arm_before(
@@ -3182,16 +3412,34 @@ mod tests {
         shapes: &[(ProbeShapeKind, &str)],
         file_source: &str,
     ) -> Vec<Probe> {
+        shapes_probes_with_deletions(added, removed, &[], shapes, file_source)
+    }
+
+    /// `shapes_probes` plus pure deletions in a separate later hunk, each
+    /// `(old line, text)` with no added counterpart.
+    fn shapes_probes_with_deletions(
+        added: &str,
+        removed: &str,
+        deletions: &[(usize, &str)],
+        shapes: &[(ProbeShapeKind, &str)],
+        file_source: &str,
+    ) -> Vec<Probe> {
         let path = PathBuf::from("src/lib.rs");
         let line = |text: &str| ChangedLine {
             line: 3,
             new_side_line: 3,
             text: text.to_string(),
         };
+        let mut removed_lines = vec![line(removed)];
+        removed_lines.extend(deletions.iter().map(|(old_line, text)| ChangedLine {
+            line: *old_line,
+            new_side_line: *old_line,
+            text: (*text).to_string(),
+        }));
         let changed = ChangedFile {
             path: path.clone(),
             added_lines: vec![line(added)],
-            removed_lines: vec![line(removed)],
+            removed_lines,
         };
         let probe_shapes = shapes
             .iter()
@@ -6076,6 +6324,114 @@ mod tests {
         }
     }
 
+    /// #14325: a changed tail literal (`1200` -> `1500`) is judged by the
+    /// added return-value probe, which pairs the removed text as `before`;
+    /// the removed literal adds no base-side static-unknown twin. A removed
+    /// literal with no positional replacement keeps its removed-side probe,
+    /// even when an equal literal is replaced elsewhere in the file.
+    #[test]
+    fn a_replaced_bare_literal_adds_no_base_side_static_unknown_twin() {
+        let head = "pub fn default_timeout_ms() -> u64 {\n    1500\n}\n";
+        // The parser reports the added tail literal as a return shape, as it
+        // does for `fn f() -> u64 { 1500 }` in a real index.
+        let probes = single_shape_probes(
+            "    1500",
+            "    1200",
+            ProbeShapeKind::ReturnValue,
+            "1500",
+            head,
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family != ProbeFamily::StaticUnknown
+                    && probe.before.as_deref() == Some("1200")),
+            "fixture: the added probe must pair the removed literal: {probes:?}"
+        );
+        assert!(
+            probes.iter().all(|probe| probe.expression != "1200"),
+            "a replaced bare literal must not get its own removed-side probe: {probes:?}"
+        );
+        // A trailing `,` on the removed line still pairs with the
+        // span-cut `before` of the added literal's probe.
+        let comma = single_shape_probes(
+            "    1500,",
+            "    1200,",
+            ProbeShapeKind::ReturnValue,
+            "1500",
+            "fn limits() -> [u64; 1] {\n    [\n    1500,\n    ]\n}\n",
+        );
+        assert!(
+            comma
+                .iter()
+                .any(|probe| probe.family != ProbeFamily::StaticUnknown),
+            "fixture: the added literal must get a modeled probe: {comma:?}"
+        );
+        assert!(
+            comma
+                .iter()
+                .all(|probe| probe.family != ProbeFamily::StaticUnknown || probe.after.is_some()),
+            "a replaced literal with a trailing comma must not get a removed-side twin: {comma:?}"
+        );
+
+        // Control: the same literal also deleted outright in a later hunk
+        // has no replacement, so it keeps its removed-side probe even though
+        // the first hunk's probe carries the equal text as `before`.
+        let mixed = shapes_probes_with_deletions(
+            "    1500",
+            "    1200",
+            &[(9, "    1200")],
+            &[(ProbeShapeKind::ReturnValue, "1500")],
+            head,
+        );
+        let base_side: Vec<&Probe> = mixed
+            .iter()
+            .filter(|probe| probe.expression == "1200")
+            .collect();
+        assert_eq!(
+            base_side.len(),
+            1,
+            "only the unpaired deletion keeps a removed-side probe: {mixed:?}"
+        );
+        assert!(
+            base_side.iter().all(|probe| probe.location.line == 9),
+            "the kept probe is the deleted line's, not the replaced one's: {mixed:?}"
+        );
+    }
+
+    #[test]
+    fn bare_literal_lines_are_single_literals_only() {
+        for bare in [
+            "1200", "-3", "1_000u64", "2.5f32", "1.", "true", "\"v1\",", "'x';", "0x1F",
+        ] {
+            assert!(is_bare_literal_line(bare), "{bare} must read as bare");
+        }
+        for not_bare in [
+            "1..10",
+            "a | b",
+            "1 + 2",
+            "x",
+            "f(1)",
+            "\"a\" + b",
+            "1.max(2)",
+            "1.max",
+            "1.0.abs",
+            "1.2.3",
+            "Some(1)",
+            "",
+            "\"unterminated",
+            "\"a\" \"b\"",
+            "r\"raw\"",
+            "b'x'",
+            "-",
+        ] {
+            assert!(
+                !is_bare_literal_line(not_bare),
+                "{not_bare} must not read as bare"
+            );
+        }
+    }
+
     /// #6675: an operand-swap rewrite keeps one probe on the added line,
     /// whose `before` is the removed text; the removed side adds no second
     /// static-unknown catch-all. A rewrite that changes characters
@@ -7155,6 +7511,121 @@ mod source_currentness_tests {
                 .iter()
                 .any(|probe| probe.location.line == 10 && probe.family == ProbeFamily::Predicate),
             "ordinary fn body beside the macro keeps its probe: {probes:?}"
+        );
+    }
+
+    /// #13983: parameter lines of a fn declared in a macro invocation body are
+    /// declarations, never `field_construction`; the fn body keeps its probe,
+    /// the same list outside a macro behaves as before, and a real record
+    /// initializer in a macro body still probes as `field_construction`.
+    #[test]
+    fn macro_body_fn_parameters_are_not_field_construction_probes() {
+        let path = PathBuf::from("src/lib.rs");
+        let line = |number: usize, text: &str| ChangedLine {
+            line: number,
+            new_side_line: number,
+            text: text.to_string(),
+        };
+        let families = |source: &str, lines: &[(usize, &str)]| {
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: lines.iter().map(|(n, t)| line(*n, t)).collect(),
+                removed_lines: Vec::new(),
+            };
+            let index = macro_source_index(&path, source);
+            probes_for_file(Path::new("workspace"), &changed, &index)
+                .iter()
+                .map(|probe| (probe.location.line, probe.family.clone()))
+                .collect::<Vec<_>>()
+        };
+        let params = [
+            (3, "    pub fn mul3("),
+            (4, "        a: u32,"),
+            (5, "        b: u32,"),
+            (6, "        c: u32,"),
+            (7, "    ) -> u32 {"),
+            (8, "        a * b * c"),
+        ];
+        let in_macro = "macro_rules! feature { ($($i:item)*) => { $($i)* } }\nfeature! {\n    pub fn mul3(\n        a: u32,\n        b: u32,\n        c: u32,\n    ) -> u32 {\n        a * b * c\n    }\n}\n";
+        let found = families(in_macro, &params);
+        assert!(
+            !found
+                .iter()
+                .any(|(l, f)| (4..=6).contains(l) && *f == ProbeFamily::FieldConstruction),
+            "macro fn parameter probed as field_construction: {found:?}"
+        );
+        assert!(
+            found.iter().any(|(l, _)| *l == 8),
+            "fn body in the macro keeps a probe: {found:?}"
+        );
+
+        // Control: the same list outside a macro never reads as a field.
+        let plain =
+            "pub fn mul3(\n    a: u32,\n    b: u32,\n    c: u32,\n) -> u32 {\n    a * b * c\n}\n";
+        let found = families(
+            plain,
+            &[(2, "    a: u32,"), (3, "    b: u32,"), (4, "    c: u32,")],
+        );
+        assert!(
+            !found
+                .iter()
+                .any(|(_, f)| *f == ProbeFamily::FieldConstruction),
+            "plain fn parameter probed as field_construction: {found:?}"
+        );
+
+        // Negative control: a record initializer in a macro body still probes.
+        let record = "wrap! {\n    Task {\n        buffered: None,\n    }\n}\n";
+        let found = families(record, &[(3, "        buffered: None,")]);
+        assert!(
+            found
+                .iter()
+                .any(|(l, f)| *l == 3 && *f == ProbeFamily::FieldConstruction),
+            "macro-body construction lost its probe: {found:?}"
+        );
+
+        // A call (not a fn header) in a macro body is not a parameter list.
+        let call = "wrap! {\n    make(\n        a: 1,\n    )\n}\n";
+        let found = families(call, &[(3, "        a: 1,")]);
+        assert!(
+            found
+                .iter()
+                .any(|(l, f)| *l == 3 && *f == ProbeFamily::FieldConstruction),
+            "macro-body call argument lost its probe: {found:?}"
+        );
+    }
+
+    /// #13983 remainder: the same holds behind a generic list with `=`/`->`
+    /// bounds, in a macro-wrapped `impl`/`trait` body and in a nested item
+    /// macro; a call argument in a method body there keeps its probe.
+    #[test]
+    fn macro_body_fn_parameters_in_item_containers_are_not_field_construction_probes() {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "feature! {\n    pub fn assoc<I: Iterator<Item = u8>, F: Fn() -> u8>(\n        it: I,\n    ) -> usize {\n        it.count()\n    }\n    impl Foo {\n        pub fn method(\n            n: u32,\n        ) -> u32 {\n            make(\n                n: 1,\n            )\n        }\n    }\n    pub trait Tr {\n        fn req(\n            m: u32,\n        ) -> u32;\n    }\n    feature! {\n        pub fn nested(\n            z: u32,\n        ) -> u32 {\n            z\n        }\n    }\n}\n";
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: source
+                .lines()
+                .enumerate()
+                .map(|(index, text)| ChangedLine {
+                    line: index + 1,
+                    new_side_line: index + 1,
+                    text: text.to_string(),
+                })
+                .collect(),
+            removed_lines: Vec::new(),
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let fields = probes
+            .iter()
+            .filter(|probe| probe.family == ProbeFamily::FieldConstruction)
+            .map(|probe| probe.location.line)
+            .collect::<Vec<_>>();
+        // Lines 3, 9, 18 and 23 are parameters; line 12 is a call argument.
+        assert_eq!(fields, vec![12], "all probes: {probes:?}");
+        assert!(
+            probes.iter().any(|probe| probe.location.line == 5),
+            "fn body in the macro keeps a probe: {probes:?}"
         );
     }
 

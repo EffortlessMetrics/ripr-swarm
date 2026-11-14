@@ -13,6 +13,7 @@ mod const_flow;
 mod tier_flow;
 #[cfg(feature = "lang-rust")]
 pub(in crate::analysis) use tier_flow::{TierFlow, evaluate_tier_flow};
+mod compile_time_guard;
 mod const_readers;
 mod context;
 mod custom_eq;
@@ -45,6 +46,7 @@ mod out_parameter;
 mod owner_pin;
 mod owner_shape;
 mod owner_value;
+mod owner_value_sink;
 mod pinned_shape;
 mod poll_helper;
 mod propagation_witness;
@@ -55,6 +57,7 @@ mod related_tests;
 mod reveal;
 mod scanner_transfer;
 mod slice_boundary;
+mod slice_counter_boundary;
 #[cfg(test)]
 mod stop_reason_contract;
 mod targeted_calls;
@@ -67,10 +70,11 @@ mod variant_field_pattern;
 pub(in crate::analysis) use absorbing_tail::absorbing_tail_sink;
 pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_of,
-    assigned_field_read_confirms, assigned_field_weak_read_start, call_parameter_names,
-    chain_row_transfer_stop, comparison_operands, computed_input_parameters, literal_operand_value,
-    local_boundary, macro_names_rebound, owner_receiver_borrow, pushed_collection_compared_whole,
-    pushed_literal_path, signature_parameters, sort_value_facts,
+    assigned_field_read_confirms, assigned_field_seed_is_visible, assigned_field_weak_read_start,
+    call_parameter_names, chain_row_transfer_stop, comparison_operands, computed_input_parameters,
+    literal_operand_value, local_boundary, macro_names_rebound, owner_plain_written_value,
+    owner_receiver_borrow, owner_writes_field_only_at_probe, pushed_collection_compared_whole,
+    pushed_literal_path, signature_parameters, sort_value_facts, test_binds_owner_type,
 };
 pub(in crate::analysis) use arm_selection::{
     ArmSelector, error_path_arm_probe, match_arm_selection_witness_linkage,
@@ -93,6 +97,7 @@ pub(in crate::analysis) use call_identity::{
     shared_owner_call_identity, test_calls_only_through_local_rival_module, text_calls_owner,
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
+pub(in crate::analysis) use compile_time_guard::constrained_by_compile_time_assertion;
 pub(in crate::analysis) use const_flow::{
     ChangedConsts, ConstFlow, associated_const_binding, const_value_changes, evaluate_const_flow,
     shares_module_scope,
@@ -107,7 +112,7 @@ pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use element_field_pin::{
     drop_is_plain_in_closed_sources, observes_returned_element_field,
-    returned_array_construction_plain,
+    returned_array_construction_plain, workspace_has_visible_non_plain_drop,
 };
 pub(in crate::analysis) use facade_reach::{
     FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,
@@ -115,7 +120,8 @@ pub(in crate::analysis) use facade_reach::{
 };
 pub(in crate::analysis) use field_reach::{FieldTable, owner_name_mentions};
 pub(in crate::analysis) use flow::{
-    local_flow_sinks, predicate_line_arms_all_agree, propagation_evidence_with_witness,
+    local_flow_sinks, predicate_branch_side_effect_only_in_body, predicate_line_arms_all_agree,
+    propagation_evidence_with_witness,
 };
 pub(in crate::analysis) use framework_oracle::{
     insta_field_snapshot_limitation, withhold_framework_oracle_gap,
@@ -141,12 +147,14 @@ pub(in crate::analysis) use hop_polling::{PolledHops, related_through_polled_hop
 pub(in crate::analysis) use implicit_call::{
     pre_cap_syntax_only, withhold_destructor_credit, withhold_implicit_call_gap,
 };
+#[cfg(test)]
+pub(in crate::analysis) use indirect_owner::{
+    item_binding_read_count, owner_item_ask_count, owner_item_scan_count,
+};
 pub(in crate::analysis) use indirect_owner::{
     oracle_owner_call_is_shadowed, related_tests_reach_owner_indirectly,
     withhold_indirect_owner_gap,
 };
-#[cfg(test)]
-pub(in crate::analysis) use indirect_owner::{owner_item_ask_count, owner_item_scan_count};
 pub(in crate::analysis) use infection::{
     OwnerInputs, exercised_bool_chain_return_sink, infection_evidence_for_owner,
 };
@@ -201,12 +209,13 @@ pub(in crate::analysis) use refusal_miss::{
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, assertion_pins_display_string,
     body_contains_owner_call, call_text_may_call_free_function, changes_only_string_literals,
-    declared_dependent_package_calls_owner, find_related_tests_with_candidate_index,
-    free_helper_call_resolves, impl_self_type_name, inherent_owner_call_resolves,
-    is_display_fmt_owner, is_drop_destructor, is_partial_eq_method, manifests_with_unindexed_files,
-    method_call_resolves_to_impl, module_stem, owner_call_is_direct, owner_call_text,
-    owner_dispatch_trait, owner_impl_identity_shadowed, owner_trait_name, package_prefix,
-    requires_inherent_receiver_identity, resolves_method_in_prefix, test_calls_free_function,
+    companion_scope_admits, declared_dependent_package_calls_owner,
+    find_related_tests_with_candidate_index, free_helper_call_resolves, impl_self_type_name,
+    inherent_owner_call_resolves, is_display_fmt_owner, is_drop_destructor, is_partial_eq_method,
+    manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem,
+    owner_call_is_direct, owner_call_text, owner_dispatch_trait, owner_impl_identity_shadowed,
+    owner_trait_name, package_prefix, requires_inherent_receiver_identity,
+    resolves_method_in_prefix, test_calls_free_function,
 };
 #[cfg(feature = "lang-rust")]
 pub(in crate::analysis) use reveal::RELATED_TESTS_RENDER_CAP;
@@ -222,6 +231,7 @@ pub(in crate::analysis) use reveal::{
 pub(in crate::analysis) use reveal::{ReturnOracleAdmission, contains_as_whole_word};
 pub(in crate::analysis) use reveal::{only_proximity_oracles, reveal_outcome};
 pub(in crate::analysis) use slice_boundary::refine_slice_boundary;
+pub(in crate::analysis) use slice_counter_boundary::refine_slice_counter_boundary;
 pub(in crate::analysis) use unpolled_future::withhold_unpolled_future_gap;
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can
 // apply variant-binding without reaching into the private `text` submodule.

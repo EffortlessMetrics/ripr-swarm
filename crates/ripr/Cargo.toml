@@ -27,6 +27,7 @@ include = [
   "examples/*/tests/**",
   "examples/*.diff",
   "examples/*.rs",
+  "examples/support/*.rs",
   "README.md",
   "LICENSE-*",
   "Cargo.toml",
@@ -83,7 +84,7 @@ oxc_parser = { version = "0.130", optional = true }
 oxc_span = { version = "0.130", optional = true }
 ra_ap_syntax = { version = "0.0.349", optional = true }
 rayon = "1"
-rmcp = { version = "=3.7.0", default-features = false, features = ["server", "transport-async-rw"] }
+rmcp = { version = "=3.9.0", default-features = false, features = ["server", "transport-async-rw"] }
 # Default features pull `malachite-bigint` (LGPL-3.0-only), which is
 # incompatible with our MIT/Apache-2.0 license posture. Disable the
 # default and select `num-bigint` (MIT/Apache-2.0) for arbitrary-precision
@@ -98,7 +99,6 @@ sha2 = "0.10"
 # tests must run in the default suite, and the module is not yet reachable from
 # the CLI. Revisit a feature gate when the CLI slice wires it in.
 prost = "0.13"
-bytes = "1"
 toml = "1"
 unicode-segmentation = "=1.13.3"
 unicode-width = "=0.2.2"
@@ -182,7 +182,7 @@ lang-perl = ["ripr-contract/lang-perl"]
 # from this crate's own features, and the contract's defaults would unify on.
 ripr-contract = { version = "=0.11.0", path = "../ripr-contract", default-features = false, features = ["test-fixtures"] }
 proptest = "1"
-rmcp = { version = "=3.7.0", default-features = false, features = ["client", "transport-async-rw"] }
+rmcp = { version = "=3.9.0", default-features = false, features = ["client", "transport-async-rw"] }
 serial_test = "4"
 # Dev-only: deterministic initialize-delivery witnesses (#3802) pause tokio
 # time and drive the service layers (tower Service) directly.

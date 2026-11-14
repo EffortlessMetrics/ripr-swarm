@@ -388,6 +388,7 @@ mod may_reach;
 mod message_pin;
 mod module_value;
 mod test_local_literal;
+mod type_checking_block;
 mod type_guard;
 mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_value_origins};
@@ -400,6 +401,8 @@ mod discriminators;
 mod effect_alignment;
 #[cfg(test)]
 mod effect_order_tests;
+#[cfg(test)]
+mod exception_body_call_tests;
 mod exception_variant;
 #[cfg(test)]
 mod exception_variant_tests;
@@ -489,6 +492,7 @@ use source_facts::{
 };
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
+mod callee_patch;
 mod collection_config;
 mod fixture_substitution;
 mod fixtures;
@@ -536,6 +540,35 @@ pub(in crate::analysis::language::python) fn publish_production_finding(
 ) {
     crate::analysis::witness::retain_finding_projection(&finding);
     findings.push(finding);
+}
+
+/// Record which related rows live in a test file the diff changed (#14027) so
+/// the one shared headline pick can prefer them. Nothing is stamped when the
+/// first row already is one (the default pick already names it) or no row is.
+/// Display evidence only: row order, class and oracle strength are untouched.
+fn stamp_related_tests_changed_in_diff(finding: &mut Finding, changed_files: &BTreeSet<PathBuf>) {
+    if changed_files.is_empty()
+        || finding
+            .related_tests
+            .first()
+            .is_none_or(|first| changed_files.contains(&first.file))
+    {
+        return;
+    }
+    finding.evidence.extend(
+        finding
+            .related_tests
+            .iter()
+            .filter(|row| changed_files.contains(&row.file))
+            .map(|row| {
+                format!(
+                    "{}{}:{}",
+                    crate::domain::RELATED_TEST_CHANGED_IN_DIFF_PREFIX,
+                    normalized_path(&row.file),
+                    row.line
+                )
+            }),
+    );
 }
 
 /// Whether `text` holds `name` as a whole Python identifier.
@@ -628,6 +661,11 @@ struct PythonOwner {
     /// workspace source file also produces (`related_tests.rs`, #4566).
     /// Empty until the workspace pass fills it.
     ambiguous_src_modules: Vec<related_tests::AmbiguousSrcModule>,
+    /// Test-local modules that shadow a top-level name of this owner's module
+    /// paths for tests under pytest's prepend import mode (`related_tests.rs`,
+    /// #13706). Empty until the workspace pass fills it.
+    #[serde(default)]
+    test_local_shadows: Vec<related_tests::TestLocalShadow>,
     /// Dotted module paths of other workspace source files that define a
     /// free function with this owner's name (`related_tests.rs`, #8759). A
     /// test that imports the name from one of them (and from no module that
@@ -1715,6 +1753,15 @@ impl PythonAdapter {
                 .filter(|file| !is_test_file(file)),
             |path| options.root.join(path).exists(),
         );
+        // Test-local helper modules are found by path as well (#13706); every
+        // discovered file counts, test files included.
+        related_tests::apply_test_local_shadows(
+            &mut all_owners,
+            reach
+                .as_ref()
+                .map_or(&workspace_files, |admission| &admission.discovered)
+                .iter(),
+        );
         related_tests::apply_rival_definition_modules(&mut all_owners);
         related_tests::apply_class_facts(&mut all_owners);
 
@@ -2019,6 +2066,11 @@ impl PythonAdapter {
             }
         }
 
+        let changed_test_files: BTreeSet<PathBuf> = python_changed_files
+            .iter()
+            .filter(|changed| !changed.added_lines.is_empty() || !changed.removed_lines.is_empty())
+            .map(|changed| changed.path.clone())
+            .collect();
         let mut findings: Vec<Finding> = Vec::new();
         let mut value_origins = crate::value_origins::ValueOrigins::default();
         let mut related_memo = related_tests::RelatedCandidateMemo::default();
@@ -2104,6 +2156,25 @@ impl PythonAdapter {
             let old_string_line_ranges = old_source
                 .as_deref()
                 .and_then(no_behavior::multi_line_string_line_ranges);
+            // #14156: the body of `if TYPE_CHECKING:` never runs, on either
+            // side of the diff.
+            let typing_shadowed =
+                type_checking_block::workspace_may_shadow_typing(workspace_read.sources.keys());
+            let type_checking_ranges = workspace_read
+                .sources
+                .get(&changed.path)
+                .filter(|_| !typing_shadowed)
+                .map(|source| {
+                    type_checking_block::type_checking_only_line_ranges(&changed.path, source)
+                })
+                .unwrap_or_default();
+            let old_type_checking_ranges = old_source
+                .as_deref()
+                .filter(|_| !typing_shadowed)
+                .map(|source| {
+                    type_checking_block::type_checking_only_line_ranges(&changed.path, source)
+                })
+                .unwrap_or_default();
             let import_ranges = import_ranges_by_file
                 .get(&changed.path)
                 .map(Vec::as_slice)
@@ -2129,6 +2200,18 @@ impl PythonAdapter {
             };
             let covered = python_quiet_lines_covered_by_run(&changed.added_lines, |added| {
                 line_is_in_ranges(added.line, new_docstring_ranges)
+                    // A block line counts as quiet only when the line it
+                    // replaced did not run either; runtime code moved into a
+                    // block goes to the classifier, which keeps its probe.
+                    || (line_is_in_ranges(added.line, &type_checking_ranges)
+                        && counterparts.get(&added.line).is_none_or(|removed| {
+                            line_is_in_ranges(removed.line, &old_type_checking_ranges)
+                                || line_is_in_ranges(removed.line, &old_docstring_ranges)
+                                || line_is_in_ranges(removed.line, &old_import_ranges)
+                                || is_python_import_line(&removed.text)
+                                || is_python_no_behavior_line(&removed.text)
+                                || is_python_structural_line(&removed.text)
+                        }))
                     || is_added_import(added)
                     || is_python_no_behavior_line(&added.text)
                     || is_python_structural_line(&added.text)
@@ -2188,6 +2271,13 @@ impl PythonAdapter {
                     old_line_in_docstring: old_line.is_some_and(|removed| {
                         line_is_in_ranges(removed.line, &old_docstring_ranges)
                     }),
+                    new_line_type_checking_only: line_is_in_ranges(
+                        added.line,
+                        &type_checking_ranges,
+                    ),
+                    old_line_type_checking_only: old_line.is_some_and(|removed| {
+                        line_is_in_ranges(removed.line, &old_type_checking_ranges)
+                    }),
                     opens_owner_with_added_body: owner_for_changed_line(
                         &changed.path,
                         added.line,
@@ -2244,6 +2334,7 @@ impl PythonAdapter {
                         reidentify_python_finding(&mut finding, &normalized);
                         value_origins.rebind_probe(&original, &finding.probe);
                     }
+                    stamp_related_tests_changed_in_diff(&mut finding, &changed_test_files);
                     publish_production_finding(&mut findings, finding);
                 }
             }
@@ -2261,6 +2352,7 @@ impl PythonAdapter {
                 &deleted_lines::OldSideRanges {
                     docstrings: &old_docstring_ranges,
                     imports: &old_import_ranges,
+                    type_checking_only: &old_type_checking_ranges,
                     source: old_source.as_deref(),
                 },
                 workspace_read
@@ -2273,7 +2365,8 @@ impl PythonAdapter {
                 &mut value_origins,
                 &mut related_memo,
             );
-            for finding in deleted {
+            for mut finding in deleted {
+                stamp_related_tests_changed_in_diff(&mut finding, &changed_test_files);
                 publish_production_finding(&mut findings, finding);
             }
         }
@@ -2481,6 +2574,8 @@ mod helper_module_attribute_tests;
 mod capability_disposition_tests;
 
 #[cfg(test)]
+mod callee_patch_tests;
+#[cfg(test)]
 mod helper_inline_tests;
 #[cfg(test)]
 mod literal_patch_tests;
@@ -2514,6 +2609,13 @@ mod imported_call_operator_tests;
 mod may_reach_tests;
 #[cfg(test)]
 mod module_value_tests;
+
+#[cfg(test)]
+pub(crate) use module_value_tests::{
+    python_module_fstring_reader_finding, python_module_reader_assertion_parses,
+    python_module_string_reader_finding, python_module_value_without_import_identity,
+};
+
 #[cfg(test)]
 mod new_declaration_tests;
 
@@ -2542,6 +2644,8 @@ mod tests;
 
 #[cfg(test)]
 mod loop_walk_tests;
+#[cfg(test)]
+mod type_checking_block_tests;
 #[cfg(test)]
 mod unemitted_stage_unknown_tests;
 #[cfg(test)]

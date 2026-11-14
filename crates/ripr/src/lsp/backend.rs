@@ -9,8 +9,9 @@
 use super::AnalysisStatusNotification;
 use super::actions::{code_action_response, disable_retained_analysis_actions, resolve_action};
 use super::capabilities::{
-    ConfigurationMode, WorkspaceRootResolution, initialize_result_for_client,
-    root_from_initialize_params, workspace_folder_set_from_initialize_params,
+    ConfigurationMode, PullDiagnosticAdvertisement, WorkspaceRootResolution,
+    initialize_result_for_client, root_from_initialize_params,
+    workspace_folder_set_from_initialize_params,
 };
 use super::client_features::ClientFeatureProfile;
 use super::config::{LspAnalysisConfig, validated_pulled_options};
@@ -193,6 +194,10 @@ pub(super) struct Backend {
     /// (or a root/shutdown clear) must retract the marker with the
     /// established empty-clear so the pending state never outlives it.
     pending_push_marker_uris: Mutex<BTreeMap<Uri, String>>,
+    /// Recovery id of the pre-snapshot pull marker last served to the pull
+    /// client (#14447 review): an attempt transition that leaves the served
+    /// route unchanged sends no `workspace/diagnostic/refresh`.
+    pending_pull_marker_served_recovery: Mutex<Option<&'static str>>,
     latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
     diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
     analysis_health: Mutex<AnalysisHealth>,
@@ -369,6 +374,7 @@ impl Backend {
             config_pull: ConfigPullCoordinator::default(),
             last_diagnostic_uris: Mutex::new(BTreeSet::new()),
             pending_push_marker_uris: Mutex::new(BTreeMap::new()),
+            pending_pull_marker_served_recovery: Mutex::new(None),
             latest_analysis: Mutex::new(None),
             diagnostic_result_ids: Mutex::new(None),
             analysis_health: Mutex::new(AnalysisHealth::default()),
@@ -457,7 +463,14 @@ impl Backend {
         // snapshot commits (and no failure is latched) real payloads own
         // the client state and this is a no-op decision-wise.
         if self.configuration_failure().is_some() || self.latest_pull_snapshot().is_none() {
-            self.publish_analysis_pending_push_markers().await;
+            // #14447: when nothing blocks this refresh, analysis is about to
+            // start, so the marker must not tell the user to start it.
+            let authority = self.workspace_root_authority();
+            let analysis_starting = self.configuration_failure().is_none()
+                && authority.effective_root.is_some()
+                && authority.allows_analysis();
+            self.publish_analysis_pending_push_markers(analysis_starting)
+                .await;
         }
         if self.configuration_failure().is_some() {
             return;
@@ -550,6 +563,7 @@ impl Backend {
                 if let Some(request) = self.refresh_scheduler.pending_request(generation) {
                     self.mark_pending_attempt(&request);
                     self.publish_analysis_status().await;
+                    self.refresh_pending_marker_surfaces().await;
                 }
                 self.log_refresh_queued(generation).await;
                 // #8733: answer once the scheduler has accepted (and
@@ -571,10 +585,24 @@ impl Backend {
             &self.refresh_idle,
             request.clone(),
         );
-
+        // #14447: re-serve the marker only once the cancellation guard is
+        // armed, so a handler dropped while the pull client answers the
+        // refresh request still finishes the scheduler's active request. The
+        // re-serve runs alongside the attempt and is dropped once the attempt
+        // ends, so a pull client slow to answer `workspace/diagnostic/refresh`
+        // delays neither analysis nor the attempt's outcome handling.
         loop {
             let attempt_started = Instant::now();
-            let outcome = self.run_refresh_request(&request).await;
+            let outcome = {
+                let attempt = self.run_refresh_request(&request);
+                let marker = self.refresh_pending_marker_surfaces();
+                tokio::pin!(attempt, marker);
+                tokio::select! {
+                    biased;
+                    outcome = &mut attempt => outcome,
+                    () = &mut marker => attempt.await,
+                }
+            };
             let attempt_duration = attempt_started.elapsed();
             self.refresh_scheduler
                 .record_attempt_outcome(outcome, attempt_duration);
@@ -590,6 +618,11 @@ impl Backend {
             else {
                 cancellation_guard.disarm();
                 self.refresh_idle.notify_waiters();
+                // #14447: an attempt that ended without a snapshot, with no
+                // follow-up request, leaves the marker naming the route that
+                // starts analysis again. A follow-up keeps "in progress", so
+                // the start route never flashes between handed-off attempts.
+                self.refresh_pending_marker_surfaces().await;
                 return;
             };
             request = next;
@@ -1467,8 +1500,8 @@ impl Backend {
             .keys()
             .filter(|uri| {
                 documents
-                    .state_for_uri(uri)
-                    .is_some_and(DocumentState::is_quarantined)
+                    .state_or_untracked(uri)
+                    .is_some_and(|state| state.is_quarantined())
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -1564,6 +1597,11 @@ impl Backend {
         if let Ok(mut diagnostic_result_ids) = self.diagnostic_result_ids.lock() {
             *diagnostic_result_ids = None;
         }
+        // #14447 review: the client's cached report was the snapshot, not a
+        // pending marker, so the next pre-snapshot transition re-pulls.
+        if let Ok(mut served) = self.pending_pull_marker_served_recovery.lock() {
+            *served = None;
+        }
         let mut uris = take_all_uris(&mut last_diagnostic_uris);
         if marker_served && let Ok(documents) = self.quarantine.documents.lock() {
             uris.extend(documents.documents.keys().cloned());
@@ -1596,7 +1634,7 @@ impl Backend {
     /// the caller sampled the state owns the client surface, and a late
     /// marker must not overwrite completed diagnostics or resurrect
     /// cleared ones (#8732 review).
-    async fn publish_analysis_pending_push_markers(&self) {
+    async fn publish_analysis_pending_push_markers(&self, analysis_starting: bool) {
         if self.pull_diagnostics_enabled() {
             return;
         }
@@ -1606,7 +1644,12 @@ impl Backend {
         if failure.is_none() && has_snapshot {
             return;
         }
-        let recovery = self.analysis_pending_recovery();
+        let recovery = match self.analysis_pending_recovery() {
+            AnalysisPendingRecovery::SaveOrRefresh if analysis_starting => {
+                AnalysisPendingRecovery::AnalysisRunning
+            }
+            recovery => recovery,
+        };
         let withdrawn = has_snapshot;
         let items = if withdrawn {
             analysis_pending_withdrawal_diagnostics(recovery)
@@ -1642,6 +1685,57 @@ impl Backend {
             self.client
                 .publish_diagnostics(uri, items.clone(), version)
                 .await;
+        }
+    }
+
+    /// Re-serve the pre-snapshot marker after an attempt-state transition
+    /// (#14447): push clients get a republish when the route changed, and a
+    /// pull client that cached the previous pending result id is asked to
+    /// pull again, only when the served recovery route changed. A committed
+    /// snapshot owns both surfaces, so nothing is sent once one exists
+    /// without a latched failure.
+    async fn refresh_pending_marker_surfaces(&self) {
+        if self.latest_pull_snapshot().is_some() && self.configuration_failure().is_none() {
+            return;
+        }
+        self.publish_analysis_pending_push_markers(false).await;
+        if !(self.pull_diagnostics_enabled() && self.diagnostic_refresh_support_enabled()) {
+            return;
+        }
+        let recovery_id = self.analysis_pending_recovery().recovery_id();
+        let route_unchanged = self
+            .pending_pull_marker_served_recovery
+            .lock()
+            .is_ok_and(|served| *served == Some(recovery_id));
+        if route_unchanged {
+            return;
+        }
+        if let Err(error) = self
+            .bounded_client_request(self.client.workspace_diagnostic_refresh())
+            .await
+        {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!("pull diagnostic refresh request failed: {error}"),
+                )
+                .await;
+        }
+    }
+
+    /// Record the pre-snapshot pull marker route just served (#14447 review).
+    fn note_pending_pull_marker_served(&self, recovery: &AnalysisPendingRecovery) {
+        if let Ok(mut served) = self.pending_pull_marker_served_recovery.lock() {
+            *served = Some(recovery.recovery_id());
+        }
+    }
+
+    /// Forget the served pending route once committed payloads are served
+    /// (#14447 review): the client no longer holds a pending marker, so the
+    /// next pending transition must ask it to re-pull.
+    fn forget_pending_pull_marker_served(&self) {
+        if let Ok(mut served) = self.pending_pull_marker_served_recovery.lock() {
+            *served = None;
         }
     }
 
@@ -1774,7 +1868,7 @@ impl Backend {
         let relative_pattern_support = self
             .watched_files_relative_pattern_support
             .load(Ordering::SeqCst);
-        let watchers = match diagnostics_input_watchers(&root, relative_pattern_support) {
+        let mut watchers = match diagnostics_input_watchers(&root, relative_pattern_support) {
             Ok(watchers) => watchers,
             Err(reason) => {
                 self.client
@@ -1788,6 +1882,19 @@ impl Backend {
                 return;
             }
         };
+        // #14099: sources the committed snapshot analyzed change outside the
+        // editor too. `diagnostics_input_watchers` succeeding means the root
+        // is anchorable (a URI, or a glob-safe absolute path).
+        let root_uri = relative_pattern_support
+            .then(|| file_uri_for_path(&root).ok())
+            .flatten();
+        if root_uri.is_some() || !relative_pattern_support {
+            let absolute = crate::output::path::path_display_lossy(&root);
+            watchers.extend(super::watched_source_drift::committed_source_watchers(
+                root_uri.as_ref(),
+                absolute.trim_end_matches('/'),
+            ));
+        }
         let registration = Registration {
             id: DIAGNOSTICS_INPUT_WATCH_ID.to_string(),
             method: "workspace/didChangeWatchedFiles".to_string(),
@@ -1906,8 +2013,8 @@ impl Backend {
             .documents
             .lock()
             .ok()?
-            .state_for_uri(uri)
-            .map(project)
+            .state_or_untracked(uri)
+            .map(|state| project(&state))
     }
 
     /// Clears intentionally bind no version (#1747): a clear must apply
@@ -2017,6 +2124,21 @@ impl Backend {
             return None;
         };
         snapshot.as_ref().map(|value| value.as_ref().clone())
+    }
+
+    /// Run `f` against the live document store the real `didOpen` /
+    /// `didChange` / `didClose` handlers mutate, so a handler-level test can
+    /// stage store occupancy or limits without 4,096 notifications (#11666).
+    #[cfg(test)]
+    pub(super) fn with_documents_for_test<R>(
+        &self,
+        f: impl FnOnce(&mut super::state::DocumentStore) -> R,
+    ) -> Option<R> {
+        self.quarantine
+            .documents
+            .lock()
+            .ok()
+            .map(|mut documents| f(&mut documents))
     }
 
     #[cfg(test)]
@@ -3275,10 +3397,26 @@ impl Backend {
     /// mirrors the `refresh_diagnostics` preconditions so a blocked state
     /// never advertises a route that returns before analysis.
     fn analysis_pending_recovery(&self) -> AnalysisPendingRecovery {
-        analysis_pending_recovery_for(
+        match analysis_pending_recovery_for(
             self.configuration_failure().as_ref(),
             &self.workspace_root_authority(),
-        )
+        ) {
+            // #14447: an attempt already queued or running needs no start.
+            AnalysisPendingRecovery::SaveOrRefresh if self.analysis_attempt_active() => {
+                AnalysisPendingRecovery::AnalysisRunning
+            }
+            recovery => recovery,
+        }
+    }
+
+    /// Whether an analysis attempt is queued or running right now.
+    fn analysis_attempt_active(&self) -> bool {
+        self.analysis_health.lock().is_ok_and(|health| {
+            matches!(
+                health.state,
+                AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+            )
+        })
     }
 
     /// Whether the most recent bounded disclosure window after an
@@ -3344,7 +3482,7 @@ impl Backend {
                 // client otherwise keeps the last published diagnostics
                 // indefinitely (the refresh guard below returns before any
                 // re-analysis can replace them).
-                self.publish_analysis_pending_push_markers().await;
+                self.publish_analysis_pending_push_markers(false).await;
                 if !repeated {
                     self.disclose_configuration_reload_failure(warning, shown)
                         .await;
@@ -3665,7 +3803,36 @@ impl Backend {
             };
             kinds.diagnostics_input_changed |= kind == WorkspaceInputKind::DiagnosticsInput;
         }
+        kinds.diagnostics_input_changed |= self.watched_events_drift_committed_sources(changes);
         kinds
+    }
+
+    /// #14099: whether a watched-file event names a source the committed
+    /// snapshot analyzed, is not open, and no longer holds the bytes that
+    /// snapshot consumed (deleted, renamed away or rewritten outside the
+    /// editor). Such an event has no document-sync path, so without a refresh
+    /// the committed rows stay on a file that is gone or predates the rewrite.
+    fn watched_events_drift_committed_sources(&self, changes: &[FileEvent]) -> bool {
+        let Some(snapshot) = self
+            .latest_analysis
+            .lock()
+            .ok()
+            .and_then(|latest| latest.clone())
+        else {
+            return false;
+        };
+        let committed = super::watched_source_drift::CommittedSources {
+            root: &snapshot.root,
+            consumed: &snapshot.rust_consumed_sources,
+            diagnostic_uris: snapshot.diagnostics_by_uri.keys().collect(),
+        };
+        super::watched_source_drift::events_drift_committed_sources(&committed, changes, &|uri| {
+            self.quarantine
+                .documents
+                .lock()
+                // A failed store lock reads as open: never refresh on a guess.
+                .map_or(true, |documents| documents.state_for_uri(uri).is_some())
+        })
     }
 
     fn set_analysis_config(&self, config: LspAnalysisConfig) {
@@ -3823,7 +3990,7 @@ impl Backend {
             .ok()
             .and_then(|documents| {
                 documents
-                    .state_for_uri(uri)
+                    .state_or_untracked(uri)
                     .map(|state| state.buffer_authority_unknown)
             })
             .unwrap_or(false)
@@ -3854,6 +4021,9 @@ impl Backend {
                 }
                 DocumentStalenessReason::InvalidIncrementalChange => {
                     "ripr could not apply one incremental edit and stopped trusting the retained text; saving cannot fix this. Undo the edit or revert the file so ripr receives the full document again."
+                }
+                DocumentStalenessReason::DocumentStoreLimitReached => {
+                    "ripr tracks a bounded number of open documents and did not track this one; saving cannot fix this. Close other open files, then reopen this file so ripr can track it."
                 }
                 DocumentStalenessReason::NoAnalyzedSavedContent => {
                     unanalyzed_file_hover_route(self.unanalyzed_file_cause(uri))
@@ -4134,6 +4304,14 @@ impl Backend {
                 self.restore_document_diagnostics(uri, was_disclosed, decision_version)
                     .await;
             }
+            QuarantineTransition::ReasonChanged => {
+                // Still quarantined, but under a different reason: the
+                // marker the client holds names the old one. Re-withdraw so
+                // it names the current reason; the once-per-episode
+                // disclosure is already recorded and is not repeated.
+                self.withdraw_document_diagnostics(uri, decision_version)
+                    .await;
+            }
             QuarantineTransition::Unchanged => {
                 // An edit that advances the version while quarantine holds
                 // must re-clear (#1747): the earlier decision-versioned
@@ -4239,6 +4417,42 @@ impl Backend {
         }
     }
 
+    /// The per-batch publication decision for one URI: pending quarantine,
+    /// bound version and current quarantine, from one state projection. A
+    /// URI with no stored state reads through the latch-aware accessor, so an
+    /// untracked overflow buffer is withdrawn rather than published
+    /// (#11666).
+    fn transaction_publication_projection(
+        &self,
+        uri: &Uri,
+        pending_analyzed: &BTreeMap<Uri, Option<String>>,
+    ) -> (
+        Option<(PathBuf, DocumentStalenessReason)>,
+        Option<i32>,
+        bool,
+    ) {
+        self.with_document_state(uri, |state| {
+            let pending = quarantine_for_pending_from_state(state, pending_analyzed);
+            let version = if state.buffer_authority_unknown {
+                None
+            } else {
+                state.version
+            };
+            (pending, version, quarantine_from_state(state).is_some())
+        })
+        .unwrap_or((None, None, false))
+    }
+
+    #[cfg(test)]
+    pub(super) fn transaction_publication_projection_for_test(
+        &self,
+        uri: &Uri,
+    ) -> (bool, Option<i32>, bool) {
+        let (pending, version, quarantined) =
+            self.transaction_publication_projection(uri, &BTreeMap::new());
+        (pending.is_some(), version, quarantined)
+    }
+
     /// Publish one document's selection-filtered diagnostics during a
     /// refresh transaction, honoring the dirty-buffer quarantine against the
     /// transaction's pending analyzed identity (#1970/#7771): a document
@@ -4258,17 +4472,8 @@ impl Backend {
         // edit cannot make analyzed diagnostics look current. Unknown
         // buffer authority binds no version (see the pending-entered
         // pass).
-        let (pending_quarantine, raw_version, is_quarantined) = self
-            .with_document_state(uri, |state| {
-                let pending = quarantine_for_pending_from_state(state, pending_analyzed);
-                let version = if state.buffer_authority_unknown {
-                    None
-                } else {
-                    state.version
-                };
-                (pending, version, quarantine_from_state(state).is_some())
-            })
-            .unwrap_or((None, None, false));
+        let (pending_quarantine, raw_version, is_quarantined) =
+            self.transaction_publication_projection(uri, pending_analyzed);
         let version = self.negotiated_version(raw_version);
         if pending_quarantine.is_some() {
             if !diagnostics.is_empty() {
@@ -6685,7 +6890,10 @@ impl LanguageServer for Backend {
             .await;
         }
         Ok(initialize_result_for_client(
-            supports_pull_diagnostics,
+            PullDiagnosticAdvertisement::for_client(
+                supports_pull_diagnostics,
+                profile.ripr_editor.is_some(),
+            ),
             position_encoding,
         ))
     }
@@ -6922,6 +7130,12 @@ impl LanguageServer for Backend {
         // Mirror the root-change path: dropping the tracked URIs without
         // publishing leaves stale diagnostics in the client (#5202).
         let uris = self.clear_all_diagnostic_uris();
+        // Shutdown is the only reset of untracked-overflow saturation: a root
+        // transition keeps the documents (and the client's untracked buffers),
+        // so it must not end the fail-closed withdrawal (#11666).
+        if let Ok(mut documents) = self.quarantine.documents.lock() {
+            documents.clear_untracked_overflow();
+        }
         if !self.pull_diagnostics_enabled() {
             for uri in uris {
                 self.client
@@ -7484,6 +7698,7 @@ impl Backend {
             // marker under a stable state identity instead, promising only
             // the recovery route the current blocking state honors.
             let recovery = self.analysis_pending_recovery();
+            self.note_pending_pull_marker_served(&recovery);
             return Ok(
                 analysis_pending_document_report(params.previous_result_id, recovery).into(),
             );
@@ -7499,12 +7714,14 @@ impl Backend {
         // holding the stale payload.
         if self.configuration_failure().is_some() {
             let recovery = AnalysisPendingRecovery::FixConfiguration;
+            self.note_pending_pull_marker_served(&recovery);
             return Ok(analysis_pending_document_report_withdrawn(
                 params.previous_result_id,
                 recovery,
             )
             .into());
         }
+        self.forget_pending_pull_marker_served();
         let uri = params.text_document.uri;
         // A quarantined (dirty-buffer) document is served one Information
         // marker under a distinct result id (#1970/#7771): saved-state
@@ -7602,6 +7819,7 @@ impl Backend {
             // workspace report item needs a document URI, and the document
             // pull path discloses the state for every open file.
             let recovery = self.analysis_pending_recovery();
+            self.note_pending_pull_marker_served(&recovery);
             return Ok(analysis_pending_workspace_report(&params, recovery).into());
         };
         // A configuration failure latched after this snapshot committed
@@ -7610,8 +7828,10 @@ impl Backend {
         // URI under the FixConfiguration recovery route.
         if self.configuration_failure().is_some() {
             let recovery = AnalysisPendingRecovery::FixConfiguration;
+            self.note_pending_pull_marker_served(&recovery);
             return Ok(analysis_pending_workspace_report_withdrawn(&params, recovery).into());
         }
+        self.forget_pending_pull_marker_served();
         let mut uris = snapshot
             .diagnostics_by_uri
             .keys()
@@ -8319,6 +8539,8 @@ impl Backend {
                         "actionable_gap_artifacts": actionable_gap_artifacts,
                         "gap_artifact_rejections": gap_artifact_rejections,
                         "out_of_scope_test_file_findings": snapshot.out_of_scope_test_file_findings,
+                        "owner_opt_out_findings": snapshot.owner_opt_out_findings,
+                        "owner_opt_out_reason": owner_opt_out_reason(snapshot.owner_opt_out_findings),
                     },
                     "diagnostic_budget": diagnostic_budget_json.clone(),
                     "diagnostic_budget_state": diagnostic_budget_state.clone(),
@@ -8355,6 +8577,8 @@ impl Backend {
                 "actionable_gap_artifacts": actionable_gap_artifacts,
                 "gap_artifact_rejections": gap_artifact_rejections,
                 "out_of_scope_test_file_findings": snapshot.out_of_scope_test_file_findings,
+                        "owner_opt_out_findings": snapshot.owner_opt_out_findings,
+                        "owner_opt_out_reason": owner_opt_out_reason(snapshot.owner_opt_out_findings),
             },
             "diagnostic_budget": diagnostic_budget_json,
             "diagnostic_budget_state": diagnostic_budget_state,
@@ -9012,6 +9236,9 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
         DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent => {
             "save the file to analyze the new saved state"
         }
+        DocumentStalenessReason::DocumentStoreLimitReached => {
+            "close other open files, then reopen this file so ripr can track it"
+        }
         DocumentStalenessReason::NoAnalyzedSavedContent => {
             "save the file if it is new, then refresh (`ripr.refresh`)"
         }
@@ -9158,6 +9385,21 @@ fn workspace_status_report_paths() -> serde_json::Value {
 /// registrations, `available: false` for a limited run that did not
 /// compute harness facts, and the registration summaries when facts are
 /// complete (#3605).
+/// Reason token for the owner opt-out disclosure on workspace status (#14136):
+/// the shared `owner_mutants_skip` token when findings were withheld, otherwise
+/// `null`, so a status reader never sees a reason without a count.
+fn owner_opt_out_reason(withheld: usize) -> serde_json::Value {
+    if withheld == 0 {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::String(
+            crate::analysis::owner_opt_out::OwnerOptOutReason::MutantsSkip
+                .as_str()
+                .to_string(),
+        )
+    }
+}
+
 fn workspace_status_harness_summary(snapshot: &AnalysisSnapshot) -> serde_json::Value {
     match &snapshot.harness_facts {
         crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered => serde_json::Value::Null,
@@ -10117,6 +10359,7 @@ mod top_limitation_selection_tests {
             partial_scope,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),
@@ -10138,6 +10381,8 @@ mod top_limitation_selection_tests {
             stop_reason: PartialDiffStopReason::FileBudget,
             next_file_changed_lines: Some(3),
             whole_diff_budgets: None,
+            over_limit_files: Vec::new(),
+            line_budget_limits: Vec::new(),
             partition_identity: "sha256:partition".to_string(),
         }
     }
@@ -12064,6 +12309,7 @@ mod delivery_selection_parity_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),
@@ -12446,6 +12692,35 @@ mod delivery_selection_parity_tests {
             if unserved != stored {
                 return Err(format!(
                     "{transport} unserved identities diverge from stored omissions: unserved={unserved:?} stored={stored:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_status_discloses_withheld_owner_opt_out_findings() -> Result<(), String> {
+        // #14136: the committed snapshot's withheld count reaches the
+        // `ripr/workspaceStatus` payload with the shared reason token, and a
+        // snapshot with nothing withheld reports a null reason.
+        for (withheld, reason) in [
+            (2usize, serde_json::json!("owner_mutants_skip")),
+            (0usize, serde_json::Value::Null),
+        ] {
+            let harness = parity_backend()?;
+            let backend = harness.service.inner();
+            let mut diagnostics = parity_workspace_diagnostics(Vec::new());
+            diagnostics.snapshot.owner_opt_out_findings = withheld;
+            commit(backend, diagnostics)?;
+            let status = backend
+                .collect_workspace_status()
+                .ok_or_else(|| "expected workspace status".to_string())?;
+            let section = &status["diagnostics"];
+            if section["owner_opt_out_findings"] != serde_json::json!(withheld)
+                || section["owner_opt_out_reason"] != reason
+            {
+                return Err(format!(
+                    "workspace status diverged from the committed snapshot for {withheld} withheld: {section}"
                 ));
             }
         }
@@ -13113,6 +13388,20 @@ mod quarantine_message_tests {
     }
 
     #[test]
+    fn quarantine_messages_name_the_open_document_limit_not_an_edit_failure() {
+        let reason = DocumentStalenessReason::DocumentStoreLimitReached;
+        let log = quarantine_withdrawal_log_message(Path::new("/workspace/src/lib.rs"), reason);
+        assert!(log.contains("document_store_limit_reached"));
+        assert!(log.contains("open-document limit was reached"));
+        assert!(log.contains("close other open files"));
+        assert!(!log.contains("incremental"));
+        assert!(!log.contains("save the file"));
+        let marker = crate::lsp::diagnostics::quarantine_withdrawal_diagnostic(reason);
+        assert!(marker.message.contains("open-document limit was reached"));
+        assert!(!marker.message.contains("incremental"));
+    }
+
+    #[test]
     fn quarantine_restored_log_message_names_path() {
         let message = quarantine_restored_log_message(Path::new("/workspace/src/lib.rs"));
         assert!(message.contains("/workspace/src/lib.rs"));
@@ -13222,6 +13511,7 @@ mod list_actionable_items_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),
@@ -14435,6 +14725,7 @@ mod pull_disclosure_dedup_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),

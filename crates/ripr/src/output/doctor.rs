@@ -73,6 +73,11 @@ pub(crate) enum DoctorFirstCommand {
     /// has no commit to diff against, so every diff-scoped first command
     /// fails; name the commit-first path and keep pilot exploration.
     UnbornHead,
+    /// `HEAD` resolves but no default base does (a shallow CI checkout, a
+    /// default branch that is neither `main` nor `master`): a bare
+    /// `ripr check` stops there, so name the explicit `--base` form, bound to
+    /// the diagnosed root like every other runnable recommendation.
+    NoDefaultBase,
     /// Git can read the work tree, but HEAD's metadata needs repair.
     DamagedRefs,
     /// The `config` check failed: `ripr check` loads the same `ripr.toml`
@@ -92,6 +97,9 @@ impl DoctorFirstCommand {
     pub(crate) const SAVED_DIFF_LINE: &'static str = "ripr check --diff PATH";
     pub(crate) const WORKTREE_LINE: &'static str = "ripr check";
     pub(crate) const DEFAULT_LINE: &'static str = "ripr check";
+    /// `REF` is a placeholder, as `PATH` is in the saved-diff line: the
+    /// advisory `git_default_base` line above it says which refs exist.
+    pub(crate) const NO_DEFAULT_BASE_LINE: &'static str = "ripr check --base REF";
 
     /// `dirty_worktree` is only evaluated when git can run, so a gitless
     /// environment is not probed (and not told to run `--worktree`).
@@ -171,6 +179,11 @@ impl DoctorFirstCommand {
             // #5259: the work tree is real but `HEAD` is unborn, so no base
             // can resolve; the diff-scoped first commands would all fail.
             Self::UnbornHead
+        } else if report.checks.iter().any(|check| {
+            check.name == "git_default_base" && check.status == DoctorCheckStatus::Advisory
+        }) && !failed_prerequisites
+        {
+            Self::NoDefaultBase
         } else if failed_prerequisites {
             // Missing Cargo.toml and a required runtime are named on the
             // bang lines. DefaultCheck / Worktree would still print
@@ -189,6 +202,7 @@ impl DoctorFirstCommand {
             Self::SavedDiff => Some(Self::SAVED_DIFF_LINE),
             Self::Worktree => Some(Self::WORKTREE_LINE),
             Self::DefaultCheck => Some(Self::DEFAULT_LINE),
+            Self::NoDefaultBase => Some(Self::NO_DEFAULT_BASE_LINE),
             Self::MissingRoot
             | Self::OutsideGit
             | Self::UnbornHead
@@ -326,7 +340,7 @@ impl DoctorFirstCommand {
                     Err(error) => Self::recommendation_lines(Err(error)),
                 }
             }
-            Self::SavedDiff | Self::Worktree | Self::DefaultCheck => {
+            Self::SavedDiff | Self::Worktree | Self::DefaultCheck | Self::NoDefaultBase => {
                 Self::recommendation_lines(self.command_line_for_root(root))
             }
         }
@@ -1427,6 +1441,7 @@ pub(crate) fn doctor_recovery_for_first_command(
         }
         DoctorFirstCommand::OutsideGit
         | DoctorFirstCommand::UnbornHead
+        | DoctorFirstCommand::NoDefaultBase
         | DoctorFirstCommand::SavedDiff
         | DoctorFirstCommand::Worktree
         | DoctorFirstCommand::DefaultCheck => return None,
@@ -1483,6 +1498,7 @@ pub(crate) fn canonical_next_action_for_doctor(
         restart_route: "ripr doctor".to_string(),
         check_case: None,
         check_repair_route: None,
+        check_scope_route: None,
         doctor_recovery: Some(recovery),
         pilot_delegation: None,
         alternatives: Vec::new(),
@@ -1980,8 +1996,22 @@ fn evaluate_doctor_core_with_probe_for_profile(
                     crate::analysis::HeadRefState::Unreadable(message) => {
                         report.add_check("git_head", DoctorStatus::Fail, Some(message));
                     }
-                    crate::analysis::HeadRefState::Resolved
-                    | crate::analysis::HeadRefState::Unknown => {}
+                    // HEAD resolves, so Git answers for this root; a bare
+                    // `ripr check` still stops when no default base does (a
+                    // shallow CI checkout is the common case). Say so here,
+                    // in the loader's own words, instead of recommending it.
+                    crate::analysis::HeadRefState::Resolved => {
+                        if let Some(message) = crate::analysis::default_base_unresolved_message(
+                            root,
+                            Some(DOCTOR_TOOL_TIMEOUT),
+                        ) {
+                            report.add_advisory_check(
+                                "git_default_base",
+                                format!("`ripr check` has no default base here: {message}"),
+                            );
+                        }
+                    }
+                    crate::analysis::HeadRefState::Unknown => {}
                 }
             }
             Some(WorkTreeProbe::Refused(message)) => {
@@ -2098,6 +2128,87 @@ pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
         .current_dir(std::env::temp_dir())
         .env("YARN_IGNORE_PATH", "1");
     doctor_tool_check_with_command(tool, command, DOCTOR_TOOL_TIMEOUT, None).into_public()
+}
+
+/// Argv (after the program) of the pytest importability probe. The probe
+/// runs from a private empty directory with `PYTHONSAFEPATH=1`, so neither the
+/// cwd nor a script directory reaches `sys.path`; user-site installs
+/// (`pip install --user`) stay visible, as they are for the verify command
+/// (#13617). `-P` is not used because it is rejected before Python 3.11.
+/// `PYTHONPATH` is removed so a checkout listed there cannot supply a
+/// `pytest.py` that doctor would execute; a pytest reachable only through
+/// `PYTHONPATH` is then reported as missing (advisory, exit code unchanged).
+///
+/// The probe only imports pytest; it never starts pytest itself. Running
+/// `python -m pytest --version` would let pytest search the ancestors of the
+/// probe directory for an ini file (for example a `/tmp/pytest.ini` planted by
+/// another local user), adopt that directory as rootdir and load its
+/// `conftest.py` or `-p` plugins. A bare import executes no project or temp
+/// directory code. The harness appends `--version`, which becomes an ignored
+/// `sys.argv[1]` of the `-c` script.
+const DOCTOR_PYTEST_PROBE_ARGS: [&str; 2] = [
+    "-c",
+    "import sys, pytest; sys.stdout.write('pytest ' + pytest.__version__)",
+];
+
+/// The probe command: PATH `python` importing pytest in `dir` with safe-path
+/// env and no `PYTHONPATH`.
+fn doctor_pytest_probe_command(dir: &Path) -> std::process::Command {
+    let mut command = doctor_tool_command("python");
+    command
+        .args(DOCTOR_PYTEST_PROBE_ARGS)
+        .env("PYTHONSAFEPATH", "1")
+        .env_remove("PYTHONPATH")
+        .current_dir(dir);
+    command
+}
+
+/// Create a fresh, unpredictable, owner-only directory with an exclusive
+/// `create_dir` (never `create_dir_all`), retrying on collision, so a
+/// pre-planted directory or symlink cannot supply a `conftest.py`.
+fn create_private_probe_dir() -> std::io::Result<std::path::PathBuf> {
+    use std::hash::{BuildHasher, Hasher};
+    let mut last = std::io::Error::other("no private probe directory");
+    for attempt in 0..16u32 {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u32(attempt);
+        hasher.write_u32(std::process::id());
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        hasher.write_u128(nanos);
+        let dir = std::env::temp_dir().join(format!("ripr-doctor-pytest-{:016x}", hasher.finish()));
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        match builder.create(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => last = error,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last)
+}
+
+/// Probe `python -m pytest --version` on the PATH `python`: the command the
+/// printed verify command runs (#13617), not a standalone `pytest` binary.
+pub(crate) fn doctor_python_pytest_check_isolated() -> (DoctorStatus, String) {
+    let Ok(dir) = create_private_probe_dir() else {
+        return (
+            DoctorStatus::Fail,
+            "python -m pytest could not be probed: no private probe directory".to_string(),
+        );
+    };
+    let command = doctor_pytest_probe_command(&dir);
+    let (status, evidence) =
+        doctor_tool_check_with_command("python -m pytest", command, DOCTOR_TOOL_TIMEOUT, None)
+            .into_public();
+    let _removed = std::fs::remove_dir(&dir);
+    match (status, evidence.is_empty()) {
+        (DoctorStatus::Pass, true) => (status, "pytest importable by `python -m pytest`".into()),
+        _ => (status, evidence),
+    }
 }
 
 fn doctor_tool_command(tool: impl AsRef<OsStr>) -> std::process::Command {
@@ -2641,6 +2752,46 @@ pub(crate) fn doctor_report_result(report: &DoctorReport) -> Result<(), String> 
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn pytest_probe_command_imports_pytest_with_safe_path_in_private_dir() -> std::io::Result<()> {
+        let dir = create_private_probe_dir()?;
+        let other = create_private_probe_dir()?;
+        assert_ne!(dir, other, "probe dirs must be unpredictable and distinct");
+        let command = doctor_pytest_probe_command(&dir);
+        let args: Vec<_> = command.get_args().collect();
+        // Import-only: never `-m pytest`, which would read ancestor ini files
+        // and conftest.py from the temp directory tree.
+        assert_eq!(args.first().copied(), Some(OsStr::new("-c")));
+        assert!(!args.iter().any(|arg| *arg == OsStr::new("-m")), "{args:?}");
+        assert!(
+            args.get(1)
+                .and_then(|script| script.to_str())
+                .is_some_and(|script| script.contains("import sys, pytest")),
+            "{args:?}"
+        );
+        assert!(
+            command
+                .get_envs()
+                .any(|(k, v)| k == "PYTHONSAFEPATH" && v == Some(OsStr::new("1")))
+        );
+        assert!(
+            command
+                .get_envs()
+                .any(|(k, v)| k == "PYTHONPATH" && v.is_none()),
+            "PYTHONPATH is removed so a checkout on it cannot supply pytest.py"
+        );
+        assert_eq!(command.get_current_dir(), Some(dir.as_path()));
+        assert!(
+            std::fs::read_dir(&dir)?.next().is_none(),
+            "probe dir is empty"
+        );
+        // Exclusive create: an existing directory is refused, not reused.
+        assert!(std::fs::DirBuilder::new().create(&dir).is_err());
+        std::fs::remove_dir(&dir)?;
+        std::fs::remove_dir(&other)?;
+        Ok(())
+    }
 
     static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -6192,6 +6343,221 @@ mod tests {
         Ok(())
     }
 
+    /// Fixture construction is not the behavior under test, so it gets a
+    /// deadline a loaded host can meet; doctor's own probes keep theirs.
+    const FIXTURE_GIT_DEADLINE: Duration = Duration::from_mins(2);
+
+    /// A committed fixture for the default-base tests: one commit on
+    /// `branch`, no remote. Asserts each Git step, since `git_in` reports
+    /// only spawn failures.
+    fn committed_fixture(label: &str, branch: &str) -> Result<std::path::PathBuf, String> {
+        let root = doctor_scope_root(
+            label,
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname = \"probe\"\nversion = \"0.1.0\"\n",
+                ),
+                ("src/lib.rs", "pub fn f() {}\n"),
+            ],
+        )?;
+        let head = format!("refs/heads/{branch}");
+        for args in [
+            &["init", "."][..],
+            &["symbolic-ref", "HEAD", head.as_str()],
+            &["add", "-A"],
+            &[
+                "-c",
+                "user.name=ripr",
+                "-c",
+                "user.email=ripr@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "init",
+            ],
+        ] {
+            let output =
+                crate::git::run_git_output_with_deadline(&root, args, Some(FIXTURE_GIT_DEADLINE))
+                    .map_err(|error| format!("fixture git {args:?}: {error}"))?;
+            if !output.status.success() {
+                let _ = std::fs::remove_dir_all(&root);
+                return Err(format!(
+                    "fixture git {args:?} failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+        }
+        Ok(root)
+    }
+
+    /// The first command doctor selects for `root`, with the
+    /// `git_default_base` check when one was recorded.
+    fn default_base_verdict(
+        root: &std::path::Path,
+    ) -> Result<(DoctorFirstCommand, Option<DoctorCheck>), String> {
+        let report = evaluate_doctor_core_with_config(root, &[LanguageId::Rust]).report;
+        if check(&report, "git_repository")?.status != DoctorCheckStatus::Pass {
+            return Err("fixture: expected a Git work tree".to_string());
+        }
+        if doctor_report_result(&report).is_err() {
+            return Err("an advisory base check must not fail the doctor run".to_string());
+        }
+        let base = report
+            .checks
+            .iter()
+            .find(|check| check.name == "git_default_base")
+            .cloned();
+        Ok((
+            DoctorFirstCommand::resolve_for_report(&report, || false),
+            base,
+        ))
+    }
+
+    /// `HEAD` resolves but no default base does (the branch is `trunk` and
+    /// there is no remote): a bare `ripr check` stops there, so doctor must
+    /// record the loader's own reason and not recommend that command. The
+    /// same repository on `main` is the control: it resolves a default base,
+    /// records no advisory and keeps `ripr check`.
+    #[test]
+    fn unresolvable_default_base_is_advised_and_not_sent_to_bare_ripr_check() -> Result<(), String>
+    {
+        let trunk = committed_fixture("no-default-base", "trunk")?;
+        let expected = crate::analysis::resolve_effective_base(&trunk, None, None).err();
+        let verdict = default_base_verdict(&trunk);
+        let _ = std::fs::remove_dir_all(&trunk);
+        let expected =
+            expected.ok_or("fixture: `ripr check` must have no default base on `trunk`")?;
+        let (first, base) = verdict?;
+        let base = base.ok_or("a repository with no default base must record git_default_base")?;
+        if base.status != DoctorCheckStatus::Advisory {
+            return Err(format!("git_default_base must be advisory: {base:?}"));
+        }
+        // The evidence is the message `ripr check` itself prints there.
+        if !base
+            .evidence
+            .as_deref()
+            .is_some_and(|evidence| evidence.ends_with(expected.as_str()))
+        {
+            return Err(format!(
+                "git_default_base must carry the loader's message {expected:?}: {base:?}"
+            ));
+        }
+        if first != DoctorFirstCommand::NoDefaultBase {
+            return Err(format!("expected NoDefaultBase, got {first:?}"));
+        }
+
+        let main = committed_fixture("default-base-main", "main")?;
+        let verdict = default_base_verdict(&main);
+        let _ = std::fs::remove_dir_all(&main);
+        let (first, base) = verdict?;
+        if base.is_some() || first != DoctorFirstCommand::DefaultCheck {
+            return Err(format!(
+                "a repository on `main` resolves its default base: {first:?} {base:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The CI default: a depth-1 detached checkout of one commit, with no
+    /// base branch fetched. Doctor names the shallow clone and its fetch
+    /// repair instead of recommending a `ripr check` that exits 2.
+    #[test]
+    fn shallow_checkout_without_a_base_branch_is_advised() -> Result<(), String> {
+        let source = committed_fixture("shallow-source", "main")?;
+        // A second commit, so depth 1 really truncates history.
+        std::fs::write(source.join("src/lib.rs"), "pub fn g() {}\n")
+            .map_err(|err| format!("fixture write: {err}"))?;
+        let shallow = doctor_scope_root("shallow-checkout", &[])?;
+        let source_arg = source.to_string_lossy().into_owned();
+        let steps: [(&std::path::Path, &[&str]); 4] = [
+            (
+                &source,
+                &[
+                    "-c",
+                    "user.name=ripr",
+                    "-c",
+                    "user.email=ripr@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-am",
+                    "second",
+                ],
+            ),
+            (&shallow, &["init", "."]),
+            (
+                &shallow,
+                &["fetch", "--depth=1", source_arg.as_str(), "main"],
+            ),
+            (&shallow, &["checkout", "--detach", "FETCH_HEAD"]),
+        ];
+        let mut failure = None;
+        for (dir, args) in steps {
+            let ran =
+                crate::git::run_git_output_with_deadline(dir, args, Some(FIXTURE_GIT_DEADLINE));
+            if !ran.is_ok_and(|output| output.status.success()) {
+                failure = Some(format!("fixture git {args:?} failed"));
+                break;
+            }
+        }
+        let is_shallow = git_in(&shallow, &["rev-parse", "--is-shallow-repository"]);
+        let verdict = default_base_verdict(&shallow);
+        let _ = std::fs::remove_dir_all(&source);
+        let _ = std::fs::remove_dir_all(&shallow);
+        if let Some(failure) = failure {
+            return Err(failure);
+        }
+        if is_shallow?.as_str() != "true" {
+            return Err("fixture: expected a shallow repository".to_string());
+        }
+        let (first, base) = verdict?;
+        let evidence = base
+            .and_then(|check| check.evidence)
+            .ok_or("a shallow checkout with no base must record git_default_base")?;
+        for needle in ["shallow clone", "git fetch --unshallow", "fetch-depth: 0"] {
+            if !evidence.contains(needle) {
+                return Err(format!("evidence {evidence:?} misses {needle:?}"));
+            }
+        }
+        if first != DoctorFirstCommand::NoDefaultBase {
+            return Err(format!("expected NoDefaultBase, got {first:?}"));
+        }
+        Ok(())
+    }
+
+    /// The NoDefaultBase recommendation is the explicit-base check, bound
+    /// to the diagnosed root exactly as the default check is; it never
+    /// prints the bare `ripr check` that stops there.
+    #[test]
+    fn no_default_base_recommendation_names_explicit_base_bound_to_root() -> Result<(), String> {
+        assert_eq!(
+            DoctorFirstCommand::NoDefaultBase.command_line_for_root(Path::new("."))?,
+            "ripr check --base REF"
+        );
+        let root = doctor_scope_root("no-default-base-rec", &[])?;
+        let bound = DoctorFirstCommand::NoDefaultBase.command_line_for_root(&root);
+        let default = DoctorFirstCommand::DefaultCheck.command_line_for_root(&root);
+        let lines = DoctorFirstCommand::NoDefaultBase.recommendation_lines_for(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        let (bound, default) = (bound?, default?);
+        if !default.starts_with("ripr check --root ") {
+            return Err(format!(
+                "fixture: a non-`.` root must be bound: {default:?}"
+            ));
+        }
+        if bound != format!("{default} --base REF") {
+            return Err(format!(
+                "the explicit-base check must bind the same root: {bound:?}"
+            ));
+        }
+        if lines.first() != Some(&format!("- Recommended first command: {bound}")) {
+            return Err(format!("unexpected recommendation: {lines:?}"));
+        }
+        Ok(())
+    }
+
     /// An unanswered probe must not add a false unborn advisory.
     #[test]
     fn unborn_head_verdict_claims_nothing_when_the_probe_never_answered() -> Result<(), String> {
@@ -6581,6 +6947,7 @@ mod tests {
             DoctorFirstCommand::SavedDiff,
             DoctorFirstCommand::OutsideGit,
             DoctorFirstCommand::UnbornHead,
+            DoctorFirstCommand::NoDefaultBase,
         ] {
             assert!(canonical_next_action_for_doctor(&healthy, runnable, root)?.is_none());
             assert!(doctor_recovery_for_first_command(runnable, &healthy).is_none());

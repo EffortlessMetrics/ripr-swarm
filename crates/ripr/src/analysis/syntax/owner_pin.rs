@@ -144,6 +144,9 @@ pub(crate) enum AssertionContextRefusal {
     /// An attribute other than `#[test]` (for example `#[should_panic]`,
     /// `#[ignore]` or a `#[cfg(..)]`) may change whether or how it runs.
     TestAttribute(String),
+    /// A bare `#[test]` whose name an import in this file rebinds
+    /// (`use .. as test`), so it may be another attribute macro.
+    TestRebound,
     /// The test is nested in an executable body (a function or block).
     NestedItem,
     /// An enclosing module carries an attribute (usually a `cfg`) ripr cannot
@@ -660,7 +663,10 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
                 .unwrap_or("")
                 .trim();
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
-                if item.star_token().is_some() && !matches!(root, "crate" | "self" | "super") {
+                if item.star_token().is_some()
+                    && !matches!(root, "crate" | "self" | "super")
+                    && !glob_is_root_sibling_module(&import, &item, root)
+                {
                     return MacroBindingCandidates::Any;
                 }
                 // As the scan reads it: `as _` binds no name.
@@ -680,6 +686,109 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
         }
     }
     MacroBindingCandidates::Names(names)
+}
+
+/// Whether `item` is the whole `root::*` glob of a top-level `use` whose
+/// `root` is an out-of-line module the same file declares at its top level
+/// (`mod global_rng; pub use global_rng::*;`). The glob then reads that
+/// module's own items, as `crate::global_rng::*` does. A macro it re-exports
+/// is defined or imported inside that module, and the workspace scan reports
+/// it at that site, so the glob is not a foreign one. Only the top level of
+/// a file qualifies, read with 2018 path semantics; the scan has no edition, so
+/// a 2015-edition non-root file, where the same spelling names a crate-root
+/// item, is an accepted residual (#14031). Longer paths (`vstd::prelude::*`), grouped globs and the
+/// standard roots keep their dedicated rules.
+fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &str) -> bool {
+    let whole_glob = import
+        .use_tree()
+        .is_some_and(|tree| tree.syntax() == item.syntax())
+        && item.use_tree_list().is_none()
+        && item.path().is_some_and(|path| {
+            let text: String = path.syntax().text().to_string();
+            text.trim() == root
+        });
+    if !whole_glob {
+        return false;
+    }
+    let root = root.trim_start_matches("r#");
+    if root.is_empty() || matches!(root, "std" | "core" | "alloc") {
+        return false;
+    }
+    let Some(parent) = import
+        .syntax()
+        .parent()
+        .filter(|parent| ast::SourceFile::can_cast(parent.kind()))
+    else {
+        return false;
+    };
+    let named_root = |name: Option<ast::Name>| {
+        name.is_some_and(|name| name.text().trim_start_matches("r#") == root)
+    };
+    let mut declared = 0usize;
+    for child in parent.children() {
+        if let Some(module) = ast::Module::cast(child.clone()) {
+            if !named_root(module.name()) {
+                continue;
+            }
+            declared += 1;
+            // `#[path]` can mount a file the scan never reads. An inline
+            // module is refused outright: its own imports are scoped to the
+            // module, so a `pub use dep::assert_eq;` inside it would reach the
+            // root through this glob without a site that covers the root's
+            // tests. An out-of-line module's public imports are reported
+            // workspace-wide at their own file.
+            if module.item_list().is_some()
+                || module
+                    .attrs()
+                    .any(|attr| attr.syntax().text().to_string().contains("path"))
+            {
+                return false;
+            }
+        } else if let Some(krate) = ast::ExternCrate::cast(child.clone()) {
+            // An `extern crate` or alias of the same spelling is another item.
+            if krate
+                .name_ref()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == root)
+                || named_root(krate.rename().and_then(|rename| rename.name()))
+            {
+                return false;
+            }
+        } else if child == *import.syntax() {
+            // The glob under test names the root by design.
+        } else if let Some(other) = ast::Use::cast(child.clone()) {
+            // Another import taking the root's name (`use dep as global;`),
+            // possibly under a `cfg` the scan does not evaluate.
+            // A path prefix reads a name; only the import leaf binds one.
+            // Keep the old spelling check for opaque leaves: an absolute
+            // grouped `self` may bind its parent's name when that path is unread.
+            let bindings = super::name_scope::use_item_bindings(&other);
+            let opaque = bindings
+                .imports
+                .iter()
+                .any(|import| matches!(import.binding, super::name_scope::UseBinding::Opaque));
+            let binds_root = bindings
+                .imports
+                .iter()
+                .any(|import| import.bound.trim_start_matches("r#") == root)
+                || (opaque
+                    && other.syntax().descendants().any(|node| {
+                        ast::NameRef::cast(node.clone())
+                            .map(|name| name.text().to_string())
+                            .or_else(|| ast::Name::cast(node).map(|name| name.text().to_string()))
+                            .is_some_and(|text| text.trim_start_matches("r#") == root)
+                    }));
+            if binds_root {
+                return false;
+            }
+        } else if ast::MacroCall::can_cast(child.kind()) {
+            // An item-position macro may emit any binding of that name.
+            return false;
+        } else if ast::AnyHasName::cast(child.clone()).is_some_and(|item| named_root(item.name())) {
+            return false;
+        }
+    }
+    // Two declarations (`cfg`-exclusive alternatives) are not one module.
+    declared == 1
 }
 
 /// An `extern crate other as std;` (or `core`, `alloc`) alias.
@@ -785,36 +894,64 @@ fn macro_binding_ambiguity_sets(
     };
     let tree = parse.tree();
     let binding_free = BindingFreeFileIndex::collect(tree.syntax());
-    let scan = |names: &[&str]| {
+    let scan = |names: &[&str], known: &[&str], known_bound: &BTreeSet<String>| {
         macro_binding_sites_in_tree(
             source,
             packages,
-            names,
+            &ScanNames {
+                trusted: names,
+                known,
+                known_bound,
+            },
             allowed_empty,
             module_resolved,
             drop_in_verified,
             &binding_free,
         )
     };
-    let union = scan(trusted);
+    let union = scan(trusted, trusted, &BTreeSet::new());
+    // #14115: a per-name query reads the other trusted macros as the union
+    // scan does. A call to one is opaque only when that macro has a binding
+    // site of its own in this file; otherwise `assert!(.. assert_eq!(..) ..)`
+    // would be named as a wrapper that may define `assert_eq`, a site the
+    // admission scan never reports.
+    let union_bound: BTreeSet<String> = union.iter().map(|(name, _)| name.clone()).collect();
     let singletons = singleton_names
         .into_iter()
         .flatten()
         .filter(|name| macro_binding_scan_needed(source, &[name]))
-        .flat_map(|name| scan(&[name]))
+        .flat_map(|name| {
+            if trusted.contains(name) {
+                scan(&[name], trusted, &union_bound)
+            } else {
+                scan(&[name], &[name], &BTreeSet::new())
+            }
+        })
         .collect();
     (union, singletons)
+}
+
+/// The names one binding-site scan reads. `trusted` are the names whose
+/// sites are reported. `known` are the names whose calls are standard macros
+/// unless bound: `trusted` itself for the admission union, the whole union
+/// list for a per-name query, with `known_bound` the names the union found a
+/// binding site for in this file.
+struct ScanNames<'a> {
+    trusted: &'a [&'a str],
+    known: &'a [&'a str],
+    known_bound: &'a BTreeSet<String>,
 }
 
 fn macro_binding_sites_in_tree(
     source: &str,
     packages: &BTreeSet<String>,
-    trusted: &[&str],
+    names: &ScanNames<'_>,
     allowed_empty: &BTreeSet<String>,
     module_resolved: &dyn Fn(usize, &str) -> bool,
     drop_in_verified: &dyn Fn(&str) -> bool,
     binding_free: &BindingFreeFileIndex,
 ) -> NamedMacroSites {
+    let (trusted, known, known_bound) = (names.trusted, names.known, names.known_bound);
     let mut ambiguous = Vec::new();
     let all = |line: usize, kind: MacroBindingKind, crate_local: bool| {
         trusted
@@ -904,10 +1041,16 @@ fn macro_binding_sites_in_tree(
         // every file, so a standard-root glob elsewhere cannot be trusted.
         // `extern crate self as std;` names this crate, whose exported macros
         // the workspace scan already reports, so it imports nothing foreign.
+        // `extern crate core as std;` (the common `no_std` shim) aliases one
+        // standard crate to another, so every standard macro it can bring is
+        // still the standard one, unless the manifest renames that crate.
         if let Some(krate) = ast::ExternCrate::cast(node.clone())
-            && krate
-                .name_ref()
-                .is_some_and(|name| name.text().trim_start_matches("r#") != "self")
+            && krate.name_ref().is_some_and(|name| {
+                let name = name.text();
+                let name = name.trim_start_matches("r#");
+                name != "self"
+                    && !(matches!(name, "std" | "core" | "alloc") && drop_in_verified(name))
+            })
             && let Some(rename) = krate.rename()
             && rename.name().is_some_and(|name| {
                 matches!(
@@ -1079,7 +1222,7 @@ fn macro_binding_sites_in_tree(
         }
         if let Some(call) = ast::MacroCall::cast(node.clone())
             && let Some(path) = call.path()
-            && !is_trusted_macro(&path.syntax().text().to_string(), trusted)
+            && !is_trusted_macro(&path.syntax().text().to_string(), known)
             && let Some(tree) = call.token_tree()
         {
             let tokens: Vec<_> = tree
@@ -1206,7 +1349,7 @@ fn macro_binding_sites_in_tree(
             // tests then use it. The one exception is a wrapper whose only
             // definition this file shows and whose expansion cannot bind a
             // name at all (#6648).
-            if binding_free_local_wrapper(binding_free, &call, &tokens, trusted) {
+            if binding_free_local_wrapper(binding_free, &call, &tokens, known) {
                 continue;
             }
             // An accepted identity invocation over literal `fn` items binds
@@ -1357,7 +1500,10 @@ fn macro_binding_sites_in_tree(
                 {
                     continue;
                 }
-                if item.star_token().is_some() && !own {
+                if item.star_token().is_some()
+                    && !own
+                    && !glob_is_root_sibling_module(&import, &item, root)
+                {
                     let path = import.syntax().text().to_string();
                     let line = line_of(node);
                     let Some((scope, scope_bytes)) = scope_of(import_scope(&import)) else {
@@ -1459,7 +1605,11 @@ fn macro_binding_sites_in_tree(
     // module whose tests then use it. The first pass skips trusted calls, so
     // run to a fixpoint: a name bound through one call's arguments makes its
     // own calls opaque in turn.
-    let mut bound: BTreeSet<String> = ambiguous.iter().map(|(name, _)| name.clone()).collect();
+    let mut bound: BTreeSet<String> = ambiguous
+        .iter()
+        .map(|(name, _)| name.clone())
+        .chain(known_bound.iter().cloned())
+        .collect();
     let mut reported = BTreeSet::new();
     // Calls spelled as tokens inside another call's tree (`dbg!(vec!(..))`)
     // are no `MacroCall` nodes: the parser keeps `vec ! (..)` flat beside a
@@ -1484,7 +1634,7 @@ fn macro_binding_sites_in_tree(
     loop {
         let before = bound.len();
         for (path, tree, node, call) in &sites {
-            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(path, trusted) {
+            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(path, known) {
                 continue;
             }
             let tokens: Vec<_> = tree
@@ -1512,9 +1662,10 @@ fn macro_binding_sites_in_tree(
             // shows an expansion that cannot bind a name stays transparent.
             // A nested call has no node to locate that definition from, so
             // it never takes the exemption.
-            if call.as_ref().is_some_and(|call| {
-                binding_free_local_wrapper(binding_free, call, &tokens, trusted)
-            }) {
+            if call
+                .as_ref()
+                .is_some_and(|call| binding_free_local_wrapper(binding_free, call, &tokens, known))
+            {
                 continue;
             }
             for token in &tokens {
@@ -1924,6 +2075,73 @@ struct BindingFreeFileIndex {
     call_nodes: Vec<SyntaxNode>,
     /// Calls accepted as the identity over literal `fn` items (#8999).
     passthrough: BTreeSet<ra_ap_syntax::TextSize>,
+    /// The call-independent half of [`binding_free_local_wrapper`] for each
+    /// `macro_rules!` definition, keyed by its start offset. Every call of a
+    /// wrapper (and every queried name set) asks the same questions of the
+    /// one definition, and its textual scope walks the whole enclosing
+    /// module, so answering per call is quadratic in calls x module size.
+    wrapper_definitions: std::cell::RefCell<BTreeMap<ra_ap_syntax::TextSize, WrapperDefinition>>,
+}
+
+/// What [`binding_free_local_wrapper`] needs from a `macro_rules!`
+/// definition, independent of the call and the trusted names.
+#[derive(Clone, Copy)]
+struct WrapperDefinition {
+    /// The byte range the definition reaches by textual scope: the rest of
+    /// the file for a file-level definition, the bounding inline module
+    /// otherwise. `None` when the scope cannot be bounded or the definition
+    /// sits in a function or block, which fail closed.
+    reach: Option<ra_ap_syntax::TextRange>,
+    /// The body exists, holds only inert tokens and captures no `tt`
+    /// fragment.
+    inert_body: bool,
+}
+
+#[cfg(test)]
+thread_local! {
+    static WRAPPER_DEFINITION_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_wrapper_definition_count() -> usize {
+    WRAPPER_DEFINITION_COUNT.with(|count| count.replace(0))
+}
+
+impl WrapperDefinition {
+    fn of(definition: &ast::MacroRules) -> Self {
+        #[cfg(test)]
+        WRAPPER_DEFINITION_COUNT.with(|count| count.set(count.get() + 1));
+        // A file-level definition reaches the rest of the file. One in an
+        // inline module reaches the call only when `textual_scope` can bound
+        // it and the call sits inside; `None` there means the scope cannot be
+        // bounded, not that it covers everything. Function and block bodies
+        // fail closed.
+        let reach = match definition.syntax().parent().map(|parent| parent.kind()) {
+            Some(ra_ap_syntax::SyntaxKind::SOURCE_FILE) => {
+                definition.syntax().parent().map(|file| file.text_range())
+            }
+            Some(ra_ap_syntax::SyntaxKind::ITEM_LIST) => {
+                textual_scope(definition.syntax()).map(|scope| scope.text_range())
+            }
+            _ => None,
+        };
+        let inert_body = definition.token_tree().is_some_and(|body| {
+            let body_tokens = non_trivia_tokens(body.syntax());
+            // A definition body admits no `!` at all, so the trusted names
+            // never decide this answer.
+            //
+            // Only a `tt` fragment can capture a lone `!` (or `#`) from the
+            // arguments and splice it after another name: `$m $bang ($n)`
+            // turns `case!(define assert_eq!(x))` into `define!(assert_eq)`.
+            // Every other fragment keeps a macro call or attribute whole.
+            inert_tokens(&body_tokens, &[], true)
+                && !body_tokens.windows(2).any(|pair| {
+                    pair[0].kind() == ra_ap_syntax::SyntaxKind::COLON
+                        && pair[1].text().trim_start_matches("r#") == "tt"
+                })
+        });
+        Self { reach, inert_body }
+    }
 }
 
 #[cfg(test)]
@@ -2004,6 +2222,7 @@ impl BindingFreeFileIndex {
             site_nodes,
             call_nodes,
             passthrough: super::passthrough_item_macros::passthrough_invocation_starts(root),
+            wrapper_definitions: std::cell::RefCell::default(),
         }
     }
 }
@@ -2051,36 +2270,17 @@ fn binding_free_local_wrapper(
     if definition_end > call_start {
         return false;
     }
-    // A file-level definition reaches the rest of the file. One in an
-    // inline module reaches the call only when `textual_scope` can bound
-    // it and the call sits inside; `None` there means the scope cannot be
-    // bounded, not that it covers everything. Function and block bodies
-    // fail closed.
-    let in_scope = match definition.syntax().parent().map(|parent| parent.kind()) {
-        Some(ra_ap_syntax::SyntaxKind::SOURCE_FILE) => true,
-        Some(ra_ap_syntax::SyntaxKind::ITEM_LIST) => textual_scope(definition.syntax())
-            .is_some_and(|scope| scope.text_range().contains(call_start)),
-        _ => false,
-    };
-    if !in_scope {
-        return false;
-    }
-    let Some(body) = definition.token_tree() else {
-        return false;
-    };
-    let body_tokens = non_trivia_tokens(body.syntax());
-    if !inert_tokens(&body_tokens, trusted, true) {
-        return false;
-    }
-    // Only a `tt` fragment can capture a lone `!` (or `#`) from the
-    // arguments and splice it after another name: `$m $bang ($n)` turns
-    // `case!(define assert_eq!(x))` into `define!(assert_eq)`. Every other
-    // fragment keeps a macro call or attribute whole.
-    let token_tree_fragment = body_tokens.windows(2).any(|pair| {
-        pair[0].kind() == ra_ap_syntax::SyntaxKind::COLON
-            && pair[1].text().trim_start_matches("r#") == "tt"
-    });
-    if token_tree_fragment {
+    let facts_of_definition = *facts
+        .wrapper_definitions
+        .borrow_mut()
+        .entry(definition.syntax().text_range().start())
+        .or_insert_with(|| WrapperDefinition::of(definition));
+    // The file-level reach is the whole file, which holds every call.
+    if !facts_of_definition
+        .reach
+        .is_some_and(|reach| reach.contains(call_start))
+        || !facts_of_definition.inert_body
+    {
         return false;
     }
     // A module between the definition and the call (`#[macro_use] mod
@@ -2954,7 +3154,7 @@ fn owner_pin_assertions_with_matches(
         } else if function.async_token().is_some()
             && !function.attrs().any(|attr| {
                 let test = function.syntax();
-                tokio_test_runs_body(&attr, test) || async_std_test_runs_body(&attr, test)
+                tokio_test_runs_body(&attr, test) || argument_free_async_test_runs_body(&attr, test)
             })
         {
             Some(AssertionContextRefusal::AsyncTest)
@@ -2978,9 +3178,14 @@ fn owner_pin_assertions_with_matches(
             !(runs_body_unchanged(attr, function.syntax())
                 || matches_context && matches_preserves_assertion_execution(attr, &function))
         }) {
-            Some(AssertionContextRefusal::TestAttribute(
-                attr.syntax().text().to_string(),
-            ))
+            // #14028: name the rebinding import, not the attribute itself.
+            if attr.simple_name().as_deref() == Some("test") {
+                Some(AssertionContextRefusal::TestRebound)
+            } else {
+                Some(AssertionContextRefusal::TestAttribute(
+                    attr.syntax().text().to_string(),
+                ))
+            }
         } else {
             item_context_refusal(function.syntax())
         };
@@ -3998,6 +4203,40 @@ pub(crate) fn unestablished_cfg_gates_of_fn(
     Some(gates)
 }
 
+/// How the out-of-line `mod name;` declared on `line` of `source` is gated
+/// (#14463): `Some(false)` when every attribute is available in test builds
+/// (none, or `cfg(test)`), `Some(true)` when at least one is a `cfg` ripr
+/// cannot evaluate and the rest are available, and `None` for a provably-off
+/// gate, any other attribute, or a declaration not found exactly once.
+pub(crate) fn module_declaration_unestablished_gate(source: &str, line: usize) -> Option<bool> {
+    let parse = parse_clean_source_file(source)?;
+    let lines = LineIndex::new(source);
+    let mut found = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Module::cast)
+        .filter(|module| {
+            module.item_list().is_none()
+                && module
+                    .mod_token()
+                    .is_some_and(|token| lines.line(token.text_range().start()) == line)
+        });
+    let (Some(module), None) = (found.next(), found.next()) else {
+        return None;
+    };
+    let mut gated = false;
+    for attr in module.attrs() {
+        let text = attr.syntax().text().to_string();
+        match attribute_test_build_availability(&text) {
+            Some(true) => {}
+            None if text.starts_with("#[cfg(") => gated = true,
+            _ => return None,
+        }
+    }
+    Some(gated)
+}
+
 /// Attributes a pinned test may carry: `#[test]` itself, and the
 /// `serial_test` locks, which run the unchanged body while holding a mutex or
 /// file lock. Lock arguments are admitted only as bare key names
@@ -4035,8 +4274,8 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if is_tokio_test_path(&path) {
         return tokio_test_runs_body(attr, test);
     }
-    if is_async_std_test_path(&path) {
-        return async_std_test_runs_body(attr, test);
+    if argument_free_async_test_crate(&path).is_some() {
+        return argument_free_async_test_runs_body(attr, test);
     }
     if let Some(kind) = rstest_attribute(&path, &module) {
         return rstest_runs_body(attr, kind, test, &module);
@@ -4236,16 +4475,36 @@ fn tokio_test_arguments_pick_runtime(attr: &ast::Attr) -> bool {
         })
 }
 
-/// `async_std::test`, rooted or not. Same shadowing rule as `tokio::test`.
-fn is_async_std_test_path(path: &str) -> bool {
-    path.strip_prefix("::").unwrap_or(path) == "async_std::test"
+/// Async test attributes that take the body of an `async fn` and run it to
+/// completion on their own runtime, failing the test when the body panics:
+/// `(crate, path)`. `#[async_std::test]` blocks on the async_std runtime;
+/// `#[actix_rt::test]` and `#[actix_web::test]` expand to a `#[test]` that
+/// blocks on an Actix `System` (#14073). Each is admitted only without
+/// arguments (see [`argument_free_async_test_runs_body`]).
+const ARGUMENT_FREE_ASYNC_TESTS: &[(&str, &str)] = &[
+    ("async_std", "async_std::test"),
+    ("actix_rt", "actix_rt::test"),
+    ("actix_web", "actix_web::test"),
+];
+
+/// The crate of an [`ARGUMENT_FREE_ASYNC_TESTS`] path, rooted or not. Only the
+/// exact crate-qualified path: same shadowing rule as `tokio::test`, so
+/// `actix_web::rt::test` and `actix_rt::test_helper` name nothing here.
+fn argument_free_async_test_crate(path: &str) -> Option<&'static str> {
+    let unrooted = path.strip_prefix("::").unwrap_or(path);
+    ARGUMENT_FREE_ASYNC_TESTS
+        .iter()
+        .find(|(_, test_path)| *test_path == unrooted)
+        .map(|(krate, _)| *krate)
 }
 
-/// Whether `attr` is `#[async_std::test]` on an `async fn` and runs the body to
-/// completion on the async_std runtime. `async_std` must be the crate in the
-/// test's module under the same rule as `tokio`. Only a bare attribute or empty
-/// `()` is admitted; any other argument refuses.
-fn async_std_test_runs_body(attr: &ast::Attr, test: &SyntaxNode) -> bool {
+/// Whether `attr` is an [`ARGUMENT_FREE_ASYNC_TESTS`] attribute on an
+/// `async fn` and runs the body to completion on that crate's runtime. The
+/// crate must be the crate in the test's module under the same rule as
+/// `tokio`. Only a bare attribute or empty `()` is admitted; any other
+/// argument refuses (`#[actix_rt::test(system = "..")]` swaps the runtime
+/// that runs the body).
+fn argument_free_async_test_runs_body(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if attr.excl_token().is_some() {
         return false;
     }
@@ -4255,16 +4514,18 @@ fn async_std_test_runs_body(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     let Some(path) = attr.path() else {
         return false;
     };
-    if !is_async_std_test_path(&path.syntax().text().to_string().replace(' ', "")) {
+    let Some(krate) =
+        argument_free_async_test_crate(&path.syntax().text().to_string().replace(' ', ""))
+    else {
         return false;
-    }
+    };
     let Some(module) = test.parent() else {
         return false;
     };
-    extern_crate_path_holds(&module, "async_std") && async_std_test_has_no_arguments(attr)
+    extern_crate_path_holds(&module, krate) && async_test_has_no_arguments(attr)
 }
 
-fn async_std_test_has_no_arguments(attr: &ast::Attr) -> bool {
+fn async_test_has_no_arguments(attr: &ast::Attr) -> bool {
     match attr.meta() {
         Some(ast::Meta::PathMeta(_)) => true,
         Some(ast::Meta::TokenTreeMeta(meta)) => match meta.token_tree() {
@@ -4727,8 +4988,15 @@ fn extern_crate_path_holds(module: &SyntaxNode, krate: &str) -> bool {
 
 /// Crates whose own attributes a module check may trust (see
 /// [`extern_crate_path_holds`]).
-const TRUSTED_ATTRIBUTE_CRATES: &[&str] =
-    &["serial_test", "tokio", "async_std", "rstest", "test_case"];
+const TRUSTED_ATTRIBUTE_CRATES: &[&str] = &[
+    "serial_test",
+    "tokio",
+    "async_std",
+    "actix_rt",
+    "actix_web",
+    "rstest",
+    "test_case",
+];
 
 /// Whether a direct item of `module` carries an attribute of `krate`: a
 /// `krate::..` path, or for `serial_test` a bare name bound to a lock.
@@ -4879,8 +5147,12 @@ fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode, trusted: &[&s
     if unrooted.starts_with("tokio::") {
         return trusted.contains(&"tokio") && is_tokio_test_path(&path);
     }
-    if unrooted.starts_with("async_std::") {
-        return trusted.contains(&"async_std") && is_async_std_test_path(&path);
+    if let Some((krate, _)) = ARGUMENT_FREE_ASYNC_TESTS.iter().find(|(krate, _)| {
+        unrooted
+            .strip_prefix(krate)
+            .is_some_and(|rest| rest.starts_with("::"))
+    }) {
+        return trusted.contains(krate) && argument_free_async_test_crate(&path) == Some(*krate);
     }
     if rstest_attribute_trusted(attr, module) {
         return trusted.contains(&"rstest");
@@ -5572,10 +5844,15 @@ fn eager_path(
             if block.async_token().is_some() {
                 // `tokio::spawn(async { .. }).await.unwrap()` re-raises the
                 // task's panic on the test task, like a joined thread.
-                let Some(joined) = spawned_task_reaching_test(&block, function) else {
+                // `futures::executor::block_on(async { .. })` polls the block
+                // to completion on the test thread, so its panic is the
+                // test's own (#14106).
+                let Some(driven) = spawned_task_reaching_test(&block, function)
+                    .or_else(|| blocked_on_async_block(&block, function))
+                else {
                     return Err("an `async` block");
                 };
-                return eager_path(joined, function, true, first_return);
+                return eager_path(driven, function, true, first_return);
             }
             if block.const_token().is_some()
                 || block.gen_token().is_some()
@@ -6604,32 +6881,7 @@ fn spawned_task_reaching_test(block: &ast::BlockExpr, function: &ast::Fn) -> Opt
     {
         return None;
     }
-    // `first_return` skips a `return` owned by an `async` block and the escape
-    // gate only reads closures, so an exit inside this block would skip the
-    // assertion unseen: refuse any `return` or `?` the block itself owns,
-    // including inside macro tokens.
-    let owns_exit = block
-        .syntax()
-        .descendants_with_tokens()
-        .filter_map(|element| element.into_token())
-        .filter(|token| {
-            matches!(
-                token.kind(),
-                ra_ap_syntax::SyntaxKind::RETURN_KW | ra_ap_syntax::SyntaxKind::QUESTION
-            )
-        })
-        .any(|token| {
-            token
-                .parent_ancestors()
-                .find(|node| {
-                    ast::ClosureExpr::can_cast(node.kind())
-                        || ast::Fn::can_cast(node.kind())
-                        || ast::BlockExpr::cast(node.clone())
-                            .is_some_and(|inner| inner.async_token().is_some())
-                })
-                .is_some_and(|owner| owner == *block.syntax())
-        });
-    if owns_exit {
+    if async_block_owns_exit(block) {
         return None;
     }
     let args = block.syntax().parent().and_then(ast::ArgList::cast)?;
@@ -6662,48 +6914,7 @@ fn spawned_task_reaching_test(block: &ast::BlockExpr, function: &ast::Fn) -> Opt
         return None;
     }
     let file = function.syntax().ancestors().last()?;
-    if file
-        .descendants()
-        .filter_map(ast::Name::cast)
-        .any(|name| matches!(unraw(name.text()), "tokio" | "spawn"))
-    {
-        return None;
-    }
-    // A `use` can supply `tokio` or `spawn` without declaring a `Name`: a
-    // glob import may pull in another module's `tokio`, and a path segment such
-    // as `crate::fake::tokio` is a `NameRef`. Only the crate's own
-    // `use tokio::..` keeps the spelling honest.
-    let rebinds_through_use = file.descendants().filter_map(ast::Use::cast).any(|item| {
-        let Some(tree) = item.use_tree() else {
-            return true;
-        };
-        let own_root = tree
-            .path()
-            .and_then(|path| path.first_segment())
-            .and_then(|segment| segment.name_ref());
-        // `use super::*;` inside an inline `mod` only re-exports names this
-        // file declares, which the scan above already covers.
-        let parent_glob =
-            item.syntax().ancestors().skip(1).any(|node| {
-                ast::Module::cast(node).is_some_and(|module| module.item_list().is_some())
-            }) && tree
-                .syntax()
-                .text()
-                .to_string()
-                .split_whitespace()
-                .collect::<String>()
-                == "super::*";
-        tree.syntax().descendants().any(|node| {
-            ast::UseTree::cast(node.clone())
-                .is_some_and(|inner| inner.star_token().is_some() && !parent_glob)
-                || ast::NameRef::cast(node.clone()).is_some_and(|name| {
-                    matches!(unraw(name.text()), "tokio" | "spawn")
-                        && !(unraw(name.text()) == "tokio"
-                            && own_root.as_ref().is_some_and(|root| root == &name))
-                })
-        })
-    });
-    if rebinds_through_use {
+    if !file_keeps_crate_path(&file, "tokio", Some("spawn")) {
         return None;
     }
     let awaited = call.syntax().parent().and_then(ast::AwaitExpr::cast)?;
@@ -6727,6 +6938,149 @@ fn spawned_task_reaching_test(block: &ast::BlockExpr, function: &ast::Fn) -> Opt
         && ((name.text() == "unwrap" && arguments == 0)
             || (name.text() == "expect" && arguments == 1)))
         .then(|| outer.syntax().clone())
+}
+
+/// Whether `block` itself owns a `return` or `?`, including inside macro
+/// tokens. `first_return` skips a `return` owned by an `async` block and the
+/// escape gate only reads closures, so an exit inside the block would skip an
+/// assertion unseen.
+fn async_block_owns_exit(block: &ast::BlockExpr) -> bool {
+    block
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| {
+            matches!(
+                token.kind(),
+                ra_ap_syntax::SyntaxKind::RETURN_KW | ra_ap_syntax::SyntaxKind::QUESTION
+            )
+        })
+        .any(|token| {
+            token
+                .parent_ancestors()
+                .find(|node| {
+                    ast::ClosureExpr::can_cast(node.kind())
+                        || ast::Fn::can_cast(node.kind())
+                        || ast::BlockExpr::cast(node.clone())
+                            .is_some_and(|inner| inner.async_token().is_some())
+                })
+                .is_some_and(|owner| owner == *block.syntax())
+        })
+}
+
+/// Whether a path rooted at `root` in `file` names the extern crate `root`:
+/// nothing in the file declares the name `root` (or `item`, when the path's
+/// last segment could be rebound on its own), and no `use` can supply either.
+///
+/// A `use` can supply a name without declaring a `Name`: a glob import may
+/// pull in another module's `root`, and a path segment such as
+/// `crate::fake::root` is a `NameRef`. Only the crate's own `use root::..`
+/// keeps the spelling honest.
+fn file_keeps_crate_path(file: &SyntaxNode, root: &str, item: Option<&str>) -> bool {
+    let rebindable = |name: &str| name == root || item.is_some_and(|item| name == item);
+    if file
+        .descendants()
+        .filter_map(ast::Name::cast)
+        .any(|name| rebindable(unraw(name.text())))
+    {
+        return false;
+    }
+    !file
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .any(|use_item| {
+            let Some(tree) = use_item.use_tree() else {
+                return true;
+            };
+            let own_root = tree
+                .path()
+                .and_then(|path| path.first_segment())
+                .and_then(|segment| segment.name_ref());
+            // `use super::*;` inside an inline `mod` only re-exports names this
+            // file declares, which the scan above already covers.
+            let parent_glob = use_item.syntax().ancestors().skip(1).any(|node| {
+                ast::Module::cast(node).is_some_and(|module| module.item_list().is_some())
+            }) && tree
+                .syntax()
+                .text()
+                .to_string()
+                .split_whitespace()
+                .collect::<String>()
+                == "super::*";
+            tree.syntax().descendants().any(|node| {
+                ast::UseTree::cast(node.clone())
+                    .is_some_and(|inner| inner.star_token().is_some() && !parent_glob)
+                    || ast::NameRef::cast(node.clone()).is_some_and(|name| {
+                        rebindable(unraw(name.text()))
+                            && !(unraw(name.text()) == root
+                                && own_root.as_ref().is_some_and(|own| own == &name))
+                    })
+            })
+        })
+}
+
+/// Free functions that poll the future they are handed to completion on the
+/// calling thread and return its output, so a panic in the future is a panic
+/// in the caller: `(crate, path)`.
+const BLOCK_ON_PATHS: &[(&str, &str)] = &[
+    ("futures", "futures::executor::block_on"),
+    ("futures_executor", "futures_executor::block_on"),
+    ("tokio_test", "tokio_test::block_on"),
+    ("pollster", "pollster::block_on"),
+    ("smol", "smol::block_on"),
+    ("async_std", "async_std::task::block_on"),
+];
+
+/// Where an `async` block's panic reaches the test thread, for a block that
+/// is the only argument of a crate-qualified `block_on(..)` in
+/// [`BLOCK_ON_PATHS`] inside a synchronous test (#14106): the executor polls
+/// the block to completion before the call returns, as a called closure runs
+/// before its call returns.
+///
+/// Nothing in the file may be named like the path's crate, so the path names
+/// the real crate's function. A bare or partially qualified `block_on` (which
+/// a test-local helper or another crate may define), a method `block_on` on a
+/// runtime value, a block that owns a `return` or `?`, and a call inside an
+/// `async fn` test (where a nested executor may refuse to start) stay
+/// refused. Returns the call, from which the test thread continues.
+fn blocked_on_async_block(block: &ast::BlockExpr, function: &ast::Fn) -> Option<SyntaxNode> {
+    if block.const_token().is_some()
+        || block.gen_token().is_some()
+        || block.try_block_modifier().is_some()
+        || block.label().is_some()
+        || function.async_token().is_some()
+        || async_block_owns_exit(block)
+    {
+        return None;
+    }
+    let args = block.syntax().parent().and_then(ast::ArgList::cast)?;
+    if args.args().count() != 1 {
+        return None;
+    }
+    let call = args.syntax().parent().and_then(ast::CallExpr::cast)?;
+    let ast::Expr::PathExpr(path) = call.expr()? else {
+        return None;
+    };
+    if path
+        .path()?
+        .segments()
+        .any(|segment| segment.generic_arg_list().is_some())
+    {
+        return None;
+    }
+    let text: String = path
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let unrooted = text.strip_prefix("::").unwrap_or(&text);
+    let (krate, _) = BLOCK_ON_PATHS
+        .iter()
+        .find(|(_, block_on)| *block_on == unrooted)?;
+    let file = function.syntax().ancestors().last()?;
+    file_keeps_crate_path(&file, krate, None).then(|| call.syntax().clone())
 }
 
 /// `<spawned>.join().unwrap()` or `<spawned>.join().expect(..)`: the outer
@@ -6860,6 +7214,80 @@ mod binding_free_index_tests {
             take_binding_free_index_count(),
             1,
             "wrapper facts must be collected once per parsed file, not once per macro"
+        );
+    }
+
+    /// The textual scope of a wrapper in an inline module walks that whole
+    /// module, so it is answered once per definition, not once per call and
+    /// queried name set (#11613).
+    #[test]
+    fn wrapper_definition_facts_are_answered_once_per_definition_not_per_call() {
+        let mut src = String::from(
+            "mod inner {\n    macro_rules! wrap { ($e:expr) => { $e }; }\n    fn f() {\n",
+        );
+        for i in 0..40 {
+            src.push_str(&format!("        wrap!(format!(\"{i}\"));\n"));
+        }
+        src.push_str("    }\n}\n");
+        let _ = take_wrapper_definition_count();
+        let sites = trusted_macro_binding_sites(
+            &src,
+            &BTreeSet::new(),
+            &["assert_eq", "assert", "format"],
+            &|_, _| true,
+            &|_| false,
+        );
+        assert_eq!(
+            take_wrapper_definition_count(),
+            1,
+            "a wrapper definition's scope and body must be read once per file"
+        );
+        // The union scan and each singleton-name scan share one file index,
+        // so the definition is still read once across all of them.
+        let (union, singletons) = trusted_macro_binding_site_sets(
+            &src,
+            &BTreeSet::new(),
+            &["assert_eq", "assert", "format"],
+            &["format", "assert_eq"],
+            &|_, _| true,
+            &|_| false,
+        );
+        assert_eq!(
+            take_wrapper_definition_count(),
+            1,
+            "a wrapper definition must be read once across the union and singleton scans"
+        );
+        assert!(union.is_empty(), "{union:?}");
+        assert!(singletons.is_empty(), "{singletons:?}");
+        // The memo keeps the answer: every call of the bounded, inert wrapper
+        // stays binding-free, exactly as the file-level wrapper does.
+        let mut file_level = String::from("macro_rules! wrap { ($e:expr) => { $e }; }\nfn f() {\n");
+        for i in 0..40 {
+            file_level.push_str(&format!("    wrap!(format!(\"{i}\"));\n"));
+        }
+        file_level.push_str("}\n");
+        let file_level_sites = trusted_macro_binding_sites(
+            &file_level,
+            &BTreeSet::new(),
+            &["assert_eq", "assert", "format"],
+            &|_, _| true,
+            &|_| false,
+        );
+        assert_eq!(sites, file_level_sites);
+        assert!(sites.is_empty(), "{sites:?}");
+        // A call past the module that bounds the definition is outside its
+        // textual scope, so the remembered reach must still refuse it.
+        let outside = "mod inner {\n    macro_rules! wrap { ($e:expr) => { $e }; }\n    fn f() { wrap!(format!(\"0\")); }\n}\nfn g() { wrap!(format!(\"1\")); }\n";
+        let outside_sites = trusted_macro_binding_sites(
+            outside,
+            &BTreeSet::new(),
+            &["assert_eq", "assert", "format"],
+            &|_, _| true,
+            &|_| false,
+        );
+        assert!(
+            !outside_sites.is_empty(),
+            "a call outside the wrapper's scope must stay a site"
         );
     }
 }

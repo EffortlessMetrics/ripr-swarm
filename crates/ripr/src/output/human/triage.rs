@@ -15,6 +15,7 @@ use crate::domain::{
     NextActionProducer, NextActionStop, StaticLimitKind, current_command_platform,
     select_canonical_next_action,
 };
+use crate::output::count_noun::count_noun;
 use crate::output::path::display_path;
 use crate::output::preview_actionability::{
     preview_actionability_for, repo_scope_no_repair_reason,
@@ -291,6 +292,52 @@ pub(crate) fn select_human_triage<'a>(
     }
 }
 
+/// True when the run is the all-clear a reader can act on: the shared
+/// verification owner (`CheckOutput::verification`, the same decision the
+/// agent format's `verify=complete` line prints) accepts it, and every
+/// finding, shown or not, reads as noticed by a test. Fail-closed: an
+/// incomplete or absent outcome, an unanalyzed or partial scope, untracked
+/// source left out of the diff, a withheld finding, or one finding of any
+/// other class keeps the narrower "no gap selected" wording, so the all-clear
+/// sentence is never printed over something it does not cover.
+fn every_finding_reads_noticed(output: &CheckOutput) -> bool {
+    output.verification().is_complete()
+        && !output.findings.is_empty()
+        && output.withheld_finding_ids().is_empty()
+        && output
+            .findings
+            .iter()
+            .all(|finding| finding.class == ExposureClass::Exposed)
+}
+
+/// The `Safe next action` line when the selected finding already reads as
+/// noticed by a test. It answers the reader's question first (is there
+/// anything to do?) and only then states the static-evidence boundary. When
+/// other findings are not noticed (a base-side or lower-ranked one), it says
+/// how many, so "none" is never read as a verdict on the whole diff.
+fn no_diff_finding_safe_action_line(triage: &HumanTriage<'_>, all_noticed: bool) -> String {
+    const BOUNDARY: &str = "This is a static reading of the code, not a test run";
+    if all_noticed {
+        return format!(
+            "  Safe next action: none needed; tests appear to notice every changed behavior ripr checked. {BOUNDARY}\n"
+        );
+    }
+    let others = triage
+        .omitted
+        .iter()
+        .filter(|finding| finding.class != ExposureClass::Exposed)
+        .count();
+    if others == 0 {
+        return format!(
+            "  Safe next action: none for this change; a test appears to notice it. {BOUNDARY}\n"
+        );
+    }
+    format!(
+        "  Safe next action: none for this change; a test appears to notice it. {} did not read as noticed; see below. {BOUNDARY}\n",
+        count_noun(others, "other finding", "other findings")
+    )
+}
+
 pub(crate) fn render_human_triage(
     out: &mut String,
     triage: &HumanTriage<'_>,
@@ -302,11 +349,19 @@ pub(crate) fn render_human_triage(
     out.push_str("Start here:\n");
     // #8165: the default (bounded) human render speaks plain language only;
     // the `HumanTriageState` schema token stays in machine surfaces.
-    out.push_str(&format!("  State: {}\n", triage.state.plain_label()));
-    // The canonical decision (#6304) selects the line family; the prose
-    // below is unchanged, so the decision has one authority while rendered
-    // bytes stay put.
+    // The canonical decision (#6304) selects the line family, so the decision
+    // has one authority.
     let check_case = check_case_or_fallback(triage, output, drill_in, provenance);
+    let all_noticed =
+        check_case == NextActionCheckCase::NoDiffFinding && every_finding_reads_noticed(output);
+    out.push_str(&format!(
+        "  State: {}\n",
+        if all_noticed {
+            "no test gap found"
+        } else {
+            triage.state.plain_label()
+        }
+    ));
     // #10709: the one recommended route is stated only when the Safe next
     // action line and the `Next` block can both name it, so they cannot
     // disagree about which command is recommended.
@@ -342,9 +397,7 @@ pub(crate) fn render_human_triage(
             });
         }
         NextActionCheckCase::NoDiffFinding => {
-            out.push_str(
-                "  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation\n",
-            );
+            out.push_str(&no_diff_finding_safe_action_line(triage, all_noticed));
         }
         NextActionCheckCase::StaticLimited => {
             let plain_no_path = triage.selected.is_some_and(|finding| {
@@ -452,6 +505,25 @@ pub(crate) fn render_human_triage(
                     "  Safe next action: the working tree has no changed tracked files against `{base}`; make a change, or `git add -N <path>` a new file, and re-run\n"
                 ));
             } else if let Some(base) = output.base.as_deref()
+                && output
+                    .analyzed_revisions
+                    .as_ref()
+                    .is_some_and(crate::output::analyzed_revisions::head_is_contained_in_base)
+            {
+                // #14265: the base is ahead of HEAD and HEAD has no commit of
+                // its own, so committing "a change" is not the missing step
+                // the generic line implies: the reader is on a branch that is
+                // behind or already merged. Name that, then the two real moves.
+                if head_has_parent(&output.root) {
+                    out.push_str(&format!(
+                        "  Safe next action: HEAD is already contained in `{base}` (it has no commit that `{base}` lacks), so there is no diff; switch to the branch that has your change, or to check the last commit run `ripr check --base HEAD~1`\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "  Safe next action: HEAD is already contained in `{base}` (it has no commit that `{base}` lacks), so there is no diff; switch to the branch that has your change, or commit a change and re-run\n"
+                    ));
+                }
+            } else if let Some(base) = output.base.as_deref()
                 && head_is_on_branch(&output.root, base)
             {
                 // #13036: when HEAD has a parent, the usual intent is "check the
@@ -471,7 +543,7 @@ pub(crate) fn render_human_triage(
                     out.push_str(&format!(
                         "  Safe next action: ripr cannot see the untracked file(s) ({listing}); run `git add -N <paths>` (intent-to-add) then `ripr check --worktree`, or pass `--diff PATH`\n"
                     ));
-                } else if head_has_parent(&output.root) {
+                } else if last_commit_retry_applies(output) {
                     out.push_str(&format!(
                         "  Safe next action: you are on `{base}`, which is the comparison base, so there is no diff; to check the last commit run `ripr check --base HEAD~1` (or edit a tracked source file, or switch to a feature branch)\n"
                     ));
@@ -725,7 +797,7 @@ pub(crate) fn render_human_triage(
         } else {
             out.push_str(&selected_hidden_line(&triage.omitted));
         }
-        let listed = triage.omitted.len().min(HIDDEN_FINDINGS_LISTED);
+        let listed = hidden_window(&triage.omitted);
         // #7643: when the omitted set mixes currentness categories, the
         // count line's clauses cannot be connected to individual bullets;
         // append each finding's category so the reader can tell an
@@ -744,7 +816,7 @@ pub(crate) fn render_human_triage(
         // collapse to one row with a repeat count so a diff with many
         // equivalent base-side findings stays scannable.
         let mut previous: Option<(String, usize)> = None;
-        for finding in triage.omitted.iter().take(listed) {
+        for finding in &listed {
             let currentness = if label_currentness {
                 format!(", {}", hidden_bullet_currentness(finding))
             } else {
@@ -806,12 +878,7 @@ pub(crate) fn render_human_triage(
         // rerun to read them.
         let mut listed_classes: Vec<&ExposureClass> = Vec::new();
         for class in ExposureClass::ALL.iter() {
-            if triage
-                .omitted
-                .iter()
-                .take(listed)
-                .any(|finding| finding.class == *class)
-            {
+            if listed.iter().any(|finding| finding.class == *class) {
                 listed_classes.push(class);
             }
         }
@@ -825,10 +892,14 @@ pub(crate) fn render_human_triage(
                 ));
             }
         }
-        let remaining = triage.omitted.len() - listed;
+        let remaining = triage.omitted.len() - listed.len();
         if remaining > 0 {
+            // The window above holds the highest-priority omitted findings,
+            // so the remainder names its own class mix: the reader can see
+            // whether anything beyond the window is still a gap.
             out.push_str(&format!(
-                "    - … and {remaining} more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
+                "    - … and {remaining} more omitted finding(s): {}; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n",
+                unlisted_class_mix(&triage.omitted)
             ));
         }
     }
@@ -841,6 +912,56 @@ pub(crate) fn render_human_triage(
 /// this window the list discloses the remainder instead of printing every
 /// identity.
 const HIDDEN_FINDINGS_LISTED: usize = 20;
+
+/// The omitted findings the `Hidden:` list names. Within the window every
+/// omitted finding is listed in the report's file and line order. Beyond it,
+/// the window keeps the findings the check-JSON findings budget would keep
+/// (candidate-current gap classes first, `exposed` and non-candidate evidence
+/// last), still printed in file and line order, so a large diff does not spend
+/// the list on the alphabetically first files while later gaps go unnamed.
+fn hidden_window<'a>(omitted: &[&'a Finding]) -> Vec<&'a Finding> {
+    hidden_window_indices(omitted)
+        .into_iter()
+        .filter_map(|index| omitted.get(index).copied())
+        .collect()
+}
+
+/// Positions in `omitted` of the rows `hidden_window` names, ascending.
+fn hidden_window_indices(omitted: &[&Finding]) -> Vec<usize> {
+    if omitted.len() <= HIDDEN_FINDINGS_LISTED {
+        return (0..omitted.len()).collect();
+    }
+    let mut kept: Vec<usize> = crate::output::json::findings_priority::priority_order(omitted)
+        .into_iter()
+        .take(HIDDEN_FINDINGS_LISTED)
+        .collect();
+    kept.sort_unstable();
+    kept
+}
+
+/// Class counts of the omitted findings outside the listed window, in the
+/// plain vocabulary and class order of the rows above. Membership is by
+/// position in `omitted`, so findings that share an id are still counted.
+fn unlisted_class_mix(omitted: &[&Finding]) -> String {
+    let mut is_listed = vec![false; omitted.len()];
+    for index in hidden_window_indices(omitted) {
+        if let Some(slot) = is_listed.get_mut(index) {
+            *slot = true;
+        }
+    }
+    ExposureClass::ALL
+        .iter()
+        .filter_map(|class| {
+            let count = omitted
+                .iter()
+                .zip(&is_listed)
+                .filter(|(finding, listed)| !**listed && finding.class == *class)
+                .count();
+            (count > 0).then(|| format!("{count} {}", class.plain_label_with_stage()))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// Share display eligibility across the selected row and hidden routing.
 fn offers_test_stub(finding: &Finding) -> bool {
@@ -860,11 +981,8 @@ fn offers_test_stub(finding: &Finding) -> bool {
 }
 
 pub(super) fn hidden_stub_route_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'a Finding> {
-    triage
-        .omitted
-        .iter()
-        .take(HIDDEN_FINDINGS_LISTED)
-        .copied()
+    hidden_window(&triage.omitted)
+        .into_iter()
         .filter(|finding| offers_test_stub(finding))
         .collect()
 }
@@ -907,9 +1025,19 @@ fn hand_written_test_step(finding: &Finding, stub_refusal: &str, no_route: bool)
         _ if stub_refusal == TestStubRefusal::OwnerGeneric.reason() => {
             "call the function with concrete types for its type parameters and an input on each side of the changed behavior, and assert the exact result each time"
         }
-        ProbeFamily::Predicate => {
-            "call the function with an input just below, exactly on, and just above the changed limit, and assert the exact result each time"
-        }
+        // #14349: the input pair depends on the changed predicate's shape.
+        // Only an ordering comparison has a limit to sit below, on and above.
+        ProbeFamily::Predicate => match predicate_test_shape(&finding.probe.expression) {
+            PredicateTestShape::Ordering => {
+                "call the function with an input just below, exactly on, and just above the changed limit, and assert the exact result each time"
+            }
+            PredicateTestShape::Equality => {
+                "call the function once with inputs whose compared values are equal and once with inputs whose compared values differ, and assert the exact result each time"
+            }
+            PredicateTestShape::Condition => {
+                "call the function once with an input that makes the changed condition true and once with one that makes it false, and assert the exact result each time"
+            }
+        },
         ProbeFamily::FieldConstruction => {
             "call the function and assert the exact value of the changed field on what it returns"
         }
@@ -929,6 +1057,91 @@ fn hand_written_test_step(finding: &Finding, stub_refusal: &str, no_route: bool)
         // that no route exists beside it.
         format!("Write this test by hand: {shape}; then rerun `ripr check`.\n")
     }
+}
+
+/// The kind of input pair that tells a changed predicate's two outcomes apart.
+#[derive(Debug, PartialEq, Eq)]
+enum PredicateTestShape {
+    /// `<`, `<=`, `>`, `>=`: a limit with a just-below, on and just-above side.
+    Ordering,
+    /// `==` / `!=` with no ordering operator: equal versus different values.
+    Equality,
+    /// No comparison operator: the condition's true and false sides.
+    Condition,
+}
+
+/// Classify the changed predicate text for the hand-written step. Fails
+/// toward `Ordering` (the long-standing wording) whenever an angle bracket
+/// remains after removing arrows and shifts, since a generic argument or an
+/// unrecognised form must not lose the boundary advice.
+fn predicate_test_shape(expression: &str) -> PredicateTestShape {
+    let stripped = without_quoted_text(expression)
+        .replace("=>", " ")
+        .replace("->", " ")
+        .replace("<<", " ")
+        .replace(">>", " ");
+    if stripped.contains('<') || stripped.contains('>') {
+        PredicateTestShape::Ordering
+    } else if stripped.contains("==") || stripped.contains("!=") {
+        PredicateTestShape::Equality
+    } else {
+        PredicateTestShape::Condition
+    }
+}
+
+/// `text` with the contents of `"…"` and `` `…` `` literals blanked, so an
+/// operator character inside a string (`s == "<none>"`) is not read as the
+/// predicate's operator. Backslash escapes are skipped; an unterminated
+/// literal blanks to the end, which only removes operators and so fails
+/// toward the condition wording only when no operator sits outside it.
+fn without_quoted_text(text: &str) -> String {
+    let characters: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut index = 0;
+    while let Some(&character) = characters.get(index) {
+        index += 1;
+        match quote {
+            Some(open) => {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == open {
+                    quote = None;
+                    out.push(character);
+                    continue;
+                }
+                out.push(' ');
+            }
+            None => {
+                // A Rust or Python character literal (`'"'`, `'\''`, `'<'`)
+                // is blanked whole, so its quote never opens a string. A
+                // lifetime (`'a`) has no closing quote within reach.
+                if character == '\'' {
+                    let rest = characters.get(index..).unwrap_or_default();
+                    let len = match rest {
+                        ['\\', _, '\'', ..] => Some(3),
+                        [_, '\'', ..] => Some(2),
+                        _ => None,
+                    };
+                    if let Some(len) = len {
+                        out.push('\'');
+                        out.extend(std::iter::repeat_n(' ', len - 1));
+                        out.push('\'');
+                        index += len;
+                        continue;
+                    }
+                }
+                if character == '"' || character == '`' {
+                    quote = Some(character);
+                }
+                out.push(character);
+            }
+        }
+    }
+    out
 }
 
 /// The repair view already counts the finding's seam as gripped or exposed.
@@ -1178,12 +1391,53 @@ pub(crate) fn canonical_next_action_for_triage(
         } else {
             None
         },
+        check_scope_route: (check_case_for_triage(triage, output)
+            == NextActionCheckCase::ScopeMissing
+            && last_commit_retry_applies(output))
+        .then(|| last_commit_retry_command(output, None)),
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives,
         limitations,
     };
     select_canonical_next_action(&input)
+}
+
+/// #14423: the one owner of the "check the last commit" retry for an empty
+/// `scope_missing` range that is the base branch compared with itself. True
+/// when the committed-history read compared HEAD's own branch as the base
+/// (`<branch>`, or `origin/<branch>` in a clone, under the same git-identity
+/// rule the bare human check's rescope uses), no untracked or ignored source
+/// file explains the empty range, and `HEAD~1` resolves. The human `Safe next
+/// action`, the agent `stop=` line and the JSON
+/// `canonical_next_action.stop.scope_route` all read this decision.
+pub(crate) fn last_commit_retry_applies(output: &CheckOutput) -> bool {
+    let Some(base) = output.base.as_deref() else {
+        return false;
+    };
+    if crate::output::analyzed_revisions::is_working_tree_read(output)
+        || (output.unanalyzed_working_tree
+            && !output.untracked_working_tree_source_paths.is_empty())
+        || !output.ignored_working_tree_source_paths.is_empty()
+    {
+        return false;
+    }
+    crate::analysis::base_is_checked_out_head_with_parent(&output.root, base, None)
+}
+
+/// The `ripr check` rerun for [`last_commit_retry_applies`], rooted like the
+/// restart route, with ` --format <format>` appended when one is given.
+pub(crate) fn last_commit_retry_command(output: &CheckOutput, format: Option<&str>) -> String {
+    let mut command = format!(
+        "ripr check --root {} --base HEAD~1",
+        shell_arg(&crate::agent::loop_commands::root_display(
+            &output.root.display().to_string()
+        ))
+    );
+    if let Some(format) = format {
+        command.push_str(&format!(" --format {format}"));
+    }
+    command
 }
 
 /// True when `HEAD~1` resolves, so `--base HEAD~1` names a real range.
@@ -1857,7 +2111,19 @@ fn triage_rank<'a>(
     root: &std::path::Path,
     context: &SourceRoleContext,
     decisive_findings: &[&Finding],
-) -> (u8, u8, u8, u8, u8, u8, u8, i32, &'a std::path::Path, usize) {
+) -> (
+    u8,
+    u8,
+    u8,
+    u8,
+    u8,
+    u8,
+    u8,
+    i32,
+    u8,
+    &'a std::path::Path,
+    usize,
+) {
     let class_rank = match finding.class {
         ExposureClass::ReachableUnrevealed => 2,
         ExposureClass::WeaklyExposed => 3,
@@ -1907,6 +2173,13 @@ fn triage_rank<'a>(
         u8::from(finding.oracle_related_tests().next().is_none()),
         u8::from(finding.missing.is_empty()),
         -(finding.confidence * 100.0) as i32,
+        // #14266: a repair route zeroes `repair_rank` for every routed
+        // finding, and every stable finding with a next step counts as
+        // routed, so without this key two otherwise equal candidates were
+        // ordered by file path: an unknown in `analysis/` led a
+        // `reachable_unrevealed` gap in `provider_contract/`. The class
+        // order breaks that tie before the path does.
+        class_rank,
         finding.probe.location.file.as_path(),
         finding.probe.location.line,
     )
@@ -2234,6 +2507,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -2408,6 +2683,63 @@ mod tests {
         );
     }
 
+    /// #14349: the hand-written predicate step names inputs that fit the
+    /// changed predicate: a limit for an ordering comparison, equal and
+    /// different values for an equality, true and false for a plain condition.
+    #[test]
+    fn hand_written_predicate_step_matches_the_predicate_shape() {
+        let mut finding = test_finding("predicate-shape");
+        finding.probe.family = ProbeFamily::Predicate;
+        let refusal = TestStubRefusal::ObserverRequired.reason();
+        for (expression, expected, absent) in [
+            (
+                "if len(text) <= max_length:",
+                "just below, exactly on, and just above",
+                "equal",
+            ),
+            (
+                "amount > limit",
+                "just below, exactly on, and just above",
+                "equal",
+            ),
+            (
+                "self.key.get() == other.key.get()",
+                "compared values are equal",
+                "just below",
+            ),
+            ("left != right", "compared values differ", "just below"),
+            (
+                "if enabled && ready",
+                "condition true and once with one that makes it false",
+                "just below",
+            ),
+            ("Some(x) => x.is_empty()", "condition true", "just below"),
+            ("flags >> 2 == 0", "compared values are equal", "just below"),
+            ("x === limit", "compared values are equal", "just below"),
+            (
+                "if s == \"<none>\":",
+                "compared values are equal",
+                "just below",
+            ),
+            ("tag !== `<br>`", "compared values differ", "just below"),
+            ("if '\"' == ch", "compared values are equal", "just below"),
+            ("c != '<'", "compared values differ", "just below"),
+            // A mixed predicate keeps the limit wording.
+            ("a == b && c < d", "just below", "compared values"),
+            // A generic argument keeps the boundary wording (fail toward it).
+            ("v.is::<u8>() == true", "just below", "compared values"),
+        ] {
+            finding.probe.expression = expression.to_string();
+            let step = hand_written_test_step(&finding, refusal, true);
+            assert!(step.contains(expected), "{expression}: {step}");
+            assert!(!step.contains(absent), "{expression}: {step}");
+            assert!(
+                step.contains("exact result each time"),
+                "{expression}: {step}"
+            );
+        }
+    }
+
     /// #10710 review: render the selected finding with a stub decision and a
     /// repair refusal, and return the screen.
     fn render_with_refusal(
@@ -2550,10 +2882,31 @@ mod tests {
                 .map(|finding| finding.id.clone())
                 .collect::<Vec<_>>()
         };
-        assert!(
-            candidates(&rows).is_empty(),
-            "take the displayed window before eligibility filtering"
+        // #14233: the one candidate-current row sorts last in report order,
+        // and the window keeps it ahead of the non-candidate rows.
+        assert_eq!(
+            candidates(&rows),
+            vec!["hidden:20"],
+            "the window keeps the candidate-current row"
         );
+        // Eligibility is still decided inside the displayed window: with 21
+        // candidate-current rows, the one that ranks last (no recommended next
+        // step) falls outside the window and offers no stub route.
+        let mut all_current = rows.clone();
+        for (index, row) in all_current.iter_mut().enumerate() {
+            row.source_currentness = SourceCurrentness::CandidateCurrent;
+            if index != 7 {
+                row.recommended_next_step = Some("inspect".to_string());
+            }
+        }
+        let windowed = candidates(&all_current);
+        assert_eq!(windowed.len(), 20, "{windowed:?}");
+        assert!(
+            !windowed.contains(&"hidden:7".to_string()),
+            "take the displayed window before eligibility filtering: {windowed:?}"
+        );
+        rows[20].source_currentness = SourceCurrentness::BaseDeleted;
+        assert!(candidates(&rows).is_empty());
         rows[0].source_currentness = SourceCurrentness::CandidateCurrent;
         assert_eq!(candidates(&rows), vec!["hidden:0"]);
         rows[0].static_limit_kind = Some(StaticLimitKind::RustAssertionContextUnresolved);
@@ -3308,6 +3661,225 @@ mod tests {
             "{out}"
         );
         assert!(out.contains("src/lib.rs"), "{out}");
+    }
+
+    /// #14080: a complete-with-findings outcome for `finding_count` findings.
+    fn complete_outcome(
+        finding_count: u64,
+    ) -> Result<crate::analysis_outcome::AnalysisOutcome, String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+        };
+        AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteWithFindings,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: finding_count,
+                candidate_line_count: finding_count,
+                probe_count: finding_count,
+                finding_count,
+            },
+            Vec::new(),
+        )
+    }
+
+    /// #14080: the `Start here` State and Safe next action lines of `output`.
+    fn start_here_lines(output: &CheckOutput) -> (String, String) {
+        let triage = select_human_triage(output, &RiprConfig::default());
+        let mut out = String::new();
+        render_human_triage(
+            &mut out,
+            &triage,
+            output,
+            &RiprConfig::default(),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        );
+        let line = |prefix: &str| {
+            out.lines()
+                .find(|line| line.starts_with(prefix))
+                .unwrap_or_default()
+                .to_string()
+        };
+        (line("  State: "), line("  Safe next action: "))
+    }
+
+    const ALL_CLEAR_STATE: &str = "  State: no test gap found";
+    const ALL_CLEAR_ACTION: &str = "  Safe next action: none needed; tests appear to notice every changed behavior ripr checked. This is a static reading of the code, not a test run";
+    const NARROW_STATE: &str = "  State: no gap selected for repair";
+    const NARROW_ACTION: &str = "  Safe next action: none for this change; a test appears to notice it. This is a static reading of the code, not a test run";
+
+    /// #14080: a complete run whose every finding reads `exposed` answers the
+    /// reader in plain words: no gap, nothing needed, static evidence only.
+    #[test]
+    fn all_clear_start_here_says_no_gap_and_nothing_needed() -> Result<(), String> {
+        let mut output = test_output(vec![
+            finding_at("finding:a", "src/lib.rs", ExposureClass::Exposed),
+            finding_at("finding:b", "src/pricing.rs", ExposureClass::Exposed),
+        ]);
+        output.analysis_outcome = Some(complete_outcome(2)?);
+        let (state, action) = start_here_lines(&output);
+        assert_eq!(state, ALL_CLEAR_STATE);
+        assert_eq!(action, ALL_CLEAR_ACTION);
+        Ok(())
+    }
+
+    /// #14080 negative control: one finding of another class, even one that is
+    /// never selected (base-side evidence), withholds the all-clear wording
+    /// and is counted on the action line.
+    #[test]
+    fn all_clear_wording_is_withheld_when_another_finding_is_not_noticed() -> Result<(), String> {
+        let mut base_side = finding_at(
+            "finding:base",
+            "src/lib.rs",
+            ExposureClass::ReachableUnrevealed,
+        );
+        base_side.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let mut unknown_base = finding_at(
+            "finding:base-unknown",
+            "src/lib.rs",
+            ExposureClass::StaticUnknown,
+        );
+        unknown_base.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let mut output = test_output(vec![
+            finding_at("finding:a", "src/lib.rs", ExposureClass::Exposed),
+            base_side,
+        ]);
+        output.analysis_outcome = Some(complete_outcome(2)?);
+        let (state, action) = start_here_lines(&output);
+        assert_eq!(state, NARROW_STATE);
+        assert_eq!(
+            action,
+            "  Safe next action: none for this change; a test appears to notice it. 1 other finding did not read as noticed; see below. This is a static reading of the code, not a test run"
+        );
+
+        output.findings.push(unknown_base);
+        output.analysis_outcome = Some(complete_outcome(3)?);
+        let (state, action) = start_here_lines(&output);
+        assert_eq!(state, NARROW_STATE);
+        assert_eq!(
+            action,
+            "  Safe next action: none for this change; a test appears to notice it. 2 other findings did not read as noticed; see below. This is a static reading of the code, not a test run"
+        );
+        Ok(())
+    }
+
+    /// #14080 negative control: the all-clear wording needs a complete
+    /// analysis outcome. An absent or incomplete one keeps the narrow wording
+    /// even when every finding reads `exposed`.
+    #[test]
+    fn all_clear_wording_needs_a_complete_analysis_outcome() -> Result<(), String> {
+        let mut output = test_output(vec![finding_at(
+            "finding:a",
+            "src/lib.rs",
+            ExposureClass::Exposed,
+        )]);
+        assert_eq!(
+            start_here_lines(&output),
+            (NARROW_STATE.to_string(), NARROW_ACTION.to_string())
+        );
+
+        let mut incomplete = complete_outcome(1)?;
+        incomplete.kind = crate::analysis_outcome::AnalysisOutcomeKind::PartialWithLimitations;
+        output.analysis_outcome = Some(incomplete);
+        assert_eq!(
+            start_here_lines(&output),
+            (NARROW_STATE.to_string(), NARROW_ACTION.to_string())
+        );
+
+        output.analysis_outcome = Some(complete_outcome(1)?);
+        assert_eq!(
+            start_here_lines(&output),
+            (ALL_CLEAR_STATE.to_string(), ALL_CLEAR_ACTION.to_string())
+        );
+        Ok(())
+    }
+
+    /// #14080 negative control: the all-clear wording follows the shared
+    /// verification owner, so a working tree ripr did not analyze withholds
+    /// it even when every finding reads `exposed`.
+    #[test]
+    fn all_clear_wording_follows_the_shared_verification_verdict() -> Result<(), String> {
+        let mut output = test_output(vec![finding_at(
+            "finding:a",
+            "src/lib.rs",
+            ExposureClass::Exposed,
+        )]);
+        output.analysis_outcome = Some(complete_outcome(1)?);
+        output.unanalyzed_working_tree = true;
+        assert!(!output.verification().is_complete());
+        assert_eq!(
+            start_here_lines(&output),
+            (NARROW_STATE.to_string(), NARROW_ACTION.to_string())
+        );
+        output.unanalyzed_working_tree = false;
+        assert!(output.verification().is_complete());
+        assert_eq!(
+            start_here_lines(&output),
+            (ALL_CLEAR_STATE.to_string(), ALL_CLEAR_ACTION.to_string())
+        );
+        Ok(())
+    }
+
+    /// #14080 negative control: a finding withheld by an owner opt-out was not
+    /// judged, so the run is not an all-clear even when every finding class
+    /// reads `exposed`.
+    #[test]
+    fn all_clear_wording_is_withheld_when_a_finding_is_withheld() -> Result<(), String> {
+        let mut output = test_output(vec![
+            finding_at("finding:a", "src/lib.rs", ExposureClass::Exposed),
+            finding_at("finding:withheld", "src/pricing.rs", ExposureClass::Exposed),
+        ]);
+        output.analysis_outcome = Some(complete_outcome(2)?);
+        output.owner_opt_outs = vec![crate::analysis::owner_opt_out::OwnerOptOut {
+            finding_id: "finding:withheld".to_string(),
+            owner: "shipping_cents".to_string(),
+            reason: crate::analysis::owner_opt_out::OwnerOptOutReason::MutantsSkip,
+        }];
+        assert_eq!(
+            start_here_lines(&output),
+            (NARROW_STATE.to_string(), NARROW_ACTION.to_string())
+        );
+        Ok(())
+    }
+
+    /// #14266: two candidates equal on every evidence key through
+    /// confidence order by exposure class, not by file path. The unknown
+    /// sorts first by path and is listed first, so neither path order nor
+    /// insertion order can masquerade as ranking.
+    #[test]
+    fn start_here_breaks_an_evidence_tie_by_class_before_path() {
+        let mut unknown = finding_at(
+            "finding:unknown",
+            "src/a_analysis.rs",
+            ExposureClass::PropagationUnknown,
+        );
+        let mut gap = finding_at(
+            "finding:unrevealed",
+            "src/z_provider.rs",
+            ExposureClass::ReachableUnrevealed,
+        );
+        for finding in [&mut unknown, &mut gap] {
+            finding.recommended_next_step = Some("inspect the related test".to_string());
+            finding.confidence = 0.66;
+        }
+        let output = test_output(vec![unknown.clone(), gap.clone()]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unrevealed")
+        );
+
+        // Discriminating control: a higher-confidence unknown still leads,
+        // so class only breaks a tie and does not override earlier keys.
+        unknown.confidence = 0.9;
+        let output = test_output(vec![gap, unknown]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unknown")
+        );
     }
 
     /// #9346: the same preference covers a weak production gap.

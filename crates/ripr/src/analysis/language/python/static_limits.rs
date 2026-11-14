@@ -2,6 +2,7 @@ use super::PythonFramework;
 use super::admission::PythonAssertionAdmission;
 use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
+use super::callee_patch::callee_only_patch;
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
 use super::cli_subcommand::CliSubcommand;
 use super::effect_alignment::ChangedEffect;
@@ -281,6 +282,15 @@ pub(super) fn static_limit_for_focused_change(
             line_text,
         ) {
             Some(calls) => substituted_calls.extend(calls),
+            // A literal stand-in for a callee the edit neither names nor
+            // feeds leaves the exact assertion reading the edit (#13632).
+            None if callee_only_patch(
+                candidate.test,
+                owner,
+                owner_source,
+                old_line_text,
+                line_text,
+            ) => {}
             None => mocked = true,
         }
     }
@@ -1804,6 +1814,7 @@ pub(super) mod tests {
             reexport_modules: Vec::new(),
             star_exported: false,
             ambiguous_src_modules: Vec::new(),
+            test_local_shadows: Vec::new(),
             rival_definition_modules: Vec::new(),
             module_constants: Vec::new(),
             same_class_callees: Vec::new(),

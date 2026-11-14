@@ -64,6 +64,17 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
             .collect::<Vec<_>>()
     };
     let lines: Vec<&str> = text.lines().collect();
+    // Braces inside string literals and comments must not move a body's end:
+    // `"hello {"` opened a body that ran to the end of the file, which then
+    // was re-parsed for every seam and oracle (#11895). The mask preserves
+    // length and newlines, so its lines align with `lines`.
+    let masked = crate::analysis::extract::mask_comments_and_strings(&text);
+    let masked_lines: Vec<&str> = masked.lines().collect();
+    let brace_lines: &[&str] = if masked_lines.len() == lines.len() {
+        &masked_lines
+    } else {
+        &lines
+    };
     let mut functions = Vec::new();
     let mut tests = Vec::new();
     let mut file_returns = Vec::new();
@@ -72,7 +83,11 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
     let mut i = 0usize;
 
     while i < lines.len() {
-        let trimmed = lines[i].trim();
+        // Attributes and function starts are read from the masked line, so a
+        // `fn decoy() {` or `#[test]` inside a string literal or comment is
+        // not a declaration whose masked braces would then swallow the next
+        // real function.
+        let trimmed = brace_lines[i].trim();
         let first_token = line_starts
             .get(i)
             .map(|start| start + lines[i].len() - lines[i].trim_start().len());
@@ -85,6 +100,8 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
         if trimmed_declares_test_attribute(trimmed, "test")
             || trimmed_declares_test_attribute(trimmed, "tokio::test")
             || trimmed_declares_test_attribute(trimmed, "async_std::test")
+            || trimmed_declares_test_attribute(trimmed, "actix_rt::test")
+            || trimmed_declares_test_attribute(trimmed, "actix_web::test")
             || trimmed.starts_with("#[rstest")
         {
             pending_test = true;
@@ -102,7 +119,7 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
 
         if let Some(name) = function_name(trimmed) {
             let start_line = i + 1;
-            let (end_line, body) = collect_function_body(&lines, i);
+            let (end_line, body) = collect_function_body(&lines, brace_lines, i);
             let calls = extract_call_facts(&body, start_line);
             let returns = extract_return_facts(&body, start_line);
             let literals = extract_literal_facts(&body, start_line);
@@ -372,7 +389,10 @@ fn function_name(trimmed: &str) -> Option<String> {
     if name.is_empty() { None } else { Some(name) }
 }
 
-fn collect_function_body(lines: &[&str], start: usize) -> (usize, String) {
+/// The body of the function opening at `lines[start]`, ending where its
+/// braces balance. `brace_lines` is the same text with comments and string
+/// contents blanked; only it is counted for braces.
+fn collect_function_body(lines: &[&str], brace_lines: &[&str], start: usize) -> (usize, String) {
     let mut body = String::new();
     let mut depth = 0isize;
     let mut saw_open = false;
@@ -381,7 +401,7 @@ fn collect_function_body(lines: &[&str], start: usize) -> (usize, String) {
     for (idx, line) in lines.iter().enumerate().skip(start) {
         body.push_str(line);
         body.push('\n');
-        for ch in line.chars() {
+        for ch in brace_lines[idx].chars() {
             if ch == '{' {
                 depth += 1;
                 saw_open = true;
@@ -434,6 +454,66 @@ mod tests {
             .summarize_file(Path::new("src/lib.rs"), "pub fn f() -> i32 { 1 }\n")?;
         if crate::analysis::extract::table_builds() != before {
             return Err("a file without assertions built a declaration table".to_string());
+        }
+        Ok(())
+    }
+
+    /// #11895: a brace inside a string literal or comment does not move the
+    /// end of a function body. An unbalanced `"{"` used to open a body that
+    /// ran to the end of the file, so every later test became part of it.
+    #[test]
+    fn lexical_body_end_ignores_braces_in_strings_and_comments() -> Result<(), String> {
+        let facts = LexicalRustSyntaxAdapter.summarize_file(
+            Path::new("src/lib.rs"),
+            "#![feature(test)]\n#[test]\nfn first() {\n    // open {\n    let s = \"hello {\";\n    assert_eq!(s, \"hello {\");\n}\n\n#[test]\nfn second() {\n    assert!(true);\n}\n",
+        )?;
+        let first = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "first")
+            .ok_or("first was not found")?;
+        if first.end_line != 7 {
+            return Err(format!(
+                "first must end at its own closing brace (line 7), ended at {}",
+                first.end_line
+            ));
+        }
+        let second = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "second")
+            .ok_or("second was not found")?;
+        if second.start_line != 10 || second.end_line != 12 {
+            return Err(format!(
+                "second must be its own function, found lines {}..{}",
+                second.start_line, second.end_line
+            ));
+        }
+        Ok(())
+    }
+
+    /// #11895 review: a function-shaped line inside a raw string is not a
+    /// declaration. Its braces are masked, so treating it as one made it
+    /// swallow the next real function.
+    #[test]
+    fn lexical_function_start_ignores_declarations_inside_raw_strings() -> Result<(), String> {
+        let facts = LexicalRustSyntaxAdapter.summarize_file(
+            Path::new("src/lib.rs"),
+            "#![feature(test)]\nconst D: &str = r#\"\nfn decoy() {\n#[test]\n\"#;\n#[test]\nfn actual() {\n    assert!(true);\n}\n",
+        )?;
+        let names: Vec<(&str, usize, usize)> = facts
+            .functions
+            .iter()
+            .map(|function| {
+                (
+                    function.name.as_str(),
+                    function.start_line,
+                    function.end_line,
+                )
+            })
+            .collect();
+        if names != vec![("actual", 7, 9)] {
+            return Err(format!("expected only actual (7..9), found {names:?}"));
         }
         Ok(())
     }
@@ -592,6 +672,14 @@ fn checks_value() {
         assert!(!trimmed_declares_test_attribute(
             "#[async_std::test_support]",
             "async_std::test"
+        ));
+        assert!(trimmed_declares_test_attribute(
+            "#[::actix_rt::test]",
+            "actix_rt::test"
+        ));
+        assert!(!trimmed_declares_test_attribute(
+            "#[actix_web::rt::test]",
+            "actix_web::test"
         ));
     }
 

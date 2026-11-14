@@ -805,13 +805,15 @@ fn credited_related_tests<'a>(
     // (#12056, #12264).
     let pins_other_function = |owner: &FunctionSummary, test: &TestSummary, oracle: &OracleFact| {
         owner_reach.as_ref().is_some_and(|(_, reach)| {
-            let text = super::classifier::assertion_text_with_local_initializers(
-                context.index,
-                test,
-                &oracle.text,
-                owner,
-            );
-            reach.assertion_pins_other_function(owner, test, oracle, &text)
+            context.other_function_pin_decision(owner, test, oracle, || {
+                let text = super::classifier::assertion_text_with_local_initializers(
+                    context.index,
+                    test,
+                    &oracle.text,
+                    owner,
+                );
+                reach.assertion_pins_other_function(owner, test, oracle, &text)
+            })
         })
     };
     related
@@ -821,14 +823,22 @@ fn credited_related_tests<'a>(
             if let Some((owner, _)) = owner_reach.as_ref()
                 && (reason.is_proximity_only()
                     || *reason == RelationReason::AssertionTargetAffinity)
-                && test
+            {
+                // One decision per oracle: the text it reads is rebuilt from
+                // the whole test body, so ask once and drop by position
+                // rather than once to detect and again to retain.
+                let pins: Vec<bool> = test
                     .assertions
                     .iter()
-                    .any(|oracle| pins_other_function(owner, test, oracle))
-            {
-                view.to_mut()
-                    .assertions
-                    .retain(|oracle| !pins_other_function(owner, test, oracle));
+                    .map(|oracle| pins_other_function(owner, test, oracle))
+                    .collect();
+                if pins.contains(&true) {
+                    let mut position = 0;
+                    view.to_mut().assertions.retain(|_| {
+                        position += 1;
+                        !pins[position - 1]
+                    });
+                }
             }
             // #12394 item 3: the claims statements `ripr check` credits
             // through the owner pin join the view the stages read.
@@ -1209,6 +1219,9 @@ thread_local! {
     static MASK_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Times credited-view owner reach was built on this thread (#12478).
     static CREDITED_OWNER_REACH_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Times an other-function pin decision was computed rather than read
+    /// from the context's memo on this thread (#14011).
+    static PIN_DECISIONS_COMPUTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether the owner's signature or the changed expression may name a type
@@ -4538,10 +4551,12 @@ fn discriminate_evidence(
     let mut contradictions: Vec<String> = Vec::new();
     for test in related {
         for oracle in &test.assertions {
-            // The same two gates `best_oracle` applies, so this stage and the
-            // related-test record cannot disagree about one assertion (#12733).
+            // The same gates `best_oracle` applies, so this stage and the
+            // related-test record cannot disagree about one assertion (#12733,
+            // #12757).
             if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax)
                 || !error_pin_can_see_return_value(seam, oracle)
+                || !success_payload_assertion_can_see_return_arm(seam, oracle)
             {
                 continue;
             }
@@ -4872,6 +4887,72 @@ fn error_pin_can_see_return_value(seam: &RepoSeam, oracle: &OracleFact) -> bool 
         || exact_err_return_matches_error_pin(seam, &oracle.text)
 }
 
+/// #12757: the mirror of the error-pin rule above. A returned-value or
+/// error-variant seam whose changed expression constructs the failure arm (`Err(..)` or `None`) is
+/// changed only by a call that takes that exit. An exact assertion that
+/// unwraps or compares the success payload (`f(1).unwrap()`, `Ok(..)`,
+/// `Some(..)`, `assert_ok_eq!`) passes only when the call took the success
+/// exit, so it cannot notice the failure arm changing and must not be
+/// published as an oracle on it. A pin that names the failure arm itself
+/// (`Err(..)`, `None`, `unwrap_err`) keeps its grade.
+fn success_payload_assertion_can_see_return_arm(seam: &RepoSeam, oracle: &OracleFact) -> bool {
+    !matches!(seam.kind(), SeamKind::ReturnValue | SeamKind::ErrorVariant)
+        || !matches!(
+            oracle.kind,
+            OracleKind::ExactValue | OracleKind::WholeObjectEquality
+        )
+        || !constructs_failure_arm(seam.expression())
+        || !pins_success_payload_only(&oracle.text)
+}
+
+/// Whether `expression` is exactly the failure arm a `Result` / `Option`
+/// return constructs: `Err(..)` or `None`, optionally spelled `return ..;`.
+fn constructs_failure_arm(expression: &str) -> bool {
+    let trimmed = expression.trim().trim_end_matches(';').trim();
+    let trimmed = trimmed.strip_prefix("return ").unwrap_or(trimmed).trim();
+    trimmed == "None"
+        || trimmed
+            .strip_prefix("Err")
+            .is_some_and(|rest| rest.trim_start().starts_with('('))
+}
+
+/// Whether the assertion text reads the success payload and never the
+/// failure arm. The text is masked first, so a string or comment cannot supply
+/// a token; any failure-arm spelling, or an adapter that turns the failure
+/// into a value (`unwrap_or`, `ok()`, `map_err`), refuses (fail closed:
+/// the assertion keeps its existing grade).
+fn pins_success_payload_only(text: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let mentions = |token: &str| masked.contains(token);
+    let reads_failure_arm = [
+        "Err(",
+        "Err (",
+        "unwrap_err",
+        "expect_err",
+        "is_err",
+        "map_err",
+    ]
+    .iter()
+    .any(|token| mentions(token))
+        || masked
+            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .any(|word| {
+                matches!(
+                    word,
+                    "None" | "unwrap_or" | "unwrap_or_else" | "unwrap_or_default" | "ok" | "err"
+                )
+            });
+    if reads_failure_arm {
+        return false;
+    }
+    mentions(".unwrap()")
+        || mentions(".expect(")
+        || mentions("Ok(")
+        || mentions("Some(")
+        || mentions("assert_ok_eq!")
+        || mentions("assert_some_eq!")
+}
+
 /// An exact error-variant assertion published at no strength is the one
 /// `error_pin_can_see_return_value` withholds: it pins the owner's `Err` arm,
 /// not the value the returned-value seam produces (#12722, #12734). No other
@@ -4900,6 +4981,9 @@ fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact)
     if seam.kind() == SeamKind::ReturnValue && matches!(oracle.kind, OracleKind::ExactErrorVariant)
     {
         return exact_err_return_matches_error_pin(seam, &oracle.text);
+    }
+    if !success_payload_assertion_can_see_return_arm(seam, oracle) {
+        return false;
     }
     if !oracle_kind_matches_seam(seam, &oracle.kind) {
         return false;
@@ -5735,6 +5819,9 @@ fn best_oracle(
         }
         if !error_pin_can_see_return_value(seam, oracle) {
             skipped_error_pin = true;
+            continue;
+        }
+        if !success_payload_assertion_can_see_return_arm(seam, oracle) {
             continue;
         }
         let (strength, contradiction) =

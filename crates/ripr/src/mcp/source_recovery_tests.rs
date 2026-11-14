@@ -47,6 +47,8 @@ fn captured_server(
         owner_opt_outs: Vec::new(),
         suppression: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     };
     let snapshot = workspace::Snapshot::from_output_admitted(
@@ -69,6 +71,7 @@ fn captured_server(
             "inspect that request",
         )),
         desired_source,
+        desired_source_defaulted: false,
         desired_base: Some("newer-request-base".to_string()),
         ..Default::default()
     };

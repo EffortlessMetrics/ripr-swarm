@@ -2331,10 +2331,235 @@ pub(super) fn own_crate_qualified_entry_path(
             .is_some_and(|root| root == Path::new("src/lib.rs"));
     let module = super::call_identity::root_library_item_module_path(index, caller)
         .filter(|_| composes_under_library_root)?;
-    // Only a test-crate root (`tests/<name>.rs`, `tests/<name>/main.rs`):
-    // a module child (`tests/api/child.rs`, `tests/common/mod.rs`) resolves
-    // paths from a parent file whose bindings this scan does not read.
-    let normalized_test = normalize_path(&test.file);
+    let facts = index.files().get(&test.file)?;
+    // The one identifier the package's library is imported as: `[lib] name`
+    // when set, else the package name (hyphens folded). The package name is
+    // not a second spelling when `[lib] name` differs.
+    let crate_name = index.root_library_name.as_deref()?;
+    let masked_file = mask_comments_and_strings(&facts.source);
+    let code_line = call_line
+        .checked_sub(1)
+        .and_then(|line| masked_file.lines().nth(line))?;
+    let spelled_path: String = std::iter::once(crate_name)
+        .chain(module.iter().map(String::as_str))
+        .chain(std::iter::once(caller.name.as_str()))
+        .collect::<Vec<_>>()
+        .join("::");
+    (is_qualified_owner_call(code_line, &spelled_path)
+        && own_crate_name_unshadowed_in_test(index, test, crate_name))
+    .then_some(spelled_path)
+}
+
+/// Whether `owner` is a top-level `impl` item of a file of the root package's library (`src/lib.rs` or a
+/// module composed under it), the only owner a root integration test reaches
+/// through the library's own crate name.
+fn owner_is_root_library_item(index: &RustIndex, owner: &FunctionSummary) -> bool {
+    !path_is_absolute_form(&owner.file)
+        && package_prefix(&owner.file).is_none()
+        && super::owner_pin::target_root(&owner.file, index, &BTreeSet::new())
+            .is_some_and(|root| root == Path::new("src/lib.rs"))
+        // The `impl` must be a top-level item of its file: a function-local or
+        // inline-module namesake type's method shares the exported type's
+        // indexed id, so only the placement tells them apart.
+        && owner_impl_is_root_item_of(index, owner, &owner.file)
+}
+
+/// #14407: [`library_module_path`] of `file`, or `None` when any indexed
+/// file may remap a module to another file with a `path = ..` attribute
+/// (plain or inside `cfg_attr`), since the file path then need not name the
+/// module.
+pub(in crate::analysis) fn indexed_library_module_path(
+    index: &RustIndex,
+    file: &Path,
+) -> Option<Vec<String>> {
+    // `#[path = ..]`, `# [path = ..]` and `#[cfg_attr(.., path = ..)]` all
+    // put `path =` right after `[` or `,`; a `let path = ..` does not.
+    let remaps = index.files().iter().any(|(_, facts)| {
+        if !facts.source.contains("path") {
+            return false;
+        }
+        let masked = crate::analysis::extract::mask_comments_and_strings(&facts.source);
+        super::owner_pin::whole_word_offsets(&masked, "path")
+            .into_iter()
+            .any(|offset| {
+                let after = masked[offset + "path".len()..].trim_start();
+                masked[..offset].trim_end().ends_with(['[', ','])
+                    && after.starts_with('=')
+                    && !after.starts_with("==")
+            })
+    });
+    if remaps {
+        None
+    } else {
+        library_module_path(file)
+    }
+}
+
+/// The module path of a root-library file under `src/` (#14407): `src/lib.rs`
+/// is the crate root (empty), `src/a.rs` and `src/a/mod.rs` are `a`, and
+/// `src/a/b.rs` is `a::b`. Any other file gives `None`.
+pub(in crate::analysis) fn library_module_path(file: &Path) -> Option<Vec<String>> {
+    let rest = file.strip_prefix("src").ok()?;
+    let mut parts: Vec<String> = rest
+        .iter()
+        .map(|part| part.to_str().map(str::to_string))
+        .collect::<Option<_>>()?;
+    let last = parts.pop()?;
+    let stem = last.strip_suffix(".rs")?;
+    if parts.is_empty() && stem == "lib" {
+        return Some(Vec::new());
+    }
+    if parts.is_empty() && stem == "main" {
+        return None;
+    }
+    if stem != "mod" {
+        parts.push(stem.to_string());
+    }
+    (!parts.is_empty()
+        && parts.iter().all(|part| {
+            !part.is_empty() && part.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+        }))
+    .then_some(parts)
+}
+
+/// Whether `owner`'s `impl` is a top-level item of its own file (#14407), so
+/// the file's module path is the type's path.
+pub(in crate::analysis) fn owner_impl_is_top_level_item(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+) -> bool {
+    owner_impl_is_root_item_of(index, owner, &owner.file)
+}
+
+/// Whether the root library file (`src/lib.rs`) puts the owner's impl type
+/// `name` at the crate root (#14407): the owner's file is `src/lib.rs` and it
+/// declares `name` exactly once, unaliased; or the owner's file is a module
+/// of the library that declares `name` once, `src/lib.rs` declares no type of
+/// that name, and `src/lib.rs` re-exports it unrenamed by `pub use` of the
+/// owner's module path (`pub use a::Ty;`, optionally `crate::`/`self::`
+/// prefixed). Anything else, including a re-export from another path, is
+/// `false`.
+pub(in crate::analysis) fn root_library_names_owner_type(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    name: &str,
+) -> bool {
+    let Some(root) = index.files().get(Path::new("src/lib.rs")) else {
+        return false;
+    };
+    if !owner_impl_is_top_level_item(index, owner) {
+        return false;
+    }
+    let root_count = super::owner_pin::source_type_declaration_count(&root.source, name);
+    if owner.file == Path::new("src/lib.rs") {
+        return root_count == 1;
+    }
+    let Some(module) =
+        indexed_library_module_path(index, &owner.file).filter(|module| !module.is_empty())
+    else {
+        return false;
+    };
+    let Some(owner_facts) = index.files().get(&owner.file) else {
+        return false;
+    };
+    let target = format!("{}::{name}", module.join("::"));
+    let reexports = super::reveal::flattened_pub_use_paths(&root.source)
+        .into_iter()
+        .filter(|item| {
+            item.alias
+                .as_deref()
+                .unwrap_or_else(|| item.path.rsplit("::").next().unwrap_or(item.path.as_str()))
+                == name
+                || item.path.ends_with("::*")
+        })
+        .collect::<Vec<_>>();
+    root_count == 0
+        && super::owner_pin::source_type_declaration_count(&owner_facts.source, name) == 1
+        && reexports.len() == 1
+        && reexports.iter().all(|item| {
+            item.alias.is_none()
+                && ["", "crate::", "self::"]
+                    .iter()
+                    .any(|prefix| item.path == format!("{prefix}{target}"))
+        })
+}
+
+/// Whether the root library file declares, aliases, renames or `pub use`s any
+/// type named `name`, or holds a `pub use` glob, so `krate::name` or a
+/// `use krate::*;` glob may bind it (#14407).
+pub(in crate::analysis) fn library_root_binds_type_name(index: &RustIndex, name: &str) -> bool {
+    let Some(root) = index.files().get(Path::new("src/lib.rs")) else {
+        return true;
+    };
+    super::owner_pin::source_type_declaration_count(&root.source, name) > 0
+        || super::reveal::flattened_pub_use_paths(&root.source)
+            .iter()
+            .any(|item| {
+                item.path.ends_with("::*")
+                    || item.alias.as_deref().unwrap_or_else(|| {
+                        item.path.rsplit("::").next().unwrap_or(item.path.as_str())
+                    }) == name
+            })
+}
+
+/// The factory name [`initializer_names_impl_type`] passes for a
+/// crate-qualified struct literal head (`krate::Ty { .. }`): no associated
+/// function can be spelled `{`, so it never collides with a constructor name.
+const CRATE_QUALIFIED_STRUCT_LITERAL: &str = "{";
+
+/// The root package's library name when `test` may spell the owner's impl type
+/// through it (`krate::Ty`): the owner is a top-level item of a file of the
+/// root package's library (`src/lib.rs` or a module composed under it) and
+/// `test`, an integration test of the root package, names the library
+/// unshadowed (#14036, #14407). `None` otherwise, so a crate-qualified
+/// spelling then establishes nothing.
+pub(in crate::analysis) fn own_crate_qualifier<'a>(
+    index: &'a RustIndex,
+    test: &TestSummary,
+    owner: &FunctionSummary,
+) -> Option<&'a str> {
+    let krate = index.root_library_name.as_deref()?;
+    (owner_is_root_library_item(index, owner)
+        && root_library_name_is_unshadowed(index, test, krate))
+    .then_some(krate)
+}
+
+/// Whether `krate` is the root package's library identifier and `test` — an
+/// integration test of the root package — names it unshadowed (#14036).
+fn root_library_name_is_unshadowed(index: &RustIndex, test: &TestSummary, krate: &str) -> bool {
+    super::call_identity::under_tests_dir(&test.file)
+        && !path_is_absolute_form(&test.file)
+        && package_prefix(&test.file).is_none()
+        && index.root_library_name.as_deref() == Some(krate)
+        && own_crate_name_unshadowed_in_test(index, test, krate)
+}
+
+/// Whether `crate_name` — the root package's library identifier — names that
+/// library from `test` unshadowed (#8999, #14036): the test is a test-crate root
+/// (`tests/<name>.rs`, `tests/<name>/main.rs`; a module child resolves paths
+/// from a parent file whose bindings this scan does not read), splices no
+/// items, and neither the file nor the test body declares, imports, renames or
+/// globs the name into something else. The caller has already established the
+/// test sits under the root package's `tests/` directory.
+fn own_crate_name_unshadowed_in_test(
+    index: &RustIndex,
+    test: &TestSummary,
+    crate_name: &str,
+) -> bool {
+    own_crate_name_unshadowed_in_test_crate_root(index, &test.file, &test.body, crate_name)
+}
+
+/// [`own_crate_name_unshadowed_in_test`] for any function of a test-crate
+/// root: `file` is the function's file and `body` its own source text. A
+/// same-file helper an integration test calls reads the crate name by the
+/// same rules as the test itself (#8387).
+pub(super) fn own_crate_name_unshadowed_in_test_crate_root(
+    index: &RustIndex,
+    file: &Path,
+    body: &str,
+    crate_name: &str,
+) -> bool {
+    let normalized_test = normalize_path(file);
     let test_segments: Vec<&str> = normalized_test.split('/').collect();
     let is_test_crate_root = match test_segments.as_slice() {
         ["tests", file] => file.ends_with(".rs"),
@@ -2342,18 +2567,16 @@ pub(super) fn own_crate_qualified_entry_path(
         _ => false,
     };
     if !is_test_crate_root {
-        return None;
+        return false;
     }
-    let facts = index.files().get(&test.file)?;
+    let Some(facts) = index.files().get(file) else {
+        return false;
+    };
     if facts.source.contains("include!")
         || super::call_identity::source_may_splice_items(&facts.source, true)
     {
-        return None;
+        return false;
     }
-    // The one identifier the package's library is imported as: `[lib] name`
-    // when set, else the package name (hyphens folded). The package name is
-    // not a second spelling when `[lib] name` differs.
-    let crate_name = index.root_library_name.as_deref()?;
     let stripped_file = strip_comments_and_strings(&facts.source);
     // Any import that may bind the crate name to something else, in the
     // file or in the test body: a glob, or a path ending in that name
@@ -2369,29 +2592,12 @@ pub(super) fn own_crate_qualified_entry_path(
                     || import.alias.as_deref().map(unraw).as_deref() == Some(crate_name)
             })
     };
-    // The call fact's text is the whole source line: match the own-crate
-    // spelling only in code, never in a string or comment beside a foreign
-    // call of the same name.
-    // The line is read from the comment/string-masked FULL file at the call's
-    // own location: a call path inside a multiline raw string or block
-    // comment that ends on a line holding a real call is masked out.
-    let masked_file = mask_comments_and_strings(&facts.source);
-    let code_line = call_line
-        .checked_sub(1)
-        .and_then(|line| masked_file.lines().nth(line))?;
-    let spelled_path: String = std::iter::once(crate_name)
-        .chain(module.iter().map(String::as_str))
-        .chain(std::iter::once(caller.name.as_str()))
-        .collect::<Vec<_>>()
-        .join("::");
-    (is_qualified_owner_call(code_line, &spelled_path)
-        && !file_may_bind_name(&stripped_file, crate_name)
-        && !body_binds_owner_name(&test.body, crate_name)
+    !file_may_bind_name(&stripped_file, crate_name)
+        && !body_binds_owner_name(body, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
         && !may_rebind_crate_name(&facts.source)
-        && !may_rebind_crate_name(&test.body))
-    .then_some(spelled_path)
+        && !may_rebind_crate_name(body)
 }
 
 /// The call's source line as code: the line at `line` of the comment/string-
@@ -3273,9 +3479,85 @@ fn same_test_file(probe_file: &Path, probe_path: Option<&str>, test_file: &Path)
     else {
         return false;
     };
-    test_stem == probe_stem
+    (test_stem == probe_stem
         || test_stem == format!("{probe_stem}_test")
-        || test_stem == format!("{probe_stem}_tests")
+        || test_stem == format!("{probe_stem}_tests"))
+        && probe_path
+            .or(probe_file.to_str())
+            .is_some_and(|probe| companion_scope_admits(probe, test_text))
+}
+
+/// Whether a test file whose module stem matches a changed source file can
+/// be that file's companion (#7527). A shared leaf name is not module
+/// identity: `src/foo.rs` and `src/bar/foo.rs` are different modules, and a
+/// root crate's `src/serialize.rs` is not a member crate's
+/// `crates/b/tests/serialize.rs`.
+///
+/// The changed file's crate is everything before its last `src/` segment.
+/// A test under that crate's `src/` must sit beside the changed module (its
+/// parent module path, ignoring `tests`/`test` directories) or directly
+/// inside it. A test elsewhere in the crate (`tests/foo.rs`,
+/// `tests/foo/mod.rs`) keeps the leaf-name match unless its path shape puts
+/// it in a nested package. A test outside the crate does not pair.
+///
+/// A changed file with no `src/` segment, and an absolute path on either
+/// side, cannot be scoped; those keep the leaf-name match. The test-grip
+/// relation applies the same rule.
+pub(in crate::analysis) fn companion_scope_admits(probe_file: &str, test_file: &str) -> bool {
+    let probe = normalize_path(Path::new(probe_file));
+    let test = normalize_path(Path::new(test_file));
+    if path_is_absolute_form(Path::new(&probe)) || path_is_absolute_form(Path::new(&test)) {
+        return true;
+    }
+    let Some((crate_prefix, probe_module)) = split_at_last_src(&probe) else {
+        return true;
+    };
+    let Some(rest) = test.strip_prefix(crate_prefix) else {
+        return false;
+    };
+    let Some(test_module) = rest.strip_prefix("src/") else {
+        return package_prefix(Path::new(rest)).is_none();
+    };
+    let probe_module = module_components(probe_module);
+    let test_module = module_components(test_module);
+    let (Some((probe_leaf, probe_parent)), Some((test_leaf, test_parent))) =
+        (probe_module.split_last(), test_module.split_last())
+    else {
+        return false;
+    };
+    let beside: Vec<&str> = test_parent
+        .iter()
+        .copied()
+        .filter(|segment| !matches!(*segment, "tests" | "test"))
+        .collect();
+    beside == probe_parent
+        || (beside == probe_module
+            && (test_leaf != probe_leaf || beside.len() != test_parent.len()))
+}
+
+/// Split a normalized relative path at its last `src/` directory segment:
+/// the crate prefix (empty, or ending in `/`) and the path under `src/`.
+fn split_at_last_src(path: &str) -> Option<(&str, &str)> {
+    if let Some(at) = path.rfind("/src/") {
+        return Some((&path[..=at], &path[at + "/src/".len()..]));
+    }
+    path.strip_prefix("src/").map(|under| ("", under))
+}
+
+/// The module path a file under `src/` names: its directories, then its
+/// stem, with `mod.rs` standing for its directory.
+fn module_components(under_src: &str) -> Vec<&str> {
+    let mut parts: Vec<&str> = under_src.split('/').collect();
+    if let Some(last) = parts.last_mut() {
+        *last = match last.rfind('.') {
+            Some(0) | None => last,
+            Some(extension) => &last[..extension],
+        };
+    }
+    if parts.len() > 1 && parts.last() == Some(&"mod") {
+        parts.pop();
+    }
+    parts
 }
 
 /// The changed file's path in the index's root-relative form (#6791).
@@ -4395,6 +4677,65 @@ pub(in crate::analysis) fn let_binding_mentions_type(
     let_binding_mentions_type_at(body, body, body, body.len(), binding, type_name)
 }
 
+/// Whether the latest `let` of `binding` in `body` (everything before the
+/// use, comments and strings masked) is unannotated and initialized by exactly
+/// the crate-qualified struct literal `krate::type_name { .. }` (#14407): the
+/// same latest-`let` reading [`let_binding_certain_type_head`] gives a
+/// one-segment literal. The caller supplies `krate` only after establishing
+/// that it names the owner's own library unshadowed ([`own_crate_qualifier`]),
+/// and rejects a rebinding after the call itself.
+pub(in crate::analysis) fn let_binding_is_crate_qualified_literal(
+    body: &str,
+    binding: &str,
+    krate: &str,
+    type_name: &str,
+) -> bool {
+    // A latest-`let` text read cannot tell block scopes apart, so a second
+    // `let` of the same name anywhere before the use refuses (#14407).
+    let_statement_count(body, binding) == 1
+        && last_let_statement(body, binding).is_some_and(|stmt| {
+            stmt.find('=').is_some_and(|eq| {
+                !stmt[..eq].contains(':')
+                    && initializer_is_crate_qualified_literal(&stmt[eq + 1..], krate, type_name)
+            })
+        })
+}
+
+/// How many `let [mut] binding` statements `body` holds, by the same text
+/// reading as [`last_let_statement`].
+pub(in crate::analysis) fn let_statement_count(body: &str, binding: &str) -> usize {
+    let mut count = 0;
+    let mut rest = body;
+    while let Some(stmt) = last_let_statement(rest, binding) {
+        count += 1;
+        let at = stmt.as_ptr() as usize - rest.as_ptr() as usize;
+        rest = &rest[..at];
+    }
+    count
+}
+
+/// Whether `init` is one struct literal (`Counter { .. }`,
+/// `krate::Counter { .. }`) with nothing after it (#14407).
+pub(in crate::analysis) fn initializer_is_struct_literal(init: &str) -> bool {
+    let init = init.trim();
+    let init = init.strip_suffix(';').map_or(init, str::trim_end);
+    initializer_is_one_head_expr(init) && matches!(type_head(init), Some((_, Some(b'{'))))
+}
+
+/// Whether `init` is one struct literal whose head is exactly
+/// `krate::type_name` (`rg::Counter { n: 5 }`), with nothing after it.
+pub(in crate::analysis) fn initializer_is_crate_qualified_literal(
+    init: &str,
+    krate: &str,
+    type_name: &str,
+) -> bool {
+    let init = init.trim();
+    let init = init.strip_suffix(';').map_or(init, str::trim_end);
+    initializer_is_one_head_expr(init)
+        && matches!(type_head(init), Some((segments, Some(b'{')))
+            if segments.as_slice() == [krate, type_name])
+}
+
 fn let_binding_mentions_type_at(
     prefix: &str,
     full_body: &str,
@@ -4560,7 +4901,21 @@ fn initializer_names_impl_type(
         // the type literal `Ty` when a same-named function could run (#8917).
         ([ty], Some(b'(')) => factory("", ty),
         ([ty, name], Some(b'(')) => *ty == impl_type && factory(ty, name),
+        // `krate::Ty { .. }` (#14407): the same crate-prefix authority (checked
+        // before the variant arm below, which would otherwise take it); the
+        // literal itself names the type, so no constructor is consulted.
+        ([krate, ty], Some(b'{')) if *ty == impl_type => {
+            factory(&format!("{krate}::{ty}"), CRATE_QUALIFIED_STRUCT_LITERAL)
+                // `Ty::Ty { .. }`: a struct variant named like its enum.
+                || (*krate == impl_type && is_variant_name(ty))
+        }
         ([ty, name], _) => *ty == impl_type && is_variant_name(name),
+        // `krate::Ty::name(..)` (#14036): the factory reads the crate prefix
+        // through the `krate::Ty` spelling and accepts only the root
+        // package's own unshadowed library name.
+        ([krate, ty, name], Some(b'(')) if *ty == impl_type => {
+            factory(&format!("{krate}::{ty}"), name)
+        }
         _ => false,
     }
 }
@@ -5568,6 +5923,23 @@ fn inherent_receiver_call_resolves_with(
                     return false;
                 }
                 head == impl_type
+            } else if let Some((krate, ty)) = ty.split_once("::") {
+                // A crate-qualified constructor head (`krate::Ty::new()`,
+                // #14036) or struct literal (`krate::Ty { .. }`, #14407): the
+                // leading segment must be the root package's library name,
+                // unshadowed in this test, and the owner an item of that
+                // library. A literal names the type itself; an associated
+                // call must be a constructor of it.
+                owner.is_some_and(|owner| {
+                    own_crate_qualifier(index, test, owner) == Some(krate)
+                        && if name == CRATE_QUALIFIED_STRUCT_LITERAL {
+                            // The literal checks no constructor, so the crate
+                            // root must name the owner's own type.
+                            root_library_names_owner_type(index, owner, ty)
+                        } else {
+                            associated_constructor_names_own_type(index, ty, name, None)
+                        }
+                })
             } else {
                 if associated_constructor_names_own_type(
                     index,
@@ -7336,6 +7708,13 @@ fn owner_call_relation_reason_gated(
         if !free_function_call_spells_free_call(test, owner_name) {
             return RelationReason::WeakTokenSubstring;
         }
+        // #14069: a renaming import can bind the owner's bare name to
+        // another function (`use super::other as discount;`). When every
+        // spelling in the test is that bare name, the test calls the other
+        // function and the owner never runs.
+        if super::call_identity::test_calls_only_a_renamed_other_function(index, owner, test) {
+            return RelationReason::WeakTokenSubstring;
+        }
         // RIPR-SPEC-0005: a free function whose name another module also
         // defines is not reached when the test's own `use` binds the bare
         // name to that other module's twin.
@@ -8068,6 +8447,106 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn a_crate_qualified_struct_literal_receiver_asks_the_crate_authority() {
+        // #14407: `krate::Ty { .. }` reaches the factory under the literal
+        // marker, so only the crate-prefix authority (never a constructor
+        // lookup) decides it.
+        let asked = std::cell::RefCell::new(Vec::new());
+        let factory = |admit: bool| {
+            let asked = &asked;
+            move |ty: &str, name: &str| {
+                asked.borrow_mut().push((ty.to_string(), name.to_string()));
+                admit
+            }
+        };
+        assert!(initializer_names_impl_type(
+            "probe::Counter { n: 5 }",
+            "Counter",
+            &factory(true)
+        ));
+        assert_eq!(
+            asked.borrow().as_slice(),
+            &[(
+                "probe::Counter".to_string(),
+                CRATE_QUALIFIED_STRUCT_LITERAL.to_string()
+            )]
+        );
+        // The authority refusing (a foreign or shadowed crate name) refuses.
+        assert!(!initializer_names_impl_type(
+            "other::Counter { n: 5 }",
+            "Counter",
+            &factory(false)
+        ));
+        asked.borrow_mut().clear();
+        // Another type, a deeper path or a tuple-struct call never asks.
+        for refused in [
+            "probe::Other { n: 5 }",
+            "probe::inner::Counter { n: 5 }",
+            "probe::Counter(5)",
+        ] {
+            assert!(
+                !initializer_names_impl_type(refused, "Counter", &factory(true)),
+                "{refused}"
+            );
+        }
+        assert!(asked.borrow().is_empty(), "{:?}", asked.borrow());
+        // A struct variant named like its enum (`Mode::Mode { .. }`) keeps
+        // the variant reading when the crate authority refuses (#14407 F4).
+        assert!(initializer_names_impl_type(
+            "Mode::Mode { n: 5 }",
+            "Mode",
+            &factory(false)
+        ));
+    }
+
+    #[test]
+    fn a_library_file_maps_to_its_module_path() {
+        let path = |file: &str| library_module_path(Path::new(file));
+        assert_eq!(path("src/lib.rs"), Some(Vec::new()));
+        assert_eq!(path("src/other.rs"), Some(vec!["other".to_string()]));
+        assert_eq!(path("src/a/mod.rs"), Some(vec!["a".to_string()]));
+        assert_eq!(
+            path("src/a/b.rs"),
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
+        for none in ["src/main.rs", "tests/t.rs", "src/a/b.txt", "lib.rs"] {
+            assert_eq!(path(none), None, "{none}");
+        }
+    }
+
+    #[test]
+    fn a_latest_let_names_the_crate_qualified_literal_exactly() {
+        let reads =
+            |body: &str| let_binding_is_crate_qualified_literal(body, "c", "probe", "Counter");
+        assert!(reads("let mut c = probe::Counter { n: 5 };\n"));
+        assert!(reads("let c = probe::Counter { n: 5 };\n"));
+        for refused in [
+            // Another crate, another type, or a one-segment spelling.
+            "let mut c = other::Counter { n: 5 };\n",
+            "let mut c = probe::Other { n: 5 };\n",
+            "let mut c = Counter { n: 5 };\n",
+            // Not one head expression: the chained value may have another type.
+            "let mut c = probe::Counter { n: 5 }.into();\n",
+            // An annotation is read by the existing typed rule, not this one.
+            "let mut c: Wrapper = probe::Counter { n: 5 };\n",
+            // Another binding, or none.
+            "let mut d = probe::Counter { n: 5 };\n",
+            "",
+            // A second `let` of the name, whose block scope a text read
+            // cannot place (#14407 review).
+            "let mut c = other::Gauge { n: 5 };\n{ let mut c = probe::Counter { n: 1 }; }\n",
+            "let mut c = probe::Counter { n: 5 };\nlet mut c = probe::Counter { n: 1 };\n",
+        ] {
+            assert!(!reads(refused), "{refused:?}");
+        }
+        assert!(initializer_is_crate_qualified_literal(
+            " probe::Counter { n: 5 };",
+            "probe",
+            "Counter"
+        ));
+    }
 
     #[test]
     fn a_test_import_of_a_same_name_twin_does_not_reach_the_owner() {
@@ -12807,6 +13286,86 @@ fn crate_c_score_test() {
         assert!(!same("src/main.rs", "crates/x/src/main.rs"));
         // An unnormalized `..` parent names no module.
         assert!(!same("a/../mod.rs", "b/../mod.rs"));
+    }
+
+    #[test]
+    fn same_leaf_name_in_another_module_or_crate_is_not_a_companion() {
+        // #7527: module identity is the module path within the owning crate,
+        // not the leaf name.
+        let index = RustIndex::default();
+        let same = |probe: &str, test: &str| {
+            let probe_path = super::probe_index_path(Path::new(probe), None, None, &index);
+            super::same_test_file(Path::new(probe), probe_path.as_deref(), Path::new(test))
+        };
+        // Same-named modules in different branches of one crate.
+        assert!(!same("src/foo.rs", "src/bar/foo.rs"));
+        assert!(!same("src/foo.rs", "src/bar/foo/mod.rs"));
+        assert!(!same("src/bar/foo.rs", "src/foo.rs"));
+        assert!(!same("src/foo/mod.rs", "src/bar/foo_tests.rs"));
+        assert!(!same("crates/a/src/foo.rs", "crates/a/src/bar/foo.rs"));
+        // A root crate's module is not a member crate's test, either way.
+        assert!(!same("src/serialize.rs", "crates/b/tests/serialize.rs"));
+        assert!(!same("src/serialize/mod.rs", "crates/b/tests/serialize.rs"));
+        assert!(!same("src/serialize.rs", "crates/b/src/serialize.rs"));
+        assert!(!same("crates/a/src/serialize.rs", "tests/serialize.rs"));
+        assert!(!same(
+            "crates/a/src/serialize.rs",
+            "crates/b/tests/serialize.rs"
+        ));
+        // A member crate kept under `src/` is its own crate.
+        assert!(same("src/tools/x/src/foo.rs", "src/tools/x/tests/foo.rs"));
+        assert!(!same("src/foo.rs", "src/tools/x/tests/foo.rs"));
+        // Deliberate companions keep pairing: beside the module, in a
+        // `tests` directory beside it, inside it, and in the crate's `tests/`.
+        assert!(same("src/bar/foo.rs", "src/bar/foo_tests.rs"));
+        assert!(same("src/bar/foo.rs", "src/bar/tests/foo.rs"));
+        assert!(same("src/foo.rs", "src/tests/foo.rs"));
+        assert!(same("src/bar/foo.rs", "src/bar/foo/foo_tests.rs"));
+        assert!(same("src/bar/foo/mod.rs", "src/bar/foo/tests/foo.rs"));
+        assert!(same("src/bar/foo.rs", "tests/foo.rs"));
+        assert!(same("src/bar/foo.rs", "tests/foo_test.rs"));
+        assert!(same("crates/a/src/bar/foo.rs", "crates/a/tests/foo/mod.rs"));
+        // A nested module of the same name is a child, not a companion.
+        assert!(!same("src/foo.rs", "src/foo/foo.rs"));
+        // Unscopable paths keep the leaf-name match.
+        assert!(same("/abs/ws/src/foo.rs", "tests/foo.rs"));
+        assert!(same("lib/foo.rs", "lib/foo_tests.rs"));
+    }
+
+    #[test]
+    fn root_crate_change_does_not_relate_a_member_crates_same_named_test_file() {
+        // #7527: a root-package owner has no package prefix, so the package
+        // guard never ran and `crates/b/tests/serialize.rs` paired with the
+        // root crate's `src/serialize.rs` on the leaf name. The same-named
+        // module in another branch of the crate paired the same way.
+        let owner = function("src/serialize.rs", "write_escaped");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![
+                test(
+                    "crates/b/tests/serialize.rs",
+                    "member_case",
+                    "assert!(true);",
+                ),
+                test(
+                    "src/wire/serialize.rs",
+                    "other_module_case",
+                    "assert!(true);",
+                ),
+                test("tests/serialize.rs", "companion_case", "assert!(true);"),
+            ],
+            ..Default::default()
+        });
+        let probe = probe("src/serialize.rs", "marker");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        let same_file: Vec<&str> = related
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::SameTestFile)
+            .map(|(test, _)| test.name.as_str())
+            .collect();
+
+        assert_eq!(same_file, ["companion_case"], "{related:?}");
     }
 
     #[test]

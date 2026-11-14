@@ -93,6 +93,25 @@ fn contract_violations(workflow: &str) -> Vec<String> {
         }
         previous = Some(index);
     }
+    for (name, id) in [
+        ("Prepare independent user-text base", "user_text_base"),
+        (
+            "Recover pinned base compiler arity if needed",
+            "user_text_recovery",
+        ),
+        (
+            "User-text goldens judged by the merge-base matcher",
+            "user_text_matcher",
+        ),
+    ] {
+        let matches: Vec<_> = blocks
+            .iter()
+            .filter(|block| block.lines().next() == Some(&format!("name: {name}")))
+            .collect();
+        if matches.len() != 1 || step_id(matches[0]) != Some(id) {
+            findings.push(format!("{name}: expected unique step with id {id}"));
+        }
+    }
     let summaries: Vec<_> = blocks
         .iter()
         .filter(|block| step_id(block) == Some("gate_summary"))
@@ -127,6 +146,13 @@ fn contract_violations(workflow: &str) -> Vec<String> {
             findings.push(format!("summary: {id} must retain its actual outcome"));
         }
     }
+    for id in ["user_text_base", "user_text_recovery", "user_text_matcher"] {
+        let variable = format!("{}_RESULT", id.to_ascii_uppercase());
+        let binding = format!("          {variable}: ${{{{ steps.{id}.outcome }}}}");
+        if !summary.lines().any(|line| line == binding) {
+            findings.push(format!("summary: {id} must bind its actual outcome"));
+        }
+    }
     if !summary.lines().any(|line| {
         line == "          PR_EVIDENCE_SCOPE: ${{ steps.pr_evidence.outputs.evidence }}"
     }) {
@@ -139,6 +165,202 @@ fn contract_violations(workflow: &str) -> Vec<String> {
 fn rust_gate_workflow_preserves_complete_ordered_command_inventory() {
     let findings = contract_violations(WORKFLOW);
     assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn user_text_summary_rejects_missing_or_swapped_outcome_bindings() {
+    for id in ["user_text_base", "user_text_recovery", "user_text_matcher"] {
+        let binding = format!("steps.{id}.outcome");
+        for replacement in ["success", "steps.precommit.outcome"] {
+            let changed = WORKFLOW.replace(&binding, replacement);
+            assert_ne!(changed, WORKFLOW);
+            assert!(
+                contract_violations(&changed)
+                    .contains(&format!("summary: {id} must bind its actual outcome"))
+            );
+        }
+        let step = format!("        id: {id}");
+        let changed = WORKFLOW.replace(&step, "        id: wrong_step");
+        assert_ne!(changed, WORKFLOW);
+        assert!(
+            contract_violations(&changed)
+                .iter()
+                .any(|finding| finding.contains(id))
+        );
+    }
+}
+
+#[cfg(unix)]
+struct SummaryScratch(std::path::PathBuf);
+
+#[cfg(unix)]
+impl SummaryScratch {
+    fn new(case: &str) -> std::io::Result<Self> {
+        let path = std::env::temp_dir().join(format!(
+            "ripr-user-text-summary-{}-{case}",
+            std::process::id()
+        ));
+        std::fs::File::create_new(&path)?;
+        Ok(Self(path))
+    }
+}
+
+#[cfg(unix)]
+impl Drop for SummaryScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn user_text_summary_reports_each_actual_outcome_and_missing_value()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::fs;
+    use std::process::Command;
+
+    let summary = WORKFLOW
+        .split("\n      - ")
+        .find(|block| step_id(block) == Some("gate_summary"))
+        .ok_or("gate summary missing")?;
+    let script = summary
+        .split_once("        run: |\n")
+        .ok_or("summary shell missing")?
+        .1
+        .lines()
+        .map(|line| line.strip_prefix("          ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let variables = [
+        "USER_TEXT_BASE_RESULT",
+        "USER_TEXT_RECOVERY_RESULT",
+        "USER_TEXT_MATCHER_RESULT",
+    ];
+    let labels = ["user_text_base", "user_text_recovery", "user_text_matcher"];
+    let scratch = SummaryScratch::new("outcomes")?;
+    let path = &scratch.0;
+    for target in 0..3 {
+        for outcome in ["success", "failure", "skipped", "cancelled", ""] {
+            let mut command = Command::new("bash");
+            command
+                .arg("-eo")
+                .arg("pipefail")
+                .arg("-c")
+                .arg(&script)
+                .env_clear()
+                .env("GITHUB_STEP_SUMMARY", path)
+                .env("GITHUB_SHA", "workflow-sha")
+                .env("SUBJECT_HEAD", "subject-head")
+                .env("INTEGRATION_SUBJECT", "integration-sha")
+                .env("INTEGRATION_TREE", "integration-tree")
+                .env("GITHUB_RUN_ID", "run-id")
+                .env("GITHUB_RUN_ATTEMPT", "attempt-id")
+                .env("EXECUTION_ROUTE", "route")
+                .env("PRECOMMIT_RESULT", "skipped");
+            for (index, variable) in variables.iter().enumerate() {
+                if index != target || !outcome.is_empty() {
+                    command.env(variable, if index == target { outcome } else { "success" });
+                }
+            }
+            fs::write(path, "")?;
+            assert!(command.status()?.success());
+            let rendered = fs::read_to_string(path)?;
+            for (index, label) in labels.iter().enumerate() {
+                let expected = if index == target {
+                    if outcome.is_empty() {
+                        "not_reported"
+                    } else {
+                        outcome
+                    }
+                } else {
+                    "success"
+                };
+                assert!(
+                    rendered.contains(&format!("| {label} | {expected} |")),
+                    "missing or wrong row: {rendered}"
+                );
+            }
+            for expected in [
+                "workflow-sha",
+                "subject-head",
+                "integration-sha",
+                "integration-tree",
+                "run-id",
+                "attempt-id",
+                "route",
+                "| precommit | skipped |",
+            ] {
+                assert!(
+                    rendered.contains(expected),
+                    "missing identity or downstream result {expected}: {rendered}"
+                );
+            }
+        }
+    }
+    fs::remove_file(path)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn user_text_summary_scratch_cleans_up_on_success_error_and_unwind()
+-> Result<(), Box<dyn std::error::Error>> {
+    let scratch = SummaryScratch::new("normal")?;
+    let normal_path = scratch.0.clone();
+    drop(scratch);
+    assert!(!normal_path.exists());
+
+    let error_path = std::env::temp_dir().join(format!(
+        "ripr-user-text-summary-{}-error",
+        std::process::id()
+    ));
+    let error = (|| -> std::io::Result<()> {
+        let scratch = SummaryScratch::new("error")?;
+        // Pin the exact scratch path so a naming-scheme change cannot let the
+        // error and unwind arms inspect an unrelated path.
+        assert_eq!(scratch.0, error_path);
+        assert!(error_path.exists());
+        Err(std::io::Error::other("injected error"))
+    })();
+    assert!(matches!(error, Err(ref error) if error.to_string() == "injected error"));
+    assert!(!error_path.exists());
+
+    let unwind_path = std::env::temp_dir().join(format!(
+        "ripr-user-text-summary-{}-unwind",
+        std::process::id()
+    ));
+    let unwind = std::panic::catch_unwind(|| -> std::io::Result<()> {
+        let scratch = SummaryScratch::new("unwind")?;
+        assert_eq!(scratch.0, unwind_path);
+        assert!(unwind_path.exists());
+        std::panic::resume_unwind(Box::new("injected unwind"));
+    });
+    // `assert!(x.is_err())` trips clippy::assertions_on_result_states and
+    // `unwrap_err` trips clippy::unwrap_used; `matches!` keeps the intent and
+    // pins the injected payload so an unrelated panic cannot pass as it.
+    assert!(matches!(unwind, Err(ref payload)
+        if payload.downcast_ref::<&str>() == Some(&"injected unwind")));
+    assert!(!unwind_path.exists());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn user_text_summary_scratch_preserves_replacement_directory()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::fs;
+
+    let scratch = SummaryScratch::new("replacement")?;
+    let replacement = scratch.0.clone();
+    fs::remove_file(&replacement)?;
+    fs::create_dir(&replacement)?;
+    let sentinel = replacement.join("summary.md");
+    fs::write(&sentinel, "must survive")?;
+    drop(scratch);
+    assert_eq!(fs::read_to_string(&sentinel)?, "must survive");
+    fs::remove_file(sentinel)?;
+    fs::remove_dir(replacement)?;
+    Ok(())
 }
 
 #[test]
@@ -483,6 +705,13 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
             ));
         }
     }
+    // The partition lists come from the prepared binaries before the run. Taken after
+    // it, one shard spent four to six minutes in the listing on every run (#12915).
+    let line_of = |needle: &str| shards.lines().position(|line| line.trim() == needle);
+    match (line_of(SHARDED_LIST_COMMAND), line_of(SHARDED_TEST_COMMAND)) {
+        (Some(list), Some(test)) if list < test => {}
+        _ => findings.push("shards: the partition list must precede the test run".to_string()),
+    }
     if shards
         .lines()
         .filter(|line| line.trim() == "tool: nextest@0.9.149")
@@ -516,11 +745,13 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
             findings.push(format!("shards: verify lost `{required}`"));
         }
     }
-    // The hosted route must run the shards behind its gates job and may not report
-    // the required result green without them.
+    // The hosted route must start the shards on the hosted gates job's own
+    // condition (alongside it, so the required context fits the merge queue's
+    // status-check timeout, #4838) and may not report the required result green
+    // without them.
     for required in [
         "      test-shards: 4\n",
-        "  rust-github-tests:\n    name: Ripr Rust Small tests on GitHub Hosted\n    needs: [rust-github]\n    if: ${{ !cancelled() && needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml\n",
+        "  rust-github-tests:\n    name: Ripr Rust Small tests on GitHub Hosted\n    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]\n    if: >-\n      !cancelled() &&\n      needs.admission.result == 'success' &&\n      needs.detect-docs-only.result == 'success' &&\n      needs.admission.outputs.docs_only != 'true' &&\n      (needs.route.outputs.router_target == 'github' ||\n      (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') ||\n      (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') ||\n      (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))\n    uses: ./.github/workflows/rust-test-shards.yml\n",
         "rust-github, rust-github-tests, docs-gate,",
         "GITHUB_TESTS_RESULT: ${{ needs.rust-github-tests.result }}",
         "elif [ \"$GITHUB_TESTS_RESULT\" != \"success\" ]; then status=fail",
@@ -579,6 +810,22 @@ fn sharded_hosted_tests_reject_legacy_and_mixed_partition_commands() {
             )));
         }
     }
+}
+
+#[test]
+fn sharded_hosted_tests_list_the_partition_before_the_run() {
+    let expected = "shards: the partition list must precede the test run".to_string();
+    assert!(!shard_contract_violations(SHARDS, ROUTED).contains(&expected));
+    // Swap the two commands: the run then precedes the listing again.
+    let swapped = SHARDS
+        .replace(SHARDED_LIST_COMMAND, "\u{0}")
+        .replace(SHARDED_TEST_COMMAND, SHARDED_LIST_COMMAND)
+        .replace('\u{0}', SHARDED_TEST_COMMAND);
+    assert_ne!(swapped, SHARDS);
+    assert!(
+        shard_contract_violations(&swapped, ROUTED).contains(&expected),
+        "a listing after the run was not rejected"
+    );
 }
 
 #[test]
@@ -678,8 +925,8 @@ fn routed_result_cannot_pass_without_the_hosted_shards() {
             "rust-github, docs-gate,",
         ),
         (
-            "needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml",
-            "needs.rust-github.result != 'cancelled' }}\n    uses: ./.github/workflows/rust-test-shards.yml",
+            "scratch_status == 'tempfail'))\n    uses: ./.github/workflows/rust-test-shards.yml",
+            "scratch_status == 'tempfail')) || always()\n    uses: ./.github/workflows/rust-test-shards.yml",
         ),
     ] {
         let changed = ROUTED.replace(from, to);
