@@ -4,7 +4,7 @@
 //! workspace. Every row changes `score` in `src/b.rs` from `x + 1` to `x + 2`
 //! beside a sibling module holding `use rayon::prelude::*;`.
 
-use ripr::{CheckInput, ExposureClass, Mode, OutputFormat, check_workspace};
+use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -14,6 +14,7 @@ const OWNER: &str = "pub fn score(x: i32) -> i32 { x + 2 }\n";
 const PLAIN: &str = "pub const K: i32 = 1;\n";
 const NAMESAKE: &str = "pub fn score(x: i32) -> i32 { x + 3 }\n";
 const NESTED: &str = "pub mod inner { include!(\"generated/g.rs\"); }\n";
+const SCIP_GENERATED: &str = include_str!("../src/analysis/scip/generated/scip.rs");
 const DIFF: &str = "diff --git a/src/b.rs b/src/b.rs
 index 1111111..2222222 100644
 --- a/src/b.rs
@@ -76,7 +77,7 @@ impl TempRepo {
         Ok(repo)
     }
 
-    fn class(&self) -> Result<ExposureClass, String> {
+    fn finding(&self) -> Result<Finding, String> {
         let output = check_workspace(CheckInput {
             root: self.root.clone(),
             base: None,
@@ -86,19 +87,38 @@ impl TempRepo {
             include_unchanged_tests: true,
             ..CheckInput::default()
         })?;
-        let mut found = output.findings.iter().filter(|finding| {
+        let mut found = output.findings.into_iter().filter(|finding| {
             finding.probe.location.line == 1 && finding.probe.location.file.ends_with("b.rs")
         });
         match (found.next(), found.next()) {
-            (Some(finding), None) => Ok(finding.class.clone()),
+            (Some(finding), None) => Ok(finding),
             _ => Err("premise: exactly one finding on the rewritten line".to_string()),
         }
+    }
+
+    fn class(&self) -> Result<ExposureClass, String> {
+        Ok(self.finding()?.class)
     }
 }
 
 impl Drop for TempRepo {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+/// The one `assertion not credited:` line a refused finding carries.
+fn only_refusal(found: &Finding) -> Result<&str, String> {
+    let mut refusals = found
+        .evidence
+        .iter()
+        .filter(|line| line.starts_with("assertion not credited: "));
+    match (refusals.next(), refusals.next()) {
+        (Some(refusal), None) => Ok(refusal),
+        _ => Err(format!(
+            "premise: exactly one assertion refusal, got {:?}",
+            found.evidence
+        )),
     }
 }
 
@@ -198,6 +218,26 @@ fn a_read_inert_fragment_in_the_library_leaves_its_tests_credited() -> Result<()
                         "pub mod inner { include!(\"fixtures/g.rs\"); }\n".to_string(),
                     ),
                     ("src/fixtures/g.rs", PLAIN.to_string()),
+                ],
+            ),
+            (
+                "a nested include whose fragment declares only inline modules",
+                vec![
+                    (
+                        "src/lib.rs",
+                        "pub mod a;\npub mod analysis;\npub mod b;\n".to_string(),
+                    ),
+                    ("src/analysis/mod.rs", "pub mod scip;\n".to_string()),
+                    (
+                        "src/analysis/scip/mod.rs",
+                        "pub mod generated { pub mod scip { include!(\"generated/scip.rs\"); } }\n"
+                            .to_string(),
+                    ),
+                    (
+                        "src/analysis/scip/generated/scip.rs",
+                        SCIP_GENERATED.to_string(),
+                    ),
+                    ("src/b.rs", own_unit()),
                 ],
             ),
         ],
@@ -331,6 +371,178 @@ fn a_fragment_symlinked_out_of_the_repository_is_not_read() -> Result<(), String
         ExposureClass::StaticUnknown => Ok(()),
         other => Err(format!("symlinked fragment: got {other:?}")),
     }
+}
+
+#[test]
+fn the_refusal_names_the_include_that_makes_placement_unavailable() -> Result<(), String> {
+    // `benches/` sorts before `src/`, so its include limitation is first in
+    // iteration order; it stays inside the bench crate and must not be named.
+    let repo = TempRepo::create(&[
+        (
+            "src/lib.rs",
+            "pub mod a;\npub mod aa;\npub mod b;\npub mod gen;\n",
+        ),
+        (
+            "src/aa.rs",
+            "pub mod inert { include!(\"generated/plain.rs\"); }\n",
+        ),
+        ("src/generated/plain.rs", PLAIN),
+        ("src/b.rs", &own_unit()),
+        ("src/gen.rs", NESTED),
+        ("src/generated/g.rs", "mod y;\n"),
+        (
+            "benches/bench.rs",
+            "mod frag { include!(\"fixtures/g.rs\"); }\nfn main() {}\n",
+        ),
+        ("benches/fixtures/g.rs", PLAIN),
+    ])?;
+    let found = repo.finding()?;
+    assert_eq!(found.class, ExposureClass::StaticUnknown);
+    let refusal = only_refusal(&found)?;
+    for expected in [
+        "placement is unavailable",
+        "`use rayon::prelude::*;` at src/a.rs:1 could not be confined",
+        "first include limitation: `include!(",
+        "generated/g.rs",
+        "src/gen.rs:1",
+        "rust_include_nested_module_context",
+    ] {
+        assert!(
+            refusal.contains(expected),
+            "{expected:?} missing from {refusal:?}"
+        );
+    }
+    // The earlier bench-crate include is not workspace-reaching, so it is not
+    // the one named.
+    assert!(!refusal.contains("benches"), "{refusal:?}");
+
+    Ok(())
+}
+
+#[test]
+fn a_separate_placement_failure_keeps_the_direct_glob_explanation() -> Result<(), String> {
+    // The mounting include is not the only reason placement is unavailable:
+    // the unrelated parser fallback independently disables it too.
+    let repo = TempRepo::create(&[
+        (
+            "src/lib.rs",
+            "pub mod a;\npub mod b;\npub mod broken;\npub mod gen;\n",
+        ),
+        ("src/broken.rs", "fn broken(\n"),
+        ("src/b.rs", &own_unit()),
+        ("src/gen.rs", NESTED),
+        ("src/generated/g.rs", "mod y;\n"),
+    ])?;
+    let found = repo.finding()?;
+    assert_eq!(found.class, ExposureClass::StaticUnknown);
+    let refusal = only_refusal(&found)?;
+    assert!(
+        refusal.contains("`use rayon::prelude::*;` at src/a.rs:1 glob-imports"),
+        "{refusal:?}"
+    );
+    for unexpected in ["placement is unavailable", "first include limitation"] {
+        assert!(!refusal.contains(unexpected), "{refusal:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_public_glob_keeps_its_direct_explanation_with_an_include_present() -> Result<(), String> {
+    // A `pub use ...::*;` is unconfined by construction, so no placement
+    // decision can change it: naming an include would blame an unrelated
+    // cause. The direct foreign-glob explanation stays.
+    let repo = TempRepo::create(&[
+        ("src/a.rs", "pub use rayon::prelude::*;\n"),
+        ("src/b.rs", &own_unit()),
+        ("src/gen.rs", NESTED),
+        ("src/generated/g.rs", "mod y;\n"),
+    ])?;
+    let found = repo.finding()?;
+    assert_eq!(found.class, ExposureClass::StaticUnknown);
+    let refusal = only_refusal(&found)?;
+    assert!(
+        refusal.contains("`pub use rayon::prelude::*;` at src/a.rs:1 glob-imports"),
+        "{refusal:?}"
+    );
+    for unexpected in ["placement is unavailable", "include limitation"] {
+        assert!(!refusal.contains(unexpected), "{refusal:?}");
+    }
+
+    // A public glob is unconfined regardless of placement, so it keeps its
+    // direct explanation instead of borrowing the include's.
+    let public = TempRepo::create(&[
+        (
+            "src/a.rs",
+            "pub use rayon::prelude::*;\npub fn twice(x: i32) -> i32 { x * 2 }\n",
+        ),
+        ("src/b.rs", &own_unit()),
+        ("src/gen.rs", NESTED),
+        ("src/generated/g.rs", "mod y;\n"),
+    ])?
+    .finding()?;
+    assert_eq!(public.class, ExposureClass::StaticUnknown);
+    let public = public
+        .evidence
+        .iter()
+        .find(|line| line.starts_with("assertion not credited: "))
+        .ok_or_else(|| "premise: the public glob keeps its refusal".to_string())?;
+    assert!(
+        public.contains("`pub use rayon::prelude::*;` at src/a.rs:1 glob-imports"),
+        "{public:?}"
+    );
+    assert!(!public.contains("first include limitation"), "{public:?}");
+
+    Ok(())
+}
+
+#[test]
+fn an_unplaced_files_glob_keeps_its_direct_explanation() -> Result<(), String> {
+    // `src/a.rs` is in no crate: even with placement on, its private glob
+    // would not be confined, so the workspace include is not the cause of its
+    // ambiguity and must not be named.
+    let repo = TempRepo::create(&[
+        ("src/lib.rs", "pub mod b;\npub mod gen;\n"),
+        ("src/b.rs", &own_unit()),
+        ("src/gen.rs", NESTED),
+        ("src/generated/g.rs", "mod y;\n"),
+    ])?;
+    let found = repo.finding()?;
+    assert_eq!(found.class, ExposureClass::StaticUnknown);
+    let refusal = only_refusal(&found)?;
+    assert!(
+        refusal.contains("`use rayon::prelude::*;` at src/a.rs:1 glob-imports"),
+        "{refusal:?}"
+    );
+    assert!(!refusal.contains("placement is unavailable"), "{refusal:?}");
+
+    Ok(())
+}
+
+#[test]
+fn a_glob_reaching_from_an_ancestor_keeps_its_direct_explanation() -> Result<(), String> {
+    // The lib root globs a foreign crate and the test's module imports it
+    // through `use super::*;`. With placement on the glob still reaches the
+    // assertion, so the include is not why credit is withheld.
+    let repo = TempRepo::create(&[
+        ("src/a.rs", PLAIN),
+        (
+            "src/lib.rs",
+            "use rayon::prelude::*;\npub mod b;\npub mod gen;\n",
+        ),
+        ("src/b.rs", &own_unit()),
+        ("src/gen.rs", NESTED),
+        ("src/generated/g.rs", "mod y;\n"),
+    ])?;
+    let found = repo.finding()?;
+    assert_eq!(found.class, ExposureClass::StaticUnknown);
+    let refusal = only_refusal(&found)?;
+    assert!(
+        refusal.contains("`use rayon::prelude::*;` at src/lib.rs:1 glob-imports"),
+        "{refusal:?}"
+    );
+    assert!(!refusal.contains("first include limitation"), "{refusal:?}");
+
+    Ok(())
 }
 
 #[test]
