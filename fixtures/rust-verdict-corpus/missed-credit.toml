@@ -282,7 +282,7 @@ reason = "Tests discriminate the change but ripr abstains because the test reach
 
 [[entry]]
 case = "semver-less-pre"
-reason = "Tests discriminate the change but ripr abstains because the test reaches the owner only through a path ripr cannot bind statically (no test path found, or tests share only a name token or file with the owner) (#12769; parent #12766). Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains at two stages (#12771, #12769; parent #12766): reach is only a name-token link to `matches_less`, and infection is unknown, because `cmp.pre` and `ver.pre` are fields of values built by the crate's full `Version`/`VersionReq` parser from strings. The bounded parse evaluator (RIPR-SPEC-0158) folds only a scalar `helper(\"DIGITS\")` argument, so it does not read this row. Delete this entry when the row credits."
 
 [[entry]]
 case = "semver-op-ge-reads-greater"
@@ -298,7 +298,7 @@ reason = "Tests discriminate the change but ripr abstains because the test reach
 
 [[entry]]
 case = "semver-tilde-pre-ge"
-reason = "Tests discriminate the change but ripr abstains because the test reaches the owner only through a path ripr cannot bind statically (no test path found, or tests share only a name token or file with the owner) (#12769; parent #12766). Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains at two stages (#12771, #12769; parent #12766): reach is only a name-token link to `matches_tilde`, and infection is unknown, because `cmp.pre` and `ver.pre` are fields of values built by the crate's full `Version`/`VersionReq` parser from strings. The bounded parse evaluator (RIPR-SPEC-0158) folds only a scalar `helper(\"DIGITS\")` argument, so it does not read this row. Delete this entry when the row credits."
 
 [[entry]]
 case = "serde-derive-rename-field-upper"
@@ -546,7 +546,7 @@ reason = "Truth is discriminated but the edit is a test-only helper, so ripr rea
 
 [[entry]]
 case = "spec0114-helper-chain-public-api"
-reason = "Tests discriminate the change but ripr abstains because the test reaches the owner only through a path ripr cannot bind statically (no test path found, or tests share only a name token or file with the owner) (#12769; parent #12766). Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains at two stages (#12771, #12769; parent #12766): reach is only a name-token link, because the test enters through a helper that calls the public API, and infection is unknown, because the compared operands are a struct field built by the runtime string parse `Req::parse(\">2\")` and a helper parameter. The bounded parse evaluator (RIPR-SPEC-0158) folds only a whole `helper(\"DIGITS\")` argument to a scalar, so it does not read this row; neither fix alone credits it. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec0114-test-calls-owner-macro"

@@ -12976,6 +12976,7 @@ tests = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::a_fact_from_another_test_file_does_not_pair_a_loan_call_on_the_same_line",
   "crates/ripr/src/analysis/classify/helper_transfer/multi_caller_tests.rs",
   "crates/ripr/src/analysis/classify/helper_transfer/method_hop_tests.rs",
+  "crates/ripr/src/analysis/classify/argument_fold/parse_helper.rs::tests",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_evaluates_exact_boundary_from_test_inputs",
 ]
 fixtures = [

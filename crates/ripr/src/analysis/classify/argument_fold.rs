@@ -9,6 +9,8 @@
 //! (a call, a method, a cast, a `mut` or shadowed name, a value that
 //! over- or underflows) keeps the unreadable reading.
 
+mod parse_helper;
+
 use super::value_transfer::{EvalOutcome, ExactInputs, TypedValue, evaluate_initializer};
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::rust_index::{RustIndex, TestSummary};
@@ -191,6 +193,16 @@ fn only_super_glob(masked: &str) -> bool {
     super_glob
 }
 
+/// The decimal value a whole `helper("DIGITS")` argument parses to; see
+/// [`parse_helper`].
+pub(super) fn folded_parse_argument(
+    test_body: &str,
+    argument: &str,
+    scope: FoldScope<'_>,
+) -> Option<String> {
+    parse_helper::folded_parse_call(test_body, argument, scope)
+}
+
 /// The decimal value `argument` computes in a test whose body is
 /// `test_body`, when every operand is exact; `None` otherwise.
 pub(super) fn folded_argument(
@@ -198,6 +210,10 @@ pub(super) fn folded_argument(
     argument: &str,
     scope: FoldScope<'_>,
 ) -> Option<String> {
+    // RIPR-SPEC-0158: `level("12")` through the file's one closed parse helper.
+    if let Some(value) = folded_parse_argument(test_body, argument, scope) {
+        return Some(value);
+    }
     let text = argument.trim();
     if text.is_empty()
         || !text.chars().all(|ch| {

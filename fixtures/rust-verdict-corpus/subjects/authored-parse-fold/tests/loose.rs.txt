@@ -1,0 +1,11 @@
+use parse_fold::classify_grade;
+
+fn grade_from(text: &str) -> u32 {
+    text.parse().unwrap()
+}
+
+#[test]
+fn far_grades_land_on_their_sides() {
+    assert_eq!(classify_grade(grade_from("3")), "low");
+    assert_eq!(classify_grade(grade_from("20")), "high");
+}
