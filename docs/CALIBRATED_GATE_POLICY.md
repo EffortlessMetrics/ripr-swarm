@@ -42,7 +42,9 @@ versioned producer-owned comparison. Only `introduced_by_change`,
 blocking count. Resolved, existing, adjacent, baseline, and unknown
 attributions remain visible but non-blocking. Missing, ambiguous, or low
 coverage comparison evidence is disclosed and fails closed rather than being
-treated as a complete causal comparison.
+treated as a complete causal comparison. Current `cargo xtask ripr-pr` runs do
+not produce this artifact or perform canonical snapshot comparisons; readers
+retain compatibility with historical or externally supplied artifacts.
 
 Only `--pr-guidance`, `--mode`, `--out`, and `--out-md` are required for the
 smallest local run. Other inputs refine the decision when available:
