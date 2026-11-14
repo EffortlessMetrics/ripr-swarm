@@ -8246,7 +8246,10 @@ fn oriented_comparison_operands(
 /// text the bounded scanner cannot balance (with or without a connective)
 /// and a continuation line that starts with `&&` or `||`, has no single
 /// boundary here.
-fn changed_comparison_conjunct<'a>(expression: &'a str, before: Option<&str>) -> Option<&'a str> {
+pub(in crate::analysis) fn changed_comparison_conjunct<'a>(
+    expression: &'a str,
+    before: Option<&str>,
+) -> Option<&'a str> {
     let operands = top_level_connective_operands(expression)?;
     if operands.len() == 1 {
         return Some(expression);

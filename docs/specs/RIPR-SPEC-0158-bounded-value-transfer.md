@@ -197,6 +197,9 @@ exercised boundary from a missing one.
   comparison's boundary can be observed there. Masking by a sibling operand
   stays with propagation: the predicate finding of `label == "beta" && on`
   called only with `on = false` reads `propagation_unknown`, not `exposed`.
+  The Rust canonical gap discriminator reads the same single comparison
+  (#14719), so `a && s.len() > 1` mints `s.len==1`; every other predicate
+  shape keeps the whole-line discriminator it minted before.
 - Literal byte-length boundary (#9637): diff analysis also reads one closed
   owner shape, `fn f(text: &str, width: usize) -> bool { let end =
   text.as_bytes().len(); end <= width }`, with immutable parameters and local,

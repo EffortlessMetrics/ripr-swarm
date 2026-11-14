@@ -1,0 +1,6 @@
+# Registers the compound-predicate canonical gap discriminator (#14719) under RIPR-SPEC-0158.
+[[extend]]
+id = "RIPR-SPEC-0158"
+tests = [
+  "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::compound_predicate_names_only_its_one_comparison",
+]
