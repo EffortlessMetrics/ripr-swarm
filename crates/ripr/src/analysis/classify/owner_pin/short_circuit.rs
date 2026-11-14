@@ -256,6 +256,160 @@ impl ShortCircuitTail {
     }
 }
 
+/// #8361: an edit whose only difference is whole operands of one top-level
+/// `&&` chain or one `||` chain (a dropped or an added guard), in a bool
+/// owner whose whole body is that tail.
+///
+/// `g && x` and `x` return the same value on every input where `g` is
+/// `true`, and `g || x` and `x` wherever `g` is `false`. A pinned call
+/// whose literal arguments give every such operand that value runs both
+/// versions to the same result, so no assertion on that call can notice the
+/// edit. The operands that differ are read as [`ShortCircuitTail`] operands
+/// (a bool parameter or one comparison over parameters and literals: they
+/// cannot call, panic or write); the operands both versions keep are
+/// compared as text and never read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::analysis::classify) struct GuardOperandChange {
+    /// `&&` or `||`.
+    operator: &'static str,
+    parameters: Vec<String>,
+    /// The operands only one version holds.
+    differing: Vec<Operand>,
+}
+
+impl GuardOperandChange {
+    /// The change when `changed` (the owner's whole tail) and `before` (its
+    /// pre-edit text) are the same chain but for whole top-level operands
+    /// that only one of them holds. `None` for anything else: a rewritten
+    /// operand, both operators, a differing operand inside a parenthesis or
+    /// one this module cannot evaluate.
+    pub(in crate::analysis::classify) fn read(
+        function: &str,
+        changed: &str,
+        before: &str,
+    ) -> Option<Self> {
+        let parameters = parameter_names(function)?;
+        // As for `ShortCircuitTail::parse`: an earlier statement could
+        // rebind a parameter, so the call's arguments must be what the
+        // operands read.
+        if !is_whole_body(function, changed) {
+            return None;
+        }
+        let before = before.trim().trim_end_matches(';').trim();
+        let before = before.strip_prefix("return ").map_or(before, str::trim);
+        let (longer, shorter) = if before.len() > changed.len() {
+            (before, changed)
+        } else {
+            (changed, before)
+        };
+        let masked = mask_comments_and_strings(longer);
+        if masked.len() != longer.len() || masked.contains("//") || masked.contains("/*") {
+            return None;
+        }
+        let operator = match (masked.contains("&&"), masked.contains("||")) {
+            (true, false) => "&&",
+            (false, true) => "||",
+            _ => return None,
+        };
+        let longer_operands = top_level_operands(longer, operator)?;
+        let shorter_operands = top_level_operands(shorter, operator)?;
+        if shorter_operands.len() >= longer_operands.len() {
+            return None;
+        }
+        // The shorter version's operands must be the longer one's, in
+        // order, with nothing rewritten; what is left over differs.
+        let compact = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut kept = shorter_operands.iter().map(|text| compact(text)).peekable();
+        let mut differing = Vec::new();
+        for operand in &longer_operands {
+            if kept.peek().is_some_and(|next| *next == compact(operand)) {
+                kept.next();
+            } else {
+                differing.push(parse_operand(operand, &parameters)?);
+            }
+        }
+        (kept.next().is_none() && !differing.is_empty()).then_some(Self {
+            operator,
+            parameters,
+            differing,
+        })
+    }
+
+    /// Whether both versions provably return the same value on every run
+    /// of the pinned call `call_text` (of `name`): every argument reads and
+    /// every differing operand takes the value that leaves its chain
+    /// unchanged. An unreadable run, or no run, answers `false` (the pin
+    /// keeps its current reading).
+    pub(in crate::analysis::classify) fn pinned_call_agrees(
+        &self,
+        test: &TestSummary,
+        loan: Option<&HelperLoan>,
+        call_text: &str,
+        call_line: usize,
+        name: &str,
+    ) -> bool {
+        let Some(arguments) = call_arguments(call_text, name) else {
+            return false;
+        };
+        if arguments.len() != self.parameters.len() {
+            return false;
+        }
+        let Some(runs) = argument_runs(test, loan, &arguments, call_line, name) else {
+            return false;
+        };
+        self.runs_agree(&runs)
+    }
+
+    fn runs_agree(&self, runs: &[Vec<Option<String>>]) -> bool {
+        let identity = self.operator == "&&";
+        !runs.is_empty()
+            && runs.iter().all(|values| {
+                values.iter().all(Option::is_some)
+                    && self
+                        .differing
+                        .iter()
+                        .all(|operand| operand.evaluate(values) == Some(identity))
+            })
+    }
+}
+
+/// `text` split at each `operator` outside every parenthesis, bracket and
+/// brace. `None` when `operator` also appears inside one (the chain is then
+/// not one flat list of operands) or the delimiters do not balance.
+fn top_level_operands<'a>(text: &'a str, operator: &str) -> Option<Vec<&'a str>> {
+    let masked = mask_comments_and_strings(text);
+    if masked.len() != text.len() {
+        return None;
+    }
+    let bytes = masked.as_bytes();
+    let mut operands = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.checked_sub(1)?,
+            _ if bytes[at..].starts_with(operator.as_bytes()) => {
+                if depth != 0 {
+                    return None;
+                }
+                operands.push(&text[start..at]);
+                at += operator.len();
+                start = at;
+                continue;
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    if depth != 0 {
+        return None;
+    }
+    operands.push(&text[start..]);
+    Some(operands)
+}
+
 impl Operand {
     fn evaluate(&self, values: &[Option<String>]) -> Option<bool> {
         let value = match &self.kind {
@@ -750,6 +904,91 @@ mod tests {
             vec![Some("true".to_string()), Some("0".to_string())],
             vec![Some("false".to_string()), Some("2".to_string())],
         ]));
+        Ok(())
+    }
+
+    const POW2: &str = "pub const fn is_pow2(n: u32) -> bool {\n    n & (n - 1) == 0\n}";
+
+    fn run(values: &[&str]) -> Vec<Option<String>> {
+        values.iter().map(|value| Some(value.to_string())).collect()
+    }
+
+    #[test]
+    fn a_guard_operand_change_is_whole_top_level_operands_only() {
+        // Dropped (the body holds the shorter chain) and added (the longer).
+        let dropped =
+            GuardOperandChange::read(POW2, "n & (n - 1) == 0", "n != 0 && n & (n - 1) == 0");
+        assert!(dropped.is_some());
+        assert_eq!(
+            dropped.as_ref().map(|change| change.differing.len()),
+            Some(1)
+        );
+        let added = "fn f(n: u32, on: bool) -> bool {\n    on || n > 3 || n == 0\n}";
+        let change = GuardOperandChange::read(added, "on || n > 3 || n == 0", "    n > 3;");
+        assert_eq!(change.as_ref().map(|change| change.operator), Some("||"));
+        assert_eq!(
+            change.as_ref().map(|change| change.differing.len()),
+            Some(2)
+        );
+        for (function, changed, before) in [
+            // A rewritten operand is not a dropped one.
+            (POW2, "n & (n - 1) == 0", "n != 0 && n & (n - 2) == 0"),
+            // Nothing dropped, or the same operand count.
+            (POW2, "n & (n - 1) == 0", "n & (n - 1) == 0"),
+            (POW2, "n & (n - 1) == 0", "n | (n - 1) == 0"),
+            // The differing operand must be one this module evaluates.
+            (POW2, "n & (n - 1) == 0", "check(n) && n & (n - 1) == 0"),
+            (POW2, "n & (n - 1) == 0", "n - 1 != 0 && n & (n - 1) == 0"),
+            // Both operators need precedence.
+            (
+                POW2,
+                "n & (n - 1) == 0",
+                "n != 0 && n & (n - 1) == 0 || n == 7",
+            ),
+            // An operator inside a parenthesis is not a flat chain.
+            (
+                "fn f(n: u32) -> bool {\n    g(n > 1)\n}",
+                "g(n > 1)",
+                "g(n != 0 && n > 1)",
+            ),
+            // An earlier statement may rebind the parameter.
+            (
+                "fn f(n: u32) -> bool {\n    let n = n + 1;\n    n > 1\n}",
+                "n > 1",
+                "n != 0 && n > 1",
+            ),
+            // A receiver or pattern parameter is not read.
+            (
+                "fn f(&self, n: u32) -> bool {\n    n > 1\n}",
+                "n > 1",
+                "n != 0 && n > 1",
+            ),
+        ] {
+            assert_eq!(
+                GuardOperandChange::read(function, changed, before),
+                None,
+                "{before} -> {changed}"
+            );
+        }
+    }
+
+    #[test]
+    fn guard_operand_runs_agree_only_when_every_run_reads_the_identity_value() -> Result<(), String>
+    {
+        let and = GuardOperandChange::read(POW2, "n & (n - 1) == 0", "n != 0 && n & (n - 1) == 0")
+            .ok_or("the dropped guard must read")?;
+        assert!(and.runs_agree(&[run(&["4"]), run(&["6"])]));
+        // `n == 0` is where the guard decided.
+        assert!(!and.runs_agree(&[run(&["4"]), run(&["0"])]));
+        // No run, or an unread argument, shows nothing.
+        assert!(!and.runs_agree(&[]));
+        assert!(!and.runs_agree(&[run(&["4"]), vec![None]]));
+        let function = "fn f(n: u32, on: bool) -> bool {\n    n > 3\n}";
+        let or = GuardOperandChange::read(function, "n > 3", "on || n > 3")
+            .ok_or("the dropped `||` guard must read")?;
+        // `||` is unchanged by a `false` operand.
+        assert!(or.runs_agree(&[run(&["9", "false"])]));
+        assert!(!or.runs_agree(&[run(&["9", "true"])]));
         Ok(())
     }
 }

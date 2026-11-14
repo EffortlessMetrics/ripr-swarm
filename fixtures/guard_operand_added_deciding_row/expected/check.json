@@ -1,0 +1,292 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/guard_operand_added_deciding_row/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":1,"propagation_unknown":0,"static_unknown":0,"conflicting_expressions":1,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:5a5ba86cfd9cb52044fd81692988077f39a84d8a995f11d8408a2b50cfd1fd74","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:22800016",
+      "canonical_gap_id": "gap:rust:src/lib.rs:is_even:predicate_boundary:predicate:n!=0_n%2==0",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:is_even:predicate_boundary:predicate:n!=0_n%2==0",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "is_even",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "n!=0_n%2==0"
+
+      },
+      "classification": "infection_unknown",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:22800016",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "n != 0 && n % 2 == 0"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach is_even: even_and_zero"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach is_even: even_and_zero", "infection unknown: Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "related test tests/even.rs:4 even_and_zero uses strong exact value oracle: assert_eq!(is_even(n), want);", "source table row value 0 at line 5", "source table row value 4 at line 5", "source table row value false at line 5", "source table row value true at line 5", "source function argument value n = 0 at line 7", "source function argument value n = 4 at line 7"],
+      "flow_sinks": [
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach is_even: even_and_zero", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "No detected boundary input for the changed predicate"],
+      "assertion_texts": {
+        "5": "let cases = [(4, true), (0, false)];",
+        "7": "assert_eq!(is_even(n), want);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "0",
+            "context": "table_row"
+          },
+          {
+            "line": 5,
+            "value": "4",
+            "context": "table_row"
+          },
+          {
+            "line": 5,
+            "value": "false",
+            "context": "table_row"
+          },
+          {
+            "line": 5,
+            "value": "true",
+            "context": "table_row"
+          },
+          {
+            "line": 7,
+            "value": "n = 0",
+            "context": "function_argument"
+          },
+          {
+            "line": 7,
+            "value": "n = 4",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "0",
+          "context": "table_row"
+        },
+        {
+          "line": 5,
+          "value": "4",
+          "context": "table_row"
+        },
+        {
+          "line": 5,
+          "value": "false",
+          "context": "table_row"
+        },
+        {
+          "line": 5,
+          "value": "true",
+          "context": "table_row"
+        },
+        {
+          "line": 7,
+          "value": "n = 0",
+          "context": "function_argument"
+        },
+        {
+          "line": 7,
+          "value": "n = 4",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "even_and_zero",
+          "file": "tests/even.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(is_even(n), want);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["infection_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:c992489b",
+      "canonical_gap_id": "gap:rust:src/lib.rs:is_even:return_value:return_value:n!=0_n%2==0",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:is_even:return_value:return_value:n!=0_n%2==0",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "is_even",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "n!=0_n%2==0"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:c992489b",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "n != 0 && n % 2 == 0"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach is_even: even_and_zero"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: n != 0 && n % 2 == 0"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach is_even: even_and_zero", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: n != 0 && n % 2 == 0", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: n != 0 && n % 2 == 0 (line 2)", "related test tests/even.rs:4 even_and_zero uses strong exact value oracle: assert_eq!(is_even(n), want);", "source table row value 0 at line 5", "source table row value 4 at line 5", "source table row value false at line 5", "source table row value true at line 5", "source function argument value n = 0 at line 7", "source function argument value n = 4 at line 7"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"n != 0 && n % 2 == 0","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: n != 0 && n % 2 == 0", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach is_even: even_and_zero", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "5": "let cases = [(4, true), (0, false)];",
+        "7": "assert_eq!(is_even(n), want);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "0",
+            "context": "table_row"
+          },
+          {
+            "line": 5,
+            "value": "4",
+            "context": "table_row"
+          },
+          {
+            "line": 5,
+            "value": "false",
+            "context": "table_row"
+          },
+          {
+            "line": 5,
+            "value": "true",
+            "context": "table_row"
+          },
+          {
+            "line": 7,
+            "value": "n = 0",
+            "context": "function_argument"
+          },
+          {
+            "line": 7,
+            "value": "n = 4",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "0",
+          "context": "table_row"
+        },
+        {
+          "line": 5,
+          "value": "4",
+          "context": "table_row"
+        },
+        {
+          "line": 5,
+          "value": "false",
+          "context": "table_row"
+        },
+        {
+          "line": 5,
+          "value": "true",
+          "context": "table_row"
+        },
+        {
+          "line": 7,
+          "value": "n = 0",
+          "context": "function_argument"
+        },
+        {
+          "line": 7,
+          "value": "n = 4",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "even_and_zero",
+          "file": "tests/even.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(is_even(n), want);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

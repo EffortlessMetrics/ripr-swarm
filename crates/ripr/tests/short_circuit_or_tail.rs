@@ -184,3 +184,77 @@ fn an_or_tail_whose_changed_operand_never_runs_stays_below_exposed() -> Result<(
     }
     Ok(())
 }
+
+// #8361 (`benchmarks/stub_quality/cases/D_unsafe_const`): the edit drops or
+// adds one whole guard operand. On a pinned call whose literal argument
+// leaves that operand at its chain's identity value (`true` for `&&`), both
+// versions return the same value, so the pin cannot notice the edit.
+const POW2_SOURCE: &str = "pub fn is_pow2(n: u32) -> bool {\n    n & (n - 1) == 0\n}\n";
+const POW2_OLD: &str = "    n != 0 && n & (n - 1) == 0";
+const POW2_TAIL: &str = "n & (n - 1) == 0";
+
+const EVEN_SOURCE: &str = "pub fn is_even(n: u32) -> bool {\n    n != 0 && n % 2 == 0\n}\n";
+const EVEN_OLD: &str = "    n % 2 == 0";
+const EVEN_TAIL: &str = "n != 0 && n % 2 == 0";
+
+#[test]
+fn a_dropped_guard_no_pinned_call_makes_decide_stays_below_exposed() -> Result<(), String> {
+    let agreeing = direct_test(
+        "short_circuit_or_tail",
+        &["assert!(is_pow2(4));", "assert!(!is_pow2(6));"],
+    );
+    let (class, _) = return_value_class(POW2_SOURCE, POW2_OLD, POW2_TAIL, &agreeing)?;
+    assert_ne!(class, ExposureClass::Exposed, "{agreeing}");
+    let table = table_test(
+        "short_circuit_or_tail",
+        "is_pow2(n)",
+        "(4, true), (6, false), (1, true)",
+        "n",
+    );
+    let (class, _) = return_value_class(POW2_SOURCE, POW2_OLD, POW2_TAIL, &table)?;
+    assert_ne!(class, ExposureClass::Exposed, "{table}");
+    Ok(())
+}
+
+#[test]
+fn a_dropped_guard_a_pinned_call_makes_decide_keeps_its_exposure() -> Result<(), String> {
+    // `is_pow2(0)` is where the dropped `n != 0` was `false`: the old
+    // version returned `false` there, so this pin tells the versions apart.
+    for asserts in [
+        &["assert!(is_pow2(0));"][..],
+        &["assert!(is_pow2(4));", "assert!(is_pow2(0));"][..],
+    ] {
+        let test = direct_test("short_circuit_or_tail", asserts);
+        let (class, _) = return_value_class(POW2_SOURCE, POW2_OLD, POW2_TAIL, &test)?;
+        assert_eq!(class, ExposureClass::Exposed, "{test}");
+    }
+    // An argument ripr cannot read keeps today's reading: the agreement is
+    // shown, never assumed.
+    let unread = "use short_circuit_or_tail::*;\n\n#[test]\nfn direct() {\n    let n = 4;\n    assert!(is_pow2(n));\n}\n";
+    let (class, _) = return_value_class(POW2_SOURCE, POW2_OLD, POW2_TAIL, unread)?;
+    assert_eq!(class, ExposureClass::Exposed, "{unread}");
+    Ok(())
+}
+
+#[test]
+fn an_added_guard_follows_the_same_agreement_rule() -> Result<(), String> {
+    let agreeing = direct_test(
+        "short_circuit_or_tail",
+        &["assert!(is_even(4));", "assert!(!is_even(3));"],
+    );
+    let (class, _) = return_value_class(EVEN_SOURCE, EVEN_OLD, EVEN_TAIL, &agreeing)?;
+    assert_ne!(class, ExposureClass::Exposed, "{agreeing}");
+    // A table whose `(0, false)` row makes the added `n != 0` decide keeps
+    // the credit its `(4, true)` row earns under item 2's run check: the
+    // agreement must hold on every run of the call. (A lone
+    // `assert!(!is_even(0))` stops at the guard and was never a pin.)
+    let deciding = table_test(
+        "short_circuit_or_tail",
+        "is_even(n)",
+        "(4, true), (0, false)",
+        "n",
+    );
+    let (class, _) = return_value_class(EVEN_SOURCE, EVEN_OLD, EVEN_TAIL, &deciding)?;
+    assert_eq!(class, ExposureClass::Exposed, "{deciding}");
+    Ok(())
+}

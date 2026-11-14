@@ -1,0 +1,50 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/guard_operand_added_deciding_row/input
+
+Summary: 2 changed behaviors checked: 1 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 2 found, 0 suppressed by your settings
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+Start here:
+  State: no gap selected for repair
+  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
+  File: ./src/lib.rs:2
+  Static exposure: exposed (severity: info, confidence 1.00)
+  Gap ID (for scripts): gap:rust:src/lib.rs:is_even:return_value:return_value:n!=0_n%2==0
+  Changed behavior: n != 0 && n % 2 == 0
+  Related test: tests/even.rs:4 even_and_zero
+  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion yes
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: Related tests appear to reach is_even: even_and_zero
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 11 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/guard_operand_added_deciding_row/input --diff <cwd>/fixtures/guard_operand_added_deciding_row/diff.patch --mode fast probe:src_lib.rs:return_value:c992489b
+  ripr context --root <cwd>/fixtures/guard_operand_added_deciding_row/input --diff <cwd>/fixtures/guard_operand_added_deciding_row/diff.patch --mode fast --at probe:src_lib.rs:return_value:c992489b
+  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:2 (unknown: infection unclear); kind: predicate; reason: Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test…
+      Choose a test-stub spot for probe:src_lib.rs:predicate:22800016: src/lib.rs:2 holds more than one predicate_boundary spot, so --at cannot pick one
+        Each command below produces a stub, but ripr could not tell which spot your change touches.
+        They do not establish a repair binding or close a static limitation.
+        ripr agent stub --root <cwd>/fixtures/guard_operand_added_deciding_row/input --seam-id 57359518da1e39e4
+        ripr agent stub --root <cwd>/fixtures/guard_operand_added_deciding_row/input --seam-id 57469518da2cad17
+  Hidden classes:
+    unknown: infection unclear = ripr could not tell what input makes the change take effect
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
