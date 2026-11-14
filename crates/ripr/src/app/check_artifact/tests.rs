@@ -664,7 +664,7 @@ fn load_fails_closed_on_wrong_schema_version_and_malformed_input() -> Result<(),
             load_findings_for_reuse(&missing, &input, &config, None),
             &[
                 "could not be read: not found; write it with `ripr check --write-artifact ",
-                "missing.json`, then rerun",
+                "missing.json` using this run's root, scope (--diff or --base) and analysis options, then rerun",
             ],
         )?;
         // A directory gets its plain cause and no `--write-artifact` advice,

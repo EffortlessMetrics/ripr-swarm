@@ -255,7 +255,7 @@ fn context_from_a_missing_artifact_names_the_command_that_writes_it() -> Result<
             "--at",
             "src/lib.rs:1",
         ],
-        "check artifact at art/none.json could not be read: not found; write it with `ripr check --write-artifact art/none.json`, then rerun",
+        "check artifact at art/none.json could not be read: not found; write it with `ripr check --write-artifact art/none.json` using this run's root, scope (--diff or --base) and analysis options, then rerun",
     );
     let _ = fs::remove_dir_all(&dir);
     result

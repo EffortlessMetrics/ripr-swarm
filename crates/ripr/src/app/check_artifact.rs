@@ -193,7 +193,8 @@ pub(crate) fn load_findings_for_reuse_core(
         let message = if err.kind() == std::io::ErrorKind::NotFound {
             format!(
                 "check artifact at {} could not be read: {detail}; write it with `ripr check \
-                 --write-artifact {}`, then rerun",
+                 --write-artifact {}` using this run's root, scope (--diff or --base) and \
+                 analysis options, then rerun",
                 path.display(),
                 path.display()
             )

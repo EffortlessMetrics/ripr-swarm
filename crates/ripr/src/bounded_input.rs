@@ -148,10 +148,9 @@ pub(crate) fn read_with_limit(path: impl AsRef<Path>, limit: u64) -> std::io::Re
 fn open_within_limit(path: &Path, limit: u64) -> std::io::Result<std::fs::File> {
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
-        Err(err) if path.is_dir() => {
-            drop(err);
-            return Err(directory_error());
-        }
+        // Windows refuses to open a directory (`PermissionDenied`): keep
+        // that kind for callers that branch on it, and replace only the text.
+        Err(err) if path.is_dir() => return Err(directory_error_with_kind(err.kind())),
         Err(err) => return Err(err),
     };
     let metadata = file.metadata()?;
@@ -166,13 +165,14 @@ fn open_within_limit(path: &Path, limit: u64) -> std::io::Result<std::fs::File> 
 
 /// Plain, platform-independent cause for a directory named where a file
 /// belongs. Callers prefix the flag or path, so this names only the cause and
-/// the fix. The kind stays [`std::io::ErrorKind::IsADirectory`] so a caller
-/// that branches on the kind keeps working.
+/// the fix. The kind is [`std::io::ErrorKind::IsADirectory`] when the open
+/// succeeded (Unix); a failed open keeps the host's kind.
 pub(crate) fn directory_error() -> std::io::Error {
-    std::io::Error::new(
-        std::io::ErrorKind::IsADirectory,
-        "is a directory, not a file; pass the path of a file",
-    )
+    directory_error_with_kind(std::io::ErrorKind::IsADirectory)
+}
+
+fn directory_error_with_kind(kind: std::io::ErrorKind) -> std::io::Error {
+    std::io::Error::new(kind, "is a directory, not a file; pass the path of a file")
 }
 
 pub(crate) fn read_reader_to_string_with_limit(
@@ -413,6 +413,9 @@ mod tests {
         let bytes = read_with_limit(&dir, MAX_CLI_INPUT_BYTES);
         let _ = std::fs::remove_dir(&dir);
         let err = text.err().ok_or("a directory must not read as text")?;
+        // Unix opens a directory and refuses it after; Windows keeps the
+        // `PermissionDenied` its open returns. The text is the same on both.
+        #[cfg(unix)]
         assert_eq!(err.kind(), std::io::ErrorKind::IsADirectory);
         assert_eq!(
             err.to_string(),
@@ -420,7 +423,10 @@ mod tests {
         );
         assert_eq!(read_failure_detail(&err), err.to_string());
         let err = bytes.err().ok_or("a directory must not read as bytes")?;
-        assert_eq!(err.kind(), std::io::ErrorKind::IsADirectory);
+        assert_eq!(
+            err.to_string(),
+            "is a directory, not a file; pass the path of a file"
+        );
         assert!(!err.to_string().contains("os error"), "{err}");
         Ok(())
     }
