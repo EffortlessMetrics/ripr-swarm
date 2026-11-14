@@ -3825,6 +3825,14 @@ impl Backend {
             root: &snapshot.root,
             consumed: &snapshot.rust_consumed_sources,
             diagnostic_uris: snapshot.diagnostics_by_uri.keys().collect(),
+            related_test_files: super::watched_source_drift::related_test_files(
+                &snapshot.root,
+                snapshot
+                    .findings
+                    .iter()
+                    .flat_map(|finding| finding.related_tests.iter())
+                    .map(|test| test.file.as_path()),
+            ),
         };
         super::watched_source_drift::events_drift_committed_sources(&committed, changes, &|uri| {
             self.quarantine
