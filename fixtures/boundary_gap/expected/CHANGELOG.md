@@ -1,5 +1,17 @@
 # Golden Output Changes
 
+## Pending — tail `if`/`else` branch-value seams (#14385)
+
+The portable unchanged-attempt snapshots now list the owner's two tail
+`if`/`else` branch values (`src/lib.rs:3` and `src/lib.rs:5`) as strongly
+gripped, non-headline `return_value` seams beside the predicate seam. Refresh the
+snapshot metrics and artifact content commitment, the verify artifact's
+unchanged seams and commitments, and the receipt byte hashes. The predicate seam,
+its weak grip, unchanged movement, historical currentness, incomplete receipt
+status and fail-closed first-action routing remain unchanged. No other fixture
+output is regenerated. The snapshots carry cache generation 1.181 from
+main (#12801).
+
 ## Pending — corpus cache generation 1.181 after #12757 (#12801)
 
 Success-only assertions no longer discriminate a failure seam, which bumps the

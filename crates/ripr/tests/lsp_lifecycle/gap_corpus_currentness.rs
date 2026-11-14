@@ -92,9 +92,14 @@ fn capture(root: &Path) -> ProofResult<Value> {
     let seams = value["seams"]
         .as_array()
         .ok_or("real capture has no seams")?;
-    require(seams.len() == 1 && seams[0]["seam_id"] == SEAM, || {
-        format!("capture must retain the exact nonempty pricing subject: {value}")
-    })?;
+    // The predicate seam plus the two strongly gripped `return_value` branch
+    // seams (#14385); the predicate seam stays first and is the subject.
+    require(
+        seams.len() == 3
+            && seams[0]["seam_id"] == SEAM
+            && seams[1..].iter().all(|seam| seam["kind"] == "return_value"),
+        || format!("capture must retain the exact nonempty pricing subject: {value}"),
+    )?;
     require(
         seams[0]["file"] == "src/lib.rs"
             && seams[0]["line"] == 2
@@ -130,8 +135,10 @@ fn derive(root: &Path, captured: &Value, label: &str) -> ProofResult<Value> {
     let records = ledger["records"]
         .as_array()
         .ok_or("real ledger has no records")?;
-    require(records.len() == 1 && records[0]["seam_id"] == SEAM, || {
-        format!("ledger must retain one real typed pricing subject: {ledger}")
+    // The predicate record plus the two already-observed `return_value` branch
+    // records (#14385); the predicate record stays first and is the subject.
+    require(records.len() == 3 && records[0]["seam_id"] == SEAM, || {
+        format!("ledger must retain the real typed pricing subject: {ledger}")
     })?;
     Ok(ledger)
 }
@@ -300,7 +307,9 @@ fn assert_capture_is_actionable(captured: &Value, ledger: &Value) -> ProofResult
             && captured["seams"][0]["evidence_record"]["canonical_gap_id"] == GAP
             && ledger["records"][0]["canonical_gap_id"] == GAP
             && ledger["records"][0]["gap_state"] == "actionable"
-            && ledger["summary"]["records_total"] == 1
+            // Plus the two already-observed `return_value` branch records (#14385).
+            && ledger["summary"]["records_total"] == 3
+            && ledger["summary"]["no_action_total"] == 2
             && ledger["summary"]["repairable_total"] == 1,
         || {
             format!(
@@ -579,9 +588,11 @@ fn corpus_mutation_contract(mutation: CorpusMutation, stale_kind: &str) -> Proof
     match mutation {
         CorpusMutation::AddEquality => {
             require(
-                fresh["summary"]["records_total"] == 1
+                // The predicate record plus the two already-observed
+                // `return_value` branch records (#14385).
+                fresh["summary"]["records_total"] == 3
                     && fresh["summary"]["repairable_total"] == 0
-                    && fresh["summary"]["no_action_total"] == 1
+                    && fresh["summary"]["no_action_total"] == 3
                     && fresh["records"][0]["gap_state"] == "already_observed",
                 || {
                     format!(
@@ -660,10 +671,14 @@ fn cache_corpus_authority(root: &Path, corpus: &Value) -> ProofResult {
                 && receipt["classified_seams"]["seams"]
                     .as_array()
                     .is_some_and(|seams| {
-                        seams.len() == 1
-                            && seams[0]["seam"]["id"] == SEAM
-                            && seams[0]["seam"]["file"] == "src/lib.rs"
-                            && seams[0]["seam"]["owner"] == "src/lib.rs::discounted_total"
+                        // The predicate seam plus the two `return_value` branch
+                        // seams (#14385).
+                        seams.len() == 3
+                            && seams.iter().any(|seam| {
+                                seam["seam"]["id"] == SEAM
+                                    && seam["seam"]["file"] == "src/lib.rs"
+                                    && seam["seam"]["owner"] == "src/lib.rs::discounted_total"
+                            })
                     })
         }),
         || {
@@ -939,8 +954,8 @@ fn passive_corpus_cannot_bypass_rust_currentness_with_missing_or_unknown_languag
         let records = ambiguous["records"]
             .as_array_mut()
             .ok_or("ledger must have real records")?;
-        require(records.len() == 1, || {
-            "scope control requires one genuine pricing record".into()
+        require(records.len() == 3 && records[0]["seam_id"] == SEAM, || {
+            "scope control requires the genuine pricing records".into()
         })?;
         let record = records[0]
             .as_object_mut()
@@ -1561,8 +1576,10 @@ fn passive_nonempty_no_action_rust_ledger_still_requires_current_corpus() -> Pro
     let old = derive(root, &captured, "already-observed")?;
     require(
         captured["seams"][0]["grip_class"] == "strongly_gripped"
-            && old["summary"]["records_total"] == 1
-            && old["summary"]["no_action_total"] == 1
+            // The predicate record plus the two already-observed `return_value`
+            // branch records (#14385).
+            && old["summary"]["records_total"] == 3
+            && old["summary"]["no_action_total"] == 3
             && old["summary"]["repairable_total"] == 0
             && old["records"][0]["canonical_gap_id"] == "gap:rust:67f9714ba37b3967"
             && old["records"][0]["gap_state"] == "already_observed"
@@ -1615,8 +1632,8 @@ fn passive_nonempty_no_action_rust_ledger_still_requires_current_corpus() -> Pro
         fresh["records"][0]["canonical_gap_id"] == observed_id
             && fresh["records"][0]["seam_id"] == SEAM
             && fresh["records"][0]["gap_state"] == "already_observed"
-            && fresh["summary"]["records_total"] == 1
-            && fresh["summary"]["no_action_total"] == 1
+            && fresh["summary"]["records_total"] == 3
+            && fresh["summary"]["no_action_total"] == 3
             && fresh["source_subject"]["corpus"]["files_content_hash"]
                 != old["source_subject"]["corpus"]["files_content_hash"],
         || {
@@ -1867,7 +1884,7 @@ fn foreign_root_ledger_derivation_cannot_rebase_captured_named_subjects_or_mint_
             && foreign["records"][0]["seam_id"] == SEAM
             && foreign["records"]
                 .as_array()
-                .is_some_and(|records| records.len() == 1)
+                .is_some_and(|records| records.len() == 3)
             && foreign["source_subject"].is_null()
             && foreign["source_subject_unavailable"] == "input_source_subject_incomplete",
         || {

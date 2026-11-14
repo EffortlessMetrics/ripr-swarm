@@ -2076,6 +2076,27 @@ no gate the stand-in passes depends on the text. Rejected: keeping
 as the inline form does; the corpus row
 `lib-expect-test-expect-file-golden` kills both mutants at runtime.
 
+### Tail `if`/`else` branch values (#14385)
+
+When the owner's tail is an `if`/`else`, each branch block's tail value is
+what the owner returns, so it gets a `return_value` probe like a plain tail
+(and an `error_path` probe when it builds an error). `else if` chains and
+nested `if` branch tails recurse. Exclusions:
+
+- a branch tail that is itself `if`, `match` or a loop gets no shape, decided
+  by AST kind (so `if` or `match` alone on its line is still excluded);
+- a value on any line of its `if`'s condition gets no shape, because an inline
+  branch already flows to the return through that line's predicate (#7626);
+- a branch value that is a comparison or boolean expression
+  (`input.len() > 3`, also inside parentheses or under `!`) keeps only its
+  predicate probe, so a weaker second row
+  cannot turn a discriminated predicate into a gap (verdict corpus
+  `spec-b-0159-recursive-helper`);
+- an `if` without `else` is a statement, not the owner's value.
+
+This adds probes only; it does not widen Rule 3. A pin of the owner's result
+still credits a branch value only weakly, as for an early return (#14387).
+
 ### Short-circuit tails (#7969)
 
 Rule 3 refuses `&&`/`||` because a pin may never evaluate the changed

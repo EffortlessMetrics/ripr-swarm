@@ -1,0 +1,6 @@
+[[extend]]
+id = "RIPR-SPEC-0197"
+code = ["crates/ripr/src/analysis/syntax/ra/probe_shapes.rs"]
+tests = [
+  "crates/ripr/src/analysis/syntax/ra.rs::tests::tail_if_branch_values_are_return_value_shapes",
+]
