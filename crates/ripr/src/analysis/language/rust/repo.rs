@@ -116,12 +116,7 @@ impl RustAdapter {
         if let Some(disclosure) = rust_index::lexical_fallback_disclosure(&index) {
             eprintln!("{disclosure}");
         }
-        if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
-            eprintln!("{disclosure}");
-        }
-        if let Some(disclosure) = rust_index::module_composition_disclosure(&index) {
-            eprintln!("{disclosure}");
-        }
+        rust_index::eprint_index_limit_disclosures(&index);
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
         // #13703: keep raw bytes only for files whose indexed text differs;
         // origin capture borrows the rest from the index.
