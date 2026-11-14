@@ -2218,11 +2218,72 @@ fn await_publish_for(
 fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Result<(), String> {
     let base = unique_compat_fixture_root("external-delete")?;
     let root = build_native_root_fixture(&base.path, "repo")?;
-    let root_uri = editor_file_uri(&root)?;
     let relative = Path::new("src").join("lib.rs");
     let lib = root.join(&relative);
     let lib_uri = editor_file_uri(&lib)?;
+    let mut session = start_session_with_published_diagnostics(&root, &relative)?;
 
+    // Unchanged bytes: nothing to refresh. Then the real deletion.
+    session.notify(
+        "workspace/didChangeWatchedFiles",
+        Some(serde_json::json!({"changes": [{"uri": lib_uri, "type": 2}]})),
+    )?;
+    fs::remove_file(&lib).map_err(|err| format!("delete fixture file failed: {err}"))?;
+    session.notify(
+        "workspace/didChangeWatchedFiles",
+        Some(serde_json::json!({"changes": [{"uri": lib_uri, "type": 3}]})),
+    )?;
+    await_publish_for(
+        &mut session,
+        &relative,
+        "the retraction for the deleted file (no manual refresh was sent)",
+        |count| count == 0,
+    )?;
+    shutdown_exit_and_wait(&mut session)
+}
+
+/// #14099: a folder deleted as one entry reaches the server as an event for
+/// the folder, never for the files it held. The diagnostics published for a
+/// file inside it must still be retracted without a manual refresh. The
+/// folder event is sent before the folder is removed, so it must not be what
+/// clears the rows.
+#[test]
+fn deleting_a_folder_outside_the_editor_retracts_the_diagnostics_below_it() -> Result<(), String> {
+    let base = unique_compat_fixture_root("external-folder-delete")?;
+    let root = build_native_root_fixture(&base.path, "repo")?;
+    let relative = Path::new("src").join("lib.rs");
+    let folder = root.join("src");
+    let folder_uri = editor_file_uri(&folder)?;
+    let mut session = start_session_with_published_diagnostics(&root, &relative)?;
+
+    // The folder still exists: not a deletion, nothing to refresh.
+    session.notify(
+        "workspace/didChangeWatchedFiles",
+        Some(serde_json::json!({"changes": [{"uri": folder_uri, "type": 3}]})),
+    )?;
+    fs::remove_dir_all(&folder).map_err(|err| format!("delete fixture folder failed: {err}"))?;
+    session.notify(
+        "workspace/didChangeWatchedFiles",
+        Some(serde_json::json!({"changes": [{"uri": folder_uri, "type": 3}]})),
+    )?;
+    await_publish_for(
+        &mut session,
+        &relative,
+        "the retraction for the file below the deleted folder (no manual refresh was sent)",
+        |count| count == 0,
+    )?;
+    shutdown_exit_and_wait(&mut session)
+}
+
+/// Start the server on `root`, refresh once, and return after the first
+/// non-empty publish for `relative`. The refresh response and that publish
+/// arrive in either order; both are consumed here, or a late response is read
+/// by `shutdown` as a stray id (#14467 CI).
+fn start_session_with_published_diagnostics(
+    root: &Path,
+    relative: &Path,
+) -> Result<LspSession, String> {
+    let root_uri = editor_file_uri(root)?;
     let mut session = LspSession::spawn()?;
     let initialize = session.request(
         "initialize",
@@ -2244,9 +2305,6 @@ fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Re
         "workspace/executeCommand",
         serde_json::json!({"command": "ripr.refresh", "arguments": []}),
     )?;
-    // The refresh response and the first publish arrive in either order; both
-    // must be consumed here, or a late response is read by `shutdown` as a
-    // stray id (#14467 CI).
     let deadline = Instant::now() + ANALYSIS_TIMEOUT;
     let (mut refreshed, mut published) = (false, false);
     while !(refreshed && published) {
@@ -2263,7 +2321,7 @@ fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Re
                 .pointer("/params/uri")
                 .and_then(serde_json::Value::as_str)
                 .and_then(editor_uri_path)
-                .is_some_and(|path| path.ends_with(&relative));
+                .is_some_and(|path| path.ends_with(relative));
             let count = message
                 .pointer("/params/diagnostics")
                 .and_then(serde_json::Value::as_array)
@@ -2271,24 +2329,7 @@ fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Re
             published |= names_expected && count > 0;
         }
     }
-
-    // Unchanged bytes: nothing to refresh. Then the real deletion.
-    session.notify(
-        "workspace/didChangeWatchedFiles",
-        Some(serde_json::json!({"changes": [{"uri": lib_uri, "type": 2}]})),
-    )?;
-    fs::remove_file(&lib).map_err(|err| format!("delete fixture file failed: {err}"))?;
-    session.notify(
-        "workspace/didChangeWatchedFiles",
-        Some(serde_json::json!({"changes": [{"uri": lib_uri, "type": 3}]})),
-    )?;
-    await_publish_for(
-        &mut session,
-        &relative,
-        "the retraction for the deleted file (no manual refresh was sent)",
-        |count| count == 0,
-    )?;
-    shutdown_exit_and_wait(&mut session)
+    Ok(session)
 }
 
 /// Refresh under a root past `MAX_PATH`. Windows cannot start git there and
