@@ -773,8 +773,8 @@ mod tests {
         // 1.9ms and 0.9ms average to 1.4ms, reported as 1ms; truncating
         // each sample to whole ms first would report 0ms.
         let summary = duration_percentiles(&[
-            Duration::from_nanos(1_900_000),
-            Duration::from_nanos(900_000),
+            Duration::from_micros(1_900),
+            Duration::from_micros(900),
         ]);
         assert_eq!(summary.map(|s| s.mean_ms), Some(1));
     }
