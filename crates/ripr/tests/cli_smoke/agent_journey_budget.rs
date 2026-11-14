@@ -14,7 +14,7 @@
 //! instrument over a fixed fixture (five changed predicates yielding three
 //! printed agent gap rows, one folded): it must not be cited as an observed agent token
 //! saving or as a completed repair workflow.
-use super::{printed_path, run_command, unique_external_workspace};
+use super::{DeclaredHunkScratch, printed_path, run_command, unique_external_workspace};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -34,8 +34,9 @@ const TESTS: &str = "#[cfg(test)]\nmod tests {\n    use super::*;\n\
     #[test] fn parses() { assert!(parse(\"12\").is_ok()); }\n\
     #[test] fn gold() { assert_eq!(tier(50), \"gold\"); }\n}\n";
 
-fn workspace(label: &str) -> TestResult<std::path::PathBuf> {
+fn workspace(label: &str) -> TestResult<(std::path::PathBuf, DeclaredHunkScratch)> {
     let project = unique_external_workspace(label)?;
+    let cleanup = DeclaredHunkScratch(project.clone());
     fs::create_dir_all(project.join("src"))?;
     fs::write(
         project.join("Cargo.toml"),
@@ -57,7 +58,7 @@ fn workspace(label: &str) -> TestResult<std::path::PathBuf> {
         }
     }
     fs::write(project.join("change.diff"), diff)?;
-    Ok(project)
+    Ok((project, cleanup))
 }
 
 fn normalize_root_text(text: &str, raw: &str, printed: &str) -> String {
@@ -129,7 +130,7 @@ fn first_gap_id(check: &str) -> TestResult<String> {
 
 #[test]
 fn agent_journey_stays_inside_byte_budget_and_keeps_verify_record() -> TestResult {
-    let project = workspace("agent-journey-budget")?;
+    let (project, _cleanup) = workspace("agent-journey-budget")?;
     let root = project.to_string_lossy().into_owned();
 
     // Cold: first run carries the one-time legend. Steady: budgeted rerun.
