@@ -503,8 +503,10 @@ acting on this panel.
 
 When the panel is incomplete because a required input is missing, the
 `Missing input:` line names the input whose warning promoted the panel to
-`missing_required_input`, not merely the first warning in the list; with no such
-warning it falls back to the first warning.
+`missing_required_input` when that warning came from a read failure on the
+assistant proof; a warning synthesized from a first-action fallback does not
+outrank a real unusable input, and with no such warning the line falls back to
+the first warning.
 
 ## Generated CI Projection
 

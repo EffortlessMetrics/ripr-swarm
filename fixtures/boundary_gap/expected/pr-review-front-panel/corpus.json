@@ -316,6 +316,53 @@
         "warnings": 0
       },
       "reason": "Same-path provenance cannot overwrite selected-proof authority; a regenerated receipt must match seam, movement, and available classes before fallback admission."
+    },
+    {
+      "id": "missing_proof_and_guidance",
+      "scenario": "unreadable assistant proof together with an unusable PR guidance input",
+      "inputs": {
+        "pr_guidance": "fixtures/boundary_gap/input/missing-pr-guidance.json",
+        "assistant_proof": "target/ripr/reports/test-oracle-assistant-proof.json"
+      },
+      "expected_report": "fixtures/boundary_gap/expected/pr-review-front-panel/missing-proof-and-guidance/pr-review-front-panel.json",
+      "expected_markdown": "fixtures/boundary_gap/expected/pr-review-front-panel/missing-proof-and-guidance/pr-review-front-panel.md",
+      "expected": {
+        "status": "incomplete",
+        "top_issue_state": "missing_required_input",
+        "policy_state": "none",
+        "placement": "not_available",
+        "movement_state": "unknown",
+        "coverage_grip_state": "not_available",
+        "new_policy_eligible": 0,
+        "baseline_resolved": 0,
+        "blocking_candidates": 0,
+        "warnings": 2
+      },
+      "reason": "The Missing input line must name the assistant proof, the input that promoted the panel, even when an optional guidance warning comes first."
+    },
+    {
+      "id": "missing_receipt_with_valid_proof",
+      "scenario": "first-action names a missing receipt while the assistant proof is present and valid",
+      "inputs": {
+        "first_action": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/first-useful-action.json",
+        "assistant_proof": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/assistant-proof.json",
+        "receipt": "fixtures/boundary_gap/input/missing-agent-receipt.json"
+      },
+      "expected_report": "fixtures/boundary_gap/expected/pr-review-front-panel/missing-receipt-with-valid-proof/pr-review-front-panel.json",
+      "expected_markdown": "fixtures/boundary_gap/expected/pr-review-front-panel/missing-receipt-with-valid-proof/pr-review-front-panel.md",
+      "expected": {
+        "status": "incomplete",
+        "top_issue_state": "missing_required_input",
+        "policy_state": "none",
+        "placement": "not_available",
+        "movement_state": "unknown",
+        "coverage_grip_state": "not_available",
+        "new_policy_eligible": 0,
+        "baseline_resolved": 0,
+        "blocking_candidates": 0,
+        "warnings": 2
+      },
+      "reason": "A synthesized required-input warning must not outrank the unusable receipt, so the Missing input line names the receipt, not the present proof."
     }
   ]
 }
