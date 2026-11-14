@@ -97,6 +97,9 @@ pub(crate) mod schemas;
 pub(crate) mod stage_rows;
 pub mod start_here_state;
 pub(crate) mod suppression_health;
+#[path = "suppressions.rs"]
+pub(crate) mod suppressions_core;
+#[path = "suppressions_confined.rs"]
 pub(crate) mod suppressions;
 pub(crate) mod swarm_ingest;
 pub(crate) mod test_oracle_assistant_proof;
