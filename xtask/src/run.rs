@@ -8,9 +8,11 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod cargo_output;
 mod command_diagnostic;
 #[cfg(all(test, target_os = "linux"))]
 mod test_session;
+pub(crate) use cargo_output::private_cargo_output_dir;
 pub(crate) use command_diagnostic::{
     CommandDiagnostic, DISCLOSURE as COMMAND_DIAGNOSTIC_DISCLOSURE,
 };
