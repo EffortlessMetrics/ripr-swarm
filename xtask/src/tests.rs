@@ -6593,6 +6593,34 @@ fn non_rust_programming_policy_requires_retention_rule() {
 }
 
 #[test]
+fn shard_verifier_bootstrap_retention_is_exact() -> Result<(), String> {
+    for path in [
+        "tools/ci/shard-verifier-artifact.py",
+        "tools/ci/test_shard_verifier_artifact.py",
+    ] {
+        assert!(is_non_rust_programming_candidate(path), "{path}");
+        let reason = non_rust_programming_retention_reason(path).ok_or_else(|| {
+            format!("the pre-execution verifier needs explicit retention: {path}")
+        })?;
+        assert!(reason.contains("#14580"), "{path}: {reason}");
+    }
+    for path in [
+        "tools/ci/other.py",
+        "tools/ci/shard-verifier-artifact-extra.py",
+        "tools/ci/test_shard_verifier_artifact_extra.py",
+        "tools/ci/nested/shard-verifier-artifact.py",
+        "tools/ci/shard-verifier-artifact.py.extra.py",
+    ] {
+        assert!(is_non_rust_programming_candidate(path), "{path}");
+        assert!(
+            non_rust_programming_retention_reason(path).is_none(),
+            "{path}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn editor_setup_node_bootstrap_retention_is_exact() -> Result<(), String> {
     let path = "editors/vscode/test/developerSetup.cjs";
     assert!(is_non_rust_programming_candidate(path));
@@ -6789,6 +6817,8 @@ fn rust_conversion_candidates_derive_retention_from_the_enforced_owner() -> Resu
         ".github/actions/pr-candidate-admission/release_cut_admission.py",
         "tools/activate-rust.sh",
         "tools/test-activate-rust.sh",
+        "tools/ci/shard-verifier-artifact.py",
+        "tools/ci/test_shard_verifier_artifact.py",
     ] {
         let enforced_reason = non_rust_programming_retention_reason(path)
             .ok_or_else(|| format!("approved boundary must be enforced-retained: {path}"))?;

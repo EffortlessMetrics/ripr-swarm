@@ -730,11 +730,15 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
     // cancelled or red shard and a non-disjoint or incomplete cover must all fail.
     for required in [
         "    needs: rust-test-shard\n    if: ${{ !cancelled() }}\n",
-        "\"$xtask\" verify-test-shards \\\n",
-        "xtask=\"$(find xtask-binary -type f -name xtask | sort -V | tail -n 1)\"\n",
-        "pattern: ${{ inputs.artifact-name }}-xtask-*\n          path: xtask-binary\n",
-        "name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}\n          path: target/xtask-binary/xtask\n",
-        "        if: matrix.shard == 1\n        run: |\n          mkdir -p target/xtask-binary\n          strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask\n",
+        "python3 tools/ci/shard-verifier-artifact.py launch \\\n",
+        "            --prefix \"$ARTIFACT_PREFIX\" --runner-temp \"$RUNNER_TEMP\" \\\n",
+        "            --provenance target/nextest/ci/verifier-artifact.json \\\n",
+        "            -- verify-test-shards \\\n",
+        "name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}\n          path: ${{ steps.xtask-artifact.outputs.path }}\n",
+        "        id: xtask-artifact\n        if: matrix.shard == 1\n        run: |\n          staging=\"$(mktemp -d \"$RUNNER_TEMP/ripr-xtask-upload.XXXXXX\")\"\n",
+        "          strip --strip-debug -o \"$stripped\" target/debug/xtask\n",
+        "          python3 tools/ci/shard-verifier-artifact.py retain \\\n            --binary \"$stripped\" --destination \"$staging/payload\" \\\n",
+        "          printf 'path=%s\\n' \"$staging/payload\" >> \"$GITHUB_OUTPUT\"\n",
         "if-no-files-found: error\n          retention-days: 1\n",
         "            --shards 4 \\\n",
         "            --sha \"$(git rev-parse HEAD)\" \\\n",
@@ -743,6 +747,16 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
     ] {
         if !shards.contains(required) {
             findings.push(format!("shards: verify lost `{required}`"));
+        }
+    }
+    for forbidden in [
+        "find xtask-binary",
+        "pattern: ${{ inputs.artifact-name }}-xtask-*",
+    ] {
+        if shards.contains(forbidden) {
+            findings.push(format!(
+                "shards: obsolete executable selection `{forbidden}`"
+            ));
         }
     }
     // The hosted route must start the shards on the hosted gates job's own
@@ -880,18 +894,39 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
         ),
         ("fail-fast: false", "continue-on-error: true"),
         ("shard: [1, 2, 3, 4]", "shard: [1, 2, 3]"),
-        ("\"$xtask\" verify-test-shards", "true"),
+        ("-- verify-test-shards", "-- other-command"),
         (
-            "find xtask-binary -type f -name xtask | sort -V | tail -n 1",
-            "find xtask-binary -type f -name xtask | head -n 1",
+            "python3 tools/ci/shard-verifier-artifact.py launch",
+            "target/xtask-binary/xtask verify-test-shards",
+        ),
+        ("--runner-temp \"$RUNNER_TEMP\"", "--runner-temp \"$PWD\""),
+        (
+            "--provenance target/nextest/ci/verifier-artifact.json",
+            "--provenance discarded.json",
+        ),
+        (
+            "path: ${{ steps.xtask-artifact.outputs.path }}",
+            "path: target/xtask-binary/",
+        ),
+        (
+            "staging=\"$(mktemp -d \"$RUNNER_TEMP/ripr-xtask-upload.XXXXXX\")\"",
+            "staging=target/xtask-binary",
+        ),
+        (
+            "--destination \"$staging/payload\"",
+            "--destination target/xtask-binary",
+        ),
+        (
+            "printf 'path=%s\\n' \"$staging/payload\" >> \"$GITHUB_OUTPUT\"",
+            "printf 'path=target/xtask-binary\\n' >> \"$GITHUB_OUTPUT\"",
         ),
         (
             "if-no-files-found: error\n          retention-days: 1",
             "if-no-files-found: warn\n          retention-days: 1",
         ),
         (
-            "-xtask-${{ github.run_attempt }}\n          path: target",
-            "-xtask-0\n          path: target",
+            "-xtask-${{ github.run_attempt }}\n          path:",
+            "-xtask-0\n          path:",
         ),
         ("            --shards 4 \\\n", "            --shards 3 \\\n"),
         ("            --sha \"$(git rev-parse HEAD)\" \\\n", ""),
@@ -908,6 +943,22 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
         assert!(
             !shard_contract_violations(&changed, ROUTED).is_empty(),
             "softening `{from}` was not rejected"
+        );
+    }
+}
+
+#[test]
+fn sharded_verifier_rejects_obsolete_download_or_selector_beside_bound_handoff() {
+    for obsolete in [
+        "find xtask-binary -type f -name xtask | sort -V | tail -n 1",
+        "pattern: ${{ inputs.artifact-name }}-xtask-*",
+    ] {
+        let changed = format!("{SHARDS}\n{obsolete}\n");
+        assert!(
+            shard_contract_violations(&changed, ROUTED)
+                .iter()
+                .any(|finding| finding.contains("obsolete executable selection")),
+            "obsolete executable selection was not rejected: {obsolete}"
         );
     }
 }
@@ -961,7 +1012,7 @@ fn checks_with_prepared_xtask(workflow: &str) -> bool {
     let commands = [
         "          build_phase workspace cargo test --no-run --locked --workspace",
         "        run: target/debug/xtask check-covered-by",
-        "          strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask",
+        "          strip --strip-debug -o \"$stripped\" target/debug/xtask",
         "      - name: Required Rust tests (shard ${{ matrix.shard }} of 4)",
     ];
     let mut previous = None;
