@@ -275,7 +275,7 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
         if error.kind() == std::io::ErrorKind::NotFound {
             format!(
                 "cache export root {} not found; pass the workspace root with --root",
-                crate::output::path::display_path(root)
+                root.display()
             )
         } else {
             format!("inspect export root: {error}")
@@ -532,7 +532,7 @@ mod tests {
             err,
             format!(
                 "cache export root {} not found; pass the workspace root with --root",
-                crate::output::path::display_path(&root)
+                root.display()
             )
         );
         Ok(())
