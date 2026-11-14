@@ -9376,6 +9376,14 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
             false,
         ),
         (
+            "mod helpers {\n    #[macro_export]\n    macro_rules! thread_local { () => { extern crate dep as global; }; }\n}\n#[cfg(any())]\nmod global;\nuse global::*;\nthread_local!();\n",
+            false,
+        ),
+        (
+            "fn helper() {\n    #[macro_export]\n    macro_rules! compile_error { ($($t:tt)*) => {}; }\n}\nmod global;\nuse global::*;\ncompile_error!(\"no\");\n",
+            false,
+        ),
+        (
             "mod global;\nuse dep::cells as thread_local;\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
             false,
         ),

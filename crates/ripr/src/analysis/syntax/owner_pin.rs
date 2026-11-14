@@ -801,7 +801,7 @@ fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &st
 /// the module-tree scan already reads as emitting no module. Refused when the
 /// call's tokens spell `root`, or when a top-level item of `file` may bind the
 /// macro's name (or, for a `std::` call, the crate name `std`) to something
-/// else: a same-named `macro_rules!`/`macro`, `mod` or `extern crate` alias, an
+/// else: a same-named `macro_rules!`/`macro` (at any depth), `mod` or `extern crate` alias, an
 /// import of that name, a `#[macro_use]` item or another glob import. As in the
 /// module-tree scan, a shadowing macro from outside the file is not modeled.
 fn std_item_macro_leaves_root_unbound(call: &ast::MacroCall, file: SyntaxNode, root: &str) -> bool {
@@ -840,19 +840,22 @@ fn std_item_macro_leaves_root_unbound(call: &ast::MacroCall, file: SyntaxNode, r
         text == callee || (qualified.is_some() && text == "std")
     };
     let names_callee = |name: Option<ast::Name>| name.is_some_and(|name| rebindable(name.text()));
-    // Only top-level items bind names in the root's scope; a nested module's
-    // imports and definitions stay inside it unless `#[macro_use]` exports them.
+    // A same-named macro definition anywhere in the file is refused: a nested
+    // `#[macro_export]` one lands in the crate root's path scope.
+    let defines_callee = file.descendants().any(|node| {
+        ast::MacroRules::cast(node.clone())
+            .map(|rules| rules.name())
+            .or_else(|| ast::MacroDef::cast(node).map(|definition| definition.name()))
+            .is_some_and(names_callee)
+    });
+    if defines_callee {
+        return false;
+    }
+    // Otherwise only top-level items bind names in the root's scope; a nested
+    // module's imports stay inside it unless `#[macro_use]` exports them.
     let mut globs = 0usize;
     for node in file.children() {
-        if let Some(rules) = ast::MacroRules::cast(node.clone()) {
-            if names_callee(rules.name()) {
-                return false;
-            }
-        } else if let Some(definition) = ast::MacroDef::cast(node.clone()) {
-            if names_callee(definition.name()) {
-                return false;
-            }
-        } else if let Some(import) = ast::Use::cast(node.clone()) {
+        if let Some(import) = ast::Use::cast(node.clone()) {
             let bindings = super::name_scope::use_item_bindings(&import);
             let opaque = bindings
                 .imports
