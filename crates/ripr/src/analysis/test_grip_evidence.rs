@@ -890,9 +890,9 @@ fn estimated_seam_cost(seam: &RepoSeam, context: &CompactGripContext<'_>) -> (us
         + crate::analysis::classify::module_stem(seam.file())
             .and_then(|stem| context.tests_by_file_stem.get(&stem))
             .map_or(0, Vec::len);
-    let line_span = seam
-        .source_lines()
-        .map_or(1, |(start, end)| end.saturating_sub(start).saturating_add(1));
+    let line_span = seam.source_lines().map_or(1, |(start, end)| {
+        end.saturating_sub(start).saturating_add(1)
+    });
     (candidate_tests, line_span)
 }
 
