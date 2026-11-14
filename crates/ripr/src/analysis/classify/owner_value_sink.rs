@@ -185,6 +185,7 @@ pub(in crate::analysis) fn owner_field_value_flow(
         test,
         owner,
         kept_field,
+        credit: false,
     };
     let mut flow = OwnerValueFlow::Absent;
     for operand in &operands {
@@ -195,6 +196,289 @@ pub(in crate::analysis) fn owner_field_value_flow(
         }
     }
     flow
+}
+
+/// #14701: whether `assertion_text` is a plain `assert!(owner(..).field)` or
+/// `assert!(!owner(..).field)`, where `owner(..)` is the owner's whole
+/// returned record read as [`owner_field_value_flow`] reads it with `field`
+/// kept (directly, through a once-bound `let`, or through a method that hands
+/// the record back). `assert!` takes a `bool`, so the assertion is
+/// `assert_eq!(owner(..).field, true)` (or `false`) spelled another way.
+pub(in crate::analysis) fn bool_field_assertion(
+    test: &TestSummary,
+    assertion_text: &str,
+    owner: &str,
+    field: &str,
+) -> bool {
+    if owner.is_empty() || !super::owner_pin::is_plain_macro(assertion_text, "assert") {
+        return false;
+    }
+    let Some(operands) = assertion_oracle_text(assertion_text) else {
+        return false;
+    };
+    let Some(ast::Expr::MacroExpr(invocation)) = parse_expression(&operands) else {
+        return false;
+    };
+    let Some(operands) = invocation
+        .macro_call()
+        .and_then(|call| macro_arguments(&call))
+    else {
+        return false;
+    };
+    let [operand] = operands.as_slice() else {
+        return false;
+    };
+    let Some(mut expr) = parse_expression(operand) else {
+        return false;
+    };
+    let mut negations = 0;
+    let expr = loop {
+        expr = match expr {
+            ast::Expr::ParenExpr(inner) => match inner.expr() {
+                Some(inner) => inner,
+                None => return false,
+            },
+            ast::Expr::PrefixExpr(prefix)
+                if negations == 0 && prefix.op_kind() == Some(ast::UnaryOp::Not) =>
+            {
+                negations += 1;
+                match prefix.expr() {
+                    Some(inner) => inner,
+                    None => return false,
+                }
+            }
+            other => break other,
+        };
+    };
+    let ast::Expr::FieldExpr(read) = expr else {
+        return false;
+    };
+    // A nested `fn owner` or a local named `owner` (`let opts = |n| ..;`)
+    // makes `owner(..)` in the test another function.
+    if super::reveal::test_body_shadows_owner(test, owner) {
+        return false;
+    }
+    if read
+        .name_ref()
+        .map(|name| name.text().to_string())
+        .as_deref()
+        != Some(field)
+    {
+        return false;
+    }
+    let reader = Reader {
+        test,
+        owner,
+        kept_field: Some(field),
+        credit: true,
+    };
+    reader.inner(read.expr(), 0) == Sink::Record
+}
+
+/// #14701: whether a `use` in `source` (the file `test_file`) may bind the
+/// bare name `owner` to a function other than the owner in `owner_file`.
+///
+/// A `self`- or `super`-rooted import (`use super::*;`, `use super::opts;`)
+/// is admitted only in the owner's own file, and only when it names the
+/// file's module itself: its `super` count equals the inline `mod` depth of
+/// the `use` (`mod tests { use super::*; }`). In any other file the module
+/// it names depends on where that file sits in the module tree, which this
+/// reader cannot see, so it refuses. An explicit import of the name is
+/// otherwise admitted only as a two-segment path from a root-module owner
+/// (`crate::opts`, `demo::opts` for an owner in `src/lib.rs` or
+/// `src/main.rs`); a rename to the name, an import from a deeper module, and
+/// a glob below the crate root (`use crate::rival::*`) may bind another
+/// function. Source that does not parse refuses.
+pub(in crate::analysis) fn use_may_rebind_owner(
+    source: &str,
+    owner: &str,
+    owner_file: &std::path::Path,
+    owner_line: usize,
+    test_file: &std::path::Path,
+) -> bool {
+    let Some(parse) = parse_clean_source_file_memoized(source) else {
+        return true;
+    };
+    let root_owner = owner_file.ends_with("src/lib.rs") || owner_file.ends_with("src/main.rs");
+    let same_file = owner_file == test_file;
+    let tree = parse.tree();
+    // `super::*` from the file's test module reaches the file-level items,
+    // so the owner (the `fn` of its name spanning `owner_line`) must be one:
+    // an owner in an inline module leaves a file-level namesake to be read.
+    let line_of = |offset: usize| {
+        source
+            .get(..offset)
+            .map_or(0, |head| head.matches('\n').count())
+            + 1
+    };
+    let owner_at_file_level = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| function.name().is_some_and(|name| name.text() == owner))
+        .any(|function| {
+            let range = function.syntax().text_range();
+            line_of(usize::from(range.start())) <= owner_line
+                && owner_line <= line_of(usize::from(range.end()))
+                && function
+                    .syntax()
+                    .ancestors()
+                    .filter_map(ast::Module::cast)
+                    .all(|module| module.item_list().is_none())
+        });
+    // A first segment the file itself binds (`use super::rival;`,
+    // `mod rival`) is a local module, not the owner's crate.
+    let locally_bound = |first: &str| {
+        tree.syntax().descendants().any(|node| {
+            ast::Module::cast(node.clone())
+                .and_then(|module| module.name())
+                .is_some_and(|name| name.text() == first)
+                || ast::UseTree::cast(node).is_some_and(|tree| {
+                    tree.use_tree_list().is_none()
+                        && tree.star_token().is_none()
+                        && tree
+                            .rename()
+                            .and_then(|rename| rename.name())
+                            .map(|name| name.text().to_string())
+                            .or_else(|| {
+                                tree.path()
+                                    .and_then(|path| path.segment())
+                                    .map(|segment| segment.syntax().text().to_string())
+                            })
+                            .is_some_and(|bound| bound == first)
+                })
+        })
+    };
+    let segments = |tree: &ast::UseTree| -> Vec<String> {
+        let mut segments = Vec::new();
+        let mut node = Some(tree.clone());
+        while let Some(current) = node {
+            if let Some(path) = current.path() {
+                let mut parts = path
+                    .segments()
+                    .map(|segment| segment.syntax().text().to_string())
+                    .collect::<Vec<_>>();
+                parts.extend(segments);
+                segments = parts;
+            }
+            node = current
+                .syntax()
+                .parent()
+                .and_then(ast::UseTreeList::cast)
+                .and_then(|list| list.syntax().parent())
+                .and_then(ast::UseTree::cast);
+        }
+        segments
+    };
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::UseTree::cast)
+        .filter(|tree| tree.use_tree_list().is_none())
+        .any(|tree| {
+            let path = segments(&tree);
+            let glob = tree.star_token().is_some();
+            let renamed = tree
+                .rename()
+                .and_then(|rename| rename.name())
+                .map(|name| name.text().to_string());
+            let bound = renamed
+                .clone()
+                .or_else(|| path.last().cloned())
+                .unwrap_or_default();
+            if !glob && bound != owner {
+                return false;
+            }
+            if renamed.is_some() {
+                return true;
+            }
+            let relative = path
+                .first()
+                .is_some_and(|first| first == "self" || first == "super");
+            if relative {
+                let supers = path.iter().take_while(|part| *part == "super").count();
+                let selfs = path.iter().take_while(|part| *part == "self").count();
+                let depth = tree
+                    .syntax()
+                    .ancestors()
+                    .filter_map(ast::Module::cast)
+                    .filter(|module| module.item_list().is_some())
+                    .count();
+                let names_file_module = match (selfs, supers) {
+                    (1, 0) => depth == 0,
+                    (0, supers) => supers == depth,
+                    _ => false,
+                };
+                let rest = path.len() - supers - selfs;
+                return !same_file
+                    || !owner_at_file_level
+                    || !names_file_module
+                    || rest != usize::from(!glob);
+            }
+            if path
+                .first()
+                .is_some_and(|first| first != "crate" && locally_bound(first))
+            {
+                return true;
+            }
+            // A crate-root glob (`use crate::*;`, `use demo::*;`) reaches the
+            // owner only when the owner is at the crate root.
+            if glob {
+                return path.len() > 1 || !root_owner;
+            }
+            !root_owner || path.len() != 2
+        })
+}
+
+/// Whether the body assigns through local `name`: the left side of an
+/// assignment (`=`, `+=`, ...) reads `name` at its base, through fields,
+/// indexing, derefs or parentheses (`o.big = true`, `*o = x`, `o.v[0] += 1`).
+fn assigns_through(root: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    root.descendants()
+        .filter_map(ast::BinExpr::cast)
+        .filter(|binary| matches!(binary.op_kind(), Some(ast::BinaryOp::Assignment { .. })))
+        .any(|binary| {
+            let mut place = binary.lhs();
+            loop {
+                place = match place {
+                    Some(ast::Expr::FieldExpr(field)) => field.expr(),
+                    Some(ast::Expr::IndexExpr(index)) => index.base(),
+                    Some(ast::Expr::ParenExpr(inner)) => inner.expr(),
+                    Some(ast::Expr::PrefixExpr(prefix)) => prefix.expr(),
+                    Some(ast::Expr::PathExpr(path)) => {
+                        break path
+                            .path()
+                            .filter(|path| path.qualifier().is_none())
+                            .and_then(|path| path.segment())
+                            .and_then(|segment| segment.name_ref())
+                            .is_some_and(|bound| bound.text() == name);
+                    }
+                    // A place this walk cannot read may still write the
+                    // local; refuse it.
+                    Some(other) => break has_identifier(&other.syntax().text().to_string(), name),
+                    None => break false,
+                };
+            }
+        })
+}
+
+/// Whether the body takes a mutable borrow whose operand reads local `name`
+/// (`&mut *o`, `& mut o.big`): the alias it creates can write the record
+/// before the read without assigning through the name itself.
+fn borrows_mutably(root: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    root.descendants()
+        .filter_map(ast::RefExpr::cast)
+        .filter(|borrow| borrow.mut_token().is_some())
+        .any(|borrow| {
+            borrow
+                .expr()
+                .is_some_and(|operand| has_identifier(&operand.syntax().text().to_string(), name))
+        })
+}
+
+fn has_identifier(text: &str, name: &str) -> bool {
+    mask_comments_and_strings(text)
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .any(|part| part == name)
 }
 
 /// The comma-separated arguments of a macro call. The split points are read
@@ -247,6 +531,12 @@ struct Reader<'a> {
     owner: &'a str,
     /// #14562: the one field of the owner's returned record the change sets.
     kept_field: Option<&'a str>,
+    /// #14701: the reading grants credit, not only a masking downgrade, so
+    /// the owner call must be the unqualified free call `owner(..)` (not
+    /// `rival::owner(..)` or `x.owner(..)`, which may name another
+    /// function) and a followed binding must be immutable (a `mut` local
+    /// may be overwritten, `o.big = true`, before the read).
+    credit: bool,
 }
 
 impl Reader<'_> {
@@ -438,6 +728,13 @@ impl Reader<'_> {
             return self.unfollowed(expr.syntax());
         };
         if name == self.owner {
+            let qualified_or_generic = callee.qualifier().is_some()
+                || callee
+                    .segment()
+                    .is_some_and(|segment| segment.generic_arg_list().is_some());
+            if self.credit && qualified_or_generic {
+                return Sink::Absent;
+            }
             return self.owner_value();
         }
         let arguments = call
@@ -478,6 +775,9 @@ impl Reader<'_> {
             return self.unfollowed(expr.syntax());
         };
         if name == self.owner {
+            if self.credit {
+                return Sink::Absent;
+            }
             return self.owner_value();
         }
         let receiver = self.inner(call.receiver(), depth);
@@ -670,6 +970,58 @@ impl Reader<'_> {
         let (Some(statement), None) = (initializers.next(), initializers.next()) else {
             return Sink::Absent;
         };
+        if self.credit
+            && matches!(
+                statement.pat(),
+                Some(ast::Pat::IdentPat(pattern))
+                    if pattern.mut_token().is_some() || pattern.ref_token().is_some()
+            )
+        {
+            return Sink::Absent;
+        }
+        // A name some other pattern binds too (`if let Some(o) = ..`,
+        // `for o in ..`, a closure parameter) may be a different value at
+        // the read, which the one `let` cannot show.
+        if self.credit
+            && parse
+                .tree()
+                .syntax()
+                .descendants()
+                .filter_map(ast::IdentPat::cast)
+                .filter(|pattern| {
+                    pattern
+                        .name()
+                        .is_some_and(|bound| bound.text() == name.as_str())
+                })
+                .count()
+                != 1
+        {
+            return Sink::Absent;
+        }
+        // A write-capable initializer (`&mut opts(10)`, `.as_mut()`) lets an
+        // immutable binding change the record before the read, and any
+        // assignment through the name (`o.big = true`, `*o = ..`) replaces
+        // the value the owner returned.
+        if self.credit
+            && (statement.initializer().is_some_and(|initializer| {
+                let text: String =
+                    mask_comments_and_strings(&initializer.syntax().text().to_string())
+                        .chars()
+                        .filter(|ch| !ch.is_whitespace())
+                        .collect();
+                text.contains("&mut")
+                    || text.contains("_mut(")
+                    || text.contains("as_mut")
+                    || initializer
+                        .syntax()
+                        .descendants()
+                        .filter_map(ast::RefExpr::cast)
+                        .any(|borrow| borrow.mut_token().is_some())
+            }) || assigns_through(parse.tree().syntax(), &name)
+                || borrows_mutably(parse.tree().syntax(), &name))
+        {
+            return Sink::Absent;
+        }
         if statement.let_else().is_some() {
             return self.unfollowed(statement.syntax());
         }
@@ -722,6 +1074,180 @@ mod tests {
             generated: None,
         };
         owner_field_value_flow(&test, assertion, "over", kept_field)
+    }
+
+    /// #14701: only a plain `assert!` whose whole condition is the kept field
+    /// read off the owner's record (optionally negated once) is a field pin.
+    #[test]
+    fn a_bare_assert_on_the_kept_field_is_a_field_pin() {
+        let pins = |body: &str, assertion: &str| {
+            let (_, let_bindings) = shadow_facts_for_body_text(body);
+            let test = TestSummary {
+                name: "t".to_string(),
+                body: body.to_string().into(),
+                assertions: Vec::new(),
+                file: "src/lib.rs".into(),
+                start_line: 1,
+                end_line: 1,
+                calls: crate::analysis::facts::SharedFactSlice::empty(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::from_vec(let_bindings),
+                generated: None,
+            };
+            bool_field_assertion(&test, assertion, "over", "big")
+        };
+        for assertion in [
+            "assert!(over(10).big);",
+            "assert!(!over(9).big);",
+            "assert!(over(10).big, \"big at ten\");",
+            "assert!((over(10).big));",
+            "assert!(!(over(9).big));",
+            "assert!(over(10).clone().big);",
+            "assert!(over(10).unwrap().big);",
+        ] {
+            assert!(pins(assertion, assertion), "{assertion}");
+        }
+        let body = "let o = over(10);\nassert!(o.big);";
+        assert!(pins(body, "assert!(o.big);"));
+        for assertion in [
+            "assert!(over(10).retries);",
+            "assert!(over(10).big && ok);",
+            "assert!(over(10).big || true);",
+            "assert!(!!over(10).big);",
+            "assert!(over(10).big == true);",
+            "assert!(over(10).inner.big);",
+            "assert!(wrap(over(10)).big);",
+            "assert!(other(10).big);",
+            "assert!(over(10).big());",
+            "debug_assert!(over(10).big);",
+            "assert_eq!(over(10).big, true);",
+            "assert!(matches!(over(10), Opts { big: true, .. }));",
+            "my::assert!(over(10).big);",
+            // A namesake path or a method of the same name may be another
+            // function.
+            "assert!(rival::over(10).big);",
+            "assert!(crate::over(10).big);",
+            "assert!(over::<u8>(10).big);",
+            "assert!(cfg.over(10).big);",
+        ] {
+            assert!(!pins(assertion, assertion), "{assertion}");
+        }
+        // A nested `fn over` or a local `over` shadows the owner.
+        for body in [
+            "fn over(_: u32) -> Opts { Opts { big: true } }\nassert!(over(10).big);",
+            "let over = |_: u32| Opts { big: true };\nassert!(over(10).big);",
+        ] {
+            assert!(!pins(body, "assert!(over(10).big);"), "{body}");
+        }
+        // A `mut` or `ref` local may be overwritten before the read.
+        for body in [
+            "let mut o = over(10);\no.big = true;\nassert!(o.big);",
+            "let ref o = over(10);\nassert!(o.big);",
+            // Another pattern binds the same name.
+            "let o = over(10);\nif let Some(o) = other() {\n assert!(o.big);\n}",
+            "let o = over(10);\nfor o in list {\n assert!(o.big);\n}",
+            "let o = over(10);\nlet f = |o: Opts| assert!(o.big);",
+            // A write-capable initializer or a write through the name.
+            "let o = &mut over(10);\no.big = true;\nassert!(o.big);",
+            "let o = over(10).as_mut();\nassert!(o.big);",
+            "let o = & mut over(10);\nlet alias = &mut *o;\nalias.big = true;\nassert!(o.big);",
+            "let o = &\tmut over(10);\nassert!(o.big);",
+            "let o = over(10);\n*o = other();\nassert!(o.big);",
+        ] {
+            assert!(!pins(body, "assert!(o.big);"), "{body}");
+        }
+    }
+
+    #[test]
+    fn a_use_that_may_bind_the_owner_name_elsewhere_refuses_the_pin() {
+        let root = std::path::Path::new("src/lib.rs");
+        let nested = std::path::Path::new("src/opts.rs");
+        let deeper = std::path::Path::new("src/a/b.rs");
+        for source in [
+            "fn opts() {}\nmod tests {\n use super::*;\n fn t() {}\n}",
+            "fn opts() {}\nmod tests {\n use super::opts;\n fn t() {}\n}",
+            "use crate::opts;\nfn t() {}",
+            "use demo::opts;\nfn t() {}",
+            "use demo::{opts, Opts};\nfn t() {}",
+            "use demo::*;\nfn t() {}",
+            "use crate::rival::other;\nfn t() {}",
+        ] {
+            assert!(
+                !use_may_rebind_owner(source, "opts", root, 1, root),
+                "{source}"
+            );
+        }
+        for source in [
+            "use crate::rival::opts;\nfn t() {}",
+            "use rival::nested::opts;\nfn t() {}",
+            "use crate::rival::*;\nfn t() {}",
+            "use crate::{rival::{opts}};\nfn t() {}",
+            "use crate::make as opts;\nfn t() {}",
+            "fn t() { use crate::rival::opts; }",
+        ] {
+            assert!(
+                use_may_rebind_owner(source, "opts", root, 1, root),
+                "{source}"
+            );
+        }
+        assert!(use_may_rebind_owner(
+            "use crate::opts;",
+            "opts",
+            nested,
+            1,
+            nested
+        ));
+        // A crate-root glob reaches a rival when the owner is not at the root.
+        assert!(use_may_rebind_owner(
+            "use crate::*;",
+            "opts",
+            nested,
+            1,
+            root
+        ));
+        assert!(use_may_rebind_owner(
+            "use demo::*;",
+            "opts",
+            nested,
+            1,
+            root
+        ));
+        let inline = "fn opts() {}\nmod tests {\n use super::*;\n fn t() {}\n}";
+        assert!(!use_may_rebind_owner(inline, "opts", nested, 1, nested));
+        // The owner in an inline module: `super::*` reads the file-level
+        // namesake instead.
+        let rival =
+            "fn opts() {}\nmod inner {\n pub fn opts() {}\n}\nmod tests {\n use super::*;\n}";
+        assert!(use_may_rebind_owner(rival, "opts", nested, 3, nested));
+        assert!(!use_may_rebind_owner(rival, "opts", nested, 1, nested));
+        // `super` names a module this reader can place only in the owner's
+        // own file, and only at the depth of the `use`: from a test file
+        // elsewhere (`crate::a::b`) or from a nested inline module it names
+        // a parent module that may define a rival of the same name.
+        for (source, test_file) in [
+            ("use super::*;\nfn t() {}", deeper),
+            ("use super::opts;\nfn t() {}", deeper),
+            ("mod tests {\n use super::*;\n fn t() {}\n}", deeper),
+            ("mod tests {\n use super::opts;\n fn t() {}\n}", deeper),
+            ("use super::*;\nfn t() {}", root),
+            ("mod outer {\n mod tests {\n  use super::*;\n }\n}", root),
+            ("mod outer {\n mod tests {\n  use super::opts;\n }\n}", root),
+            ("mod tests {\n use self::opts;\n}", root),
+            ("mod tests {\n use super::super::*;\n}", root),
+            // A local module named like a crate.
+            (
+                "mod tests {\n use super::rival;\n use rival::opts;\n}",
+                root,
+            ),
+            ("mod rival {}\nuse rival::opts;", root),
+        ] {
+            assert!(
+                use_may_rebind_owner(source, "opts", root, 1, test_file),
+                "{source} in {test_file:?}"
+            );
+        }
     }
 
     /// #14562: with the changed field `big` kept, the owner's record reaches
