@@ -9,6 +9,7 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::a_same_text_comparison_outside_the_header_does_not_carry_the_edit",
   "crates/ripr/src/analysis/probes/diff.rs::an_arm_edit_beside_an_unchanged_header_stays_a_match_arm",
   "crates/ripr/tests/match_arm_two_arrow_line.rs::a_scrutinee_only_edit_is_not_a_weak_match_arm_gap",
+  "crates/ripr/tests/match_arm_two_arrow_line.rs::an_untouched_comparison_in_an_edited_tuple_scrutinee_is_no_finding",
 ]
 code = [
   "crates/ripr/src/analysis/probes/diff.rs",

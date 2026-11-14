@@ -542,6 +542,24 @@ pub(crate) fn probes_for_file_with_relations(
             let carried_header = |shape: &super::classify::ParserProbeShape| {
                 scrutinee_only_header(shape) && scrutinee_carried(shape)
             };
+            // A shape inside a scrutinee-only header that does not hold the
+            // edit (`a >= b` in `match foo(a >= b)` to `match bar(a >= b)`)
+            // did not change; the header's unclassified probe stands for the
+            // edit, so the unchanged shape is not a finding of its own.
+            let unchanged_in_header = |shape: &super::classify::ParserProbeShape| {
+                let shape_text = canonical_probe_text(text, shape.text);
+                shape.family != ProbeFamily::MatchArm
+                    && shape.family != ProbeFamily::StaticUnknown
+                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                        !removed_span_of_shape(text, &shape_text, removed.trim())
+                            .is_some_and(|old| old != shape_text)
+                    })
+                    && canonical_shapes.iter().any(|header| {
+                        scrutinee_only_header(header)
+                            && !scrutinee_carried(header)
+                            && canonical_probe_text(text, header.text).contains(shape_text.as_str())
+                    })
+            };
             let canonical_shapes = canonical_shapes
                 .iter()
                 .filter(|shape| {
@@ -549,6 +567,7 @@ pub(crate) fn probes_for_file_with_relations(
                         && !respelled_return(shape)
                         && !guard_only_arm(shape)
                         && !carried_header(shape)
+                        && !unchanged_in_header(shape)
                 })
                 .map(|shape| {
                     let mut shape = shape.clone();
@@ -4860,7 +4879,8 @@ mod tests {
     }
 
     /// #14722: a comparison that sits unchanged inside the scrutinee does
-    /// not carry an edit elsewhere in it, so the header keeps a probe.
+    /// not carry an edit elsewhere in it, so the header keeps the only
+    /// probe; the unchanged comparison is no finding of its own.
     #[test]
     fn an_unchanged_comparison_in_the_scrutinee_does_not_carry_the_edit() {
         let probes = shapes_probes(
@@ -4873,18 +4893,14 @@ mod tests {
             "",
         );
 
-        let header = probes
+        let families = probes
             .iter()
-            .find(|probe| probe.family == ProbeFamily::StaticUnknown);
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(families, vec![ProbeFamily::StaticUnknown], "{probes:?}");
         assert_eq!(
-            header.and_then(|probe| probe.before.as_deref()),
+            probes[0].before.as_deref(),
             Some("match foo(a >= b)"),
-            "{probes:?}"
-        );
-        assert!(
-            probes
-                .iter()
-                .all(|probe| probe.family != ProbeFamily::MatchArm),
             "{probes:?}"
         );
     }
@@ -4904,11 +4920,13 @@ mod tests {
             "",
         );
 
-        let header = probes
+        let families = probes
             .iter()
-            .find(|probe| probe.family == ProbeFamily::StaticUnknown);
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(families, vec![ProbeFamily::StaticUnknown], "{probes:?}");
         assert_eq!(
-            header.and_then(|probe| probe.before.as_deref()),
+            probes[0].before.as_deref(),
             Some("match tag(\"x > 0\", before())"),
             "{probes:?}"
         );

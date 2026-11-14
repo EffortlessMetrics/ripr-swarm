@@ -200,12 +200,9 @@ fn a_nested_match_in_the_body_keeps_the_whole_line_and_names_no_unselected_arm()
     Ok(())
 }
 
-/// #14722: an edit wholly inside a `match` scrutinee (`rfind` to `find`,
-/// arms unchanged) changed no arm. It is not a match-arm finding that asks
-/// for an assertion naming the changed arm; it reads like the same
-/// expression edit on a plain line, with no weak gap to repair.
-#[test]
-fn a_scrutinee_only_edit_is_not_a_weak_match_arm_gap() -> Result<(), String> {
+/// Checks a one-file crate `match-scrutinee-only` whose `src/lib.rs` is
+/// `source` with `diff` applied and whose integration test is `test`.
+fn check_scrutinee_crate(source: &str, test: &str, diff: &str) -> Result<CheckOutput, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!(
@@ -222,33 +219,41 @@ fn a_scrutinee_only_edit_is_not_a_weak_match_arm_gap() -> Result<(), String> {
         "[package]\nname = \"match-scrutinee-only\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
     )
     .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
-    std::fs::write(
-        repo.root.join("src/lib.rs"),
-        "pub fn last_dot(name: &str) -> usize {\n    match name.find('.') {\n        None => 0,\n        Some(at) => at,\n    }\n}\n",
-    )
-    .map_err(|error| format!("write source failed: {error}"))?;
-    // `find` returns 1 here where `rfind` returned 3, so this test already
-    // tells the edit apart.
-    std::fs::write(
-        repo.root.join("tests/last_dot.rs"),
-        "use match_scrutinee_only::last_dot;\n\n#[test]\nfn the_last_dot_wins() {\n    assert_eq!(last_dot(\"a.b.c\"), 3);\n}\n",
-    )
-    .map_err(|error| format!("write test failed: {error}"))?;
-    std::fs::write(
-        repo.root.join("diff.patch"),
-        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,6 +1,6 @@\n pub fn last_dot(name: &str) -> usize {\n-    match name.rfind('.') {\n+    match name.find('.') {\n         None => 0,\n         Some(at) => at,\n     }\n }\n",
-    )
-    .map_err(|error| format!("write diff failed: {error}"))?;
-
+    std::fs::write(repo.root.join("src/lib.rs"), source)
+        .map_err(|error| format!("write source failed: {error}"))?;
+    std::fs::write(repo.root.join("tests/scrutinee.rs"), test)
+        .map_err(|error| format!("write test failed: {error}"))?;
+    std::fs::write(repo.root.join("diff.patch"), diff)
+        .map_err(|error| format!("write diff failed: {error}"))?;
     let output = repo.check()?;
     if format!("{output:?}").contains("MalformedDiff") {
         return Err("the fixture diff must parse cleanly".to_string());
     }
-    let header = output
+    Ok(output)
+}
+
+fn findings_on_line(output: &CheckOutput, line: usize) -> Vec<&ripr::Finding> {
+    output
         .findings
         .iter()
-        .filter(|finding| finding.probe.location.line == 2)
-        .collect::<Vec<_>>();
+        .filter(|finding| finding.probe.location.line == line)
+        .collect()
+}
+
+/// #14722: an edit wholly inside a `match` scrutinee (`rfind` to `find`,
+/// arms unchanged) changed no arm. It is not a match-arm finding that asks
+/// for an assertion naming the changed arm; it reads like the same
+/// expression edit on a plain line, with no weak gap to repair.
+#[test]
+fn a_scrutinee_only_edit_is_not_a_weak_match_arm_gap() -> Result<(), String> {
+    // `find` returns 1 here where `rfind` returned 3, so this test already
+    // tells the edit apart.
+    let output = check_scrutinee_crate(
+        "pub fn last_dot(name: &str) -> usize {\n    match name.find('.') {\n        None => 0,\n        Some(at) => at,\n    }\n}\n",
+        "use match_scrutinee_only::last_dot;\n\n#[test]\nfn the_last_dot_wins() {\n    assert_eq!(last_dot(\"a.b.c\"), 3);\n}\n",
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,6 +1,6 @@\n pub fn last_dot(name: &str) -> usize {\n-    match name.rfind('.') {\n+    match name.find('.') {\n         None => 0,\n         Some(at) => at,\n     }\n }\n",
+    )?;
+    let header = findings_on_line(&output, 2);
     assert_eq!(header.len(), 1, "one finding for the header: {header:?}");
     let finding = header[0];
     assert_eq!(
@@ -257,5 +262,30 @@ fn a_scrutinee_only_edit_is_not_a_weak_match_arm_gap() -> Result<(), String> {
     );
     assert_ne!(finding.probe.family, ProbeFamily::MatchArm, "{finding:?}");
     assert_eq!(finding.class, ExposureClass::StaticUnknown, "{finding:?}");
+    Ok(())
+}
+
+/// #14722: with the real parser, a tuple scrutinee whose untouched
+/// comparison sits beside the edited element (`(a >= b, c)` to
+/// `(a >= b, d)`) yields the header's unclassified finding alone: the
+/// comparison neither carries the edit nor reads as a finding of its own.
+#[test]
+fn an_untouched_comparison_in_an_edited_tuple_scrutinee_is_no_finding() -> Result<(), String> {
+    let output = check_scrutinee_crate(
+        "pub fn pick(a: i32, b: i32, c: bool, d: bool) -> u8 {\n    match (a >= b, d) {\n        (true, true) => 1,\n        _ => 0,\n    }\n}\n",
+        "use match_scrutinee_only::pick;\n\n#[test]\nfn both_true_picks_one() {\n    assert_eq!(pick(2, 1, false, true), 1);\n}\n",
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,6 +1,6 @@\n pub fn pick(a: i32, b: i32, c: bool, d: bool) -> u8 {\n-    match (a >= b, c) {\n+    match (a >= b, d) {\n         (true, true) => 1,\n         _ => 0,\n     }\n }\n",
+    )?;
+    let header = findings_on_line(&output, 2);
+    let families = header
+        .iter()
+        .map(|finding| finding.probe.family.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(families, vec![ProbeFamily::StaticUnknown], "{header:?}");
+    assert_eq!(
+        header[0].probe.expression, "match (a >= b, d)",
+        "{header:?}"
+    );
+    assert_eq!(header[0].class, ExposureClass::StaticUnknown, "{header:?}");
     Ok(())
 }
