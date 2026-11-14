@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Record Kani invocations and harness observations in a versioned JSON journal, with Markdown derived from the same data, run-owned checkpoints and retained captured-text commitments. Missing, changed or unexpected observations refuse lane success; require the observed source-file set to match the selected harness-file set without duplicate observations, while permitting multiple harnesses in one file. Unregistered observations do not become formal assurance (#14472).

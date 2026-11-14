@@ -1,0 +1,605 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://effortlessmetrics.dev/ripr/internal/kani-observation-v1.schema.json",
+  "title": "Internal Kani native observation envelope v1",
+  "description": "Shape contract for the runner observation journal. Conformance does not establish registered claims, complete source custody, currentness, or native producer authenticity.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "report",
+    "markdown_path",
+    "markdown",
+    "markdown_sha256"
+  ],
+  "properties": {
+    "report": {
+      "$ref": "#/$defs/report"
+    },
+    "markdown_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "markdown": {
+      "type": "string"
+    },
+    "markdown_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    }
+  },
+  "$defs": {
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allow_empty",
+        "harness",
+        "default_unwind",
+        "timeout_secs",
+        "harness_timeout_secs"
+      ],
+      "properties": {
+        "allow_empty": {
+          "type": "boolean"
+        },
+        "harness": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "default_unwind": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timeout_secs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "harness_timeout_secs": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "harness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "name"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "status": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status"
+          ],
+          "properties": {
+            "status": {
+              "const": "VERIFIED"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "detail"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "FAILED",
+                "NOT-ESTABLISHED"
+              ]
+            },
+            "detail": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "package",
+        "observation",
+        "claim_id",
+        "claim_generation"
+      ],
+      "properties": {
+        "package": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "harness",
+            "status",
+            "time"
+          ],
+          "properties": {
+            "harness": {
+              "$ref": "#/$defs/harness"
+            },
+            "status": {
+              "$ref": "#/$defs/status"
+            },
+            "time": {
+              "type": "string"
+            }
+          }
+        },
+        "claim_id": {
+          "type": "null"
+        },
+        "claim_generation": {
+          "type": "null"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "bytes",
+        "sha256"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      }
+    },
+    "stream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "encoding",
+        "bytes",
+        "sha256",
+        "text"
+      ],
+      "properties": {
+        "encoding": {
+          "const": "utf8_text_from_process_capture"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "covers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "satisfied",
+        "total",
+        "undetermined",
+        "unreachable"
+      ],
+      "properties": {
+        "satisfied": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "undetermined": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unreachable": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "qualified_name",
+        "normalized_block_sha256",
+        "covers"
+      ],
+      "properties": {
+        "qualified_name": {
+          "type": "string"
+        },
+        "normalized_block_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "covers": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/covers"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "invocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "package",
+        "argv",
+        "timeout_ms",
+        "elapsed_ms",
+        "exit_code",
+        "exit_success",
+        "timed_out",
+        "capture_error",
+        "cleanup_state",
+        "stdout",
+        "stderr",
+        "native_blocks",
+        "unmatched_native_blocks"
+      ],
+      "properties": {
+        "package": {
+          "type": "string",
+          "minLength": 1
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "timeout_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "elapsed_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exit_success": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timed_out": {
+          "type": "boolean"
+        },
+        "capture_error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cleanup_state": {
+          "const": "not_observed"
+        },
+        "stdout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/stream"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stderr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/stream"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "native_blocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/block"
+          }
+        },
+        "unmatched_native_blocks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "run_id",
+        "phase",
+        "requested",
+        "tool_available",
+        "lane_success",
+        "lane_error",
+        "selected",
+        "selected_source_files",
+        "selected_files_unchanged_after_run",
+        "source_observation_digest",
+        "source_recheck_errors",
+        "invocations",
+        "results",
+        "registered_claims",
+        "claim_assurance",
+        "limitations"
+      ],
+      "properties": {
+        "schema": {
+          "const": "ripr.kani-observation.v1"
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phase": {
+          "enum": [
+            "started",
+            "completed"
+          ]
+        },
+        "requested": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/args"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tool_available": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lane_success": {
+          "type": "boolean"
+        },
+        "lane_error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selected": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "package",
+              "harness"
+            ],
+            "properties": {
+              "package": {
+                "type": "string",
+                "minLength": 1
+              },
+              "harness": {
+                "$ref": "#/$defs/harness"
+              }
+            }
+          }
+        },
+        "selected_source_files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        },
+        "selected_files_unchanged_after_run": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_observation_digest": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_recheck_errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "invocations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/invocation"
+          }
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/row"
+          }
+        },
+        "registered_claims": {
+          "const": 0
+        },
+        "claim_assurance": {
+          "const": "not_established"
+        },
+        "limitations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "const": "started"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "lane_success": {
+                "const": false
+              },
+              "lane_error": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "lane_success": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "phase": {
+                "const": "completed"
+              },
+              "tool_available": {
+                "const": true
+              },
+              "requested": {
+                "$ref": "#/$defs/args"
+              },
+              "lane_error": {
+                "type": "null"
+              },
+              "source_recheck_errors": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
