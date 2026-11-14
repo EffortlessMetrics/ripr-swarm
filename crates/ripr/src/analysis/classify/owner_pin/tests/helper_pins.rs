@@ -1016,3 +1016,39 @@ fn a_gated_predicate_assert_eq_in_a_dead_branch_or_ignored_test_is_still_refused
     }
     Ok(())
 }
+
+/// #14537 repair: a retry after the shared Module edge still converts a
+/// value-dependent early return into the analyzer-limit ValueGuard disclosure.
+#[test]
+fn a_gated_predicate_assert_eq_value_guard_is_an_analyzer_limit() -> Result<(), String> {
+    let lib = "#[cfg(feature = \"lang-python\")]\nmod python;\n\npub fn gate(value: u32) -> u32 {\n    value\n}\n";
+    let python = "#[cfg(test)]\nmod tests {\n    use crate::gate;\n\n    #[test]\n    fn pins() {\n        if gate(10) == 11 {\n            return;\n        }\n        assert_eq!(gate(10), 10);\n    }\n}\n";
+    let index = index(&[(LIB, lib), ("src/python.rs", python)]);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "pins")
+        .ok_or("premise: `pins` is indexed")?;
+    let owner = owner(&index, "gate");
+    let probe = super::predicate_probe(owner, "value");
+    let assertion = parser_oracles_for_function(&test.body, test.start_line)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|oracle| oracle.text.starts_with("assert_eq!(gate(10), 10)"))
+        .ok_or("premise: the test's assert_eq! parses")?;
+    let refusal = OwnerPinSyntax::default()
+        .equality_assertion_refusal(&probe, Some(owner), test, &assertion, &index);
+    assert!(
+        matches!(
+            &refusal,
+            Some(AssertionRefusal::ValueGuard { condition, subject })
+                if condition == "gate(10) == 11" && subject == "gate(10)"
+        ),
+        "the gated-mod retry must preserve the expected-value guard, not report a false gap (refusal={refusal:?})"
+    );
+    assert!(
+        refusal.as_ref().is_some_and(AssertionRefusal::is_analyzer_limit),
+        "an expected-value guard is an analyzer limit, not a true false gap (refusal={refusal:?})"
+    );
+    Ok(())
+}

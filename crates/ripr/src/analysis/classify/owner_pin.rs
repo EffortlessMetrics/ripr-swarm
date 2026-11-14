@@ -1080,7 +1080,7 @@ impl OwnerPinSyntax {
             skip.as_deref(),
         );
         if inner.is_some() {
-            return inner;
+            return inner.map(|refusal| Self::refusal_with_value_guard(refusal, assertion));
         }
         if shared_gate {
             return None;
@@ -2257,13 +2257,8 @@ impl OwnerPinSyntax {
             )
     }
 
-    fn refusal(
-        &self,
-        test: &TestSummary,
-        assertion: &OracleFact,
-        index: &RustIndex,
-    ) -> Option<AssertionRefusal> {
-        Some(match self.context_refusal(test, assertion, index, false)? {
+    fn refusal_with_value_guard(refusal: AssertionRefusal, assertion: &OracleFact) -> AssertionRefusal {
+        match refusal {
             AssertionRefusal::Syntax(AssertionContextRefusal::GuardedReturn(condition)) => {
                 match value_guard_subject(&condition, &assertion.text) {
                     Some(subject) => AssertionRefusal::ValueGuard {
@@ -2276,7 +2271,19 @@ impl OwnerPinSyntax {
                 }
             }
             refusal => refusal,
-        })
+        }
+    }
+
+    fn refusal(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> Option<AssertionRefusal> {
+        Some(Self::refusal_with_value_guard(
+            self.context_refusal(test, assertion, index, false)?,
+            assertion,
+        ))
     }
 
     fn context_refusal(
