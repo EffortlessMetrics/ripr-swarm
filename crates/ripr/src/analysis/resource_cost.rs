@@ -224,7 +224,9 @@ pub(crate) fn duration_percentiles(durations: &[Duration]) -> Option<DurationPer
         let rank = (percent * n).div_ceil(100).clamp(1, n);
         sorted[(rank - 1) as usize].as_millis() as u64
     };
-    let total_ms: u128 = sorted.iter().map(|d| d.as_millis()).sum();
+    // Sum sub-millisecond precision before converting: truncating each
+    // sample to whole ms first would understate the mean of fast seams.
+    let total_ms: u128 = sorted.iter().map(|d| d.as_nanos()).sum::<u128>() / 1_000_000;
     Some(DurationPercentiles {
         count: sorted.len(),
         p50_ms: nearest_rank(50),
@@ -763,6 +765,19 @@ mod tests {
             "ripr_repo_exposure_latency phase=file_fact_cache \
              status=start_files_42_production_7 duration_ms=0"
         );
+    }
+
+    #[test]
+    fn duration_percentiles_mean_keeps_sub_millisecond_precision() {
+        use super::duration_percentiles;
+        // 1.9ms and 0.9ms average to 1.4ms, reported as 1ms; truncating
+        // each sample to whole ms first would report 0ms.
+        let summary = duration_percentiles(&[
+            Duration::from_nanos(1_900_000),
+            Duration::from_nanos(900_000),
+        ])
+        .expect("non-empty durations summarize");
+        assert_eq!(summary.mean_ms, 1);
     }
 
     #[test]

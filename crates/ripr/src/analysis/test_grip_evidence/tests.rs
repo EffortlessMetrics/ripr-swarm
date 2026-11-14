@@ -2829,6 +2829,66 @@ fn seam_cost_trace_aggregates_occupancy_window_and_tokens() {
 }
 
 #[test]
+fn seam_cost_trace_emission_names_phases_window_and_memo() {
+    // More records than the last-window cap, across two workers, so the
+    // emitted phases must prove the window boundary and worker split.
+    // Removing emit_seam_cost_trace empties the recording and fails here.
+    let records: Vec<SeamCostRecord> = (0..20)
+        .map(|index| SeamCostRecord {
+            seam_id: format!("src/w.rs::seam{index:02}"),
+            duration: Duration::from_millis(index as u64 + 1),
+            worker: Some(index % 2),
+        })
+        .collect();
+    let memo = crate::analysis::syntax::run_memo::MemoStats {
+        hits: 11,
+        misses: 3,
+    };
+    let (_, phases) = crate::analysis::resource_cost::record_latency_phases(|| {
+        emit_seam_cost_trace(&records, memo, Duration::from_millis(210));
+    });
+    let by_phase = |name: &str| {
+        phases
+            .iter()
+            .filter(|phase| phase.phase == name)
+            .map(|phase| phase.status.clone())
+            .collect::<Vec<_>>()
+    };
+    let durations = by_phase("evidence_seam_durations");
+    assert_eq!(durations.len(), 1, "{phases:?}");
+    assert!(durations[0].contains("seams_20_"), "{}", durations[0]);
+    let occupancy = by_phase("evidence_worker_occupancy");
+    assert_eq!(occupancy.len(), 3, "{phases:?}");
+    assert!(
+        occupancy
+            .iter()
+            .any(|s| s.contains("summary_workers_2_seams_20")),
+        "{occupancy:?}"
+    );
+    let worker_seams: usize = occupancy
+        .iter()
+        .filter(|s| s.starts_with("worker_"))
+        .filter_map(|s| {
+            s.split("_seams_")
+                .nth(1)?
+                .split('_')
+                .next()?
+                .parse::<usize>()
+                .ok()
+        })
+        .sum();
+    assert_eq!(worker_seams, 20);
+    let window = by_phase("evidence_last_window");
+    assert_eq!(window.len(), 1, "{phases:?}");
+    assert!(window[0].starts_with("last_16_"), "{}", window[0]);
+    assert!(window[0].contains("seam04"), "{}", window[0]);
+    assert!(window[0].contains("seam19"), "{}", window[0]);
+    assert!(!window[0].contains("seam03"), "{}", window[0]);
+    let memo_lines = by_phase("evidence_run_memo");
+    assert_eq!(memo_lines, vec!["hits_11_misses_3".to_string()]);
+}
+
+#[test]
 fn evidence_pass_scans_each_test_body_once_not_once_per_oracle_ask() -> Result<(), String> {
     // The seam pass asks the shadow check about the same test bodies again and
     // again (per seam, stage and oracle). A worker's run memo must absorb the
