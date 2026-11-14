@@ -334,6 +334,12 @@ pub(crate) fn check_droid_security_scan_config(
         ));
     }
 
+    if !has_active_line(&lines, "runs-on: ubuntu-latest") {
+        violations.push(format!(
+            "{path_label}: scheduled security scan must run on a GitHub-hosted runner (runs-on: ubuntu-latest); a job pinned to an unavailable self-hosted runner group queues for 24 hours and is cancelled without running a step (#14641)"
+        ));
+    }
+
     if !has_active_line(&lines, "MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}") {
         violations.push(format!(
             "{path_label}: MINIMAX_API_KEY must be job-level env"
@@ -342,6 +348,12 @@ pub(crate) fn check_droid_security_scan_config(
 
     if !has_active_line(&lines, "security_scan_schedule: true") {
         violations.push(format!("{path_label}: security_scan_schedule must be true"));
+    }
+
+    if !has_active_line(&lines, "github_token: ${{ secrets.GITHUB_TOKEN }}") {
+        violations.push(format!(
+            "{path_label}: the droid action must receive the job's GITHUB_TOKEN as github_token instead of an id-token grant"
+        ));
     }
 
     if !has_active_line(&lines, "security_scan_days: 7") {
@@ -470,6 +482,31 @@ mod tests {
             violations
                 .iter()
                 .any(|v| v.contains("security_scan_days must be 7"))
+        );
+    }
+
+    #[test]
+    fn retained_security_scan_rejects_self_hosted_runner_and_token_removal() {
+        let source = include_str!("../../../.github/workflows/droid-security-scan.yml");
+
+        let self_hosted = source.replace("runs-on: ubuntu-latest", "runs-on: self-hosted");
+        assert_ne!(self_hosted, source, "runner mutation must engage");
+        let mut violations = Vec::new();
+        super::check_droid_security_scan_config(&mut violations, "security.yml", &self_hosted);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("GitHub-hosted runner")),
+            "{violations:?}"
+        );
+
+        let without_token = source.replace("github_token: ${{ secrets.GITHUB_TOKEN }}\n", "");
+        assert_ne!(without_token, source, "github_token mutation must engage");
+        let mut violations = Vec::new();
+        super::check_droid_security_scan_config(&mut violations, "security.yml", &without_token);
+        assert!(
+            violations.iter().any(|v| v.contains("GITHUB_TOKEN")),
+            "{violations:?}"
         );
     }
 
