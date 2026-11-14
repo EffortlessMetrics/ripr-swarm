@@ -27,7 +27,7 @@ use crate::analysis::facts::cfg_predicates::{
     attribute_introduces_only_test, attribute_test_build_availability,
 };
 use ra_ap_syntax::{
-    AstNode, SyntaxNode, TextSize,
+    AstNode, SyntaxKind, SyntaxNode, TextSize,
     ast::{
         self, HasArgList, HasAttrs, HasGenericArgs, HasGenericParams, HasLoopBody, HasName,
         HasVisibility,
@@ -780,15 +780,120 @@ fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &st
             if binds_root {
                 return false;
             }
-        } else if ast::MacroCall::can_cast(child.kind()) {
-            // An item-position macro may emit any binding of that name.
-            return false;
+        } else if let Some(call) = ast::MacroCall::cast(child.clone()) {
+            // An item-position macro may emit any binding of that name, except
+            // std's `thread_local!` and `compile_error!`, which emit no module
+            // (#14116): only while the call never spells the root and nothing
+            // in the file rebinds the macro's name.
+            if !std_item_macro_leaves_root_unbound(&call, parent.clone(), root) {
+                return false;
+            }
         } else if ast::AnyHasName::cast(child.clone()).is_some_and(|item| named_root(item.name())) {
             return false;
         }
     }
     // Two declarations (`cfg`-exclusive alternatives) are not one module.
     declared == 1
+}
+
+/// Whether an item-position `call` beside a sibling-module glob is std's
+/// `thread_local!` or `compile_error!` (bare, or `std::`), the macros
+/// the module-tree scan already reads as emitting no module. Refused when the
+/// call's tokens spell `root`, or when a top-level item of `file` may bind the
+/// macro's name (or, for a `std::` call, the crate name `std`) to something
+/// else: a same-named `macro_rules!`/`macro`, `mod` or `extern crate` alias, an
+/// import of that name, a `#[macro_use]` item or another glob import. As in the
+/// module-tree scan, a shadowing macro from outside the file is not modeled.
+fn std_item_macro_leaves_root_unbound(call: &ast::MacroCall, file: SyntaxNode, root: &str) -> bool {
+    let Some(path) = call.path() else {
+        return false;
+    };
+    let spelled: String = path
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    // `core` exports neither macro under that path, so `core::` (like a
+    // leading `::`) is refused; a `std::` call also needs `std` itself unbound.
+    let qualified = spelled.strip_prefix("std::");
+    let callee = qualified.unwrap_or(&spelled);
+    if !super::module_tree::ITEM_MACROS_WITHOUT_MODULES.contains(&callee) {
+        return false;
+    }
+    let spells_root = call.token_tree().is_some_and(|tree| {
+        tree.syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .any(|token| {
+                token.kind() == SyntaxKind::IDENT && token.text().trim_start_matches("r#") == root
+            })
+    });
+    if spells_root {
+        return false;
+    }
+    // Either the macro's own name or, for a `std::` call, the crate name `std`.
+    let rebindable = |text: &str| {
+        let text = text.trim_start_matches("r#");
+        text == callee || (qualified.is_some() && text == "std")
+    };
+    let names_callee = |name: Option<ast::Name>| name.is_some_and(|name| rebindable(name.text()));
+    // Only top-level items bind names in the root's scope; a nested module's
+    // imports and definitions stay inside it unless `#[macro_use]` exports them.
+    let mut globs = 0usize;
+    for node in file.children() {
+        if let Some(rules) = ast::MacroRules::cast(node.clone()) {
+            if names_callee(rules.name()) {
+                return false;
+            }
+        } else if let Some(definition) = ast::MacroDef::cast(node.clone()) {
+            if names_callee(definition.name()) {
+                return false;
+            }
+        } else if let Some(import) = ast::Use::cast(node.clone()) {
+            let bindings = super::name_scope::use_item_bindings(&import);
+            let opaque = bindings
+                .imports
+                .iter()
+                .any(|import| matches!(import.binding, super::name_scope::UseBinding::Opaque));
+            let binds_callee = bindings
+                .imports
+                .iter()
+                .any(|import| rebindable(&import.bound))
+                || (opaque
+                    && import.syntax().descendants_with_tokens().any(|element| {
+                        element.into_token().is_some_and(|token| {
+                            token.kind() == SyntaxKind::IDENT && rebindable(token.text())
+                        })
+                    }));
+            if binds_callee {
+                return false;
+            }
+            globs += import
+                .syntax()
+                .descendants()
+                .filter_map(ast::UseTree::cast)
+                .filter(|tree| tree.star_token().is_some())
+                .count();
+        } else if let Some(module) = ast::Module::cast(node.clone())
+            && names_callee(module.name())
+        {
+            return false;
+        } else if let Some(krate) = ast::ExternCrate::cast(node.clone())
+            && names_callee(krate.rename().and_then(|rename| rename.name()))
+        {
+            return false;
+        } else if let Some(item) = ast::Item::cast(node)
+            && item
+                .attrs()
+                .any(|attr| attr.syntax().text().to_string().contains("macro_use"))
+        {
+            return false;
+        }
+    }
+    // The sibling glob itself is the one allowed glob.
+    globs <= 1
 }
 
 /// An `extern crate other as std;` (or `core`, `alloc`) alias.
