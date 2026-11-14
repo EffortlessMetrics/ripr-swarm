@@ -1,0 +1,945 @@
+//! End-to-end witness for changed range bounds (#14419).
+//!
+//! A changed range bound (`0..n` to `0..=n`, `1..n` to `0..n`, a match range
+//! pattern `0..=5` to `0..5`) changes the owner's result only at inputs where
+//! the old and new ranges give different values: `(0..n).sum()` and
+//! `(0..=n).sum()` are both 0 at `n = 0`. A test that pins an exact value at
+//! such an input passes on both versions, so it is not credited as exposing
+//! the change. A test whose asserted input does separate the ranges is.
+//! When ripr cannot evaluate the owner at the test's inputs, the change is not
+//! credited either.
+
+use ripr::{CheckInput, CheckOutput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+struct TempRepo {
+    root: PathBuf,
+}
+
+impl TempRepo {
+    fn create(lib: &str, test: &str, diff: &str) -> Result<Self, String> {
+        // A process-wide sequence, not the clock: parallel tests share one
+        // `SystemTime` on some platforms.
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-range-bound-edit-{}-{sequence}",
+            std::process::id()
+        ));
+        // Built before any write so `Drop` removes a partly written root.
+        let repo = Self { root };
+        let root = &repo.root;
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create source directory failed: {error}"))?;
+        std::fs::create_dir_all(root.join("tests"))
+            .map_err(|error| format!("create test directory failed: {error}"))?;
+        let write = |path: &str, text: &str| {
+            std::fs::write(root.join(path), text)
+                .map_err(|error| format!("write {path} failed: {error}"))
+        };
+        write(
+            "Cargo.toml",
+            "[package]\nname = \"ranges\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+        )?;
+        write("src/lib.rs", lib)?;
+        write("tests/it.rs", test)?;
+        write("diff.patch", diff)?;
+        Ok(repo)
+    }
+
+    fn check(&self) -> Result<CheckOutput, String> {
+        check_workspace(CheckInput {
+            root: self.root.clone(),
+            base: None,
+            diff_file: Some(self.root.join("diff.patch")),
+            mode: Mode::Ready,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })
+    }
+}
+
+impl Drop for TempRepo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+/// A one-line diff of `src/lib.rs` from `old` to `new`, and the changed line.
+fn diff_at(text: &str, new: &str, old: &str) -> Result<(String, usize), String> {
+    let lines = text.lines().collect::<Vec<_>>();
+    let mut matches = lines.iter().enumerate().filter(|(_, line)| **line == new);
+    let (index, _) = matches
+        .next()
+        .ok_or_else(|| format!("src/lib.rs has no line {new:?}"))?;
+    if matches.next().is_some() || index < 1 || index + 2 > lines.len() {
+        return Err(format!(
+            "src/lib.rs needs one {new:?} with a line before and one after"
+        ));
+    }
+    let start = index;
+    Ok((
+        format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{start},3 +{start},3 @@\n {}\n-{old}\n+{new}\n {}\n",
+            lines[index - 1],
+            lines[index + 1]
+        ),
+        index + 1,
+    ))
+}
+
+/// The findings on the changed line of `src/lib.rs` after `old` -> `new`.
+fn findings_on_changed_line(
+    lib: &str,
+    new: &str,
+    old: &str,
+    test: &str,
+) -> Result<Vec<Finding>, String> {
+    let (diff, line) = diff_at(lib, new, old)?;
+    let repo = TempRepo::create(lib, test, &diff)?;
+    let output = repo.check()?;
+    let findings: Vec<Finding> = output
+        .findings
+        .into_iter()
+        .filter(|finding| finding.probe.location.line == line)
+        .collect();
+    if findings.is_empty() {
+        return Err(format!("no finding on line {line}"));
+    }
+    Ok(findings)
+}
+
+fn classes(findings: &[Finding]) -> Vec<ExposureClass> {
+    findings
+        .iter()
+        .map(|finding| finding.class.clone())
+        .collect()
+}
+
+fn infection_states(findings: &[Finding]) -> Vec<String> {
+    findings
+        .iter()
+        .map(|finding| format!("{:?}", finding.ripr.infect.state))
+        .collect()
+}
+
+fn test_calling(body: &str) -> String {
+    format!("use ranges::*;\n\n#[test]\nfn pins() {{\n    {body}\n}}\n")
+}
+
+fn sum_to(expression: &str) -> String {
+    format!("/// Sum below the bound.\npub fn sum_to(n: u32) -> u32 {{\n    {expression}\n}}\n")
+}
+
+#[test]
+fn an_inclusive_sum_bound_is_not_credited_by_an_input_where_both_ranges_agree() -> Result<(), String>
+{
+    // The #14419 repro: both ranges sum to 0 at n = 0.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("assert_eq!(sum_to(0), 0);"),
+    )?;
+    assert_eq!(classes(&findings), vec![ExposureClass::WeaklyExposed]);
+    assert_eq!(infection_states(&findings), vec!["Weak".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn an_inclusive_sum_bound_is_credited_by_an_input_that_separates_the_ranges() -> Result<(), String>
+{
+    // n = 4: 0..4 sums to 6 and 0..=4 to 10.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("assert_eq!(sum_to(4), 10);"),
+    )?;
+    assert_eq!(classes(&findings), vec![ExposureClass::Exposed]);
+    Ok(())
+}
+
+#[test]
+fn a_relational_check_at_a_separating_input_stays_weak() -> Result<(), String> {
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("assert!(sum_to(4) > 0);"),
+    )?;
+    assert_eq!(classes(&findings), vec![ExposureClass::WeaklyExposed]);
+    Ok(())
+}
+
+#[test]
+fn an_unread_input_does_not_credit_a_changed_range_bound() -> Result<(), String> {
+    let findings = findings_on_changed_line(
+        &sum_to("(0..n).sum()"),
+        "    (0..n).sum()",
+        "    (0..=n).sum()",
+        &test_calling("let k = std::env::args().count() as u32;\n    assert_eq!(sum_to(k), 0);"),
+    )?;
+    assert!(
+        classes(&findings)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    assert_eq!(infection_states(&findings), vec!["Unknown".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn a_count_bound_is_credited_where_the_empty_range_gains_an_element() -> Result<(), String> {
+    // Unlike the sum, the count does separate at n = 0: 0 versus 1.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).count() as u32"),
+        "    (0..=n).count() as u32",
+        "    (0..n).count() as u32",
+        &test_calling("assert_eq!(sum_to(0), 1);"),
+    )?;
+    assert_eq!(classes(&findings), vec![ExposureClass::Exposed]);
+    Ok(())
+}
+
+#[test]
+fn an_equivalent_range_start_edit_is_not_credited() -> Result<(), String> {
+    // `1..n` and `0..n` sum alike at every n: no test can tell them apart.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..n).sum()"),
+        "    (0..n).sum()",
+        "    (1..n).sum()",
+        &test_calling("assert_eq!(sum_to(3), 3);"),
+    )?;
+    assert!(
+        classes(&findings)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+fn inside(expression: &str) -> String {
+    format!(
+        "/// Whether `x` is in range.\npub fn inside(x: u32) -> bool {{\n    {expression}\n}}\n"
+    )
+}
+
+#[test]
+fn a_membership_bound_needs_the_endpoint_input() -> Result<(), String> {
+    let lib = inside("(0..=10).contains(&x)");
+    let off_boundary = findings_on_changed_line(
+        &lib,
+        "    (0..=10).contains(&x)",
+        "    (0..10).contains(&x)",
+        &test_calling("assert!(inside(3));"),
+    )?;
+    assert_eq!(classes(&off_boundary), vec![ExposureClass::WeaklyExposed]);
+    let on_boundary = findings_on_changed_line(
+        &lib,
+        "    (0..=10).contains(&x)",
+        "    (0..10).contains(&x)",
+        &test_calling("assert!(inside(10));"),
+    )?;
+    assert_eq!(classes(&on_boundary), vec![ExposureClass::Exposed]);
+    Ok(())
+}
+
+const TIER: &str = "/// The tier of `x`.\npub fn tier(x: u32) -> u32 {\n    match x {\n        0..5 => 1,\n        _ => 2,\n    }\n}\n";
+
+#[test]
+fn a_match_range_pattern_bound_needs_the_endpoint_input() -> Result<(), String> {
+    let inside_both = findings_on_changed_line(
+        TIER,
+        "        0..5 => 1,",
+        "        0..=5 => 1,",
+        &test_calling("assert_eq!(tier(3), 1);"),
+    )?;
+    assert!(
+        classes(&inside_both)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{inside_both:?}"
+    );
+    assert_eq!(infection_states(&inside_both), vec!["Weak".to_string()]);
+    let endpoint = findings_on_changed_line(
+        TIER,
+        "        0..5 => 1,",
+        "        0..=5 => 1,",
+        &test_calling("assert_eq!(tier(5), 2);"),
+    )?;
+    assert_eq!(classes(&endpoint), vec![ExposureClass::Exposed]);
+    Ok(())
+}
+
+#[test]
+fn a_slice_range_feeding_a_sum_is_not_credited_without_a_fold() -> Result<(), String> {
+    // The extra element is 0 here, so the test passes on both versions; ripr
+    // cannot fold the slice and must not credit it.
+    let lib = "/// Sum the first `n` values.\npub fn total(v: &[u32], n: usize) -> u32 {\n    v[..=n].iter().sum()\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "    v[..=n].iter().sum()",
+        "    v[..n].iter().sum()",
+        &test_calling("assert_eq!(total(&[0, 0, 5], 1), 0);"),
+    )?;
+    assert!(
+        classes(&findings)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    assert_eq!(infection_states(&findings), vec!["Unknown".to_string()]);
+    Ok(())
+}
+
+const UPTO: &str = "/// The values below the bound.\npub fn upto(n: u32) -> Vec<u32> {\n    (0..=n).collect()\n}\n";
+
+#[test]
+fn a_collected_range_keeps_the_ordinary_reading() -> Result<(), String> {
+    // `.collect()` preserves length, so one element more shows at every
+    // non-empty input; the gate leaves this shape to the ordinary reading.
+    let findings = findings_on_changed_line(
+        UPTO,
+        "    (0..=n).collect()",
+        "    (0..n).collect()",
+        &test_calling("assert_eq!(upto(2), vec![0, 1, 2]);"),
+    )?;
+    assert_eq!(classes(&findings), vec![ExposureClass::Exposed]);
+    Ok(())
+}
+
+#[test]
+fn a_wrapper_around_the_owner_call_does_not_credit_a_range_bound() -> Result<(), String> {
+    // 0..3 sums to 3 and 0..=3 to 6: both are positive, so the wrapper
+    // folds the separating input back into one outcome.
+    let test = "use ranges::*;\n\nfn is_positive(value: u32) -> bool {\n    value > 0\n}\n\n#[test]\nfn pins() {\n    assert!(is_positive(sum_to(3)));\n}\n";
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        test,
+    )?;
+    assert!(
+        classes(&findings)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    assert_ne!(infection_states(&findings), vec!["Yes".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn a_self_comparison_does_not_credit_a_range_bound() -> Result<(), String> {
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("assert_eq!(sum_to(5), sum_to(5));"),
+    )?;
+    assert_ne!(infection_states(&findings), vec!["Yes".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn a_test_helper_that_calls_the_owner_does_not_supply_a_separating_input() -> Result<(), String> {
+    // `reference(4)` calls `sum_to(4)`, so both sides move together and the
+    // assertion holds on both versions.
+    let test = "use ranges::*;\n\nfn reference(n: u32) -> u32 {\n    sum_to(n)\n}\n\n#[test]\nfn pins() {\n    assert_eq!(sum_to(4), reference(4));\n}\n";
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        test,
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_library_helper_that_calls_the_owner_does_not_supply_a_separating_input() -> Result<(), String>
+{
+    let lib = format!(
+        "{}\n/// Mirror of the sum.\npub fn reference(n: u32) -> u32 {{\n    sum_to(n)\n}}\n",
+        sum_to("(0..=n).sum()")
+    );
+    let findings = findings_on_changed_line(
+        &lib,
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("assert_eq!(sum_to(4), reference(4));"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_boolean_equality_against_a_helper_does_not_supply_a_separating_input() -> Result<(), String> {
+    let test = "use ranges::*;\n\nfn reference(n: u32) -> u32 {\n    sum_to(n)\n}\n\n#[test]\nfn pins() {\n    assert!(sum_to(4) == reference(4));\n}\n";
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        test,
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_compound_assigned_expected_binding_does_not_supply_a_separating_input() -> Result<(), String> {
+    // `expected |= sum_to(4)` tracks the owner, so the assertion holds on both versions.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling(
+            "let mut expected = 0;\n    expected |= sum_to(4);\n    assert_eq!(sum_to(4), expected);",
+        ),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_literal_neither_version_returns_does_not_supply_a_separating_input() -> Result<(), String> {
+    // 6 and 10 both differ from 99: the assertion fails on both versions.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("assert_eq!(sum_to(4), 99);"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_literal_only_the_old_range_returns_does_not_supply_a_separating_input() -> Result<(), String> {
+    // 6 is the old `0..4` sum; the test fails on the current `0..=4` code.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("assert_eq!(sum_to(4), 6);"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_ignored_test_does_not_supply_a_separating_input() -> Result<(), String> {
+    // An ignored test never runs.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        "use ranges::*;\n\n#[test]\n#[ignore]\nfn pins() {\n    assert_eq!(sum_to(4), 10);\n}\n",
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_for_pattern_shadowing_the_expected_binding_does_not_supply_a_separating_input()
+-> Result<(), String> {
+    // The loop's `expected` is `sum_to(4)`, not the outer 10.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling(
+            "let expected = 10;\n    for expected in [sum_to(4)] {\n        assert_eq!(sum_to(4), expected);\n    }",
+        ),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_destructuring_let_shadowing_the_expected_binding_does_not_supply_a_separating_input()
+-> Result<(), String> {
+    // The tuple pattern rebinds `expected` to `sum_to(4)`.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling(
+            "let expected = 10;\n    let (expected,) = (sum_to(4),);\n    assert_eq!(sum_to(4), expected);",
+        ),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_should_panic_test_does_not_supply_a_separating_input() -> Result<(), String> {
+    // The old version fails the assertion and the new one panics after it:
+    // the test passes on both.
+    let test = "use ranges::*;\n\n#[test]\n#[should_panic]\nfn pins() {\n    assert_eq!(sum_to(4), 10);\n    panic!(\"done\");\n}\n";
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        test,
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_dead_assertion_does_not_supply_a_separating_input() -> Result<(), String> {
+    // Only `sum_to(0)` runs, and both ranges sum to 0 there.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling(
+            "assert_eq!(sum_to(0), 0);\n    if false {\n        assert_eq!(sum_to(4), 10);\n    }",
+        ),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_assertion_after_return_on_the_same_line_does_not_separate() -> Result<(), String> {
+    // `return;` ends the test before `sum_to(4)` is asserted.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("assert_eq!(sum_to(0), 0);\n    return; assert_eq!(sum_to(4), 10);"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_assertion_in_an_uncalled_closure_does_not_separate() -> Result<(), String> {
+    // `_check` is never called, so only `sum_to(0)` runs.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling(
+            "assert_eq!(sum_to(0), 0);\n    let _check = || {\n        assert_eq!(sum_to(4), 10);\n    };",
+        ),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_live_assertion_sharing_a_line_still_separates() -> Result<(), String> {
+    // Control: no dead code on the line, so `sum_to(4)` still separates.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("let _seed = 1; assert_eq!(sum_to(4), 10);"),
+    )?;
+    assert_eq!(classes(&findings), vec![ExposureClass::Exposed]);
+    Ok(())
+}
+
+#[test]
+fn a_range_passed_to_an_associated_sum_is_gated() -> Result<(), String> {
+    // `Iterator::sum(0..=n)` absorbs the extra element at n = 0.
+    let lib =
+        "/// Sum below the bound.\npub fn sum_to(n: u32) -> u32 {\n    Iterator::sum(0..=n)\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "    Iterator::sum(0..=n)",
+        "    Iterator::sum(0..n)",
+        &test_calling("assert_eq!(sum_to(0), 0);"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_nested_match_arm_sharing_the_head_is_still_gated() -> Result<(), String> {
+    // Two `_ =>` arms: the edited outer one still reaches the range gate.
+    let lib = "/// Pick a sum.\npub fn pick(m: u32, n: u32) -> u32 {\n    match m {\n        0 => match n {\n            0 => 1,\n            _ => 2,\n        },\n        _ => (0..=n).sum(),\n    }\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "        _ => (0..=n).sum(),",
+        "        _ => (0..n).sum(),",
+        &test_calling("assert_eq!(pick(1, 0), 0);"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_cfg_gated_match_arm_is_not_folded_or_contradicted() -> Result<(), String> {
+    // The `#[cfg(any())]` arm is compiled out, so `tier(5)` returns 1.
+    let lib = "/// Tier an input.\npub fn tier(n: u32) -> u32 {\n    match n {\n        #[cfg(any())]\n        5 => 2,\n        0..=5 => 1,\n        _ => 3,\n    }\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "        0..=5 => 1,",
+        "        0..5 => 1,",
+        &test_calling("assert_eq!(tier(5), 1);"),
+    )?;
+    assert!(!findings.is_empty());
+    let contradicted = findings
+        .iter()
+        .any(|finding| format!("{finding:?}").contains("contradicts static evaluation"));
+    assert!(!contradicted, "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_range_passed_to_get_keeps_the_slicing_reading() -> Result<(), String> {
+    // `v.get(..n)` slices like `v[..n]`: one element more shows at every
+    // non-empty input, so the ordinary reading stays.
+    let lib = "/// The first n values.\npub fn head(v: &[u32], n: usize) -> Option<&[u32]> {\n    v.get(..=n)\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "    v.get(..=n)",
+        "    v.get(..n)",
+        &test_calling("assert_eq!(head(&[1, 2, 3], 1), Some(&[1, 2][..]));"),
+    )?;
+    assert!(
+        infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_single_use_expected_binding_keeps_a_separating_input() -> Result<(), String> {
+    // Control: `let expected = 10;` read once is the literal 10.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("let expected = 10;\n    assert_eq!(sum_to(4), expected);"),
+    )?;
+    assert_eq!(classes(&findings), vec![ExposureClass::Exposed]);
+    Ok(())
+}
+
+#[test]
+fn a_moved_match_range_start_needs_an_input_between_the_bounds() -> Result<(), String> {
+    // `1..5` and `0..5` differ only at 0; `tier(3)` reads 1 on both.
+    let between = findings_on_changed_line(
+        TIER,
+        "        0..5 => 1,",
+        "        1..5 => 1,",
+        &test_calling("assert_eq!(tier(3), 1);"),
+    )?;
+    assert!(
+        classes(&between)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{between:?}"
+    );
+    // The arm head carries the change; the removed old arm keeps its own
+    // deleted-behavior reading, unchanged from before this gate.
+    let head_infection = |findings: &[Finding]| {
+        findings
+            .iter()
+            .filter(|finding| finding.probe.expression == "0..5 =>")
+            .map(|finding| format!("{:?}", finding.ripr.infect.state))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(head_infection(&between), vec!["Weak".to_string()]);
+    let moved = findings_on_changed_line(
+        TIER,
+        "        0..5 => 1,",
+        "        1..5 => 1,",
+        &test_calling("assert_eq!(tier(0), 1);"),
+    )?;
+    assert_eq!(head_infection(&moved), vec!["Yes".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn another_caller_keeps_agreeing_inputs_unknown() -> Result<(), String> {
+    // A helper may feed the owner inputs no test names, so "every asserted
+    // input agrees" is not claimed.
+    let lib = "/// Sum below the bound.\npub fn sum_to(n: u32) -> u32 {\n    (0..=n).sum()\n}\n\n/// Twice the sum.\npub fn twice(n: u32) -> u32 {\n    sum_to(n) * 2\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("assert_eq!(sum_to(0), 0);"),
+    )?;
+    assert!(
+        classes(&findings)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    assert_eq!(infection_states(&findings), vec!["Unknown".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn a_scoped_import_of_the_owner_name_does_not_supply_a_separating_input() -> Result<(), String> {
+    let lib = "/// Sum below the bound.\npub fn sum_to(n: u32) -> u32 {\n    (0..=n).sum()\n}\n\npub mod rival {\n    pub fn sum_to(_n: u32) -> u32 {\n        6\n    }\n}\n";
+    let test = "use ranges::*;\n\n#[test]\nfn pins() {\n    assert_eq!(sum_to(0), 0);\n    {\n        use ranges::rival::sum_to;\n        assert_eq!(sum_to(3), 6);\n    }\n}\n";
+    let findings = findings_on_changed_line(lib, "    (0..=n).sum()", "    (0..n).sum()", test)?;
+    assert!(
+        classes(&findings)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    assert_ne!(infection_states(&findings), vec!["Yes".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn a_match_arm_with_intermediate_arithmetic_is_not_folded_or_contradicted() -> Result<(), String> {
+    // At n = 255 `n + 1` wraps to 0 in unchecked u8 arithmetic, so the
+    // passing assertion must not be read against an untyped 128.
+    let lib = "/// Bucket a byte.\npub fn bucket(n: u8) -> u8 {\n    match n {\n        200..=255 => (n + 1) / 2,\n        _ => 0,\n    }\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "        200..=255 => (n + 1) / 2,",
+        "        201..=255 => (n + 1) / 2,",
+        &test_calling("assert_eq!(bucket(255), 0);"),
+    )?;
+    assert!(
+        classes(&findings)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    let contradicted = findings
+        .iter()
+        .any(|finding| format!("{finding:?}").contains("contradicts static evaluation"));
+    assert!(!contradicted, "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_range_in_a_match_arm_body_is_gated() -> Result<(), String> {
+    // The arrow on this arm line is not a bare arm head, so the line is
+    // compared whole and its range is found in the arm body. An unread
+    // input keeps an earlier fold from settling it.
+    let lib = "/// Sum or zero.\npub fn pick(k: u32, n: u32) -> u32 {\n    match k {\n        1 => 0,\n        _ => (0..=n).sum(),\n    }\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "        _ => (0..=n).sum(),",
+        "        _ => (0..n).sum(),",
+        &test_calling("let k = std::env::args().count() as u32;\n    assert_eq!(pick(2, k), 0);"),
+    )?;
+    assert!(
+        classes(&findings)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_separating_input_on_a_match_arm_body_range_is_unknown_not_weak() -> Result<(), String> {
+    // Known limit: the fold reads only plain arm values, so an arm-body range
+    // reduction cannot be evaluated. A separating input then stays Unknown,
+    // never the "every input agrees" Weak reading and never Yes.
+    let lib = "/// Sum or zero.\npub fn pick(k: u32, n: u32) -> u32 {\n    match k {\n        1 => 0,\n        _ => (0..=n).sum(),\n    }\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "        _ => (0..=n).sum(),",
+        "        _ => (0..n).sum(),",
+        &test_calling("assert_eq!(pick(2, 3), 6);"),
+    )?;
+    assert_eq!(infection_states(&findings), vec!["Unknown".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn a_str_match_range_pattern_keeps_moved_input_credit() -> Result<(), String> {
+    // The arms are `&str`, so the fold cannot read them; the arm selector on
+    // the parameter scrutinee still credits the input that moves arms.
+    let lib = "/// Name a count.\npub fn f(n: u32) -> &'static str {\n    match n {\n        0 => \"zero\",\n        1..=9 => \"digit\",\n        _ => \"many\",\n    }\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "        1..=9 => \"digit\",",
+        "        1..=8 => \"digit\",",
+        &test_calling("assert_eq!(f(9), \"digit\");"),
+    )?;
+    assert_eq!(
+        classes(&findings),
+        vec![ExposureClass::Exposed],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_str_match_range_pattern_on_a_computed_scrutinee_is_not_exposed_at_an_inside_input()
+-> Result<(), String> {
+    // `match n + 1` has no established arm selector and the fold cannot read
+    // `&str` arms. The range gate keeps the ordinary infection reading for a
+    // pattern, and the discriminator stage still withholds credit from the
+    // inside input `f(4)` (scrutinee 5, in both `1..=8` and `1..=9`).
+    let lib = "/// Name a successor.\npub fn f(n: u32) -> &'static str {\n    match n + 1 {\n        0 => \"zero\",\n        1..=9 => \"digit\",\n        _ => \"many\",\n    }\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "        1..=9 => \"digit\",",
+        "        1..=8 => \"digit\",",
+        &test_calling("assert_eq!(f(4), \"digit\");"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        classes(&findings)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_sum_into_an_unresolved_alias_width_does_not_supply_a_separating_input() -> Result<(), String> {
+    // `Byte` is `u8`, so `(34u8..41).sum()` wraps to 3 with overflow checks
+    // off, the same as `(1u8..3).sum()`; the fold cannot see the width.
+    let lib = "/// A byte.\npub type Byte = u8;\n\n/// Sum a fixed range.\npub fn f() -> Byte {\n    (34u8..41).sum()\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "    (34u8..41).sum()",
+        "    (1u8..3).sum()",
+        &test_calling("assert_eq!(f(), 3);"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_sum_into_a_recognized_width_keeps_a_separating_input() -> Result<(), String> {
+    // Control: with the width written out, 3 and 6 both fit in `u8`.
+    let lib = "/// Sum a fixed range.\npub fn f() -> u8 {\n    (1u8..4).sum()\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "    (1u8..4).sum()",
+        "    (1u8..3).sum()",
+        &test_calling("assert_eq!(f(), 6);"),
+    )?;
+    assert_eq!(
+        infection_states(&findings),
+        vec!["Yes".to_string()],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_glob_import_in_the_test_body_does_not_supply_a_separating_input() -> Result<(), String> {
+    let lib = "/// Sum below the bound.\npub fn sum_to(n: u32) -> u32 {\n    (0..=n).sum()\n}\n\npub mod rival {\n    pub fn sum_to(_n: u32) -> u32 {\n        6\n    }\n}\n";
+    let test = "use ranges::*;\n\n#[test]\nfn pins() {\n    assert_eq!(sum_to(0), 0);\n    {\n        use ranges::rival::*;\n        assert_eq!(sum_to(3), 6);\n    }\n}\n";
+    let findings = findings_on_changed_line(lib, "    (0..=n).sum()", "    (0..n).sum()", test)?;
+    assert_ne!(infection_states(&findings), vec!["Yes".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn a_local_const_or_static_of_the_owner_name_does_not_supply_a_separating_input()
+-> Result<(), String> {
+    let lib = "/// Sum below the bound.\npub fn sum_to(n: u32) -> u32 {\n    (0..=n).sum()\n}\n\npub mod rival {\n    pub fn sum_to(_n: u32) -> u32 {\n        6\n    }\n}\n";
+    for binding in ["const", "static"] {
+        let test = format!(
+            "use ranges::*;\n\n#[test]\nfn pins() {{\n    assert_eq!(sum_to(0), 0);\n    {{\n        #[allow(non_upper_case_globals)]\n        {binding} sum_to: fn(u32) -> u32 = ranges::rival::sum_to;\n        assert_eq!(sum_to(3), 6);\n    }}\n}}\n"
+        );
+        let findings =
+            findings_on_changed_line(lib, "    (0..=n).sum()", "    (0..n).sum()", &test)?;
+        assert!(!findings.is_empty(), "{binding}");
+        assert!(
+            !infection_states(&findings).contains(&"Yes".to_string()),
+            "{binding}: {findings:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_arrow_inside_a_comment_does_not_hide_a_range_bound() -> Result<(), String> {
+    // An unread input keeps an earlier fold from settling it: the gate itself
+    // must still read the change as a range-bound change.
+    let findings = findings_on_changed_line(
+        &sum_to("(/* => */ 0..=n).sum()"),
+        "    (/* => */ 0..=n).sum()",
+        "    (/* => */ 0..n).sum()",
+        &test_calling("let k = std::env::args().count() as u32;\n    assert_eq!(sum_to(k), 0);"),
+    )?;
+    assert_eq!(infection_states(&findings), vec!["Unknown".to_string()]);
+    Ok(())
+}
