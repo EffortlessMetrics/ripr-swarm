@@ -1269,8 +1269,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "|| [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\"",
         ),
         (
-            "more than one queued PR",
-            "[ \"$parents\" = \"1\" ] && [ \"$parent\" = \"$GROUP_BASE_SHA\" ] && [[ \"$subject\" == *\"(#${pr})\" ]]",
+            "single-parent linear chain",
+            "[ -n \"${p1:-}\" ] && [ -z \"${p2_extra:-}\" ] && [ \"$p1\" = \"$expected_parent\" ]",
         ),
         (
             "bind the queue ref sha",
@@ -1278,11 +1278,11 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         ),
         (
             "PR ref to still name the live head",
-            "[ \"$fetched\" = \"$head\" ]",
+            "[ \"$fetched\" = \"$c_head\" ]",
         ),
         (
             "tree to the live head merged onto the group base",
-            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${GROUP_HEAD_SHA}^{tree}\")\" ]",
+            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${c_sha}^{tree}\")\" ]",
         ),
         (
             "same-head succession read as the last live eligibility check",
