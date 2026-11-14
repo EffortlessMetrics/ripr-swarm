@@ -634,6 +634,48 @@ fn a_clean_head_pushed_after_the_label_is_told_once_to_re_apply_it() -> Result<(
 }
 
 #[test]
+fn an_in_flight_head_with_unreadable_mergeability_keeps_the_unreadability_note(
+) -> Result<(), String> {
+    // A freshly pushed head can start a qualification while its first mergeability
+    // read is still unknown. The row must keep the in-flight instruction and the
+    // per-head unreadability classification the header and AC3 promise (#14636).
+    let in_flight = Pr {
+        state: "unknown",
+        in_flight: true,
+        ..Pr::dirty(980)
+    };
+    let outcome = run(&[in_flight], "in-flight-unreadable")?;
+    assert_eq!(
+        (outcome.comments, outcome.failures, outcome.successes),
+        (0, 0, 0),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        outcome.summary.contains(
+            "in flight (1 merge-ready run(s) not yet at result; do not re-apply the label)"
+        ),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        outcome
+            .summary
+            .contains("mergeability unreadable, conflict status unavailable"),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        outcome
+            .summary
+            .contains("in-flight qualifications: 1; dark merge-ready heads reported: 0"),
+        "{}",
+        outcome.summary
+    );
+    Ok(())
+}
+
+#[test]
 fn a_covered_in_flight_or_uncomputed_head_gets_no_re_apply_notice() -> Result<(), String> {
     let covered = Pr {
         state: "clean",
