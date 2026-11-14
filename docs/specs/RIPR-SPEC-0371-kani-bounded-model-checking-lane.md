@@ -316,6 +316,11 @@ It does not claim:
   `report_names_every_status_word`.
 - `xtask/tests/kani_lane_process.rs`:
   `kani_runner_requires_observed_complete_cover_evidence`.
+- `xtask/src/kani_lane/machine.rs`:
+  `retention_refusal_distinguishes_stream_and_run_budgets`.
+- `xtask/src/kani_lane/machine/retention_boundary_tests.rs`:
+  `stream_overflow_refuses_otherwise_valid_lane`,
+  `aggregate_overflow_refuses_otherwise_valid_lane`.
 - Constant-only harness witnesses:
   `production_cap_is_256_mib`, `exit_code_constants_match_documented_table`,
   `generation_counter_saturates_at_max`, `default_budget_is_valid`.
