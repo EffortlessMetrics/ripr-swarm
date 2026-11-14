@@ -297,7 +297,7 @@ fn push_catalog_example(examples: &mut Vec<&'static str>, path: &str) {
 
 /// The catalog `example` field for one command path: the catalog row looked up
 /// by path, then the metadata row joined on the catalog id.
-fn catalog_example(path: &str) -> Option<&'static str> {
+pub(super) fn catalog_example(path: &str) -> Option<&'static str> {
     let entry = crate::cli::command_catalog::catalog()
         .iter()
         .find(|entry| entry.path == path)?;
@@ -342,12 +342,14 @@ pub(super) fn print_gate_help() {
     );
 }
 
-/// Help for a group command (`policy`, `reports`, `baseline`, `pr-comments`).
+/// Help for a group command (`policy`, `reports`, `baseline`, `pr-comments`,
+/// `assistant-loop`).
 ///
 /// The group shares one body across its leaves. When the first argument names
-/// a registered leaf (`policy readiness`), the body's lead sentence is replaced
-/// by that leaf's one-line catalog summary, the same sentence `ripr help --all`
-/// shows; otherwise the group help prints unchanged.
+/// a registered leaf (`policy readiness`), only that leaf's help prints: its
+/// catalog summary, its own usage lines, its own options section, its catalog
+/// example, and a pointer to the whole family (#14314, see `help_leaf`).
+/// Otherwise the group help prints unchanged.
 pub(super) fn print_group_help(group: &str, args: &[String]) {
     let prefix = format!("{group} ");
     let Some(group_body) = registered_command_paths()
@@ -357,22 +359,21 @@ pub(super) fn print_group_help(group: &str, args: &[String]) {
     else {
         return;
     };
-    let rendered = render_command_help(group_body, &[]);
-    let leaf_summary = args.first().and_then(|leaf| {
+    let leaf_help = args.first().and_then(|leaf| {
         let path = format!("{group} {leaf}");
         if !registered_command_paths().contains(&path.as_str()) {
             return None;
         }
-        catalog_summary(&path)
+        crate::cli::help_leaf::leaf_help(&path)
     });
-    match (leaf_summary, rendered.split_once('\n')) {
-        (Some(summary), Some((_, rest))) => println!("{summary}\n{rest}"),
-        _ => println!("{rendered}"),
+    match leaf_help {
+        Some(scoped) => println!("{scoped}"),
+        None => println!("{}", render_command_help(group_body, &[])),
     }
 }
 
 /// The catalog `summary` field for one command path.
-fn catalog_summary(path: &str) -> Option<&'static str> {
+pub(super) fn catalog_summary(path: &str) -> Option<&'static str> {
     let entry = crate::cli::command_catalog::catalog()
         .iter()
         .find(|entry| entry.path == path)?;

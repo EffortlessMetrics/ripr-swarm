@@ -140,7 +140,7 @@ map is:
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
 | `ripr reports kani` | `schema_version` | `ripr_kani_report.v1` |
 | `ripr reports kani --binding` input | `schema_version` | `ripr_kani_binding.v1` |
-| `ripr help --json` | `schema_version` | `4` |
+| `ripr help --json` | `schema_version` | `5` |
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
 | `ripr agent card --json` refusal stdout envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
@@ -1833,11 +1833,31 @@ format and each carrying the same typed identity and repair route:
   requested-input echo and retry the human format prints; a stdin diff has
   no replayable retry, so `next=` is absent there.
 
-Machine formats without an honest refusal shape yet (`repo-sarif`,
-`badge-plus`, `repo-badge-*`, `shields`, `repo-seams-*`,
-`repo-exposure-summary-json`) write nothing to stdout and put the prose
-diagnostic on stderr for now; that gap is a named limitation, not a clean
-result.
+- `--format json-terse` renders the same check JSON refusal envelope as
+  `json`, through the terse pass (`rendering: "terse"`, minified) (#14499).
+- `--format check-findings-json` renders the same check JSON refusal
+  envelope as `json`. It carries no `artifact` identity: a refused run has
+  no snapshot, so a verify that requires one rejects it (#14499).
+- `--format badge-shields`, `badge-plus-shields`, `repo-badge-shields` and
+  `repo-badge-plus-shields` render the Shields endpoint with exactly its four
+  fields: the family's `label` (`ripr` or `ripr+`), `message: "refused:
+  <identity>"` and `color: "lightgrey"` (#14499).
+- `--format badge-plus-json`, `repo-badge-json` and `repo-badge-plus-json`
+  render the same degraded badge as `badge-json` under their own `kind` and
+  `scope`; the repo badges use the `canonical_actionable_gap` basis (#14499).
+- `--format repo-sarif` and `repo-sarif-compact` render the same refusal run
+  as `sarif`, with `run.properties.scope: "repo_seam"` (#14499).
+- `--format repo-seams-json` renders its own envelope: `schema_version`,
+  `scope: "repo"`, `run_status: "refused"`, one `limitations[]` entry with
+  the typed `category`, `repair_route` and message, and an empty `seams`
+  array, with no `artifact` identity (#14499).
+- `--format repo-exposure-summary-json` renders the summary's own envelope
+  with `run_status: "refused"`, the same `limitations[]` entry, zeroed
+  `metrics` and an empty `top_files` array (#14499).
+
+The prose formats (`human`, `human-full`, `repo-seams-md`,
+`repo-exposure-md`) write nothing to stdout and keep the diagnostic on
+stderr.
 
 Whether the analysis ran is implicit per identity, not a separate field.
 `suppression_policy_invalid` is the one identity where classification ran to

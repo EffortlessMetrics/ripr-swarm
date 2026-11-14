@@ -65,12 +65,14 @@ default.
 Usage: ripr pr-comments existing [--root PATH] [--raw PATH] [--out PATH]
 
 Existing options:
+  --root PATH                 Workspace root. Defaults to current directory.
   --raw PATH                  `gh api --paginate --slurp` pages of the pull request's review comments. `-` reads standard input and keeps a copy there. Defaults to target/ripr/review/existing-comments.raw.json.
   --out PATH                  Existing-comment metadata for `--existing-comments`. Defaults to target/ripr/review/existing-comments.json.
 
 Usage: ripr pr-comments summary --pull-request N --head-sha SHA [--root PATH] [--pr-guidance PATH] [--raw PATH] [--run-url URL] [--out-dir PATH]
 
 Summary options:
+  --root PATH                 Workspace root that --out-dir is relative to. Defaults to current directory.
   --pull-request N            Pull request the summary comment belongs to.
   --head-sha SHA              Head commit the digest names.
   --pr-guidance PATH          `ripr review-comments` JSON. Defaults to target/ripr/review/comments.json.
@@ -87,16 +89,19 @@ nothing for a clean pull request. It does not call GitHub or read a token.
 Usage: ripr pr-comments requests --pull-request N --head-sha SHA [--root PATH] [--plan PATH] [--out-dir PATH]
 
 Requests options:
+  --root PATH                 Workspace root that --out-dir is relative to. Defaults to current directory.
   --pull-request N            Pull request the review is posted on.
   --head-sha SHA              Head commit the review comments are placed on.
   --plan PATH                 Publish plan. Defaults to target/ripr/review/comment-publish-plan.json.
   --out-dir PATH              Request directory relative to --root, its earlier request files are replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/publish.
 
-`existing` keeps only marked comments that github-actions[bot] posted.
+`existing` keeps only marked comments that github-actions[bot] posted. It
+does not call GitHub or read a token.
+
 `requests` writes one JSON payload per call and requests.tsv, one line per
 call in order: method, endpoint after repos/OWNER/REPO/, payload file, and the
 message to print once the call succeeds. An unsafe plan writes no requests
-and prints why. Neither command calls GitHub or reads a token; the generated
+and prints why. It does not call GitHub or read a token; the generated
 workflow's comment steps hold GH_TOKEN and run `gh api`.
 "#;
 pub(super) const PR_REVIEW_HELP: &str = r#"Compose the first-screen PR review summary from existing review artifacts.
