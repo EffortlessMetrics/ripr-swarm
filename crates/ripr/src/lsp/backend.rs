@@ -9790,7 +9790,7 @@ fn workspace_status_top_actionable_packet(snapshot: &AnalysisSnapshot) -> serde_
         return serde_json::Value::Null;
     };
     let canonical_gap_id = artifact
-        .identities
+        .identities()
         .first()
         .and_then(|id| id.canonical_gap_id.as_deref())
         .unwrap_or("");
@@ -9803,16 +9803,15 @@ fn workspace_status_top_actionable_packet(snapshot: &AnalysisSnapshot) -> serde_
             })
             .unwrap_or_default()
     };
-    let verify_command = bind(artifact.verify_commands.first());
-    let receipt_command = bind(artifact.receipt_commands.first());
+    let verify_command = bind(artifact.verify_commands().first());
+    let receipt_command = bind(artifact.receipt_commands().first());
     let file = artifact
-        .related_paths
+        .related_paths()
         .first()
         .map(String::as_str)
         .unwrap_or("");
     let repair_kind = artifact
-        .gap_state
-        .as_deref()
+        .gap_state()
         .unwrap_or(crate::domain::EvidenceState::Actionable.as_str());
     serde_json::json!({
         "canonical_gap_id": canonical_gap_id,
@@ -10872,28 +10871,30 @@ mod gap_record_context_tests {
 
     fn top_gap_named(canonical_gap_id: &str) -> super::super::gap_artifacts::ValidatedGapArtifact {
         use super::super::gap_artifacts::{
-            GapArtifactIdentity, GapArtifactKind, ValidatedGapArtifact,
+            GapArtifactCorpusCurrentness, GapArtifactIdentity, ValidatedActionableGapsArtifact,
+            ValidatedGapArtifact, ValidatedGapArtifactCommon,
         };
-        ValidatedGapArtifact {
-            kind: GapArtifactKind::ActionableGaps,
-            corpus_currentness: None,
-            root: None,
+        ValidatedGapArtifact::ActionableGaps(ValidatedActionableGapsArtifact {
+            common: ValidatedGapArtifactCommon {
+                root: None,
+                language: None,
+                language_status: None,
+                gap_state: None,
+                related_paths: Vec::new(),
+                static_limit_kinds: Vec::new(),
+                has_text_static_limit: false,
+            },
+            corpus_currentness: GapArtifactCorpusCurrentness::CurrentRustWorkspace,
             identities: vec![GapArtifactIdentity {
                 canonical_gap_id: Some(canonical_gap_id.to_string()),
                 seam_id: None,
                 finding_id: None,
             }],
-            language: None,
-            language_status: None,
-            gap_state: None,
-            related_paths: Vec::new(),
             verify_commands: Vec::new(),
             receipt_commands: Vec::new(),
             verify_command_specs: Vec::new(),
             receipt_command_specs: Vec::new(),
-            static_limit_kinds: Vec::new(),
-            has_text_static_limit: false,
-        }
+        })
     }
 
     #[test]
