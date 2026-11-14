@@ -1,0 +1,22 @@
+{
+  "case_id": "arbitrary_crate_generator_stimulus_not_product",
+  "subject_id": "authored-arbitrary-shapes-arbitrary",
+  "origin": "authored",
+  "anchor": "src/lib.rs:13",
+  "behavior_family": "return_value",
+  "test_shape": "arbitrary_crate_impl_change",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

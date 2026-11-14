@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -19,7 +19,7 @@ pub fn width(span: &Span) -> u8 {
+ impl Arbitrary for Pair {
+     fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+         let a = u8::arbitrary(g);
+-        Pair(a, a.wrapping_add(2))
++        Pair(a, a.wrapping_add(5))
+     }
+ }
+ 

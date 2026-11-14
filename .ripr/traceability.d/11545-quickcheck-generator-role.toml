@@ -12,14 +12,21 @@ tests = [
   "crates/ripr/src/analysis/facts/quickcheck_generator_tests.rs::quickcheck_generator_nested_helper_remains_production",
   "crates/ripr/src/analysis/facts/quickcheck_generator_tests.rs::quickcheck_generator_unsupported_target_identity_is_not_reclassified",
   "crates/ripr/src/analysis/facts/quickcheck_generator_tests.rs::quickcheck_generator_opaque_expansions_and_compiler_overrides_refuse_role",
+  "crates/ripr/src/analysis/facts/quickcheck_generator_tests.rs::quickcheck_generator_role_requires_the_admitted_trait_spelling",
   "crates/ripr/tests/quickcheck_generator_rendered.rs::verified_generator_remains_visible_in_json_and_human",
   "crates/ripr/tests/quickcheck_generator_rendered.rs::lookalike_and_ordinary_arbitrary_keep_production_gap_in_rendered_output",
+  "crates/ripr/tests/arbitrary_generator_shapes.rs::imported_aliased_and_provider_spellings_read_as_stimulus",
+  "crates/ripr/tests/arbitrary_generator_shapes.rs::generator_modules_read_as_stimulus_and_test_only_modules_stay_silent",
+  "crates/ripr/tests/arbitrary_generator_shapes.rs::unsupported_spellings_and_layouts_keep_the_product_reading",
+  "crates/ripr/tests/arbitrary_generator_shapes.rs::derived_arbitrary_type_keeps_its_product_reading",
+  "crates/ripr/tests/arbitrary_generator_shapes.rs::compiler_wrapper_refuses_module_generator_role",
 ]
 code = [
   "crates/ripr/src/analysis/language/rust/mod.rs",
   "crates/ripr/src/analysis/facts/quickcheck_generator.rs",
   "crates/ripr/src/analysis/facts/model.rs",
   "crates/ripr/src/analysis/facts/test_styles.rs",
+  "crates/ripr/src/analysis/facts/role_composition.rs",
   "crates/ripr/src/analysis/probes/diff.rs",
   "crates/ripr/src/analysis/classifier/test_input_generator.rs",
 ]

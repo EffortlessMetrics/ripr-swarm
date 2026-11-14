@@ -1,0 +1,18 @@
+use arbitrary::{Arbitrary, Unstructured};
+use arbitrary_crate_shapes::{gap, shapes::Span, Pair};
+
+#[test]
+fn gap_is_second_minus_first() {
+    let bytes: Vec<u8> = (0..=255).collect();
+    let mut u = Unstructured::new(&bytes);
+    for _ in 0..64 {
+        let pair = Pair::arbitrary(&mut u).unwrap();
+        assert_eq!(gap(&pair), pair.1.wrapping_sub(pair.0));
+    }
+}
+
+#[test]
+fn span_end_wraps_start_plus_len() {
+    let span = Span { start: 250, len: 10 };
+    assert_eq!(span.end(), 4);
+}

@@ -1,0 +1,11 @@
+#[derive(Clone, Debug, arbitrary::Arbitrary)]
+pub struct Span {
+    pub start: u8,
+    pub len: u8,
+}
+
+impl Span {
+    pub fn end(&self) -> u8 {
+        self.start.wrapping_add(self.len)
+    }
+}

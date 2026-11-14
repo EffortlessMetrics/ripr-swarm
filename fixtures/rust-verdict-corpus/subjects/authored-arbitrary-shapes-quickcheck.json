@@ -1,0 +1,14 @@
+{
+  "subject_id": "authored-arbitrary-shapes-quickcheck",
+  "origin": "authored",
+  "version_label": "authored 2026-11-08; #11545 imported, aliased, module and cfg(test) QuickCheck Arbitrary generators; labeled against quickcheck 1.1.0 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {"path": "Cargo.lock", "sha256": "56bb6f0406bcc02bfc0ac0cba124c4ef52f51bfeaf5e90a3688adee152e4b84d"},
+    {"path": "Cargo.toml", "sha256": "d9ee260143452b995fd9a72c830e0373690691d2e5b16d6eb4a613f45f762e92"},
+    {"path": "src/generators.rs", "sha256": "bdc838781cee0356c1cac1e7640bba4fa2353fc509e5ae748c8024149a20a001"},
+    {"path": "src/lib.rs", "sha256": "72d602827278070452d29542714ae2305bf398a09c5f3dfac98db40d37e05de3"},
+    {"path": "tests/gap.rs", "sha256": "89bc3e3a03c9f9b1904f6263e4364d73d93321c263b74c93f1bc0372b096f7d5"}
+  ]
+}
