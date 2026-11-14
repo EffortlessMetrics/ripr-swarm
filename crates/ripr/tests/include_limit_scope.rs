@@ -519,6 +519,33 @@ fn an_unplaced_files_glob_keeps_its_direct_explanation() -> Result<(), String> {
 }
 
 #[test]
+fn a_glob_reaching_from_an_ancestor_keeps_its_direct_explanation() -> Result<(), String> {
+    // The lib root globs a foreign crate and the test's module imports it
+    // through `use super::*;`. With placement on the glob still reaches the
+    // assertion, so the include is not why credit is withheld.
+    let repo = TempRepo::create(&[
+        ("src/a.rs", PLAIN),
+        (
+            "src/lib.rs",
+            "use rayon::prelude::*;\npub mod b;\npub mod gen;\n",
+        ),
+        ("src/b.rs", &own_unit()),
+        ("src/gen.rs", NESTED),
+        ("src/generated/g.rs", "mod y;\n"),
+    ])?;
+    let found = repo.finding()?;
+    assert_eq!(found.class, ExposureClass::StaticUnknown);
+    let refusal = only_refusal(&found)?;
+    assert!(
+        refusal.contains("`use rayon::prelude::*;` at src/lib.rs:1 glob-imports"),
+        "{refusal:?}"
+    );
+    assert!(!refusal.contains("first include limitation"), "{refusal:?}");
+
+    Ok(())
+}
+
+#[test]
 fn a_fragments_namesake_is_never_taken_for_the_owner() -> Result<(), String> {
     let library = |b: String| {
         vec![
