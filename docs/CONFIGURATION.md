@@ -535,6 +535,16 @@ ripr doctor [--root PATH] [--json] [--timings] [--profile analysis|source-build]
 ```
 
 Reports local tooling and workspace shape. Takes no analysis-shaping flags.
+For Python roots, doctor checks that the PATH `python` (the interpreter the
+printed `python -m pytest` verify route runs, not a standalone `pytest` binary)
+can import pytest. It runs `python -c 'import pytest'` from a private empty
+directory with `PYTHONSAFEPATH=1` and `PYTHONPATH` unset, so no checkout or temp
+directory code runs. It does not start pytest, so a broken pytest entry point
+that still imports is not detected. A missing
+pytest is an advisory warning and never changes the exit code. When a project
+`.venv` or `venv` has pytest installed but PATH `python` does not, the warning
+suggests activating the venv before running the printed verify command; the
+virtualenv is read statically and never executed.
 `--profile analysis` (the default) keeps a missing or old toolchain advisory;
 `--profile source-build` makes it a failure. See
 [Exit codes](EXIT_CODES.md#ripr-doctor-exit-codes).
@@ -1136,8 +1146,8 @@ them. It does not enable runtime mutation execution or CI blocking policy.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `mode` | enum: `instant` \| `draft` \| `fast` \| `deep` \| `ready` | `draft` | Default analysis mode when not set by a CLI flag or LSP initialization option. |
-| `include_unchanged_tests` | boolean | `true` | Whether unchanged tests may be indexed as static evidence. |
+| `mode` | enum: `instant` \| `draft` \| `fast` \| `deep` \| `ready` | `draft` | Default analysis mode when not set by a CLI flag or LSP initialization option. MCP `ripr_refresh` uses it too, since it takes no mode argument. |
+| `include_unchanged_tests` | boolean | `true` | Whether unchanged tests may be indexed as static evidence. Applies to `ripr check`, the LSP and MCP `ripr_refresh` alike. |
 | `production_like_targets` | array of repository-relative paths | `[]` (empty — no opt-in) | Workspace-relative targets opted in as production-like test infrastructure (#3283, RIPR-SPEC-0153): analyzed as production behavior rather than test evidence. Paths must be repository-relative with `/` separators — backslashes, drive/scheme prefixes, leading `/`, and `..` escape fail closed at parse time. |
 | `test_harnesses` | array of `[[analysis.test_harnesses]]` tables | `[]` (empty — no registration recognized) | Repository-governed test-harness registrations (#3532, RIPR-SPEC-0153). Registration is explicit configuration only: without an entry, no custom harness or registered test producer is recognized. See `[analysis.test_harnesses]` entries below. |
 

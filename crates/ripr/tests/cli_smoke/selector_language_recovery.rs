@@ -176,6 +176,18 @@ fn disabled_preview_misses_disclose_scope_and_replay_exact_listing() -> TestResu
                 stderr.contains("Analysis limitations for this run:"),
                 "{label}/{command}: {stderr}"
             );
+            // #14406: the location hint never reads as an all-clear for a
+            // file the run did not analyze, and the incompleteness the #14077
+            // cause already states is not repeated.
+            assert!(
+                stderr.contains("No finding was reported in \"src/z.ts\"")
+                    && stderr.matches("was incomplete").count() == 1,
+                "{label}/{command}: {stderr}"
+            );
+            assert!(
+                !stderr.contains("No finding in this scope is in"),
+                "{stderr}"
+            );
             assert!(stderr.contains("TypeScript"), "{stderr}");
             assert!(stderr.contains("preview adapter not enabled"), "{stderr}");
             assert!(stderr.contains("ripr.toml"), "{stderr}");
@@ -237,6 +249,16 @@ fn enabled_preview_hits_and_ordinary_misses_do_not_claim_unanalyzed_scope() -> T
             "{stderr}"
         );
         assert!(!stderr.contains("adapter not enabled"), "{stderr}");
+        // #14406: a complete run keeps the plain location-miss wording.
+        let stderr = miss(fixture.run(command, Some("src/nofile.ts:2"), &scope)?)?;
+        assert!(
+            stderr.contains("No finding in this scope is in"),
+            "{stderr}"
+        );
+        assert!(
+            !stderr.contains("Analysis of this scope was incomplete"),
+            "{stderr}"
+        );
     }
     Ok(())
 }
@@ -318,6 +340,11 @@ fn uncompiled_preview_misses_name_binary_prerequisites_not_config_enablement() -
         let stderr = miss(fixture.run(command, Some("src/z.pl:2"), &scope)?)?;
         assert!(
             stderr.contains("Analysis limitations for this run:"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("No finding was reported in \"src/z.pl\"")
+                && stderr.matches("was incomplete").count() == 1,
             "{stderr}"
         );
         assert!(

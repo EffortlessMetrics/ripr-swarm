@@ -424,6 +424,12 @@ Next: provide at least one `test-oracle-assistant-proof.json` artifact.
   is available.
 - Multiple proof paths are counted deterministically in input order and grouped
   by warning kind without producing an opaque score.
+- A `--proof` path that is missing, unreadable, malformed, unsupported, or
+  lacks seam and movement context still writes the report and exits 0. The CLI
+  also prints `Warnings: N` and one line per such proof on stderr, naming the
+  path and the cause, with a missing file read as "not found" rather than an
+  OS error code. Usable proofs (for example an unchanged attempt) stay off
+  stderr. The Markdown `regenerate_proof` line repeats the same reason.
 
 ## Test Mapping
 

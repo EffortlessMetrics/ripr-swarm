@@ -362,6 +362,51 @@ fn preview_leaves_test_side_open(finding: &Finding) -> bool {
         && triage::weak_assertion_row(finding).is_some()
 }
 
+/// The agent-format record for a refused `ripr check` run (#14452): the
+/// same typed identity, repair route and machine-safe message every other
+/// machine format renders from one [`RefusalNotice`], in the format's own
+/// `stop=` / `next=` / `verify=` vocabulary instead of zero bytes. `next=`
+/// appears only when the remedy states one command that runs as-is
+/// (`output::refusal::runnable_command`): a conditional remedy, placeholders,
+/// or flags or env named outside the command stay prose on `stop=`. A timed
+/// run's bounded retry (`retry`, from the stashed timeout projection) is the
+/// replayable command and takes that slot, so the recovery the JSON envelope
+/// and human stderr offer reaches the agent record too.
+///
+/// [`RefusalNotice`]: crate::core_error::RefusalNotice
+pub(super) fn render_refusal(
+    notice: &crate::core_error::RefusalNotice,
+    retry: Option<&str>,
+) -> String {
+    let message = notice
+        .message
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut out = format!(
+        "#ripr agent static-advisory refused run_status={} repair_route={}\nstop={}\n",
+        notice.identity,
+        notice.repair_route,
+        super::terminal_safe(message)
+    );
+    // A command spanning lines (a root or diff path holding a line break) is
+    // not one runnable line and could forge record lines, so it is withheld.
+    if let Some(command) = retry
+        .or_else(|| crate::output::refusal::runnable_command(&notice.remedy))
+        .filter(|command| !command.contains(['\n', '\r', '\u{85}', '\u{2028}', '\u{2029}']))
+    {
+        out.push_str(&format!(
+            "next={}\n",
+            super::terminal_safe(command.to_string())
+        ));
+    }
+    out.push_str(&format!(
+        "verify=refused|outcome=refused|findings=0|exposed=0|reason={}\n",
+        notice.identity
+    ));
+    out
+}
+
 /// `ripr explain --format agent` (#12104): the one-finding counterpart of
 /// [`render`]. It reuses the same record, test-table and terminal vocabulary
 /// (`done=` / `open=` / `stop=`) and the same gap predicates, so a finding is
@@ -827,6 +872,16 @@ fn terminal_line(
                 }
             }
         }
+        // #14423: on the base branch the empty range is the base compared
+        // with itself; name the last-commit rerun the human view prints
+        // instead of leaving REV to be guessed.
+        NextActionCheckCase::ScopeMissing if triage::last_commit_retry_applies(output) => {
+            format!(
+                "stop=nothing was analyzed: HEAD is at the comparison base `{}`, so the diff is empty; to check the last commit run `{}`\n",
+                output.base.as_deref().unwrap_or_default(),
+                triage::last_commit_retry_command(output, Some("agent"))
+            )
+        }
         NextActionCheckCase::ScopeMissing => {
             "stop=nothing was analyzed (no scope); pass --base REV, --diff FILE or --worktree\n"
                 .to_string()
@@ -1111,7 +1166,10 @@ fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missin
         "{}|{}|{}|missing={}|test={}|id={}",
         finding.class.as_str(),
         field(&location),
-        field(&clip(&finding.probe.expression)),
+        field(&clip(&super::sections::with_arm_result(
+            finding,
+            &finding.probe.expression
+        ))),
         field(&missing),
         test,
         finding.id

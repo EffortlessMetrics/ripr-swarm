@@ -543,7 +543,7 @@ pub(crate) fn render_human_triage(
                     out.push_str(&format!(
                         "  Safe next action: ripr cannot see the untracked file(s) ({listing}); run `git add -N <paths>` (intent-to-add) then `ripr check --worktree`, or pass `--diff PATH`\n"
                     ));
-                } else if head_has_parent(&output.root) {
+                } else if last_commit_retry_applies(output) {
                     out.push_str(&format!(
                         "  Safe next action: you are on `{base}`, which is the comparison base, so there is no diff; to check the last commit run `ripr check --base HEAD~1` (or edit a tracked source file, or switch to a feature branch)\n"
                     ));
@@ -816,7 +816,25 @@ pub(crate) fn render_human_triage(
         // collapse to one row with a repeat count so a diff with many
         // equivalent base-side findings stays scannable.
         let mut previous: Option<(String, usize)> = None;
-        for finding in &listed {
+        for row_members in hidden_rows(&triage.omitted) {
+            // #14299: one row stands for every omitted finding that shares
+            // file, owner, class, currentness and reason. Members that also
+            // share line and kind keep the legacy row and its repeat count.
+            let members: Vec<&Finding> = row_members
+                .iter()
+                .filter_map(|index| triage.omitted.get(*index).copied())
+                .collect();
+            let Some(finding) = members.first().copied() else {
+                continue;
+            };
+            if let Some(row) = grouped_hidden_row(&output.root, &members, label_currentness) {
+                if let Some((prev, count)) = previous.take() {
+                    push_hidden_row(out, &prev, count);
+                }
+                out.push_str(&row);
+                continue;
+            }
+            let repeat = members.len();
             let currentness = if label_currentness {
                 format!(", {}", hidden_bullet_currentness(finding))
             } else {
@@ -856,12 +874,12 @@ pub(crate) fn render_human_triage(
                 }
             }
             match previous.as_mut() {
-                Some((prev, count)) if *prev == row => *count += 1,
+                Some((prev, count)) if *prev == row => *count += repeat,
                 _ => {
                     if let Some((prev, count)) = previous.take() {
                         push_hidden_row(out, &prev, count);
                     }
-                    previous = Some((row, 1));
+                    previous = Some((row, repeat));
                 }
             }
         }
@@ -909,16 +927,12 @@ pub(crate) fn render_human_triage(
 
 /// #4320: the `Hidden:` list names omitted findings so the reader can confirm
 /// coverage without a rerun, but the default surface stays bounded: beyond
-/// this window the list discloses the remainder instead of printing every
-/// identity.
+/// this many rows the list discloses the remainder instead of printing every
+/// identity. A row may stand for several findings (#14299).
 const HIDDEN_FINDINGS_LISTED: usize = 20;
 
-/// The omitted findings the `Hidden:` list names. Within the window every
-/// omitted finding is listed in the report's file and line order. Beyond it,
-/// the window keeps the findings the check-JSON findings budget would keep
-/// (candidate-current gap classes first, `exposed` and non-candidate evidence
-/// last), still printed in file and line order, so a large diff does not spend
-/// the list on the alphabetically first files while later gaps go unnamed.
+/// The omitted findings the `Hidden:` list's rows stand for, in report order.
+/// See [`hidden_rows`] for grouping and the row window (#14233, #14299).
 fn hidden_window<'a>(omitted: &[&'a Finding]) -> Vec<&'a Finding> {
     hidden_window_indices(omitted)
         .into_iter()
@@ -926,17 +940,150 @@ fn hidden_window<'a>(omitted: &[&'a Finding]) -> Vec<&'a Finding> {
         .collect()
 }
 
-/// Positions in `omitted` of the rows `hidden_window` names, ascending.
+/// Positions in `omitted` of the findings the listed rows stand for, ascending.
 fn hidden_window_indices(omitted: &[&Finding]) -> Vec<usize> {
-    if omitted.len() <= HIDDEN_FINDINGS_LISTED {
-        return (0..omitted.len()).collect();
+    let mut kept: Vec<usize> = hidden_rows(omitted).into_iter().flatten().collect();
+    kept.sort_unstable();
+    kept
+}
+
+/// #14299: the rows the `Hidden:` list prints, each a list of positions in
+/// `omitted` (ascending). Findings that share file, owner, class,
+/// currentness label and reason form one row, so a diff that changes one
+/// function does not spend the window on one line per probe. Findings that
+/// offer a per-finding test stub stay one row each, since each row carries
+/// its own `Test id`. The window bounds rows, not findings: beyond
+/// [`HIDDEN_FINDINGS_LISTED`] rows it keeps the rows whose best member ranks
+/// highest in the shared check-JSON priority order (#14235), printed in the
+/// order of each row's first member.
+fn hidden_rows(omitted: &[&Finding]) -> Vec<Vec<usize>> {
+    let mut rows: Vec<Vec<usize>> = Vec::new();
+    let mut row_of_key: std::collections::BTreeMap<HiddenRowKey, usize> =
+        std::collections::BTreeMap::new();
+    for (index, finding) in omitted.iter().enumerate() {
+        // An owner-less finding has no function to group by: unrelated
+        // probes across a file would read as one contiguous region.
+        if offers_test_stub(finding) || finding.probe.owner.is_none() {
+            rows.push(vec![index]);
+            continue;
+        }
+        let key = hidden_row_key(finding);
+        match row_of_key.get(&key) {
+            Some(&row) => {
+                if let Some(members) = rows.get_mut(row) {
+                    members.push(index);
+                }
+            }
+            None => {
+                row_of_key.insert(key, rows.len());
+                rows.push(vec![index]);
+            }
+        }
     }
-    let mut kept: Vec<usize> = crate::output::json::findings_priority::priority_order(omitted)
+    if rows.len() <= HIDDEN_FINDINGS_LISTED {
+        return rows;
+    }
+    let mut rank = vec![usize::MAX; omitted.len()];
+    for (position, index) in crate::output::json::findings_priority::priority_order(omitted)
+        .into_iter()
+        .enumerate()
+    {
+        if let Some(slot) = rank.get_mut(index) {
+            *slot = position;
+        }
+    }
+    let best_rank = |members: &Vec<usize>| {
+        members
+            .iter()
+            .filter_map(|index| rank.get(*index).copied())
+            .min()
+            .unwrap_or(usize::MAX)
+    };
+    let mut by_priority: Vec<usize> = (0..rows.len()).collect();
+    by_priority.sort_by_key(|row| rows.get(*row).map_or(usize::MAX, best_rank));
+    let mut kept: Vec<usize> = by_priority
         .into_iter()
         .take(HIDDEN_FINDINGS_LISTED)
         .collect();
     kept.sort_unstable();
-    kept
+    kept.into_iter()
+        .filter_map(|row| rows.get(row).cloned())
+        .collect()
+}
+
+/// What a grouped `Hidden:` row has in common: file, owner, class,
+/// currentness label and the reason text the row prints.
+type HiddenRowKey = (
+    std::path::PathBuf,
+    Option<String>,
+    &'static str,
+    &'static str,
+    String,
+);
+
+fn hidden_row_key(finding: &Finding) -> HiddenRowKey {
+    (
+        finding.probe.location.file.clone(),
+        finding.probe.owner.as_ref().map(|owner| owner.0.clone()),
+        finding.class.as_str(),
+        hidden_bullet_currentness(finding),
+        hidden_finding_reason(finding),
+    )
+}
+
+/// #14299: the one row for a group whose members differ by line or kind:
+/// the line span, the count, the owner and the kinds. `None` when the group
+/// is a single finding or its members share line and kind, which keep the
+/// legacy row (with a repeat count for identical members).
+fn grouped_hidden_row(
+    root: &std::path::Path,
+    members: &[&Finding],
+    label_currentness: bool,
+) -> Option<String> {
+    let first = members.first()?;
+    let mut kinds: Vec<&'static str> = Vec::new();
+    for finding in members {
+        let kind = super::evidence_lines::plain_probe_family(&finding.probe.family);
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+    }
+    let first_line = members.iter().map(|f| f.probe.location.line).min()?;
+    let last_line = members.iter().map(|f| f.probe.location.line).max()?;
+    if members.len() < 2 || (first_line == last_line && kinds.len() == 1) {
+        return None;
+    }
+    let lines = if first_line == last_line {
+        first_line.to_string()
+    } else {
+        format!("{first_line}-{last_line}")
+    };
+    let currentness = if label_currentness {
+        format!(", {}", hidden_bullet_currentness(first))
+    } else {
+        String::new()
+    };
+    let owner = first
+        .probe
+        .owner
+        .as_ref()
+        .and_then(|owner| owner.0.rsplit("::").next())
+        .filter(|name| !name.is_empty())
+        .map(|name| format!(" in `{name}`"))
+        .unwrap_or_default();
+    let label = if kinds.len() == 1 { "kind" } else { "kinds" };
+    Some(format!(
+        "    - {}:{} ({}{}); {} changed behaviors{}; {}: {}; reason: {}\n",
+        crate::analysis::finding_location_text(root, &first.probe.location.file),
+        lines,
+        first.class.plain_label_with_stage(),
+        currentness,
+        members.len(),
+        owner,
+        label,
+        kinds.join(", "),
+        hidden_finding_reason(first)
+    ))
 }
 
 /// Class counts of the omitted findings outside the listed window, in the
@@ -1391,12 +1538,53 @@ pub(crate) fn canonical_next_action_for_triage(
         } else {
             None
         },
+        check_scope_route: (check_case_for_triage(triage, output)
+            == NextActionCheckCase::ScopeMissing
+            && last_commit_retry_applies(output))
+        .then(|| last_commit_retry_command(output, None)),
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives,
         limitations,
     };
     select_canonical_next_action(&input)
+}
+
+/// #14423: the one owner of the "check the last commit" retry for an empty
+/// `scope_missing` range that is the base branch compared with itself. True
+/// when the committed-history read compared HEAD's own branch as the base
+/// (`<branch>`, or `origin/<branch>` in a clone, under the same git-identity
+/// rule the bare human check's rescope uses), no untracked or ignored source
+/// file explains the empty range, and `HEAD~1` resolves. The human `Safe next
+/// action`, the agent `stop=` line and the JSON
+/// `canonical_next_action.stop.scope_route` all read this decision.
+pub(crate) fn last_commit_retry_applies(output: &CheckOutput) -> bool {
+    let Some(base) = output.base.as_deref() else {
+        return false;
+    };
+    if crate::output::analyzed_revisions::is_working_tree_read(output)
+        || (output.unanalyzed_working_tree
+            && !output.untracked_working_tree_source_paths.is_empty())
+        || !output.ignored_working_tree_source_paths.is_empty()
+    {
+        return false;
+    }
+    crate::analysis::base_is_checked_out_head_with_parent(&output.root, base, None)
+}
+
+/// The `ripr check` rerun for [`last_commit_retry_applies`], rooted like the
+/// restart route, with ` --format <format>` appended when one is given.
+pub(crate) fn last_commit_retry_command(output: &CheckOutput, format: Option<&str>) -> String {
+    let mut command = format!(
+        "ripr check --root {} --base HEAD~1",
+        shell_arg(&crate::agent::loop_commands::root_display(
+            &output.root.display().to_string()
+        ))
+    );
+    if let Some(format) = format {
+        command.push_str(&format!(" --format {format}"));
+    }
+    command
 }
 
 /// True when `HEAD~1` resolves, so `--base HEAD~1` names a real range.
@@ -2070,7 +2258,19 @@ fn triage_rank<'a>(
     root: &std::path::Path,
     context: &SourceRoleContext,
     decisive_findings: &[&Finding],
-) -> (u8, u8, u8, u8, u8, u8, u8, i32, &'a std::path::Path, usize) {
+) -> (
+    u8,
+    u8,
+    u8,
+    u8,
+    u8,
+    u8,
+    u8,
+    i32,
+    u8,
+    &'a std::path::Path,
+    usize,
+) {
     let class_rank = match finding.class {
         ExposureClass::ReachableUnrevealed => 2,
         ExposureClass::WeaklyExposed => 3,
@@ -2120,6 +2320,13 @@ fn triage_rank<'a>(
         u8::from(finding.oracle_related_tests().next().is_none()),
         u8::from(finding.missing.is_empty()),
         -(finding.confidence * 100.0) as i32,
+        // #14266: a repair route zeroes `repair_rank` for every routed
+        // finding, and every stable finding with a next step counts as
+        // routed, so without this key two otherwise equal candidates were
+        // ordered by file path: an unknown in `analysis/` led a
+        // `reachable_unrevealed` gap in `provider_contract/`. The class
+        // order breaks that tie before the path does.
+        class_rank,
         finding.probe.location.file.as_path(),
         finding.probe.location.line,
     )
@@ -3782,6 +3989,44 @@ mod tests {
             (NARROW_STATE.to_string(), NARROW_ACTION.to_string())
         );
         Ok(())
+    }
+
+    /// #14266: two candidates equal on every evidence key through
+    /// confidence order by exposure class, not by file path. The unknown
+    /// sorts first by path and is listed first, so neither path order nor
+    /// insertion order can masquerade as ranking.
+    #[test]
+    fn start_here_breaks_an_evidence_tie_by_class_before_path() {
+        let mut unknown = finding_at(
+            "finding:unknown",
+            "src/a_analysis.rs",
+            ExposureClass::PropagationUnknown,
+        );
+        let mut gap = finding_at(
+            "finding:unrevealed",
+            "src/z_provider.rs",
+            ExposureClass::ReachableUnrevealed,
+        );
+        for finding in [&mut unknown, &mut gap] {
+            finding.recommended_next_step = Some("inspect the related test".to_string());
+            finding.confidence = 0.66;
+        }
+        let output = test_output(vec![unknown.clone(), gap.clone()]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unrevealed")
+        );
+
+        // Discriminating control: a higher-confidence unknown still leads,
+        // so class only breaks a tie and does not override earlier keys.
+        unknown.confidence = 0.9;
+        let output = test_output(vec![gap, unknown]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unknown")
+        );
     }
 
     /// #9346: the same preference covers a weak production gap.

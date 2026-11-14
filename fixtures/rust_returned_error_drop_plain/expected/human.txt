@@ -43,8 +43,7 @@ Write this test by hand: call the function and assert on what it returns: match 
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:13 (exposed); kind: error_path; reason: Strong oracle found: exact error variant assertion
-    - ./src/lib.rs:13 (exposed); kind: return_value; reason: Strong oracle found: exact error variant assertion
+    - ./src/lib.rs:13 (exposed); 2 changed behaviors in `parse`; kinds: error_path, return_value; reason: Strong oracle found: exact error variant assertion
   Hidden classes:
     exposed = tests appear to notice the change
   Full evidence: rerun with --format human-full

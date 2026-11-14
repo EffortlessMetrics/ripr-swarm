@@ -25,7 +25,7 @@ pub(crate) use public_projection::{
 };
 pub(crate) use render::{render_native_json, render_shields_json};
 pub(crate) use summaries::{
-    refusal_badge_summary, repo_gap_ledger_badge_summary_from_json,
+    refusal_badge_summary, refusal_badge_summary_for, repo_gap_ledger_badge_summary_from_json,
     ripr_badge_summary_with_suppressions, ripr_canonical_actionable_gap_badge_summary,
 };
 #[cfg(test)]

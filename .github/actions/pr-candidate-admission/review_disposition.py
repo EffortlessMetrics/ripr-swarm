@@ -73,6 +73,26 @@ STATE_TOKEN = re.compile(
     re.IGNORECASE,
 )
 STATE_MENTION = re.compile(r"disposition|" + STATE_TOKEN.pattern, re.IGNORECASE)
+# A line that states a disposition: after optional list (bulleted, numbered or task),
+# quote, heading, emphasis or code markers it opens with a ``disposition:`` field or a state token. Only such a line
+# after the first one changes what the review says. A state word inside prose, such
+# as a backticked quotation of a marker or "the earlier review is superseded", is
+# narration and is not read: free text scanning ejected fully green queue entries
+# after a whole run (#11566).
+# A line that is nothing but a state token, however it is marked up (including
+# backticks), still states it. The leading markup includes ordered-list numbers
+# (``1.``, ``1)``) and task-list boxes (``[ ]``, ``[x]``).
+STATE_LINE_PREFIX = r"^(?:[ \t>*\-+_#~`]|\d{1,9}[.)]|\[[ \txX]?\])*"
+# A ``disposition`` field label anywhere on the line (``Final disposition:``, a
+# ``| Disposition | ... |`` table row) and a table cell that holds only a state token
+# also state one.
+STATE_LINE = re.compile(
+    STATE_LINE_PREFIX + r"(?:disposition[ \t*_`]*:|(?:" + STATE_TOKEN.pattern + r")\b)"
+    r"|" + STATE_LINE_PREFIX + r"(?:" + STATE_TOKEN.pattern + r")[ \t*_`.:!]*$"
+    r"|^.*?\bdisposition[ \t*_`]*[:|]"
+    r"|^[ \t]*\|(?:.*\|)?[ \t*_`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.]*\|",
+    re.IGNORECASE,
+)
 # Retraction and blocker phrases for body prose after the marker (and for fenced text,
 # which must not be able to hide one). Best effort: free prose cannot be enumerated, so
 # the closed control is the marker line plus later native reviews superseding this one.
@@ -162,7 +182,16 @@ BODY_FIELD_VALUE = re.compile(r"^(?:SOURCE_REVIEW_READY|REVIEW_READY) (?P<sha>[0
 # A second, competing state field in the description. The review-body form is a
 # ``disposition:`` line, so a description that carries one (whatever its value, and
 # however it is quoted, listed, emphasised or fenced) is ambiguous and attests nothing.
-BODY_COMPETING_FIELD = re.compile(r"^[ \t>*\-+_`#~]*disposition[ \t*_`]*:", re.IGNORECASE)
+# The field shapes match the review side's state lines (#11566): a ``disposition``
+# label after any list (bulleted, numbered, task), quote or emphasis markup or later in
+# the line (``Final disposition:``, ``| Disposition | ... |``), and a table row with a
+# cell that holds only a state token.
+BODY_COMPETING_FIELD = re.compile(
+    STATE_LINE_PREFIX + r"disposition[ \t*_`]*:"
+    r"|^.*?\bdisposition[ \t*_`]*[:|]"
+    r"|^[ \t]*\|(?:.*\|)?[ \t*_`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.]*\|",
+    re.IGNORECASE,
+)
 
 
 def normalize_body(body: str) -> str:
@@ -273,8 +302,8 @@ def comment_body_ready(body: str) -> bool:
     """Whether a COMMENT review body carries a current positive source disposition.
 
     The first substantive line must be a marker line with an allowed tail. Any later
-    line that mentions disposition or a readiness state must itself be a positive
-    line; retraction or blocker text refuses on later lines and inside fenced blocks.
+    line that states a disposition (see STATE_LINE) must itself be a positive line;
+    retraction or blocker text refuses on later lines and inside fenced blocks.
     """
     parts = split_body(body)
     if parts is None:
@@ -287,13 +316,13 @@ def comment_body_ready(body: str) -> bool:
         return False
     return all(
         positive_line(line)
-        or not (STATE_MENTION.search(line) or negation_hit(line))
+        or not (STATE_LINE.match(line) or negation_hit(line))
         for line in substantive[1:]
     )
 
 
 def comment_body_negative(body: str) -> bool:
-    """Whether a COMMENT body speaks about disposition without being exactly positive.
+    """Whether a COMMENT body states a disposition without being exactly positive.
 
     Ordinary chatter with no state mention is neutral. Structurally ambiguous bodies
     count as negative so they can never silently drop a refusal.
@@ -304,9 +333,12 @@ def comment_body_negative(body: str) -> bool:
     if parts is None:
         return True
     visible, fenced = parts
-    return any(STATE_MENTION.search(line) for line in visible) or any(
-        STATE_TOKEN.search(line) or negation_hit(line) for line in fenced
-    )
+    # A prose line that names a state and retracts or blocks it still speaks: another
+    # reviewer's "the earlier REVIEW_READY is withdrawn" must not read as chatter.
+    return any(
+        STATE_LINE.match(line) or (STATE_MENTION.search(line) and negation_hit(line))
+        for line in visible
+    ) or any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced)
 
 
 def body_attests_head(body: str, head: str) -> bool:
@@ -685,6 +717,35 @@ def self_test() -> None:
         ("REVIEW_READY\nBlocked.", False),
         ("REVIEW_READY\nStale", False),
         ("REVIEW_READY\nI do not approve", False),
+        ("REVIEW_READY\n`REPAIR_REQUIRED`", False),
+        ("REVIEW_READY\n## SUPERSEDED", False),
+        ("REVIEW_READY\nDisposition: repair the oracle first", False),
+        ("REVIEW_READY\n`REPAIR_REQUIRED`: fix the oracle", False),
+        ("REVIEW_READY\n- `Disposition`: repair the oracle first", False),
+        ("REVIEW_READY\n1. REPAIR_REQUIRED: repair oracle", False),
+        ("REVIEW_READY\n1) REPAIR_REQUIRED: repair oracle", False),
+        ("REVIEW_READY\n- [ ] REPAIR_REQUIRED: repair oracle", False),
+        ("REVIEW_READY\n- [x] Disposition: REPAIR_REQUIRED", False),
+        ("REVIEW_READY\n```\n1. REPAIR_REQUIRED: repair oracle\n```", False),
+        ("REVIEW_READY\n1. The earlier `SOURCE_REVIEW_READY` was for the previous head.", True),
+        # Fences cannot hide a state token, whatever shape the fenced text has.
+        ('REVIEW_READY\n```json\n{"disposition":"REPAIR_REQUIRED"}\n```', False),
+        ('REVIEW_READY\n```toml\nstate = "REPAIR_REQUIRED"\n```', False),
+        # Declared field and table shapes state a disposition.
+        ("REVIEW_READY\nFinal disposition: REPAIR_REQUIRED", False),
+        ("REVIEW_READY\nCurrent disposition: REVIEW_INCOMPLETE", False),
+        ("REVIEW_READY\n| Disposition | REPAIR_REQUIRED |", False),
+        ("REVIEW_READY\n| PR | State |\n| --- | --- |\n| 14421 | REPAIR_REQUIRED |", False),
+        # Any cell position, including the first and a sole cell.
+        ("REVIEW_READY\n| State | Detail |\n| --- | --- |\n| REPAIR_REQUIRED | fix oracle |", False),
+        ("REVIEW_READY\n| a | REPAIR_REQUIRED | b |", False),
+        ("REVIEW_READY\n| REPAIR_REQUIRED |", False),
+        ("REVIEW_READY\n| **`REPAIR_REQUIRED`** | fix oracle |", False),
+        ("REVIEW_READY\n| Check | Result |\n| --- | --- |\n| fmt | pass |", True),
+        # Narration that only mentions a state word is not a state line (#11566).
+        ("SOURCE_REVIEW_READY - head 314f6893124dc719aabe2a4da3df6d5bf5f33ef5\n\n- One-line delta.\n\nThe earlier `SOURCE_REVIEW_READY` at c0d7341941 is superseded by this exact-head attestation.", True),
+        ("REVIEW_READY\nThe previous run quoted `SOURCE_REVIEW_READY` in a later line and was refused.", True),
+        ("REVIEW_READY\nThe admission script reads the review disposition from the first line.", True),
     ]
     for body, expected in cases:
         actual = comment_body_ready(body)
@@ -737,6 +798,31 @@ def self_test() -> None:
         ],
         head=head,
     )
+    # Another reviewer's prose that names a state and retracts it still refuses, while
+    # prose that only quotes a state word is narration (#11566).
+    for body, allowed in (
+        ("Tests fail here, so the earlier REVIEW_READY is withdrawn.", False),
+        ("`REPAIR_REQUIRED`: fix the oracle", False),
+        ("1. REPAIR_REQUIRED: repair oracle", False),
+        ("1) REPAIR_REQUIRED: repair oracle", False),
+        ("- [ ] REPAIR_REQUIRED: repair oracle", False),
+        ("- [ ] Disposition: REPAIR_REQUIRED", False),
+        ('```json\n{"disposition":"REPAIR_REQUIRED"}\n```', False),
+        ("Final disposition: REPAIR_REQUIRED", False),
+        ("| Disposition | REPAIR_REQUIRED |", False),
+        ("| REPAIR_REQUIRED | fix oracle |", False),
+        ("| REPAIR_REQUIRED |", False),
+        ("The earlier `SOURCE_REVIEW_READY` was for the previous head.", True),
+    ):
+        assert reviews_allow_source_attestation(
+            [
+                review(state="COMMENTED", commit_id=head, id=1, body="REVIEW_READY",
+                       submitted_at="2026-10-15T01:00:01Z"),
+                review(state="COMMENTED", commit_id=head, id=2, body=body,
+                       submitted_at="2026-10-15T01:00:02Z", user={"login": "other"}),
+            ],
+            head=head,
+        ) is allowed, body
     # A decisive review without submitted_at cannot be ordered, so refuse.
     assert not reviews_allow_source_attestation(
         [review(state="APPROVED", commit_id=head, submitted_at=None)], head=head
@@ -771,6 +857,19 @@ def self_test() -> None:
         (f"{line}\n- **Disposition:** REVIEW_INCOMPLETE", False),
         (f"{line}\n> disposition: REVIEW_READY", False),  # ambiguous even when positive
         (f"{line}\n```\ndisposition: REPAIR_REQUIRED\n```", False),
+        (f"{line}\n1. disposition: REPAIR_REQUIRED", False),
+        (f"{line}\n1) disposition: REPAIR_REQUIRED", False),
+        (f"{line}\n- [ ] disposition: REPAIR_REQUIRED", False),
+        (f"{line}\n- [x] Disposition: REVIEW_READY", False),  # ambiguous even when positive
+        (f"{line}\n1. Recorded the earlier disposition in the issue.", True),
+        (f"{line}\nFinal disposition: REPAIR_REQUIRED", False),
+        (f"{line}\nCurrent disposition: REVIEW_INCOMPLETE", False),
+        (f"{line}\n| Disposition | REPAIR_REQUIRED |", False),
+        (f"{line}\n| PR | State |\n| --- | --- |\n| 14421 | REPAIR_REQUIRED |", False),
+        (f"{line}\n| REPAIR_REQUIRED | fix oracle |", False),
+        (f"{line}\n| REPAIR_REQUIRED |", False),
+        (f"{line}\n| a | REVIEW_READY | b |", False),  # ambiguous even when positive
+        (f"{line}\n| Check | Result |\n| --- | --- |\n| fmt | pass |", True),
         (f"{line}\nAccepted winner and losing candidate disposition (when decided): none", True),
         ("", False),
     ]
@@ -790,6 +889,28 @@ def self_test() -> None:
     }
     assert reviews_allow_source_attestation([], head=head, pull=pull())
     assert not reviews_allow_source_attestation([], head=head, pull=None)
+    # A trusted reviewer's current negative state line refuses the description carrier
+    # whatever list markup leads it (#11566); narration does not.
+    for body, allowed in (
+        ("1. REPAIR_REQUIRED: repair oracle", False),
+        ("1) REPAIR_REQUIRED: repair oracle", False),
+        ("- [ ] REPAIR_REQUIRED: repair oracle", False),
+        ("- [ ] Disposition: REPAIR_REQUIRED", False),
+        ("- REPAIR_REQUIRED: repair oracle", False),
+        ('```json\n{"disposition":"REPAIR_REQUIRED"}\n```', False),
+        ('```toml\nstate = "REPAIR_REQUIRED"\n```', False),
+        ("Current disposition: REVIEW_INCOMPLETE", False),
+        ("| Disposition | REPAIR_REQUIRED |", False),
+        ("| REPAIR_REQUIRED | fix oracle |", False),
+        ("| REPAIR_REQUIRED |", False),
+        ("The earlier `SOURCE_REVIEW_READY` was for the previous head.", True),
+    ):
+        assert reviews_allow_source_attestation(
+            [review(state="COMMENTED", commit_id=head, id=3, body=body,
+                    submitted_at="2026-10-15T01:00:03Z", user={"login": "other"})],
+            head=head,
+            pull=pull(),
+        ) is allowed, body
     assert not reviews_allow_source_attestation([], head=head)
     for association in ("NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", ""):
         assert not reviews_allow_source_attestation(

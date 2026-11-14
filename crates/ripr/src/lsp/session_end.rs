@@ -53,11 +53,25 @@ impl SessionEnd {
 pub(super) struct EndOfInput<R> {
     inner: R,
     end: SessionEnd,
+    /// Set only on a clean end of input (#14219), so `serve_streams` can
+    /// tell a closed client from a read loop that stopped on a message the
+    /// codec refused.
+    reached_eof: Arc<AtomicBool>,
 }
 
 impl<R> EndOfInput<R> {
     pub(super) fn new(inner: R, end: SessionEnd) -> Self {
-        Self { inner, end }
+        Self {
+            inner,
+            end,
+            reached_eof: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Shared flag that turns true once the wrapped reader reports a clean
+    /// end of input. A read error does not set it.
+    pub(super) fn eof_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.reached_eof)
     }
 }
 
@@ -71,6 +85,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for EndOfInput<R> {
         let polled = Pin::new(&mut self.inner).poll_read(cx, buf);
         match &polled {
             Poll::Ready(Ok(())) if buf.filled().len() == before && buf.remaining() > 0 => {
+                self.reached_eof.store(true, Ordering::SeqCst);
                 self.end.signal();
             }
             Poll::Ready(Err(_)) => self.end.signal(),
