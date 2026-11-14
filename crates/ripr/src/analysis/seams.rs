@@ -496,6 +496,26 @@ impl OwnerCallShape {
     }
 }
 
+/// #14683: the result of a head-only match-arm seam's arm (`Size::Medium =>`
+/// gives `450`) read from `source`, the seam file's whole text, under the
+/// same fail-closed same-line rule the flow model applies to a head-only
+/// arm probe (#14420). Presentation only: it is not part of the seam ID or
+/// the cached seam, and a source whose line no longer holds this head reads
+/// nothing.
+pub(crate) fn match_arm_seam_result(seam: &RepoSeam, source: &str) -> Option<String> {
+    let head = seam.expression().trim();
+    let head_only = seam.kind() == SeamKind::MatchArm
+        && head.ends_with("=>")
+        && crate::analysis::mask_comments_and_strings(head)
+            .matches("=>")
+            .count()
+            == 1;
+    if !head_only {
+        return None;
+    }
+    crate::analysis::classify::same_line_arm_result_in(head, seam.display_line(), source, 1)
+}
+
 impl RepoSeam {
     /// Construct a synthetic or already-normalized seam: the ID hashes the
     /// byte offset exactly as given.
@@ -836,6 +856,49 @@ mod tests {
             );
         }
         assert_eq!(SeamGripClass::from_schema_value("weakly_exposed"), None);
+    }
+
+    /// #14683: a head-only match-arm seam reads its same-line result from
+    /// the file; a block result, a non-arm seam and a full-arm expression
+    /// read nothing.
+    #[test]
+    fn match_arm_seam_result_reads_the_heads_line() {
+        let source = "fn f(x: u8) -> u8 {\n    match x {\n        0 => 450,\n        1 => { 2 }\n        _ => 3,\n    }\n}\n";
+        let arm = |line: usize, expression: &str, kind: SeamKind| {
+            RepoSeam::new(
+                "src/lib.rs",
+                "f",
+                kind,
+                line * 10,
+                line,
+                expression,
+                RequiredDiscriminator::MatchArmTaken {
+                    arm: expression.to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            )
+        };
+        assert_eq!(
+            match_arm_seam_result(&arm(3, "0 =>", SeamKind::MatchArm), source).as_deref(),
+            Some("450")
+        );
+        assert_eq!(
+            match_arm_seam_result(&arm(4, "1 =>", SeamKind::MatchArm), source),
+            None
+        );
+        assert_eq!(
+            match_arm_seam_result(&arm(3, "0 =>", SeamKind::ReturnValue), source),
+            None
+        );
+        assert_eq!(
+            match_arm_seam_result(&arm(5, "_ => 3,", SeamKind::MatchArm), source),
+            None
+        );
+        // A head another line now holds is not read from this line.
+        assert_eq!(
+            match_arm_seam_result(&arm(5, "0 =>", SeamKind::MatchArm), source),
+            None
+        );
     }
 
     fn make_seam(file: &str, owner: &str, kind: SeamKind, off: usize) -> RepoSeam {
