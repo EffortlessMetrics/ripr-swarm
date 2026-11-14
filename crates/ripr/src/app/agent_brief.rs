@@ -388,8 +388,8 @@ pub(super) enum TwinRole {
     ReturnValue,
 }
 
-/// The fold identity of a seam: its role and a key naming file, line and
-/// expression. Seams of other kinds never fold.
+/// The fold identity of a seam: its role and a key naming file, line, owner
+/// and expression. Seams of other kinds never fold.
 pub(super) fn twin_key(seam: &RepoSeam) -> Option<(TwinRole, String)> {
     let (role, expression) = match seam.kind() {
         SeamKind::ErrorVariant => (TwinRole::ErrorVariant, seam.expression().trim()),
@@ -410,9 +410,10 @@ pub(super) fn twin_key(seam: &RepoSeam) -> Option<(TwinRole, String)> {
     Some((
         role,
         format!(
-            "{}\n{}\n{}",
+            "{}\n{}\n{}\n{}",
             normalized_path(seam.file()),
             seam.display_line(),
+            seam.owner(),
             expression
         ),
     ))
@@ -438,8 +439,9 @@ fn fold_return_value_twins(candidates: &mut Vec<AgentBriefSelectedSeam<'_>>) -> 
 
 pub(super) fn folded_twin_warning(folded: usize) -> Option<String> {
     (folded > 0).then(|| {
+        let noun = if folded == 1 { "seam was" } else { "seams were" };
         format!(
-            "{folded} return_value seams were folded into the error_variant seam on the same line"
+            "{folded} return_value {noun} folded into the error_variant seam on the same line"
         )
     })
 }
@@ -1341,10 +1343,20 @@ mod tests {
         expression: &str,
         class: SeamGripClass,
     ) -> ClassifiedSeam {
-        let mut entry = classified("src/lib.rs", line, "names::parse_name", expression, class);
+        owned_twin_seam("names::parse_name", line, kind, expression, class)
+    }
+
+    fn owned_twin_seam(
+        owner: &str,
+        line: usize,
+        kind: SeamKind,
+        expression: &str,
+        class: SeamGripClass,
+    ) -> ClassifiedSeam {
+        let mut entry = classified("src/lib.rs", line, owner, expression, class);
         entry.seam = RepoSeam::new(
             "src/lib.rs",
-            "names::parse_name",
+            owner,
             kind,
             line * 10,
             line,
@@ -1441,6 +1453,55 @@ mod tests {
                 == "2 return_value seams were folded into the error_variant seam on the same line"
         }) {
             return Err(format!("missing fold warning: {:?}", selected.warnings));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn return_value_twin_folds_only_into_an_error_variant_of_the_same_owner() -> Result<(), String>
+    {
+        // Two one-line functions on the same source line can share the
+        // `Err(..)` text; a seam of one owner must not fold into the other's.
+        let entries = vec![
+            owned_twin_seam(
+                "names::parse_name",
+                7,
+                SeamKind::ReturnValue,
+                "return Err(NameError::Empty)",
+                SeamGripClass::WeaklyGripped,
+            ),
+            owned_twin_seam(
+                "names::parse_alias",
+                7,
+                SeamKind::ErrorVariant,
+                "Err(NameError::Empty)",
+                SeamGripClass::WeaklyGripped,
+            ),
+            owned_twin_seam(
+                "names::parse_alias",
+                7,
+                SeamKind::ReturnValue,
+                "return Err(NameError::Empty)",
+                SeamGripClass::WeaklyGripped,
+            ),
+        ];
+        let working_set = AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/lib.rs")]);
+        let selected = select(&entries, &working_set, 3);
+        let shown = selected
+            .top_seams
+            .iter()
+            .map(|entry| (entry.seam.seam.owner(), entry.seam.seam.kind()))
+            .collect::<Vec<_>>();
+        if shown.len() != 2
+            || !shown.contains(&("names::parse_name", SeamKind::ReturnValue))
+            || !shown.contains(&("names::parse_alias", SeamKind::ErrorVariant))
+        {
+            return Err(format!("owner-scoped fold shows {shown:?}"));
+        }
+        if !selected.warnings.iter().any(|warning| {
+            warning == "1 return_value seam was folded into the error_variant seam on the same line"
+        }) {
+            return Err(format!("missing singular fold warning: {:?}", selected.warnings));
         }
         Ok(())
     }
