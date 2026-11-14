@@ -24,8 +24,8 @@
       "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_pricing.ts:typescript_preview:fff3ea84",
-        "family": "predicate",
-        "delta": "control",
+        "family": "return_value",
+        "delta": "value",
         "file": "src/pricing.ts",
         "line": 6,
         "expression": "export const DEFAULT_FEE_RULE: FeeRule = { bps: 300, cap: 50 };",
@@ -69,7 +69,7 @@
         "authority_boundary": "preview_advisory_only",
         "bun_cross_language_grip": null,
         "card_version": "typescript_preview_card.v1",
-        "changed_behavior": "predicate changed at src/pricing.ts:6: `export const DEFAULT_FEE_RULE: FeeRule = { bps: 300, cap: 50 };`",
+        "changed_behavior": "return_value changed at src/pricing.ts:6: `export const DEFAULT_FEE_RULE: FeeRule = { bps: 300, cap: 50 };`",
         "language": "typescript",
         "language_status": "preview",
         "limits": [
@@ -82,13 +82,13 @@
         "oracle_strength": "none",
         "owner": "DEFAULT_FEE_RULE",
         "owner_kind": "module_function",
-        "probe_family": "predicate",
+        "probe_family": "return_value",
         "related_test": null,
         "repair_packet_ready": false,
         "repair_route": "add trusted related-test matching for this owner shape before emitting a repair packet",
         "source": "check_typescript_preview",
         "static_limits": [],
-        "suggested_assertion_shape": "Add an exact boundary assertion for the changed predicate.",
+        "suggested_assertion_shape": "Add an exact return-value assertion for the changed output.",
         "verify": {
           "command": null
         },

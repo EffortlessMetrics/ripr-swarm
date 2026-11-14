@@ -57,6 +57,25 @@ retain their existing behavior. Recorded `--from` lookups do not infer these
 facts from ambient configuration: the artifact has no complete advisory carrier.
 Exit 2, prose stderr and empty stdout remain the miss contract (#10720).
 
+A well-formed `file:line` miss on any route (fresh or `--from`) adds one
+bounded sentence naming where this scope's findings are (#14384): up to five
+lines with findings in the named file (then "and N more"), shown
+root-relative, counting other files the path also matches, with a suggested
+`file:line` that the same resolver selects as exactly one finding (or a
+pointer to probe ids when every listed line holds several); otherwise up to
+five files that hold findings; otherwise that the scope has none. A
+`file:line:column` selector is told to drop the column. Id selectors keep
+their existing miss text, and the typed selector never enters a command. On a
+fresh run whose miss-cause clause (#14077) already names the same file's
+other finding lines, that sentence is not repeated.
+The empty-scope and other-file forms claim no findings exist only when the
+run is known complete: a fresh run with an incomplete producer outcome, a
+partial diff scope, a non-`Ok` language run or unanalyzed preview files says
+analysis was incomplete (#14406), stated once when the miss cause already
+says so, and a replayed `--from` miss says the artifact does not
+record whether its run was complete (#14440), so a finding there may be
+missing.
+
 The packet should include:
 
 - task kind

@@ -1,3 +1,4 @@
+use crate::cli::commands_context::ensure_command_root;
 use crate::output;
 use std::path::Path;
 
@@ -27,6 +28,7 @@ fn write_policy_report_files(
 
 pub(crate) fn policy_readiness(args: &[String]) -> Result<(), String> {
     let options = parse_policy_readiness_options(args)?;
+    ensure_command_root(Path::new(&options.root), "policy readiness")?;
     let input = output::policy_readiness::PolicyReadinessInput {
         root: options.root,
         generated_at: policy_readiness_generated_at()?,
@@ -107,6 +109,19 @@ pub(crate) fn policy_readiness(args: &[String]) -> Result<(), String> {
         "Recommended mode: {}",
         output::policy_readiness::policy_readiness_recommended_mode(&report)
     );
+    // An input the caller supplied that could not be used means readiness
+    // could not complete (exit 2, docs/EXIT_CODES.md). The `config_error`
+    // report is written first so it replaces any earlier readiness report a
+    // later step would otherwise read as current (#14311).
+    let failures = output::policy_readiness::supplied_input_failures(&report);
+    if !failures.is_empty() {
+        return Err(format!(
+            "policy readiness could not use {} supplied input{}: {}; the report was written as `config_error`. Pass the artifact each flag names (see `ripr help policy readiness`), or drop the flag to leave that input out",
+            failures.len(),
+            if failures.len() == 1 { "" } else { "s" },
+            failures.join("; ")
+        ));
+    }
     Ok(())
 }
 
@@ -305,6 +320,7 @@ pub(crate) fn policy_preview_promotion(args: &[String]) -> Result<(), String> {
 
 pub(crate) fn policy_waiver_aging(args: &[String]) -> Result<(), String> {
     let options = parse_policy_waiver_aging_options(args)?;
+    ensure_command_root(Path::new(&options.root), "policy waiver-aging")?;
     let input = output::waiver_aging::WaiverAgingInput {
         root: options.root,
         generated_at: policy_readiness_generated_at()?,

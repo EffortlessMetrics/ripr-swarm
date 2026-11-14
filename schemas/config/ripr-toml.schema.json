@@ -30,7 +30,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Cargo targets treated as production-like."
+          "description": "Repository-relative source file paths treated as production-like test infrastructure."
         },
         "test_harnesses": {
           "type": "array",

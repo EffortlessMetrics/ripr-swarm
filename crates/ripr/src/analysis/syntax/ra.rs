@@ -1542,7 +1542,7 @@ fn disambiguate_duplicate_symbol_ids(functions: &mut [FunctionFact]) {
 
 /// Whether a function carries a test-framework attribute (`#[test]`,
 /// `#[tokio::test]`, `#[async_std::test]`, `#[actix_rt::test]`,
-/// `#[actix_web::test]`, `#[rstest]`). Parser-backed, so
+/// `#[actix_web::test]`, `#[test_log::test]`, `#[rstest]`). Parser-backed, so
 /// commented-out or string-embedded lookalikes never count.
 pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
     function.attrs().any(|attr| {
@@ -1554,7 +1554,8 @@ pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
                 || names_exact_harness_path(&path, "tokio::test")
                 || names_exact_harness_path(&path, "async_std::test")
                 || names_exact_harness_path(&path, "actix_rt::test")
-                || names_exact_harness_path(&path, "actix_web::test"))
+                || names_exact_harness_path(&path, "actix_web::test")
+                || names_exact_harness_path(&path, "test_log::test"))
         {
             return true;
         }

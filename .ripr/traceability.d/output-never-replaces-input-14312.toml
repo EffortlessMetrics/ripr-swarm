@@ -1,0 +1,19 @@
+[[behavior]]
+id = "RIPR-SPEC-0440"
+name = "report output never replaces its own input"
+spec = "docs/specs/RIPR-SPEC-0440-output-never-replaces-own-input.md"
+tests = [
+  "crates/ripr/tests/output_names_input_refusal.rs::output_naming_an_input_is_refused_before_writing",
+  "crates/ripr/tests/output_names_input_refusal.rs::an_absolute_spelling_of_the_input_is_still_refused",
+  "crates/ripr/tests/output_names_input_refusal.rs::a_symlink_to_the_input_is_still_refused",
+  "crates/ripr/tests/output_names_input_refusal.rs::distinct_output_paths_still_write",
+  "crates/ripr/tests/output_names_input_refusal.rs::baseline_update_in_place_is_not_an_overwrite_refusal",
+  "crates/ripr/tests/output_names_input_refusal.rs::non_destructive_same_path_flows_are_not_refused",
+  "crates/ripr/tests/output_names_input_refusal.rs::a_symlinked_parent_followed_by_dotdot_is_not_a_false_match",
+  "crates/ripr/tests/output_names_input_refusal.rs::directory_members_are_inputs_and_missing_inputs_are_not",
+]
+code = [
+  "crates/ripr/src/output/path.rs::output_replaces_input",
+  "crates/ripr/src/cli/commands.rs::refuse_output_naming_input",
+]
+metrics = ["unit_test_pass_rate"]

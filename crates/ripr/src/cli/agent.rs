@@ -203,6 +203,9 @@ pub(super) struct AgentRepairOptions {
     /// phase's progress narration and `wrote <path>` lines. `RIPR_QUIET`
     /// does the same without the flag. Results and refusal prose always print.
     pub(super) quiet: bool,
+    /// Started through the `ripr repair <item>` façade (#14394): a refusal
+    /// that names a restart names that spelling, not `ripr agent repair`.
+    pub(super) facade_start: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -744,6 +747,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         store,
         json,
         quiet: false,
+        facade_start: false,
     }))
 }
 
@@ -1911,6 +1915,7 @@ mod tests {
                 store: None,
                 json: false,
                 quiet: false,
+                facade_start: false,
             }))
         );
         assert_eq!(
@@ -1947,6 +1952,7 @@ mod tests {
                 store: None,
                 json: false,
                 quiet: false,
+                facade_start: false,
             }))
         );
     }
@@ -1989,6 +1995,7 @@ mod tests {
                 store: Some(PathBuf::from("target/ripr/alt-attempts")),
                 json: false,
                 quiet: false,
+                facade_start: false,
             }))
         );
         assert_eq!(
@@ -2131,6 +2138,7 @@ mod tests {
                 store: None,
                 json: false,
                 quiet: false,
+                facade_start: false,
             }))
         );
     }

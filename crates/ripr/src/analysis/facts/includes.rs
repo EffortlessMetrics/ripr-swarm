@@ -346,6 +346,39 @@ fn sort_limitations(limitations: &mut Vec<RustIncludeLimitation>) {
     limitations.dedup();
 }
 
+/// #14116: the repository-relative files an `include!` limitation pastes,
+/// when the limitation is a literal path inside the repository: the
+/// invocation sits in an inline module (`mod name { include!("literal"); }`),
+/// or sits at file level and names a file the index does not hold. Every
+/// such invocation on the limitation's line must name a literal path. The
+/// limitation itself stands; this only names the files the paste reads,
+/// which the index may or may not hold. `None` for every other limitation,
+/// a dynamic expression or a path that leaves the repository.
+pub(crate) fn literal_include_fragments(
+    index: &RustIndex,
+    limitation: &RustIncludeLimitation,
+) -> Option<Vec<PathBuf>> {
+    let file_level = match limitation.reason_code.as_str() {
+        "rust_include_nested_module_context" => false,
+        "rust_include_target_not_indexed" => true,
+        _ => return None,
+    };
+    let parent = index.files.get(&limitation.parent)?;
+    if parent.used_lexical_fallback {
+        return None;
+    }
+    let directives =
+        rust_include_directives(&limitation.parent, &parent.source, MAX_INCLUDE_EDGES).ok()?;
+    let mut fragments = Vec::new();
+    for directive in directives.iter().filter(|directive| {
+        directive.is_file_level == file_level && directive.line == limitation.line
+    }) {
+        let literal = directive.literal_path.as_deref()?;
+        fragments.push(repository_relative_target(&limitation.parent, literal)?);
+    }
+    (!fragments.is_empty()).then_some(fragments)
+}
+
 pub(crate) fn repository_relative_target(parent: &Path, literal: &Path) -> Option<PathBuf> {
     if literal.is_absolute() {
         return None;

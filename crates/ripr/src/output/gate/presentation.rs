@@ -304,6 +304,24 @@ pub(crate) fn gate_decision_inline_detail(report: &GateDecisionReport) -> String
                 );
             }
         }
+        // #14485: calibrated-gate blocks on a changed file the parser
+        // declined; no candidate or violation carries that reason, so name
+        // it from the warnings, with the disclosure that lists the files.
+        if report
+            .warnings
+            .iter()
+            .any(|warning| warning == super::UNPARSED_BLOCK_WARNING)
+        {
+            let files = report
+                .warnings
+                .iter()
+                .find(|warning| warning.contains("parser_declined_files"))
+                .map(String::as_str)
+                .unwrap_or("");
+            return format!(
+                ": a changed file was not parsed, so nothing was judged for it; {files}"
+            );
+        }
     }
     String::new()
 }

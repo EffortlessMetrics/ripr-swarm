@@ -6540,18 +6540,20 @@ fn truncated_seam_inventory_refuses_repair_readiness_over_stdio() -> Result<(), 
     session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
     let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
     structured_tool_success(&refresh, "ripr_refresh")?;
-    let list = session.call_tool(
-        "list",
-        "ripr_list_gaps",
-        json!({ "class": "exposed" }),
-        REPLY_TIMEOUT,
-    )?;
+    // No `class` filter (#14327): a truncation-refused `exposed` item is not
+    // an already-gripped one, so the default list must keep it.
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
     let list = structured_tool_success(&list, "ripr_list_gaps")?;
     let items = list["items"].as_array().ok_or("list omitted items")?;
     let item = items
         .iter()
         .find(|item| item["canonical_id"] == ready_id.as_str())
         .ok_or_else(|| format!("truncated refresh lost {ready_id}: {list}"))?;
+    if item["class"] != "exposed" {
+        return Err(format!(
+            "precondition (#14327): the truncation-refused item must be exposed: {item}"
+        ));
+    }
     if item["repair_packet_ready"] != false || item["repair_ineligibility"] != TRUNCATED {
         return Err(format!(
             "truncated inventory must refuse {ready_id} with {TRUNCATED}: {item}"
@@ -6666,19 +6668,18 @@ fn truncated_seam_inventory_refuses_repair_card_over_stdio() -> Result<(), Strin
     session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
     let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
     structured_tool_success(&refresh, "ripr_refresh")?;
-    let list = session.call_tool(
-        "list",
-        "ripr_list_gaps",
-        json!({ "class": "exposed" }),
-        REPLY_TIMEOUT,
-    )?;
+    // No `class` filter (#14327): a truncation-refused `exposed` item is not
+    // an already-gripped one, so the default list must keep it.
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
     let list = structured_tool_success(&list, "ripr_list_gaps")?;
     let items = list["items"].as_array().ok_or("list omitted items")?;
     if !items
         .iter()
-        .any(|item| item["canonical_id"] == ready_id.as_str())
+        .any(|item| item["canonical_id"] == ready_id.as_str() && item["class"] == "exposed")
     {
-        return Err(format!("truncated refresh lost {ready_id}: {list}"));
+        return Err(format!(
+            "truncated refresh lost exposed item {ready_id}: {list}"
+        ));
     }
     for item in items {
         let id = item["canonical_id"].as_str().ok_or("item omitted id")?;

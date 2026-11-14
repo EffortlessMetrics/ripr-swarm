@@ -377,12 +377,60 @@ pub(crate) fn no_finding_matched_fresh_run(
         }
         message
     };
-    if let Some(cause) = location_miss_cause(selector, output) {
+    // #14077: one cause clause from facts the run holds. When it already
+    // names the other finding lines of the same file, the #14384 hint
+    // would repeat it; otherwise the hint adds where this scope's findings
+    // are (and the column note), so the next selector needs no listing run.
+    let cause = location_miss_cause(selector, output);
+    let names_same_file_lines = cause
+        .as_ref()
+        .is_some_and(|cause| cause.names_same_file_lines);
+    let names_incomplete = cause.as_ref().is_some_and(|cause| cause.names_incomplete);
+    if let Some(LocationMissCause { text: cause, .. }) = cause {
         message.push_str(". ");
         message.push_str(&cause);
     }
+    // #14406: an incomplete run never reads as an all-clear; when the cause
+    // already said so, the hint keeps its wording without repeating it.
+    let completeness = if names_incomplete {
+        super::selector::ScopeCompleteness::IncompleteDisclosed
+    } else if fresh_run_incomplete(output) {
+        super::selector::ScopeCompleteness::Incomplete
+    } else {
+        super::selector::ScopeCompleteness::Complete
+    };
+    if !names_same_file_lines
+        && let Some(hint) =
+            super::selector::location_miss_hint(&output.findings, root, selector, completeness)
+    {
+        message.push('.');
+        message.push_str(&hint);
+    }
     append_fresh_run_language_limits(&mut message, output);
     message
+}
+
+/// Whether a fresh run left part of its scope unanalyzed: an incomplete
+/// producer outcome (`partial_with_limitations`, `unsupported_input`,
+/// `analysis_failed`, for example an oversized or malformed diff), a
+/// language run that did not complete, or preview-language files no adapter
+/// analyzed (#14406).
+fn fresh_run_incomplete(output: &CheckOutput) -> bool {
+    output
+        .analysis_outcome
+        .as_ref()
+        .is_some_and(|outcome| !outcome.kind.is_complete())
+        // A diff degraded to a partial scope (`limited_partial_scope`), the
+        // same signal #14077's miss cause reads as incomplete.
+        || output.partial_scope.is_some()
+        || output
+            .language_runs
+            .iter()
+            .any(|run| run.status != crate::analysis::LanguageRunStatus::Ok)
+        || output
+            .preview_language_advisories
+            .iter()
+            .any(|advisory| !advisory.analyzed(&output.language_runs))
 }
 
 /// How many same-file finding locations a location miss names.
@@ -397,7 +445,31 @@ const MAX_NEARBY_FINDING_LOCATIONS: usize = 5;
 /// The run output carries counts, not the per-file changed-line set, so this
 /// never says whether the named line itself changed. Finding ids, seam ids
 /// and malformed locations return `None`: they keep their own wording.
-fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<String> {
+fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<LocationMissCause> {
+    location_miss_cause_text(selector, output)
+}
+
+/// A [`location_miss_cause`] clause, whether it already names the same
+/// file's other finding lines (so the #14384 hint must not repeat them),
+/// and whether it already says the analysis was incomplete (so the hint
+/// must not repeat that either, #14406).
+struct LocationMissCause {
+    text: String,
+    names_same_file_lines: bool,
+    names_incomplete: bool,
+}
+
+impl LocationMissCause {
+    fn plain(text: String) -> Self {
+        Self {
+            text,
+            names_same_file_lines: false,
+            names_incomplete: false,
+        }
+    }
+}
+
+fn location_miss_cause_text(selector: &str, output: &CheckOutput) -> Option<LocationMissCause> {
     if selector.starts_with("probe:")
         || selector.starts_with("repo-probe:")
         || selector.starts_with("gap:")
@@ -408,6 +480,15 @@ fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<String> {
     }
     let (selector_file, selector_line) = selector.rsplit_once(':')?;
     let wanted_line = selector_line.parse::<usize>().ok()?;
+    // A `file:line:column` selector would read its line as part of the path
+    // and be told the path is misspelled; the #14384 hint names the column
+    // form instead.
+    if selector_file
+        .rsplit_once(':')
+        .is_some_and(|(_, line)| !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return None;
+    }
     let wanted_file = super::selector::normalize_locator_path(selector_file);
     if wanted_file.is_empty() {
         return None;
@@ -422,7 +503,14 @@ fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<String> {
             super::selector::locator_paths_match(stored.as_ref(), selector_file).then(|| {
                 (
                     finding.probe.location.line,
-                    super::selector::normalize_locator_path(stored.as_ref()),
+                    // Shown root-relative, as every rendered location is: a
+                    // fresh run stores absolute (on Windows, verbatim) paths.
+                    super::selector::normalize_locator_path(
+                        &crate::analysis::finding_location_text(
+                            &output.root,
+                            &finding.probe.location.file,
+                        ),
+                    ),
                 )
             })
         })
@@ -451,9 +539,13 @@ fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<String> {
         } else {
             "findings at other lines"
         };
-        return Some(format!(
-            "No finding is at line {wanted_line}, but this run has {noun} of that file: {scope} {listed}. Retry with one of those locations"
-        ));
+        return Some(LocationMissCause {
+            text: format!(
+                "No finding is at line {wanted_line}, but this run has {noun} of that file: {scope} {listed}. Retry with one of those locations"
+            ),
+            names_same_file_lines: true,
+            names_incomplete: false,
+        });
     }
 
     // Only a plain relative path is probed on disk, so a selector can never
@@ -470,29 +562,33 @@ fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<String> {
     }
     let root = output.root.display();
     if !output.root.join(relative).is_file() {
-        return Some(format!(
+        return Some(LocationMissCause::plain(format!(
             "{wanted_file:?} is not the path of a file from the analyzed root `{root}`, and no finding is in a file whose path ends with it; give the file's path from that root, check the spelling, or pass `--root`"
-        ));
+        )));
     }
     let mut cause = format!("{wanted_file:?} exists, but this run has no finding anywhere in it");
     // Only a complete run supports "nothing there to report": an incomplete
     // or partitioned run may never have analyzed the file, and a run with no
     // producer outcome establishes neither.
     let Some(outcome) = &output.analysis_outcome else {
-        return Some(cause);
+        return Some(LocationMissCause::plain(cause));
     };
     if !outcome.kind.is_complete() || output.partial_scope.is_some() {
         cause.push_str(
             ". The analysis was incomplete, so that file may not have been analyzed; `ripr check` for the same scope lists what was left out",
         );
-        return Some(cause);
+        return Some(LocationMissCause {
+            text: cause,
+            names_same_file_lines: false,
+            names_incomplete: true,
+        });
     }
     let counts = &outcome.counts;
     cause.push_str(&format!(
         ". ripr reports a finding only on a changed line whose behavior it checks, so an unchanged line, a comment or a line of test code has none. This run read {} changed file(s) and {} changed line(s), {} of them candidate line(s) ripr considers",
         counts.changed_file_count, counts.changed_line_count, counts.candidate_line_count
     ));
-    Some(cause)
+    Some(LocationMissCause::plain(cause))
 }
 
 /// Preserve the check producer's scope limitations on a fresh lookup miss.
@@ -632,11 +728,25 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
             &explain_navigation_list_command(&navigation),
             &limitation,
         )),
-        FindingSelection::NoMatch => Err(no_finding_matched(
-            selector,
-            &explain_navigation_list_command(&navigation),
-            None,
-        )),
+        FindingSelection::NoMatch => {
+            let mut message = no_finding_matched(
+                selector,
+                &explain_navigation_list_command(&navigation),
+                None,
+            );
+            if let Some(hint) = super::selector::location_miss_hint(
+                &findings,
+                &input.root,
+                selector,
+                // #14440: the artifact records findings, not whether
+                // its run was complete.
+                super::selector::ScopeCompleteness::Unrecorded,
+            ) {
+                message.push('.');
+                message.push_str(&hint);
+            }
+            Err(message)
+        }
     }
 }
 #[cfg(test)]
@@ -736,6 +846,52 @@ mod tests {
                 "Next: ripr context --root {root} --diff {diff} --at probe:crates_ripr_examples_sample_src_lib.rs:error_path:a776c683"
             )
         ));
+        Ok(())
+    }
+
+    fn outcome_of_kind(
+        kind: crate::analysis_outcome::AnalysisOutcomeKind,
+        limitations: Vec<crate::analysis_outcome::AnalysisLimitation>,
+    ) -> Result<crate::analysis_outcome::AnalysisOutcome, String> {
+        crate::analysis_outcome::AnalysisOutcome::new(
+            kind,
+            crate::analysis_outcome::AnalysisIdentity::default(),
+            crate::analysis_outcome::AnalysisOutcomeCounts::default(),
+            limitations,
+        )
+    }
+
+    #[test]
+    fn fresh_run_incomplete_reads_an_incomplete_producer_outcome() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcomeKind, AnalysisRecovery,
+            AnalysisRecoveryKind, AnalysisStage,
+        };
+        // #14406: an oversized or malformed diff leaves no language-run or
+        // preview record, only the producer outcome; the location-miss hint
+        // must still read that run as incomplete.
+        let mut output = crate::app::check_workspace(sample_diff_input())?;
+        output.language_runs.clear();
+        output.preview_language_advisories.clear();
+        // The sample has no Cargo.toml, so its own outcome is partial (the
+        // path-dependency graph is unavailable) and already reads incomplete.
+        assert!(fresh_run_incomplete(&output));
+        let Some(outcome) = output.analysis_outcome.as_mut() else {
+            return Err("the sample run carries a producer outcome".to_string());
+        };
+        outcome.kind = AnalysisOutcomeKind::CompleteWithFindings;
+        assert!(!fresh_run_incomplete(&output));
+        output.analysis_outcome = None;
+        assert!(!fresh_run_incomplete(&output));
+        output.analysis_outcome = Some(outcome_of_kind(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            vec![AnalysisLimitation::new(
+                AnalysisLimitationKind::DiffScopeOversized,
+                AnalysisStage::DiffLoad,
+                AnalysisRecovery::new(AnalysisRecoveryKind::NarrowDiff, "Narrow the diff.")?,
+            )],
+        )?);
+        assert!(fresh_run_incomplete(&output));
         Ok(())
     }
 

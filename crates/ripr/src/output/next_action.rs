@@ -151,6 +151,9 @@ pub(crate) fn render_next_action_plain_at_root(
         Some(NextActionStop::CheckTriage { repair_route, .. }) if !repair_route.is_empty() => {
             out.extend(route_line("start the guided repair", repair_route));
         }
+        Some(NextActionStop::CheckTriage { scope_route, .. }) if !scope_route.is_empty() => {
+            out.extend(route_line("check the last commit", scope_route));
+        }
         Some(NextActionStop::TerminalComplete { .. }) => {
             out.push("  Next: nothing; this repair is already complete.".to_string());
         }
@@ -442,6 +445,7 @@ fn render_stop(stop: &NextActionStop, bound: Option<&str>) -> Vec<String> {
             case,
             detail_route,
             repair_route,
+            scope_route,
         } => {
             let route = bind_route_root(detail_route, bound);
             let mut line = if route.is_empty() {
@@ -453,6 +457,9 @@ fn render_stop(stop: &NextActionStop, bound: Option<&str>) -> Vec<String> {
             // prints, so the two views never offer different follow-ups.
             if !repair_route.is_empty() {
                 line.push_str(&format!("; guided repair: {repair_route}"));
+            }
+            if !scope_route.is_empty() {
+                line.push_str(&format!("; check the last commit: {scope_route}"));
             }
             (line, (!route.is_empty()).then_some(route))
         }
@@ -911,6 +918,7 @@ mod tests {
                 case: crate::domain::NextActionCheckCase::TopGap,
                 detail_route: "r".to_string(),
                 repair_route: String::new(),
+                scope_route: String::new(),
             },
             NextActionStop::DoctorRecovery {
                 check_name: "c".to_string(),
@@ -987,11 +995,36 @@ mod tests {
     }
 
     #[test]
+    fn scope_missing_stop_names_the_last_commit_rerun_in_both_views() -> Result<(), String> {
+        let stop = NextActionStop::CheckTriage {
+            case: crate::domain::NextActionCheckCase::ScopeMissing,
+            detail_route: String::new(),
+            repair_route: String::new(),
+            scope_route: "ripr check --root . --base HEAD~1".to_string(),
+        };
+        let verbose = render_stop(&stop, None);
+        if verbose.len() != 1
+            || !verbose[0].ends_with("; check the last commit: ripr check --root . --base HEAD~1")
+        {
+            return Err(format!("verbose stop must name the rerun: {verbose:?}"));
+        }
+        let plain = render_next_action_plain_at_root(&stopped_action(stop)?, None);
+        if !plain
+            .iter()
+            .any(|line| line.contains("check the last commit") && line.contains("--base HEAD~1"))
+        {
+            return Err(format!("plain view must name the rerun: {plain:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn append_canonical_next_action_member_keeps_one_json_document() -> Result<(), String> {
         let action = stopped_action(NextActionStop::CheckTriage {
             case: crate::domain::NextActionCheckCase::TopGap,
             detail_route: "ripr explain finding:top".to_string(),
             repair_route: String::new(),
+            scope_route: String::new(),
         })?;
         let rendered = "{\n  \"schema_version\": \"0.2\",\n  \"findings\": []\n}\n".to_string();
         let attached = append_canonical_next_action_member(rendered, &action);

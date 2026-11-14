@@ -11,6 +11,7 @@ pub mod coverage_diagnostics;
 pub mod executable_files;
 mod identity;
 pub mod python_wheel;
+pub mod workflow_lifecycle;
 pub use identity::{enter_workspace_root, preflight, verify_executable_identity, verify_preflight};
 pub const ROUTED_RUST_REQUIRED_RESULT_NAME: &str = "Ripr Rust Small Result";
 
@@ -423,6 +424,7 @@ pub fn check_workflows_impl() -> Result<(), String> {
         }
         let text = read_text_lossy(&path)?;
         workflows.push((normalized.clone(), text.clone()));
+        violations.extend(workflow_lifecycle::violations(&normalized, &text));
         let Some(budget) = budgets.get(&normalized) else {
             violations.push(format!(
                 "missing workflow budget for {normalized} in policy/workflow_allowlist.txt"

@@ -329,7 +329,8 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
   all `none`;
 - a `ripr-mcp-session-v1` session block: the current desired input (workspace
   diff against the resolved default branch or the explicit `ripr_refresh`
-  `base` with `base_revision` when present, draft mode, the workspace's own
+  `base` with `base_revision` when present, the analysis mode from `ripr.toml`
+  `[analysis] mode` (`draft` when unset), the workspace's own
   configuration), the current
   attempt state (`no_snapshot`, `in_flight`, `completed`, `failed`), the last
   completed snapshot identity, last-known-good state, freshness relative to
@@ -388,6 +389,15 @@ languages), a config-less root runs built-in defaults including the
 zero-config language auto-enable, and a present-but-unreadable or unparseable
 config fails the attempt closed with `config_invalid`. Provider
 configuration stays unloaded.
+The git invocations of a refresh's check (diff load and committed-source
+probe) are bounded like `ripr check` (#14386):
+`RIPR_GIT_TIMEOUT` in the server's `env` (whole seconds, `0` disables the
+deadline) when set, else the same 300-second default. MCP has no
+`--git-timeout` flag. An invalid value fails the attempt closed with
+`config_invalid`, never a silent default; the environment is read by the
+server process, so a fix needs a server restart.
+Other git reads, such as the repair-card currentness probe, keep their own
+fixed 60-second deadline.
 
 Gap-list responses use `ripr-mcp-gap-list-v5`, including typed refusals.
 The prior v1 success schema forbids unknown top-level properties, so the new
@@ -450,9 +460,14 @@ token (for example `exposed`), `language` takes a language wire string (for
 example `rust`), and `repair_ready: true` (or `false`) selects the
 commit-time readiness projection. `selected` stays the full stored-selection
 count while `filtered` counts the narrowed set the page walks. With no
-`class`, `exposed` items that are not repair-ready are left out of `items` and
-`filtered` (they need no test-side action; repair-ready ones stay listed) and disclosed as `exposed_omitted` plus an `exposed_route`
-hint (both absent when zero or when `class` is given; the default applies under `repair_ready: false` too); `total`, `eligible`,
+`class`, `exposed` items whose `repair_ineligibility` is `seam_already_gripped`
+(the shared seam gate found existing tests already check the seam) are left
+out of `items` and `filtered` and disclosed as `exposed_omitted` plus an
+`exposed_route` hint (both absent when zero or when `class` is given; the
+default applies under `repair_ready: false` too). An `exposed` item that is
+repair-ready, or unready for any other cause (for example
+`seam_inventory_truncated` or `worktree_source_not_committed`), stays listed:
+missing or limited evidence is never read as "no action needed". `total`, `eligible`,
 `selected` and `outcome` still describe the whole snapshot, and
 `class: "exposed"` lists them. An unknown
 `file` value is an empty disclosed page; an unknown `class` or `language` is
@@ -958,7 +973,7 @@ only it is the mapping, not an observed `resources/read` response.
 | `workspace_unavailable` | `-32603` | operator action | restart with `ripr mcp --stdio --root <repository>` |
 | `analysis_failed` | `-32603` | operator action | fix the named cause or pass `base`, then `ripr_refresh` |
 | `unsupported_profile` | `-32603` | operator action; tool-path only, not produced by `resources/read` (`ripr_refresh`) | the workspace input is unsupported; narrow the diff and retry `ripr_refresh` |
-| `config_invalid` | `-32603` | operator action; tool-path only, not produced by `resources/read` (`ripr_refresh`) | repair `ripr.toml`, then `ripr_refresh` |
+| `config_invalid` | `-32603` | operator action; tool-path only, not produced by `resources/read` (`ripr_refresh`) | repair `ripr.toml` (or an invalid `RIPR_GIT_TIMEOUT` in the server `env`, then restart), then `ripr_refresh` |
 | `stale_inventory` | `-32603` | retryable after refresh; tool-path only, not produced by `resources/read` (`ripr_list_repair_attempts`) | re-list the attempt inventory |
 | `policy_omitted` | `-32603` | operator action; reachable on the repair-card read (#10718) | the agent policy omits this seam's class; inspect it with `ripr agent brief --seam-id <seam> --json` |
 | `witness_unavailable` | `-32603` | named, unreachable here | reserved for wire stability |

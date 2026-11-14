@@ -434,6 +434,10 @@ jobs:
 
       - name: Strict workspace Clippy
         id: clippy
+        # #14589: bound simultaneous large lint units on the 16-GiB hosted route.
+        # Keep the scratch runner's configured capacity and every lint target.
+        env:
+          CARGO_BUILD_JOBS: ${{ inputs.use-scratch && inputs.cargo-build-jobs || '3' }}
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       # The gates below need only the `ripr` build, not the test run. They run before

@@ -62,7 +62,7 @@ need to run it.
 | Oracles | Snapshot and mock-expectation oracles are `medium`; broad error checks are `weak`. |
 | Seam diagnostics | Saved-workspace LSP seam diagnostics are on, with explicit config or initialization options allowed to disable them. |
 | Report caps | Context packets and collect-context commands include up to `5` related tests by default. |
-| Suppressions | Badge renderers look for `.ripr/suppressions.toml`; a missing file is normal. |
+| Suppressions | SARIF and the diff-scope and `ripr+` badge formats apply `.ripr/suppressions.toml`; human, human-full, JSON, JSON-compact, GitHub and missed-txt only mention a detected default-path file on stderr. A missing file is normal. |
 | Badges | Public repo badges count unresolved canonical actionable gaps, or explicit gap-decision-ledger projection targets when a ledger is supplied. Seam-native counts remain internal inventory. Badge rendering stays advisory unless an explicit failure policy is selected. |
 | Cache | Full and compact classified cache stores use an 8 MiB encoded-byte ceiling per entry or shard by default, with secondary record caps of `20000` (full) and `100000` (compact). Large repos can opt into higher process-local limits. |
 | CI | Generated GitHub workflows upload advisory pilot/report/agent artifacts, keep SARIF rendering/upload optional, and use `continue-on-error` by default. |
@@ -104,7 +104,7 @@ A test keeps this table, the schema, and the parser's accepted keys identical.
 | --- | --- | --- |
 | `analysis.mode` | one of `instant`, `draft`, `fast`, `deep`, `ready` | Default analysis mode when CLI flags or LSP options do not set one. |
 | `analysis.include_unchanged_tests` | boolean | Also consider tests the diff did not touch. |
-| `analysis.production_like_targets` | array of string | Cargo targets treated as production-like. |
+| `analysis.production_like_targets` | array of string | Repository-relative source file paths treated as production-like test infrastructure. |
 | `analysis.test_harnesses[]` | array of tables | Exact custom test-harness registrations. Every field is required; `custom_harness` pairs with `libtest_mimic_v1` and `registered_attribute` with `exact_attribute_v1`. |
 | `analysis.test_harnesses[].registration_id` | string |  |
 | `analysis.test_harnesses[].target` | string | Repository-relative path. |
@@ -143,7 +143,7 @@ A test keeps this table, the schema, and the parser's accepted keys identical.
 | `languages.python.excluded_file_patterns` | array of string | Globs excluded from preview indexing. |
 | `languages.typescript.handwritten_files` | array of string | Exact handwritten paths. |
 | `languages.typescript.excluded_file_patterns` | array of string | Globs excluded from preview indexing. |
-| `profiles.bun_ub.test_roots` | array of string, required in `[profiles.bun_ub]` | Test-root globs. |
+| `profiles.bun_ub.test_roots` | non-empty array of unique strings, required in `[profiles.bun_ub]` | Test-root globs. |
 | `profiles.bun_ub.bridge_hints` | string, required in `[profiles.bun_ub]` | Repository-relative bridge hints file. |
 | `typescript.resolve_tsconfig_paths` | boolean | Resolve tsconfig `paths` aliases. |
 | `perl.producer` | one of `perl-ripr-facts`, `perllsp`, `perl-lsp` | Managed fact-packet exporter. |
@@ -311,7 +311,7 @@ Runs the static exposure analysis and renders findings.
 | `--gap-ledger PATH` | _(unset)_ | For `repo-badge-*` formats only: render badge counts from explicit gap-decision-ledger projection targets. |
 | `--json` | _(off)_ | Shortcut for `--format json`. |
 | `--no-unchanged-tests` | `ripr.toml` `analysis.include_unchanged_tests`, otherwise tests included | Limits the source index to changed Rust files. By default unchanged tests are part of the index so `Reach` evidence can find them. |
-| `--suppression-policy PATH` | _(unset)_ | Apply a suppressions TOML (same schema as `.ripr/suppressions.toml`) to the findings-based formats. Relative paths resolve against `--root`; a missing or malformed policy fails the run. Without this flag, findings-based human, human-full, JSON and GitHub formats leave the default file unapplied and disclose a detected `.ripr/suppressions.toml` on stderr. An unused malformed file stays nonfatal; stdout and exit semantics are unchanged. |
+| `--suppression-policy PATH` | _(unset)_ | Apply a suppressions TOML (same schema as `.ripr/suppressions.toml`) to the findings-based formats. Relative paths resolve against `--root`; a missing or malformed policy fails the run. Without this flag, findings-based human, human-full, JSON, JSON-compact, GitHub and missed-txt formats leave the default file unapplied and disclose a detected `.ripr/suppressions.toml` on stderr. An unused malformed file stays nonfatal; stdout and exit semantics are unchanged. |
 | `--write-artifact PATH` | _(unset)_ | Write a full-fidelity check artifact (`ripr-check-artifact-v1`) for later `ripr explain --from PATH` / `ripr context --from PATH` reuse. Diff-scoped findings runs only. Python truthiness findings that require a live physical audit refuse `--from`; run explain/context without it. A local, disposable derivative: never a gate, badge, or proof input. |
 | `--perl-facts PATH` | _(unset)_ | Use this explicit Perl facts packet as the analysis input for Perl files. |
 | `--output-dir DIR` | _(unset)_ | With a named `--diff` file, write native `badge.json`, `detail.json` and `human.txt` from one analysis plus a `manifest.json`. `DIR` must be new (its parent must exist). Does not combine with `--format`/`--json`, scope switches, `--gap-ledger`, `--write-artifact` or `--suppression-policy`. See [Output schema](OUTPUT_SCHEMA.md). |
@@ -345,7 +345,7 @@ that needs the tuning.
 | `RIPR_MODULE_TREE_SCAN_CACHE_BYTES` | `33554432` (32 MiB) | Load ceiling for the single module-tree scan bundle (`scans.json`). A bundle above the ceiling is never allocated whole; the load degrades to a cold rebuild, so analysis output stays correct and only the warm-run benefit is lost. Raise this only for workspaces whose legitimate bundle exceeds 32 MiB. Must be a positive integer; an invalid value falls back to the default ceiling rather than failing the load. This is a load-path bound, not a process RSS guarantee. |
 | `RIPR_QUIET` | unset | Silences the stderr `ripr progress:` stream exactly like `--quiet` for `ripr check`, `explain`, `context` and `pilot` (#11580), and the progress narration and `wrote <path>` lines of `ripr repair`, `ripr continue` and `ripr agent repair` (#11598). Unset, empty, `0` and `false` (any case) keep progress; any other value silences it. Stdout, exit codes, result lines and refusal/error prose are unchanged. Intended for agent harnesses that merge stderr into the model's view. |
 | `RIPR_PROGRESS` | unset | Keeps the stderr `ripr progress:` stream when a machine format (`--json`, `--format json`, `sarif`, `badge-*`, `agent` and the other document formats; `ripr context`; `ripr pilot --format json`) is selected and stderr is not a terminal, where progress is off by default (#11598). Unset, empty, `0` and `false` leave that default; any other value restores the stream. `--quiet` and `RIPR_QUIET` win over it. A terminal and the human formats always keep progress. |
-| `RIPR_GIT_TIMEOUT` | `300` | Cooperative deadline in seconds for each git invocation in the diff-load path. A git command that exceeds the deadline is terminated and the error names `git_invocation_timeout`. `0` disables the deadline. Must be a non-negative integer; an invalid value fails closed (exit `2`) with an error naming the variable. An explicit `ripr check --git-timeout SECS` overrides the environment value. |
+| `RIPR_GIT_TIMEOUT` | `300` | Cooperative deadline in seconds for each git invocation in the diff-load path. A git command that exceeds the deadline is terminated and the error names `git_invocation_timeout`. `0` disables the deadline. Must be a non-negative integer; an invalid value fails closed (exit `2`) with an error naming the variable. An explicit `ripr check --git-timeout SECS` overrides the environment value. `ripr mcp` refreshes read it from the server's environment with the same default and parser; there an invalid value fails the refresh with `config_invalid`. |
 | `RIPR_CHECK_TIMEOUT` | `600` | Wall-clock budget in seconds for one `ripr check` diff or worktree analysis (#5369). Past the budget the run is stopped and refuses with `analysis_timeout` (exit non-zero, no findings, never a clean pass). `0` disables the budget. Must be a non-negative integer; an invalid value fails closed with an error naming the variable. An explicit `ripr check --timeout SECS` overrides the environment value. |
 | `RIPR_ALLOW_REPO_PERL_EXECUTABLE` | unset | Only the exact value `1` lets `[perl].executable` from `ripr.toml` run as the Perl facts exporter. Otherwise ripr ignores the key, says so, and runs the exporter from `PATH`, so a cloned repository cannot choose a program for ripr to run. |
 | `RIPR_MAX_REPO_INDEX_FILES` | `1200` | Maximum Rust files a repo-scoped analysis will load into the index before failing closed as `repo_scope_oversized`. The analysis is not run when the limit is exceeded, so the result is never a silently partial one. Scope the run with `ripr check --diff` or raise the limit. Must be a positive integer. |
@@ -535,6 +535,16 @@ ripr doctor [--root PATH] [--json] [--timings] [--profile analysis|source-build]
 ```
 
 Reports local tooling and workspace shape. Takes no analysis-shaping flags.
+For Python roots, doctor checks that the PATH `python` (the interpreter the
+printed `python -m pytest` verify route runs, not a standalone `pytest` binary)
+can import pytest. It runs `python -c 'import pytest'` from a private empty
+directory with `PYTHONSAFEPATH=1` and `PYTHONPATH` unset, so no checkout or temp
+directory code runs. It does not start pytest, so a broken pytest entry point
+that still imports is not detected. A missing
+pytest is an advisory warning and never changes the exit code. When a project
+`.venv` or `venv` has pytest installed but PATH `python` does not, the warning
+suggests activating the venv before running the printed verify command; the
+virtualenv is read statically and never executed.
 `--profile analysis` (the default) keeps a missing or old toolchain advisory;
 `--profile source-build` makes it a failure. See
 [Exit codes](EXIT_CODES.md#ripr-doctor-exit-codes).
@@ -928,7 +938,7 @@ diagnostics, MCP gaps and repair cards, `ripr explain` and repo-scope output
 still report them. There is no setting to turn this off; remove the attribute
 to see the findings again.
 
-Validated by `ripr check --format badge-*` (loaded relative to `--root`).
+Validated by `ripr check --format sarif`, `sarif-compact`, `badge-json`, `badge-shields` and the `badge-plus-*` / `repo-badge-plus-*` formats (loaded relative to `--root`).
 Schema:
 
 ```toml
@@ -1136,8 +1146,8 @@ them. It does not enable runtime mutation execution or CI blocking policy.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `mode` | enum: `instant` \| `draft` \| `fast` \| `deep` \| `ready` | `draft` | Default analysis mode when not set by a CLI flag or LSP initialization option. |
-| `include_unchanged_tests` | boolean | `true` | Whether unchanged tests may be indexed as static evidence. |
+| `mode` | enum: `instant` \| `draft` \| `fast` \| `deep` \| `ready` | `draft` | Default analysis mode when not set by a CLI flag or LSP initialization option. MCP `ripr_refresh` uses it too, since it takes no mode argument. |
+| `include_unchanged_tests` | boolean | `true` | Whether unchanged tests may be indexed as static evidence. Applies to `ripr check`, the LSP and MCP `ripr_refresh` alike. |
 | `production_like_targets` | array of repository-relative paths | `[]` (empty — no opt-in) | Workspace-relative targets opted in as production-like test infrastructure (#3283, RIPR-SPEC-0153): analyzed as production behavior rather than test evidence. Paths must be repository-relative with `/` separators — backslashes, drive/scheme prefixes, leading `/`, and `..` escape fail closed at parse time. |
 | `test_harnesses` | array of `[[analysis.test_harnesses]]` tables | `[]` (empty — no registration recognized) | Repository-governed test-harness registrations (#3532, RIPR-SPEC-0153). Registration is explicit configuration only: without an entry, no custom harness or registered test producer is recognized. See `[analysis.test_harnesses]` entries below. |
 
@@ -1228,8 +1238,10 @@ oracles.snapshot_strength = "weak"
 ### `[severity.findings]`
 
 Finding severities affect human output, JSON `severity`, GitHub annotations,
-and LSP Finding diagnostics. Valid values are `info`, `warning`, and `note`.
-Use suppressions for accepted debt; Finding severities cannot be `off`.
+SARIF finding result levels, the `severity` field of `ripr context` packets,
+`missed-txt` output, and LSP Finding diagnostics. Valid values are `info`,
+`warning`, and `note`. Use suppressions for accepted debt; Finding severities
+cannot be `off`.
 
 | Key | Default |
 | --- | --- |
@@ -1243,8 +1255,13 @@ Use suppressions for accepted debt; Finding severities cannot be `off`.
 
 ### `[severity.seams]`
 
-Seam severities affect LSP seam diagnostics. Valid values are `off`, `info`,
-`warning`, and `note`. Classes set to `off` do not publish diagnostics.
+Seam severities apply to LSP seam diagnostics, SARIF seam results, the seam
+`severity` field in `review-comments` output, and agent results: agent-brief
+seam selection and its `severity` field, `ripr agent start` and `ripr agent
+card`. Valid values are `off`, `info`, `warning`, and `note`. A class set to `off` publishes no LSP diagnostic or SARIF result and is
+left out of agent results with the omission reason named (agent start and agent
+card refuse it); `review-comments` output still lists it, labelled `off`.
+`ripr check` findings use `[severity.findings]`.
 
 | Key | Default |
 | --- | --- |
@@ -1277,7 +1294,7 @@ Seam severities affect LSP seam diagnostics. Valid values are `off`, `info`,
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `path` | repo-relative path | `.ripr/suppressions.toml` | Badge renderers load suppressions from this path. Absolute paths, `..`, and backslashes are rejected. |
+| `path` | repo-relative path | `.ripr/suppressions.toml` | `ripr check --format sarif`, `sarif-compact`, `badge-json`, `badge-shields` and the `badge-plus-*` / `repo-badge-plus-*` formats apply suppressions from this path. `repo-badge-json` and `repo-badge-shields` count canonical actionable gaps from the classified seam inventory and load no suppressions. The other findings formats leave the file unapplied unless `--suppression-policy` names a policy; human, human-full, JSON, JSON-compact, GitHub and missed-txt mention a detected `.ripr/suppressions.toml` (the default path only) on stderr, and `agent` does not. Absolute paths, `..`, and backslashes are rejected. |
 
 ### `[languages]`
 
@@ -1429,9 +1446,10 @@ enabled = ["rust", "typescript", "python"]
 ### `[profiles.bun_ub]`
 
 The Bun UB profile is an opt-in advisory profile for Bun stable-byte review.
-It records where TypeScript-family integration tests and Bun bridge hints live
-so operators can run the calibrated Blob / ArrayBuffer cross-language preview
-without changing Rust defaults.
+It records where TypeScript-family integration tests and Bun bridge hints live,
+for operators running the calibrated Blob / ArrayBuffer cross-language preview.
+Only `ripr doctor` reads it today: analysis does not consult these values, and
+the Bun bridge preview uses its own built-in test paths and bridge profile.
 
 ```toml
 [languages]
@@ -1447,8 +1465,8 @@ bridge_hints = "ripr.bun.bridge.toml"
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `test_roots` | non-empty array of repo-relative glob strings | none; required when the profile is present | Names the TypeScript-family Bun integration tests to inspect. JavaScript test files are covered by the `typescript` adapter. |
-| `bridge_hints` | repo-relative path | none; required when the profile is present | Points to the opt-in Bun TS-to-Rust bridge-hint file. |
+| `test_roots` | non-empty array of repo-relative glob strings | none; required when the profile is present | Records the TypeScript-family Bun integration test globs; `ripr doctor` reports them. Analysis does not read this list. JavaScript test files are covered by the `typescript` adapter. |
+| `bridge_hints` | repo-relative path | none; required when the profile is present | Records the opt-in Bun TS-to-Rust bridge-hint file path; `ripr doctor` reports it. Analysis does not load this file. |
 
 This profile is read-only configuration. It does not enable TypeScript by
 itself, run `tsc`, start `tsserver`, execute Bun/Jest/Vitest, generate tests,

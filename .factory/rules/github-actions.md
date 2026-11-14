@@ -26,5 +26,5 @@
 ## Droid workflows
 
 - Automatic Droid PR review is retired under #5086; do not restore its workflow or lane policy.
-- Manual `@droid` triggers should be restricted to trusted actors.
+- Mention-triggered Droid Actions are retired under #4842; development review runs in the owning session.
 - Do not enable `show_full_output` in normal operation.

@@ -4584,7 +4584,7 @@ fn select_awaiting_repair_attempt_by_seam(
     // A fresh workspace has no attempts directory at all: that is zero
     // matches, not an operational error (#4332), so the refusal still names
     // the start command.
-    let entries: Vec<std::fs::DirEntry> = match std::fs::read_dir(manifests_root) {
+    let mut entries: Vec<std::fs::DirEntry> = match std::fs::read_dir(manifests_root) {
         Ok(entries) => {
             // A failed directory entry is an operational error, not a silent
             // skip: a partial listing must never masquerade as a complete one
@@ -4601,6 +4601,10 @@ fn select_awaiting_repair_attempt_by_seam(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(error) => return Err(format!("read {} failed: {error}", manifests_root.display())),
     };
+    // `read_dir` order is filesystem-defined. Visit attempts in directory-name
+    // order so the same store always names the same ids in the same order,
+    // and always reports the same unreadable manifest first.
+    entries.sort_by_key(std::fs::DirEntry::file_name);
     for entry in entries {
         let path = entry.path().join(REPAIR_ATTEMPT_MANIFEST);
         if !path.is_file() {

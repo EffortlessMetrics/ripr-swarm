@@ -22,9 +22,9 @@ Changed
   after:  export const DEFAULT_FEE_RULE: FeeRule = { bps: 300, cap: 50 };
 
 Change type
-  a condition or comparison changed
-  family: predicate
-  delta:  control (changes which code path runs)
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
   owner:  typescript:src/pricing.ts::DEFAULT_FEE_RULE
 
 Language
@@ -67,9 +67,9 @@ TypeScript preview card (advisory)
   authority: preview_advisory_only (typescript/preview)
   owner: DEFAULT_FEE_RULE
   owner kind: module_function
-  changed behavior: predicate changed at src/pricing.ts:6: `export const DEFAULT_FEE_RULE: FeeRule = { bps: 300, cap: 50 };`
+  changed behavior: return_value changed at src/pricing.ts:6: `export const DEFAULT_FEE_RULE: FeeRule = { bps: 300, cap: 50 };`
   oracle: unknown (none)
-  suggested assertion shape: Add an exact boundary assertion for the changed predicate.
+  suggested assertion shape: Add an exact return-value assertion for the changed output.
   repair packet ready: false
   why not actionable: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route
   repair route: add trusted related-test matching for this owner shape before emitting a repair packet

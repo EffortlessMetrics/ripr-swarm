@@ -216,9 +216,22 @@ asks for an action that is already underway (#11253):
 - With no committed snapshot and no queued or running attempt, the existing
   "has not analyzed this workspace yet" wording and `ripr.refresh` route stay.
 
-The `ripr-diagnostic-analysis-pending` marker, its result ids and its wire
-shape are unchanged. These are advisory hover words using static vocabulary;
-they make no runtime-outcome or test-sufficiency claim.
+The `ripr-diagnostic-analysis-pending` marker follows the same rule (#14447).
+While no snapshot exists and an attempt is queued or running, the marker says
+"ripr analysis is in progress" and that results replace it when the attempt
+finishes, under recovery `analysis_running`, on push and on both pull paths.
+A push client also gets that route when an unblocked refresh is about to
+start an attempt; a pull client is asked to re-pull once the attempt is
+queued. The marker does not request `ripr.refresh`. When the attempt ends
+without a snapshot and no follow-up attempt starts, the marker returns to
+recovery `save_or_refresh` and its "has not analyzed this workspace yet"
+wording. Blocked states keep their own recovery routes. A pull client is
+asked to re-pull only when the served recovery route changes.
+
+The marker's code, data kind and state are unchanged; #14447 adds only the
+`analysis_running` recovery and its result id. These are advisory hover
+words using static vocabulary; they make no runtime-outcome or
+test-sufficiency claim.
 
 ## Required Evidence
 
@@ -284,6 +297,15 @@ they make no runtime-outcome or test-sufficiency claim.
   covers production constructors for pending, overflow, and unsupported
   markers: they keep their existing wire recovery ids and resolve to the
   catalog metadata for those families.
+- `analysis_pending_tests.rs::analysis_pending_marker_names_a_running_attempt_instead_of_asking_to_start_one`
+  pins the pull marker's `analysis_running` route while an attempt is queued
+  or running and the return to `save_or_refresh` after a failed attempt;
+  `lsp/tests.rs::framed_push_client_pending_marker_names_the_running_first_analysis`
+  pins the push marker on an unblocked didOpen and its retraction on commit;
+  `lsp/tests.rs::framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_first_analysis`
+  pins the return to `save_or_refresh` after a failed first attempt; and
+  `analysis_pending_tests.rs::analysis_pending_blocked_routes_win_over_a_running_attempt`
+  pins blocked routes over a running attempt (#14447).
 - `lsp/tests.rs::hover_without_evidence_states_are_distinct_and_static` and
   the two `backend.rs::pull_disclosure_dedup_tests::no_evidence_hover_*` tests pin the in-progress
   and clean-workspace hover states against their discriminating negatives

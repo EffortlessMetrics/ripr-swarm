@@ -6,7 +6,7 @@ name: Mutation spot check (TypeScript)
 # JSON reporter at an exact pinned version, then runs
 # `cargo xtask mutation-spot-check --stryker-report`, which synthesizes a
 # one-hunk diff per mutant, runs `ripr check --diff` on it, and compares the
-# verdict with the real outcome. Runs weekly and on demand, never on a pull
+# verdict with the real outcome. Runs on demand only, never on a pull
 # request. Read-only: no secrets, nothing is published or pushed.
 #
 # STATUS: first hosted run 2026-11-08 installed and scored defu and ufo
@@ -17,8 +17,6 @@ name: Mutation spot check (TypeScript)
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "17 5 * * 3"
 
 permissions:
   contents: read

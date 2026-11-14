@@ -376,6 +376,7 @@ mod guard_activation;
 mod guard_atoms;
 mod guard_credit;
 mod helper_inline;
+mod import_adds_binding;
 mod import_identity;
 mod imported_call_operator;
 mod known_equality_helpers;
@@ -388,6 +389,7 @@ mod may_reach;
 mod message_pin;
 mod module_value;
 mod test_local_literal;
+mod type_checking_block;
 mod type_guard;
 mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_value_origins};
@@ -2155,6 +2157,25 @@ impl PythonAdapter {
             let old_string_line_ranges = old_source
                 .as_deref()
                 .and_then(no_behavior::multi_line_string_line_ranges);
+            // #14156: the body of `if TYPE_CHECKING:` never runs, on either
+            // side of the diff.
+            let typing_shadowed =
+                type_checking_block::workspace_may_shadow_typing(workspace_read.sources.keys());
+            let type_checking_ranges = workspace_read
+                .sources
+                .get(&changed.path)
+                .filter(|_| !typing_shadowed)
+                .map(|source| {
+                    type_checking_block::type_checking_only_line_ranges(&changed.path, source)
+                })
+                .unwrap_or_default();
+            let old_type_checking_ranges = old_source
+                .as_deref()
+                .filter(|_| !typing_shadowed)
+                .map(|source| {
+                    type_checking_block::type_checking_only_line_ranges(&changed.path, source)
+                })
+                .unwrap_or_default();
             let import_ranges = import_ranges_by_file
                 .get(&changed.path)
                 .map(Vec::as_slice)
@@ -2174,12 +2195,33 @@ impl PythonAdapter {
             let is_added_import = |added: &crate::analysis::diff::ChangedLine| {
                 line_is_in_ranges(added.line, import_ranges)
                     && counterparts.get(&added.line).is_none_or(|removed| {
-                        !line_is_in_ranges(removed.line, &old_import_ranges)
-                            && !is_python_import_line(&removed.text)
+                        (!line_is_in_ranges(removed.line, &old_import_ranges)
+                            && !is_python_import_line(&removed.text))
+                            // #14157: the old import line with more names
+                            // is an added import in place.
+                            || old_source.as_deref().is_some_and(|old_source| {
+                                import_adds_binding::import_line_only_adds_bindings(
+                                    &removed.text,
+                                    &added.text,
+                                    old_source,
+                                )
+                            })
                     })
             };
             let covered = python_quiet_lines_covered_by_run(&changed.added_lines, |added| {
                 line_is_in_ranges(added.line, new_docstring_ranges)
+                    // A block line counts as quiet only when the line it
+                    // replaced did not run either; runtime code moved into a
+                    // block goes to the classifier, which keeps its probe.
+                    || (line_is_in_ranges(added.line, &type_checking_ranges)
+                        && counterparts.get(&added.line).is_none_or(|removed| {
+                            line_is_in_ranges(removed.line, &old_type_checking_ranges)
+                                || line_is_in_ranges(removed.line, &old_docstring_ranges)
+                                || line_is_in_ranges(removed.line, &old_import_ranges)
+                                || is_python_import_line(&removed.text)
+                                || is_python_no_behavior_line(&removed.text)
+                                || is_python_structural_line(&removed.text)
+                        }))
                     || is_added_import(added)
                     || is_python_no_behavior_line(&added.text)
                     || is_python_structural_line(&added.text)
@@ -2238,6 +2280,13 @@ impl PythonAdapter {
                         }),
                     old_line_in_docstring: old_line.is_some_and(|removed| {
                         line_is_in_ranges(removed.line, &old_docstring_ranges)
+                    }),
+                    new_line_type_checking_only: line_is_in_ranges(
+                        added.line,
+                        &type_checking_ranges,
+                    ),
+                    old_line_type_checking_only: old_line.is_some_and(|removed| {
+                        line_is_in_ranges(removed.line, &old_type_checking_ranges)
                     }),
                     opens_owner_with_added_body: owner_for_changed_line(
                         &changed.path,
@@ -2313,6 +2362,7 @@ impl PythonAdapter {
                 &deleted_lines::OldSideRanges {
                     docstrings: &old_docstring_ranges,
                     imports: &old_import_ranges,
+                    type_checking_only: &old_type_checking_ranges,
                     source: old_source.as_deref(),
                 },
                 workspace_read
@@ -2603,7 +2653,11 @@ pub(crate) use row_miss_tests::{python_direct_and_advisory_finding, python_miss_
 mod tests;
 
 #[cfg(test)]
+mod import_adds_binding_tests;
+#[cfg(test)]
 mod loop_walk_tests;
+#[cfg(test)]
+mod type_checking_block_tests;
 #[cfg(test)]
 mod unemitted_stage_unknown_tests;
 #[cfg(test)]

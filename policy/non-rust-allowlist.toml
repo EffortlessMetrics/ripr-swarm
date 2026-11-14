@@ -353,6 +353,15 @@ classification = "config"
 reason = "Codecov configuration for coverage status checks and reporting."
 covered_by = []
 
+[[allow]]
+glob = ".pre-commit-hooks.yaml"
+kind = "pre_commit_hook_manifest"
+owner = "release/ci"
+surface = "ci"
+classification = "config"
+reason = "Hook manifest the pre-commit framework reads from this repository root so consumers can reference the advisory ripr check by id."
+covered_by = []
+
 # ---------------------------------------------------------------------------
 # Repo metadata
 # ---------------------------------------------------------------------------
@@ -765,6 +774,15 @@ covered_by = ["npm --prefix packaging/npm/launcher pack --dry-run --json --ignor
 # ---------------------------------------------------------------------------
 
 [[allow]]
+glob = "tools/repo-policy/tests/workflow_contracts/fixtures/inventory-map.json"
+kind = "fixture_input"
+owner = "repo-policy"
+surface = "fixtures"
+classification = "fixture"
+reason = "Frozen workflow-contract test identities verify that executable consolidation preserves every original logical case and ignored state (#12914)."
+covered_by = ["cargo test -p repo-policy --test workflow_contracts workflow_contracts::inventory_contract", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "docs/agent-context/review-conversations.fixture.json"
 kind = "fixture_input"
 owner = "agents/review"
@@ -865,6 +883,15 @@ reason = "Controlled inputs, specs, and corpora consumed by the B1-B6 agentic-su
 covered_by = ["cargo xtask agentic-bench", "cargo xtask check-file-policy"]
 
 [[allow]]
+glob = "benchmarks/agent_eval/baseline.json"
+kind = "benchmark_receipt"
+owner = "agent-eval"
+surface = "repo"
+classification = "metadata"
+reason = "Committed baseline of the answer-keyed agent eval (#14298): per-scenario, per-route estimated tokens to the answer and loop checks, compared by cargo xtask agent-eval --compare."
+covered_by = ["cargo xtask agent-eval --compare benchmarks/agent_eval/baseline.json", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "benchmarks/agent-discrimination/**"
 kind = "benchmark_fixture"
 owner = "agent-efficiency-bench"
@@ -935,6 +962,15 @@ surface = "fixtures"
 classification = "fixture"
 reason = "Pinned upstream Kani contract examples and an authored no-promotion report projection; no native-run capture claim."
 covered_by = ["cargo test -p ripr --test kani_report_cli"]
+
+[[allow]]
+glob = "xtask/tests/fixtures/kani-cover-evidence/provenance.json"
+kind = "kani_native_conformance_fixture"
+owner = "verification/kani-lane"
+surface = "fixtures"
+classification = "fixture"
+reason = "Authored provenance for retained native cover-evidence fixtures replayed by the lane tests; the capture record is not authenticated execution."
+covered_by = ["cargo test -p xtask kani_lane::tests::pinned_native_cover_captures_keep_distinct_lane_dispositions", "cargo xtask check-file-policy"]
 
 [[allow]]
 glob = "crates/ripr/src/app/kani_import/fixtures/native-captures/**"

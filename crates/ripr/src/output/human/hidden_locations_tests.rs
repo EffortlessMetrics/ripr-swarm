@@ -179,7 +179,7 @@ fn location_change_keeps_the_twenty_row_cap_and_continuation() {
         "{rendered}"
     );
     assert!(!rendered.contains("    - ./src/f20.rs:"), "{rendered}");
-    assert!(rendered.contains("    - … and 3 more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"), "{rendered}");
+    assert!(rendered.contains("    - … and 3 more omitted finding(s): 3 weak; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"), "{rendered}");
 }
 
 /// #9373 items 2 and 3: hidden rows tell the three unknown classes apart and

@@ -15,11 +15,7 @@ impl Drop for Fixture {
 }
 
 fn run(root: &Path, args: &[&str]) -> Result<(), String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .current_dir(root)
-        .args(args)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let output = run_status(root, args)?;
     if output.status.success() {
         Ok(())
     } else {
@@ -77,6 +73,176 @@ fn review_and_gate(root: &Path, base: &str, label: &str) -> Result<(), String> {
             &markdown,
         ],
     )
+}
+
+fn run_status(root: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(root)
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())
+}
+fn init_fixture(root: &Path) -> Result<String, String> {
+    fixture_git_ok(root, &["init", "-q", "-b", "main"])?;
+    fixture_git_ok(root, &["config", "user.name", "fixture"])?;
+    fixture_git_ok(root, &["config", "user.email", "fixture@example.invalid"])?;
+    fixture_git_ok(root, &["config", "commit.gpgsign", "false"])?;
+    write(
+        root,
+        "Cargo.toml",
+        "[package]\nname=\"parser-proof\"\nversion=\"0.1.0\"\nedition=\"2021\"\n",
+    )?;
+    write(
+        root,
+        "src/lib.rs",
+        "pub fn early(n: i32) -> bool { n > 10 }\n",
+    )?;
+    write(
+        root,
+        "tests/boundary.rs",
+        "#[test] fn boundary() { assert!(parser_proof::early(10)); }\n",
+    )?;
+    fixture_git_ok(root, &["add", "."])?;
+    fixture_git_ok(root, &["commit", "-qm", "base"])?;
+    Ok(fixture_git_output(root, &["rev-parse", "HEAD"])?
+        .trim()
+        .to_owned())
+}
+fn temp_fixture(label: &str) -> Result<PathBuf, String> {
+    let root = std::env::temp_dir().join(format!(
+        "ripr-{label}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos()
+    ));
+    std::fs::create_dir(&root).map_err(|e| e.to_string())?;
+    Ok(root)
+}
+
+/// #14485: `calibrated-gate` exists to stop a merge, so a changed file that
+/// was never parsed (nothing judged for it) blocks there with exit 3, while
+/// the same mode on a diff whose files all parsed is unchanged.
+#[test]
+fn calibrated_gate_blocks_a_changed_file_that_was_not_parsed() -> Result<(), String> {
+    let root = temp_fixture("calibrated-declined")?;
+    let _fixture = Fixture(root.clone());
+    let base = init_fixture(&root)?;
+
+    // Control: a parsed change with nothing to find is not blocked.
+    write(&root, "src/lib.rs", "pub fn unrelated() {}\n")?;
+    fixture_git_ok(&root, &["add", "src/lib.rs"])?;
+    fixture_git_ok(&root, &["commit", "-qm", "parsed"])?;
+    let gate_args = |review: &str, out: &'static str, md: &'static str| -> Vec<String> {
+        [
+            "gate",
+            "evaluate",
+            "--root",
+            ".",
+            "--pr-guidance",
+            review,
+            "--mode",
+            "calibrated-gate",
+            "--baseline",
+            "baseline.json",
+            "--out",
+            out,
+            "--out-md",
+            md,
+        ]
+        .map(String::from)
+        .to_vec()
+    };
+    run(
+        &root,
+        &[
+            "review-comments",
+            "--root",
+            ".",
+            "--base",
+            &base,
+            "--head",
+            "HEAD",
+            "--out",
+            "parsed-review.json",
+        ],
+    )?;
+    // calibrated-gate requires an explicit baseline artifact; an empty one
+    // taken from the clean parsed diff keeps the declined-file result free of
+    // baseline effects.
+    review_and_gate(&root, &base, "parsed-ack")?;
+    run(
+        &root,
+        &[
+            "baseline",
+            "create",
+            "--from",
+            "parsed-ack-gate.json",
+            "--out",
+            "baseline.json",
+        ],
+    )?;
+    let parsed_args = gate_args("parsed-review.json", "parsed-gate.json", "parsed-gate.md");
+    let parsed = run_status(
+        &root,
+        &parsed_args.iter().map(String::as_str).collect::<Vec<_>>(),
+    )?;
+    let parsed_gate = read(&root, "parsed-gate.json")?;
+    assert_eq!(parsed.status.code(), Some(0), "{parsed_gate}");
+    assert_eq!(parsed_gate["status"], "pass", "{parsed_gate}");
+
+    // A file the parser declines: nothing is judged, so the mode blocks.
+    let declined = format!(
+        "pub fn early(n: i32) -> bool {{ n > 10 }}\npub fn deep() {{ {}{} }}\n",
+        "{".repeat(400),
+        "}".repeat(400)
+    );
+    write(&root, "src/lib.rs", &declined)?;
+    fixture_git_ok(&root, &["add", "src/lib.rs"])?;
+    fixture_git_ok(&root, &["commit", "-qm", "declined"])?;
+    run(
+        &root,
+        &[
+            "review-comments",
+            "--root",
+            ".",
+            "--base",
+            &base,
+            "--head",
+            "HEAD",
+            "--out",
+            "declined-review.json",
+        ],
+    )?;
+    let declined_args = gate_args(
+        "declined-review.json",
+        "declined-gate.json",
+        "declined-gate.md",
+    );
+    let blocked = run_status(
+        &root,
+        &declined_args.iter().map(String::as_str).collect::<Vec<_>>(),
+    )?;
+    let blocked_gate = read(&root, "declined-gate.json")?;
+    assert_eq!(blocked_gate["summary"]["evaluated"], 0, "{blocked_gate}");
+    assert_eq!(blocked_gate["status"], "blocked", "{blocked_gate}");
+    assert_eq!(blocked.status.code(), Some(3), "{blocked_gate}");
+    let stderr = String::from_utf8_lossy(&blocked.stderr);
+    assert!(
+        stderr.contains("a changed file was not parsed") && stderr.contains("src/lib.rs"),
+        "{stderr}"
+    );
+    let warnings = blocked_gate["warnings"].to_string();
+    assert!(
+        warnings.contains("calibrated-gate blocks while a changed file was not parsed")
+            && warnings.contains("parser_declined_files"),
+        "{warnings}"
+    );
+    let markdown =
+        std::fs::read_to_string(root.join("declined-gate.md")).map_err(|e| e.to_string())?;
+    assert!(markdown.contains("Decision: blocked"), "{markdown}");
+    Ok(())
 }
 
 #[test]

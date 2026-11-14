@@ -37,8 +37,8 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach gate: same_test_separate_owners
-    - infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
-    - 8 more detail line(s) in --format human-full
+    - propagation yes: Changed behavior appears to influence returned value: input >= 10
+    - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)

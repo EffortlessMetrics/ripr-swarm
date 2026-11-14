@@ -277,6 +277,22 @@ from the compared operands, not a diagnostic message argument; a test that
 shadows the owner with a local callable never confirms; and a credited pin
 clears the new variant's obsolete missing-discriminator fact.
 
+### Part E — a success-payload assertion on the failure seam (#12757)
+
+The mirror of the error-pin rule above. A seam whose changed expression
+constructs the failure arm of the owner's return (`Err(..)`, or `None`) is
+reached only by a call that takes that exit. An exact assertion that unwraps or
+compares the success payload (`f(1).unwrap()`, `.expect(..)`, `Ok(..)`,
+`Some(..)`, `assert_ok_eq!`, `assert_some_eq!`) passes only when its call took
+the success exit, so it cannot notice the failure arm changing: it is published
+as no oracle on that seam, and it keeps its credit on the success seam
+(`Ok(n)`, `Some(..)`). A pin that names the failure arm (`Err(..)`, `None`,
+`unwrap_err`, `expect_err`) keeps its grade. An assertion that turns the
+failure into a value (`unwrap_or*`, `ok()`, `map_err`) is read as before.
+The rule is text-only over the masked assertion and can only withhold credit,
+which removes repair candidates' false strong grips and never adds one.
+Fixture: `ok-assertion-failure-seam` in the evidence-promotion honesty corpus.
+
 ## Non-Goals
 
 - Does NOT recognize `expect_err` in a middle position (only at the end of the

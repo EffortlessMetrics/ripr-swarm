@@ -144,6 +144,19 @@ discloses a `session_state_inconsistent` failure and analysis stays paused
 rather than running on a torn negotiation where sibling session fields were
 populated from a profile the session no longer holds.
 
+### Pull-diagnostic advertisement
+
+A client that advertises `textDocument.diagnostic` is offered the pull
+provider. Workspace pull (`workspaceDiagnostics: true`) is offered only to a
+client whose `riprEditor` block parsed; every other pull client is offered
+document pull only (`workspaceDiagnostics: false`) (#1630). A generic client
+that sees workspace pull may answer `workspace/diagnostic/refresh` with a
+workspace pull alone and ignore that report for buffers it pulls by document
+(Neovim 0.12), so its open files never refresh; with document pull only it
+re-pulls each open document. The server still answers `workspace/diagnostic`
+from any client, and sends `workspace/diagnostic/refresh` only to a client
+that advertises `workspace.diagnostics.refreshSupport`.
+
 ### Editor advertisement
 
 The VS Code extension advertises the `riprEditor` block (extension version,
@@ -285,6 +298,15 @@ and never the raw capability document or the client name.
 - `crates/ripr/src/lsp/tests.rs::workspace_folder_transitions_root_switch_reanchors_diagnostics_input_watchers`
   — a root switch unregisters the old-root watchers and registers the new
   root.
+- `crates/ripr/src/lsp/capabilities.rs::tests::generic_pull_client_gets_document_pull_without_workspace_pull`
+  — a generic pull client is offered document pull only; the `riprEditor`
+  client keeps workspace pull.
+- `crates/ripr/src/lsp/tests.rs::push_and_pull_delivery_yield_identical_code_action_availability`
+  — the real `initialize` result per profile carries the expected
+  `workspaceDiagnostics` value.
+- `crates/ripr/src/lsp/tests.rs::framed_generic_pull_client_repulls_its_open_document_after_a_save_refresh`
+  — over the wire, a generic pull client receives `workspace/diagnostic/refresh`
+  after a save and its document re-pull carries the new finding.
 - `editors/vscode/test/suite/extension.test.ts::initialize advertises the RIPR experimental capability block`
   — the extension advertises the riprEditor block.
 

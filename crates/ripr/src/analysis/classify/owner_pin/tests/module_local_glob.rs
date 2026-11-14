@@ -266,6 +266,32 @@ fn an_unresolved_include_anywhere_leaves_the_glob_workspace_wide() {
     assert!(is_binding(&refusal_of(&index, SUITE)));
 }
 
+/// RIPR-SPEC-0369 / #14116: named member re-exports do not turn a local
+/// module glob into a foreign glob, even while placement is unavailable.
+#[test]
+fn sibling_member_reexports_preserve_assertion_admission_with_an_include_limit() {
+    use crate::analysis::facts::RustIncludeLimitation;
+    let lib = "mod model;\nuse model::*;\npub(crate) use model::{A, B};\nmod suite;\npub fn weight(x: u32) -> u32 { x * 3 }\n";
+    for (model, admitted) in [
+        ("pub struct A; pub struct B;", true),
+        // A local module's real public macro import must still be seen.
+        (
+            "pub struct A; pub struct B; pub use foreign::assert_eq;",
+            false,
+        ),
+    ] {
+        let mut index = index(&[(LIB, lib), ("src/model.rs", model), (SUITE, SUITE_BODY)]);
+        index.include_limitations.push(RustIncludeLimitation {
+            parent: PathBuf::from("tests/unrelated.rs"),
+            line: 1,
+            expression: "include!(\"leaf.rs\")".to_string(),
+            reason_code: "rust_include_nested_module_context".to_string(),
+        });
+        assert!(TargetRoots::new(&index).disabled, "placement stays refused");
+        assert_eq!(refusal_of(&index, SUITE).is_none(), admitted, "{model}");
+    }
+}
+
 #[test]
 fn a_public_glob_is_not_confined() {
     let public = "pub use rayon::prelude::*;\n";

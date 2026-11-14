@@ -48,7 +48,9 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     let mut suppressed = 0usize;
     let mut withheld = 0usize;
     let mut not_current = 0usize;
-    for finding in &output.findings {
+    let mut folded = 0usize;
+    let same_line = same_line_folds(output, &suppressed_ids, &withheld_ids);
+    for (index, finding) in output.findings.iter().enumerate() {
         if suppressed_ids.contains(finding.id.as_str()) {
             suppressed += 1;
             continue;
@@ -71,6 +73,16 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         else {
             continue;
         };
+        // After the severity filter, like SARIF's fold: a class configured
+        // off is neither annotated nor counted as folded.
+        let (also_covers, other_gaps) = match same_line.get(&index) {
+            Some(SameLine::Folded) => {
+                folded += 1;
+                continue;
+            }
+            Some(SameLine::Keeps { count, other_gaps }) => (*count, other_gaps.as_slice()),
+            None => (0, &[][..]),
+        };
         let title = format!("ripr {}", finding.class.as_str());
         let reconciled = reconcile_next_step(finding);
         let mut message = if reconciled.is_empty() {
@@ -88,9 +100,20 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             message.push_str(" Stop reason: ");
             message.push_str(&reasons);
         }
+        if also_covers > 0 {
+            message.push_str(&format!(
+                " Also covers {also_covers} more {} of this change on this line.",
+                if also_covers == 1 { "probe" } else { "probes" }
+            ));
+        }
         if let Some(gap) = &finding.canonical_gap {
             message.push_str(" Canonical gap: ");
             message.push_str(&crate::output::human::cap_rendered_identity(&gap.id));
+        }
+        // A folded probe's own gap id stays on the line (RIPR-SPEC-0008).
+        for gap in other_gaps {
+            message.push_str(" Also canonical gap: ");
+            message.push_str(&crate::output::human::cap_rendered_identity(gap));
         }
         if let Some(actionability) = preview_actionability_for(finding) {
             message.push_str(" Preview actionability: ");
@@ -311,9 +334,12 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     if !output.findings.is_empty() && (suppressed > 0 || withheld > 0 || not_current > 0) {
         out.push_str(&unannotated_denominator_notice(
             output,
-            suppressed,
-            withheld,
-            not_current,
+            Unannotated {
+                suppressed,
+                withheld,
+                not_current,
+                folded,
+            },
         ));
     }
     if let Some(notice) = display_limit_notice(&per_level) {
@@ -608,19 +634,126 @@ fn display_limit_notice(
     Some(format!("::notice title=ripr::{}\n", escape_data(&message)))
 }
 
+/// Counts of findings the annotation stream leaves out, by reason.
+struct Unannotated {
+    suppressed: usize,
+    withheld: usize,
+    not_current: usize,
+    folded: usize,
+}
+
+/// A finding's part in a same-line fold.
+enum SameLine<'a> {
+    /// Annotated, standing for `count` more findings on its line, whose
+    /// canonical gap ids other than the kept finding's are `other_gaps`.
+    Keeps {
+        count: usize,
+        other_gaps: Vec<&'a str>,
+    },
+    /// Not annotated: another finding on its line stands for it.
+    Folded,
+}
+
+/// One annotation per changed line and class (#14302), the same groups the
+/// SARIF renderer folds (#11219): two probes of one class on one line (for
+/// example the `predicate` and `return_value` probes of `a.len() == 0`) are
+/// one edit to the reviewer, yet each used to print its own annotation and
+/// spend GitHub's per-step display budget. A finding with its own repair
+/// card or preview actionability never folds, and the kept annotation lists
+/// every folded canonical gap id, so the fold drops no gap identity; each
+/// folded probe's own next step stays in `ripr check --format json`. Only
+/// annotated findings group:
+/// suppressed, withheld and not-current findings keep their own counts. The
+/// kept finding is the one SARIF keeps (its fingerprint order, so a
+/// reorder never changes it); unlocated (line 0) findings never fold.
+fn same_line_folds<'a>(
+    output: &'a CheckOutput,
+    suppressed_ids: &std::collections::BTreeSet<&str>,
+    withheld_ids: &std::collections::BTreeSet<&str>,
+) -> std::collections::BTreeMap<usize, SameLine<'a>> {
+    // Grouped by the rendered `file=` text, so two spellings of one file
+    // (absolute and repository-relative) share a line, as in SARIF.
+    type Key<'k> = (&'k str, String, usize);
+    let mut groups = std::collections::BTreeMap::<Key<'a>, Vec<(usize, &'a Finding)>>::new();
+    for (index, finding) in output.findings.iter().enumerate() {
+        let line = finding.probe.location.line;
+        if line == 0
+            || suppressed_ids.contains(finding.id.as_str())
+            || withheld_ids.contains(finding.id.as_str())
+            || !finding.is_candidate_actionable()
+            || carries_own_guidance(finding)
+        {
+            continue;
+        }
+        groups
+            .entry((
+                finding.class.as_str(),
+                repository_display_path(&output.root, &finding.probe.location.file),
+                line,
+            ))
+            .or_default()
+            .push((index, finding));
+    }
+    let mut roles = std::collections::BTreeMap::new();
+    for mut group in groups.into_values() {
+        if group.len() < 2 {
+            continue;
+        }
+        // SARIF keeps the smallest `rule|finding id|probe id|file`
+        // fingerprint; rule and file are shared within a group, so the same
+        // `|`-joined text picks the same finding (a bare tuple order differs
+        // when one id is a prefix of another).
+        group.sort_by_cached_key(|(_, finding)| format!("{}|{}", finding.id, finding.probe.id.0));
+        let mut members = group.into_iter();
+        let Some((keeper_index, keeper)) = members.next() else {
+            continue;
+        };
+        let keeper_gap = keeper.canonical_gap.as_ref().map(|gap| gap.id.as_str());
+        let mut count = 0usize;
+        let mut other_gaps = Vec::new();
+        // Roles are keyed by each finding's place in `output.findings`, not
+        // its id, so a repeated id can neither block nor cross a fold.
+        for (index, member) in members {
+            roles.insert(index, SameLine::Folded);
+            count += 1;
+            if let Some(gap) = &member.canonical_gap
+                && Some(gap.id.as_str()) != keeper_gap
+                && !other_gaps.contains(&gap.id.as_str())
+            {
+                other_gaps.push(gap.id.as_str());
+            }
+        }
+        roles.insert(keeper_index, SameLine::Keeps { count, other_gaps });
+    }
+    roles
+}
+
+/// Whether a finding's annotation carries guidance of its own beyond its
+/// class and location: a preview actionability state or a language repair
+/// card. Folding such a finding would drop that guidance, so it keeps its own
+/// annotation.
+fn carries_own_guidance(finding: &Finding) -> bool {
+    preview_actionability_for(finding).is_some()
+        || python_repair_card(finding).is_some()
+        || python_no_action_annotation(finding).is_some()
+        || typescript_preview_card(finding).is_some()
+        || perl_preview_card(finding).is_some()
+}
+
 /// Denominator for findings the annotation stream deliberately omits (#4393).
 ///
 /// Without it, a run whose findings are all policy-suppressed or all
 /// base-side prints nothing, which a reader cannot tell apart from a clean
 /// run. The omitted findings stay unannotated; this line only counts them.
-fn unannotated_denominator_notice(
-    output: &CheckOutput,
-    suppressed: usize,
-    withheld: usize,
-    not_current: usize,
-) -> String {
+fn unannotated_denominator_notice(output: &CheckOutput, unannotated: Unannotated) -> String {
+    let Unannotated {
+        suppressed,
+        withheld,
+        not_current,
+        folded,
+    } = unannotated;
     let total = output.findings.len();
-    let annotated = total - suppressed - withheld - not_current;
+    let annotated = total - suppressed - withheld - not_current - folded;
     let mut parts = Vec::new();
     if suppressed > 0 {
         let policy = output
@@ -643,6 +776,11 @@ fn unannotated_denominator_notice(
     if not_current > 0 {
         parts.push(format!(
             "{not_current} not current in this change (base-side or unresolved evidence)"
+        ));
+    }
+    if folded > 0 {
+        parts.push(format!(
+            "{folded} folded into an annotation of the same class on the same line"
         ));
     }
     let message = format!(
@@ -2276,6 +2414,211 @@ mod tests {
         assert!(
             !rendered.contains("Annotated "),
             "a fully annotated run needs no denominator: {rendered}"
+        );
+    }
+
+    /// The located annotation lines of a rendered stream.
+    fn located_annotations(rendered: &str) -> Vec<&str> {
+        rendered
+            .lines()
+            .filter(|line| line.contains(" file="))
+            .collect()
+    }
+
+    fn with_probe(base: &Finding, id: &str, line: usize, class: ExposureClass) -> Finding {
+        let mut finding = base.clone();
+        finding.id = id.to_string();
+        finding.probe.id = ProbeId(id.to_string());
+        finding.probe.location = SourceLocation::new("src/lib.rs", line, 1);
+        finding.class = class;
+        finding
+    }
+
+    /// #14302: two probes of one class on one line render one annotation that
+    /// says it stands for the other, the group SARIF folds (#11219). Another
+    /// line, or another class on the same line, keeps its own annotation, and
+    /// the kept finding does not depend on the order findings arrive in.
+    #[test]
+    fn same_line_same_class_findings_fold_into_one_annotation() -> Result<(), String> {
+        let mut output = output_with_unknown_finding();
+        let base = output.findings[0].clone();
+        let unknown = ExposureClass::StaticUnknown;
+        output.findings = vec![
+            with_probe(&base, "probe:b:return_value", 13, unknown.clone()),
+            with_probe(&base, "probe:a:predicate", 13, unknown.clone()),
+            with_probe(&base, "probe:c:predicate", 14, unknown.clone()),
+            with_probe(&base, "probe:d:predicate", 13, ExposureClass::WeaklyExposed),
+        ];
+        let rendered = render(&output);
+        let located = located_annotations(&rendered);
+        assert_eq!(located.len(), 3, "{rendered}");
+        let line_13_unknown = located
+            .iter()
+            .filter(|line| line.contains(",line=13,title=ripr static_unknown::"))
+            .collect::<Vec<_>>();
+        assert_eq!(line_13_unknown.len(), 1, "{rendered}");
+        assert!(
+            line_13_unknown[0].contains("Also covers 1 more probe of this change on this line."),
+            "{rendered}"
+        );
+        assert!(
+            located
+                .iter()
+                .any(|line| line.contains(",line=14,title=ripr static_unknown::")
+                    && !line.contains("Also covers")),
+            "{rendered}"
+        );
+        assert!(
+            located
+                .iter()
+                .any(|line| line.contains(",line=13,title=ripr weakly_exposed::")
+                    && !line.contains("Also covers")),
+            "{rendered}"
+        );
+        // Folding alone adds no denominator notice: the kept annotation names it.
+        assert!(!rendered.contains("Annotated "), "{rendered}");
+
+        // Annotations follow the findings' order; which one is kept does not.
+        output.findings.reverse();
+        let reversed = render(&output);
+        let mut forward_lines = rendered.lines().collect::<Vec<_>>();
+        let mut reversed_lines = reversed.lines().collect::<Vec<_>>();
+        forward_lines.sort_unstable();
+        reversed_lines.sort_unstable();
+        assert_eq!(
+            reversed_lines, forward_lines,
+            "the fold must not depend on order"
+        );
+        Ok(())
+    }
+
+    /// The denominator still adds up when it is printed for another reason.
+    #[test]
+    fn the_denominator_counts_folded_findings() {
+        let mut output = output_with_unknown_finding();
+        let base = output.findings[0].clone();
+        let unknown = ExposureClass::StaticUnknown;
+        // On the folded line, so a base-side finding neither keeps nor folds.
+        let mut base_side = with_probe(&base, "probe:0:base", 13, unknown.clone());
+        base_side.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        output.findings = vec![
+            with_probe(&base, "probe:a:predicate", 13, unknown.clone()),
+            with_probe(&base, "probe:b:return_value", 13, unknown),
+            base_side,
+        ];
+        let rendered = render(&output);
+        assert!(
+            rendered.contains(
+                "Annotated 1 of 3 static exposure finding(s); 1 not current in this change (base-side or unresolved evidence); 1 folded into an annotation of the same class on the same line."
+            ),
+            "{rendered}"
+        );
+    }
+
+    /// #14302 review: a fold must not drop a folded finding's canonical gap.
+    /// Two probes of one edit carry different gap ids; the one annotation
+    /// names both, the kept finding's first.
+    #[test]
+    fn a_fold_keeps_every_folded_canonical_gap_id() {
+        let mut output = output_with_unknown_finding();
+        let base = output.findings[0].clone();
+        let unknown = ExposureClass::StaticUnknown;
+        let gap = |id: &str| crate::domain::FindingCanonicalGap {
+            id: id.to_string(),
+            language: "rust".to_string(),
+            file: "src/lib.rs".to_string(),
+            owner: "f".to_string(),
+            behavior_kind: "predicate_boundary".to_string(),
+            probe_kind: "predicate".to_string(),
+            normalized_discriminator: "x".to_string(),
+        };
+        // Probe kinds mint different gap ids for one edit (`a.len() == 0`).
+        let mut first = with_probe(&base, "probe:a:predicate", 13, unknown.clone());
+        first.canonical_gap = Some(gap("gap:rust:predicate"));
+        let mut second = with_probe(&base, "probe:b:return_value", 13, unknown);
+        second.canonical_gap = Some(gap("gap:rust:return_value"));
+        output.findings = vec![second, first];
+        let rendered = render(&output);
+        let located = located_annotations(&rendered);
+        assert_eq!(located.len(), 1, "{rendered}");
+        assert!(
+            located[0].contains("Also covers 1 more probe of this change on this line."),
+            "{rendered}"
+        );
+        assert!(
+            located[0].contains(
+                " Canonical gap: gap:rust:predicate Also canonical gap: gap:rust:return_value"
+            ),
+            "{rendered}"
+        );
+    }
+
+    /// #14302 review: the fold groups by the rendered `file=` path, so two
+    /// spellings of one file share a line, and roles follow each finding's
+    /// place, so a repeated id neither blocks a fold nor crosses lines.
+    #[test]
+    fn fold_groups_by_rendered_path_and_finding_place() {
+        let mut output = output_with_unknown_finding();
+        let base = output.findings[0].clone();
+        let unknown = ExposureClass::StaticUnknown;
+        let mut dotted = with_probe(&base, "probe:b:return_value", 13, unknown.clone());
+        dotted.probe.location = SourceLocation::new("./src/lib.rs", 13, 1);
+        output.findings = vec![
+            with_probe(&base, "probe:a:predicate", 13, unknown.clone()),
+            dotted,
+        ];
+        let rendered = render(&output);
+        let located = located_annotations(&rendered);
+        assert_eq!(located.len(), 1, "{rendered}");
+        assert!(
+            located[0].contains("Also covers 1 more probe"),
+            "{rendered}"
+        );
+
+        // One id on two lines: each line keeps its own annotation.
+        let mut first = with_probe(&base, "probe:same", 13, unknown.clone());
+        let mut second = with_probe(&base, "probe:same", 14, unknown.clone());
+        first.id = "finding:dup".to_string();
+        second.id = "finding:dup".to_string();
+        // One id twice on line 15: they still fold into one annotation.
+        let mut third = with_probe(&base, "probe:x", 15, unknown.clone());
+        let mut fourth = with_probe(&base, "probe:y", 15, unknown);
+        third.id = "finding:twin".to_string();
+        fourth.id = "finding:twin".to_string();
+        output.findings = vec![first, second, third, fourth];
+        let rendered = render(&output);
+        let located = located_annotations(&rendered);
+        assert_eq!(located.len(), 3, "{rendered}");
+        let covers = |line: usize| {
+            located.iter().any(|text| {
+                text.contains(&format!(",line={line},")) && text.contains("Also covers")
+            })
+        };
+        assert!(!covers(13) && !covers(14) && covers(15), "{rendered}");
+    }
+
+    /// #14302 review: a finding with its own repair card never folds, so two
+    /// same-line, same-class card findings keep one card annotation each.
+    #[test]
+    fn card_findings_on_one_line_never_fold() {
+        let mut output = output_with_perl_preview_card();
+        let first = output.findings[0].clone();
+        assert!(
+            super::perl_preview_card(&first).is_some(),
+            "fixture carries a card"
+        );
+        let mut second = first.clone();
+        second.id = format!("{}:second", first.id);
+        second.probe.id = ProbeId(second.id.clone());
+        output.findings = vec![first, second];
+        let rendered = render(&output);
+        let located = located_annotations(&rendered);
+        assert_eq!(located.len(), 2, "{rendered}");
+        assert!(
+            located
+                .iter()
+                .all(|line| line.contains("Perl preview card:") && !line.contains("Also covers")),
+            "{rendered}"
         );
     }
 

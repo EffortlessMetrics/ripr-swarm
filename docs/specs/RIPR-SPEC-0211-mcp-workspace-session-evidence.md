@@ -151,8 +151,10 @@ official SDK transport:
   discovery, configuration presence, trust, authority — all unchanged from
   #3088) plus a `ripr-mcp-session-v1` session block: current desired input
   (workspace diff against the resolved default branch or the explicit
-  refresh `base` with `base_revision` when present, draft mode, built-in
-  defaults), current attempt state (`no_snapshot`, `in_flight`,
+  refresh `base` with `base_revision` when present, the analysis mode from
+  `ripr.toml` `[analysis] mode` (`draft` when unset), and the workspace's own
+  configuration, whose `[analysis]` table the refresh applies through the same
+  owner `ripr check` uses), current attempt state (`no_snapshot`, `in_flight`,
   `completed`, `failed`), last completed snapshot identity,
   last-known-good, freshness relative to the last completed refresh
   (`current_at_last_refresh`, or `stale_after_failed_attempt` once a later
@@ -419,10 +421,14 @@ official SDK transport:
   no match, and an unknown `file`, produce an empty disclosed page.
   `selected` remains the stored-selection count; `filtered` is the narrowed
   count. `filters` echoes all four dimensions, with null for omitted values.
-  With no `class` filter the list leaves out `exposed` items that are not
-  repair-ready (#14327): they need no test-side action, so listing them
-  invites per-item evidence reads that change nothing. A repair-ready
-  `exposed` item stays listed because it is still an actionable repair target. `filtered` counts after that exclusion (it is the set
+  With no `class` filter the list leaves out `exposed` items the shared seam
+  gate refused as `seam_already_gripped` (#14327): existing tests already
+  check the seam, so listing them invites per-item evidence reads that change
+  nothing. Only that positive cause omits. An `exposed` item that is
+  repair-ready, or unready for any other cause (a truncated seam inventory,
+  withheld worktree evidence, an ambiguous or unfound seam, a finding-level
+  gate), stays listed, because missing or limited evidence never becomes a
+  no-action conclusion. `filtered` counts after that exclusion (it is the set
   the page walks), the additive `exposed_omitted` count and `exposed_route`
   string disclose what was left out (both absent when zero or when `class`
   was named), and `total`, `eligible`, `selected` and `outcome` still describe
@@ -708,6 +714,10 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   `config_identity`, `built_in_defaults` when none resolves,
   `detected_not_loaded` when the file cannot be read or parsed), and an
   unparseable config fails the attempt closed with `config_invalid`.
+  The git invocations of a refresh's check are bounded by
+  `RIPR_GIT_TIMEOUT` from the server environment when set, else the
+  `ripr check` default, through the CLI's parser (#14386); an invalid value
+  fails the attempt closed with `config_invalid` naming the variable.
 - No support-tier promotion.
 - No durable snapshot persistence; the session is in-memory and a server
   restart drops it (a fresh `ripr_refresh` rebuilds it).
@@ -802,8 +812,9 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   + `gap_list_filters_narrow_each_dimension_then_combine_before_paging`
   — direct stored-fact narrowing/readiness and continuation controls.
 - `crates/ripr/src/mcp/workspace.rs::tests::default_gap_list_omits_exposed_and_discloses_the_count`
-  — default list leaves out non-repair-ready `exposed` items and counts them
-  in `exposed_omitted`; `class: "exposed"` lists them; other items stay.
+  — default list leaves out already-gripped `exposed` items and counts them
+  in `exposed_omitted`; a truncation-refused `exposed` item and a
+  repair-ready one stay listed; `class: "exposed"` lists them all.
 - `crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_filters_at_the_dispatch_edge`
   — argument admission before refresh; this is not successful narrowing proof.
 - `crates/ripr/tests/mcp_stdio.rs::list_gaps_rejects_unknown_class_tokens_with_the_vocabulary`
@@ -845,6 +856,10 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   refresh/list/get_gap with the `loaded` posture, a config-less rust
   workspace keeps the defaults posture, and an unparseable `ripr.toml`
   fails the refresh closed with `config_invalid`.
+- `crates/ripr/tests/mcp_workspace_config.rs::refresh_honors_ripr_git_timeout_from_the_server_environment`
+  — #14386: an invalid server `RIPR_GIT_TIMEOUT` fails the refresh with
+  `config_invalid` naming the variable and a restart recovery; `0` keeps
+  the analysis.
 - `crates/ripr/src/mcp/gaps.rs::tests` — canonical item projection and the
   readiness block this slice pinned (the readiness evaluation itself is
   owned with RIPR-SPEC-0214).

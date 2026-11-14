@@ -749,6 +749,35 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
         || text.starts_with("mod ")
         || text.starts_with("#")
         || is_visible_module_declaration(text)
+        || is_plain_extern_crate(text)
+}
+
+/// A private, plain `extern crate name;` only links a crate, the same way a
+/// private `use` imports one, so it holds no behavior for a test to notice
+/// (#14403). A visibility-qualified form (`pub extern crate foo;`) re-exports
+/// the crate under the declaring module's path, like a visible `use`, and the
+/// renaming form (`extern crate core as std;`, `extern crate self as name;`)
+/// changes what a name means for the rest of the crate; both stay probed, as
+/// does any line with trailing code.
+fn is_plain_extern_crate(text: &str) -> bool {
+    let Some(body) = text.strip_suffix(';') else {
+        return false;
+    };
+    body.strip_prefix("extern")
+        .filter(|tail| tail.starts_with(char::is_whitespace))
+        .map(str::trim_start)
+        .and_then(|tail| tail.strip_prefix("crate"))
+        .filter(|tail| tail.starts_with(char::is_whitespace))
+        .map(str::trim)
+        .is_some_and(|name| {
+            let name = name.strip_prefix("r#").unwrap_or(name);
+            name != "self"
+                && name
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
 }
 
 /// A visibility-qualified out-of-line `mod name;` declaration
@@ -854,6 +883,65 @@ pub(crate) fn is_item_header(text: &str) -> bool {
                 && !generics_hold_expression(rest)
         })
     })
+}
+
+/// A one-line `type` item, whether a trait's associated type (`type Eq: CmpEq;`,
+/// `type Item;`), an impl's binding (`type Eq = __m128i;`) or a type alias
+/// (`pub type Map<K> = BTreeMap<K, u8>;`), declares a type and runs nothing
+/// (#14429). Its `name: Bound` only looks like a constructed field `name:
+/// value`, so it reads as one `static_unknown`, like an item header, and a
+/// changed type stays visible. The line must hold the whole item, ending in
+/// `;`. A type that holds an expression (a block, a macro, or any array
+/// length) keeps its ordinary families.
+pub(crate) fn is_type_item_declaration(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    let text = masked.trim();
+    let declared = super::diff::strip_visibility(text);
+    let declared = declared
+        .strip_prefix("default")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map_or(declared, str::trim_start);
+    let Some(rest) = declared
+        .strip_prefix("type")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map(str::trim_start)
+    else {
+        return false;
+    };
+    let name_len = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    let name = rest.get(..name_len).unwrap_or_default();
+    let starts_like_identifier = name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
+    let Some(body) = rest.strip_suffix(';') else {
+        return false;
+    };
+    // A `;` outside brackets joins a second statement (`type A = u8; f();`);
+    // one inside an array type (`[u8; 4]`) is part of the type.
+    let mut depth = 0usize;
+    let second_statement = body.chars().any(|c| match c {
+        '[' | '(' | '<' => {
+            depth += 1;
+            false
+        }
+        ']' | ')' | '>' => {
+            depth = depth.saturating_sub(1);
+            false
+        }
+        ';' => depth == 0,
+        _ => false,
+    });
+    // An array length is a const expression evaluated in the type
+    // (`[T; 4]`), so the item keeps its ordinary families, as the inline
+    // bound owner rule requires.
+    let has_array_length = array_length_texts(body).next().is_some();
+    starts_like_identifier
+        && !second_statement
+        && !has_array_length
+        && !generics_hold_expression(body)
 }
 
 /// A const-generic default (`<const N: usize = { capacity() }>`) or an array
@@ -1126,6 +1214,158 @@ mod tests {
         // `pub use` keeps its pre-existing ignore; the new helper must not
         // be what claims it.
         assert!(!is_visible_module_declaration("pub use a::b;"));
+    }
+
+    /// #14429: a one-line `type` item declares a type; its bound only looks
+    /// like a constructed field. Expressions in the type and trailing code
+    /// keep their ordinary families.
+    #[test]
+    fn type_items_read_as_declarations_not_fields() {
+        use crate::analysis::probes::lexical::classify_changed_line;
+        for declaration in [
+            "type Eq: CmpEq;",
+            "type Mask: MoveMask;",
+            "type Item;",
+            "type Eq = __m128i;",
+            "pub type Map<K> = BTreeMap<K, u8>;",
+            "default type Output = Self;",
+            "type Error: std::error::Error + Send + Sync + 'static;",
+            "type F = fn(u8) -> u8;",
+        ] {
+            assert!(is_type_item_declaration(declaration), "`{declaration}`");
+            assert_eq!(
+                classify_changed_line(declaration),
+                vec![ProbeFamily::StaticUnknown],
+                "`{declaration}`"
+            );
+        }
+        for kept in [
+            "type Buf = [u8; cap()];",
+            "pub(crate) type Buf = [u8; 4];",
+            "type Packet<T: Clone> = [T; 4];",
+            "type A = u8; f();",
+            "type Out = { 1 };",
+            "type M = mac!(u8);",
+            "type Eq: CmpEq",
+            "type = u8;",
+            "type 1x = u8;",
+            "typed: u8,",
+            "type_: Kind,",
+            "let ty = Type::new();",
+        ] {
+            assert!(!is_type_item_declaration(kept), "`{kept}`");
+        }
+    }
+
+    /// #14429 producer level: a changed trait associated type yields no
+    /// field-construction probe, while a changed struct-literal field still
+    /// does (negative control).
+    #[test]
+    fn diff_producer_reads_associated_type_as_declaration() -> Result<(), String> {
+        use crate::analysis::diff::{ChangedFile, ChangedLine};
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source = "pub trait Vector {\n    type Eq: CmpEq;\n}\npub struct S {\n    pub a: u8,\n}\npub fn make() -> S {\n    S {\n        a: 1,\n    }\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(path.clone(), facts)]),
+            ..Default::default()
+        });
+        let families_for = |line: usize| {
+            let text = source.lines().nth(line - 1).unwrap_or_default().to_string();
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: vec![ChangedLine {
+                    line,
+                    new_side_line: line,
+                    text,
+                }],
+                removed_lines: Vec::new(),
+            };
+            super::super::diff::probes_for_file(std::path::Path::new("."), &changed, &index)
+                .into_iter()
+                .map(|probe| probe.family)
+                .collect::<Vec<_>>()
+        };
+        let associated = families_for(2);
+        assert!(
+            !associated.contains(&ProbeFamily::FieldConstruction),
+            "`type Eq: CmpEq;` must not read as a constructed field: {associated:?}"
+        );
+        let field = families_for(9);
+        assert!(
+            field.contains(&ProbeFamily::FieldConstruction),
+            "the struct-literal field `a: 1,` must stay field_construction: {field:?}"
+        );
+        Ok(())
+    }
+
+    /// #14403: a private plain `extern crate name;` links a crate and has no
+    /// behavior; a re-export (`pub extern crate x;`), a renaming
+    /// `extern crate a as b;` and any trailing code stay probed.
+    #[test]
+    fn plain_extern_crate_is_ignored_but_a_rename_is_not() {
+        for ignored in [
+            "extern crate alloc;",
+            "extern  crate  std ;",
+            "extern crate r#async;",
+        ] {
+            assert!(should_ignore_changed_line(ignored), "`{ignored}`");
+        }
+        for kept in [
+            "pub extern crate core;",
+            "pub(crate) extern crate serde_json;",
+            "extern crate core as std;",
+            "pub extern crate other as u32;",
+            "extern crate self as my_crate;",
+            "extern crate self;",
+            "extern crate alloc; fn go() {}",
+            "extern crate alloc",
+            "extern crate;",
+            "extern \"C\" fn go();",
+            "externcrate alloc;",
+            "extern cratex alloc;",
+            "extern crate 1alloc;",
+        ] {
+            assert!(!should_ignore_changed_line(kept), "`{kept}`");
+        }
+    }
+
+    /// Producer level: an added `extern crate alloc;` yields no probe, while a
+    /// renaming `extern crate core as std;` still yields one.
+    #[test]
+    fn diff_producer_ignores_plain_extern_crate_but_probes_a_rename() -> Result<(), String> {
+        use crate::analysis::diff::{ChangedFile, ChangedLine};
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source = "extern crate alloc;\nextern crate core as std;\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(path.clone(), facts)]),
+            ..Default::default()
+        });
+        let probes_for = |line: usize| {
+            let text = source.lines().nth(line - 1).unwrap_or_default().to_string();
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: vec![ChangedLine {
+                    line,
+                    new_side_line: line,
+                    text,
+                }],
+                removed_lines: Vec::new(),
+            };
+            super::super::diff::probes_for_file(std::path::Path::new("."), &changed, &index)
+        };
+        assert!(
+            probes_for(1).is_empty(),
+            "`extern crate alloc;` must yield no probe"
+        );
+        assert!(
+            !probes_for(2).is_empty(),
+            "a renaming `extern crate core as std;` must still be probed"
+        );
+        Ok(())
     }
 
     /// Producer level: an added `pub mod new;` yields no probe, while a

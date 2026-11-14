@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Exact assertions inside `block_on(async { .. })` in a synchronous test are now read when the call is one of the crate-qualified executors `futures::executor::block_on`, `futures_executor::block_on`, `tokio_test::block_on`, `pollster::block_on`, `smol::block_on` or `async_std::task::block_on`. A changed owner such a test pins previously read `reachable_unrevealed`, the same as a block nothing polls. A bare or method `block_on` stays unread (#14106).

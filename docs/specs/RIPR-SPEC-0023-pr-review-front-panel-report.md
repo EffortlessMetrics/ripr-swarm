@@ -548,6 +548,10 @@ configured pass/fail authority.
 - Flat coverage with improved grip returns
   `coverage_grip_state = "flat_coverage_grip_improved"` without claiming
   coverage adequacy.
+- An explicitly passed input that is missing, unreadable, or malformed stays
+  a report warning and keeps the exit status advisory. The CLI also prints
+  `Warnings: N` and one line per such input on stderr, naming the input and
+  path, with a missing file read as "not found" rather than an OS error code.
 
 ## Test Mapping
 

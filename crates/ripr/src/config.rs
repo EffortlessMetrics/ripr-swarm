@@ -209,6 +209,9 @@ suppressed = "off"
 # initializationOptions.seamDiagnostics still wins explicitly, and repo policy
 # may disable this with seam_diagnostics = false.
 seam_diagnostics = true
+# Editor diagnostic projection: "actionable" (the default when unset) shows
+# only findings with a bounded repair route; "full" keeps the audit/debug view.
+# diagnostic_profile = "actionable"
 
 [reports]
 # Default for context packets and editor collect-context commands when no
@@ -216,7 +219,7 @@ seam_diagnostics = true
 max_related_tests = 5
 
 [suppressions]
-# Repo-relative, slash-separated path. Badge renderers load this path.
+# Repo-relative, slash-separated path. SARIF and most badge formats apply it.
 path = ".ripr/suppressions.toml"
 
 [languages]
@@ -868,19 +871,122 @@ pub(crate) fn config_error_summary(error: &str) -> String {
 
 fn config_error_summary_with(retired: &[RetiredKey], error: &str) -> String {
     let first = error.lines().next().unwrap_or(error).trim();
-    let hint = error.lines().skip(1).map(str::trim).find(|line| {
+    let is_hint_line = |line: &str| {
         suggest::is_known_suggestion_line(line)
             || KEY_HOME_TABLES
                 .iter()
-                .any(|(key, table)| *line == misplaced_key_hint_line(key, table))
+                .any(|(key, table)| line == misplaced_key_hint_line(key, table))
             || retired
                 .iter()
-                .any(|entry| *line == retired_key_hint_line(entry))
-    });
-    match hint {
-        Some(hint) => format!("{first}; {hint}"),
-        None => first.to_string(),
+                .any(|entry| line == retired_key_hint_line(entry))
+    };
+    let hint = error
+        .lines()
+        .skip(1)
+        .map(str::trim)
+        .find(|line| is_hint_line(line));
+    // #14441: the parser's reason ("unclosed table", the keys ripr accepts)
+    // is what makes the line/column actionable for a machine reader; keep
+    // it only in a source-free form.
+    let reason = parser_message_line(error, is_hint_line).and_then(machine_safe_reason_line);
+    let mut summary = first.to_string();
+    for part in [reason.as_deref(), hint].into_iter().flatten() {
+        summary.push_str("; ");
+        summary.push_str(part);
     }
+    summary
+}
+
+/// The parser's reason when it is exactly one line, or `None` (#14441).
+///
+/// toml's `Display` with a span is fixed: the location line, a gutter line,
+/// one `N | <source line>` excerpt, the caret line, then the message. Only
+/// lines after those four can be the message, and the excerpt itself never
+/// reaches the reason. A decoded key or value may hold a raw newline, which
+/// splits serde's `unknown field `<key>`, ...` message into several lines,
+/// any of which a writer controls. So a reason is read only when the message
+/// is a single line (allowlisted hint lines aside); a multi-line message
+/// keeps the location alone. Without the location header (no span) there is
+/// no fixed layout to rely on, so nothing is read.
+fn parser_message_line(error: &str, is_hint_line: impl Fn(&str) -> bool) -> Option<&str> {
+    // The header must END in ripr's own `invalid ripr.toml: TOML parse error
+    // at line N, column M`, and whatever precedes it (a path, `candidate
+    // tree ripr.toml: `) must hold no quote or backtick. A semantic diagnostic
+    // echoes a user value inside backticks, so its value cannot pose as the
+    // header (review of #14449).
+    let mut lines = error.lines();
+    let first = lines.next()?;
+    let (prefix, position) = first.rsplit_once("invalid ripr.toml: TOML parse error at line ")?;
+    if prefix.contains(['`', '"', '\'']) {
+        return None;
+    }
+    let (line, column) = position.split_once(", column ")?;
+    let is_number = |text: &str| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+    if !(is_number(line) && is_number(column)) {
+        return None;
+    }
+    // Then toml's fixed excerpt: a bare gutter, `N | <source>` for the same
+    // line N, and a caret line.
+    let gutter = lines.next()?.trim();
+    let excerpt = lines.next()?;
+    let caret = lines.next()?.trim();
+    let caret_marks = caret.strip_prefix('|').map(str::trim_start);
+    if gutter != "|"
+        || !excerpt.starts_with(&format!("{line} | "))
+        || !caret_marks.is_some_and(|marks| !marks.is_empty() && marks.bytes().all(|b| b == b'^'))
+    {
+        return None;
+    }
+    let mut message = lines
+        .map(str::trim)
+        // The loaders' recovery lines are ripr's own fixed text, appended
+        // after the parser's message.
+        .filter(|line| {
+            !line.is_empty()
+                && !is_hint_line(line)
+                && *line != CONFIG_LOAD_PARSE_HINT
+                && *line != CANDIDATE_CONFIG_PARSE_HINT
+        });
+    let only = message.next()?;
+    message.next().is_none().then_some(only)
+}
+
+/// A TOML/serde reason line in a form that carries no file content, or
+/// `None` (#14441). `unknown field `<key>`, expected ...` drops the key (it is
+/// file content; the summary's line and column locate it) and keeps the
+/// expected list, which names ripr's own schema fields. Grammar lines keep
+/// their fixed wording only when every backticked token is punctuation.
+fn machine_safe_reason_line(line: &str) -> Option<String> {
+    if let Some(rest) = line.strip_prefix("unknown field `") {
+        let (_, expected) = rest.split_once("`, expected ")?;
+        let schema_tokens_only = expected.split(", ").all(|item| {
+            let item = item.strip_prefix("one of ").unwrap_or(item);
+            item.strip_prefix('`')
+                .and_then(|token| token.strip_suffix('`'))
+                .is_some_and(|token| {
+                    !token.is_empty()
+                        && token.bytes().all(|byte| {
+                            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
+                        })
+                })
+        });
+        return schema_tokens_only.then(|| format!("unknown key, expected {expected}"));
+    }
+    let grammar = line.strip_prefix("unclosed table, ").unwrap_or(line);
+    let grammar = grammar.strip_prefix("unclosed array, ").unwrap_or(grammar);
+    if grammar.starts_with("expected ") {
+        let mut in_tick = false;
+        let fixed_wording = grammar.chars().all(|ch| match ch {
+            '`' => {
+                in_tick = !in_tick;
+                true
+            }
+            _ if in_tick => !ch.is_alphanumeric() && !ch.is_whitespace(),
+            _ => ch.is_ascii_lowercase() || matches!(ch, ' ' | ','),
+        });
+        return (fixed_wording && !in_tick).then(|| line.to_string());
+    }
+    None
 }
 
 /// Human doctor lines for a config load error. Compact is the source-free

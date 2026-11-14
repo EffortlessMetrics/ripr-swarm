@@ -27,9 +27,6 @@ on:
         required: false
         default: ""
         type: string
-  schedule:
-    - cron: "23 6 * * 1"
-
 permissions:
   contents: read
 

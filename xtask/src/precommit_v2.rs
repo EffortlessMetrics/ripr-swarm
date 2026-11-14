@@ -192,7 +192,14 @@ fn run_composition(ci_policy: bool) -> Result<(), String> {
                 crate::precommit(coverage)
             }
         },
-        &mut run_status,
+        &mut |program, args| {
+            // Hosted `ci-policy` keeps Cargo's own job count (#13705).
+            if ci_policy {
+                run_status(program, args)
+            } else {
+                run_status_with_envs(program, args, crate::cargo_job_cap::local_precommit_envs())
+            }
+        },
     )
 }
 
@@ -853,8 +860,10 @@ const COVERAGE_ENUMERATION_SKIPPED: &str = "check-file-policy did not build or l
 /// Rust control files and the policy declarations. When the complete local
 /// change set touches none of them, the listing equals the merge base's, which
 /// hosted qualification already enumerated, so the build is skipped. This is
-/// the same premise that skips local Clippy. Anything else enumerates, as does
-/// every `ci-policy` run: hosted qualification never skips.
+/// the same premise that skips local Clippy. Any other local run enumerates,
+/// resolving library unit-test selectors in source where it can, because the
+/// `ripr` library test build does not fit a 15 GB container. Every `ci-policy`
+/// run enumerates in full: hosted qualification never skips or substitutes.
 fn coverage_enumeration(
     ci_policy: bool,
     change_set: &ChangeSet,
@@ -864,13 +873,16 @@ fn coverage_enumeration(
         .paths()
         .iter()
         .any(|path| is_rust_relevant(path) || path_is_under(path, "policy"));
-    if ci_policy
-        || !change_set.complete
+    if ci_policy {
+        CoverageEnumeration::Enumerate
+    } else if !change_set.complete
         || plan.workspace_clippy
         || !plan.impacted_packages.is_empty()
         || rust_or_policy_changed
     {
-        CoverageEnumeration::Enumerate
+        // Local runs do not build a library test target for a selector that
+        // resolves in source; hosted qualification lists it.
+        CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource
     } else {
         CoverageEnumeration::SkipUnaffectedChangeSet
     }
@@ -1034,8 +1046,16 @@ fn cargo_bytes(args: &[String], context: &str) -> Result<Vec<u8>, PrecommitError
 }
 
 fn run_status(program: &str, args: &[String]) -> Result<CommandDiagnostic, PrecommitError> {
+    run_status_with_envs(program, args, &[])
+}
+
+fn run_status_with_envs(
+    program: &str,
+    args: &[String],
+    envs: &[(&str, &str)],
+) -> Result<CommandDiagnostic, PrecommitError> {
     // Same no-cap shared-runner path as `cargo_bytes` (#4150).
-    let captured = capture_output_without_timeout(program, args, &[], "precommit command");
+    let captured = capture_output_without_timeout(program, args, envs, "precommit command");
     let diagnostic = CommandDiagnostic::captured(program, args, &captured);
     let output = captured.map_err(|error| {
         PrecommitError::new(
@@ -1758,7 +1778,7 @@ mod tests {
             )?;
             require(
                 decide(false, &single_path_change_set(path, None, false))
-                    == CoverageEnumeration::Enumerate,
+                    == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource,
                 format!("an incomplete change set must enumerate even for {path}"),
             )?;
         }
@@ -1775,8 +1795,13 @@ mod tests {
         ] {
             require(
                 decide(false, &single_path_change_set(path, None, true))
-                    == CoverageEnumeration::Enumerate,
+                    == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource,
                 format!("{path} can change a covered_by listing and must enumerate"),
+            )?;
+            require(
+                decide(true, &single_path_change_set(path, None, true))
+                    == CoverageEnumeration::Enumerate,
+                format!("ci-policy must list in full for {path}"),
             )?;
         }
         // A rename away from a Rust or policy path still removes that input.
@@ -1785,7 +1810,7 @@ mod tests {
                 decide(
                     false,
                     &single_path_change_set("docs/moved.md", Some(old_path), true),
-                ) == CoverageEnumeration::Enumerate,
+                ) == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource,
                 format!("a rename from {old_path} must enumerate"),
             )?;
         }
@@ -1798,7 +1823,7 @@ mod tests {
                     impacted_packages: vec!["a".to_string()],
                     ..ImpactPlan::empty()
                 },
-            ) == CoverageEnumeration::Enumerate
+            ) == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource
                 && coverage_enumeration(
                     false,
                     &single_path_change_set("docs/guide.md", None, true),
@@ -1806,7 +1831,7 @@ mod tests {
                         workspace_clippy: true,
                         ..ImpactPlan::empty()
                     },
-                ) == CoverageEnumeration::Enumerate,
+                ) == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource,
             "an impacted package or workspace widening must enumerate",
         )
     }
@@ -1825,7 +1850,7 @@ mod tests {
             (
                 "crates/a/src/lib.rs",
                 "pub fn a_changed() {}\n",
-                CoverageEnumeration::Enumerate,
+                CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource,
             ),
         ] {
             let fixture = TestRepo::new()?;

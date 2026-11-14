@@ -107,6 +107,16 @@ The SARIF layer should:
   folded results in `properties.folded_results`, and the run records the
   count in `runs[].properties.folded_same_line_results` (absent when zero).
   Different classes never fold: a weaker class does not hide a stronger one.
+  `ripr check --format github` folds by the same key (class, file and line
+  among the annotated findings, the file as the rendered `file=` path) into
+  one annotation. When every finding in the group may fold, it keeps the
+  finding SARIF keeps; it adds `Also covers N more probe(s) of this change
+  on this line.` before its canonical gap id, then `Also canonical gap: <id>`
+  for each different gap id a folded probe carries. A finding with its own
+  repair card or preview actionability never folds, so its guidance stays
+  on its own annotation; each folded probe's next step stays in
+  `ripr check --format json`. A printed denominator notice counts the folded
+  findings (#14302).
 - bound the results array by bytes: `RIPR_SARIF_RESULTS_BYTES` (default
   `1000000`, `0` removes the cap, an unparseable value fails the run) keeps
   the leading results in both diff-scoped and repo-scoped runs, always
