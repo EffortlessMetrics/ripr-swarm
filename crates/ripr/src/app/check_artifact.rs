@@ -185,11 +185,26 @@ pub(crate) fn load_findings_for_reuse_core(
     config: &RiprConfig,
     asserted_base: Option<&str>,
 ) -> Result<Vec<Finding>, crate::core_error::CoreError> {
-    let text = std::fs::read_to_string(path).map_err(|err| {
-        crate::core_error::CoreError::check_artifact_unusable(format!(
-            "check artifact at {} not found or unreadable: {err}",
-            path.display()
-        ))
+    // Bounded, and phrased without the host errno (#9851): `not found` for a
+    // missing file, a plain cause for a directory, then the command that
+    // writes the artifact.
+    let text = crate::bounded_input::read_to_string(path).map_err(|err| {
+        let detail = crate::bounded_input::read_failure_detail(&err);
+        let message = if err.kind() == std::io::ErrorKind::NotFound {
+            format!(
+                "check artifact at {} could not be read: {detail}; write it with `ripr check \
+                 --write-artifact {}` using this run's root, scope (--diff or --base) and \
+                 analysis options, then rerun",
+                path.display(),
+                path.display()
+            )
+        } else {
+            format!(
+                "check artifact at {} could not be read: {detail}",
+                path.display()
+            )
+        };
+        crate::core_error::CoreError::check_artifact_unusable(message)
     })?;
     let value: serde_json::Value = serde_json::from_str(&text).map_err(|err| {
         crate::core_error::CoreError::check_artifact_unusable(format!(

@@ -271,7 +271,16 @@ fn changed_inputs(
 }
 
 pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportReport, String> {
-    let metadata = fs::metadata(root).map_err(|error| format!("inspect export root: {error}"))?;
+    let metadata = fs::metadata(root).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            format!(
+                "cache export root {} not found; pass the workspace root with --root",
+                root.display()
+            )
+        } else {
+            format!("inspect export root: {error}")
+        }
+    })?;
     if !metadata.is_dir() {
         return Err(
             "cache export root must be a directory; pass the workspace root with --root".to_owned(),
@@ -509,6 +518,23 @@ mod tests {
             "error should name the recovery route, got: {err}"
         );
         assert!(!err.contains("os error"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn export_current_missing_root_names_the_flag_without_os_errno() -> Result<(), String> {
+        let root = isolated_dir("export-current-missing-root");
+        ignore_remove_dir_all(&root);
+        let err = export_current(&root, &root.join("export"))
+            .err()
+            .ok_or("a missing root must fail")?;
+        assert_eq!(
+            err,
+            format!(
+                "cache export root {} not found; pass the workspace root with --root",
+                root.display()
+            )
+        );
         Ok(())
     }
 

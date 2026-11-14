@@ -2,6 +2,10 @@
 //! `--out`, agent verify, outcome and calibrate say what failed in user words,
 //! name the flag and path, and give the next step (#14313). No bare
 //! `os error N` tail and no serde struct names; exit codes stay `2`.
+//!
+//! A directory named where a file belongs is refused by the shared bounded
+//! reader and the atomic writer in one plain sentence on every platform
+//! (#14694), so commands without their own directory check inherit it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -201,4 +205,120 @@ fn directory_inputs_name_the_flag_and_the_file_to_pass() -> Result<(), String> {
     outcome?;
     calibrate?;
     repo_exposure
+}
+
+#[test]
+fn shared_reader_and_writer_name_a_directory_without_the_host_errno() -> Result<(), String> {
+    let dir = workspace("shared-dir")?;
+    fs::write(dir.join("art/empty.diff"), "").map_err(|error| format!("write diff: {error}"))?;
+    let context = assert_refusal(
+        &dir,
+        &[
+            "context",
+            "--diff",
+            "art/empty.diff",
+            "--from",
+            "art/adir",
+            "--at",
+            "src/lib.rs:1",
+        ],
+        "check artifact at art/adir could not be read: is a directory, not a file; pass the path of a file",
+    );
+    let queue = assert_refusal(
+        &dir,
+        &["swarm", "queue", "--gap-ledger", "art/adir"],
+        "swarm queue --gap-ledger art/adir is invalid: is a directory, not a file; pass the path of a file",
+    );
+    let packet = assert_refusal(
+        &dir,
+        &[
+            "agent",
+            "packet",
+            "--gap-ledger",
+            "art/adir",
+            "--gap-id",
+            "g1",
+            "--json",
+        ],
+        "agent packet --gap-ledger art/adir is invalid: is a directory, not a file; pass the path of a file",
+    );
+    let write = assert_refusal(
+        &dir,
+        &["feedback", "export", "--out", "art/adir"],
+        "failed to finalize usefulness-feedback join art/adir: the destination is a directory, not a file; pass a file path, such as one inside that directory",
+    );
+    let _ = fs::remove_dir_all(&dir);
+    context?;
+    queue?;
+    packet?;
+    write
+}
+
+#[test]
+fn context_from_a_missing_artifact_names_the_command_that_writes_it() -> Result<(), String> {
+    let dir = workspace("context-missing")?;
+    fs::write(dir.join("art/empty.diff"), "").map_err(|error| format!("write diff: {error}"))?;
+    let result = assert_refusal(
+        &dir,
+        &[
+            "context",
+            "--diff",
+            "art/empty.diff",
+            "--from",
+            "art/none.json",
+            "--at",
+            "src/lib.rs:1",
+        ],
+        "check artifact at art/none.json could not be read: not found; write it with `ripr check --write-artifact art/none.json` using this run's root, scope (--diff or --base) and analysis options, then rerun",
+    );
+    // Following the advice with this run's scope produces an artifact the
+    // same `context --from` call accepts: the retry gets past the artifact
+    // read and identity check to the finding lookup.
+    let recovered = (|| -> Result<(), String> {
+        let written = run(
+            &dir,
+            &[
+                "check",
+                "--diff",
+                "art/empty.diff",
+                "--write-artifact",
+                "art/none.json",
+            ],
+        )?;
+        if written.status.code() != Some(0) {
+            return Err(format!("check --write-artifact: {written:?}"));
+        }
+        let retry = run(
+            &dir,
+            &[
+                "context",
+                "--diff",
+                "art/empty.diff",
+                "--from",
+                "art/none.json",
+                "--at",
+                "src/lib.rs:1",
+            ],
+        )?;
+        let stderr = String::from_utf8_lossy(&retry.stderr);
+        if stderr.contains("check artifact at") || !stderr.contains("no finding matched") {
+            return Err(format!("retry did not reuse the artifact: {stderr}"));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&dir);
+    result?;
+    recovered
+}
+
+#[test]
+fn cache_export_missing_root_names_the_flag() -> Result<(), String> {
+    let dir = workspace("cache-root")?;
+    let result = assert_refusal(
+        &dir,
+        &["cache", "export", "--root", "nope", "--out", "fresh"],
+        "cache export root nope not found; pass the workspace root with --root",
+    );
+    let _ = fs::remove_dir_all(&dir);
+    result
 }

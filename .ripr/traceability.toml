@@ -12272,6 +12272,8 @@ tests = [
   "crates/ripr/src/app/check_artifact/tests.rs::load_fails_closed_on_analyzer_version_mismatch",
   "crates/ripr/src/app/check_artifact/tests.rs::load_fails_closed_on_enabled_languages_mismatch",
   "crates/ripr/src/app/check_artifact/tests.rs::load_fails_closed_on_wrong_schema_version_and_malformed_input",
+  "crates/ripr/tests/raw_error_next_step.rs::context_from_a_missing_artifact_names_the_command_that_writes_it",
+  "crates/ripr/tests/raw_error_next_step.rs::shared_reader_and_writer_name_a_directory_without_the_host_errno",
   "crates/ripr/src/app/check_artifact/tests.rs::scope_flags_passed_alongside_from_are_assertions",
   "crates/ripr/src/app/check_artifact/tests.rs::perl_facts_packet_content_is_part_of_the_identity",
   "crates/ripr/src/app/check_artifact/tests.rs::worktree_diff_source_wire_form_is_documented_worktree",
@@ -20484,6 +20486,8 @@ tests = [
   "crates/ripr/src/analysis/seam_cache/export.rs::tests::normalized_source_layout_preserves_relative_and_parent_component_spellings",
   "crates/ripr/src/analysis/seam_cache/export.rs::tests::changed_inputs_names_only_the_inputs_that_moved",
   "crates/ripr/tests/raw_error_next_step.rs::cache_export_out_problems_name_the_flag_and_fix",
+  "crates/ripr/tests/raw_error_next_step.rs::cache_export_missing_root_names_the_flag",
+  "crates/ripr/src/analysis/seam_cache/export.rs::tests::export_current_missing_root_names_the_flag_without_os_errno",
   "crates/ripr/src/cli/command_metadata.rs::tests::production_table_is_complete_and_consistent",
   "crates/ripr/src/cli/help_json.rs::tests::production_document_is_valid_and_nonempty",
 ]

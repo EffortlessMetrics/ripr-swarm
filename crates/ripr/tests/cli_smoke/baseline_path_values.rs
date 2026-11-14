@@ -104,10 +104,10 @@ fn explicit_option_named_paths_and_unreadable_inputs_keep_advisory_reports() -> 
         r#"{"schema_version":"0.1","status":"advisory","decisions":[]}"#,
     )
     .map_err(|error| format!("write current: {error}"))?;
-    let read_error = std::fs::read_to_string(root.join("input-directory"))
-        .err()
-        .ok_or("directory fixture unexpectedly readable")?
-        .to_string();
+    assert!(root.join("input-directory").is_dir());
+    // #14694: the shared bounded reader names a directory in plain words on
+    // every platform instead of the host errno.
+    let read_error = "is a directory, not a file; pass the path of a file".to_string();
     for (current, out, out_md, unreadable) in [
         ("./--current.json", "./--delta.json", "./--delta.md", false),
         (
