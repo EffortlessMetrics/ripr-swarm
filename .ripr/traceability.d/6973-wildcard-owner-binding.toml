@@ -1,0 +1,13 @@
+[[extend]]
+id = "RIPR-SPEC-0094"
+tests = [
+  "crates/ripr/src/analysis/classifier/finding.rs::tests::owner_binding_scan_never_treats_a_wildcard_as_a_bound_name",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::discarded_owner_result_cannot_confirm_an_unrelated_wildcard_assertion",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/wildcard_owner_discard",
+  "fixtures/wildcard_owner_named",
+]

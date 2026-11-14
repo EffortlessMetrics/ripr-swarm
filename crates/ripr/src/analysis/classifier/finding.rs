@@ -757,6 +757,41 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
         }
         text
     }
+    /// End of a wildcard declaration's pattern and optional type, before its
+    /// initializer or terminating semicolon. Generic commas and associated
+    /// type equalities belong to the type, not to value-binding syntax.
+    fn wildcard_pattern_end(text: &str) -> Option<usize> {
+        let bytes = text.as_bytes();
+        let mut brackets = Vec::new();
+        for (index, &byte) in bytes.iter().enumerate() {
+            match byte {
+                b'(' | b'[' | b'{' => brackets.push(byte),
+                b')' | b']' | b'}' => {
+                    let open = match byte {
+                        b')' => b'(',
+                        b']' => b'[',
+                        _ => b'{',
+                    };
+                    if brackets.pop() != Some(open) {
+                        return None;
+                    }
+                }
+                // Nested non-angle groups already protect their contents;
+                // `<`/`>` inside a const expression need not balance.
+                b'<' if brackets.last().is_none_or(|open| *open == b'<') => {
+                    brackets.push(byte);
+                }
+                b'>' if brackets.last() == Some(&b'<')
+                    && index.checked_sub(1).and_then(|at| bytes.get(at)) != Some(&b'-') =>
+                {
+                    brackets.pop();
+                }
+                b'=' | b';' if brackets.is_empty() => return Some(index),
+                _ => {}
+            }
+        }
+        None
+    }
     /// Whether an initializer's value is the owner's result. A block whose
     /// statements precede its tail (`{ tax(2); 0 }`, or one cut at its first
     /// `;`) cannot be read as the owner's value, so it fails closed.
@@ -771,11 +806,27 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
     let bytes = body.as_bytes();
     // Every binding event: (name, initializer calls the owner).
     let mut events: Vec<(String, bool)> = Vec::new();
+    let mut wildcard_patterns = Vec::new();
     let mut cursor = 0;
     while let Some(offset) = body[cursor..].find("let ") {
         let start = cursor + offset;
         cursor = start + "let ".len();
         if start > 0 && is_ident_byte(bytes[start - 1]) {
+            continue;
+        }
+        // A wildcard binds no value name. Skip it before scanning the type:
+        // `let _: amount = ...` must not shadow a local named `amount`, even
+        // when an array type's semicolon precedes the initializer delimiter.
+        if body[cursor..]
+            .trim_start()
+            .strip_prefix('_')
+            .is_some_and(|tail| tail.trim_start().starts_with(['=', ':', ';']))
+        {
+            // The later reassignment scan must also ignore type names here,
+            // without ignoring writes inside the discarded initializer.
+            if let Some(pattern_end) = wildcard_pattern_end(&body[cursor..]) {
+                wildcard_patterns.push(cursor..cursor + pattern_end);
+            }
             continue;
         }
         let Some(assign) = body[cursor..].find('=') else {
@@ -843,6 +894,12 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
             let before_ok = at == 0 || !is_ident_byte(bytes[at - 1]);
             let after_ok = from >= bytes.len() || !is_ident_byte(bytes[from]);
             if !(before_ok && after_ok) {
+                continue;
+            }
+            if wildcard_patterns
+                .iter()
+                .any(|pattern| pattern.contains(&at))
+            {
                 continue;
             }
             let tail = body[from..].trim_start();
@@ -1812,6 +1869,73 @@ mod tests {
             "let other = recalculate(5);",
             Some("calculate")
         ));
+    }
+
+    #[test]
+    fn owner_binding_scan_never_treats_a_wildcard_as_a_bound_name() {
+        for body in ["let _ = tax(100);", "let _: i64 = tax(100);"] {
+            assert!(bound_identifiers_from_owner_calls(body, "tax").is_empty());
+            assert!(!oracle_binds_sink_identity(
+                "assert!(matches!(Some(100), Some(_)))",
+                body,
+                Some("tax")
+            ));
+        }
+        // Leading underscores are legal bindings, not wildcard patterns.
+        for name in ["_amount", "__"] {
+            let body = format!("let {name} = tax(100);");
+            assert_eq!(
+                bound_identifiers_from_owner_calls(&body, "tax"),
+                vec![name.to_string()]
+            );
+            assert!(oracle_binds_sink_identity(
+                &format!("assert_eq!({name}, 8)"),
+                &body,
+                Some("tax")
+            ));
+        }
+        // Discarding a separate call must not invalidate a real binding.
+        assert_eq!(
+            bound_identifiers_from_owner_calls("let amount = tax(100); let _ = tax(200);", "tax"),
+            vec!["amount".to_string()]
+        );
+        assert!(oracle_binds_sink_identity(
+            "assert_eq!(tax(100), 8)",
+            "let _ = tax(200);",
+            Some("tax")
+        ));
+        // An outer-scope type alias can share the local's name. Its use in a
+        // wildcard annotation must not create a false shadowing event.
+        for discarded in [
+            "let _: amount = tax(200);",
+            "let _: amount = 0;",
+            "let _: Option<amount> = Some(tax(200));",
+            "let _: [amount; 2] = [tax(200), tax(300)];",
+            "let _: Result<(), &mut amount> = Ok(());",
+            "let _: Option<Box<dyn Iterator<Item = &mut amount>>> = None;",
+            "let _: Result<fn() -> (), &mut amount> = Ok(|| ());",
+            "let _: Result<[(); { 1 > 0 } as usize], &mut amount> = Ok([(); 1]);",
+        ] {
+            let body = format!("let amount = tax(100); {discarded}");
+            assert_eq!(
+                bound_identifiers_from_owner_calls(&body, "tax"),
+                vec!["amount".to_string()],
+                "{discarded}"
+            );
+            assert!(oracle_binds_sink_identity(
+                "assert_eq!(amount, 8)",
+                &body,
+                Some("tax")
+            ));
+        }
+        // A real binding or an initializer-side write still changes the value.
+        for body in [
+            "let amount = tax(100); let amount: amount = 0;",
+            "let mut amount = tax(100); let _: amount = { amount = 0; tax(200) };",
+            "let mut amount = tax(100); let _: Option<Box<dyn Iterator<Item = &mut amount>>> = { amount = 0; None };",
+        ] {
+            assert!(bound_identifiers_from_owner_calls(body, "tax").is_empty());
+        }
     }
 
     #[test]

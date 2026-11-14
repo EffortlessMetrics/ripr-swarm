@@ -1,0 +1,39 @@
+{
+  "id": "rust_wildcard_owner_discard",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/wildcard_owner_discard",
+  "vector": "discarded_wildcard_is_not_owner_identity",
+  "probe_family": "return_value",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_oracle",
+      "kind": "exact_value",
+      "strength": "strong"
+    },
+    {
+      "type": "expected_related_test",
+      "name": "observes_tax",
+      "file": "src/lib.rs",
+      "line": 10,
+      "kind": "exact_value",
+      "strength": "strong",
+      "relation_reason": "direct_owner_call",
+      "miss": "observation_unconfirmed"
+    }
+  ]
+}

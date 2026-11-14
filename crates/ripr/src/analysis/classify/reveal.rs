@@ -14220,6 +14220,46 @@ return Err(\"typed pin\".into());
         );
     }
 
+    #[test]
+    fn discarded_owner_result_cannot_confirm_an_unrelated_wildcard_assertion() {
+        let assertion = "assert_eq!(matches!(Some(100), Some(_)), true);";
+        let discarded = test_with_body_assertions(
+            "discarded_tax",
+            &format!("let _ = tax(100); {assertion}"),
+            vec![exact(assertion)],
+        );
+        let (discriminate, _) = tax_reveal("amount * 8 / 100", &discarded, &[], &|_, _| false);
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "{}",
+            discriminate.summary
+        );
+        assert!(discriminate.summary.contains("observation_unverified"));
+
+        // A named underscore binding can carry a real owner result. A
+        // discarded call's type annotation cannot shadow that result either.
+        for (body, assertion) in [
+            (
+                "let _amount = tax(1250); assert_eq!(_amount, 100);",
+                "assert_eq!(_amount, 100);",
+            ),
+            (
+                "let amount = tax(1250); let _: amount = tax(2500); assert_eq!(amount, 100);",
+                "assert_eq!(amount, 100);",
+            ),
+        ] {
+            let bound = test_with_body_assertions("bound_tax", body, vec![exact(assertion)]);
+            let (discriminate, _) = tax_reveal("amount * 8 / 100", &bound, &[], &|_, _| false);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "{}",
+                discriminate.summary
+            );
+        }
+    }
+
     /// RIPR-SPEC-0035 / #5830: the expected side `subtotal + tax(subtotal)`
     /// calls the owner and the actual side `invoice(..)` reaches it, so both
     /// sides move together and the equality pins nothing about `tax`.
