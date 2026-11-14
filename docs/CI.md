@@ -108,7 +108,17 @@ time; the Result job repeats the read before the eligibility recheck. A trusted
 (OWNER/MEMBER/COLLABORATOR) reviewer must post a native APPROVED, or a COMMENT whose
 first line is the readiness marker with an allowed tail; a trusted reviewer's later
 negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding signal;
-free-prose retraction on later lines is best-effort (#12835). The PR author can still
+free-prose retraction on later lines is best-effort (#12835). A later line changes the
+disposition only when it states one: it opens, after list (bulleted, numbered or task),
+quote, heading, emphasis or code markers, with a `disposition:` field or a state token;
+it is a state token alone; it carries a `disposition` field label anywhere (such as
+`Final disposition:` or a `| Disposition | ... |` table row); or it is a table row with a
+cell that holds only a state token. Fenced text is still scanned for any state token. A
+PR description that carries any of these field shapes besides its `Source review:` line
+is ambiguous and attests nothing.
+A state word inside prose, such as a backticked quotation of a marker or "the earlier
+review is superseded", is narration and is not read, because that scan ejected fully
+green queue entries after the whole run (#11566). The PR author can still
 self-attest (unchanged), and retractions posted as issue comments are not read.
 A negated change/repair phrase is resolved work, not a blocker: `no code change
 needed`, `no changes needed` and `without a change` admit, while `Code change
@@ -212,8 +222,11 @@ purposes establishes neither economical cadence nor lifecycle activation.
 | `printed-command-paste.yml` | Cross-platform shell compatibility |
 | `public-proof.yml` | Public proof drift |
 | `size-scaling.yml` | Scaling measurement |
-| `scratch-gc.yml` | Lease-governed terminal scratch reclamation |
 | `source-of-truth.yml` | Source/spec maintenance digest |
+
+`scratch-gc.yml` is manual-only after #14295 retired its half-hourly timer.
+It retains lease-governed terminal scratch reclamation through dispatch;
+the separate `ci_scratch` policy rejects automatic triggers for this lane.
 
 ### What starts what in this source stage
 
@@ -775,6 +788,11 @@ normalization behavior surfaced only on a maintainer's local run.
 
 ### Advisory Kani Lane
 
+The maintained [formal-verification guide](formal-verification/README.md)
+defines claim/result identity, evidence retention, admitted qualification and
+the maintainer runbook. Its design contracts and implementation work index
+distinguish current source from candidates and planned assurance.
+
 `.github/workflows/kani.yml` (RIPR-SPEC-0371) runs Kani bounded model checking
 over pure cores. It follows "lighter, later, tighter": it is not a required
 check and does not run on ordinary pushes or PR updates.
@@ -786,11 +804,17 @@ check and does not run on ordinary pushes or PR updates.
   --locked` and `cargo kani setup`, cached through `Swatinem/rust-cache`
   (`~/.kani` and the cargo bin directory).
 - **Contract.** Per harness the report (`target/ripr/reports/kani.md`) says
-  `VERIFIED` (within the harness's documented `kani::assume` bounds), `FAILED`
-  (counterexample, or an unreachable `kani::cover!` that makes the proof
-  vacuous) or `NOT-ESTABLISHED` (tool missing, a harness over its 900 s per-harness timeout, no verdict). Anything
-  but `VERIFIED` fails the job, and so does a missing tool or zero harnesses
-  (`--allow-empty` is a local-only opt-out). Nothing passes by absence.
+  `VERIFIED` (native success within the harness's documented bounds and
+  verification policy, with one positive-total complete cover summary),
+  `FAILED` (native verification failure or a known unsatisfied required cover)
+  or `NOT-ESTABLISHED` (tool missing, a harness over its 900 s per-harness timeout,
+  no verdict, or missing/zero/malformed/repeated/inconsistent/undetermined cover
+  evidence). Regular property statuses of `UNDETERMINED`, `ERROR` or an
+  unrecognized word cannot be overridden by a complete cover count. An
+  unsatisfied cover fails the lane's reachability policy; it does not establish
+  that every assertion is vacuous. Anything but `VERIFIED` fails the job, and so
+  does a missing tool or zero harnesses (`--allow-empty` is a local-only opt-out
+  for empty selections, not incomplete evidence). Nothing passes by absence.
 - **Not a claim.** A `VERIFIED` row is a bounded check of a pure core. It is not a
   full-program proof, not a runtime-mutation result and not evidence about code
   a harness does not call.
@@ -1603,7 +1627,7 @@ establish queue activation, installed runner capacity, or execution within a
 | `kani.yml` | `ubuntu-latest` | Retained schedule or manual dispatch |
 | `security.yml` `cargo-deny` | `ubuntu-latest` | Retained schedule or manual dispatch |
 | `security.yml` `deny-tracker` | `ubuntu-latest` | Schedule on main in this repository, after cargo-deny success or failure |
-| `security.yml` `dependency-review` | `ubuntu-latest` | Dormant: job requires PR event, but workflow has no PR subscription |
+| `security.yml` `dependency-review` | `ubuntu-latest` | Manual dispatch with explicit base/head commit IDs; no PR subscription |
 | `source-of-truth.yml` both jobs | `ubuntu-latest` | Retained schedule or manual dispatch |
 | `badge-endpoints.yml` | `ubuntu-latest` | Manual dispatch only |
 | `droid-security-scan.yml` | Group `em-ci-review`, tier `droid-review` | Retained schedule or manual dispatch |
@@ -1809,7 +1833,12 @@ when their input artifacts exist, assistant-loop health when proof artifacts
 exist, the report packet index when any indexed artifact exists, the top
 recommendation, the agent review packet when present, artifact links,
 SARIF and badge status, known limits, and PR guidance annotation counts when
-`target/ripr/review/comments.json` exists. On pull
+`target/ripr/review/comments.json` exists. Each section keeps its at-a-glance
+lines and names its full Markdown report as a file in the `ripr-reports`
+artifact (`- Full report: ripr/... in the ripr-reports artifact`, the path
+inside the downloaded artifact, which drops the `target/` prefix) rather than
+inlining it; a three-line pull request's summary went from about 50 KB to
+13 KB (#14301). On pull
 requests, the generated workflow writes that report before emitting
 changed-line check annotations by default without posting inline review
 comments.
@@ -2851,11 +2880,35 @@ enforce RustSec advisories, license policy, banned crates, and approved
 dependency sources. Duplicate dependency findings are warnings while the
 `ra_ap_syntax` dependency graph is being baselined.
 
-The retained GitHub Dependency Review job is dormant: its guard requires
-`pull_request`, while `security.yml` admits only schedule and manual dispatch.
-Its high-severity and denied-license configuration does not establish an active
-PR gate or a manual Dependency Review route. This documentation makes no change
-to Dependency Graph or branch-protection settings.
+The security workflow also supplies GitHub Dependency Review for high-severity
+vulnerability alerts and denied license families. These security jobs remain
+advisory to the repository's required-check set. A failed or missing security
+result does not satisfy a candidate's separate security acceptance, including
+the exact-head cargo-deny and Dependency Review requirements under #9067.
+Dependency Review retains the pinned action's default `runtime` dependency
+scope; this capability does not expand its policy to development dependencies.
+
+For an explicit candidate comparison, dispatch `security.yml` from the reviewed
+workflow ref with both `base_sha` and `head_sha` set to distinct full 40-character
+commit IDs in this repository. Both jobs reject a partial pair or mutable ref.
+The cargo-deny checkout is bound to `head_sha`; Dependency Review compares
+`base_sha` to that same head using the existing high-severity and denied-license
+settings. Each job verifies its checkout and records its subject in the run
+summary. Missing commits and dependency API errors fail the affected job; the
+selected inputs alone are not a passing security receipt. Inspect both job
+results and any dependency-snapshot warnings: the pinned provider can report
+incomplete snapshot data without failing, so missing coverage remains unproven.
+Retain the exact pair, workflow revision and run URL with the candidate's evidence.
+For manual requests, Actions records the workflow ref as the run's native head.
+Use the verified selected SHAs and both consumer results for candidate evidence;
+that record does not change the run's native identity.
+
+Dispatch without either input retains the ordinary cargo-deny scan of the
+workflow event's immutable commit and does not select Dependency Review. The
+daily main scan and its deny-red tracker keep their separate advisory-monitoring
+purpose. Neither is a substitute for an exact-candidate comparison. This manual
+capability remains available when auxiliary PR/push subscriptions are retired
+under #12973; it adds no automatic event, queue obligation or required check.
 
 ## GitHub Actions Runtime Policy
 
@@ -2867,7 +2920,9 @@ releases exist. `cargo xtask check-workflows` rejects old action refs such as
 `actions/dependency-review-action@v4` is temporarily allowlisted in
 `policy/workflow_action_runtime_allowlist.txt` because the official Dependency
 Review action still declares a Node 20 runtime and no Node-24-backed major is
-available. The retained action pin does not make the dormant Dependency Review job execute.
+available. The action pin fixes the implementation revision. Dependency Review
+executes through the explicit base/head manual route described above; this
+restores neither a PR subscription nor required-check membership.
 
 The same cargo-deny check can be run locally with:
 

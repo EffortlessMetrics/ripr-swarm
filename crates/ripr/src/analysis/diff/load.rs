@@ -1646,6 +1646,65 @@ pub fn resolve_base_commit(
     (!commit.is_empty()).then_some(commit)
 }
 
+/// #13644 / #14423: the one git-identity rule for "this empty range is the
+/// checked-out base branch compared with itself, and `--base HEAD~1` names
+/// the last commit". True when HEAD is on a branch, `base` resolves to HEAD's
+/// own commit, `HEAD~1` resolves, and `base` names that branch, either as
+/// `<branch>` or, in a clone, as `origin/<branch>` when the branch is a
+/// conventional default or no other base candidate exists (#7644: a
+/// feature-branch clone whose `origin/HEAD` tracks the feature branch has its
+/// real base elsewhere). The bare human check's last-commit rescope and the
+/// machine formats' last-commit route both read this decision.
+pub fn base_is_checked_out_head_with_parent(
+    root: &Path,
+    base: &str,
+    git_timeout: Option<Duration>,
+) -> bool {
+    let git = |args: &[&str]| {
+        crate::git::run_git_output_with_deadline(
+            root,
+            args,
+            // `--git-timeout` bounds these probes like any other git call.
+            Some(git_timeout.unwrap_or(Duration::from_secs(5))),
+        )
+        .ok()
+        .filter(|out| out.status.success())
+    };
+    let Some(branch) = git(&["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    else {
+        return false;
+    };
+    let commit = |rev: &str| {
+        git(&[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{rev}^{{commit}}"),
+        ])
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    // Both spellings below require the base to name HEAD's own commit: an
+    // empty range by construction, not a branch that is merely behind.
+    let same_commit = commit(base).is_some_and(|base_commit| commit("HEAD") == Some(base_commit));
+    if !same_commit || commit("HEAD~1").is_none() {
+        return false;
+    }
+    if base == branch {
+        return true;
+    }
+    // A clone resolves the default base to `origin/<branch>` while HEAD is
+    // `<branch>`. That is also the shape of a feature-branch clone whose
+    // `origin/HEAD` tracks the feature branch, where the real base is
+    // elsewhere and the existing hedge names it (#7644); only narrow to the
+    // last commit when the branch is a conventional default or no other base
+    // candidate exists (a full clone of `main` usually carries other remote
+    // branches, which must not disable the fallback).
+    base.strip_prefix("origin/") == Some(branch.as_str())
+        && (matches!(branch.as_str(), "main" | "master")
+            || another_base_candidate(root, git_timeout).is_none())
+}
+
 /// Whether some branch other than the current one could serve as a
 /// `--base`: a local or remote-tracking branch (never a remote's `HEAD`
 /// pointer) for which `<branch>...HEAD` actually contains changed files.

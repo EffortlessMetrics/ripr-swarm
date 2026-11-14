@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A test under `#[test_log::test]` (bare on a sync `fn`, or exactly `#[test_log::test(tokio::test)]` on an `async fn`) or under `#[tracing_test::traced_test]` (crate-qualified, or a bare name bound by one unrenamed `use`) is now read as a test that runs its body, so a changed owner it pins with exact values reads `exposed` instead of `no_static_path` or `static_unknown`. Attributes with other arguments, or in a module that rebinds the crate, stay unread (#14211, #14213).

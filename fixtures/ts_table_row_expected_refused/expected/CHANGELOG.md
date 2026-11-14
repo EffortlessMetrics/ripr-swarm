@@ -127,3 +127,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_table_row_expected_refused (12)
+
+Reason:
+RIPR-SPEC-0147: human limitation lines carry the producer's bounded detail (#14398)
+
+Command:
+`cargo xtask goldens bless ts_table_row_expected_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
