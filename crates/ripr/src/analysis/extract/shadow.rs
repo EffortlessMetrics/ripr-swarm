@@ -663,6 +663,16 @@ mod fact_authority_tests {
                 "match pair { Foo { owner, .. } => owner(100, 100), _ => 0 }",
                 true,
             ),
+            (
+                "nested tuple pattern binding",
+                "match pair { Some((owner, _)) => owner(100, 100), _ => 0 }",
+                true,
+            ),
+            (
+                "slice pattern binding",
+                "match pair { [owner, _] => owner(100, 100), _ => 0 }",
+                true,
+            ),
         ];
         for (label, body, expected) in cases {
             assert_eq!(
@@ -671,5 +681,29 @@ mod fact_authority_tests {
                 "{label}: {body}"
             );
         }
+    }
+
+    #[test]
+    fn scoped_shadow_sees_a_flat_tuple_pattern_binding() {
+        assert!(test_body_scoped_shadow_at_line(
+            "match pair { (owner, _) => owner(100, 100), _ => 0 }",
+            "owner"
+        ));
+    }
+
+    #[test]
+    fn scoped_shadow_sees_a_nested_tuple_pattern_binding() {
+        assert!(test_body_scoped_shadow_at_line(
+            "match pair { Some((owner, _)) => owner(100, 100), _ => 0 }",
+            "owner"
+        ));
+    }
+
+    #[test]
+    fn scoped_shadow_sees_a_slice_pattern_binding() {
+        assert!(test_body_scoped_shadow_at_line(
+            "match pair { [owner, _] => owner(100, 100), _ => 0 }",
+            "owner"
+        ));
     }
 }
