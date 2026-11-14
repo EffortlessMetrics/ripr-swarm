@@ -8,7 +8,7 @@ use super::*;
 /// Code in which imports, exports of bindings, enum declarations and the
 /// supported function signatures cannot look like value escapes. Everything
 /// else remains visible to the conservative read-only-root check.
-pub(crate) fn enum_member_use_code(body: &[Statement<'_>], source: &str) -> String {
+fn enum_member_use_code(body: &[Statement<'_>], source: &str) -> String {
     let mut ranges = Vec::new();
     for statement in body {
         match statement {
@@ -51,17 +51,48 @@ fn enum_function_types(function: &Function<'_>, ranges: &mut Vec<oxc_span::Span>
     }
 }
 
-/// An enum root can only be read through a scalar member; a namespace needs
-/// both the enum and scalar member segments. Bare aliases, casts, calls,
-/// assignments, deletion and member mutation all leave its value unknown.
-/// This runs once per imported/declared root over its whole module, including
-/// hooks and other tests, rather than trusting only the assertion callback.
-pub(crate) fn enum_member_root_is_read_only(code: &str, root: &str, namespace: bool) -> bool {
-    // The textual stability scan cannot compare escaped runtime identifiers
-    // with their canonical spelling. Strings and comments are already masked.
-    !code.contains("\\u")
-        && !tests_extract::identifier_written_in(code, root)
-        && !ts_members_written(code, root, true)
+/// One module's enum-member use code, masked and write-scanned once.
+pub(crate) struct EnumMemberUse {
+    code: String,
+    /// The textual stability scan cannot compare escaped runtime identifiers
+    /// with their canonical spelling. Strings and comments are already masked.
+    escaped: bool,
+    /// Every identifier the module may write ([`tests_extract::identifier_writes`]).
+    /// The write scan does not depend on the root, so one scan serves every
+    /// root of the module instead of one whole-module scan per import.
+    written: std::collections::HashSet<String>,
+}
+
+impl EnumMemberUse {
+    /// Mask the module once ([`enum_member_use_code`]) and scan its writes once.
+    pub(crate) fn new(body: &[Statement<'_>], source: &str) -> Self {
+        let code = enum_member_use_code(body, source);
+        let escaped = code.contains("\\u");
+        let written = tests_extract::identifier_writes(&code)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        Self {
+            code,
+            escaped,
+            written,
+        }
+    }
+
+    /// An enum root can only be read through a scalar member; a namespace needs
+    /// both the enum and scalar member segments. Bare aliases, casts, calls,
+    /// assignments, deletion and member mutation all leave its value unknown.
+    /// This runs once per imported/declared root over its whole module, including
+    /// hooks and other tests, rather than trusting only the assertion callback.
+    pub(crate) fn root_is_read_only(&self, root: &str, namespace: bool) -> bool {
+        !self.escaped
+            && !self.written.contains(root)
+            && enum_member_root_mentions_are_read_only(&self.code, root, namespace)
+    }
+}
+
+fn enum_member_root_mentions_are_read_only(code: &str, root: &str, namespace: bool) -> bool {
+    !ts_members_written(code, root, true)
         && mock_payload_guard::identifier_offsets(code, root)
             .into_iter()
             .all(|at| {

@@ -90,7 +90,7 @@ pub(crate) fn source_value_evidence_line_with_file(
     let context = fact.context.as_str().replace('_', " ");
     format!(
         "source {context} value {value} at {}:{}",
-        crate::output::path::display_path(file),
+        crate::output::path::display_source_path(file),
         fact.line
     )
 }
@@ -178,6 +178,23 @@ mod tests {
         assert_eq!(
             source_value_evidence_line_with_file(&single, Some(&single_file)),
             "source assertion argument value \"a  b\" at tests/pricing.rs:7"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn human_source_value_line_preserves_literal_backslash_paths() {
+        let mut fact = fact(12, ValueContext::AssertionArgument);
+        fact.value = "\"not_collected\"".to_string();
+        let backslash = std::path::PathBuf::from(r"src/odd\receipt.rs");
+        let directory = std::path::PathBuf::from("src/odd/receipt.rs");
+        assert_ne!(
+            source_value_evidence_line_with_file(&fact, Some(&backslash)),
+            source_value_evidence_line_with_file(&fact, Some(&directory))
+        );
+        assert!(
+            source_value_evidence_line_with_file(&fact, Some(&backslash))
+                .contains("src/odd%5Creceipt.rs:12")
         );
     }
 

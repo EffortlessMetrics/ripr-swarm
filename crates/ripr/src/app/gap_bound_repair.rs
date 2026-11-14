@@ -281,7 +281,32 @@ pub(crate) fn lookup_python_gap_start(
     };
     match validate_agent_gap_record_packet(&record) {
         Ok(()) => GapStartLookup::Ready(Box::new(record)),
-        Err(reason) => GapStartLookup::NotReady { reason },
+        Err(reason) => GapStartLookup::NotReady {
+            reason: python_not_ready_reason(finding, &record, reason),
+        },
+    }
+}
+
+/// The refusal reason for a Python gap the shared readiness owner declined
+/// (#13790). The decision is already made; this only names why when the
+/// record says the finding has no repair card and the finding's Missing check
+/// says the changed predicate holds several comparisons, and adds the
+/// by-hand test shape. Every other refusal keeps the owner's reason as is.
+fn python_not_ready_reason(finding: &Finding, record: &GapRecord, reason: String) -> String {
+    let no_card = record.static_limit_kind.as_deref()
+        == Some(
+            crate::output::gap_decision_ledger::PYTHON_REPAIR_CARD_UNAVAILABLE_STATIC_LIMIT_KIND,
+        );
+    if !no_card || !finding.activation.missing_discriminators.is_empty() {
+        return reason;
+    }
+    match crate::output::human::multi_comparison_predicate(&finding.missing) {
+        Some(predicate) => format!(
+            "{reason} ({}).\nBy hand: {}",
+            predicate.reason(),
+            predicate.manual_test_shape()
+        ),
+        None => reason,
     }
 }
 
@@ -568,5 +593,55 @@ mod tests {
             GapStartLookup::NoSuchGap => Ok(()),
             _ => Err("an unknown id must resolve NoSuchGap".to_string()),
         }
+    }
+
+    const MULTI_MISSING: &str = "A strong Python oracle reaches `discount`, but static evidence does not place a related test input at the changed predicate boundary. The changed predicate `rate < 0 or rate >= 1` holds 2 relational comparisons; static evidence cannot establish which boundary a related test call pins.";
+
+    fn no_card_record() -> GapRecord {
+        GapRecord {
+            static_limit_kind: Some(
+                crate::output::gap_decision_ledger::PYTHON_REPAIR_CARD_UNAVAILABLE_STATIC_LIMIT_KIND
+                    .to_string(),
+            ),
+            ..GapRecord::default()
+        }
+    }
+
+    #[test]
+    fn a_declined_multi_comparison_gap_names_the_reason_and_rows() {
+        // #13790: the owner already refused; the reason gains the cause and
+        // the by-hand shape.
+        let mut finding = complete_finding();
+        finding.missing = vec![MULTI_MISSING.to_string()];
+        finding.activation.missing_discriminators.clear();
+        let reason = python_not_ready_reason(
+            &finding,
+            &no_card_record(),
+            "is not agent-packet eligible: not_repairable".to_string(),
+        );
+        assert_eq!(
+            reason,
+            "is not agent-packet eligible: not_repairable (the changed predicate `rate < 0 or rate >= 1` holds 2 comparisons, so static evidence cannot tell which boundary a test pins).\nBy hand: add one test row per boundary (`rate == 0`, `rate == 1`)"
+        );
+    }
+
+    #[test]
+    fn other_declines_keep_the_owner_reason_unchanged() {
+        let owner = "is not agent-packet eligible: not_repairable".to_string();
+        let mut finding = complete_finding();
+        finding.activation.missing_discriminators.clear();
+        // No multi-comparison Missing check: unchanged.
+        finding.missing = vec!["static evidence names no concrete missing check".to_string()];
+        assert_eq!(
+            python_not_ready_reason(&finding, &no_card_record(), owner.clone()),
+            owner
+        );
+        // A record that is not the no-repair-card decline: unchanged, even
+        // when the Missing check names several comparisons.
+        finding.missing = vec![MULTI_MISSING.to_string()];
+        assert_eq!(
+            python_not_ready_reason(&finding, &GapRecord::default(), owner.clone()),
+            owner
+        );
     }
 }

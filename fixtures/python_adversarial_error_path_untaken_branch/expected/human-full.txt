@@ -50,6 +50,9 @@ Weakness
   - Related Python test reaches `parse`, but its assertions observe a different behavior (strongest: `exact_value`) and none observes the changed error path; add or strengthen a focused assertion for the exact exception type/message
   - missing discriminator raises KeyError matching "empty": changed Python exception at line 3 lacks a concrete repair discriminator
 
+Next step
+  Python preview: strengthen the existing related test with an exception assertion for the missing check `raises KeyError matching "empty"`
+
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
   canonical gap: gap:python:src/parseint.py:parse:exception_path:error_path:keyerror_empty
@@ -75,9 +78,6 @@ Python repair card (preview/advisory)
     - Syntax-first Python preview evidence only.
     - No source edits, generated tests, mutation execution, provider calls, or gate authority.
     - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with an exception assertion for the missing check `raises KeyError matching "empty"`
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_adversarial_error_path_untaken_branch/input --diff <cwd>/fixtures/python_adversarial_error_path_untaken_branch/diff.patch --mode fast probe:src_parseint.py:python_preview:0f645328

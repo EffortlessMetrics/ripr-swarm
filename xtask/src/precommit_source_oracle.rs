@@ -2,10 +2,8 @@
 
 pub(crate) fn require_catalogue(source: &str, expected: &[String]) -> Result<(), String> {
     let start = source
-        .find("\nfn precommit_policy(collect_all: bool) -> Result<(), String> {")
-        .ok_or(
-            "xtask/src/main.rs must define the shared `fn precommit_policy(collect_all: bool)`",
-        )?;
+        .find("\nfn precommit_policy(")
+        .ok_or("xtask/src/main.rs must define the shared `fn precommit_policy`")?;
     let body = &source[start..];
     let end = body
         .find("precommit_report_body")
@@ -19,7 +17,7 @@ pub(crate) fn require_catalogue(source: &str, expected: &[String]) -> Result<(),
             }
             // #8793: file policy runs through a deferring wrapper so an
             // instrument failure cannot hide the later gates.
-            if line == "check_file_policy_deferring(&mut deferred)?;" {
+            if line == "check_file_policy_deferring(&mut deferred, coverage)?;" {
                 return Some("check-file-policy".to_string());
             }
             let call = line

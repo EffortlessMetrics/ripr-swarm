@@ -612,4 +612,254 @@ mod tests {
         assert!(initialized_field("crate::pos").is_none());
         assert_eq!(initialized_field("pos: usize::from(i)"), Some("pos"));
     }
+
+    fn pattern(fields: &str) -> String {
+        format!("assert_matches!(parse_num(\"x1\"), Err(ParseError::BadDigit {{ {fields} }}));")
+    }
+
+    fn scrutinee(call: &str) -> String {
+        format!("assert_matches!({call}, Err(ParseError::BadDigit {{ pos: 0 }}));")
+    }
+
+    #[test]
+    fn only_a_literal_value_for_the_changed_field_pins_it() {
+        // Every literal kind compares by value; text inside a string is not
+        // an alternative or a guard.
+        for value in [
+            "0usize", "0x0", "1_000", "-1", "1.5", "true", "false", "'x'", "\"p\"", "\"a|b\"",
+            "\"if\"",
+        ] {
+            let assertion = pattern(&format!("pos: {value}"));
+            assert!(pins(&assertion), "{assertion}");
+        }
+        // A name, a path, a binding or a nested pattern is decided elsewhere,
+        // and a string holding `..` is refused with the range patterns.
+        for value in [
+            "MAX",
+            "Self::MAX",
+            "usize::MAX",
+            "-n",
+            "ref p",
+            "p @ 0",
+            "Pos { pos: 0 }",
+            "(0)",
+            "\"a..b\"",
+            "",
+        ] {
+            let assertion = pattern(&format!("pos: {value}"));
+            assert!(!pins(&assertion), "{assertion}");
+        }
+    }
+
+    #[test]
+    fn only_the_changed_field_of_the_variant_s_own_group_is_read() {
+        for assertion in [
+            // Another field is pinned beside the changed one.
+            pattern("len: 2, pos: 0"),
+            // `if` inside a longer name is not a guard.
+            pattern("pos: 0, iffy: _"),
+            // A longer spelled path still ends in the constructed one.
+            "assert_matches!(parse_num(\"x1\"), Err(crate::errors::ParseError::BadDigit { pos: 0 }));"
+                .to_string(),
+        ] {
+            assert!(pins(&assertion), "{assertion}");
+        }
+        for assertion in [
+            // Only another field is pinned.
+            pattern("len: 0, pos: p"),
+            pattern("len: 0, .."),
+            pattern("position: 0"),
+            // The same field name one group down belongs to another value.
+            pattern("inner: Inner { pos: 0 }"),
+            pattern("inner: (pos, 0)"),
+            pattern("inner: Inner { a: 1, pos: 0, b: 2 }"),
+            // The variant head is spelled twice, or with generic arguments.
+            "assert_matches!(parse_num(\"x1\"), Err(Pair(BadDigit { pos: 0 }, BadDigit { pos: 0 })));"
+                .to_string(),
+            "assert_matches!(parse_num(\"x1\"), Err(ParseError::BadDigit::<u8> { pos: 0 }));"
+                .to_string(),
+            // A tuple variant of the same name has no field group.
+            "assert_matches!(parse_num(\"x1\"), Err(ParseError::BadDigit(0)));".to_string(),
+        ] {
+            assert!(!pins(&assertion), "{assertion}");
+        }
+    }
+
+    #[test]
+    fn the_scrutinee_is_the_whole_owner_call_on_literal_arguments() {
+        for call in [
+            "&parse_num(\"x1\")",
+            "parse_num(\"x1\", 3, -1, 1.5, true, 'c')",
+            "parse_num(&\"x1\")",
+            "parse_num()",
+            // Delimiters inside a string argument are text.
+            "parse_num(\"a,b)\")",
+            // Leading whitespace before the call.
+            "\n            parse_num(\"x1\")",
+        ] {
+            let assertion = scrutinee(call);
+            assert!(pins(&assertion), "{assertion}");
+        }
+        // Leading whitespace before the macro name.
+        let indented = format!("\n        {}", scrutinee("parse_num(\"x1\")"));
+        assert!(pins(&indented), "{indented}");
+        for call in [
+            // The owner call is wrapped, dereferenced, continued, or a method
+            // or namesake call.
+            "wrap(parse_num(\"x1\"))",
+            "*parse_num(\"x1\")",
+            "parser.parse_num(\"x1\")",
+            "my_parse_num(\"x1\")",
+            "parse_num(\"x1\")?",
+            "parse_num(\"x1\").await",
+            "parse_num(\"x1\")(\"x2\")",
+            "parse_num(\"x1\") == other(\"x2\")",
+            // One argument is not a literal.
+            "parse_num(\"x1\", n)",
+            "parse_num(MAX)",
+            "parse_num(&[1, 2])",
+            "parse_num(String::from(\"x1\"))",
+        ] {
+            let assertion = scrutinee(call);
+            assert!(!pins(&assertion), "{assertion}");
+        }
+        // No pattern operand, or no close.
+        for assertion in [
+            "assert_matches!(parse_num(\"x1\"));",
+            "assert_matches!(parse_num(\"x1\"), Err(ParseError::BadDigit { pos: 0 })",
+        ] {
+            assert!(!pins(assertion), "{assertion}");
+        }
+    }
+
+    #[test]
+    fn a_literal_the_probe_line_does_not_open_is_not_read() {
+        let assertion = scrutinee("parse_num(\"x1\")");
+        let pins_as =
+            |assertion: &str, owner_body: &str, probe_line: usize, probe_expression: &str| {
+                let changed = ConstructedField {
+                    owner_body,
+                    owner_start_line: 10,
+                    owner_name: "parse_num",
+                    probe_line,
+                    probe_expression,
+                };
+                pattern_pins_constructed_field(&changed, assertion, assertion, &|_| true, &|_| 1)
+            };
+        let pins_at = |owner_body: &str, probe_line: usize, probe_expression: &str| {
+            pins_as(&assertion, owner_body, probe_line, probe_expression)
+        };
+        let one_line = "pub fn parse_num(s: &str) -> Result<u32, ParseError> {
+    Err(ParseError::BadDigit { pos: 0 + s.len() })
+}";
+        assert!(pins_at(one_line, 11, "pos: 0 + s.len()"));
+        // The probe line is before the owner, past its end, or another line.
+        assert!(!pins_at(one_line, 9, "pos: 0 + s.len()"));
+        assert!(!pins_at(one_line, 13, "pos: 0 + s.len()"));
+        assert!(!pins_at(one_line, 10, "pos: 0 + s.len()"));
+        // A shorthand initializer names no literal value.
+        assert!(!pins_at(one_line, 11, "pos"));
+        // The literal opens on an earlier line, so its path is not on the
+        // probe line.
+        let split = "pub fn parse_num(s: &str) -> Result<u32, ParseError> {
+    Err(ParseError::BadDigit {
+        pos: 0 + s.len(),
+    })
+}";
+        assert!(!pins_at(split, 12, "pos: 0 + s.len()"));
+        // The brace before the initializer does not follow an uppercase
+        // path, even when the pattern spells the same head.
+        for head in ["build!", "bad_digit", "ParseError::bad_digit"] {
+            let owner = one_line.replace("ParseError::BadDigit", head);
+            let same_head = assertion.replace("ParseError::BadDigit", head);
+            assert!(
+                !pins_as(&same_head, &owner, 11, "pos: 0 + s.len()"),
+                "{head}"
+            );
+        }
+        // A closed group earlier on the line is skipped on the way back to
+        // the literal's own brace.
+        let earlier = "pub fn parse_num(s: &str) -> Result<u32, ParseError> {
+    Err(ParseError::BadDigit { len: Len { n: 1 }.n, pos: 0 + s.len() })
+}";
+        assert!(pins_at(earlier, 11, "pos: 0 + s.len()"));
+    }
+
+    #[test]
+    fn a_path_before_a_brace_is_whole_segments_ending_uppercase() {
+        let segments = |text: &str| path_before(text).map(|path| path.join("::"));
+        assert_eq!(
+            segments("    Err(ParseError::BadDigit "),
+            Some("ParseError::BadDigit".to_string())
+        );
+        assert_eq!(segments("let e = BadDigit"), Some("BadDigit".to_string()));
+        assert_eq!(
+            segments("crate::errors::ParseError::BadDigit"),
+            Some("crate::errors::ParseError::BadDigit".to_string())
+        );
+        // A lowercase last segment, an empty segment or no path at all.
+        assert_eq!(segments("Err(bad_digit"), None);
+        assert_eq!(segments("Err(ParseError::bad_digit"), None);
+        assert_eq!(segments("Err(::ParseError::BadDigit"), None);
+        assert_eq!(segments("Err(ParseError::::BadDigit"), None);
+        assert_eq!(segments("Err("), None);
+        assert_eq!(segments(""), None);
+    }
+
+    #[test]
+    fn only_an_enum_item_body_is_a_declaration_span() {
+        let source = "enum ParseError { Empty, BadDigit { pos: usize } }
+fn more() -> ParseError { ParseError::BadDigit { pos: 9 } }";
+        let bodies = enum_bodies(source);
+        assert_eq!(
+            bodies
+                .iter()
+                .filter_map(|body| source.get(body.clone()))
+                .collect::<Vec<_>>(),
+            ["{ Empty, BadDigit { pos: usize } "]
+        );
+        // Both heads are counted; only the declared one is inside the body.
+        let heads: Vec<usize> = literal_head_offsets(source, "BadDigit").collect();
+        assert_eq!(
+            heads
+                .iter()
+                .map(|at| bodies.iter().any(|body| body.contains(at)))
+                .collect::<Vec<_>>(),
+            [true, false]
+        );
+        // Generics and a `where` clause still reach the item's brace.
+        assert_eq!(
+            enum_bodies("pub enum Wrap<T> where T: Copy { One { v: T } }").len(),
+            1
+        );
+        // A name that ends or starts with `enum`, and an `enum` word that an
+        // item end, a close or a call separates from the next brace.
+        for not_an_item in [
+            "struct Renum { v: u8 }",
+            "struct my_enum { v: u8 }",
+            "struct enums { v: u8 }",
+            "kw!(enum Kind); struct B { v: u8 }",
+            "kw! { enum Kind } struct B { v: u8 }",
+            "kw![enum Kind] fn f() { B { v: 1 } }",
+            "enum",
+        ] {
+            assert!(enum_bodies(not_an_item).is_empty(), "{not_an_item}");
+        }
+    }
+
+    #[test]
+    fn a_literal_head_is_the_whole_name_before_a_brace_or_generics() {
+        let count = |text: &str| literal_heads(text, "BadDigit");
+        assert_eq!(count("BadDigit { pos: 0 }"), 1);
+        assert_eq!(count("ParseError::BadDigit   { pos: 0 }"), 1);
+        assert_eq!(count("BadDigit::<u8> { pos: 0 }"), 1);
+        assert_eq!(count("BadDigit { pos: 0 } | BadDigit { pos: 1 }"), 2);
+        // A longer name, a tuple or unit variant, and a path through it.
+        assert_eq!(count("NotBadDigit { pos: 0 }"), 0);
+        assert_eq!(count("_BadDigit { pos: 0 }"), 0);
+        assert_eq!(count("BadDigits { pos: 0 }"), 0);
+        assert_eq!(count("BadDigit(0)"), 0);
+        assert_eq!(count("BadDigit => 0"), 0);
+        assert_eq!(count("BadDigit::new()"), 0);
+    }
 }

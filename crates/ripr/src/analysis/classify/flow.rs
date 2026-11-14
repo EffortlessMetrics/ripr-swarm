@@ -201,7 +201,7 @@ pub(in crate::analysis) fn local_flow_sinks(
             probe.location.line,
             owner.clone(),
         )],
-        ProbeFamily::MatchArm => vec![match_arm_sink(probe, owner.clone())],
+        ProbeFamily::MatchArm => vec![match_arm_sink(probe, owner_fn, owner.clone())],
         ProbeFamily::ReturnValue => vec![return_value_sink(probe, owner_fn, owner.clone())],
         ProbeFamily::Predicate => predicate_flow_sinks(probe, owner_fn, owner.clone()),
     };
@@ -275,6 +275,17 @@ fn predicate_flow_sinks(
             branch.line,
             owner,
         )];
+    }
+    if let Some(branch) = tail_if_parameter_branches(probe, owner_fn) {
+        return vec![flow_sink(
+            FlowSinkKind::ReturnValue,
+            branch.text,
+            branch.line,
+            owner,
+        )];
+    }
+    if predicate_branch_side_effect_only(owner_fn, probe.location.line) {
+        return Vec::new();
     }
     if let Some(return_fact) = nearest_return(owner_fn, probe.location.line) {
         return vec![flow_sink(
@@ -577,13 +588,30 @@ fn return_value_sink(
     )
 }
 
-fn match_arm_sink(probe: &Probe, owner: Option<SymbolId>) -> FlowSinkFact {
-    let arm_result = probe
-        .expression
-        .split_once("=>")
-        .map(|(_, result)| result.trim().trim_end_matches(',').to_string())
-        .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| probe.expression.clone());
+fn match_arm_sink(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+    owner: Option<SymbolId>,
+) -> FlowSinkFact {
+    // The arm arrow is located on the comment/string-masked text, so a `=>`
+    // inside a string or comment pattern (`"a=>b" =>`) is not mistaken for
+    // it and the probe is read as head-only, as the renderer reads it.
+    let masked = crate::analysis::extract::mask_comments_and_strings(&probe.expression);
+    let arrow = if masked.len() == probe.expression.len() {
+        masked.find("=>")
+    } else {
+        probe.expression.find("=>")
+    };
+    let arm_result = arrow
+        .map(|at| {
+            probe.expression[at + 2..]
+                .trim()
+                .trim_end_matches(',')
+                .to_string()
+        })
+        .filter(|text| !text.is_empty());
+    let head_only = arm_result.is_none();
+    let arm_result = arm_result.unwrap_or_else(|| probe.expression.clone());
 
     if arm_result.contains("Err(") {
         flow_sink(
@@ -593,13 +621,105 @@ fn match_arm_sink(probe: &Probe, owner: Option<SymbolId>) -> FlowSinkFact {
             owner,
         )
     } else {
-        flow_sink(
-            FlowSinkKind::MatchArm,
-            arm_result,
-            probe.location.line,
-            owner,
-        )
+        // #14420: the parser's arm shape is the head alone (`Size::Medium =>`),
+        // so the result a test must pin was lost. The sink's kind is decided
+        // from the probe text as before; only its text reads the arm's
+        // same-line result from the owner source when one is short and plain.
+        let text = head_only
+            .then(|| owner_fn.and_then(|owner| same_line_arm_result(probe, owner)))
+            .flatten()
+            .unwrap_or(arm_result);
+        flow_sink(FlowSinkKind::MatchArm, text, probe.location.line, owner)
     }
+}
+
+/// Longest same-line arm result [`same_line_arm_result`] names.
+const ARM_RESULT_BUDGET: usize = 60;
+
+/// #14420: the result of a head-only match-arm probe's arm when it sits on
+/// the head's own line in the owner source (`Size::Medium => 450,` gives
+/// `450`). The line must hold this head and exactly one `=>`, and the
+/// result must be short, balanced, comment-free and neither a block nor an
+/// `Err(..)` (whose sink kind the probe text decides). Anything else is
+/// `None`, and the sink keeps the head.
+fn same_line_arm_result(probe: &Probe, owner: &FunctionSummary) -> Option<String> {
+    let line = owner
+        .body
+        .lines()
+        .nth(probe.location.line.checked_sub(owner.start_line)?)?;
+    let masked = crate::analysis::extract::mask_comments_and_strings(line);
+    if masked.len() != line.len() || masked.matches("=>").count() != 1 {
+        return None;
+    }
+    let arrow = masked.find("=>")?;
+    let compact = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let head = probe.expression.trim().strip_suffix("=>")?;
+    if compact(&line[..arrow]) != compact(head) {
+        return None;
+    }
+    // A trailing line comment (`Size::Medium => 450, // new tier`) is cut at
+    // the first `//` outside every string literal the shared lexical scan
+    // reads (raw strings, escapes and char literals included).
+    let tail = &line[arrow + 2..];
+    let strings = crate::analysis::extract::string_literal_spans(tail);
+    let tail = tail
+        .match_indices("//")
+        .map(|(at, _)| at)
+        .find(|&at| {
+            !strings
+                .iter()
+                .any(|&(open, close, _)| open < at && at < close)
+        })
+        .map_or(tail, |at| &tail[..at]);
+    // An unterminated string continues past this line, so the arm does.
+    let (_, quotes) = crate::analysis::extract::mask_with_string_delimiter_quotes(tail);
+    if quotes % 2 != 0 {
+        return None;
+    }
+    // A comma ends a non-block arm; without one the arm must be the last
+    // before the match's closing brace. Otherwise the result continues on
+    // the next line (`base` then `+ 1,`) and its first line alone would
+    // name a wrong value.
+    if !tail.trim_end().ends_with(',') {
+        let next = owner
+            .body
+            .lines()
+            .skip(probe.location.line.checked_sub(owner.start_line)? + 1)
+            .map(str::trim)
+            .find(|next| !next.is_empty() && !next.starts_with("//"));
+        if !next.is_some_and(|next| next.starts_with('}')) {
+            return None;
+        }
+    }
+    let end = arrow + 2 + tail.len();
+    let result = tail.trim().trim_end_matches(',').trim_end();
+    let masked_result = masked[arrow + 2..end]
+        .trim()
+        .trim_end_matches(',')
+        .trim_end();
+    let balanced = |open: char, close: char| {
+        let mut depth = 0_i32;
+        for ch in masked_result.chars() {
+            if ch == open {
+                depth += 1;
+            } else if ch == close {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+        }
+        depth == 0
+    };
+    let plain = !result.is_empty()
+        && result.chars().count() <= ARM_RESULT_BUDGET
+        && !result.contains("/*")
+        && !result.contains("Err(")
+        && !spells_result_err(result)
+        && !masked_result.contains(['{', '}'])
+        && balanced('(', ')')
+        && balanced('[', ']');
+    plain.then(|| result.to_string())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -896,6 +1016,67 @@ fn tail_if_branch_value(
     })
 }
 
+/// #6694: the rustfmt tail `if <cond> {` / `a` / `} else {` / `b` / `}` whose
+/// two branch values are different parameters of the owner (`if value > cap {
+/// cap } else { value }`, the body of a generic `min`/`max`/clamp helper). The
+/// condition decides which parameter the function returns, so the first branch
+/// is the value sink. Fails closed: the function body is exactly that `if`
+/// (no earlier statement can rebind a parameter), the owner returns a value,
+/// the probe is the `if` condition, and each branch is one bare parameter name
+/// (distinct, so the choice is observable). A literal, call or other
+/// expression branch keeps the adjacency reading of [`next_branch_value`].
+fn tail_if_parameter_branches(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+) -> Option<LocalTextFact> {
+    let function = owner_fn?;
+    if probe.owner.as_ref() != Some(&function.id) || probe.location.line != function.start_line + 1
+    {
+        return None;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&function.body);
+    let lines: Vec<&str> = masked.lines().map(str::trim).collect();
+    let [
+        signature,
+        head,
+        then_value,
+        else_head,
+        else_value,
+        inner_close,
+        outer_close,
+    ] = lines.as_slice()
+    else {
+        return None;
+    };
+    if !signature_returns_value(signature)
+        || !signature.ends_with('{')
+        || *else_head != "} else {"
+        || *inner_close != "}"
+        || *outer_close != "}"
+    {
+        return None;
+    }
+    let condition = head.strip_prefix("if ")?.strip_suffix('{')?.trim();
+    let code = |text: &str| {
+        crate::analysis::language::mask_rust_comments_and_strings(text)
+            .trim()
+            .to_string()
+    };
+    if condition.is_empty() || condition != code(&probe.expression) {
+        return None;
+    }
+    let parameters = super::call_parameter_names(function);
+    let is_parameter =
+        |name: &str| is_plain_identifier(name) && parameters.iter().any(|known| known == name);
+    if !is_parameter(then_value) || !is_parameter(else_value) || then_value == else_value {
+        return None;
+    }
+    Some(LocalTextFact {
+        line: probe.location.line + 1,
+        text: (*then_value).to_string(),
+    })
+}
+
 /// Whether the signature's top-level return type (the arrow after the
 /// parameter list) names a non-unit value. Arrows inside parameter types
 /// (`fn() -> i32`) do not count.
@@ -983,6 +1164,85 @@ fn nearest_return(owner_fn: Option<&FunctionSummary>, probe_line: usize) -> Opti
                 text: return_fact.text.clone(),
             })
     })
+}
+
+/// The changed predicate's two branch values, read from the owner body
+/// with the same parser the tail-if sink models use: entry 0 is the arm a
+/// HOLDING equality boundary executes and entry 1 the arm a failing
+/// boundary executes, each `return_sink_text`-normalized. An arm the model
+/// cannot read as the block's plain tail value stays `None` — the caller
+/// refuses that branch instead of guessing, because a guessed value would
+/// draft a wrong expected value. Registered return facts (explicit
+/// `return` statements) are not read here; see
+/// [`returned_value_texts_at`].
+pub(in crate::analysis) fn predicate_branch_values(
+    owner_fn: &FunctionSummary,
+    predicate_line: usize,
+) -> Option<[Option<String>; 2]> {
+    use crate::analysis::syntax::parse_clean_source_file;
+    use ra_ap_syntax::{AstNode, ast};
+
+    let parse = parse_clean_source_file(&owner_fn.body)?;
+    let tree = parse.tree();
+    let mut items = tree.syntax().children().filter_map(ast::Item::cast);
+    let Some(ast::Item::Fn(function)) = items.next() else {
+        return None;
+    };
+    let body = function.body()?;
+    // The predicate owns the `if` that starts on its line.
+    let mut predicate_if = None;
+    for candidate in body.syntax().descendants().filter_map(ast::IfExpr::cast) {
+        let start = usize::from(candidate.syntax().text_range().start());
+        let line = owner_fn.start_line
+            + owner_fn
+                .body
+                .get(..start)?
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count();
+        if line == predicate_line {
+            predicate_if = Some(candidate);
+            break;
+        }
+    }
+    let predicate_if = predicate_if?;
+    let then_tail = predicate_if
+        .then_branch()?
+        .tail_expr()
+        .map(|expression| return_sink_text(&expression.syntax().text().to_string()));
+    let else_tail = predicate_if.else_branch().and_then(|branch| match branch {
+        ast::ElseBranch::Block(block) => block
+            .tail_expr()
+            .map(|expression| return_sink_text(&expression.syntax().text().to_string())),
+        // An `else if` chain makes the failing boundary's arm a nested
+        // condition, not one plain value; the model refuses it.
+        ast::ElseBranch::IfExpr(_) => None,
+    });
+    Some([then_tail, else_tail])
+}
+
+/// The owner's returned value expressions at or after `line`, in source
+/// order, as the flow model reads them (`return_sink_text`-normalized, for
+/// example `amount - 10`). Consumers that must pick the branch a pinned
+/// input actually takes read the first entry (the arm at or after the
+/// predicate) or the second (the following arm), and refuse when the model
+/// does not expose the branch they need — a guessed branch would draft a
+/// wrong expected value.
+pub(in crate::analysis) fn returned_value_texts_at(
+    owner_fn: Option<&FunctionSummary>,
+    line: usize,
+) -> Vec<String> {
+    let Some(function) = owner_fn else {
+        return Vec::new();
+    };
+    let mut texts: Vec<(usize, String)> = function
+        .returns
+        .iter()
+        .filter(|return_fact| return_fact.line >= line)
+        .map(|return_fact| (return_fact.line, return_sink_text(&return_fact.text)))
+        .collect();
+    texts.sort_by_key(|(return_line, _)| *return_line);
+    texts.into_iter().map(|(_, text)| text).collect()
 }
 
 /// Whether the value on `value_offset` is repeated by a later arm of the
@@ -1076,6 +1336,195 @@ pub(in crate::analysis) fn predicate_line_arms_all_agree(
             .nth(probe_line.saturating_sub(function.start_line))
             .is_some_and(inline_arms_all_agree)
     })
+}
+
+/// Whether the `if` at `probe_line` only runs unit-returning calls in its arms,
+/// so flipping the predicate cannot change a return, error, or field value — only
+/// which side effect runs (#5384).
+pub(in crate::analysis) fn predicate_branch_side_effect_only(
+    owner_fn: Option<&FunctionSummary>,
+    probe_line: usize,
+) -> bool {
+    owner_fn.is_some_and(|function| {
+        !body_may_mutate_locals(&function.body)
+            && if_statement_arms(function, probe_line)
+                .is_some_and(|arms| arms.iter().all(|arm| arm_is_side_effect_only(arm)))
+    })
+}
+
+/// Whether the owner body can mutate a local through a `&mut` borrow or a
+/// `let mut` binding. A unit-returning call such as `bump(&mut x);`, or one
+/// through a mutable alias, can change a value the owner later returns, so
+/// independence from the return cannot be established. Fail closed (#5384): keep the
+/// established return-value sink for such owners.
+fn body_may_mutate_locals(body: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    masked.contains("&mut") || masked.contains("let mut ") || masked.contains("ref mut ")
+}
+
+pub(in crate::analysis) fn predicate_branch_side_effect_only_in_body(
+    body: &str,
+    start_line: usize,
+    probe_line: usize,
+) -> bool {
+    !body_may_mutate_locals(body)
+        && if_statement_arms_in_body(body, start_line, probe_line)
+            .is_some_and(|arms| arms.iter().all(|arm| arm_is_side_effect_only(arm)))
+}
+
+fn if_statement_arms(function: &FunctionSummary, probe_line: usize) -> Option<Vec<String>> {
+    if_statement_arms_in_body(&function.body, function.start_line, probe_line)
+}
+
+fn if_statement_arms_in_body(
+    body: &str,
+    start_line: usize,
+    probe_line: usize,
+) -> Option<Vec<String>> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    if masked.len() != body.len() {
+        return None;
+    }
+    let line_start: usize = masked
+        .split_inclusive('\n')
+        .take(probe_line.saturating_sub(start_line))
+        .map(str::len)
+        .sum();
+    let from_line = &masked[line_start..];
+    let line = from_line.lines().next().unwrap_or("");
+    if !line.trim_start().starts_with("if ") {
+        return None;
+    }
+    let mut cursor = line_start + from_line.find("if ").unwrap_or(0);
+    let mut arms: Vec<String> = Vec::new();
+    loop {
+        let Some(open) = masked[cursor..].find('{').map(|at| cursor + at) else {
+            return if arms.is_empty() { None } else { Some(arms) };
+        };
+        let (body_range, end) = braced_block_range(&masked[open..])?;
+        let text: String = body[open + body_range.start..open + body_range.end]
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        arms.push(text);
+        cursor = open + end;
+        let rest = masked[cursor..].trim_start();
+        let Some(after_else) = rest.strip_prefix("else") else {
+            break;
+        };
+        cursor = masked.len() - after_else.len();
+        let after_else = after_else.trim_start();
+        if !after_else.starts_with('{') {
+            return None;
+        }
+    }
+    (!arms.is_empty()).then_some(arms)
+}
+
+fn arm_is_side_effect_only(arm: &str) -> bool {
+    let arm = arm.trim();
+    if arm.is_empty() {
+        return true;
+    }
+    // A trailing expression without `;` (`one()` or `log(); compute()`) is the
+    // arm's value, not a discarded call, so only arms ending in `;` qualify.
+    if !arm.ends_with(';') {
+        return false;
+    }
+    arm.split(';').all(|stmt| {
+        let stmt = stmt.trim();
+        stmt.is_empty() || statement_is_unit_side_effect(stmt)
+    })
+}
+
+fn statement_is_unit_side_effect(stmt: &str) -> bool {
+    let lower = stmt.to_ascii_lowercase();
+    if lower.starts_with("return ")
+        || lower.starts_with("break")
+        || lower.starts_with("continue")
+        || lower.starts_with("if ")
+        || lower.starts_with("match ")
+        || lower.starts_with("for ")
+        || lower.starts_with("while ")
+        || lower.starts_with("loop ")
+    {
+        return false;
+    }
+    // Early-exit macros expand to a return or a diverging call, so they are not
+    // discarded unit side effects.
+    let head = lower.split('(').next().unwrap_or("").trim();
+    if let Some(name) = head.strip_suffix('!') {
+        let name = name.trim();
+        let name = name.rsplit("::").next().unwrap_or(name).trim();
+        if matches!(
+            name,
+            "bail" | "ensure" | "return_err" | "panic" | "unreachable" | "todo" | "unimplemented"
+        ) {
+            return false;
+        }
+    }
+    for method in [
+        ".push(",
+        ".push_str(",
+        ".push_back(",
+        ".push_front(",
+        ".insert(",
+        ".extend(",
+        ".extend_from_slice(",
+        ".append(",
+        ".remove(",
+        ".swap_remove(",
+        ".pop(",
+        ".pop_back(",
+        ".pop_front(",
+        ".clear(",
+        ".truncate(",
+        ".retain(",
+        ".retain_mut(",
+        ".drain(",
+        ".dedup(",
+        ".dedup_by(",
+        ".dedup_by_key(",
+        ".sort(",
+        ".sort_by(",
+        ".sort_by_key(",
+        ".sort_unstable(",
+        ".sort_unstable_by(",
+        ".sort_unstable_by_key(",
+        ".reverse(",
+        ".resize(",
+        ".resize_with(",
+        ".split_off(",
+        ".swap(",
+        ".fill(",
+        ".entry(",
+        ".get_mut(",
+        ".iter_mut(",
+        ".take(",
+        ".replace(",
+    ] {
+        if lower.contains(method) {
+            return false;
+        }
+    }
+    if stmt.contains('=') {
+        let collapsed = stmt
+            .replace("==", "")
+            .replace("!=", "")
+            .replace("<=", "")
+            .replace(">=", "");
+        if collapsed.contains('=') {
+            return false;
+        }
+    }
+    if stmt.ends_with('?') {
+        return false;
+    }
+    // A `&mut` argument can write a local the owner later returns (#5384).
+    if stmt.contains("&mut") {
+        return false;
+    }
+    stmt.contains('(')
 }
 
 fn next_branch_value(
@@ -2193,6 +2642,121 @@ mod tests {
     }
 
     #[test]
+    fn returned_call_branch_if_keeps_return_value_sink() {
+        let body = "pub fn pick(flag: bool) -> i32 {\n    if flag { one() } else { two() }\n}";
+        let owner = tail_owner(body);
+        let probe = probe(ProbeFamily::Predicate, "flag", 2);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert!(
+            sinks
+                .iter()
+                .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+            "returned call branches must keep a return-value sink: {sinks:?}"
+        );
+    }
+
+    #[test]
+    fn local_push_before_return_keeps_return_value_sink() {
+        let body = "pub fn count(flag: bool) -> usize {\n    let mut items = vec![];\n    if flag { items.push(1); }\n    items.len()\n}";
+        let owner = tail_owner(body);
+        let probe = probe(ProbeFamily::Predicate, "flag", 3);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert!(
+            sinks
+                .iter()
+                .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+            "mutating branch calls must not suppress the return sink: {sinks:?}"
+        );
+    }
+
+    #[test]
+    fn arm_with_value_tail_or_local_mutation_is_not_side_effect_only() {
+        assert!(arm_is_side_effect_only("log(1);"));
+        assert!(arm_is_side_effect_only("log(1); audit(2);"));
+        // The tail expression after the last `;` is the arm's value.
+        assert!(!arm_is_side_effect_only("log(1); compute()"));
+        assert!(!arm_is_side_effect_only("compute()"));
+        // Local-state mutators change a value the function may later return.
+        for mutator in [
+            "items.clear();",
+            "s.push_str(\"x\");",
+            "v.pop();",
+            "v.truncate(1);",
+            "v.append(&mut w);",
+            "v.retain(|x| *x > 0);",
+            "v.sort();",
+            "v.push_back(1);",
+        ] {
+            assert!(!arm_is_side_effect_only(mutator), "{mutator}");
+        }
+    }
+
+    #[test]
+    fn early_exit_macros_keep_the_return_sink() {
+        for stmt in [
+            "bail!(\"invalid\");",
+            "anyhow::bail!(\"invalid\");",
+            "ensure!(ok, \"bad\");",
+            "return_err!(e);",
+            "panic!(\"x\");",
+            "unreachable!();",
+            "todo!();",
+            "unimplemented!();",
+        ] {
+            assert!(!arm_is_side_effect_only(stmt), "{stmt}");
+        }
+        assert!(arm_is_side_effect_only("log_it(1);"));
+        let body = "pub fn run(bad: bool) -> Result<i32, E> {\n    if bad {\n        bail!(\"invalid\");\n    }\n    Ok(42)\n}";
+        let owner = tail_owner(body);
+        assert!(!predicate_branch_side_effect_only(Some(&owner), 2));
+    }
+
+    #[test]
+    fn mutable_borrow_or_binding_keeps_the_return_sink() {
+        assert!(!arm_is_side_effect_only("bump(&mut x);"));
+        let direct = "pub fn run(flag: bool) -> i32 {\n    let mut x = 0;\n    if flag {\n        bump(&mut x);\n    }\n    x\n}";
+        let alias = "pub fn run(flag: bool) -> i32 {\n    let mut x = 0;\n    let r = &mut x;\n    if flag {\n        bump(r);\n    }\n    x\n}";
+        for (body, line) in [(direct, 3), (alias, 4)] {
+            let owner = tail_owner(body);
+            assert!(
+                !predicate_branch_side_effect_only(Some(&owner), line),
+                "{body}"
+            );
+        }
+        let clean = "pub fn run(flag: bool) -> i32 {\n    if flag {\n        side_only(1);\n    }\n    42\n}";
+        let owner = tail_owner(clean);
+        assert!(predicate_branch_side_effect_only(Some(&owner), 2));
+    }
+
+    #[test]
+    fn side_effect_only_branch_does_not_lend_nearest_return_as_sink() {
+        let body = "pub fn open(exrescode: bool) -> i32 {\n    if !exrescode {\n        side_only(1);\n    }\n    42\n}";
+        let owner = tail_owner(body);
+        let probe = probe(ProbeFamily::Predicate, "!exrescode", 2);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert!(
+            !sinks
+                .iter()
+                .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+            "side-effect-only branch must not credit a return-value sink: {sinks:?}"
+        );
+    }
+
+    #[test]
+    fn side_effect_only_branch_with_value_assignment_keeps_return_sink() {
+        let body = "pub fn pick(flag: bool) -> i32 {\n    let r;\n    if flag { side_only(1); } else { r = 2; }\n    r + 0\n}";
+        let owner = tail_owner(body);
+        let probe = probe(ProbeFamily::Predicate, "flag", 3);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert!(
+            sinks
+                .iter()
+                .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+            "mixed arms must keep a value sink: {sinks:?}"
+        );
+    }
+
+    #[test]
     fn identical_inline_arms_do_not_lend_the_next_line_as_a_branch_value() {
         for tail in ["r + 0", "r * 2", "r.max(0)"] {
             let body = format!(
@@ -2770,6 +3334,125 @@ mod tests {
         assert_eq!(value_sinks[0].text, "total + 1");
     }
 
+    /// #14420: a head-only arm probe (`Size::Medium =>`, the parser's arm
+    /// shape) names the arm's same-line result as its sink, so the value a
+    /// test must pin reaches the gap row. Near misses keep the head.
+    #[test]
+    fn head_only_arm_sink_reads_the_same_line_result() {
+        let owner = function(
+            "pub fn price(size: Size) -> u32 {\n    match size {\n        Size::Small => 300,\n        Size::Medium => 450, // new tier\n        Size::Large => { 500 }\n        Size::Huge =>\n            900,\n        Size::Odd => compute(\"=>\", 1),\n        Size::Bad => Err(PriceError::Bad),\n    }\n}\n",
+        );
+        let sink_text = |expression: &str, line: usize| {
+            let sinks = local_flow_sinks(
+                &probe(ProbeFamily::MatchArm, expression, line),
+                Some(&owner),
+            );
+            assert_eq!(sinks[0].kind, FlowSinkKind::MatchArm, "{expression}");
+            sinks[0].text.clone()
+        };
+        assert_eq!(sink_text("Size::Small =>", 3), "300");
+        // A trailing line comment is not part of the result.
+        assert_eq!(sink_text("Size::Medium =>", 4), "450");
+        // A block body, a body on the next line and a head that is not this
+        // line's head keep the head too; a `=>` inside a string is not an arm.
+        assert_eq!(sink_text("Size::Large =>", 5), "Size::Large =>");
+        assert_eq!(sink_text("Size::Huge =>", 6), "Size::Huge =>");
+        assert_eq!(sink_text("Size::Odd =>", 8), "compute(\"=>\", 1)");
+        assert_eq!(sink_text("Size::Other =>", 3), "Size::Other =>");
+        // The kind still follows the probe text: a head-only `Err` arm stays a
+        // match-arm sink naming its head, as before.
+        assert_eq!(sink_text("Size::Bad =>", 9), "Size::Bad =>");
+        // A probe that already carries its body is unchanged.
+        assert_eq!(sink_text("Size::Small => 301,", 3), "301");
+        // Two arms on one line are not one arm's result.
+        let mut packed = function(
+            "pub fn price(size: Size) -> u32 {\n    match size { Size::Small => 1, Size::Large => 2 }\n}\n",
+        );
+        assert_eq!(
+            local_flow_sinks(
+                &probe(ProbeFamily::MatchArm, "Size::Small =>", 2),
+                Some(&packed)
+            )[0]
+            .text,
+            "Size::Small =>"
+        );
+        // An owner that starts deep in its file reads the probe's own line;
+        // a `//` inside a string is kept, and multibyte text slices cleanly.
+        packed = function(
+            "pub fn label(size: Size) -> &'static str {\n    match size {\n        Size::Small => \"http://s/é\", // ü\n        Size::Large => \"ü\",\n    }\n}\n",
+        );
+        packed.start_line = 40;
+        assert_eq!(
+            local_flow_sinks(
+                &probe(ProbeFamily::MatchArm, "Size::Small =>", 42),
+                Some(&packed)
+            )[0]
+            .text,
+            "\"http://s/é\""
+        );
+        assert_eq!(
+            local_flow_sinks(
+                &probe(ProbeFamily::MatchArm, "Size::Large =>", 43),
+                Some(&packed)
+            )[0]
+            .text,
+            "\"ü\""
+        );
+        assert_eq!(
+            local_flow_sinks(
+                &probe(ProbeFamily::MatchArm, "Size::Large =>", 3),
+                Some(&packed)
+            )[0]
+            .text,
+            "Size::Large =>"
+        );
+        // A result continued on the next line keeps the head: its first line
+        // alone (`base`, `a ||`, `"x"`) would name a wrong value. A last arm
+        // without a comma reads when the match closes on the next line, and
+        // a comment after a raw string holding a quote is cut.
+        packed = function(
+            "pub fn price(size: Size, base: u32) -> u32 {\n    match size {\n        Size::Small => base\n            + 1,\n        Size::Medium => a ||\n            b,\n        Size::Large => \"x\"\n            .len(),\n        Size::Raw => r#\"a\"b\"#.len(), // c\n        Size::Huge => 900\n        // last arm\n    }\n}\n",
+        );
+        let read = |head: &str, line: usize| {
+            local_flow_sinks(&probe(ProbeFamily::MatchArm, head, line), Some(&packed))[0]
+                .text
+                .clone()
+        };
+        assert_eq!(read("Size::Small =>", 3), "Size::Small =>");
+        assert_eq!(read("Size::Medium =>", 5), "Size::Medium =>");
+        assert_eq!(read("Size::Large =>", 7), "Size::Large =>");
+        assert_eq!(read("Size::Raw =>", 9), "r#\"a\"b\"#.len()");
+        assert_eq!(read("Size::Huge =>", 10), "900");
+        // A `=>` inside a string or comment pattern is not the arm arrow: the
+        // probe is head-only and the line's real result is read.
+        let literal = function(
+            "pub fn label(s: &str) -> u32 {\n    match s {\n        \"a=>b\" => 450,\n        _ => 0,\n    }\n}\n",
+        );
+        let read_literal = |head: &str| {
+            local_flow_sinks(&probe(ProbeFamily::MatchArm, head, 3), Some(&literal))[0]
+                .text
+                .clone()
+        };
+        assert_eq!(read_literal("\"a=>b\" =>"), "450");
+        assert_eq!(read_literal("\"a=>b\" => 451,"), "451");
+        // A turbofish `Err::<..>(..)` result is an error construction too, so
+        // the head is kept as for `Err(..)`.
+        let turbofish = function(
+            "pub fn state(s: State) -> Result<u32, E> {\n    match s {\n        State::Bad => Err::<u32, E>(E::Bad),\n        _ => Ok(0),\n    }\n}\n",
+        );
+        assert_eq!(
+            local_flow_sinks(
+                &probe(ProbeFamily::MatchArm, "State::Bad =>", 3),
+                Some(&turbofish)
+            )[0]
+            .text,
+            "State::Bad =>"
+        );
+        // Without an owner there is no source to read.
+        let sinks = local_flow_sinks(&probe(ProbeFamily::MatchArm, "Size::Small =>", 3), None);
+        assert_eq!(sinks[0].text, "Size::Small =>");
+    }
+
     #[test]
     fn return_value_flow_distinguishes_unknown_and_obvious_expression() {
         let unknown_probe = probe(ProbeFamily::ReturnValue, "opaque_value", 2);
@@ -2794,14 +3477,14 @@ mod tests {
             end_line: 5,
             body: "pub fn score(amount: i32) -> Response {\n    if amount > 10 {\n        status: amount,\n    }\n}"
                 .into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -2830,14 +3513,14 @@ mod tests {
             end_line: 6,
             body: "pub fn quote(amount: i32, threshold: i32) -> Quote {\n    let eligible = amount >= threshold;\n    Quote {\n        code: 200,\n        eligible,\n    }\n}"
                 .into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -2861,14 +3544,14 @@ mod tests {
             end_line: 6,
             body: "pub fn quote(amount: i32, threshold: i32) -> Quote {\n    let eligible = amount >= threshold;\n    Quote {\n        code: 200,\n        remaining: threshold,\n    }\n}"
                 .into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -2889,20 +3572,90 @@ mod tests {
             start_line: 1,
             end_line: body.lines().count(),
             body: body.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![ReturnFact {
                 line: 3,
                 text: "amount - 1".to_string(),
             }],
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
+    }
+
+    /// #6694: `if c { a } else { b }` as a helper's whole body over two
+    /// distinct parameters sinks the condition at the first branch value;
+    /// every other shape keeps no sink.
+    #[test]
+    fn parameter_returning_tail_if_sinks_the_condition_only_when_whole_and_distinct() {
+        let sinks = |body: &str| {
+            let owner = function(body);
+            local_flow_sinks(
+                &probe(ProbeFamily::Predicate, "cap < value", 2),
+                Some(&owner),
+            )
+        };
+        let capped = |branches: &str, prefix: &str| {
+            format!(
+                "fn capped<T: PartialOrd + Copy>(value: T, cap: T) -> T {{\n{prefix}    if cap < value {{\n{branches}}}\n}}"
+            )
+        };
+        let found = sinks(&capped(
+            "        cap\n    } else {\n        value\n    ",
+            "",
+        ));
+        assert!(
+            found
+                .iter()
+                .any(|sink| sink.kind == FlowSinkKind::ReturnValue
+                    && sink.text == "cap"
+                    && sink.line == 3),
+            "{found:?}"
+        );
+        for (label, body) in [
+            (
+                "a statement before the if",
+                capped(
+                    "        cap\n    } else {\n        value\n    ",
+                    "    let value = value;\n",
+                ),
+            ),
+            (
+                "the same parameter in both branches",
+                capped("        value\n    } else {\n        value\n    ", ""),
+            ),
+            (
+                "a branch that is no parameter",
+                capped("        cap\n    } else {\n        other\n    ", ""),
+            ),
+            (
+                "a statement after the branches",
+                capped("        cap\n    } else {\n        value\n    ", "")
+                    .replace("    }\n}", "    }\n    ;\n}"),
+            ),
+        ] {
+            let found = sinks(&body);
+            assert!(
+                found
+                    .iter()
+                    .all(|sink| sink.text != "cap" && sink.text != "value"),
+                "{label}: {found:?}"
+            );
+        }
+        // A unit-returning function has no value to decide.
+        let unit = sinks(
+            "fn capped(value: u32, cap: u32) {\n    if cap < value {\n        cap\n    } else {\n        value\n    }\n}",
+        );
+        assert!(
+            unit.iter()
+                .all(|sink| sink.text != "cap" && sink.text != "value"),
+            "{unit:?}"
+        );
     }
 
     // ── #6695: `.ok_or(Variant)?` propagates that error from the owner ──
@@ -3383,14 +4136,14 @@ mod tests {
             body:
                 "pub fn collect(x: i32) {\n    let mut items = Vec::new();\n    items.push(x);\n}"
                     .into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };

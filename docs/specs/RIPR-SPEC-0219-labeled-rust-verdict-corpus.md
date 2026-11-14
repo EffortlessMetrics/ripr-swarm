@@ -127,7 +127,19 @@ Expected verdicts follow one table the validator enforces:
 The observed verdict reads only candidate-current findings on the anchor:
 `exposed` is credited; a named `static_limit_kind` or a `no_static_path`,
 `infection_unknown`, `propagation_unknown`, or `static_unknown` class is
-limited; any other class is a gap; no anchored finding is silent. When the
+limited, except that a `no_static_path` finding with no named limit whose reach
+summary ends `(unreferenced in workspace)` is a gap: the workspace names the
+owner nowhere (no caller, alias, doctest, macro block or language-dispatch
+clause), so no test can run it. The classifier withholds the marker when the index does not span the
+workspace, and from
+`main`, build scripts, `bin` targets, lexical-fallback files, foreign-ABI
+(`extern`) signatures, owners whose name appears as a whole word anywhere else
+in the workspace (including qualified calls such as `Self::f`), and owners or
+`impl` blocks carrying any attribute other than `inline`, `must_use`, `doc`,
+lint levels, `deprecated`, `cold`, `track_caller` or `rustfmt` (so
+`no_mangle`, `export_name`, `wasm_bindgen`, `ctor` and `proc_macro*` owners stay
+limited). Any other class is a gap; no anchored
+finding is silent. When the
 anchor is a changed single-line `let`, RIPR-SPEC-0157 moves ripr's probe to
 the predicate that uses the binding, so the projection also reads
 candidate-current findings in the anchor file whose evidence carries
@@ -173,7 +185,10 @@ a reaching row ranked below the window goes uncounted.
   run-owned workspace under `target/ripr/verdict-corpus/<language>/`, applies the case
   diff with a strict patch reader that refuses drifted context, runs
   `ripr check --json` on the cases in parallel, and writes `report.json` and
-  `report.md`. It refuses an `--out` inside the expected directory.
+  `report.md`. Parent workers parallelize cases; each analyzer child uses one
+  worker per Rayon pool and its own cache through a child-only environment overlay.
+  This does not change the parent pool or interactive CLI defaults.
+  It refuses an `--out` inside the expected directory.
 - `check [--cases <id,...>] [--out <dir>]` does the same and fails, naming
   each case, when a row differs from
   `fixtures/rust-verdict-corpus/expected/rows/<case_id>.json`. A
@@ -261,6 +276,16 @@ cases), false-exposed and false-silent (over the rest), ideal, abstention,
 and contradiction rates as exact fractions, the verdict rates again per
 subject origin, and one row per case with its origin and a
 `changed_since_labeling` flag.
+
+Every consumer deriving a report from committed rows first checks each row's
+subject, truth, origin, anchor, ideal verdict, packet provenance and scored
+outcome against its case and subject definitions. Missing or extra rows and
+missing subjects fail; inconsistent rows are rejected, never silently corrected
+or excluded from denominators. Public-proof receipts and scoreboard populations
+use this same corpus-owned check. It establishes record consistency, not fresh
+analyzer execution, retained-byte validation or independent re-adjudication of
+jointly changed definitions and observations. The scoreboard retains its
+additional source-byte, oracle and comparison-identity validation.
 
 The contradiction rate counts candidate-current findings across each case's
 whole `ripr check` run, not only the anchor line, because a
@@ -701,6 +726,7 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `split_moves_the_one_file_layout_into_records_without_loss`
 - `drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows`
 - `summary_derived_from_blessed_rows_equals_the_run_summary`
+- `expected_report_rejects_rows_that_change_scoring_definition`
 - `validator_rejects_a_case_that_borrows_another_cases_diff`
 - `check_all_finds_every_language_corpus_and_refuses_one_without_a_header`
 - `contradiction_counts_use_one_per_finding_unit`
@@ -716,7 +742,9 @@ The derived rates' consumers are tested beside them:
 `spec_example_coverage_resolves_from_the_committed_fixtures` in
 `xtask/src/reports/dx_scoreboard/tests.rs` and
 `verdict_receipt_derives_the_summary_from_rows_in_file_name_order` in
-`xtask/src/public_proof.rs`.
+`xtask/src/public_proof.rs`. The same consumer's
+`verdict_receipt_rejects_a_row_that_hides_a_false_verdict` rejects a false
+outcome relabeled as ideal while its independently loaded case stays unchanged.
 
 Relabel tests live in `xtask/src/reports/verdict_corpus_relabel_tests.rs`:
 

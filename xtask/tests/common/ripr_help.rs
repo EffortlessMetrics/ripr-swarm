@@ -222,9 +222,16 @@ pub fn extracted_package(root: &Path) -> Result<PathBuf, String> {
         .get_or_init(|| {
             let scratch = Scratch::new("help-package")?;
             let mut command = cargo();
+            // ADR 0027: `ripr` depends on the lockstep support crate
+            // `ripr-contract`, which is not on crates.io yet, so packaging
+            // `ripr` alone cannot resolve it offline. Package both crates
+            // (Cargo resolves the interdependent pair from the workspace)
+            // and keep the `ripr` archive.
             command
                 .args([
                     "package",
+                    "-p",
+                    "ripr-contract",
                     "-p",
                     "ripr",
                     "--locked",
@@ -241,10 +248,15 @@ pub fn extracted_package(root: &Path) -> Result<PathBuf, String> {
                 .map_err(|error| error.to_string())?
                 .into_iter()
                 .map(|entry| entry.path())
-                .filter(|path| path.extension().is_some_and(|ext| ext == "crate"))
+                .filter(|path| {
+                    path.file_name().is_some_and(|name| {
+                        let name = name.to_string_lossy();
+                        name.starts_with("ripr-") && !name.starts_with("ripr-contract-")
+                    })
+                })
                 .collect::<Vec<_>>();
             if archives.len() != 1 {
-                return Err(format!("expected one actual .crate, got {archives:?}"));
+                return Err(format!("expected one actual ripr .crate, got {archives:?}"));
             }
             std::fs::read(archives.remove(0)).map_err(|error| error.to_string())
         })

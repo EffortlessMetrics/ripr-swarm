@@ -1,0 +1,16 @@
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/config/preview_excluded.rs::tests::syntax_highlighted_fixture_path_is_probable_fixture",
+  "crates/ripr/src/config/preview_excluded.rs::tests::excluded_pattern_matches_repository_relative_globs",
+  "crates/ripr/src/analysis/language/python/python_tests.rs::excluded_file_patterns_prune_fixture_paths_from_workspace_walk",
+]
+code = [
+  "crates/ripr/src/config/preview_excluded.rs",
+  "crates/ripr/src/config/model.rs",
+  "crates/ripr/src/config.rs",
+  "crates/ripr/src/analysis/language/python.rs",
+  "crates/ripr/src/analysis/language/python/workspace.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
+  "crates/ripr/src/analysis_outcome.rs",
+]

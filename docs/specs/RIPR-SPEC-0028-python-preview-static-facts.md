@@ -291,11 +291,63 @@ mock expectations, and custom `assert_*` helpers.
   elements are not evaluated by this bounded path. An unproved list-equality
   change retains the finding and limitation without inventing a missing exact
   assertion, typed repair placement or repair card.
-- `self.assertTrue(...)` / `assertFalse(...)` â†’ smoke oracle
+- `self.assertTrue(...)` / `assertFalse(...)` → smoke oracle, except the bounded bool-owner exception below
+  Bool-owner exception (#13620): `assert f(lit, ..) is True` / `is False`
+  (either operand order), `self.assertTrue(f(lit, ..))`,
+  `self.assertFalse(f(lit, ..))` and `self.assertIs(f(lit, ..), True|False)`
+  are re-read as `f(lit, ..) == True|False` exact pins only when `f` is a
+  unique function owner that provably returns a `bool` (annotated `-> bool`,
+  or a single `return <comparison>`), every argument is a literal, the test
+  file does not patch or rebind `f`, and, for the unittest forms, the file
+  defines none of `assertTrue`/`assertFalse`/`assertIs`/`assertEqual` and every
+  class base is `unittest.TestCase` or `TestCase` imported from `unittest`.
+  `is not`, `is None`, `isinstance`, `assertIsNot`, `assertIsNotNone`, bare
+  truthiness on a non-bool owner and non-literal arguments stay uncredited.
+  `assertIs(x, True|False)` is recorded as a weak assertion otherwise.
 - `mock.assert_called*` family (`assert_called_once_with`,
   `assert_called_with`, `assert_called`, `assert_not_called`) â†’
   side-effect/call oracle
 - `unittest.mock` patches recognised syntactically as call-context only
+
+A class-only `pytest.raises(NewError)` can supply finding-specific
+`exact_error_variant` / strong evidence for a sole-line change from
+`raise OldError(...)` to `raise NewError(...)` (#12952). Both classes must be
+inert, distinct direct subclasses of the unshadowed builtin `Exception` in
+the owner's module. The test must import the new class and owner directly
+without aliases, using the same module spelling for both names, and its own
+context must call the owner with literal inputs
+that provably reach the exact changed raise. A complete current workspace
+scan must also establish that no source module, package initializer or
+compiled module at the bounded import roots shadows `pytest`; canonical
+import spelling alone supplies no framework identity. This admission fact is
+recomputed on each check, including when source facts come from the cache.
+The bounded reading and its refusals are specified in RIPR-SPEC-0238 rule 6.
+It preserves that assertion's context in sink alignment, including when
+another strong assertion exists in the test; it does not change the global
+grade of class-only exception tests.
+
+The bounded readings receive a separate, default-false module-import fact
+from the current workspace. It checks the raw foreign-module view before the
+legacy configured-path refusal is applied, then checks every admitted dotted
+spelling physically at every known root. Source modules, source prefixes,
+package initializers, compiled code, unreadable paths and parent symlinks can
+all withhold that fact, including files omitted from source discovery. Each
+path component must be one ASCII module identifier; a standard-library
+module spelling cannot identify a workspace replacement. Package initializers
+must be scanned, regular files containing only comments, docstrings or
+`pass`; namespace package parents are outside this reading, apart from the
+top-level `src` layout directory. The fact is kept only for the current run.
+
+The existing import-configuration refusal remains unchanged for legacy
+module-value passes. These bounded readings can additionally admit exactly
+the root `pyproject.toml`'s `[tool.pytest.ini_options] pythonpath = ["src"]`
+when that physical, non-symlink root is already scanned and contains the
+changed module. No other pytest/tox configuration file, path setting,
+`addopts`, path alias, extra entry or unread root is admitted by this
+exception. The configuration read is bounded to 64 KiB and initializer
+directory checks to 4096 entries. Unchecked bytecode remains a refusal.
+This admits the canonical `src/fx/core.py` benchmark without accepting a
+flat `fx/core.py` owner merely because an unrelated `src` directory exists.
 
 Related-test heuristics mirror the Rust and TypeScript adapters: changed
 owner name match, import-reference match, file-path proximity, and
@@ -308,8 +360,38 @@ with the owner's dotted module path by exact equality. An owner below a
 directory named `src` (the PyPA src layout, including monorepo
 `packages/<pkg>/src/`) also matches the dotted path below that `src` import
 root, so `from pricing.discounts import f` identifies `src/pricing/discounts.py`
-while the repository-relative `src.pricing.discounts` form still matches. Bare
-file stems and arbitrary path suffixes never count as module identity.
+while the repository-relative `src.pricing.discounts` form still matches. An
+owner inside a nested project (the nearest non-root ancestor holding
+`pyproject.toml`, `setup.py`, `setup.cfg`, `pytest.ini` or `tox.ini`) also
+matches its project-relative dotted path, so `from core import f` in
+`svc/b/tests` identifies `svc/b/core.py` (#13675). That name identifies the
+owner only for a test under the same project root; the repository-root `lib/`
+import root is not applied inside a project, and a name another file of the
+same project also yields (`pkg.py` beside `pkg/__init__.py`) identifies
+neither. Repository scans record the same project-relative names and test-local module shadows as diff checks (they do not run the src-layout ambiguity or rival-definition passes, so a rival root's module is withheld there by the project-root gate alone), except that a capped or discovery-incomplete scan records no project-relative names, and a
+package `__init__.py` of the owner's own project that re-exports the owner is
+also known by its project-relative name (`from pkg import f` for
+`svc/b/pkg/__init__.py`), under the same project-root gate (#13737). Bare file stems and arbitrary path suffixes never count as module
+identity.
+A src-layout short name that a plain module of the same project also produces
+(a repository-root `core.py`, or `<project>/core.py` beside `<project>/src/`)
+identifies neither module from any test (#13745).
+A workspace module of the same top-level name (not necessarily test-named) in a
+directory pytest's prepend import mode puts ahead on `sys.path` for that test
+means a bare import of that name is not the owner's for that test (#13706). The
+directory set is the basedir of the test's directory (the first ancestor,
+inclusive, without an `__init__.py`), the same basedir for each `conftest.py`
+at or above the test, and the repository root; package directories themselves
+are not on `sys.path` and are not included.
+Known limits of this pass: directories a pytest `pythonpath` setting
+(`pytest.ini`, `[tool.pytest.ini_options]`, `tox.ini`, `setup.cfg`) puts ahead on
+`sys.path` are not read, so a shadowing module reachable only through one is not
+detected; the model is one pytest invocation per project, so cross-project
+`sys.path` and `sys.modules` effects of a repository-wide run are not modeled,
+nor is a subproject directory used as the working directory; and the
+module-attribute credit sites (`boundary.rs`, `transitive_reach.rs`) match
+`owner_module_paths` directly and are not gated by the shadow, the same as the
+pre-existing rival-module case (#4566).
 A test that imports a free-function owner's name from a workspace module that
 defines its own function of that name, when no import reaches the owner's module,
 is not related to the owner even if its call text matches the name (#8759). The
@@ -344,6 +426,10 @@ definition, an assignment, `del`, a loop or `with` target, or any binding
 inside a conditional block), the re-export is not followed, because the
 reader does not order bindings. An unreadable or unparsable initializer
 re-exports nothing.
+A re-exported package name is shadowed like an src-layout short name: when a plain
+module of the same project (beside `src/` or at the repo root) resolves under the
+package's name, `from core import price` cannot be told apart from it, so the
+re-export identifies no owner and credits no test.
 Methods and module owners are never re-exported. The test must still call the owner's own name through
 the package, so a test that only calls a sibling name from the same package
 stays unrelated, and a test that binds a local named like the package alias
@@ -505,7 +591,20 @@ comments, strings, and docstrings:
   `module.Class(...)`) relates `__init__`, `__new__`, and `__post_init__` as
   `constructor_call`, an oracle-eligible relation; for any other dunder it
   relates as `dunder_protocol`, which stays uncertain because syntax cannot
-  bind `obj[key] = value` or `a == b` to the constructed instance. The one
+  bind `obj[key] = value` or `a == b` to the constructed instance. A
+  non-dunder helper that only a same-class dunder reaches through `self.` /
+  `cls.` (at most five hops, keyed by file and class so name-mangled helpers
+  never cross classes) reads `static_unknown` (`dynamic_dispatch`) only when a
+  test both references the helper's class through an import of its module and
+  uses the protocol syntax of one of the reaching dunders somewhere in its body
+  (subscript, `in`, `len(`, `iter(`, `for ... in`, `next(`, `with`, `==` /
+  `!=`, `hash(`, `str(`). The syntax is not tied to an instance of the class
+  (accepted: the limit only withdraws a confident claim). Constructor and
+  finalizer dunders (`__init__`, `__new__`, `__post_init__`,
+  `__init_subclass__`, `__del__`) never start the reach; a test that only
+  constructs the class, or a dunder without a syntactic protocol, keeps
+  `no_static_path`, and the reach never earns an oracle or `exposed`
+  (RIPR-SPEC-0201, #13776). The one
   exception is a builtin protocol entry applied to a sole argument bound to the
   owner class (`reversed(Class(0))` for `__reversed__`, likewise `len`, `bool`,
   `iter`, `next`, `hash`, `str`, `repr`): it relates as `protocol_entry_call`,
@@ -515,7 +614,7 @@ comments, strings, and docstrings:
   bindings: a builtin shadowed by an import, a module or test-local binding
   (including tuple and annotated targets), or a receiver rebound by a chained,
   bracketed (spaced or nested too: `( r), x = ...`, `((r), x) = ...`,
-  `for ((r), x) in ...`; #9178; non-adjacent single-line targets
+  `for ((r), x) in ...`; #9178; non-adjacent targets
   `(x, (r)) = ...`, `[a, [r]] = ...`, outer/chained targets and inline
   loop/with header targets too; #9531), loop, `with`, walrus or augmented target
   (`(r) += ...` and `(r): list = ...` included), or not the whole bound value,
@@ -531,22 +630,22 @@ comments, strings, and docstrings:
   `assert "for" and ((r)) in [r]` stays a credited read. Loop-keyword masking
   retains earlier lines for multiline literals while searching only the current
   line; an unterminated literal supplies no parsed test or protocol-entry credit.
-  Known limits, none of
-  them closed by this: a non-adjacent assignment inside an inline compound
-  body (`if c: (x, (r)) = ...`) is outside the complete-target fallback;
-  a multi-line tuple target whose earlier elements sit on
-  other lines (`(x,\n r) = ...`) is not seen, so the receiver stays credited
-  (the credit-keeping direction); and a dict key at the start of a continuation
-  line (`{\n (r): 1\n}`) reads as an annotated target and withholds credit
-  (a miss). A `:` ends a target
-  position only when it closes a compound-statement header whose brackets
-  balance outside string literals (single, double and tripled quotes, escaped
-  quotes) and comments (`if ")": ( r), x = ...` and
-  `if x == '''it's''': ( r), x = ...` rebind, a dict value `{"k": (r), 1}` does
-  not). A header whose brackets do not balance, or that is split across
-  lines, is not read as a header, so a one-line-suite rebind after it is not
-  seen and the receiver stays credited (the credit-keeping direction, a known
-  limit). Extra, keyword, starred or trailing-comma
+  The shared budgeted parser and scope-binding collector also read complete
+  multiline tuple/list targets, split compound headers and assignments in their
+  inline suites, multiline loop/with targets, and multiline case captures
+  (#9992). The constructor assignment counts once; another target binding the
+  same local withholds credit. Tuple RHS values, call arguments, subscript
+  indices and dotted/class pattern reads do not bind the local. The parsed collector
+  does not enter nested function or class suites for outer-scope case captures.
+  Existing textual guards retain their conservative boundaries: a dict key at
+  the start of a continuation line (`{\n (r): 1\n}`) can read as an annotated
+  target and withhold credit (a miss), and a same-line case guard read can
+  withhold credit too. A `:` ends a textual target position only when it closes
+  a compound-statement header whose brackets balance outside string literals
+  (single, double and tripled quotes, escaped quotes) and comments. Malformed
+  or unsupported source cannot obtain parsed test credit; the fallback does
+  not invent a suite to repair an incomplete header. Extra, keyword, starred
+  or trailing-comma
   arguments are not the entry and fall back to `dunder_protocol`. A dunder
   owner with no related test, in a workspace whose tests import its class,
   its module, or anything from a package above it, reads `static_unknown`
@@ -567,8 +666,9 @@ comments, strings, and docstrings:
   module.
 
 A module-level `NAME = <literal>` edit (#9423) relates as `module_value_call`,
-an oracle-eligible relation, only to a test whose straight-line `assert`
-provably holds under the old literal and fails under the new one. The module
+an oracle-eligible relation, when a test's straight-line `assert` provably
+holds under the old literal and fails under the new one. The bounded string
+reader extension below also recognizes the reverse distinction (#12950). The module
 binds `NAME` once (no `global`, walrus, attribute write, star import or dynamic
 namespace writer), the edit is the file's only changed line, no test file
 writes the attribute, and the test keeps its imported names. Reader functions
@@ -585,7 +685,98 @@ source read, not a complete import or reflective-execution graph. The assertion
 reads `NAME` itself or calls a module function with literal arguments whose
 body is one `return` expression over its parameters, literals and `NAME`; a
 name, call, operator or value kind outside that bounded evaluator decides
-nothing and the edit keeps the `missing_import_graph` abstention. A body-only edit of
+nothing and the edit keeps the `missing_import_graph` abstention. A module
+reader may use an f-string whose literal segments and interpolated
+expressions all evaluate to strings under the same bounded evaluator (#12950).
+Interpolation has no conversion (`!s`, `!r`, `!a`) or format specification,
+including an empty specification, and the resulting UTF-8 string is at most
+65,536 bytes on each evaluated side. Non-string values and custom formatting
+remain unresolved. F-string text that merely spells the constant name is not
+a read. All existing binding, import, writer and activation guards remain
+required.
+
+A string-to-string module constant edit additionally requires a positive,
+per-changed-file module-import identity fact from the workspace producer. The
+fact defaults to false; an import spelling alone cannot establish it. It
+requires a complete source view, intact regular package paths, and no competing
+source module, source package, compiled shadow, unchecked bytecode or unresolved
+configured import root. The canonical root `pyproject.toml` setting
+`pythonpath = ["src"]` is admitted only when the physical, scanned `src` layout
+and every accepted owner-module spelling satisfy that custody proof. The
+existing global import uncertainty flags remain unchanged. This requirement
+precedes every string-value route, including direct and forwarded old-value
+pins and the older `flips` fallback. Opaque foreign reflection, import hooks,
+non-byte-exact bindings and dunder writes also withhold string evidence; a
+positive physical import fact does not override those binding facts.
+A competing `tests/fx/core.py` or
+`tests/fx/core/__init__.py` returning the asserted value cannot lend reach,
+discrimination or repair guidance to an edit of `src/fx/core.py`. Without the
+positive fact, the string edit retains unknown reach and no repair card, even
+if an exact current pin was added to the test.
+String reader spellings are restricted to the checked owner-module paths and
+their aliases or module receivers. A package re-export or sibling forwarder
+has an additional import identity that the changed file's fact does not prove,
+so those string routes remain unresolved. In particular, a shadow of
+`wrapper` cannot borrow `fx.core` custody through `from wrapper import greet`
+or `import wrapper; wrapper.greet(...)`.
+
+For an admitted string-to-string module constant edit, a direct call to such a reader
+compared with an independent string literal can establish either truth
+direction: an exact equality pin of `greet('bob') == 'hello, bob'` distinguishes
+`GREETING = 'hello'` from `GREETING = 'hi'`, and the current pin
+`greet('bob') == 'hi, bob'` distinguishes the same edit. Both returned values
+must resolve to strings within the 65,536-byte bound; the comparison must have
+one operator and two operands, with the call on either side of `==` or on the
+right side of `in`/`not in`. A membership assertion that changes truth is a
+strong discriminator while retaining its `relational_check` oracle kind.
+Outer boolean expressions, conditional wrappers, comparison chains and an
+unevaluated call spelling supply no new string-reader credit. The original
+source assertion and every preceding assertion are read in full: a normalized
+strong `and` conjunct cannot erase a false prefix or invent an executed call.
+Every preceding assertion must resolve true on both sides. Only a fully
+evaluated exact current pin, false before and true after, may be in a test
+edited by the same diff; edited weak assertions, edited membership discriminators and edited
+old-side pins stay ineligible. Lambda, dataclass and non-string direct-read
+and forwarder paths retain their existing old-true/new-false convention.
+An admitted direct string-constant read also retains that direction; the
+reverse distinction is specific to the bounded direct reader comparison.
+
+An unchanged test with exactly one direct string membership assertion may
+instead establish weak observation: the call resolves through the same
+binding, import, writer and activation guards, the assertion evaluates true on
+both sides, and the returned strings differ. For example, `assert 'bob' in greet('bob')`
+accepts both `'hello, bob'` and `'hi, bob'`. Its separate
+`module_value_reader_call` relation establishes reach, a reader `return_value`
+flow sink and weak observation/discrimination; it is never a strong
+`module_value_call` credit. The finding is `weakly_exposed` and names the
+selected call with an exact current-value discriminator, such as
+`greet('bob') == "hi, bob"`. The suggested Python string literal preserves
+control-character escapes. The selected test, node id, source line when names
+collide and verify command stay attached to that same reader witness.
+The existing canonical module-constant gap identity is retained when the pin
+is added; return-value repair guidance follows the supplied sink without
+changing that identity. The existing Python gap-bound repair start is
+available only when the resulting record passes the shared agent-packet
+validator; missing verification data still refuses the route. Adding the
+current exact assertion, including after the original membership assertion
+in an edited test, exposes that same gap and removes its repair card. Both
+weak observations and fully evaluated string pins retain the concrete reader
+return sink with propagation `yes`; strengthening the oracle does not erase
+that established return path. Generic scalar and other module-value credits
+do not gain this string-reader propagation witness.
+The real producer regression uses the canonical `src/fx/core.py` layout and
+its configured import root. Adding a competing test-root module or package
+withdraws both the weak route and exact-pin credit; removing only that shadow
+restores the existing validator-complete route.
+
+Both-false assertions, equal reader returns, discarded or unresolved calls,
+and guarded or rebound consumers supply no actionable weak witness. A
+recognized string replacement in this sole-line path with no bounded
+discriminating or weak reader evidence stays `static_unknown` with
+`missing_import_graph` and unknown reach; it does not claim that there is no
+consumer path and offers no repair card.
+
+A body-only edit of
 a top-level `NAME = lambda a, b: <body>` binding (#9619) credits the same way:
 the parameters are unchanged positional ones without defaults, `*args` or
 keywords, `NAME` is bound once in the old and new module, no file writes or
@@ -594,8 +785,9 @@ the same evaluator; a test that calls `NAME` with literal arguments in a
 straight-line `assert` that holds with the old body and fails with the new one
 is the oracle, and only then is the lambda-syntax limit lifted. A changed
 parameter list, a default, a body outside the evaluator, a second binding or a
-test that shadows, patches or may skip the call keeps `unsupported_syntax`. A value no
-assertion distinguishes is never graded as a gap. A default edit of a field in
+test that shadows, patches or may skip the call keeps `unsupported_syntax`.
+Without the bounded weak string-reader observation above, a value no assertion
+distinguishes is not graded as a gap. A default edit of a field in
 a plain `@dataclass` class (#9619) relates the same way: the class is a
 top-level `@dataclass` or `@dataclasses.dataclass` with no arguments, bases or
 keywords, imported from `dataclasses` and bound once; its body holds only
@@ -1182,7 +1374,11 @@ read-out: the boolean the classifier uses is derived from the surfaced
   asserts a local the same test bound once to such a call as its whole value
   (`result = utils.sign(0)`, not `result = utils.sign(0) or 1`; #4567). The
   call or local must be an asserted operand: nested in another call
-  (`always_true(utils.sign(0))`) it is not the compared value. A later import
+  (`always_true(utils.sign(0))`) it is not the compared value. An exception
+  assertion compares no operand, so for it the call is read in the code the
+  assertion runs: its `with` body or its rule 13 callable
+  (`with pytest.raises(ValueError, match="blank"): utils.sign(0)`; #14090),
+  not when a `lambda` or nested `def`/`class` in that body defers it. A later import
   of the same name inside the test replaces the earlier binding, and the
   test's own `import pkg.mod as alias` is not a rebinding of `alias`. Those calls also bind boundary activation, so the
   relational-boundary gate still applies to them.
@@ -1242,6 +1438,11 @@ can show:
 - fixtures proving broad `pytest.raises` / `self.assertRaises` are recognised
   as weak error-path oracles while `pytest.raises(..., match=...)` /
   `self.assertRaisesRegex(...)` are recognised as exact exception observers
+- classifier regressions proving a specific sibling exception class can
+  distinguish a type-only raise edit, while a base class, wrong class,
+  alias, foreign or rebound class, unreachable changed raise and message-only
+  edit receive no finding-specific class credit; Unicode string lengths use
+  code points, and unrelated assertions cannot replace the selected context
 - a fixture proving unittest assertion argument shapes can identify field,
   output, and status-code oracles
 - a fixture proving pytest and unittest related tests produce
@@ -1458,6 +1659,39 @@ can show:
      registration.
 
 ## Test Mapping
+
+Finding-specific exception-variant credit (#12952) is covered by the eight
+`specific_exception_variant_*` tests in
+`crates/ripr/src/analysis/language/python/exception_variant_tests.rs`.
+They exercise the public classifier through real owner/test extraction,
+including exact selected-context alignment, passing literal prefixes and
+blocked paths, import and class identity, builtin shadowing, Unicode length
+boundaries, explicit module/framework admission and the sole type-only edit
+requirement.
+The full `check_workspace_with_config` path is covered by
+`crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_exception_variant_preserves_import_environment_guards`:
+flat-layout imports retain credit with cold and warm file facts, Unicode
+inputs preserve the changed-raise boundary, and configuring an unrelated
+`src` import root refuses credit until the own-directory configuration is
+restored.
+The same module's
+`check_output_python_exception_variant_rejects_framework_shadows` checks
+source module/package and compiled-shadow presence at root, test and owner
+directories. Each shadow removes the credit without changing the canonical
+gap, and removing it restores credit through the real workspace pipeline.
+`check_output_python_exception_variant_admits_scanned_src_imports` covers
+the canonical src layout with cold and warm facts, configuration refusals,
+framework shadows under `src`, active initializers and mixed class/function
+module spellings. `check_output_python_import_identity_checks_excluded_module_sources`
+checks direct `core` and full `src.core` imports against excluded source
+shadows, with gap identity and removal/restoration controls.
+`check_output_python_import_identity_rejects_non_module_paths` refuses
+dotted file/directory components and a workspace `sys` shadow.
+The fixture `python_exception_framework_shadow_no_credit` and its
+RIPR-SPEC-0108 corpus fragment independently forbid promoting a local
+`pytest.py` context that suppresses both exception classes.
+`python_exception_dotted_module_no_credit` independently forbids treating
+the physical filename `fx.core.py` as the imported package module `fx.core`.
 
 Default-prefix regression cases live in
 `crates/ripr/src/analysis/language/python/owners_tests/tests.rs`. They exercise

@@ -82,6 +82,10 @@ pub(crate) enum BindingValueResolution {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ChangedBindingPredicateUse {
     pub(crate) binding: String,
+    /// Absolute (new-file) line of the changed `let` declaration, so a
+    /// finding retargeted onto an unchanged predicate line can name the
+    /// changed binding's own line (#12118).
+    pub(crate) binding_line: usize,
     /// The changed initializer text (the `…` of `let ident = …;`).
     pub(crate) initializer: String,
     /// The exact predicate line text at the use site.
@@ -257,6 +261,7 @@ pub(crate) fn resolve_changed_binding_uses(
                     } else {
                         uses.push(ChangedBindingPredicateUse {
                             binding: binding.to_string(),
+                            binding_line: changed_line,
                             initializer: initializer.to_string(),
                             predicate_expression: raw_line.trim().to_string(),
                             predicate_line: absolute,
@@ -426,6 +431,11 @@ fn direct_predicate_operand(line: &str, binding: &str) -> Option<PredicateOperan
     let head = strip_control_keywords(base);
     for operator in COMPARISON_OPERATORS {
         let mut search = 0;
+        // Operator offsets only grow within one pass, so both operand
+        // scans keep their place instead of re-reading the line for every
+        // operator (#14096).
+        let mut left_scan = LeftOperandScan::new(head);
+        let mut right_scan = RightOperandScan::new(head);
         while let Some(offset) = head[search..].find(operator) {
             let at = search + offset;
             // A `<`/`>` that is half of a shift operator is not a
@@ -437,12 +447,13 @@ fn direct_predicate_operand(line: &str, binding: &str) -> Option<PredicateOperan
             }
             // An operator inside unclosed parentheses/brackets sits in
             // a call or index argument, not at statement level.
-            if has_unclosed_group_before(&head[..at]) {
+            left_scan.advance_to(at);
+            if left_scan.has_unclosed_group() {
                 search = at + operator.len();
                 continue;
             }
-            let left = operand_before(&head[..at]);
-            let right = operand_after(&head[at + operator.len()..]);
+            let left = left_scan.operand_before();
+            let right = right_scan.operand_after(at + operator.len());
             if operand_is_binding(left, binding) {
                 return Some(PredicateOperandSide::Left);
             }
@@ -498,57 +509,165 @@ fn strip_control_keywords(base: &str) -> &str {
         .unwrap_or(base)
 }
 
-/// Whether the text before an operator leaves a `(`/`[` unclosed at the
-/// operator itself: the operator sits inside a call or index argument.
-/// A fully closed group before the operator is fine — the operator is
-/// still at statement level.
-fn has_unclosed_group_before(text: &str) -> bool {
-    let mut depth = 0isize;
-    for character in text.chars() {
-        match character {
-            '(' | '[' => depth += 1,
-            ')' | ']' => depth -= 1,
-            _ => {}
+/// What lies left of an operator, read once per line.
+///
+/// `advance_to(at)` extends the scanned prefix to `head[..at]`; offsets only
+/// grow within one operator pass, so a line is read once however many
+/// operators it holds. Re-reading the prefix for every operator made a
+/// 500 KB one-line body take 18 seconds (#14096).
+struct LeftOperandScan<'a> {
+    head: &'a str,
+    scanned: usize,
+    /// Open `(`/`[` minus closed `)`/`]` in the scanned prefix.
+    depth: isize,
+    /// End offset of the rightmost `&&` in the scanned prefix.
+    last_and_end: usize,
+    /// End offset of the rightmost `||` in the scanned prefix.
+    last_or_end: usize,
+    /// Rightmost `(`/`[`/`{`/`,` in the scanned prefix.
+    last_boundary: Option<(usize, u8)>,
+    /// Rightmost `)`/`]` in the scanned prefix.
+    last_close: Option<usize>,
+}
+
+impl<'a> LeftOperandScan<'a> {
+    fn new(head: &'a str) -> Self {
+        Self {
+            head,
+            scanned: 0,
+            depth: 0,
+            last_and_end: 0,
+            last_or_end: 0,
+            last_boundary: None,
+            last_close: None,
         }
     }
-    depth > 0
+
+    fn advance_to(&mut self, at: usize) {
+        let bytes = self.head.as_bytes();
+        let at = at.min(bytes.len());
+        for index in self.scanned..at {
+            let byte = bytes[index];
+            match byte {
+                b'(' | b'[' => {
+                    self.depth += 1;
+                    self.last_boundary = Some((index, byte));
+                }
+                b')' | b']' => {
+                    self.depth -= 1;
+                    self.last_close = Some(index);
+                }
+                b'{' | b',' => self.last_boundary = Some((index, byte)),
+                b'&' if index > 0 && bytes[index - 1] == b'&' => self.last_and_end = index + 1,
+                b'|' if index > 0 && bytes[index - 1] == b'|' => self.last_or_end = index + 1,
+                _ => {}
+            }
+        }
+        self.scanned = self.scanned.max(at);
+    }
+
+    /// Whether the scanned prefix leaves a `(`/`[` unclosed at the operator
+    /// itself: the operator sits inside a call or index argument. A fully
+    /// closed group before the operator is fine — the operator is still at
+    /// statement level.
+    fn has_unclosed_group(&self) -> bool {
+        self.depth > 0
+    }
+
+    /// The operand text immediately left of the operator: the segment
+    /// since the nearest `&&`/`||`/`(`/`[`/`{`/`,` boundary. `None` when
+    /// that boundary was a group opener or the segment still holds a group
+    /// character — both mean the operand position is a call/index interior
+    /// or a composite.
+    fn operand_before(&self) -> Option<&'a str> {
+        // A `||` counts only when it follows the last `&&`.
+        let term_start = self.last_and_end.max(self.last_or_end);
+        let start = match self.last_boundary {
+            Some((at, _)) if at < term_start => term_start,
+            Some((_, b'(' | b'[')) => return None,
+            Some((at, _)) => at + 1,
+            None => term_start,
+        };
+        if self.last_close.is_some_and(|close| close >= start) {
+            return None;
+        }
+        self.head.get(start..self.scanned)
+    }
 }
 
-/// The operand text immediately left of an operator: the segment since
-/// the nearest `(`/`[`/`{`/`,` boundary. `None` when that boundary was
-/// a group opener or the segment still holds a group character — both
-/// mean the operand position is a call/index interior or a composite.
-fn operand_before(text: &str) -> Option<&str> {
-    let after_and = text.rsplit("&&").next().unwrap_or(text);
-    let after_or = after_and.rsplit("||").next().unwrap_or(after_and);
-    let boundary = after_or
-        .rfind(['(', '[', '{', ','])
-        .map(|at| (at, after_or.as_bytes()[at] as char));
-    let segment = match boundary {
-        Some((_, '(' | '[')) => return None,
-        Some((at, _)) => &after_or[at + 1..],
-        None => after_or,
-    };
-    if segment.contains(['(', ')', '[', ']', ',']) {
-        return None;
-    }
-    Some(segment)
+/// What lies right of an operator, read once per line: the next `&&`,
+/// `||` and group character at or after a start offset that only grows
+/// within one operator pass.
+struct RightOperandScan<'a> {
+    head: &'a str,
+    next_and: NextOccurrence,
+    next_or: NextOccurrence,
+    next_group: NextOccurrence,
 }
 
-/// The operand text immediately right of an operator: the segment up to
-/// the nearest `(`/`[`/`)`/`]`/`{`/`,` boundary. `None` when the segment
-/// holds a group character — the operand is a call/index or composite.
-fn operand_after(text: &str) -> Option<&str> {
-    let before_and = text.split("&&").next().unwrap_or(text);
-    let before_or = before_and.split("||").next().unwrap_or(before_and);
-    let cut = before_or
-        .find(['(', '[', ')', ']', '{', ','])
-        .unwrap_or(before_or.len());
-    let segment = &before_or[..cut];
-    if segment.contains(['(', ')', '[', ']', ',']) {
-        return None;
+impl<'a> RightOperandScan<'a> {
+    fn new(head: &'a str) -> Self {
+        Self {
+            head,
+            next_and: NextOccurrence::default(),
+            next_or: NextOccurrence::default(),
+            next_group: NextOccurrence::default(),
+        }
     }
-    Some(segment)
+
+    /// The operand text immediately right of an operator that ends at
+    /// `start`: the segment up to the nearest
+    /// `&&`/`||`/`(`/`[`/`)`/`]`/`{`/`,` boundary.
+    fn operand_after(&mut self, start: usize) -> Option<&'a str> {
+        let head = self.head;
+        let and = self
+            .next_and
+            .at_or_after(head, start, |rest| rest.find("&&"));
+        let or = self
+            .next_or
+            .at_or_after(head, start, |rest| rest.find("||"));
+        let group = self.next_group.at_or_after(head, start, |rest| {
+            rest.find(['(', '[', ')', ']', '{', ','])
+        });
+        let end = [and, or, group]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(head.len());
+        head.get(start..end)
+    }
+}
+
+/// The leftmost occurrence of one pattern at or after a growing start
+/// offset. A cached answer stays the answer until the start passes it, so
+/// the line is searched once across all queries.
+#[derive(Default)]
+struct NextOccurrence {
+    searched: bool,
+    found: Option<usize>,
+}
+
+impl NextOccurrence {
+    fn at_or_after(
+        &mut self,
+        head: &str,
+        start: usize,
+        find: impl Fn(&str) -> Option<usize>,
+    ) -> Option<usize> {
+        let stale = match self.found {
+            Some(found) => found < start,
+            // Nothing from an earlier start means nothing from a later one.
+            None => !self.searched,
+        };
+        if stale {
+            self.searched = true;
+            self.found = head
+                .get(start..)
+                .and_then(find)
+                .map(|offset| start + offset);
+        }
+        self.found
+    }
 }
 
 /// The `&&`/`||`-separated terms of a boolean condition.
@@ -1197,5 +1316,169 @@ mod tests {
         assert_eq!(uses[1].predicate_line, 4);
         assert_eq!(uses[1].predicate_expression, "if end != 3 { }");
         Ok(())
+    }
+
+    // ---- #14096: the per-line operand scan is linear and unchanged ----
+
+    /// The operand scan as it was before #14096: every operator re-read
+    /// the line prefix for brackets and split the line suffix on `&&`.
+    /// Kept as the oracle for the single-pass scan.
+    fn reference_operator_operand(line: &str, binding: &str) -> Option<PredicateOperandSide> {
+        fn has_unclosed_group_before(text: &str) -> bool {
+            let mut depth = 0isize;
+            for character in text.chars() {
+                match character {
+                    '(' | '[' => depth += 1,
+                    ')' | ']' => depth -= 1,
+                    _ => {}
+                }
+            }
+            depth > 0
+        }
+        fn operand_before(text: &str) -> Option<&str> {
+            let after_and = text.rsplit("&&").next().unwrap_or(text);
+            let after_or = after_and.rsplit("||").next().unwrap_or(after_and);
+            let boundary = after_or
+                .rfind(['(', '[', '{', ','])
+                .map(|at| (at, after_or.as_bytes()[at] as char));
+            let segment = match boundary {
+                Some((_, '(' | '[')) => return None,
+                Some((at, _)) => &after_or[at + 1..],
+                None => after_or,
+            };
+            if segment.contains(['(', ')', '[', ']', ',']) {
+                return None;
+            }
+            Some(segment)
+        }
+        fn operand_after(text: &str) -> Option<&str> {
+            let before_and = text.split("&&").next().unwrap_or(text);
+            let before_or = before_and.split("||").next().unwrap_or(before_and);
+            let cut = before_or
+                .find(['(', '[', ')', ']', '{', ','])
+                .unwrap_or(before_or.len());
+            let segment = &before_or[..cut];
+            if segment.contains(['(', ')', '[', ']', ',']) {
+                return None;
+            }
+            Some(segment)
+        }
+        let head = strip_control_keywords(strip_leading_closing_and_else(line));
+        for operator in COMPARISON_OPERATORS {
+            let mut search = 0;
+            while let Some(offset) = head[search..].find(operator) {
+                let at = search + offset;
+                if is_shift_operator_half(head, at, operator)
+                    || has_unclosed_group_before(&head[..at])
+                {
+                    search = at + operator.len();
+                    continue;
+                }
+                if operand_is_binding(operand_before(&head[..at]), binding) {
+                    return Some(PredicateOperandSide::Left);
+                }
+                if operand_is_binding(operand_after(&head[at + operator.len()..]), binding) {
+                    return Some(PredicateOperandSide::Right);
+                }
+                search = at + operator.len();
+            }
+        }
+        None
+    }
+
+    /// The comparison-operator answer of the production scan: `Left` or
+    /// `Right` only. The boolean-control and match-scrutinee answers come
+    /// from code #14096 left alone.
+    fn operator_operand(line: &str, binding: &str) -> Option<PredicateOperandSide> {
+        direct_predicate_operand(line, binding).filter(|side| {
+            matches!(
+                side,
+                PredicateOperandSide::Left | PredicateOperandSide::Right
+            )
+        })
+    }
+
+    /// Line fragments that steer every branch of the operand scan: the
+    /// binding, look-alikes, each operator, shifts, group characters and
+    /// both boolean separators, including runs that overlap (`&&&`, `|||`).
+    const SCAN_FRAGMENTS: &[&str] = &[
+        "end", "end", "end", "endpoint", "self.end", "start", "1", " ", " ", "&", "*", "&&", "||",
+        "&&&", "|||", "|", "==", "!=", "<=", ">=", "<", ">", "<<", ">>", "=>", "->", "(", ")", "[",
+        "]", "{", "}", ",", ";", "é", "if ", "match ", "} else ", "!", ".",
+    ];
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config {
+            cases: 4_000,
+            failure_persistence: None,
+            ..proptest::test_runner::Config::default()
+        })]
+
+        #[test]
+        fn single_pass_operand_scan_matches_the_per_operator_rescan(
+            picks in proptest::collection::vec(0usize..SCAN_FRAGMENTS.len(), 0..40)
+        ) {
+            let line: String = picks.iter().map(|pick| SCAN_FRAGMENTS[*pick]).collect();
+            // A boolean-control or match answer hides nothing here: both
+            // sides are compared on the operator answer alone, and the
+            // production function returns an operator answer first.
+            proptest::prop_assert_eq!(
+                operator_operand(&line, "end"),
+                reference_operator_operand(&line, "end"),
+                "line: {:?}", line
+            );
+        }
+    }
+
+    /// The generated lines must reach each answer, or the differential
+    /// property above could pass on `None == None` alone.
+    #[test]
+    fn scan_fragments_reach_every_operator_answer() {
+        for (line, expected) in [
+            ("if end == start {", Some(PredicateOperandSide::Left)),
+            ("if start<=&end&&start {", Some(PredicateOperandSide::Right)),
+            ("if start||end>1,start {", Some(PredicateOperandSide::Left)),
+            ("f(start) != end || 1 {", Some(PredicateOperandSide::Right)),
+            ("if f(end == start) {", None),
+            ("if start &&& end == 1 {", Some(PredicateOperandSide::Left)),
+            ("if start ||| end == 1 {", Some(PredicateOperandSide::Left)),
+            ("if (start) end == 1 {", None),
+            ("if start == end(1) {", Some(PredicateOperandSide::Right)),
+            ("if start, end >= é {", Some(PredicateOperandSide::Left)),
+        ] {
+            assert_eq!(operator_operand(line, "end"), expected, "{line}");
+            assert_eq!(
+                reference_operator_operand(line, "end"),
+                expected,
+                "reference: {line}"
+            );
+        }
+    }
+
+    /// The #14096 regression input: `links` nested match arms on one line.
+    /// The per-operator rescan read the line prefix and suffix once for
+    /// every `>` (two per link): 18 seconds for 20,000 links in a release
+    /// build. The single-pass scan answers in milliseconds, so the
+    /// deadline leaves three orders of magnitude for a slow runner while
+    /// the old scan misses it. The trailing comparison proves the scan
+    /// still reads the whole line.
+    #[test]
+    fn operand_scan_stays_linear_on_a_long_line() {
+        let links = 20_000;
+        let mut line = "match a { 0 => 0, _ => ".repeat(links);
+        assert_eq!(line.matches('>').count(), links * 2, "fixture shape");
+        let started = std::time::Instant::now();
+        assert_eq!(direct_predicate_operand(&line, "end"), None);
+        line.push_str("start == end {");
+        assert_eq!(
+            direct_predicate_operand(&line, "end"),
+            Some(PredicateOperandSide::Right)
+        );
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "operand scan took {elapsed:?} on a {} byte line",
+            line.len()
+        );
     }
 }

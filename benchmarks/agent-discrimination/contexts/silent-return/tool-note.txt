@@ -1,0 +1,21 @@
+# TOOL NOTE: the ripr analyzer
+
+ripr (ripr 0.11.0 (e19f45c83e93855317059944b91e36932e58a7c7)) is available at: <study-harness>/ripr.exe
+Run it from any shell. Verified invocations for this crate:
+
+  <study-harness>/ripr.exe check --root <study-harness>/silent-return --base HEAD~1 --format agent
+
+That prints a compact agent-format advisory for the changed behavior between
+HEAD~1 and HEAD. Each finding line ends with id=... . The output also contains
+a 'next=ripr ...' line nominating the exact follow-up command for the top
+finding. Run it by substituting the absolute binary path for 'ripr', e.g.:
+
+  <study-harness>/ripr.exe explain --root <study-harness>/silent-return --base "HEAD~1" --committed <FINDING_ID>
+
+ripr is a static advisory analyzer: it reports exposure evidence and draft
+test intent (classifications such as exposed / weakly_exposed /
+reachable_unrevealed). It does not write or run tests, and it never promotes
+static evidence to killed/survived/proven.
+
+If you run ripr, save the output you used to:
+  <study-harness>/contexts/silent-return/ripr-run-output-<run_id>.txt

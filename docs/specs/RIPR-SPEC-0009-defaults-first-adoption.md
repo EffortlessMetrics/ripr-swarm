@@ -78,6 +78,28 @@ The default contract is:
 - A missing `ripr.toml` and a freshly generated `ripr.toml` should produce
   equivalent default policy behavior, except for filesystem artifacts
   intentionally created by `init` or other commands.
+- `ripr init --agents` writes language-appropriate agent instructions. The
+  Rust block stays byte-identical to `docs/AGENT_QUICKSTART.md`; a preview
+  language (Python, TypeScript/JavaScript) gets its own test runner and
+  assertion advice, an advisory label, and the same fail-closed DONE/STOP
+  rules. Every language variant, including mixed roots, uses one compact
+  post-edit `check --format agent` report for VERIFY and DONE; its final
+  producer-owned `verify=` record enforces complete outcome, equal full
+  findings/exposed counts and source/scope currentness. A missing, refused or
+  cut-off record cannot establish completion. JSON drilldown is not required.
+  A language counts
+  only when it is both detected and enabled in the effective
+  `[languages].enabled` (the config this run writes, else the one it keeps,
+  with an unreadable config enabling none); a detected language that is not
+  enabled is named as not analyzed instead of promised. The Cursor rule's
+  front-matter globs follow the same languages, and `--force` refreshes that
+  front matter only when it exactly matches a shape ripr generated;
+  user-authored front matter and content outside the markers stay untouched.
+- `ripr init --mcp` suggests `--agents cursor --mcp` for Cursor only when the
+  run does not already plan `.cursor/mcp.json`.
+- `ripr init --agents` repeats the "register the MCP server" follow-up only
+  when the same run does not actually write the MCP config (an existing `ripr`
+  entry left unchanged does not count).
 - Explicit CLI flags and LSP initialization options override repo config.
 - Repo config overrides built-in defaults.
 - Config discovery stops at a `.git` directory entry, including a dangling or
@@ -112,6 +134,15 @@ These are argv refusals: exit 2, empty stdout, and the diagnostic prefixed
 with `ripr: ` on stderr. A suggestion does not accept the mistyped value.
 Omitting the value retains `missing value for --format` with the same exit
 and streams. This does not replace `check`'s common-format/help-pointer contract.
+
+`ripr explain --format` accepts `human`, its `text` alias, and `agent`.
+Unknown values use the same shared enum-value diagnostic, listing all three
+spellings and suggesting a nearby value without accepting it. These remain
+argv refusals with exit 2, empty stdout and `ripr: `-prefixed stderr.
+The dedicated `--format json` refusal instead retains its recovery through
+`ripr context --at <finding-id>` or compact `--format agent` lines. Missing
+values retain the existing missing-value diagnostic. The rendered help names
+the `text` alias alongside `human` and `agent`.
 
 The rendered `pilot` usage line names `[--format FORMAT]`; its option line
 names `human` as the default and `json` as the alternative. Both spellings
@@ -580,6 +611,23 @@ when a user runs ripr init without --force,
 then ripr exits with an actionable message and leaves the file unchanged.
 ```
 
+### Init agent instructions follow the analyzed languages
+
+```text
+Given a Python repository whose ripr.toml enables Python,
+when a user runs ripr init --agents all,
+then CLAUDE.md, AGENTS.md and the Cursor rule carry the Python preview loop
+(pytest advice, `**/*.py` globs) without cargo or Rust-only repair commands.
+VERIFY requests one compact post-edit check; DONE reuses that report and
+requires exit 0 and its final verify=complete record. Preview and mixed
+language loops do not request full JSON or fields absent from compact output.
+If ripr.toml enables only rust, the Python loop is not written and the block
+says Python files are not analyzed.
+After Python is added to a Rust repository, ripr init --agents cursor --force
+rewrites ripr's own Cursor front matter to the new globs and keeps the user's
+notes outside the markers and any user-authored front matter unchanged.
+```
+
 ### Init provider recovery does not initialize a rejected value
 
 ```text
@@ -608,6 +656,18 @@ files from a previous complete run,
 when ripr pilot times out,
 then those leftover files are gone and the partial summaries do not present
 them as this run's outputs.
+```
+
+### Pilot default extension honors total wall budget
+
+```text
+Given the default 30000 ms pilot budget with an automatic extension on the
+same run,
+when analysis still has not finished when the combined budget elapses,
+then ripr cancels promptly and writes the timeout partial summary without
+running for multiples of the stated budget alone,
+and `ripr help pilot` states the total default wall budget including the
+extension and cancel grace.
 ```
 
 ### Pilot names languages its Rust scan did not rank
@@ -846,6 +906,10 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/cli/mod.rs::tests::run_dispatches_check_parse_errors`
 - `crates/ripr/src/cli/mod.rs::tests::run_treats_a_repeated_global_verbose_as_one_enable`
 - `crates/ripr/src/cli/execute.rs::tests::execute_dispatches_subcommand_args_without_reparsing_argv`
+- `crates/ripr/src/cli/commands/init_agents.rs::tests::detected_but_not_enabled_languages_are_not_promised`
+- `crates/ripr/src/cli/commands/init_agents.rs::tests::force_refreshes_generated_cursor_frontmatter_but_not_user_frontmatter`
+- `crates/ripr/src/cli/commands/init_agents.rs::tests::python_block_names_pytest_and_does_not_promise_guided_repair`
+- `crates/ripr/tests/cli_smoke.rs::init_agents_writes_language_appropriate_instructions`
 
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_sparse_missing_changed_file_and_recovers_same_head`
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_mixed_missing_changed_file_even_with_changed_recommendation`
@@ -938,6 +1002,9 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/output/pilot/tests.rs::timeout_summary_json_is_partial_and_points_to_retry`
 - `crates/ripr/src/output/pilot/tests/timeout_retry.rs::timeout_json_retry_preserves_format_and_unknown_analysis`
 - `crates/ripr/tests/cli_smoke/pilot_timeout_retry.rs::timeout_json_retry_replays_as_json_from_a_foreign_directory`
+- `crates/ripr/src/cli/commands/pilot.rs::tests::pilot_default_extension_wall_clock_stays_within_total_budget`
+- `crates/ripr/src/cli/commands/pilot.rs::tests::pilot_extension_notice_fires_at_first_phase_boundary`
+- `crates/ripr/tests/cli_smoke/pilot_wall_budget.rs::many_function_pilot_hard_timeout_exits_within_cancel_grace`
 - `crates/ripr/src/output/pilot/tests.rs::timeout_summary_md_explains_partial_status_and_retry_command`
 - `crates/ripr/tests/cli_smoke.rs::pilot_accepts_python_project_without_ripr_config`
 - `crates/ripr/tests/cli_smoke.rs::pilot_projects_python_repair_card_for_git_diff`
@@ -983,6 +1050,9 @@ Current implementation pieces:
 - `crates/ripr/src/cli/commands.rs` exposes `init`, `pilot`, `outcome`, `check`,
   `explain`, `context`, `doctor`, and `lsp`; `init --ci github` writes the
   advisory GitHub Actions report workflow with optional SARIF rendering/upload.
+- `crates/ripr/src/cli/commands/init_agents.rs` owns the language-sensitive
+  `ripr init --agents` block and Cursor front matter; `crates/ripr/src/cli/commands/init.rs`
+  passes it the effective enabled languages.
 - `crates/ripr/src/app.rs` orchestrates config-aware analysis entry points.
 - `crates/ripr/src/output/agent_seam_packets.rs` renders targeted-test work
   orders.

@@ -50,6 +50,9 @@ Weakness
   - A strong Python oracle reaches `render`, but every related call passes `verbose` explicitly, so the changed default value is never exercised; static evidence cannot confirm the changed default is discriminated. Add a test that calls `render` without `verbose` to exercise the changed default
   - missing discriminator call `render` without `verbose`: changed default parameter(s) `verbose` at line 1 are always explicitly bound, so the default is never exercised
 
+Next step
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `call `render` without `verbose``
+
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
   canonical gap: gap:python:src/render.py:render:predicate_boundary:predicate:def_render_name_verbose=true
@@ -75,9 +78,6 @@ Python repair card (preview/advisory)
     - Syntax-first Python preview evidence only.
     - No source edits, generated tests, mutation execution, provider calls, or gate authority.
     - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `call `render` without `verbose``
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_adversarial_default_value_overridden/input --diff <cwd>/fixtures/python_adversarial_default_value_overridden/diff.patch --mode fast probe:src_render.py:python_preview:bc1138cb

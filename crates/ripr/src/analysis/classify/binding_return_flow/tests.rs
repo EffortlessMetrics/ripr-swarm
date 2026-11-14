@@ -210,3 +210,78 @@ fn a_duplicate_owner_name_is_unreadable() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// #13577: the helper scan reads one module-scope table per file per run.
+#[test]
+fn same_file_helper_scan_builds_one_module_scope_table_per_run() -> Result<(), String> {
+    use super::same_file_binding_helpers;
+    use crate::analysis::classify::const_flow::{MODULE_SCOPE_BUILDS, shares_module_scope};
+    use crate::analysis::facts::RustIndex;
+    use crate::analysis::syntax::run_memo;
+    let mut source = String::from("pub fn score(x: i64) -> i64 { x }\n");
+    for number in 0..30 {
+        source.push_str(&format!(
+            "pub fn helper_{number}(x: i64) -> i64 {{ x + {number} }}\n"
+        ));
+    }
+    source.push_str("mod inner {\n    pub fn nested(x: i64) -> i64 { x }\n}\n");
+    let path = Path::new("src/lib.rs");
+    let facts = RaRustSyntaxAdapter.summarize_file(path, &source)?;
+    let functions = facts.functions.clone();
+    let mut index = RustIndex::default();
+    index.insert_file_only(path.to_path_buf(), facts);
+    index.extend_functions(functions);
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "score")
+        .ok_or("no score owner")?;
+    // Independent reference: the original per-candidate question, asked
+    // outside any run scope so every ask builds its own table.
+    let facts = index.files().get(path).ok_or("file indexed")?;
+    MODULE_SCOPE_BUILDS.with(|builds| builds.set(0));
+    let reference: Vec<String> = facts
+        .functions
+        .iter()
+        .filter(|function| {
+            function.name != "score"
+                && function.source_role == FunctionSourceRole::Production
+                && matches!(
+                    function.impl_context,
+                    crate::analysis::facts::FunctionImplContext::Free
+                )
+                && shares_module_scope(&facts.source, owner.start_line, &[function.start_line])
+        })
+        .map(|function| function.name.clone())
+        .collect();
+    let candidates = facts.functions.len() - 1;
+    assert_eq!(
+        MODULE_SCOPE_BUILDS.with(std::cell::Cell::get),
+        candidates,
+        "outside a scope each candidate builds its own table"
+    );
+    assert_eq!(
+        reference.len(),
+        30,
+        "the nested module's function is not a sibling"
+    );
+    assert!(!reference.iter().any(|name| name == "nested"));
+
+    let probes = 5;
+    let _scope = run_memo::enter();
+    MODULE_SCOPE_BUILDS.with(|builds| builds.set(0));
+    for _ in 0..probes {
+        let helpers = same_file_binding_helpers(owner, &index).ok_or("helpers decided")?;
+        let names: Vec<String> = helpers
+            .iter()
+            .map(|function| function.name.clone())
+            .collect();
+        assert_eq!(names, reference);
+    }
+    assert_eq!(
+        MODULE_SCOPE_BUILDS.with(std::cell::Cell::get),
+        1,
+        "{probes} probes over {candidates} candidates read one table"
+    );
+    Ok(())
+}

@@ -1,0 +1,2 @@
+crates/ripr/tests/check_file_fact_cache_verbose.rs|Command::new|1|cli-tests|#4975: runs the built ripr binary (`check --diff --format json`) against an isolated temporary Cargo workspace with a private cache directory to assert verbose file-fact cache telemetry. No shell, network, or user-repository mutation.
+crates/ripr/tests/check_file_fact_cache_verbose.rs|use std::process::Command|1|cli-tests|#4975: import for the built-binary `check` runs against an isolated temporary Cargo workspace; see the Command::new entry.

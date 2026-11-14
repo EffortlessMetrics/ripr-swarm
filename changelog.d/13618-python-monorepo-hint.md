@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python monorepo roots: `ripr doctor` no longer demands `cargo init` when nested `pyproject.toml`/`setup.py` packages are the only language markers, and the "Python adapter is preview and not enabled" note in `ripr check` names those packages and suggests `ripr check --root <package>` for the one holding the changed files. Library API: `PreviewLanguageAdvisory` gains a public `nested_packages` field (#13618).

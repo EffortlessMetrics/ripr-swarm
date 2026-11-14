@@ -6,7 +6,7 @@ use super::{
     python_return_dict_field_discriminator,
 };
 use crate::domain::{
-    Confidence, DeltaKind, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, ProbeFamily,
+    Confidence, DeltaKind, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, OwnerKind, ProbeFamily,
     StageEvidence, StageState,
 };
 use std::path::Path;
@@ -110,6 +110,129 @@ fn classify_probe_shape_gated(
         return (ProbeFamily::SideEffect, DeltaKind::Effect);
     }
     (ProbeFamily::Predicate, DeltaKind::Control)
+}
+
+/// A single-name assignment whose right side is a plain value expression
+/// (#13587): `text = f"{text} {label}"`, `total = base - bonus`. It computes a
+/// value and neither tests a condition nor calls anything, so it is value
+/// shaped, whether or not an unchanged guard encloses it. The recognizer is
+/// closed: the target is one identifier, and any right side that could carry a
+/// comparison, boolean operator, membership test, conditional or lambda keeps
+/// the conservative predicate default. A guard line itself (`if ...:`) never
+/// reaches this check.
+pub(super) fn is_python_plain_local_value_assignment(line_text: &str) -> bool {
+    let trimmed = line_text.trim();
+    let Some((lhs, rhs)) = trimmed.split_once('=') else {
+        return false;
+    };
+    // Assignment style puts a space on both sides of `=`; a bare `ident=value`
+    // is a keyword-argument or parameter continuation (`timeout=30`).
+    if !(lhs.ends_with(' ') && rhs.starts_with(' ')) {
+        return false;
+    }
+    let rhs = rhs.trim();
+    // `total: int = ...`: a clean annotation only. `else: x = 3`,
+    // `try: x = 3`, `except E: x = 3` and similar one-line compound
+    // statements fail the keyword and identifier checks.
+    let lhs = match lhs.split_once(':') {
+        Some((target, annotation)) => {
+            let annotation = annotation.trim();
+            let clean = !annotation.is_empty()
+                && annotation.chars().all(|ch| {
+                    ch.is_ascii_alphanumeric()
+                        || matches!(ch, '_' | '.' | '[' | ']' | ',' | ' ' | '|')
+                })
+                && python_brackets_balanced(annotation)
+                && !annotation.contains("lambda");
+            if !clean {
+                return false;
+            }
+            target.trim()
+        }
+        None => lhs.trim(),
+    };
+    if !is_python_identifier(lhs)
+        || PYTHON_NON_TARGET_KEYWORDS.contains(&lhs)
+        || rhs.is_empty()
+        || rhs.starts_with('=')
+        || rhs.ends_with('\\')
+        // A trailing comma is a call-argument, parameter or dict continuation
+        // (`timeout=30,`), and `;` joins a second statement: neither is one
+        // plain assignment.
+        || rhs.ends_with(',')
+        || rhs.contains(';')
+        // A further `=` is a chained write (`x = obj.status = 1`), a walrus or
+        // a keyword argument inside the right side: not one plain local value.
+        || rhs.contains('=')
+        || !python_brackets_balanced(rhs)
+    {
+        return false;
+    }
+    // Only the right side's own keywords are checked as word-bounded text.
+    let rhs_padded = format!(" {rhs} ");
+    ![
+        "<", ">", "==", "!=", " if ", " else ", " and ", " or ", " not ", " in ", " is ", " and(",
+        " or(", " not(", "lambda", " yield ", " yield)", " await ",
+    ]
+    .iter()
+    .any(|marker| rhs_padded.contains(marker))
+}
+
+/// The shape a finding presents (#13587). Analysis keeps the conservative
+/// `(Predicate, Control)` default for a plain local assignment, because its
+/// gates, oracle admission and credit are calibrated on it. Only what the
+/// finding says about itself (probe family, delta, gap id) reads as a value,
+/// and only for an indented plain local value assignment inside a callable
+/// owner, so no verdict or credit moves.
+pub(super) fn presented_python_shape(
+    owner: &PythonOwner,
+    family: &ProbeFamily,
+    delta: &DeltaKind,
+    line_text: &str,
+) -> (ProbeFamily, DeltaKind) {
+    if matches!(family, ProbeFamily::Predicate)
+        && matches!(delta, DeltaKind::Control)
+        && matches!(
+            owner.owner_kind,
+            Some(OwnerKind::Function | OwnerKind::Method | OwnerKind::ClassMethod)
+        )
+        && line_text.starts_with([' ', '\t'])
+        && is_python_plain_local_value_assignment(line_text)
+    {
+        (ProbeFamily::ReturnValue, DeltaKind::Value)
+    } else {
+        (family.clone(), delta.clone())
+    }
+}
+
+const PYTHON_NON_TARGET_KEYWORDS: &[&str] = &[
+    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "case", "class",
+    "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if",
+    "import", "in", "is", "lambda", "match", "nonlocal", "not", "or", "pass", "print", "raise",
+    "return", "try", "while", "with", "yield",
+];
+
+fn is_python_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+fn python_brackets_balanced(text: &str) -> bool {
+    let mut depth = 0i32;
+    for ch in text.chars() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ => {}
+        }
+        if depth < 0 {
+            return false;
+        }
+    }
+    depth == 0
 }
 
 pub(super) fn contains_mock_initializer(text: &str) -> bool {

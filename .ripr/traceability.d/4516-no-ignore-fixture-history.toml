@@ -1,0 +1,20 @@
+[[extend]]
+id = "RIPR-SPEC-0207"
+tests = [
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::committed_fixtures_reproduce_their_recorded_ids_from_the_recipe",
+  "xtask/src/fixture_contracts/installed_journey_recipe_rust_tests.rs::rust_fixture_gate_refuses_a_forged_no_ignore_commit",
+  "xtask/src/fixture_contracts/installed_journey_recipe_rust_tests.rs::rust_recipe_retains_positive_history_and_corrects_only_the_variant",
+  "xtask/src/fixture_contracts/installed_journey_recipe_rust_tests.rs::rust_fixture_gate_refuses_the_historical_pin_and_a_forged_tree",
+  "xtask/src/fixture_contracts/installed_journey_recipe_rust_tests.rs::rust_fixture_gate_refuses_missing_variant_metadata",
+  "xtask/src/fixture_contracts/installed_journey_recipe_rust_tests.rs::rust_fixture_gate_refuses_missing_positive_history_metadata",
+  "xtask/src/fixture_contracts/installed_journey_recipe_rust_tests.rs::rust_fixture_gate_uses_every_declared_commit_field",
+  "xtask/src/fixture_contracts/installed_journey_recipe_rust_tests.rs::rust_fixture_gate_requires_exact_variant_inventory_and_base_parent",
+]
+code = [
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_rebuilt_ids",
+  "xtask/src/fixture_contracts/installed_journey.rs::installed_journey_snapshot_violations",
+]
+outputs = [
+  "fixtures/blind_journey_installed_rust/manifest.json",
+  "fixtures/blind_journey_execute/corpus.json",
+]

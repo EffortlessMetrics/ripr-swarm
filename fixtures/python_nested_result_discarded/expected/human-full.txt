@@ -50,6 +50,9 @@ Weakness
   - A strong Python oracle reaches `inner`, but the enclosing function calls `inner` only as a statement of its own, so its result reaches nothing the test asserts; static evidence cannot confirm the changed operand is discriminated. Assert on a value that depends on the result of `tally.inner`
   - missing discriminator an assertion on a value computed from the result of `tally.inner`: the enclosing function calls `inner` only as a statement of its own, so its result reaches nothing the test asserts
 
+Next step
+  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `an assertion on a value computed from the result of `tally.inner``
+
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
   canonical gap: gap:python:src/tally.py:tally.inner:return_value:return_value:m+2
@@ -75,9 +78,6 @@ Python repair card (preview/advisory)
     - Syntax-first Python preview evidence only.
     - No source edits, generated tests, mutation execution, provider calls, or gate authority.
     - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `an assertion on a value computed from the result of `tally.inner``
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_nested_result_discarded/input --diff <cwd>/fixtures/python_nested_result_discarded/diff.patch --mode fast probe:src_tally.py:python_preview:24c935dc

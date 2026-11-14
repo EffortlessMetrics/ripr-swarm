@@ -107,6 +107,19 @@ pub(crate) fn policy_readiness(args: &[String]) -> Result<(), String> {
         "Recommended mode: {}",
         output::policy_readiness::policy_readiness_recommended_mode(&report)
     );
+    // An input the caller supplied that could not be used means readiness
+    // could not complete (exit 2, docs/EXIT_CODES.md). The `config_error`
+    // report is written first so it replaces any earlier readiness report a
+    // later step would otherwise read as current (#14311).
+    let failures = output::policy_readiness::supplied_input_failures(&report);
+    if !failures.is_empty() {
+        return Err(format!(
+            "policy readiness could not use {} supplied input{}: {}; the report was written as `config_error`. Pass the artifact each flag names (see `ripr help policy readiness`), or drop the flag to leave that input out",
+            failures.len(),
+            if failures.len() == 1 { "" } else { "s" },
+            failures.join("; ")
+        ));
+    }
     Ok(())
 }
 

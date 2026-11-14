@@ -186,6 +186,15 @@ fn admit_from_source(file: &str, source: &str) -> NewTestTargetAdmission {
     admit_new_inline_unit_test(&seam, &index)
 }
 
+/// #13203 A0: an inline proposal carries the workspace identity from the
+/// workspace authority; an index without one admits no proposal at all.
+#[test]
+fn inline_proposal_without_workspace_authority_is_not_admitted() {
+    let admission = admit_from_source("src/lib.rs", private_owner_with_inline_tests());
+    assert!(admission.proposal.is_none(), "{admission:?}");
+    assert_eq!(admission.blocker, Some(NewTestProposalBlocker::PathUnsafe));
+}
+
 #[test]
 fn governed_cfg_test_modules_skip_nested_and_fn_local_modules() -> Result<(), String> {
     let source = r#"

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Analysis of a Rust file that falls back to lexical reading no longer treats a brace inside a string literal or comment as the end of a function body, and the oracle scan no longer re-walks the body per row. A 1.6 MB benchmark data file made `ripr repair` and `pilot` on memchr run for more than five minutes; the repair now finishes in about a minute in a debug build (#11895).

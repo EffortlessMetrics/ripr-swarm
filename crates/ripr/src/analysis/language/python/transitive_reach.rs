@@ -14,7 +14,7 @@
 
 use super::related_tests::{
     body_calls_method_on_owner_bound_receiver, contains_call_name,
-    import_source_module_matches_owner, owner_module_paths,
+    import_source_module_matches_owner, module_name_identifies_owner_for, owner_module_paths,
 };
 use super::{PythonOwner, PythonTest};
 use crate::domain::{
@@ -237,7 +237,10 @@ fn import_provenanced_class_locals(
         if import.source_module.is_empty()
             && !import.alias.is_empty()
             && (owner_modules.contains(&import.imported)
-                || owner.reexport_modules.contains(&import.imported))
+                // A project-relative package name (#13737) identifies the
+                // owner only for a test under its project root.
+                || (owner.reexport_modules.contains(&import.imported)
+                    && module_name_identifies_owner_for(owner, &import.imported, &test.file)))
         {
             let qualified = format!("{}.{class}", import.alias);
             if !locals.contains(&qualified) {
@@ -297,6 +300,7 @@ mod tests {
     use super::*;
     use crate::analysis::language::python::classify::classify_change;
     use crate::analysis::language::python::owners_tests::{extract_owners, extract_tests};
+    use crate::analysis::language::python::related_tests::apply_class_facts;
     use crate::domain::StopReason;
     use std::path::Path;
 
@@ -330,7 +334,9 @@ class Table:
             .position(|line| line == line_text)
             .ok_or_else(|| format!("fixture source must contain the changed line: {line_text}"))?
             + 1;
-        let owners = extract_owners(file, source);
+        let mut owners = extract_owners(file, source);
+        // The production path fills class facts before classification.
+        apply_class_facts(&mut owners);
         let tests = extract_tests(Path::new(test_file), tests);
         classify_change(file, line, line_text, &owners, &tests)
             .ok_or_else(|| "behavioral fixture must produce a finding".to_string())

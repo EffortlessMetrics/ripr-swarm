@@ -316,7 +316,7 @@ fn current_payload_repository_context(
     })
 }
 
-fn workspace_version() -> Result<String, String> {
+pub(super) fn workspace_version() -> Result<String, String> {
     let path = Path::new("Cargo.toml");
     let text = fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;

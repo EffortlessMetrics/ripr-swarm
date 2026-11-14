@@ -12,8 +12,17 @@ pub(crate) fn summarize_findings(changed_rust_files: usize, findings: &[Finding]
         summary.increment_exposure_class(&finding.class);
     }
     summary.conflicting_expressions = conflicting_expression_count(findings.iter());
+    summary.proof_harness_only = proof_harness_only_count(findings.iter());
 
     summary
+}
+
+/// Findings (#12921) a proof harness reaches but ripr does not evaluate. Takes
+/// an iterator so a caller can exclude suppressed findings.
+pub(crate) fn proof_harness_only_count<'a>(findings: impl Iterator<Item = &'a Finding>) -> usize {
+    findings
+        .filter(|finding| finding.is_proof_harness_only())
+        .count()
 }
 
 /// Expressions (file, line, text) whose findings carry more than one class
@@ -159,6 +168,34 @@ mod tests {
         assert_eq!(summary.infection_unknown, 0);
         assert_eq!(summary.propagation_unknown, 0);
         assert_eq!(summary.static_unknown, 0);
+    }
+
+    // #12921: proof-only is a disclosure subset; the class buckets are unchanged.
+    #[test]
+    fn proof_harness_only_counts_apart_from_the_class_bucket() {
+        let mut proof = finding(ExposureClass::NoStaticPath);
+        proof.static_limit_kind = Some(crate::domain::StaticLimitKind::ProofHarnessNotEvaluated);
+        let mut other_limit = finding(ExposureClass::NoStaticPath);
+        other_limit.static_limit_kind = Some(crate::domain::StaticLimitKind::MockedModule);
+        let findings = [proof, other_limit, finding(ExposureClass::NoStaticPath)];
+        let summary = summarize_findings(1, &findings);
+        assert_eq!(summary.no_static_path, 3);
+        assert_eq!(summary.proof_harness_only, 1);
+        assert_eq!(summary.exposed, 0);
+    }
+
+    // #12921: a finding the proc-macro withhold rewrote to `static_unknown`
+    // keeps the proof limit but is not `no_static_path`, so it is not counted
+    // (the member is a subset of `no_static_path`).
+    #[test]
+    fn proof_limit_on_a_non_no_static_path_class_is_not_proof_only() {
+        let mut rewritten = finding(ExposureClass::StaticUnknown);
+        rewritten.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::ProofHarnessNotEvaluated);
+        assert!(!rewritten.is_proof_harness_only());
+        let summary = summarize_findings(1, &[rewritten]);
+        assert_eq!(summary.proof_harness_only, 0);
+        assert_eq!(summary.static_unknown, 1);
     }
 
     // #11554: raw counts stay per probe; the conflicting-expression count says

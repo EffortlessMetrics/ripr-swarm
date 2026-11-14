@@ -1,0 +1,8 @@
+{
+  "scenario_id": "missing-or-unapproved-server",
+  "setup_outcome": "approval_required | server_unavailable",
+  "required_edit": "none",
+  "executed_oracle": "not_applicable",
+  "combined_claim": "refused",
+  "notes": "With a 0.10.x binary the diagnosis must name the MCP version floor. Hand-written MCP configuration as a workaround fails the scenario."
+}

@@ -151,6 +151,18 @@ const FIELD_EXPORT_FILES: &[(&str, &str)] = &[
     ),
 ];
 
+fn assert_assertion_refusal_miss(test: &serde_json::Value) -> Result<(), String> {
+    let miss = test["miss"].as_str().ok_or("missing miss")?;
+    assert!(
+        matches!(
+            miss,
+            "assertion_not_credited" | "assertion_inert" | "assertion_admission_unproven"
+        ),
+        "{test}"
+    );
+    Ok(())
+}
+
 fn assert_field_macro_refused(finding: &serde_json::Value, site: &str) -> Result<(), String> {
     assert_ne!(finding["classification"], "exposed", "{finding}");
     assert_ne!(finding["ripr"]["observe"]["state"], "yes", "{finding}");
@@ -159,7 +171,7 @@ fn assert_field_macro_refused(finding: &serde_json::Value, site: &str) -> Result
     assert_eq!(tests.len(), 1, "{finding}");
     assert_eq!(tests[0]["oracle_strength"], "none", "{finding}");
     assert_eq!(tests[0]["oracle_kind"], "unknown", "{finding}");
-    assert_eq!(tests[0]["miss"], "assertion_not_credited", "{finding}");
+    assert_assertion_refusal_miss(&tests[0])?;
     assert!(
         finding["evidence"]
             .as_array()
@@ -354,7 +366,7 @@ fn field_assertion_rebindings_refuse_credit_and_disclose_the_site() -> Result<()
             assert_eq!(tests.len(), 1, "{finding}");
             assert_eq!(tests[0]["oracle_strength"], "none", "{finding}");
             assert_eq!(tests[0]["oracle_kind"], "unknown", "{finding}");
-            assert_eq!(tests[0]["miss"], "assertion_not_credited", "{finding}");
+            assert_assertion_refusal_miss(&tests[0])?;
             assert!(
                 finding["evidence"]
                     .as_array()

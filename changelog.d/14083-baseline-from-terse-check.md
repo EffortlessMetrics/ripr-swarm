@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Baseline: `ripr baseline create --from-check` now reads a `json-terse` check document like the full one. Terse omits the finding-level `canonical_gap_id` and `missing_discriminators` aliases, so every gap fell to fallback identity and was refused; both are now read from their owners (`canonical_gap.id`, `activation.missing_discriminators`) when the alias is absent (#14083).

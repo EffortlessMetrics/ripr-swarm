@@ -66,12 +66,16 @@ first Ready, validate the body offline and fix every line it names:
 ## Draft to Ready handoff
 
 Publish a coherent candidate as Draft. The review, repair and evidence boundaries
-below apply to candidate preparation. The label-request sequence describes the
-installed legacy route until verified migration; after verified queue activation,
-use [the native-queue procedure](MERGE_FLOW.md#selected-native-queue-procedure-after-verified-activation)
-for qualification and conditional landing authorization instead. For the legacy
-route, the delivery owner completes this order before spending the
-`merge-ready`-requested `Ripr Rust Small Result` qualification:
+below apply to candidate preparation. Ordinary development does not request CI.
+The selected, reviewed candidate uses the installed qualification route. After
+verified queue activation, use
+[the native-queue procedure](MERGE_FLOW.md#selected-native-queue-procedure-after-verified-activation)
+for conditional landing and actual-G qualification. During the current bootstrap,
+GitHub can still require the installed H check before enqueue; the delivery owner
+may request that check through `merge-ready` after completing this preparation.
+Auxiliary event retirement does not replace that producer with cheap H admission.
+Retire its label request only after the replacement is qualified and enforced.
+The delivery owner completes this preparation order:
 
 1. Bind the exact candidate head and integration basis. Complete directed
    substantive review through `review-pr` inline in the owning session's main
@@ -112,13 +116,15 @@ route, the delivery owner completes this order before spending the
    [local and hosted proof route](agent-context/validation.md#local-and-hosted-proof):
    record the unavailable dimension and reason, completed available checks, and
    existing authorized narrow hosted qualification that will establish it.
-   `REVIEW_INCOMPLETE` may retain that evidence gap and merge-ready-requested proof;
-   unavailable proof is not a pass. It cannot excuse an executable but unrun
+   `REVIEW_INCOMPLETE` may retain that evidence gap pending the applicable
+   authorized qualification route; unavailable proof is not a pass. It cannot excuse an executable but unrun
    applicable local check, unfinished review or repair, a known-red test, or
-   missing claim-essential native proof. After Ready, inspect the existing label, request and runs for the exact head
-   and subject before acting. The `merge-ready` label requests qualification;
-   Ready alone requests nothing;
-   `REVIEW_READY` and required proof still govern merge under `finish-pr`.
+   missing claim-essential native proof. After Ready, inspect the existing
+   native request and runs for the exact head and subject before acting. Ready
+   alone requests nothing; `REVIEW_READY` and required proof still govern merge
+   under `finish-pr`. If the installed required H check is still needed before
+   enqueue, use its retained label request as described below; do not duplicate
+   an existing current-subject request.
 
 After Ready, inspect the actual job checkout commit, parents and tree against
 the reviewed candidate and basis. A run's head SHA or a pre-Ready ref observation
@@ -128,7 +134,13 @@ or subject is verified; do not relabel that run as proof for the local tree or
 re-apply `merge-ready` merely to refresh it.
 
 A new head or material finding returns the candidate to Draft for one joined
-repair/proof/review wave. Preserve unaffected evidence. Before any label request,
+repair/proof/review wave. Preserve unaffected evidence.
+
+### Retained label-request reconciliation
+
+These details apply while the installed qualification producer still needs its
+label request. A selected, reviewed candidate may use that route; it is not
+development feedback and cannot restore a retired auxiliary subscriber. Before a label request,
 read the current head, label and admitted run state, including the run subject:
 
 - Preserve a queued or running current-subject run and its link; reapplying the
@@ -390,6 +402,7 @@ cargo xtask specs next
 cargo xtask suggested-fixes
 cargo xtask targeted-rerun-benchmark --root <path> --changed-test <path> [--samples <n>] [--timeout-ms <n>]
 cargo xtask targeted-test-outcome --before <path> --after <path>
+cargo xtask slow-test-report [--junit <path>] [--policy <path>] [--limit <n>]
 cargo xtask test-efficiency-report
 cargo xtask test-oracle-report
 cargo xtask update-badge-endpoints
@@ -456,11 +469,14 @@ before compilation-bearing file-policy enumeration. It writes
 `target/ripr/reports/ci-policy.{json,md}` through the precommit report owner,
 identifies its composition, and leaves legacy `precommit.md` and structured
 local `precommit-v2` receipts untouched.
-Its pass excludes selected Clippy; the required producer retains explicit
-`cargo clippy --workspace --all-targets -- -D warnings`. The source/toolchain/input
-policy-preflight receipt is still verified. Formatting and the later dependency,
-process and network steps are retained; no duplicate-policy removal or measured
-savings is claimed. Ordinary local `precommit` keeps selected Clippy.
+Its pass excludes formatting and selected Clippy; the required producer retains
+explicit `cargo fmt --check` and
+`cargo clippy --workspace --all-targets -- -D warnings` obligations. The
+source/toolchain/input policy-preflight receipt is still verified and does not
+stand in for formatting proof. Formatting runs once in the hosted early step,
+instead of again inside `ci-policy` (#8198). The later dependency, process and
+network steps are retained. No measured duration saving or complete 20-minute
+route is claimed. Ordinary local `precommit` keeps formatting and selected Clippy.
 
 `precommit` is the cheap non-mutating guardrail. It checks formatting, spec
 format and numbering, and the policy surfaces that should fail quickly before
@@ -468,7 +484,7 @@ review.
 
 Local `precommit` also runs `goldens check` when the diff against
 `origin/main` touches output-surface code (`crates/ripr/src/output/`,
-`crates/ripr/src/domain/`, `lsp.rs`, `docs/OUTPUT_SCHEMA.md`,
+`crates/ripr-contract/src/domain/`, `lsp.rs`, `docs/OUTPUT_SCHEMA.md`,
 `policy/output_contracts.txt`) or a fixture `expected/` file, because renderer
 wording changes make stale goldens the usual way main goes red (#8421). Other
 diffs print a skip line and do not pay for the fixture run. Real drift fails
@@ -805,6 +821,17 @@ alias that produces the same non-blocking report.
 oracle kind and strength, observed literal values, static limitations, and
 advisory reason counts for low-discriminator signals. The report is a review
 aid and does not block CI.
+
+`slow-test-report` reads the nextest `ci` JUnit XML (default
+`target/nextest/ci/junit.xml`) and writes the slowest tests (default 50) to
+`target/ripr/reports/slow-tests.md` and `target/ripr/reports/slow-tests.json`.
+Each test is judged against `policy/test-time-budget.toml`: a per-test budget, a
+baseline allowlist of tests already over budget, and a regression cap (a
+baselined test slower than `regression_factor` times its recorded time is
+reported as regressed). The report is advisory; it fails only when the policy
+`mode` is `enforced` and a test is over budget without a baseline entry or has
+regressed past the cap. Duplicate testcase rows from several shards are merged,
+keeping the slowest. It never runs tests (#12905).
 
 `dogfood` runs `ripr check --mode fast` against stable in-repo fixture diffs,
 writes actual outputs under `target/ripr/dogfood/`, and writes advisory

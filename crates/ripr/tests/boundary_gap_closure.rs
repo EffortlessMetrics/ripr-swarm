@@ -38,11 +38,12 @@ fn seam_id(seam: &Value) -> Result<&str, String> {
         .ok_or_else(|| "boundary seam is missing seam_id".to_string())
 }
 
-fn printed_next_command(stderr: &str) -> Result<&str, String> {
-    stderr
+/// A human before phase prints its one next command on stdout (#13803).
+fn printed_next_command(stdout: &str) -> Result<&str, String> {
+    stdout
         .lines()
-        .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
-        .ok_or_else(|| format!("before phase printed no attempt command:\n{stderr}"))
+        .find_map(|line| line.strip_prefix("Next, after the test edit: "))
+        .ok_or_else(|| format!("before phase printed no next command:\n{stdout}"))
 }
 
 fn verification_status(receipt: &Value) -> Result<&str, String> {
@@ -468,7 +469,7 @@ fn harness_executes_intended_test_and_printed_repair_agrees_with_status() -> Res
     )?;
     require_success("agent repair --phase before", &repair_before)?;
     let printed_after =
-        printed_next_command(&String::from_utf8_lossy(&repair_before.stderr))?.to_string();
+        printed_next_command(&String::from_utf8_lossy(&repair_before.stdout))?.to_string();
     let tokens = split_printed_ripr_command(&printed_after)?;
     if tokens.get(1).map(String::as_str) != Some("continue")
         || !tokens.iter().any(|token| token == "--root")

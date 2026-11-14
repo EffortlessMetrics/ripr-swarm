@@ -35,7 +35,7 @@ fn run(root: &Path, limit: usize) -> Result<LanguageRepoResult, String> {
         ts_workspace_file_limit(),
         ts_file_read_limit(),
         ts_workspace_read_budget(),
-        &[],
+        &crate::config::TypescriptLanguageConfig::default(),
     )
 }
 
@@ -244,7 +244,7 @@ fn truncated_discovery_walk_is_partial() -> Result<(), String> {
         3,
         ts_file_read_limit(),
         ts_workspace_read_budget(),
-        &[],
+        &crate::config::TypescriptLanguageConfig::default(),
     );
     let _ = std::fs::remove_dir_all(&root);
     let reason = result?
@@ -361,7 +361,7 @@ fn over_read_bound_file_leaves_the_denominator_and_is_partial() -> Result<(), St
         ts_workspace_file_limit(),
         8,
         ts_workspace_read_budget(),
-        &[],
+        &crate::config::TypescriptLanguageConfig::default(),
     );
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
@@ -397,7 +397,10 @@ fn declared_handwritten_source_under_an_excluded_directory_is_admitted() -> Resu
         ts_workspace_file_limit(),
         ts_file_read_limit(),
         ts_workspace_read_budget(),
-        &declared,
+        &crate::config::TypescriptLanguageConfig {
+            handwritten_files: declared,
+            ..crate::config::TypescriptLanguageConfig::default()
+        },
     );
     let without_decl = run(&root, 800);
     let _ = std::fs::remove_dir_all(&root);
@@ -411,6 +414,45 @@ fn declared_handwritten_source_under_an_excluded_directory_is_admitted() -> Resu
         "the admitted file must be analyzed, not just counted"
     );
     assert_eq!(without_decl?.production_files, 0);
+    Ok(())
+}
+
+#[test]
+fn docs_site_source_is_disclosed_as_skipped_unless_declared_handwritten() -> Result<(), String> {
+    // #13088: repo mode shares the adapter exclusion, so a docs-site file must
+    // leave the production denominator and be counted as skipped (not silently
+    // dropped), while a declared hand-written path is analyzed again.
+    let root = ts_unique_tempdir("repo-docs-site")?;
+    ts_write_file(&root.join("docs/theme/index.ts"), TS_SRC)?;
+    ts_write_file(&root.join("src/lib.ts"), TS_SRC)?;
+    let declared = vec!["docs/theme/index.ts".to_string()];
+    let with_decl = repo::analyze_repo_with_limit(
+        &repo_options(&root),
+        800,
+        ts_workspace_file_limit(),
+        ts_file_read_limit(),
+        ts_workspace_read_budget(),
+        &crate::config::TypescriptLanguageConfig {
+            handwritten_files: declared,
+            ..crate::config::TypescriptLanguageConfig::default()
+        },
+    );
+    let without_decl = run(&root, 800);
+    let _ = std::fs::remove_dir_all(&root);
+    let without_decl = without_decl?;
+    assert_eq!(without_decl.production_files, 1);
+    assert_eq!(without_decl.file_accounting.skipped, Some(1));
+    assert_eq!(without_decl.file_accounting.discovered, Some(2));
+    assert!(
+        without_decl
+            .findings
+            .iter()
+            .all(|f| f.probe.location.file != Path::new("docs/theme/index.ts")),
+        "a docs-site file must not seed findings"
+    );
+    let with_decl = with_decl?;
+    assert_eq!(with_decl.production_files, 2);
+    assert_eq!(with_decl.file_accounting.skipped, Some(0));
     Ok(())
 }
 
@@ -484,7 +526,7 @@ fn truncated_walk_names_the_discovery_cap_first_and_leaves_total_unknown() -> Re
         2,
         ts_file_read_limit(),
         ts_workspace_read_budget(),
-        &[],
+        &crate::config::TypescriptLanguageConfig::default(),
     );
     let _ = std::fs::remove_dir_all(&root);
     let accounting = result?.file_accounting;

@@ -30,7 +30,7 @@ Static exposure
   no_static_path (warning, confidence 0.43)
 
 Evidence
-  - reach no: No test is seen calling parse_summary; tests share only its file or a name token: try_parse_summary_pins_malformed_source
+  - reach no: No test is seen calling parse_summary; tests share only its file or a name token: try_parse_summary_pins_malformed_source (unreferenced in workspace)
   - infection no: No test reaches the changed owner, so no test can activate this change
   - propagation yes: Changed behavior appears to influence call effect: try_parse_summary(raw).map_err(Into::into)
   - observation no: No test reaches the changed owner, so no test can observe this change
@@ -64,7 +64,7 @@ Static exposure
   no_static_path (warning, confidence 0.43)
 
 Evidence
-  - reach no: No test is seen calling parse_summary; tests share only its file or a name token: try_parse_summary_pins_malformed_source
+  - reach no: No test is seen calling parse_summary; tests share only its file or a name token: try_parse_summary_pins_malformed_source (unreferenced in workspace)
   - infection no: No test reaches the changed owner, so no test can activate this change
   - propagation yes: Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)
   - observation no: No test reaches the changed owner, so no test can observe this change

@@ -22,13 +22,20 @@
 //! calls. Reach through an entry is weaker than a direct owner call: it is
 //! admitted only when no test calls the owner itself, and the classifier never
 //! promotes it to `exposed`.
+//!
+//! Cross-module reach (#13592): the same bounded graph also records, per
+//! exported entry, the imported bindings its code bare-calls
+//! ([`OutboundImportCall`]). `ReExportIndex::cross_module_entries` resolves
+//! those bindings through the existing import / re-export identity and adds
+//! the importer's exports as entries of the imported module's owners, under
+//! the same three-hop total bound and the same weaker-than-direct contract.
 
 use super::*;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// Maximum call edges followed from an exported entry to the owner. Matches
 /// the Rust helper-owner graph bound (`HELPER_OWNER_CALL_GRAPH_MAX_HOPS`).
-const MODULE_ENTRY_MAX_HOPS: usize = 3;
+pub(crate) const MODULE_ENTRY_MAX_HOPS: usize = 3;
 
 /// An exported name of the owner's module whose code reaches the owner.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
@@ -54,6 +61,43 @@ pub(crate) struct TypeScriptModuleEntry {
     /// relation ignores it.
     #[serde(default)]
     pub(crate) instance_factory: bool,
+    /// Call edges from this entry's code to the owner (same-module entries),
+    /// or across the whole import chain (cross-module entries). `0` for
+    /// entries that are not call-graph reach (class members, decorated
+    /// methods, instance factories). Bounded by `MODULE_ENTRY_MAX_HOPS`.
+    #[serde(default)]
+    pub(crate) hops: u8,
+    /// `Some` when the entry is an export of ANOTHER module that reaches the
+    /// owner through an imported binding (#13592); `None` for an export of
+    /// the owner's own module.
+    #[serde(default)]
+    pub(crate) cross_module: Option<TypeScriptCrossModuleLink>,
+}
+
+/// Where a cross-module entry lives and which modules and bindings its reach
+/// to the owner passes through, so a test that mocks or fabricates any of them
+/// is refused per test.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub(crate) struct TypeScriptCrossModuleLink {
+    /// The file that exports the entry name.
+    pub(crate) file: PathBuf,
+    /// Canonical modules the chain imports through: every imported module and
+    /// every re-export barrel resolved on the way (sorted, deduplicated).
+    pub(crate) via_modules: Vec<String>,
+    /// Binding names the chain calls (the owner and each intermediate export),
+    /// for the spy-fabrication guard.
+    pub(crate) chain_names: Vec<String>,
+}
+
+/// An imported binding that code reachable from exported entries of a module
+/// bare-calls (#13592). Persisted in the module's export facts so the
+/// workspace-level resolution never re-parses the importer.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct OutboundImportCall {
+    pub(crate) import: TypeScriptImport,
+    /// Exports of the importing module whose code reaches the call, each with
+    /// the call edges from the export to the calling function.
+    pub(crate) entries: Vec<TypeScriptModuleEntry>,
 }
 
 /// The decorated method a pass-through decorator owner reaches, with the
@@ -95,11 +139,19 @@ struct CallText<'s> {
     scope: &'s str,
 }
 
-/// Exported entries per top-level owner name.
-pub(crate) fn module_entries_by_owner<'a>(
+/// Exported entries per top-level owner name, plus the imported bindings the
+/// entries' code bare-calls. `imports` are the file's ES/CommonJS import
+/// bindings (never re-export hops); only a named, non-namespace binding whose
+/// local name is unique and not a top-level declaration of the module can
+/// become an outbound edge.
+pub(crate) fn module_entries_and_outbound<'a>(
     statements: &'a [Statement<'a>],
     source: &'a str,
-) -> BTreeMap<String, Vec<TypeScriptModuleEntry>> {
+    imports: &[TypeScriptImport],
+) -> (
+    BTreeMap<String, Vec<TypeScriptModuleEntry>>,
+    Vec<OutboundImportCall>,
+) {
     // Node keys and factories are AST atoms or string literals, so the graph
     // borrows them instead of owning a String per node (#10087 follow-up).
     let mut nodes: BTreeMap<&'a str, ModuleNode<'a>> = BTreeMap::new();
@@ -107,21 +159,75 @@ pub(crate) fn module_entries_by_owner<'a>(
     for statement in statements {
         collect_statement(statement, source, &mut nodes, &mut exports);
     }
-    let names: std::collections::HashSet<&'a str> = nodes.keys().copied().collect();
-    let callees: BTreeMap<&'a str, BTreeSet<&'a str>> = nodes
+    // Imported bindings a node may bare-call: named, value, bound once, and
+    // not also a top-level declaration of this module.
+    let bindings: BTreeMap<&str, &TypeScriptImport> = imports
         .iter()
-        .map(|(name, node)| (*name, node_callees(node, &nodes, &names)))
+        .filter(|import| {
+            !import.namespace
+                && import.imported.is_some()
+                && !nodes.contains_key(import.local.as_str())
+                && imports
+                    .iter()
+                    .filter(|other| other.local == import.local)
+                    .count()
+                    == 1
+        })
+        .map(|import| (import.local.as_str(), import))
         .collect();
+    let names: std::collections::HashSet<&str> = nodes
+        .keys()
+        .copied()
+        .chain(bindings.keys().copied())
+        .collect();
+    let mut callees: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    let mut import_callees: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for (name, node) in &nodes {
+        let (top_level, imported): (BTreeSet<&str>, BTreeSet<&str>) =
+            node_callees(node, &nodes, &names)
+                .into_iter()
+                .partition(|callee| nodes.contains_key(callee));
+        callees.insert(*name, top_level);
+        if !imported.is_empty() {
+            import_callees.insert(*name, imported);
+        }
+    }
     let mut entries: BTreeMap<String, Vec<TypeScriptModuleEntry>> = BTreeMap::new();
+    // (import local) -> exports of this module that reach a call of it.
+    let mut outbound: BTreeMap<&str, BTreeMap<String, TypeScriptModuleEntry>> = BTreeMap::new();
     for (local, exported) in &exports {
-        for reached in reachable_within_hops(local, &callees) {
-            if reached == local.as_str() {
+        for (reached, hops) in reachable_within_hops(local, &callees) {
+            if reached != local.as_str() {
+                let owner_entries = entries.entry(reached.to_string()).or_default();
+                for entry in exported {
+                    let entry = TypeScriptModuleEntry {
+                        hops: u8::try_from(hops).unwrap_or(u8::MAX),
+                        ..entry.clone()
+                    };
+                    if !owner_entries.contains(&entry) {
+                        owner_entries.push(entry);
+                    }
+                }
+            }
+            // The import edge itself is one more hop.
+            if hops >= MODULE_ENTRY_MAX_HOPS {
                 continue;
             }
-            let owner_entries = entries.entry(reached.to_string()).or_default();
-            for entry in exported {
-                if !owner_entries.contains(entry) {
-                    owner_entries.push(entry.clone());
+            for &binding in import_callees.get(reached).into_iter().flatten() {
+                let by_name = outbound.entry(binding).or_default();
+                for entry in exported {
+                    let entry = TypeScriptModuleEntry {
+                        hops: u8::try_from(hops).unwrap_or(u8::MAX),
+                        ..entry.clone()
+                    };
+                    by_name
+                        .entry(entry.name.clone())
+                        .and_modify(|seen| {
+                            if entry.hops < seen.hops {
+                                *seen = entry.clone();
+                            }
+                        })
+                        .or_insert(entry);
                 }
             }
         }
@@ -129,7 +235,16 @@ pub(crate) fn module_entries_by_owner<'a>(
     for owner_entries in entries.values_mut() {
         owner_entries.sort();
     }
-    entries
+    let outbound = outbound
+        .into_iter()
+        .filter_map(|(binding, by_name)| {
+            Some(OutboundImportCall {
+                import: (*bindings.get(binding)?).clone(),
+                entries: by_name.into_values().collect(),
+            })
+        })
+        .collect();
+    (entries, outbound)
 }
 
 fn collect_statement<'a>(
@@ -217,6 +332,8 @@ fn record_export(
             class_member: None,
             decorated: None,
             instance_factory: false,
+            hops: 0,
+            cross_module: None,
         });
 }
 
@@ -409,11 +526,11 @@ fn span_text(source: &str, span: oxc_span::Span) -> &str {
 
 /// Top-level names a node calls. A factory product calls what its factory's
 /// returned function calls.
-fn node_callees<'a>(
+fn node_callees<'n, 'a>(
     node: &ModuleNode<'a>,
     nodes: &BTreeMap<&'a str, ModuleNode<'a>>,
-    names: &std::collections::HashSet<&'a str>,
-) -> BTreeSet<&'a str> {
+    names: &std::collections::HashSet<&'n str>,
+) -> BTreeSet<&'n str> {
     let texts: Vec<&CallText<'_>> = match node.factory {
         Some(factory) => nodes
             .get(factory)
@@ -491,18 +608,21 @@ fn every_mention_is_a_bare_call(scope: &str, name: &str) -> bool {
     })
 }
 
+/// Names reachable from `start` within the hop bound, each with its shortest
+/// call-edge distance (`start` itself at `0`).
 fn reachable_within_hops<'n>(
     start: &'n str,
     callees: &BTreeMap<&'n str, BTreeSet<&'n str>>,
-) -> BTreeSet<&'n str> {
-    let mut seen: BTreeSet<&str> = BTreeSet::from([start]);
+) -> BTreeMap<&'n str, usize> {
+    let mut seen: BTreeMap<&str, usize> = BTreeMap::from([(start, 0)]);
     let mut queue: VecDeque<(&str, usize)> = VecDeque::from([(start, 0)]);
     while let Some((name, hops)) = queue.pop_front() {
         if hops == MODULE_ENTRY_MAX_HOPS {
             continue;
         }
         for &callee in callees.get(name).into_iter().flatten() {
-            if seen.insert(callee) {
+            if !seen.contains_key(callee) {
+                seen.insert(callee, hops + 1);
                 queue.push_back((callee, hops + 1));
             }
         }

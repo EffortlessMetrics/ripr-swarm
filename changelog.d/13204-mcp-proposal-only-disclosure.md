@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- An MCP gap item whose only repair target is a producer-owned new-test proposal (the finding has no existing test, so it is held as `fix_site_not_established`) now names that proposal as `proposed_new_test`, the same kind and file the CLI repair card shows, instead of reading as target-less. The item stays not ready; items held by any other gate still name no proposal (#13204).

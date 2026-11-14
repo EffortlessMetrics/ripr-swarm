@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0127"
+tests = [
+  "crates/ripr/src/lsp/state.rs::tests::open_document_count_cap_quarantines_the_overflow_uri",
+  "crates/ripr/src/lsp/state.rs::tests::invalidating_an_overflow_placeholder_keeps_the_store_limit_reason",
+  "crates/ripr/src/lsp/state.rs::tests::store_limit_flag_clears_on_recovery_so_a_later_bad_edit_is_an_edit_failure",
+  "crates/ripr/src/lsp/state.rs::tests::existing_document_refused_at_the_byte_cap_names_the_store_limit",
+  "crates/ripr/src/lsp/backend.rs::quarantine_message_tests::quarantine_messages_name_the_open_document_limit_not_an_edit_failure",
+  "crates/ripr/src/lsp/tests/document_store_overflow_tests.rs::did_open_beyond_the_document_count_cap_is_refused_and_quarantined",
+  "crates/ripr/src/lsp/tests/document_store_overflow_tests.rs::did_open_beyond_the_retained_byte_cap_is_refused_and_quarantined",
+]
+code = ["crates/ripr/src/lsp/state.rs"]

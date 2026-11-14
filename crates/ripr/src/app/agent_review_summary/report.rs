@@ -21,6 +21,20 @@ use super::util::string_field;
 /// Plain-language early-state copy for Markdown when check has not run (#10696).
 pub(crate) const NO_ANALYSIS_YET: &str = "No analysis yet. Run `ripr check` first.";
 
+/// Plain copy when the analysis outcome and receipt are unavailable (#10696).
+pub(crate) const FRESH_REVIEW_SUMMARY_HEADLINE: &str =
+    "Review incomplete: analysis outcome and repair receipt are unavailable.";
+
+pub(crate) fn review_summary_is_fresh_early_state(
+    surfaces: &[AgentReviewSurface],
+    analysis_outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
+    movement: &AgentReviewStaticMovement,
+) -> bool {
+    review_summary_before_analysis_artifact(surfaces, analysis_outcome)
+        && movement.state == "missing_artifact"
+        && movement.evidence_artifact.is_none()
+}
+
 pub(crate) fn review_summary_before_analysis_artifact(
     surfaces: &[AgentReviewSurface],
     analysis_outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
@@ -38,6 +52,9 @@ pub(crate) fn reviewer_summary_headline_markdown(
     analysis_outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
     surfaces: &[AgentReviewSurface],
 ) -> String {
+    if review_summary_is_fresh_early_state(surfaces, analysis_outcome, movement) {
+        return FRESH_REVIEW_SUMMARY_HEADLINE.to_string();
+    }
     if review_summary_before_analysis_artifact(surfaces, analysis_outcome) {
         return match target_seam {
             Some(seam) => format!(
@@ -279,8 +296,15 @@ fn reviewer_summary(
     let target = seam
         .map(|seam| seam.seam_id.as_str())
         .unwrap_or("unknown seam");
-    let headline = reviewer_summary_headline(status, target, movement, analysis_outcome);
-    let what_changed = if analysis_outcome.is_none() {
+    let fresh = review_summary_is_fresh_early_state(surfaces, analysis_outcome, movement);
+    let headline = if fresh {
+        FRESH_REVIEW_SUMMARY_HEADLINE.to_string()
+    } else {
+        reviewer_summary_headline(status, target, movement, analysis_outcome)
+    };
+    let what_changed = if fresh {
+        FRESH_REVIEW_SUMMARY_HEADLINE.to_string()
+    } else if analysis_outcome.is_none() {
         "No producer-backed completeness result is available; static review evidence cannot be treated as complete.".to_string()
     } else if let Some(outcome) = analysis_outcome.filter(|outcome| !outcome.kind.is_complete()) {
         format!(

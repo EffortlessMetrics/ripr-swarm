@@ -10,41 +10,69 @@
 //! non-test `fn` that could shadow a callee the isolated expansion mentions
 //! is such a refusal (#9967): the generated test must not outrank its twin.
 
+use super::MacroGeneratedOrigin;
 use super::macro_visibility::MacroVisibility;
 use super::{RustIndex, TestFact};
-use crate::analysis::syntax::expand_local_test_macros_with;
 use crate::analysis::syntax::ra::summarize_file_with_parser;
+use crate::analysis::syntax::{expand_local_test_macros_with, expansion_declares_items};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 pub(super) fn register_macro_generated_tests(index: &mut RustIndex) -> Result<(), String> {
-    let mut generated: Vec<TestFact> = Vec::new();
+    use rayon::prelude::*;
     let visibility = MacroVisibility::new(
         index
             .files
             .iter()
             .map(|(path, file)| (path.clone(), file.data.source.clone())),
     );
-    for (path, file) in &index.files {
-        // Resolving a file's imported definitions re-parses it, so a large
-        // workspace spends its whole budget in this loop unless each file
-        // observes the run's token (#1604).
-        crate::analysis::cancellation::checkpoint()?;
-        let imported = visibility.imported_macros(path);
-        for expansion in expand_local_test_macros_with(&file.data.source, &imported) {
-            let Ok(facts) = summarize_file_with_parser(path, &expansion.text) else {
-                continue;
-            };
-            // The same exact attribute-path rule the style normalizer
-            // applies to hand-written tests; the parser's own check is a
-            // prefix match.
-            for mut test in facts.tests.into_iter().filter(|test| {
-                super::test_styles::attributes_define_test(test.attrs.iter().map(String::as_str))
-            }) {
-                pin_to_invocation(&mut test, path, expansion.start_line, expansion.end_line);
-                generated.push(test);
-            }
-        }
+    // Every file's expansion is independent of the others, so the loop runs
+    // on the rayon pool; the indexed collect keeps file order, so the
+    // generated tests (and the first failure) are those of the serial walk.
+    let token = crate::analysis::cancellation::current_token();
+    let files: Vec<_> = index.files.iter().collect();
+    let per_file: Vec<Result<Vec<TestFact>, String>> = files
+        .par_iter()
+        .map(|(path, file)| {
+            crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                // Resolving a file's imported definitions re-parses it, so a
+                // large workspace spends its whole budget in this loop unless
+                // each file observes the run's token (#1604).
+                crate::analysis::cancellation::checkpoint()?;
+                let mut generated: Vec<TestFact> = Vec::new();
+                let imported = visibility.imported_macros(path);
+                for expansion in expand_local_test_macros_with(&file.data.source, &imported) {
+                    let Ok(facts) = summarize_file_with_parser(path, &expansion.text) else {
+                        continue;
+                    };
+                    let origin = MacroGeneratedOrigin {
+                        body_declares_items: expansion_declares_items(&expansion.text),
+                    };
+                    // The same exact attribute-path rule the style normalizer
+                    // applies to hand-written tests; the parser's own check
+                    // is a prefix match.
+                    for mut test in facts.tests.into_iter().filter(|test| {
+                        super::test_styles::attributes_define_test(
+                            test.attrs.iter().map(String::as_str),
+                        )
+                    }) {
+                        pin_to_invocation(
+                            &mut test,
+                            path,
+                            expansion.start_line,
+                            expansion.end_line,
+                        );
+                        test.generated = Some(origin);
+                        generated.push(test);
+                    }
+                }
+                Ok(generated)
+            })
+        })
+        .collect();
+    let mut generated: Vec<TestFact> = Vec::new();
+    for tests in per_file {
+        generated.extend(tests?);
     }
     if generated.is_empty() {
         return Ok(());

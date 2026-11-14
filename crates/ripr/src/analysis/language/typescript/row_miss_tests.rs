@@ -557,6 +557,7 @@ fn class_gate_withholds_every_row_miss() -> Result<(), String> {
                 credits: CreditFacts {
                     mock_facts: &mock_facts,
                     pin_facts: &pin_facts,
+                    push_facts: &Default::default(),
                     changed_field: None,
                 },
                 boundary_fact: None,
@@ -617,6 +618,7 @@ fn missing_input_without_a_boundary_fact_carries_no_support() -> Result<(), Stri
             credits: CreditFacts {
                 mock_facts: &mock_facts,
                 pin_facts: &pin_facts,
+                push_facts: &Default::default(),
                 changed_field: None,
             },
             boundary_fact: None,

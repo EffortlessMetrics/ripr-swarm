@@ -1,0 +1,13 @@
+#[derive(Clone, Debug)]
+pub struct Pair(pub u8, pub u8);
+
+pub fn gap(pair: &Pair) -> u8 {
+    pair.1.wrapping_sub(pair.0)
+}
+
+impl quickcheck::Arbitrary for Pair {
+    fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+        let a = u8::arbitrary(g);
+        Pair(a, a.wrapping_add(2))
+    }
+}

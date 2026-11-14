@@ -78,6 +78,24 @@ Judgment classes are `useful`, `incorrect`, `unclear`, `expensive`, and
 requires `--note` and `--judgment`. A useful limitation or intentional
 no-action may omit a gap id and attempt. File/line is rejected as identity.
 
+The retained closed reason contract is explicit below. These values classify
+feedback about the result, rather than the underlying code: an already-covered
+item or stale result is judged an incorrect recommendation, and a failed command or
+unsupported workflow is workflow cost (`expensive`).
+
+| Default judgment | Reason codes |
+| --- | --- |
+| `useful` | `useful_actionable`, `useful_limitation`, `correct_target`, `correct_discriminator`, `clear_explanation` |
+| `incorrect` | `wrong_target`, `wrong_discriminator`, `false_actionable`, `duplicate_item`, `already_covered`, `incorrect_causal_attribution`, `stale_result` |
+| `unclear` | `missing_context`, `ambiguous_target`, `unclear_explanation`, `other` |
+| `expensive` | `verify_command_failed`, `receipt_command_failed`, `route_too_broad`, `too_slow`, `too_noisy`, `unsupported_workflow` |
+| `intentional_no_action` | `intentional_defensive_code`, `intentional_low_grip`, `manual_review_preferred` |
+
+The `other` default is not a valid receipt on its own: the caller must supply
+the explicit judgment and note. Other closed reasons accept only their mapped
+judgment. The per-reason ordinary and Kani tests pin these values independently
+of the production decision function (#12109).
+
 Idempotency: the same key and payload produce one record (`already_recorded`
 on repeat). A different payload with the same key is a conflict. Notes are
 bounded (1024 bytes) and fail closed on known secret patterns; those checks
@@ -191,13 +209,13 @@ join does not authenticate a reviewer or independently analyze a repository.
 
 ## Test Mapping
 
-- `crates/ripr/src/domain/feedback.rs::tests::every_reason_maps_onto_one_of_the_five_judgments`
-- `crates/ripr/src/domain/feedback.rs::tests::snapshot_is_required_and_file_line_is_not_identity`
-- `crates/ripr/src/domain/feedback.rs::tests::useful_limitation_may_omit_canonical_item`
-- `crates/ripr/src/domain/feedback.rs::tests::other_requires_a_note_and_explicit_judgment`
-- `crates/ripr/src/domain/feedback.rs::tests::closed_reason_rejects_a_mismatched_judgment`
-- `crates/ripr/src/domain/feedback.rs::tests::a_later_attempt_keeps_the_historical_reference`
-- `crates/ripr/src/domain/feedback.rs::tests::absent_live_identity_is_current_not_staleness`
+- `crates/ripr-contract/src/domain/feedback.rs::tests::every_reason_maps_onto_one_of_the_five_judgments`
+- `crates/ripr-contract/src/domain/feedback.rs::tests::snapshot_is_required_and_file_line_is_not_identity`
+- `crates/ripr-contract/src/domain/feedback.rs::tests::useful_limitation_may_omit_canonical_item`
+- `crates/ripr-contract/src/domain/feedback.rs::tests::other_requires_a_note_and_explicit_judgment`
+- `crates/ripr-contract/src/domain/feedback.rs::tests::closed_reason_rejects_a_mismatched_judgment`
+- `crates/ripr-contract/src/domain/feedback.rs::tests::a_later_attempt_keeps_the_historical_reference`
+- `crates/ripr-contract/src/domain/feedback.rs::tests::absent_live_identity_is_current_not_staleness`
 - `crates/ripr/src/app/feedback.rs::tests::recording_the_same_key_and_payload_is_idempotent`
 - `crates/ripr/src/app/feedback.rs::tests::matching_explicit_judgment_is_idempotent_with_the_derived_class`
 - `crates/ripr/src/app/feedback.rs::tests::same_key_with_a_different_payload_is_a_conflict`
@@ -222,7 +240,7 @@ join does not authenticate a reviewer or independently analyze a repository.
 
 ## Implementation Mapping
 
-- `crates/ripr/src/domain/feedback.rs` — typed identity, reason taxonomy, and
+- `crates/ripr-contract/src/domain/feedback.rs` — typed identity, reason taxonomy, and
   reference-state classification
 - `crates/ripr/src/app/feedback.rs` — record, load, privacy, join
 - `crates/ripr/src/output/feedback.rs` — JSON receipt and join rendering

@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0423"
+scope = "out"
+reason = "Shell tab-completion script generation is CLI surface behavior with no runtime-mutant truth for a verdict corpus case; covered by completions unit and integration tests"

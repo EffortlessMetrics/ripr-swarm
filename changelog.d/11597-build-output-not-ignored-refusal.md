@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr repair` now refuses a Rust repair whose Cargo build directory is not Git-ignored with the same not-started shape as the uncommitted-target hold: the plain reason, a `next:` line, then `ripr: refusal code=build_output_not_ignored disposition=not_started`, exit `3` on the façade (the advanced `agent repair --phase before` keeps exit `2`). The uncommitted-target hold gains the same `next:` line. (#11597)

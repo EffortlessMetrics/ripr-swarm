@@ -29,6 +29,10 @@ Plan item:
 Governing issue or accepted claim:
 Acceptance delta (one sentence):
 
+<!-- A ripr <-> ripr-swarm sync merge with the `history-sync` label also adds the
+two History-sync source and destination base lines described in
+docs/MERGE_FLOW.md (History-sync route). Other PRs leave them out. -->
+
 ## Candidate Relationships
 
 Candidate branch (GitHub PR head is authoritative after publication):

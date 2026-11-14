@@ -22,6 +22,55 @@ suppression handling, and conservative defaults.
 The SARIF layer is a renderer over existing analyzer evidence. It must not
 classify findings or seams itself.
 
+The generated GitHub workflow (`ripr init --ci github`) uploads one of the two
+per event, so code scanning shows one alert per changed line (#14300): a pull
+request renders and uploads only the diff-scoped `ripr-findings` category,
+and a manual run renders and uploads only the repo-scoped `ripr-seams`
+category. The job summary names the file that is absent by design on that
+event and reports the expected one as `missing or skipped` when it did not
+render. `ci_packet.rs::repo_seam_sarif_renders_on_manual_runs_only`,
+`manual_run_flags_a_missing_seam_sarif_not_the_diff_sarif` and the empty-root
+summary test pin this split.
+
+### Cross-surface conformance (#12925)
+
+The same producer finding retains its class, canonical identity and contract
+confidence on JSON, SARIF, LSP and context-packet projections. MCP's gap list
+retains canonical identity, class and language; its detail document also names
+the original finding ID. GitHub annotation titles retain class and messages
+retain the canonical gap ID when one exists. Annotation text does not carry a
+structured finding ID or language field. Context packets identify the probe
+and optional canonical gap rather than supplying a separate finding ID.
+
+Candidate currentness, diagnostic visibility and repair readiness are distinct.
+An annotation's warning level is not permission to repair. LSP's full profile
+can disclose all classes; its actionable profile requires a current finding,
+an eligible gap class and a witness with a discriminator and fix site. This
+includes `no_static_path` when those facts exist. MCP finding readiness is
+conjoined with the shared seam validator at snapshot admission; a projected
+finding's readiness alone does not authorize `ripr_prepare_repair`.
+For example, `helper_chain_one_hop` currently supplies an `infection_unknown`
+finding with an established canonical discriminator and strong direct tests;
+its finding-level MCP readiness is true. A blanket class-based refusal would
+change the existing readiness contract rather than prove parity.
+
+The context packet carries a finding's classification. The separate
+`ripr agent packet` contract consumes a GapRecord or classified seam and uses
+`gap_state`/`evidence_class`, not the seven finding classes. TypeScript's
+existing finding-to-GapRecord producer is tested through the real packet
+renderer, including complete-packet and unreachable-discriminator controls.
+Rust findings do not become GapRecords through the check-output ledger route;
+their seam-packet path requires the separately scoped seam inventory. No test
+may manufacture that missing relationship or equate the distinct taxonomies.
+
+Conformance proof must preserve unavailable fields as unavailable, compare
+fields where the surface actually exposes them, and reject a mismatched class,
+identity or configured severity without changing classification or weakening
+any repair refusal. Existing representative fixtures cover every class each
+selected adapter emits. Optional `expected/sarif.json` and
+`expected/github.txt` files participate in the normal fixture golden check and
+spec-reasoned blessing route.
+
 The SARIF layer should:
 
 - declare `columnKind: "unicodeCodePoints"` on finding and repo-seam runs,
@@ -45,6 +94,12 @@ The SARIF layer should:
   The property is absent when the count is zero. Omitted findings stay
   out of `results`; the property only discloses the filter, matching the
   GitHub annotation denominator notice (#4393);
+- drop from diff-scoped `results` any finding whose changed owner carries
+  `#[mutants::skip]` (owner opt-out, #13819), and record the count of such
+  candidate-actionable findings in
+  `runs[].properties.withheld_by_owner_opt_out` (absent when zero).
+  Policy-suppressed findings are unaffected and keep their SARIF
+  `suppressions` marking;
 - fold diff-scoped results that share a rule, file, line and suppression
   state into the first one, so one changed line is one code-scanning alert
   (#11219). The kept result is the one with the smallest fingerprint (input order never
@@ -52,6 +107,24 @@ The SARIF layer should:
   folded results in `properties.folded_results`, and the run records the
   count in `runs[].properties.folded_same_line_results` (absent when zero).
   Different classes never fold: a weaker class does not hide a stronger one.
+  `ripr check --format github` folds by the same key (class, file and line
+  among the annotated findings, the file as the rendered `file=` path) into
+  one annotation. When every finding in the group may fold, it keeps the
+  finding SARIF keeps; it adds `Also covers N more probe(s) of this change
+  on this line.` before its canonical gap id, then `Also canonical gap: <id>`
+  for each different gap id a folded probe carries. A finding with its own
+  repair card or preview actionability never folds, so its guidance stays
+  on its own annotation; each folded probe's next step stays in
+  `ripr check --format json`. A printed denominator notice counts the folded
+  findings (#14302).
+- bound the results array by bytes: `RIPR_SARIF_RESULTS_BYTES` (default
+  `1000000`, `0` removes the cap, an unparseable value fails the run) keeps
+  the leading results in both diff-scoped and repo-scoped runs, always
+  keeping the first result. When the budget omits results, the run records
+  `runs[].properties.results_rendered`, `results_total`, `results_omitted`,
+  `results_byte_budget`, `limited_results_bound: true` and
+  `document_complete: false` (absent when nothing was omitted), so a bounded
+  document never reads as the complete set.
 
 ## Rule IDs
 

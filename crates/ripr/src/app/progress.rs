@@ -33,6 +33,18 @@ pub(crate) enum AnalysisProgressScope {
     Repo,
 }
 
+impl AnalysisProgressScope {
+    /// Stable lowercase token for stderr: the `[worktree]` in a progress line
+    /// and the `scope = worktree` in the `-v` diagnostics are this value.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Diff => "diff",
+            Self::Worktree => "worktree",
+            Self::Repo => "repo",
+        }
+    }
+}
+
 /// One bounded, path-free progress observation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct AnalysisProgressEvent {

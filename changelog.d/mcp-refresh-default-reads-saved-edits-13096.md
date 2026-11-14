@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr_refresh` with no `source` now makes the same input choice as `ripr check`: it analyzes saved staged and unstaged tracked edits when any exist, and the committed diff otherwise, so an agent that just edited code no longer gets an empty `no_scope` snapshot and a retry hint. The result reports `requested_source: "default"` beside `captured_source`; `source: "committed"` or `"worktree"` still forces one (#13096).

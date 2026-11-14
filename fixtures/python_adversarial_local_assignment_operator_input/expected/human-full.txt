@@ -22,11 +22,11 @@ Changed
   after:      total = base - bonus
 
 Change type
-  a condition or comparison changed
-  family: predicate
-  delta:  control (changes which code path runs)
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
   owner:  python:src/calc.py::compute
-  gap id (for scripts): gap:python:src/calc.py:compute:predicate_boundary:predicate:total=base-bonus
+  gap id (for scripts): gap:python:src/calc.py:compute:return_value:return_value:total=base-bonus
 
 Language
   language: python
@@ -44,7 +44,7 @@ Evidence
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches unknown sink: total = base - bonus (line 2) — ripr could not classify where the changed value ends up; propagation confidence is limited
-  - related test tests/test_calc.py:4 test_base_unchanged uses strong exact value oracle: assert base == 10; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/test_calc.py:4 test_base_unchanged uses strong exact value oracle: assert base == 10
 
 Weakness
   - A strong Python oracle reaches `compute`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output

@@ -78,7 +78,7 @@ Static exposure
   propagation_unknown (note, confidence 0.66)
 Evidence
   - reach yes: Related tests appear to reach thr: at, high, low
-  - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+  - infection weak: Related tests contain input values, but the equality-boundary check is missing
   - propagation unknown: Propagation is not statically obvious from syntax-first analysis
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly

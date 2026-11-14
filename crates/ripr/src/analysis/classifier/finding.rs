@@ -84,6 +84,21 @@ pub(in crate::analysis) fn build_finding_with_origins(
     if context.const_flow.is_some() || context.binding_return_flow.is_some() {
         stop_reasons.retain(|reason| reason.as_str() != StopReason::NoChangedRustLine.as_str());
     }
+    #[cfg(feature = "lang-rust")]
+    if context.tier_flow.is_some() {
+        stop_reasons.retain(|reason| reason.as_str() != StopReason::NoChangedRustLine.as_str());
+    }
+    // #12040: a build-time check constrains this line; a violating edit fails
+    // to build. The classifier withholds a ruled-out reach separately.
+    if context.compile_time_guarded
+        && let Some(at) = stop_reasons
+            .iter()
+            .position(|reason| *reason == StopReason::NoChangedRustLine)
+    {
+        stop_reasons[at] = StopReason::CompileTimeInvariant;
+        stop_reasons.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        stop_reasons.dedup_by(|a, b| a.as_str() == b.as_str());
+    }
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
     // RIPR-SPEC-0263: no related test call enters the guard around the
     // changed line, so the repair is an input, not a stronger assertion.
@@ -672,17 +687,90 @@ fn text_calls_owner(text: &str, owner_name: &str) -> bool {
     body_contains_owner_call(text, owner_name)
 }
 
-/// Identifiers bound by `let <ident> = ...` statements in `body` whose
-/// initializer calls `owner_name`. Bounded text scan: each binding's
-/// initializer extends to the next `;`. Uppercase pattern names
-/// (`let Some(x) = ...`) and tuple destructuring are skipped — they cannot
-/// name the bound variable, so the binding fails closed.
+/// Identifiers bound only to owner results in `body`. A `let <ident> = ...`
+/// whose initializer (to the next `;`) calls `owner_name` binds the name; the
+/// name is dropped when the body binds it through a covered non-owner form:
+/// another `let` of the same name, a destructuring pattern that mentions it,
+/// a `for` loop variable, a plain `<ident> = ...` reassignment, a field write
+/// (`<ident>.0 = ...`) or a `&mut <ident>` borrow. The scan is
+/// position-blind, so each covered rebinding fails closed (RIPR-SPEC-0001): an
+/// assertion after `let amount = tax(100); let amount = 0;` is not credited as
+/// observing `tax`. Uppercase single-name patterns (`let Some(x) = ...`) and
+/// tuple destructuring cannot name an owner result, so they only shadow.
 fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<String> {
     fn is_ident_byte(byte: u8) -> bool {
         byte.is_ascii_alphanumeric() || byte == b'_'
     }
+    fn record_pattern_bindings(pattern: &str, events: &mut Vec<(String, bool)>) {
+        // In a struct pattern `field: binding` only the name after the colon is
+        // bound; the field label is not a shadow. Classify each occurrence by
+        // its own position. `let` and `for` share this rule.
+        let pattern_bytes = pattern.as_bytes();
+        let mut brackets = Vec::new();
+        let mut index = 0;
+        while index < pattern_bytes.len() {
+            if !is_ident_byte(pattern_bytes[index]) {
+                match pattern_bytes[index] {
+                    b'(' | b'[' | b'{' => brackets.push(pattern_bytes[index]),
+                    b')' | b']' | b'}' => {
+                        brackets.pop();
+                    }
+                    _ => {}
+                }
+                index += 1;
+                continue;
+            }
+            let start = index;
+            while index < pattern_bytes.len() && is_ident_byte(pattern_bytes[index]) {
+                index += 1;
+            }
+            let word = &pattern[start..index];
+            if matches!(word, "mut" | "ref") {
+                continue;
+            }
+            let after_word = pattern[index..].trim_start();
+            let label = brackets.last() == Some(&b'{')
+                && after_word.starts_with(':')
+                && !after_word.starts_with("::");
+            if !label {
+                events.push((word.to_string(), false));
+            }
+        }
+    }
+    /// The part of `text` that belongs to one statement or match arm: it stops
+    /// at `;` or `,` outside brackets, or at an unmatched closing bracket, so
+    /// a block-tail `amount = 0 }` does not swallow the code after it.
+    fn statement_prefix(text: &str) -> &str {
+        let mut depth = 0usize;
+        for (index, byte) in text.bytes().enumerate() {
+            match byte {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    if depth == 0 {
+                        return &text[..index];
+                    }
+                    depth -= 1;
+                }
+                b';' | b',' if depth == 0 => return &text[..index],
+                _ => {}
+            }
+        }
+        text
+    }
+    /// Whether an initializer's value is the owner's result. A block whose
+    /// statements precede its tail (`{ tax(2); 0 }`, or one cut at its first
+    /// `;`) cannot be read as the owner's value, so it fails closed.
+    fn value_from_owner(initializer: &str, owner_name: &str) -> bool {
+        let opens = initializer.matches(['(', '[', '{']).count();
+        let closes = initializer.matches([')', ']', '}']).count();
+        opens == closes && !initializer.contains(';') && text_calls_owner(initializer, owner_name)
+    }
+    // Quoted text and comments are not code: mask them before every scan.
+    let masked = crate::analysis::extract::mask::mask_comments_and_strings(body);
+    let body = masked.as_str();
     let bytes = body.as_bytes();
-    let mut bound = Vec::new();
+    // Every binding event: (name, initializer calls the owner).
+    let mut events: Vec<(String, bool)> = Vec::new();
     let mut cursor = 0;
     while let Some(offset) = body[cursor..].find("let ") {
         let start = cursor + offset;
@@ -690,44 +778,145 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
         if start > 0 && is_ident_byte(bytes[start - 1]) {
             continue;
         }
-        let mut name_end = cursor;
-        while name_end < bytes.len() && is_ident_byte(bytes[name_end]) {
-            name_end += 1;
-        }
-        let mut name = &body[cursor..name_end];
-        if matches!(name, "mut" | "ref") {
-            let mut pattern_start = name_end;
-            while pattern_start < bytes.len() && bytes[pattern_start].is_ascii_whitespace() {
-                pattern_start += 1;
-            }
-            name_end = pattern_start;
-            while name_end < bytes.len() && is_ident_byte(bytes[name_end]) {
-                name_end += 1;
-            }
-            name = &body[pattern_start..name_end];
-        }
-        if name.is_empty()
-            || name
-                .chars()
-                .next()
-                .is_some_and(|character| character.is_ascii_uppercase())
-        {
-            continue;
-        }
-        let Some(assign) = body[name_end..].find('=') else {
+        let Some(assign) = body[cursor..].find('=') else {
             continue;
         };
-        let Some(terminator) = body[name_end..].find(';') else {
+        let Some(terminator) = body[cursor..].find(';') else {
             continue;
         };
         if assign >= terminator {
+            // A type annotation may contain the first semicolon, for example
+            // `[u8; 3]`. The binding still exists even though the initializer
+            // delimiter has not appeared yet.
+            record_pattern_bindings(&body[cursor..cursor + terminator], &mut events);
             continue;
         }
-        let initializer = &body[name_end + assign + 1..name_end + terminator];
-        if text_calls_owner(initializer, owner_name) {
-            bound.push(name.to_string());
+        let pattern = &body[cursor..cursor + assign];
+        let initializer = &body[cursor + assign + 1..cursor + terminator];
+        let words: Vec<&str> = pattern
+            .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+            .filter(|word| !word.is_empty() && !matches!(*word, "mut" | "ref"))
+            .collect();
+        let simple = words.first().copied().filter(|name| {
+            let head = pattern.trim_start();
+            let head = head
+                .strip_prefix("mut ")
+                .or_else(|| head.strip_prefix("ref "))
+                .unwrap_or(head)
+                .trim_start();
+            head.starts_with(name)
+                && !name
+                    .chars()
+                    .next()
+                    .is_some_and(|character| character.is_ascii_uppercase())
+                && !head[name.len()..].trim_start().starts_with(['(', '{', '@'])
+                && !head[name.len()..].trim_start().starts_with("::")
+        });
+        match simple {
+            Some(name) => {
+                events.push((name.to_string(), value_from_owner(initializer, owner_name)))
+            }
+            None => record_pattern_bindings(pattern, &mut events),
         }
-        cursor = name_end.max(cursor);
+    }
+    // A `for <pattern> in` loop variable and a plain `<ident> = ...`
+    // reassignment rebind a name too.
+    let mut rest = body;
+    while let Some(offset) = rest.find("for ") {
+        let after = &rest[offset + "for ".len()..];
+        let word_start = offset == 0 || !is_ident_byte(rest.as_bytes()[offset - 1]);
+        if word_start && let Some(end) = after.find(" in ") {
+            record_pattern_bindings(&after[..end], &mut events);
+        }
+        rest = after;
+    }
+    let candidates: Vec<String> = events
+        .iter()
+        .filter(|(_, from_owner)| *from_owner)
+        .map(|(name, _)| name.clone())
+        .collect();
+    for name in &candidates {
+        let mut from = 0;
+        while let Some(found) = body[from..].find(name.as_str()) {
+            let at = from + found;
+            from = at + name.len();
+            let before_ok = at == 0 || !is_ident_byte(bytes[at - 1]);
+            let after_ok = from >= bytes.len() || !is_ident_byte(bytes[from]);
+            if !(before_ok && after_ok) {
+                continue;
+            }
+            let tail = body[from..].trim_start();
+            // `&mut name` lets the callee overwrite it, and `name.0 = ..` /
+            // `name.field = ..` rewrites part of it: neither is still the
+            // owner's result.
+            let head = body[..at].trim_end();
+            if head.ends_with("&mut") {
+                events.push((name.clone(), false));
+                continue;
+            }
+            if at > 0 && bytes[at - 1] == b'.' {
+                // `other.name`: a field label, not the local.
+                continue;
+            }
+            if tail.starts_with('.') {
+                // `name.0 = ..`, `name.a.b -= ..`: walk the field path, then
+                // look for a plain or compound assignment operator.
+                let mut after_field = tail;
+                let mut segments = 0usize;
+                while let Some(field) = after_field.strip_prefix('.') {
+                    let field_end = field
+                        .find(|character: char| {
+                            !character.is_ascii_alphanumeric() && character != '_'
+                        })
+                        .unwrap_or(field.len());
+                    if field_end == 0 {
+                        break;
+                    }
+                    after_field = field[field_end..].trim_start();
+                    segments += 1;
+                }
+                const COMPOUND: [&str; 10] =
+                    ["+=", "-=", "*=", "/=", "%=", "^=", "&=", "|=", "<<=", ">>="];
+                let plain = after_field.starts_with('=')
+                    && !after_field.starts_with("==")
+                    && !after_field.starts_with("=>");
+                let compound = COMPOUND.iter().any(|op| after_field.starts_with(op));
+                if segments > 0 && (plain || compound) {
+                    events.push((name.clone(), false));
+                }
+                continue;
+            }
+            // `=` or a compound assignment (`+=`, `<<=`, ...); comparisons
+            // (`==`, `<=`, `>=`, `!=`) and `=>` are not rebindings.
+            let operator = ["<<", ">>"]
+                .iter()
+                .find(|operator| tail.starts_with(**operator))
+                .map_or_else(
+                    || usize::from(tail.starts_with(['+', '-', '*', '/', '%', '&', '|', '^'])),
+                    |operator| operator.len(),
+                );
+            let assign = &tail[operator..];
+            if !assign.starts_with('=') || assign.starts_with("==") || assign.starts_with("=>") {
+                continue;
+            }
+            if head.ends_with("let") || head.ends_with("mut") || head.ends_with("ref") {
+                continue;
+            }
+            let initializer = statement_prefix(&assign[1..]);
+            events.push((name.clone(), value_from_owner(initializer, owner_name)));
+        }
+    }
+    let mut bound: Vec<String> = Vec::new();
+    for name in candidates {
+        if bound.contains(&name) {
+            continue;
+        }
+        if events
+            .iter()
+            .all(|(event, from_owner)| *event != name || *from_owner)
+        {
+            bound.push(name);
+        }
     }
     bound
 }
@@ -1097,11 +1286,15 @@ mod tests {
     /// miss itself is unchanged by the support (control 9).
     #[test]
     fn rust_attaches_the_universal_fact_only_to_rows_it_assigns_the_miss() {
-        use crate::domain::{MissingDiscriminatorFact, RelatedTestMiss, RelatedTestMissSupport};
+        use crate::domain::{
+            DiscriminatorShape, MissingDiscriminatorFact, RelatedTestMiss, RelatedTestMissSupport,
+        };
         let fact = |value: &str| MissingDiscriminatorFact {
             value: value.to_string(),
             reason: "no related test passes the boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         };
         let rows = || {
             vec![
@@ -1258,6 +1451,8 @@ mod tests {
             observe: yes.clone(),
             discriminate: yes,
             reach_ruled_out: true,
+            proximity_reach_of_named_owner: false,
+            assigned_field_weakly_read: false,
             assertion_refusal: None,
             refusals_are_analyzer_limits: false,
             mixed_refusal_is_analyzer_limit: false,
@@ -1274,12 +1469,13 @@ mod tests {
             start_line: 1,
             end_line: 6,
             body: body.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         }
     }
 
@@ -1616,6 +1812,195 @@ mod tests {
             "let other = recalculate(5);",
             Some("calculate")
         ));
+    }
+
+    #[test]
+    fn owner_binding_scan_drops_a_name_the_body_rebinds() {
+        // #6973: the covered rebinding forms fail closed; controls keep the
+        // owner binding when no covered form rebinds it.
+        let bound = |body: &str| bound_identifiers_from_owner_calls(body, "tax");
+        assert_eq!(
+            bound("let amount = tax(100); assert_eq!(amount, 90);"),
+            vec!["amount".to_string()]
+        );
+        for (label, body) in [
+            (
+                "shadowing let",
+                "let amount = tax(100); let amount = 0; assert_eq!(amount, 0);",
+            ),
+            (
+                "shadowing destructure",
+                "let amount = tax(100); let (amount, _) = pair(); assert_eq!(amount, 0);",
+            ),
+            (
+                "shadowing pattern",
+                "let amount = tax(100); let Some(amount) = lookup() else { return }; assert_eq!(amount, 0);",
+            ),
+            (
+                "reassignment",
+                "let mut amount = tax(100); amount = 0; assert_eq!(amount, 0);",
+            ),
+            (
+                "compound assignment",
+                "let mut amount = tax(100); amount *= 0; assert_eq!(amount, 0);",
+            ),
+            (
+                "shifted assignment",
+                "let mut amount = tax(100); amount <<= 1; assert_eq!(amount, 0);",
+            ),
+            (
+                "for variable",
+                "let amount = tax(100); for amount in 0..3 { assert_eq!(amount, 0); }",
+            ),
+            (
+                "reference type ascription",
+                "let amount = tax(100); let &amount: &u32 = &0; assert_eq!(amount, 0);",
+            ),
+            (
+                "type annotation containing semicolon",
+                "let amount = tax(100); let amount: [u8; 3] = [0; 3]; assert_eq!(amount, 0);",
+            ),
+            (
+                "lowercase path pattern",
+                "let amount = tax(100); let wrap::W(amount) = w; assert_eq!(amount, 0);",
+            ),
+            (
+                "block-tail reassignment",
+                "let mut amount = tax(100); if flag { amount = 0 } record(tax(2)); assert_eq!(amount, 0);",
+            ),
+            (
+                "match-arm reassignment",
+                "let mut amount = tax(100); match x { A => amount = 0, B => {} } record(tax(2)); assert_eq!(amount, 0);",
+            ),
+            (
+                "tuple field write",
+                "let mut amount = tax(100); amount.0 = 5; assert_eq!(amount.0, 5);",
+            ),
+            (
+                "mutable borrow",
+                "let mut amount = tax(100); reset(&mut amount); assert_eq!(amount, 0);",
+            ),
+            (
+                "compound field write",
+                "let mut amount = tax(100); amount.0 += 1; assert_eq!(amount.0, 5);",
+            ),
+            (
+                "nested field write",
+                "let mut amount = tax(100); amount.a.b = 1; assert_eq!(amount.a.b, 1);",
+            ),
+            (
+                "block with a leading discarded owner call",
+                "let mut amount = tax(1); amount = { tax(2); 0 }; assert_eq!(amount, 0);",
+            ),
+            (
+                "let block with a leading discarded owner call",
+                "let amount = { tax(1); 0 }; assert_eq!(amount, 0);",
+            ),
+            (
+                "block initializer discarding the owner call",
+                "let mut amount = tax(1); amount = { let x = 0; tax(2); 0 }; assert_eq!(amount, 0);",
+            ),
+        ] {
+            assert!(bound(body).is_empty(), "{label}: {body}");
+        }
+        // Rebinding from the owner again, comparisons and other names keep it.
+        assert_eq!(
+            bound("let mut amount = tax(1); amount = tax(2); assert_eq!(amount, 3);"),
+            vec!["amount".to_string()]
+        );
+        assert_eq!(
+            bound("let amount = tax(1); assert!(amount == 1); let other = 0;"),
+            vec!["amount".to_string()]
+        );
+        assert_eq!(
+            bound("let amount = tax(1); assert!(amount <= 1 && amount >= 0 && amount != 2);"),
+            vec!["amount".to_string()]
+        );
+        // Only a real rebinding of the local counts: a field write, a quoted
+        // or commented loop, a struct-pattern field label and a comparison
+        // leave the owner binding in place.
+        for (label, body) in [
+            (
+                "field write",
+                "let amount = tax(100); other.amount = 0; assert_eq!(amount, 90);",
+            ),
+            (
+                "nested field of another receiver",
+                "let amount = tax(100); other.amount.value = 0; assert_eq!(amount, 90);",
+            ),
+            (
+                "field comparison and method call on the local",
+                "let amount = tax(100); assert!(amount.value <= 3 && amount.value == 1 && amount.len() > 0);",
+            ),
+            (
+                "compound write on another receiver",
+                "let amount = tax(100); other.amount += 1; assert_eq!(amount, 90);",
+            ),
+            (
+                "block tail is the owner call",
+                "let amount = { tax(100) }; assert_eq!(amount, 90);",
+            ),
+            (
+                "quoted loop",
+                "let amount = tax(100); let note = \"for amount in examples\"; assert_eq!(amount, 90);",
+            ),
+            (
+                "commented loop",
+                "let amount = tax(100); // for amount in examples\n assert_eq!(amount, 90);",
+            ),
+            (
+                "struct field label",
+                "let amount = tax(100); let Record { amount: other } = record; assert_eq!(amount, 90);",
+            ),
+        ] {
+            assert_eq!(bound(body), vec!["amount".to_string()], "{label}: {body}");
+        }
+        // A label never hides a real binding of the same word, or of a word
+        // that merely contains the label.
+        for (label, body) in [
+            (
+                "label and binding share a name",
+                "let amount = tax(100); let Record { amount: amount } = r; assert_eq!(amount, 0);",
+            ),
+            (
+                "later binding of the label name",
+                "let amount = tax(100); let Rec { amount: x, y: amount } = r; assert_eq!(amount, 0);",
+            ),
+            (
+                "shorthand after a longer label",
+                "let amount = tax(100); let Record { total_amount: x, amount } = r; assert_eq!(amount, 0);",
+            ),
+        ] {
+            assert!(bound(body).is_empty(), "{label}: {body}");
+        }
+        // The shadowed test is not credited as observing the owner.
+        assert!(!oracle_binds_sink_identity(
+            "assert_eq!(amount, 0)",
+            "let amount = tax(100); let amount = 0;",
+            Some("tax")
+        ));
+        assert!(oracle_binds_sink_identity(
+            "assert_eq!(amount, 90)",
+            "let amount = tax(100);",
+            Some("tax")
+        ));
+    }
+
+    #[test]
+    fn owner_binding_scan_distinguishes_for_loop_field_labels_from_bindings() {
+        let bound = |body: &str| bound_identifiers_from_owner_calls(body, "tax");
+        assert!(
+            bound("let amount = tax(100); for Record { amount: amount } in records { assert_eq!(amount, 0); }")
+                .is_empty(),
+            "a same-named field binding in a for-loop pattern rebinds the owner result"
+        );
+        assert_eq!(
+            bound(
+                "let amount = tax(100); for Record { amount: other } in records { assert_eq!(amount, 90); }"
+            ),
+            vec!["amount".to_string()],
+            "a struct field label in a for-loop pattern does not rebind the owner result"
+        );
     }
 
     #[test]

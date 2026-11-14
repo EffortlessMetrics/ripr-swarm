@@ -1,0 +1,1 @@
+crates/ripr/tests/typescript_push_argument_observation.rs|Command::new|1|typescript-preview|#12949: integration test runs the worktree-built ripr binary against isolated temporary TypeScript fixtures to compare length-only and discriminating indexed-value assertions under explicit Jest and Vitest imports; no shell, network, or user-repository mutation.

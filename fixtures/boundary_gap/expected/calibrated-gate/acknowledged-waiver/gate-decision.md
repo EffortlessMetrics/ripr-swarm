@@ -9,7 +9,7 @@ Advisory: 0
 
 ## Acknowledged
 
-- src/pricing.rs:88 weakly_gripped — policy-eligible gap acknowledged by ripr-waive
+- src/pricing.rs:88 weakly_gripped — policy-eligible gap acknowledged by ripr-waive (global_scope=true legacy compatibility)
   - Gap state: `actionable`
   - Gap: `gap:dedf923a13a00573`
   - Seam: `8f7fa8644fd12280`

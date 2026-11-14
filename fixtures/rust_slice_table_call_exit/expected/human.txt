@@ -38,8 +38,8 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach mean_latency: mean_lies_between_min_and_max
-    - infection unknown: Changed boundary input is unresolved: slice length `samples.len()` is outside the bounded eager immutable literal table family; not every input cardinality is…
-    - 19 more detail line(s) in --format human-full
+    - propagation yes: Changed behavior appears to influence returned value: 0
+    - 18 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)

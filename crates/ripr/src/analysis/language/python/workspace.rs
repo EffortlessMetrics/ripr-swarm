@@ -39,9 +39,16 @@ pub(super) fn owner_for_changed_line<'a>(
 pub(super) fn collect_workspace_python_files_with_handwritten(
     root: &Path,
     handwritten: &[String],
+    excluded_file_patterns: &[String],
 ) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    visit_workspace_with_handwritten(root, root, handwritten, &mut |file| out.push(file));
+    visit_workspace_with_handwritten(
+        root,
+        root,
+        handwritten,
+        excluded_file_patterns,
+        &mut |file| out.push(file),
+    );
     out.sort();
     out
 }
@@ -52,6 +59,7 @@ pub(super) fn visit_workspace_with_handwritten(
     root: &Path,
     dir: &Path,
     handwritten: &[String],
+    excluded_file_patterns: &[String],
     sink: &mut dyn FnMut(PathBuf),
 ) {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -79,11 +87,21 @@ pub(super) fn visit_workspace_with_handwritten(
             Err(_) => continue,
         };
         if file_type.is_dir() {
-            visit_workspace_with_handwritten(root, &path, handwritten, sink);
+            visit_workspace_with_handwritten(
+                root,
+                &path,
+                handwritten,
+                excluded_file_patterns,
+                sink,
+            );
         } else if file_type.is_file() {
             let adapter = PythonAdapter;
             if adapter.accepts_path(&path)
                 && !is_detectable_generated_python_path(&path)
+                && !crate::config::path_matches_preview_excluded_patterns(
+                    excluded_file_patterns,
+                    &relative,
+                )
                 && (!crate::config::is_detectable_excluded_python_path(&relative)
                     || crate::config::is_declared_handwritten_python_path(handwritten, &relative))
             {

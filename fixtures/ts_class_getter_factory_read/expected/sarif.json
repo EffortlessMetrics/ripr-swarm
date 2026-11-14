@@ -1,0 +1,305 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "columnKind": "unicodeCodePoints",
+      "properties": {
+        "analysis_complete": true,
+        "analysis_outcome": {
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.",
+          "counts": {
+            "candidate_line_count": 1,
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "finding_count": 1,
+            "probe_count": 1
+          },
+          "identity": {
+            "base_revision": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "git_candidate_subject": null,
+            "input_identity": "sha256:0f13101aebacc88d469ca849fb923a06ed2c48ee7c81d6327801bfb476d0a409",
+            "repository_identity": null,
+            "root_identity": null,
+            "snapshot_identity": null
+          },
+          "kind": "complete_with_findings",
+          "limitations": [],
+          "schema_version": "0.1"
+        },
+        "run_status": "complete",
+        "schema_version": "0.1",
+        "scope": "finding",
+        "tool": "ripr"
+      },
+      "results": [
+        {
+          "fingerprints": {
+            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_cache.ts:typescript_preview:c77a33fa|probe:src_cache.ts:typescript_preview:c77a33fa|src/cache.ts"
+          },
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/cache.ts"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 11
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Missing check: changed TypeScript equality-boundary at line 11 lacks a concrete preview discriminator. weakly_exposed static exposure for predicate probe:     if (getter === undefined) {. Next step: TypeScript preview advisory: add or strengthen a focused assertion for the missing check `getter == undefined`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+          },
+          "partialFingerprints": {
+            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_cache.ts:typescript_preview:c77a33fa|probe:src_cache.ts:typescript_preview:c77a33fa|src/cache.ts"
+          },
+          "properties": {
+            "changed_expression": "    if (getter === undefined) {",
+            "classification": "weakly_exposed",
+            "confidence": 0.4,
+            "finding_id": "probe:src_cache.ts:typescript_preview:c77a33fa",
+            "flow_sinks": [],
+            "kind": "finding",
+            "language": "typescript",
+            "language_status": "preview",
+            "missing_discriminators": [
+              {
+                "flow_sink": null,
+                "reason": "changed TypeScript equality-boundary at line 11 lacks a concrete preview discriminator",
+                "value": "getter == undefined"
+              }
+            ],
+            "observed_values": [],
+            "owner": "typescript:src/cache.ts::value",
+            "owner_kind": "method",
+            "preview_actionability": {
+              "actionability_category": "incomplete_repair_packet",
+              "authority_boundary": "preview_advisory_only",
+              "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+              "gap_state": "unknown",
+              "missing_actionability_fields": [
+                "canonical_gap_id",
+                "repair_kind",
+                "target_test_shape",
+                "related_test_or_observer",
+                "verify_command",
+                "receipt_command",
+                "must_not_change",
+                "allowed_edit_surface",
+                "raw_evidence_refs"
+              ],
+              "missing_graph_legs": [],
+              "raw_evidence_refs": [
+                {
+                  "file": "src/cache.ts",
+                  "kind": "typescript_preview_probe",
+                  "leg": null,
+                  "line": 11,
+                  "owner": "value",
+                  "raw": "file=src/cache.ts;line=11;kind=typescript_preview_probe;source_id=probe:src_cache.ts:typescript_preview:c77a33fa;owner=value",
+                  "sample": null,
+                  "source_id": "probe:src_cache.ts:typescript_preview:c77a33fa"
+                }
+              ],
+              "repair_packet_ready": false,
+              "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+              "unlock_condition": null,
+              "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+            },
+            "probe_delta": "control",
+            "probe_family": "predicate",
+            "probe_id": "probe:src_cache.ts:typescript_preview:c77a33fa",
+            "related_tests": [
+              {
+                "file": "tests/cache.test.ts",
+                "line": 3,
+                "name": "cached memoizes the first result",
+                "oracle": "expect(...).toBe(...)",
+                "oracle_kind": "exact_value",
+                "oracle_strength": "strong"
+              }
+            ],
+            "related_tests_total": 1,
+            "ripr": {
+              "discriminate": {
+                "confidence": "low",
+                "state": "weak",
+                "summary": "TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `getter == undefined`."
+              },
+              "infect": {
+                "confidence": "low",
+                "state": "unknown",
+                "summary": "TypeScript preview adapter does not yet model infection."
+              },
+              "observe": {
+                "confidence": "low",
+                "state": "weak",
+                "summary": "Strongest extracted oracle kind: `exact_value` (rank 5)"
+              },
+              "propagate": {
+                "confidence": "low",
+                "state": "unknown",
+                "summary": "TypeScript preview adapter does not yet model propagation."
+              },
+              "reach": {
+                "confidence": "low",
+                "state": "yes",
+                "summary": "1 related test(s) found for owner `value`"
+              }
+            },
+            "severity": "warning",
+            "stop_reasons": [],
+            "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `getter == undefined`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+            "tool": "ripr",
+            "typescript_preview_card": {
+              "authority_boundary": "preview_advisory_only",
+              "bun_cross_language_grip": null,
+              "card_version": "typescript_preview_card.v1",
+              "changed_behavior": "predicate changed at src/cache.ts:11: `if (getter === undefined) {`",
+              "language": "typescript",
+              "language_status": "preview",
+              "limits": [
+                "Syntax-first TypeScript/JavaScript preview evidence only.",
+                "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+                "This card is advisory and is not a repair packet."
+              ],
+              "missing_discriminator": "getter == undefined",
+              "oracle_kind": "exact_value",
+              "oracle_strength": "strong",
+              "owner": "value",
+              "owner_kind": "method",
+              "probe_family": "predicate",
+              "related_test": {
+                "file": "tests/cache.test.ts",
+                "line": 3,
+                "name": "cached memoizes the first result"
+              },
+              "repair_packet_ready": false,
+              "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+              "source": "check_typescript_preview",
+              "static_limits": [],
+              "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
+              "verify": {
+                "command": null
+              },
+              "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+            }
+          },
+          "ruleId": "ripr.finding.weakly_exposed"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/EffortlessMetrics/ripr",
+          "name": "ripr",
+          "rules": [
+            {
+              "fullDescription": {
+                "text": "Static analysis found a complete path from the changed code to a test oracle strong enough to observe the changed behavior."
+              },
+              "help": {
+                "text": "This is static evidence, not a runtime verdict: ripr did not execute any test. Next step: run the linked related test and confirm it observes the changed sink."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.exposed",
+              "name": "ripr exposed",
+              "shortDescription": {
+                "text": "Changed behavior appears covered by a strong test oracle"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "A static path from the change to a related test exists, but the infection or the oracle's discrimination looks weak, so the test could pass even when the behavior is wrong."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: strengthen the nearest assertion so it observes the changed sink directly, then re-run ripr check."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.weakly_exposed",
+              "name": "ripr weakly_exposed",
+              "shortDescription": {
+                "text": "Changed behavior may not be caught by the current tests"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Related tests appear to reach the changed code, but no meaningful oracle was found that would notice a wrong result."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: add or sharpen an assertion that discriminates the changed behavior."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.reachable_unrevealed",
+              "name": "ripr reachable_unrevealed",
+              "shortDescription": {
+                "text": "Tests reach the changed code but no assertion appears to check it"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "No static test path to the changed owner was found; static analysis could not trace any related test to this behavior."
+              },
+              "help": {
+                "text": "This is a static reachability statement, not a runtime coverage measurement. Next step: add a focused test that exercises the changed behavior."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.no_static_path",
+              "name": "ripr no_static_path",
+              "shortDescription": {
+                "text": "No test appears to reach the changed code"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Tests may reach the change, but the input or fixture evidence is opaque, so static analysis cannot tell whether a wrong result would propagate."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: make the decisive input or fixture value explicit, then re-run ripr check."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.infection_unknown",
+              "name": "ripr infection_unknown",
+              "shortDescription": {
+                "text": "Tests may reach the change but their inputs are not visible to static analysis"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "The changed behavior crosses a boundary static analysis cannot see through, so it is unknown whether a wrong result would reach an observable sink."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: add an assertion at an observable sink beyond the boundary."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.propagation_unknown",
+              "name": "ripr propagation_unknown",
+              "shortDescription": {
+                "text": "Static analysis cannot tell whether a wrong result would reach an assertion"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Syntax-first analysis could not make a credible judgment for this finding, usually because parsing or symbol resolution was incomplete."
+              },
+              "help": {
+                "text": "This is an analysis limitation disclosure, not a coverage verdict. Next step: re-run with fuller analysis settings or triage the finding manually."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.static_unknown",
+              "name": "ripr static_unknown",
+              "shortDescription": {
+                "text": "Static analysis could not judge this change"
+              }
+            }
+          ],
+          "semanticVersion": "0.11.0"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

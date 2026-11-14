@@ -1,6 +1,6 @@
 use super::action_contract::{
-    ActionDataInputs, ActionDisabledReason, ParsedActionData, action_data,
-    disabled_reason_emittable, parse_validated_action_data,
+    ActionDataInputs, ActionDisabledReason, CROSS_LANGUAGE_LIMITATION_REASON, ParsedActionData,
+    action_data, disabled_reason_emittable, parse_validated_action_data,
 };
 use super::client_features::ClientFeatureProfile;
 use super::fix_instruction_authority;
@@ -195,6 +195,14 @@ fn command_permitted(command: &str, client_features: &ClientFeatureProfile) -> b
     SERVER_EXECUTED_COMMANDS.contains(&command) || client_features.supports_client_command(command)
 }
 
+/// Whether the negotiated client is offered an executable "Inspect finding"
+/// quick fix (#13440). It is the same `command_permitted` decision that
+/// gates `copy_context_action` in `code_action_response`, so hover guidance
+/// can never promise the action to a client the gate would strip or disable.
+pub(super) fn inspect_finding_quick_fix_offered(client_features: &ClientFeatureProfile) -> bool {
+    command_permitted(COPY_CONTEXT_COMMAND, client_features)
+}
+
 /// The capability the client must hold for a command (#1892): a
 /// server-executed command runs inside the server (`"server"`); any other
 /// command requires the client-command advertisement itself (#1776).
@@ -304,6 +312,7 @@ pub(super) fn disable_retained_analysis_actions(
                         | "verification_route_unavailable"
                         | "receipt_route_unavailable"
                         | "preview_or_static_limitation"
+                        | "repair_route_not_ready"
                 )
             )
         {
@@ -491,6 +500,35 @@ fn disabled_action(
     }))
 }
 
+/// The cross-language form of [`disabled_action`]: same machine reason
+/// (`preview_or_static_limitation`), but the human text names the language
+/// boundary. Only the sites that matched the producer-owned cross-language
+/// target limitation call this (#13797).
+fn cross_language_disabled_action(
+    title: &str,
+    action_kind: &'static str,
+    action_name: &'static str,
+    command_id: &str,
+    diagnostic: &Diagnostic,
+    snapshot: Option<&AnalysisSnapshot>,
+) -> Option<CodeActionOrCommand> {
+    let mut action = disabled_action(
+        title,
+        action_kind,
+        action_name,
+        command_id,
+        diagnostic,
+        snapshot,
+        ActionDisabledReason::PreviewOrStaticLimitation,
+    )?;
+    if let CodeActionOrCommand::CodeAction(code_action) = &mut action
+        && let Some(disabled) = code_action.disabled.as_mut()
+    {
+        disabled.reason = CROSS_LANGUAGE_LIMITATION_REASON.to_string();
+    }
+    Some(action)
+}
+
 /// A gap diagnostic the current snapshot no longer carries (#1892): any
 /// action built from it would address superseded evidence, so a
 /// disabled-capable client receives an inert action naming `stale_snapshot`
@@ -663,37 +701,34 @@ fn push_seam_actions(
         // surface; a disabled-capable client still sees the brief action
         // inert with the preview/static limitation named.
         if client_features.code_action_disabled
-            && let Some(action) = disabled_action(
+            && let Some(action) = cross_language_disabled_action(
                 TARGETED_TEST_BRIEF_TITLE,
                 "quickfix.ripr.inspect",
                 "copy_targeted_test_brief",
                 COPY_TARGETED_TEST_BRIEF_COMMAND,
                 context.diagnostic,
                 Some(context.snapshot),
-                ActionDisabledReason::PreviewOrStaticLimitation,
             )
         {
             actions.push(action);
         }
         return;
     }
-    let instruction_summary = fix_instruction_authority::summary_for_seam_action(
-        context.snapshot,
-        context.diagnostic,
-        context.seam,
-    );
+    let instruction_summary =
+        fix_instruction_authority::summary_for_seam_action(context.diagnostic, context.seam);
     let instruction_blocks_repair =
         fix_instruction_authority::blocks_repair_ready_actions(&instruction_summary);
     // The targeted-test brief is the editor's repair-packet surface, so the
     // flip routes through the single producer-owned authority
     // (`repair_packet_eligibility`, RIPR-SPEC-0087 §8) instead of hand-conjoining
     // readiness and cross-language predicates. The remaining guard is content
-    // availability (a concrete assertion template or related test), not a
-    // readiness predicate.
+    // availability (a concrete assertion template or any related test), not a
+    // readiness predicate. It reads every related test, proximity-only ones
+    // included: #5354 narrows only which test the editor opens.
     if instruction_blocks_repair {
         if client_features.code_action_disabled
             && let Some(reason) = fix_instruction_authority::disabled_reason_for_instruction_state(
-                instruction_summary.state,
+                &instruction_summary,
             )
             && let Some(action) = disabled_action(
                 TARGETED_TEST_BRIEF_TITLE,
@@ -708,7 +743,7 @@ fn push_seam_actions(
             actions.push(action);
         }
     } else if repair_packet_eligibility(context.seam).eligible()
-        && (suggested_assertion.is_some() || related_test.is_some())
+        && (suggested_assertion.is_some() || !context.seam.evidence.related_tests.is_empty())
     {
         actions.push(copy_targeted_test_brief_action(
             context.seam,
@@ -1054,7 +1089,7 @@ fn push_gap_actions(
             if client_features.code_action_disabled
                 && let Some(reason) =
                     fix_instruction_authority::disabled_reason_for_instruction_state(
-                        instruction_summary.state,
+                        &instruction_summary,
                     )
                 && let Some(action) = disabled_action(
                     INSPECT_GAP_PACKET_TITLE,
@@ -1072,14 +1107,13 @@ fn push_gap_actions(
             push_gap_repair_ready_actions(actions, params, &context, client_features);
         }
     } else if client_features.code_action_disabled
-        && let Some(action) = disabled_action(
+        && let Some(action) = cross_language_disabled_action(
             INSPECT_GAP_PACKET_TITLE,
             "quickfix.ripr.inspect",
             "copy_gap_repair_packet",
             COPY_CONTEXT_COMMAND,
             context.diagnostic,
             Some(context.snapshot),
-            ActionDisabledReason::PreviewOrStaticLimitation,
         )
     {
         // #1892: the producer-owned cross-language limitation suppresses the
@@ -2335,32 +2369,51 @@ fn copy_suggested_assertion_action(
     })
 }
 
+/// The one owner of related-test navigation routing (RIPR-SPEC-0129), shared
+/// by the `quickfix.ripr.navigate` code action and the code lens click:
+/// the client-side `ripr.openRelatedTest` when the client advertised it; else,
+/// for a `window/showDocument` client, the server-executed
+/// `ripr.showRelatedTest` bound to the snapshot input identity (the server
+/// answers with `window/showDocument`; it never edits or runs a test); else
+/// no route. A snapshot without an input identity cannot bind the server
+/// command, so no route is offered. Returns `(command id, action name, args)`.
+pub(super) fn related_test_navigation_route(
+    target: LSPAny,
+    snapshot: Option<&AnalysisSnapshot>,
+    client_features: &ClientFeatureProfile,
+) -> Option<(&'static str, &'static str, LSPAny)> {
+    if client_features.supports_client_command(OPEN_RELATED_TEST_COMMAND) {
+        return Some((OPEN_RELATED_TEST_COMMAND, "open_related_test", target));
+    }
+    if !client_features.show_document {
+        return None;
+    }
+    let identity = snapshot.and_then(AnalysisSnapshot::input_identity_id)?;
+    let mut target = target;
+    target
+        .as_object_mut()?
+        .insert("input_identity".to_string(), Value::String(identity));
+    Some((SHOW_RELATED_TEST_COMMAND, "show_related_test", target))
+}
+
 fn open_related_test_action(
     target: LSPAny,
     diagnostic: &Diagnostic,
     snapshot: Option<&AnalysisSnapshot>,
     client_features: &ClientFeatureProfile,
 ) -> Option<CodeActionOrCommand> {
-    // Generic-client navigation (RIPR-SPEC-0129): a client that did not
-    // advertise the client-side `ripr.openRelatedTest` command but does
-    // advertise `window/showDocument` gets the same navigation through the
-    // server-executed `ripr.showRelatedTest` command. The server answers it
-    // with a `window/showDocument` request; it never edits or runs a test.
-    let (command_id, action_name, arguments) = if !client_features
-        .supports_client_command(OPEN_RELATED_TEST_COMMAND)
-        && client_features.show_document
-    {
-        // The server command is bound to the snapshot input identity; a
-        // snapshot without one cannot bind it, so no action is offered.
-        let identity = snapshot.and_then(AnalysisSnapshot::input_identity_id)?;
-        let mut target = target;
-        target
-            .as_object_mut()?
-            .insert("input_identity".to_string(), Value::String(identity));
-        (SHOW_RELATED_TEST_COMMAND, "show_related_test", target)
-    } else {
-        (OPEN_RELATED_TEST_COMMAND, "open_related_test", target)
-    };
+    // A code action keeps offering the client-side command to a client that
+    // advertised neither route (the integration may register it without
+    // advertising it); a showDocument client whose snapshot cannot bind the
+    // server command gets no action.
+    let (command_id, action_name, arguments) =
+        match related_test_navigation_route(target.clone(), snapshot, client_features) {
+            Some(route) => route,
+            None if !client_features.show_document => {
+                (OPEN_RELATED_TEST_COMMAND, "open_related_test", target)
+            }
+            None => return None,
+        };
     Some(CodeActionOrCommand::CodeAction(CodeAction {
         title: OPEN_RELATED_TEST_TITLE.to_string(),
         kind: Some(CodeActionKind::new("quickfix.ripr.navigate")),
@@ -2465,6 +2518,7 @@ fn is_delivery_limitation(diagnostic: &Diagnostic) -> bool {
         diagnostic.code.as_ref(),
         Some(tower_lsp_server::ls_types::NumberOrString::String(code))
             if code == super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE
+                || code == super::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE
                 || code == super::diagnostic_catalog::DIAGNOSTIC_QUARANTINE_WITHDRAWN_CODE
                 || code == super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE
                 || code == super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE
@@ -2576,18 +2630,31 @@ fn copy_seam_packet_target(
     target
 }
 
+/// The related test the editor opens for a seam. A test linked only by
+/// proximity (same file, same module, a token substring) never runs the
+/// seam, so its oracle belongs to other code, and it is never offered: with
+/// no other related test there is no navigation, matching the witness fix
+/// site (#5354). Tests whose relation runs the owner
+/// (`RelationReason::establishes_reach`) are tried before name, import or
+/// fixture affinities, so a strong name-matched test never wins over a test
+/// that calls the change; within each group a strong oracle comes first, then
+/// the lowest relation-confidence rank.
 fn best_related_test_for_editor(seam: &ClassifiedSeam) -> Option<&RelatedTestGrip> {
-    seam.evidence
-        .related_tests
-        .iter()
-        .find(|test| test.oracle_strength == OracleStrength::Strong)
-        .or_else(|| {
-            seam.evidence
-                .related_tests
-                .iter()
-                .min_by_key(|test| relation_confidence_rank(test.relation_confidence))
-        })
-        .map(Arc::as_ref)
+    let tests = &seam.evidence.related_tests;
+    let pick = |reaches: bool| {
+        let group = || {
+            tests.iter().filter(move |test| {
+                !test.relation_reason.is_proximity_only()
+                    && test.relation_reason.establishes_reach(true) == reaches
+            })
+        };
+        group()
+            .find(|test| test.oracle_strength == OracleStrength::Strong)
+            .or_else(|| {
+                group().min_by_key(|test| relation_confidence_rank(test.relation_confidence))
+            })
+    };
+    pick(true).or_else(|| pick(false)).map(Arc::as_ref)
 }
 
 fn relation_confidence_rank(confidence: RelationConfidence) -> u8 {
@@ -2783,6 +2850,26 @@ mod tests {
             vec![INSPECT_FINDING_CONTEXT_TITLE, REFRESH_ANALYSIS_TITLE],
             "the client can execute the copy command for an ordinary finding"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn analysis_pending_marker_has_no_finding_context_action() -> Result<(), String> {
+        // #14447: the pre-snapshot marker is not a finding, so an "Inspect
+        // finding" action on it would copy a context packet for nothing.
+        let marker = super::super::diagnostics::analysis_pending_diagnostic(
+            super::super::diagnostics::AnalysisPendingRecovery::AnalysisRunning,
+        );
+        let mut features = ClientFeatureProfile::unsupported();
+        features.ripr_editor = Some(
+            super::super::client_features::RiprEditorClientCapabilities {
+                version: "test".to_string(),
+                commands: vec![COPY_CONTEXT_COMMAND.to_string()],
+                guarded_test_edit: false,
+            },
+        );
+        let actions = code_action_response(&code_action_params(vec![marker])?, None, &features);
+        assert_eq!(action_titles(&actions), vec![REFRESH_ANALYSIS_TITLE]);
         Ok(())
     }
 
@@ -3349,6 +3436,7 @@ mod tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),

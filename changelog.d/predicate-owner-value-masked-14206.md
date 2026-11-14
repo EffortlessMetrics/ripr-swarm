@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust predicate finding no longer reads `exposed` on the strength of an assertion that calls the changed function but discards or masks the call's value before comparing (`assert_eq!(Some(over(10)).is_some(), true)`, another tuple element, a block statement, an ignored helper argument, a lazy closure or branch that may never run). It reads `weakly_exposed`, as the `return_value` finding on the same line already did, and says why (#14206).

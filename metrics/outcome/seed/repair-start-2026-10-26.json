@@ -1,0 +1,12 @@
+{
+  "schema_version": "ripr-repair-start-receipt-v1",
+  "date": "2026-10-26",
+  "source": "manual_harness",
+  "ripr_version": "ripr (see audit/not-ready-rate.md)",
+  "cases": 24,
+  "started": 2,
+  "not_ready": 22,
+  "check_ms_p50": null,
+  "instrument_failures": [],
+  "note": "Manual audit harness; 2/24 repair starts (8%)."
+}

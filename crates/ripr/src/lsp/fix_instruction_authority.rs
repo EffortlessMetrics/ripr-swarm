@@ -5,12 +5,12 @@
 //! actionability from optional fields.
 
 use super::action_contract::ActionDisabledReason;
-use super::state::AnalysisSnapshot;
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::repair_route::{
-    cross_language_test_target_unresolved, repair_packet_eligibility,
+    RepairPacketIneligibility, cross_language_test_target_unresolved, repair_packet_eligibility,
 };
 use crate::domain::{DiagnosticWitness, EvidenceState, FixInstructionState, FixInstructionSummary};
+use crate::output::agent_seam_packets::suggested_assertion_for_classified_seam;
 use serde_json::Value;
 use tower_lsp_server::ls_types::Diagnostic;
 
@@ -24,27 +24,6 @@ fn summary_from_diagnostic_data(data: &Value) -> Option<FixInstructionSummary> {
     }
     let witness: DiagnosticWitness = serde_json::from_value(data.get("witness")?.clone()).ok()?;
     Some(FixInstructionSummary::from_witness(&witness))
-}
-
-fn witness_for_seam(
-    snapshot: &AnalysisSnapshot,
-    diagnostic: &Diagnostic,
-    seam: &ClassifiedSeam,
-) -> Option<DiagnosticWitness> {
-    if let Some(finding) = snapshot.finding_for_diagnostic(diagnostic) {
-        return DiagnosticWitness::from_finding(finding);
-    }
-    let gap = crate::analysis::canonical_gap::canonical_gap_identity(seam)?;
-    snapshot
-        .findings
-        .iter()
-        .find(|finding| {
-            finding
-                .canonical_gap
-                .as_ref()
-                .is_some_and(|canonical| canonical.id == gap.id)
-        })
-        .and_then(DiagnosticWitness::from_finding)
 }
 
 fn summary_from_gap_ledger_data(data: &Value) -> FixInstructionSummary {
@@ -96,41 +75,64 @@ fn summary_from_gap_ledger_data(data: &Value) -> FixInstructionSummary {
     FixInstructionSummary::unavailable()
 }
 
-fn summary_for_seam_without_witness(seam: &ClassifiedSeam) -> FixInstructionSummary {
-    if cross_language_test_target_unresolved(seam) {
-        return FixInstructionSummary {
-            state: FixInstructionState::StaticLimitation,
-            has_fix_site: false,
-            has_suggested_assertion: false,
-            limitation_kinds: vec!["cross_language_target_unresolved".to_string()],
-            instruction_semantic_id: None,
-            instruction_instance_id: None,
-        };
-    }
-    if !repair_packet_eligibility(seam).eligible() {
-        return FixInstructionSummary {
-            state: FixInstructionState::StaticLimitation,
-            has_fix_site: false,
-            has_suggested_assertion: false,
-            limitation_kinds: vec!["repair_route_not_ready".to_string()],
-            instruction_semantic_id: None,
-            instruction_instance_id: None,
-        };
-    }
-    FixInstructionSummary {
-        state: FixInstructionState::InspectOnly,
+/// The kind a not-yet-repairable seam carries: it fails the producer-owned
+/// repair-packet flip, so ripr has no bounded test to point at yet.
+const REPAIR_ROUTE_NOT_READY: &str = "repair_route_not_ready";
+
+/// The seam's own fix-instruction summary, from the producer-owned
+/// repair-packet flip (`repair_packet_eligibility`, RIPR-SPEC-0087 §8).
+///
+/// A seam passing the flip is `fix_site_ready`: the flip is the gate the
+/// seam hover's "repair (start here)" line and `repair_start_command_for`
+/// already consume, so the code action must agree with them (#13716).
+/// `ripr agent repair` re-checks more at start time (proposal identity, a
+/// held inline target, the dirty-tree premise, an ignored build directory)
+/// and refuses with nothing started; the editor does not claim those.
+/// The seam is not re-derived from a `ripr check` finding witness: that is
+/// a finding-level projection keyed by a different id family, and on the
+/// same change it can report no related test while the seam holds one, which
+/// withheld the start on every real seam diagnostic.
+fn summary_for_seam(seam: &ClassifiedSeam) -> FixInstructionSummary {
+    let limitation = |kind: &str| FixInstructionSummary {
+        state: FixInstructionState::StaticLimitation,
         has_fix_site: false,
         has_suggested_assertion: false,
+        limitation_kinds: vec![kind.to_string()],
+        instruction_semantic_id: None,
+        instruction_instance_id: None,
+    };
+    if cross_language_test_target_unresolved(seam) {
+        return limitation("cross_language_target_unresolved");
+    }
+    match repair_packet_eligibility(seam).ineligibility {
+        None => {}
+        // Real static limitations ripr cannot trace keep that name.
+        Some(
+            RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved
+            | RepairPacketIneligibility::CrossLanguageTestTargetUnresolved,
+        ) => return limitation("cross_language_target_unresolved"),
+        Some(RepairPacketIneligibility::NamedStaticLimitation) => {
+            return limitation("static_limitation");
+        }
+        // No bounded test target yet: not a limitation of what ripr can see.
+        Some(
+            RepairPacketIneligibility::ClassNotHeadlineEligible
+            | RepairPacketIneligibility::RouteNotReady,
+        ) => return limitation(REPAIR_ROUTE_NOT_READY),
+    }
+    FixInstructionSummary {
+        state: FixInstructionState::FixSiteReady,
+        has_fix_site: true,
+        has_suggested_assertion: suggested_assertion_for_classified_seam(seam).is_some(),
         limitation_kinds: Vec::new(),
         instruction_semantic_id: None,
         instruction_instance_id: None,
     }
 }
 
-/// Summary for a seam-addressed action: diagnostic payload first, then the
-/// finding witness the CLI card and hover already use.
+/// Summary for a seam-addressed action: an explicit diagnostic payload
+/// first, then the seam's own producer-owned repair-packet flip.
 pub(super) fn summary_for_seam_action(
-    snapshot: &AnalysisSnapshot,
     diagnostic: &Diagnostic,
     seam: &ClassifiedSeam,
 ) -> FixInstructionSummary {
@@ -139,9 +141,7 @@ pub(super) fn summary_for_seam_action(
     {
         return summary;
     }
-    witness_for_seam(snapshot, diagnostic, seam)
-        .map(|witness| FixInstructionSummary::from_witness(&witness))
-        .unwrap_or_else(|| summary_for_seam_without_witness(seam))
+    summary_for_seam(seam)
 }
 
 /// Summary for a gap-addressed action from embedded witness/fix_instruction
@@ -161,15 +161,27 @@ pub(super) fn blocks_repair_ready_actions(summary: &FixInstructionSummary) -> bo
 }
 
 pub(super) fn disabled_reason_for_instruction_state(
-    state: FixInstructionState,
+    summary: &FixInstructionSummary,
 ) -> Option<ActionDisabledReason> {
-    use ActionDisabledReason::{PreviewOrStaticLimitation, StaleSnapshot};
-    match state {
+    use ActionDisabledReason::{PreviewOrStaticLimitation, RepairRouteNotReady, StaleSnapshot};
+    match summary.state {
         FixInstructionState::FixSiteReady => None,
         FixInstructionState::Stale => Some(StaleSnapshot),
+        // Only a real static limitation names one; a seam that merely has no
+        // bounded test yet must not be blamed on a language boundary (#13716).
+        FixInstructionState::StaticLimitation
+            if summary
+                .limitation_kinds
+                .iter()
+                .any(|kind| kind == REPAIR_ROUTE_NOT_READY) =>
+        {
+            Some(RepairRouteNotReady)
+        }
         FixInstructionState::StaticLimitation => Some(PreviewOrStaticLimitation),
+        // No limitation was named and no fix site is known: ripr simply has
+        // not picked a test to extend, which is not a language boundary.
         FixInstructionState::InspectOnly | FixInstructionState::Unavailable => {
-            Some(PreviewOrStaticLimitation)
+            Some(RepairRouteNotReady)
         }
     }
 }
@@ -256,7 +268,7 @@ mod tests {
         let summary = FixInstructionSummary::from_witness(&witness);
         assert!(blocks_repair_ready_actions(&summary));
         assert_eq!(
-            disabled_reason_for_instruction_state(summary.state),
+            disabled_reason_for_instruction_state(&summary),
             Some(ActionDisabledReason::PreviewOrStaticLimitation)
         );
     }
@@ -270,7 +282,7 @@ mod tests {
         }];
         let summary = FixInstructionSummary::from_witness(&witness);
         assert_eq!(
-            disabled_reason_for_instruction_state(summary.state),
+            disabled_reason_for_instruction_state(&summary),
             Some(ActionDisabledReason::StaleSnapshot)
         );
     }

@@ -223,9 +223,15 @@ fn macro_struct_field_line(root: &SyntaxNode, span: &Range<usize>) -> bool {
     else {
         return false;
     };
-    let Some(body) = first.parent().filter(is_brace_token_tree) else {
+    // A struct body is a `{ .. }` tree; a fn parameter list is a `( .. )` tree
+    // (#13983). Each has its own header and trailer rule below.
+    let Some(body) = first
+        .parent()
+        .filter(|node| is_brace_token_tree(node) || is_paren_token_tree(node))
+    else {
         return false;
     };
+    let is_fn_params = is_paren_token_tree(&body);
     let in_span = |range: ra_ap_syntax::TextRange| {
         (u32::from(range.start()) as usize) >= span.start
             && (u32::from(range.end()) as usize) <= span.end
@@ -353,6 +359,12 @@ fn macro_struct_field_line(root: &SyntaxNode, span: &Range<usize>) -> bool {
     }
     if angle_depth != 0 || !top_level_colon {
         return false;
+    }
+    // A fn parameter list names itself (`fn name(..)`), so it may also sit in
+    // a macro-wrapped `impl`/`trait` body or a nested item macro (#13983).
+    if is_fn_params {
+        return macro_fn_param_header(&body)
+            && body.parent().is_some_and(|tree| macro_item_position(&tree));
     }
     // The struct must sit directly in the token tree of one macro call: a
     // macro nested inside another macro's input is opaque twice over.
@@ -520,6 +532,156 @@ fn literal_or_path_array_length(open: &ra_ap_syntax::SyntaxToken) -> bool {
     element_parts > 0 && (!after_semicolon || length_parts > 0)
 }
 
+fn is_paren_token_tree(node: &SyntaxNode) -> bool {
+    node.kind() == SyntaxKind::TOKEN_TREE
+        && node
+            .first_token()
+            .is_some_and(|token| token.kind() == SyntaxKind::L_PAREN)
+}
+
+/// Whether a paren token tree is the parameter list of a `fn` item written
+/// in a macro call: `fn name (..)` or `fn name<..> (..)` immediately before
+/// it, so a fn-pointer type (`fn(..)`), a call or a tuple never qualifies
+/// (#13983). The generic list may hold `Item = u8` and `Fn() -> u8` bounds;
+/// it fails closed on `;`, `=>` or an unbalanced `<`.
+fn macro_fn_param_header(params: &SyntaxNode) -> bool {
+    let mut previous = previous_significant_sibling(params.prev_sibling_or_token());
+    // Optional generic parameters between the name and the list.
+    if previous
+        .as_ref()
+        .is_some_and(|e| e.kind() == SyntaxKind::R_ANGLE)
+    {
+        let mut depth = 0usize;
+        let mut opened = false;
+        while let Some(element) = previous {
+            let before = previous_significant_sibling(element.prev_sibling_or_token());
+            match element.kind() {
+                // Inside a token tree `->` is `-` then `>`: not a close.
+                SyntaxKind::R_ANGLE => match before.as_ref().map(|e| e.kind()) {
+                    Some(SyntaxKind::MINUS) => {}
+                    Some(SyntaxKind::EQ) => return false,
+                    _ => depth += 1,
+                },
+                SyntaxKind::L_ANGLE => match depth.checked_sub(1) {
+                    Some(0) => {
+                        previous = before;
+                        opened = true;
+                        break;
+                    }
+                    Some(rest) => depth = rest,
+                    None => return false,
+                },
+                SyntaxKind::SEMICOLON => return false,
+                _ => {}
+            }
+            previous = before;
+        }
+        if !opened {
+            return false;
+        }
+    }
+    let Some(name) = previous.filter(|e| e.kind() == SyntaxKind::IDENT) else {
+        return false;
+    };
+    previous_significant_sibling(name.prev_sibling_or_token())
+        .is_some_and(|e| e.kind() == SyntaxKind::FN_KW)
+}
+
+/// The nearest sibling at or before `element` that is not trivia.
+fn previous_significant_sibling(
+    mut element: Option<ra_ap_syntax::SyntaxElement>,
+) -> Option<ra_ap_syntax::SyntaxElement> {
+    while let Some(candidate) = element {
+        if !matches!(
+            candidate.kind(),
+            SyntaxKind::WHITESPACE | SyntaxKind::COMMENT
+        ) {
+            return Some(candidate);
+        }
+        element = candidate.prev_sibling_or_token();
+    }
+    None
+}
+
+/// Whether a token tree is a place where items are written inside a macro
+/// call: the call's own token tree, or below it only `{ .. }` trees that are
+/// each an `impl`/`trait`/`mod` body or the body of a nested macro call. Any other
+/// enclosing group (a fn body, a struct literal, a call) fails closed.
+fn macro_item_position(tree: &SyntaxNode) -> bool {
+    // Bounded: real item nesting is shallow, and the walk must terminate.
+    const MAX_DEPTH: usize = 8;
+    let mut tree = tree.clone();
+    for _ in 0..MAX_DEPTH {
+        if tree.kind() != SyntaxKind::TOKEN_TREE {
+            return false;
+        }
+        let Some(parent) = tree.parent() else {
+            return false;
+        };
+        if parent.kind() == SyntaxKind::MACRO_CALL {
+            return true;
+        }
+        if !is_brace_token_tree(&tree)
+            || !(item_container_header(&tree) || nested_macro_body(&tree))
+        {
+            return false;
+        }
+        tree = parent;
+    }
+    false
+}
+
+/// `name! { .. }` (or `path::name! { .. }`) written inside another macro's
+/// token tree.
+fn nested_macro_body(body: &SyntaxNode) -> bool {
+    let Some(bang) = previous_significant_sibling(body.prev_sibling_or_token())
+        .filter(|e| e.kind() == SyntaxKind::BANG)
+    else {
+        return false;
+    };
+    previous_significant_sibling(bang.prev_sibling_or_token())
+        .is_some_and(|e| e.kind() == SyntaxKind::IDENT)
+}
+
+/// Whether the tokens before a `{ .. }` tree, back to the previous item, are
+/// an `impl`, `trait` or `mod` header. Fails closed on anything that can end or start
+/// another construct first: `;`, a top-level `=`, `=>`, a brace group, `!`, or
+/// a `fn`/`struct`/`enum` keyword.
+fn item_container_header(body: &SyntaxNode) -> bool {
+    let mut angle_depth = 0usize;
+    let mut previous = previous_significant_sibling(body.prev_sibling_or_token());
+    while let Some(element) = previous {
+        let before = previous_significant_sibling(element.prev_sibling_or_token());
+        match element.kind() {
+            SyntaxKind::IMPL_KW | SyntaxKind::TRAIT_KW | SyntaxKind::MOD_KW if angle_depth == 0 => {
+                return true;
+            }
+            SyntaxKind::R_ANGLE => match before.as_ref().map(|e| e.kind()) {
+                Some(SyntaxKind::MINUS) => {}
+                Some(SyntaxKind::EQ) => return false,
+                _ => angle_depth += 1,
+            },
+            SyntaxKind::L_ANGLE => match angle_depth.checked_sub(1) {
+                Some(depth) => angle_depth = depth,
+                None => return false,
+            },
+            SyntaxKind::EQ if angle_depth == 0 => return false,
+            SyntaxKind::SEMICOLON
+            | SyntaxKind::BANG
+            | SyntaxKind::FN_KW
+            | SyntaxKind::STRUCT_KW
+            | SyntaxKind::ENUM_KW
+            | SyntaxKind::FAT_ARROW => return false,
+            SyntaxKind::TOKEN_TREE if element.as_node().is_some_and(is_brace_token_tree) => {
+                return false;
+            }
+            _ => {}
+        }
+        previous = before;
+    }
+    false
+}
+
 fn is_brace_token_tree(node: &SyntaxNode) -> bool {
     node.kind() == SyntaxKind::TOKEN_TREE
         && node
@@ -682,11 +844,100 @@ mod tests {
             used_lexical_fallback: facts.used_lexical_fallback,
             module_declarations: facts.module_declarations,
             unresolved_property_macros: facts.unresolved_property_macros,
+            verus_guard_facts: facts.verus_guard_facts,
             role_provenance: facts.role_provenance,
             source: facts.source,
             item_scopes: facts.item_scopes,
             macro_candidates: facts.macro_candidates,
         })
+    }
+
+    /// #13983: parameters of a `fn` written directly in a macro call are type
+    /// declarations; fn pointers, calls and non-type values are not.
+    #[test]
+    fn macro_wrapped_fn_parameter_is_a_declaration_but_a_call_argument_is_not() -> Result<(), String>
+    {
+        let source = "feature! {\n    pub fn mul3<T: Copy>(\n        a: u32,\n        cb: fn(u8) -> u8,\n        d: u32 = 1,\n    ) -> u32 {\n        a\n    }\n}\nwrap! {\n    make(\n        a: u32,\n    )\n    type F = fn(\n        b: u32,\n    );\n}\n";
+        let facts = declaration_facts(source)?;
+        for (line, text) in [(3, "a: u32,"), (4, "cb: fn(u8) -> u8,")] {
+            let shape = declaration_shape(&facts, line, text)
+                .ok_or_else(|| format!("macro fn parameter not a declaration: {text}"))?;
+            assert_eq!(shape.family, ProbeFamily::StaticUnknown);
+        }
+        for (line, text) in [(5, "d: u32 = 1,"), (12, "a: u32,"), (15, "b: u32,")] {
+            assert!(
+                declaration_shape(&facts, line, text).is_none(),
+                "not a fn parameter list: {text}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #13983 remainder: the generic list may hold `Item = u8` and
+    /// `Fn() -> u8`, and the fn may sit in a macro-wrapped `impl`/`trait`
+    /// body or a nested item macro. Anything that is not an item position
+    /// (a fn body, a macro arm, a call, a struct literal) keeps its probe.
+    #[test]
+    fn macro_fn_parameter_reads_through_generic_bounds_and_item_containers() -> Result<(), String> {
+        let decl = |source: &str, line: usize, text: &str| -> Result<bool, String> {
+            Ok(declaration_shape(&declaration_facts(source)?, line, text).is_some())
+        };
+        for header in [
+            "fn f<I: Iterator<Item = u8>>(",
+            "fn f<F: Fn() -> u8>(",
+            "fn f<'a, F: FnMut(&'a str) -> Option<Vec<u8>>, const N: usize>(",
+            "pub(crate) async unsafe fn f<T: Into<Box<dyn Fn() -> u8>>>(",
+            "fn f<const N: usize, T: Arr<{ N }>>(",
+        ] {
+            let source = format!("feature! {{\n    {header}\n        a: T,\n    ) {{}}\n}}\n");
+            assert!(decl(&source, 3, "a: T,")?, "generic header: {header}");
+        }
+        for (open, close) in [
+            ("impl Foo {", "}"),
+            (
+                "impl<F: Fn() -> u8, I: Iterator<Item = u8>> Tr<I> for Foo<F> where F: Send, {",
+                "}",
+            ),
+            ("pub unsafe trait Tr: Sized {", "}"),
+            ("pub(crate) mod inner {", "}"),
+            ("inner::cfg! {", "}"),
+            ("cfg_a! { impl Foo {", "} }"),
+        ] {
+            let source = format!(
+                "feature! {{\n    {open}\n        fn f(\n            &self,\n            a: u32,\n        ) {{}}\n    {close}\n}}\n"
+            );
+            assert!(decl(&source, 5, "a: u32,")?, "item container: {open}");
+            assert!(!decl(&source, 4, "&self,")?, "receiver has no type: {open}");
+        }
+        // Not an item position, or not a balanced fn header: fail closed.
+        for (open, close) in [
+            ("fn outer() {", "}"),
+            ("(x) => {", "}"),
+            ("Foo {", "}"),
+            ("let x = impl_like {", "};"),
+            ("impl Foo { fn g() {} } wrap {", "}"),
+            ("make(", ")"),
+        ] {
+            let source = format!(
+                "feature! {{\n    {open}\n        fn f(\n            a: u32,\n        ) {{}}\n    {close}\n}}\n"
+            );
+            assert!(
+                !decl(&source, 4, "a: u32,")?,
+                "not an item position: {open}"
+            );
+        }
+        for header in [
+            "fn f<T(",
+            "fn f<T -> (",
+            "f<T: Fn() -> u8>(",
+            "fn f<T> g(",
+            "x => f>(",
+            "fn f<T>; y > (",
+        ] {
+            let source = format!("feature! {{\n    {header}\n        a: T,\n    ) {{}}\n}}\n");
+            assert!(!decl(&source, 3, "a: T,")?, "not a fn header: {header}");
+        }
+        Ok(())
     }
 
     #[test]

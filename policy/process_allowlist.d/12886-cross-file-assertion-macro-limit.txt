@@ -1,0 +1,2 @@
+crates/ripr/tests/cross_file_assertion_macro_limit.rs|Command::new|1|cross-file-assertion-macro-limit|#12886: runs the built ripr binary over a temp workspace to read the diff finding; no network or credential operation.
+crates/ripr/tests/cross_file_assertion_macro_limit.rs|use std::process::Command|1|cross-file-assertion-macro-limit|#12886: imports Command only for the bounded binary invocation described above.

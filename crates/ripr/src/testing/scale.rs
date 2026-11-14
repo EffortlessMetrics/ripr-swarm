@@ -12,11 +12,7 @@
 //! eliminate asymmetric scheduling delays or establish a universal bound.
 //! Nontermination is handled by the test runner, not by this assertion.
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
-
-#[cfg(test)]
-static MEASUREMENT_PASS: AtomicU32 = AtomicU32::new(0);
 
 const NOISE_ALLOWANCE: Duration = Duration::from_millis(2);
 const MIN_SAMPLE: Duration = Duration::from_millis(20);
@@ -101,8 +97,6 @@ fn assert_measured_growth(
     mut measure: impl FnMut(usize, usize) -> Duration,
 ) {
     assert!(small > 0 && large > small && factor > 0);
-    #[cfg(test)]
-    MEASUREMENT_PASS.store(0, Ordering::Relaxed);
     let mut repetitions = 1;
     loop {
         let (small_time, large_time) = measure_batch(small, large, repetitions, RUNS, &mut measure);
@@ -115,8 +109,6 @@ fn assert_measured_growth(
                 return;
             }
             let retry_repetitions = repetitions * 2;
-            #[cfg(test)]
-            MEASUREMENT_PASS.store(1, Ordering::Relaxed);
             eprintln!(
                 "{label}: ratio check failed; remeasuring once at {retry_repetitions} repetitions"
             );
@@ -143,11 +135,8 @@ fn assert_measured_growth(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        MEASUREMENT_PASS, assert_growth_with_clock, assert_growth_within, assert_measured_growth,
-    };
+    use super::{assert_growth_with_clock, assert_growth_within, assert_measured_growth};
     use std::cell::{Cell, RefCell};
-    use std::sync::atomic::Ordering;
     use std::time::Duration;
 
     #[test]
@@ -234,14 +223,36 @@ mod tests {
 
     #[test]
     fn one_stalled_large_sample_is_remeasured_before_failing() {
-        assert_measured_growth("stalled large remeasure", 1, 2, 3, |size, repetitions| {
-            let base = Duration::from_millis(20 * size as u64 * repetitions as u64);
-            if MEASUREMENT_PASS.load(Ordering::Relaxed) == 0 && size == 2 {
-                base * 4
-            } else {
+        for interleave in [false, true] {
+            let mut samples = Vec::new();
+            let mut large_samples = 0;
+            assert_measured_growth("stalled large remeasure", 1, 2, 3, |size, repetitions| {
+                if interleave {
+                    // Deterministically exercise another measurement between
+                    // samples. A shared phase flag let it restart this stall.
+                    assert_measured_growth("interleaved linear", 1, 2, 3, |size, repetitions| {
+                        Duration::from_millis(20 * size as u64 * repetitions as u64)
+                    });
+                }
+                samples.push((size, repetitions));
+                let base = Duration::from_millis(20 * size as u64 * repetitions as u64);
+                if size == 2 {
+                    large_samples += 1;
+                    // Stall the entire initial batch so its minimum fails,
+                    // then recover independently of the implementation's phase.
+                    if large_samples <= 15 {
+                        return base * 4;
+                    }
+                }
                 base
+            });
+            // A silent success without retrying, or a retry without doubling
+            // both sizes, must not satisfy this control.
+            assert_eq!(samples.len(), 60);
+            for sample in [(1, 1), (2, 1), (1, 2), (2, 2)] {
+                assert_eq!(samples.iter().filter(|&&seen| seen == sample).count(), 15);
             }
-        });
+        }
     }
 
     #[test]

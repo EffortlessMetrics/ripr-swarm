@@ -398,6 +398,7 @@ jobs:
     name: assemble qualification manifest
     needs: [build, verify-candidate]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Fetch exact candidate without credentials
         shell: bash
@@ -606,6 +607,32 @@ jobs:
             dist/server-archive-qualification-receipt.json
             dist/server-archive-qualification-receipt.md
           if-no-files-found: error
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Compile the managed-download rehearsal instrument
+        working-directory: editors/vscode
+        run: |
+          npm ci --ignore-scripts
+          npm run compile
+          node --test out/test/managedDownload/contract.test.js
+
+      - name: Exercise packaged VSIX against the same-run qualified Linux archive
+        # A distinct local-mirror manifest is bound before packaging. Original
+        # qualification bytes stay intact; no publish-extension job is called.
+        run: xvfb-run -a node editors/vscode/out/test/managedDownload/rehearse.js
+
+      - name: Retain managed-download composition evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ripr-packaged-managed-download-rehearsal
+          path: |
+            target/ripr/managed-download/run-*/rehearsal.json
+            target/ripr/managed-download/run-*/*/host.json
+          if-no-files-found: warn
 
   terminal-receipt:
     name: retain terminal qualification denominator

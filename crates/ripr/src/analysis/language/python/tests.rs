@@ -1451,6 +1451,63 @@ fn classify_probe_shape_recognizes_python_field_and_call_shapes() {
     assert_eq!(delta, DeltaKind::Effect);
 }
 
+// #13630: the field-value missing check localizes a `return {...}` change
+// against the paired old line; without one the unlocalized pick stands.
+#[test]
+fn return_dict_missing_check_localizes_changed_entry_from_old_line() -> Result<(), String> {
+    let source = "class Item:\n    def to_dict(self):\n        return {\"sku\": self.sku, \"qty\": self.quantity}\n";
+    let owners = extract_owners(Path::new("src/fx/core.py"), source);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name.ends_with("to_dict"))
+        .ok_or_else(|| "to_dict owner must be extracted".to_string())?;
+    let new = "        return {\"sku\": self.sku, \"qty\": self.quantity}";
+    let values = |old: Option<&str>| -> Vec<String> {
+        super::discriminators::python_missing_discriminators(
+            &ProbeFamily::FieldConstruction,
+            3,
+            new,
+            old,
+            owner,
+            None,
+        )
+        .into_iter()
+        .map(|missing| missing.value)
+        .collect()
+    };
+    // Renamed key: the new key, not the unchanged first entry.
+    assert_eq!(
+        values(Some(
+            "        return {\"sku\": self.sku, \"quantity\": self.quantity}"
+        )),
+        vec!["qty == <expected value>"]
+    );
+    // Re-valued single entry.
+    assert_eq!(
+        values(Some(
+            "        return {\"sku\": self.sku, \"qty\": self.count}"
+        )),
+        vec!["qty == <expected value>"]
+    );
+    // Several entries changed: the whole dict, no single key.
+    assert_eq!(
+        values(Some(
+            "        return {\"id\": self.sku, \"quantity\": self.quantity}"
+        )),
+        vec!["return value == <expected value>"]
+    );
+    // No paired old line, an old line that is not a dict, or an old line
+    // whose entries are unchanged (reorder): the unlocalized pick stands.
+    for old in [
+        None,
+        Some("        return self.legacy_dict()"),
+        Some("        return {\"qty\": self.quantity, \"sku\": self.sku}"),
+    ] {
+        assert_eq!(values(old), vec!["sku == <expected value>"], "{old:?}");
+    }
+    Ok(())
+}
+
 #[test]
 fn return_dict_field_parts_prefer_literal_changed_value_candidates() {
     assert_eq!(
@@ -6451,7 +6508,8 @@ fn transitive_reach_witness_silences_with_no_link_guidance() -> Result<(), Strin
         .position(|line| line == changed)
         .ok_or_else(|| "fixture source must contain the changed line".to_string())?
         + 1;
-    let owners = extract_owners(Path::new("src/table.py"), source);
+    let mut owners = extract_owners(Path::new("src/table.py"), source);
+    super::related_tests::apply_class_facts(&mut owners);
     let tests = extract_tests(
         Path::new("tests/test_table.py"),
         "from src.table import Table\n\ndef test_print_table():\n    table = Table()\n    assert table is not None\n",
@@ -6790,7 +6848,7 @@ fn declared_handwritten_file_under_build_dir_is_analyzed() -> Result<(), String>
         &repo_options(&root),
         &changed_files,
         generous_walk_limits(),
-        &[],
+        &crate::config::PythonLanguageConfig::default(),
     )?;
     if undeclared.changed_files != 0 {
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
@@ -6804,7 +6862,10 @@ fn declared_handwritten_file_under_build_dir_is_analyzed() -> Result<(), String>
         &repo_options(&root),
         &changed_files,
         generous_walk_limits(),
-        &["build/lib/pipeline.py".to_string()],
+        &crate::config::PythonLanguageConfig {
+            handwritten_files: vec!["build/lib/pipeline.py".to_string()],
+            ..crate::config::PythonLanguageConfig::default()
+        },
     )?;
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     if declared.changed_files != 1 {
@@ -11191,6 +11252,52 @@ fn protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited
 }
 
 #[test]
+fn protocol_entry_multiline_receiver_rebinding_withholds_credit() -> Result<(), String> {
+    for middle in [
+        "    (x,\n     (r)) = 1, [1]\n",
+        "    (x,\n     r) = 1, [1]\n",
+        "    if (True and\n        True): (x, (r)) = 1, [1]\n",
+        "    for (x,\n         (r)) in [(1, [1])]:\n        pass\n",
+        "    with (manager() as\n          (x, (r))):\n        pass\n",
+        "    del x, (r)\n",
+    ] {
+        let (finding, relations) = classify_reversed_guard(&reversed_receiver_src(middle))?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{middle:?}");
+        assert!(
+            relations
+                .iter()
+                .all(|(_, kind)| *kind != "protocol_entry_call"),
+            "{middle:?}: {relations:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_multiline_receiver_reads_keep_credit() -> Result<(), String> {
+    for middle in [
+        "    x = (1,\n         (r))\n",
+        "    x = f(1,\n          (r))\n",
+        "    if (True and\n        True): x = (1, (r))\n",
+        "    (x, values[(r)]) = 1, 2\n",
+        "    text = '''for (x,\n     (r)) in items: global x, r'''\n",
+        "    # (x,\n    # (r)) = 1, [1]\n",
+    ] {
+        let source = reversed_receiver_src(middle)
+            .replace("numeric_range(0)", "numeric_range(2)")
+            .replace("== [1]", "== [1, 0]");
+        let (finding, relations) = classify_reversed_guard(&source)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{middle:?}");
+        assert_eq!(
+            relations,
+            vec![("test_x".to_string(), "protocol_entry_call")],
+            "{middle:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited() -> Result<(), String> {
     for middle in [
         // Comparisons are not augmented assignments.
@@ -11295,6 +11402,7 @@ fn protocol_entry_receiver_reads_that_resemble_global_del_or_type_stay_credited(
 fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
     use super::related_tests::binds_in_target_list;
     for body in [
+        "r = make()\nmatch value:\n    case Foo(\n        key=(r)\n    ):\n        pass\n",
         "r = make()\ncase (r):\n    pass\n",
         "r = make()\ncase [r]:\n    pass\n",
         "r = make()\n    case (r):\n        pass\n",
@@ -11306,6 +11414,9 @@ fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
         assert!(binds_in_target_list(body, "r"), "{body:?}");
     }
     for body in [
+        "r = make()\nmatch value:\n    case r.VALUE:\n        pass\n",
+        "r = make()\nmatch value:\n    case Other(\n        key=r.VALUE\n    ):\n        pass\n",
+        "r = make()\ndef helper():\n    match value:\n        case Other(\n            key=(r)\n        ):\n            pass\n",
         "r = make()\nif (r):\n    pass\n",
         "r = make()\nif [r]:\n    pass\n",
         "r = make()\ncase_count = (r)\n",

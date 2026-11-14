@@ -1174,7 +1174,10 @@ fn live_runs(scratch: &Scratch) -> Vec<LiveRun> {
         ("repair", "Usage: ripr repair [<item>]"),
         ("continue", "Usage: ripr continue [--attempt ID]"),
         ("explain", "Usage: ripr explain [--root PATH]"),
-        ("context", "Print the per-change context packet"),
+        (
+            "context",
+            "Print one finding's changed code and related tests",
+        ),
         ("agent", "Usage: ripr agent <subcommand>"),
     ] {
         runs.push(LiveRun {

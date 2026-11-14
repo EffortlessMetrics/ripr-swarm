@@ -37,3 +37,27 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_snapshot_effect_spy_calls_weak (4)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless typescript_snapshot_effect_spy_calls_weak --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`
+
+## Pending — typescript_snapshot_effect_spy_calls_weak (5)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless typescript_snapshot_effect_spy_calls_weak --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`

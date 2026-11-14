@@ -50,6 +50,9 @@ Weakness
   - Related Python test reaches `is_adult` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed boundary
   - missing discriminator age == 18: changed Python equality-boundary at line 2 lacks a concrete repair discriminator
 
+Next step
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `age == 18`
+
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
   canonical gap: gap:python:rules.py:is_adult:predicate_boundary:predicate:age>=18
@@ -76,9 +79,6 @@ Python repair card (preview/advisory)
     - Syntax-first Python preview evidence only.
     - No source edits, generated tests, mutation execution, provider calls, or gate authority.
     - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `age == 18`
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_bool_owner_escaped_patch_target/input --diff <cwd>/fixtures/python_bool_owner_escaped_patch_target/diff.patch --mode fast probe:rules.py:python_preview:9d399b85

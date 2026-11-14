@@ -33,6 +33,16 @@ The negative shapes (a row on neither constant, a compound predicate
 with the gate off, a weak oracle) are the `eq-swap-*` cases of the
 Rust verdict corpus; they stay gaps.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.rs:predicate:659cd128 -> exposed
+probe:src_lib.rs:predicate:2d6b188b -> exposed
+probe:src_lib.rs:predicate:845a474d -> exposed
+probe:src_lib.rs:predicate:0a147037 -> exposed
+```
+
 ## Must Not
 
 - Report a gap or an unknown class on any of the four probes: each

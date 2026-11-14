@@ -14,8 +14,6 @@ mod test_session;
 pub(crate) use command_diagnostic::{
     CommandDiagnostic, DISCLOSURE as COMMAND_DIAGNOSTIC_DISCLOSURE,
 };
-#[cfg(all(test, target_os = "linux"))]
-pub(crate) use test_session::enter_test_session;
 
 /// Grace period for draining stdout/stderr pipes after a process-group kill.
 ///
@@ -1002,6 +1000,28 @@ pub(crate) fn capture_bytes_in_dir_with_env_budget(
         program,
         args,
         (cwd, None),
+        envs,
+        env_remove,
+        (budget.timeout, Some(budget)),
+        error_context,
+    )
+}
+
+/// `capture_bytes_in_dir_with_env_budget` that also writes `input` to the
+/// child's stdin (an MCP stdio session with a configured environment).
+pub(crate) fn capture_bytes_in_dir_with_input_env_budget(
+    program: &Path,
+    args: &[String],
+    source: (&Path, Option<&[u8]>),
+    envs: (&[(&str, &str)], &[&str]),
+    budget: ByteCaptureBudget,
+    error_context: &str,
+) -> Result<TimedBytesOutput, String> {
+    let (envs, env_remove) = envs;
+    capture_bytes_with_input(
+        program,
+        args,
+        source,
         envs,
         env_remove,
         (budget.timeout, Some(budget)),
@@ -2100,7 +2120,9 @@ mod tests {
     use std::process::{Command, Stdio};
     use std::sync::mpsc;
     use std::thread;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+    #[cfg(unix)]
+    use std::time::Instant;
 
     #[cfg(unix)]
     use std::os::unix::process::CommandExt;

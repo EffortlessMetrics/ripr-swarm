@@ -3,8 +3,8 @@
 //! Per-run trees under `/mnt/ci-scratch/{cargo-home,target,tmp}` are owned by
 //! a kernel `flock` lease that the job holds for its whole lifetime. The only
 //! reclamation authority is `.github/actions/ci-scratch-lease`, and both the
-//! inline `rust-gates.yml` reclaim and the scheduled `scratch-gc.yml` sweep
-//! must consume it. A top-level directory age is never evidence that a job is
+//! inline `rust-gates.yml` reclaim and the `scratch-gc.yml` sweep (manual
+//! dispatch while its timer is off, #4984) must consume it. A top-level directory age is never evidence that a job is
 //! inactive: nested writes do not refresh it, so the retired
 //! `find ... -mmin +30 -exec rm -rf` selector deleted live job trees.
 //!
@@ -188,11 +188,41 @@ fn scratch_gc_violations(text: &str) -> Vec<String> {
     match (checkout, lease_step_line(text, "reclaim")) {
         (Some(first), Some(second)) if first < second => {}
         (_, None) => violations.push(format!(
-            "{SCRATCH_GC_PATH}: scheduled reclamation must use `{SCRATCH_LEASE_USES}` `mode: reclaim`, the same authority as rust-gates.yml (#3841)"
+            "{SCRATCH_GC_PATH}: the reclamation sweep must use `{SCRATCH_LEASE_USES}` `mode: reclaim`, the same authority as rust-gates.yml (#3841)"
         )),
         _ => violations.push(format!(
             "{SCRATCH_GC_PATH}: the lease action needs a checkout step before `mode: reclaim` (#3841)"
         )),
+    }
+    violations.extend(scratch_gc_trigger_violations(text));
+    violations
+}
+
+/// While no self-hosted pool accepts jobs the sweep is manual only (#4984): a
+/// timer there only queues runs that the next fire cancels. Restoring the timer
+/// with the pools is a deliberate edit of this rule and the workflow together.
+fn scratch_gc_trigger_violations(text: &str) -> Vec<String> {
+    let triggers: Vec<&str> = text
+        .lines()
+        .skip_while(|line| line.trim_end() != "on:")
+        .skip(1)
+        .take_while(|line| line.is_empty() || line.starts_with(' ') || line.starts_with('#'))
+        .filter(|line| line.starts_with("  ") && !line[2..].starts_with([' ', '#']))
+        .map(str::trim)
+        .collect();
+    let mut violations = Vec::new();
+    if !triggers.contains(&"workflow_dispatch:") {
+        violations.push(format!(
+            "{SCRATCH_GC_PATH}: keep the `workflow_dispatch` trigger; it is the only way to run the sweep while its timer is off (#4984)"
+        ));
+    }
+    if let Some(other) = triggers
+        .iter()
+        .find(|trigger| **trigger != "workflow_dispatch:")
+    {
+        violations.push(format!(
+            "{SCRATCH_GC_PATH}: trigger `{other}` is not allowed while the sweep is manual only; a timer queues runs no self-hosted pool accepts (#4984)"
+        ));
     }
     violations
 }

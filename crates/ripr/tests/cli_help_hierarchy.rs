@@ -852,6 +852,31 @@ fn group_help_preserves_explicit_errors_and_gate_flag_alias() -> Result<(), Stri
             assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
             assert_contains(args[0], &String::from_utf8_lossy(&output.stderr), error)?;
         }
+        // #14086: a gate flag typo is answered from the subcommand that
+        // parsed it. `gate evaluate` used to offer `gate check`'s `--base`,
+        // which it rejects, and `gate check` offered nothing.
+        for (args, suggestion) in [
+            (["gate", "check", "--bse", "x"], Some("--base")),
+            (["gate", "check", "--timeout", "5"], Some("--timeout-ms")),
+            (["gate", "check", "--out-m", "x"], Some("--out-md")),
+            (["gate", "check", "--pr-guidanc", "x"], None),
+            (["gate", "evaluate", "--mde", "x"], Some("--mode")),
+            (["gate", "evaluate", "--bse", "x"], None),
+            (["gate", "evaluate", "--hed", "x"], None),
+        ] {
+            let output = run_ripr_in(&args, Some(root))?;
+            assert_eq!(output.status.code(), Some(2), "{args:?}: {output:?}");
+            assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            match suggestion {
+                Some(flag) => assert_contains(
+                    "gate flag typo",
+                    &stderr,
+                    &format!("Did you mean `{flag}`?"),
+                )?,
+                None => assert!(!stderr.contains("Did you mean"), "{args:?}: {stderr}"),
+            }
+        }
         let alias = run_ripr_in(&["gate", "--pr-guidance"], Some(root))?;
         let explicit = run_ripr_in(&["gate", "evaluate", "--pr-guidance"], Some(root))?;
         assert_eq!(alias.status.code(), Some(2));
@@ -926,6 +951,61 @@ fn workflow_help_renders_one_workflow_with_bounded_sections() -> Result<(), Stri
         &rendered_help(&["help", "workflow", "adoption"])?,
         "Workflow: guided-adoption",
     )?;
+    Ok(())
+}
+
+/// A slip on one of `ripr help`'s own options, or a reach for a `workflow`
+/// command, is answered with the route that works. `help --al` used to be
+/// told to move the flag behind `check`, which has no such flag.
+#[test]
+fn help_route_typos_name_the_route_that_works() -> Result<(), String> {
+    for (args, expected) in [
+        (
+            &["help", "--al"][..],
+            "ripr: unknown help argument \"--al\". Did you mean `--all`? Run `ripr --help`.",
+        ),
+        (
+            &["help", "--jsn"][..],
+            "ripr: unknown help argument \"--jsn\". Did you mean `--json`? Run `ripr --help`.",
+        ),
+        (
+            &["help", "workflows"][..],
+            "ripr: unknown command \"workflows\". Did you mean `ripr help workflow`? Run `ripr --help`.",
+        ),
+        (
+            &["workflow"][..],
+            "ripr: unknown command \"workflow\". Did you mean `ripr help workflow`? Run `ripr --help`.",
+        ),
+        // Controls: a command typo and a top-level flag slip keep their own
+        // suggestions after `help`.
+        (
+            &["help", "chekc"][..],
+            "ripr: unknown command \"chekc\". Did you mean `check`? Run `ripr --help`.",
+        ),
+        (
+            &["help", "--hlep"][..],
+            "ripr: unknown command \"--hlep\". Did you mean `--help`? Run `ripr --help`.",
+        ),
+    ] {
+        let output = run_ripr(args)?;
+        assert_eq!(output.status.code(), Some(2), "{args:?}: {output:?}");
+        assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr).trim_end(),
+            expected,
+            "{args:?}"
+        );
+    }
+    // The suggested routes themselves succeed.
+    for args in [
+        &["help", "--all"][..],
+        &["help", "--json"],
+        &["help", "workflow"],
+    ] {
+        let output = run_ripr(args)?;
+        assert_eq!(output.status.code(), Some(0), "{args:?}: {output:?}");
+        assert!(!output.stdout.is_empty(), "{args:?} printed nothing");
+    }
     Ok(())
 }
 
@@ -1803,9 +1883,11 @@ fn check_help_is_one_screen_and_all_is_the_full_reference() -> Result<(), String
         // #10515: discover the shipped analysis budget and recover before a
         // first run reaches it. Repo seam walks bypass that budget.
         "--timeout SECS",
-        "Wall-clock analysis budget (600s default; 0 disables;",
-        "excludes the repo-wide formats)",
-        "On analysis_timeout, raise/disable it or narrow the diff; re-run.",
+        "Analysis-worker budget (600s default; 0 off; repo formats skip)",
+        "Pre-worker git/post-run rendering outside",
+        "in-worker git diff",
+        "each git call has its own timeout",
+        "Raise/disable on analysis_timeout",
         "--quiet",
         "Unknown totals show no percentage or ETA",
         "progress makes no speed claim",

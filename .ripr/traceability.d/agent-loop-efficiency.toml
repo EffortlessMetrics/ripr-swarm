@@ -1,0 +1,10 @@
+[[extend]]
+id = "RIPR-SPEC-0147"
+tests = [
+  "crates/ripr/src/cli/commands/init_agents.rs::tests::block_uses_one_complete_post_edit_report",
+  "crates/ripr/src/cli/commands/init_agents.rs::tests::quickstart_page_carries_the_identical_block",
+  "crates/ripr/tests/init_agents_block_smoke.rs::init_agents_block_commands_run_with_documented_exits",
+  "crates/ripr/tests/init_agents_block_smoke.rs::init_agents_policy_artifact_replay_keeps_its_supported_format",
+]
+code = ["crates/ripr/src/cli/commands/init_agents.rs"]
+outputs = ["docs/AGENT_QUICKSTART.md"]

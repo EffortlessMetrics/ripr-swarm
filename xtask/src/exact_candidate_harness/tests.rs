@@ -1,13 +1,15 @@
 use std::path::PathBuf;
 
 use super::admission::{admit_installed_binary, version_commit};
+#[cfg(unix)]
+use super::execution_boundary_controls;
 use super::model::{
     Aggregate, BinaryIdentity, CandidateProofControl, CandidateProofPacket, CandidateProofRow,
     HarnessExecutionState, HostIdentity, InputDigest, SCHEMA, SubjectCounts, render_json,
     render_markdown,
 };
 use super::packet::{aggregate_packet, packet_digest, subject_counts};
-use super::{AdmitOptions, ROOT_TOKEN, environment_boundary, execution_boundary_controls};
+use super::{AdmitOptions, ROOT_TOKEN, environment_boundary};
 
 type TestResult = Result<(), String>;
 

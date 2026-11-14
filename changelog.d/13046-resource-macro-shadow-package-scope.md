@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Resource dependency edges: the embed-macro shadow check now supersedes the lexical crate-wide pass from #13448. It is parser-backed and scoped to the owning package, so a shadow in one crate no longer drops edges in another. It also sees `use` imports and `as` renames, macro 2.0 items and `macro_rules!` spacing variants. A withheld call is recorded as `rust_resource_macro_shadowed` instead of being skipped silently (#13046). Not detected: a macro brought in from another crate by `#[macro_use] extern crate` or a glob import.

@@ -141,24 +141,24 @@ preregistration does not prove intervention value.
 
 ## Test Mapping
 
-- `crates/ripr/src/domain/intervention_study.rs::tests::example_preregistration_satisfies_study_laws`
-- `crates/ripr/src/domain/intervention_study.rs::tests::assignment_after_outcome_is_rejected`
-- `crates/ripr/src/domain/intervention_study.rs::tests::unequal_condition_budgets_are_rejected`
-- `crates/ripr/src/domain/intervention_study.rs::tests::control_reading_ripr_outputs_is_rejected`
-- `crates/ripr/src/domain/intervention_study.rs::tests::assisted_undeclared_context_is_rejected`
-- `crates/ripr/src/domain/intervention_study.rs::tests::task_replacement_after_failure_is_rejected`
-- `crates/ripr/src/domain/intervention_study.rs::tests::retry_only_in_weaker_condition_is_rejected`
-- `crates/ripr/src/domain/intervention_study.rs::tests::dropping_timeouts_or_invalid_attempts_is_rejected`
-- `crates/ripr/src/domain/intervention_study.rs::tests::stopping_on_favorable_interim_is_rejected`
-- `crates/ripr/src/domain/intervention_study.rs::tests::missing_grader_or_rubric_is_rejected`
-- `crates/ripr/src/domain/intervention_study.rs::tests::protocol_mutation_after_first_attempt_requires_new_study_id`
+- `crates/ripr-contract/src/domain/intervention_study.rs::tests::example_preregistration_satisfies_study_laws`
+- `crates/ripr-contract/src/domain/intervention_study.rs::tests::assignment_after_outcome_is_rejected`
+- `crates/ripr-contract/src/domain/intervention_study.rs::tests::unequal_condition_budgets_are_rejected`
+- `crates/ripr-contract/src/domain/intervention_study.rs::tests::control_reading_ripr_outputs_is_rejected`
+- `crates/ripr-contract/src/domain/intervention_study.rs::tests::assisted_undeclared_context_is_rejected`
+- `crates/ripr-contract/src/domain/intervention_study.rs::tests::task_replacement_after_failure_is_rejected`
+- `crates/ripr-contract/src/domain/intervention_study.rs::tests::retry_only_in_weaker_condition_is_rejected`
+- `crates/ripr-contract/src/domain/intervention_study.rs::tests::dropping_timeouts_or_invalid_attempts_is_rejected`
+- `crates/ripr-contract/src/domain/intervention_study.rs::tests::stopping_on_favorable_interim_is_rejected`
+- `crates/ripr-contract/src/domain/intervention_study.rs::tests::missing_grader_or_rubric_is_rejected`
+- `crates/ripr-contract/src/domain/intervention_study.rs::tests::protocol_mutation_after_first_attempt_requires_new_study_id`
 - `crates/ripr/src/output/intervention_study.rs::tests::json_and_markdown_derive_from_one_sealed_object`
 - `crates/ripr/src/output/intervention_study.rs::tests::committed_valid_fixture_matches_sealed_example`
 - `crates/ripr/src/output/intervention_study.rs::tests::corpus_falsifiers_are_rejected_with_preregistered_codes`
 
 ## Implementation Mapping
 
-- `crates/ripr/src/domain/intervention_study.rs` — protocol object and study-law validator
+- `crates/ripr-contract/src/domain/intervention_study.rs` — protocol object and study-law validator
 - `crates/ripr/src/output/intervention_study.rs` — digest sealing, JSON, Markdown
 - `schemas/ripr/ripr-intervention-study.schema.json` — published wire shape
 - `fixtures/intervention-study/` — valid protocol, expected Markdown, falsifier corpus

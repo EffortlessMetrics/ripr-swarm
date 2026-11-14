@@ -55,7 +55,8 @@ fn plant(dir: &Path, name: &str, age: Duration) -> Result<PathBuf, String> {
 /// not. The cache root also holds other layers (`repo-module-tree-scans`)
 /// that only a write sweeps, so the walk must not take whichever layer
 /// `read_dir` lists first: NTFS lists alphabetically and picked the scans
-/// layer on Windows (#10344).
+/// layer on Windows (#10344). It also skips the `.build-use` marker
+/// directory, which holds files but no entries.
 fn file_facts_entry_dir(cache: &Path) -> Option<PathBuf> {
     let mut stack = vec![cache.join("repo-file-facts")];
     while let Some(dir) = stack.pop() {
@@ -63,7 +64,15 @@ fn file_facts_entry_dir(cache: &Path) -> Option<PathBuf> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                stack.push(path);
+                // Dot directories hold bookkeeping (the `.build-use` markers a
+                // cache hit writes), never fact entries.
+                let hidden = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with('.'));
+                if !hidden {
+                    stack.push(path);
+                }
             } else {
                 return path.parent().map(Path::to_path_buf);
             }

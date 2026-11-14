@@ -124,7 +124,12 @@ clone is shallow and never fetched a base branch (name `git fetch
 --unshallow` and `fetch-depth: 0`); other branches exist (name up to five,
 never the current branch, with a `--base` example); the current branch is
 the only one. A Git probe that fails to run adds no context rather than a
-guessed cause.
+guessed cause. When `remote.origin.fetch` holds only named-branch refspecs
+(a single-branch clone, which `git clone --depth N` creates), the context
+names `git remote set-branches origin "*"` before the fetch: in a shallow
+clone it replaces the plain unshallow advice, and in a full clone it
+precedes the branch list, because no fetch there ever creates another
+branch's `origin/<name>` (#14104).
 
 A damaged repository is not a missing base. When the `HEAD` probe itself
 fails with a Git `fatal:` line (exit 128, for example a corrupt
@@ -158,7 +163,11 @@ base, the Git failure text is kept and followed by its cause: a shallow
 clone (repair: `git fetch --unshallow`, or `fetch-depth: 0` on
 `actions/checkout`) or unrelated histories (repair: a `--base` on HEAD's
 history). An explicit base that does not resolve in a shallow clone names
-the unshallow repair; otherwise the repair follows the repo's own remote
+the unshallow repair; in a single-branch shallow clone, a base that needs a
+branch (a branch name, or an ancestor offset whose anchor is absent such as
+`origin/main~1`) names the widening step first and fetches `origin`
+explicitly, while an offset of a present commit (`HEAD~1`) keeps the
+depth-only repair (#14104); otherwise the repair follows the repo's own remote
 configuration (a remote-qualified ref names its configured remote, a
 remote-less repo gets the add-remote step) instead of prescribing `origin`
 (#5252 item 8).
@@ -173,6 +182,24 @@ is named as the followable advice; several candidates are all named
 without picking one. A nested branch name (`feature/topic`) probes the
 same tracking forms before its first segment is treated as a remote
 qualifier; explicit `refs/...` paths and rev expressions never probe.
+
+In a repository with no commits and no refs at all, no revision can resolve, so
+the repair says the repository has no commits yet and to commit once instead
+of asking for a spelling check or a remote (#13664). A repository that has
+other refs keeps the spelling and remote advice.
+
+A `--base` or `--head` value that contains `..` is a revision range
+(`main..HEAD`, `main...HEAD`, `main..`), which Git never allows inside a ref
+name, so it is answered as a range before any spelling, depth or remote
+advice: the refusal says the flag takes one revision and that ripr builds the
+range itself, and names the value to pass, the range's start for `--base` and
+its end for `--head` (#14238). An end is quoted as a command only when it is
+non-empty, not option-shaped and spelled with revision characters alone;
+otherwise the advice names the end in words. The separator is read only where
+Git reads one: dots inside a commit-message search (`<rev>^{/text}` up to its
+closing brace, `:/text` to the end of the value) and a leading-colon path are
+free text, so `HEAD^{/wip..done}` is one revision while `HEAD^{/fix}..HEAD`
+is a range. The analysis still does not run (exit 2).
 
 Commands that take both revisions (`diff`, `review-comments`) verify the
 head the same way: an unresolvable `--head` fails with ripr's named message
@@ -363,6 +390,12 @@ shown unchanged.
 - `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_every_configured_remote`
 - `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_nested_branch_names`
 - `crates/ripr/tests/cli_smoke.rs::check_missing_base_advice_names_the_resolvable_remote_tracking_ref`
+- `crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_names_the_end_the_flag_wants`
+- `crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_quotes_no_missing_or_unsafe_end`
+- `crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_leaves_single_revisions_alone`
+- `crates/ripr/src/analysis/diff/load.rs::tests::revision_range_separator_is_read_outside_a_commit_message_search`
+- `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_answers_a_range_before_any_remote_or_spelling_advice`
+- `crates/ripr/tests/cli_smoke.rs::check_and_diff_answer_a_revision_range_as_a_range_not_a_missing_branch`
 
 ## Implementation Mapping
 

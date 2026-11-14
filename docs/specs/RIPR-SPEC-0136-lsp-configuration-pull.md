@@ -419,7 +419,7 @@ then the recorded outcome stays superseded (first-cancel-wins).
 - `crates/ripr/src/app/check.rs::tests::cli_check_input_carries_no_git_deadline`
   — the CLI no-drift contract (no deadline, unbounded, byte-identical).
 - #1972 amendment:
-  `crates/ripr/src/analysis/cancellation.rs::tests::deadline_exceeded_is_reported_by_checkpoint`
+  `crates/ripr-contract/src/cancellation.rs::tests::deadline_exceeded_is_reported_by_checkpoint`
   and `deadline_cancel_loses_to_an_earlier_superseded` — the named abort
   kind and first-cancel-wins.
 - `crates/ripr/src/lsp/config.rs::tests::refresh_deadline_ms_applies_from_initialization_options`,
@@ -456,7 +456,7 @@ then the recorded outcome stays superseded (first-cancel-wins).
   limited-snapshot conversion; `crates/ripr/src/lsp/git_inputs.rs` — the
   fail-closed probe deadline; `crates/ripr/src/lsp/config.rs` — the
   `gitTimeoutMs` governed key.
-- #1972 amendment: `crates/ripr/src/analysis/cancellation.rs` — the
+- #1972 amendment: `crates/ripr-contract/src/cancellation.rs` — the
   `DeadlineExceeded` abort kind; `crates/ripr/src/lsp/config.rs` — the
   `refreshDeadlineMs` governed key (`DEFAULT_LSP_REFRESH_DEADLINE_MS`);
   `crates/ripr/src/lsp/backend.rs` — deadline arming in

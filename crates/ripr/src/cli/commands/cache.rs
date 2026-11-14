@@ -3,6 +3,7 @@ use crate::analysis::seam_cache::{
     inspect_cache_root,
 };
 use crate::cli::help;
+use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use serde_json::json;
@@ -119,16 +120,21 @@ fn split_root_arg(
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         if arg == "--root" {
-            if root.is_some() {
-                return Err(format!("{command} repeats --root"));
-            }
             let value = iter
                 .next()
                 .filter(|value| !value.is_empty() && !value.starts_with("--"))
                 .ok_or_else(|| {
                     format!("{command} --root requires a path; pass the path right after --root")
                 })?;
-            root = Some(PathBuf::from(value));
+            // #9008/#10542: a conflicting repeat refuses with both values; an
+            // identical repeat is absorbed for scripted double-root use.
+            let reconciled = reconcile_root(
+                root.as_deref().unwrap_or(Path::new(".")),
+                root.is_some(),
+                value,
+                command,
+            )?;
+            root = Some(reconciled);
         } else {
             rest.push(arg.clone());
         }
@@ -779,8 +785,26 @@ fn parse_export_args(args: &[String]) -> Result<(Option<PathBuf>, PathBuf), Stri
     let mut output = None;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
+        if arg == "--root" {
+            // #9008/#10542: a conflicting repeat refuses with both values;
+            // an identical repeat is absorbed for scripted double-root use.
+            let value = args
+                .next()
+                .filter(|value| !value.is_empty() && !value.starts_with("--"))
+                .ok_or_else(|| {
+                    "cache export --root requires a path; pass the path right after --root"
+                        .to_string()
+                })?;
+            let reconciled = reconcile_root(
+                root.as_deref().unwrap_or(Path::new(".")),
+                root.is_some(),
+                value,
+                "cache export",
+            )?;
+            root = Some(reconciled);
+            continue;
+        }
         let slot = match arg.as_str() {
-            "--root" => &mut root,
             "--out" => &mut output,
             other => return Err(unknown_argument("cache export", other)),
         };
@@ -884,6 +908,10 @@ mod tests {
     #[test]
     fn export_current_snapshot_through_command_preserves_source_and_bounds_history()
     -> Result<(), String> {
+        // The export input witness reads the effective seam limit twice; hold
+        // the cap mutators off so an in-process pilot or repair test cannot
+        // move the limit between the reads (#12421).
+        let _seam_limit_mutators = crate::analysis::hold_seam_limit_mutators();
         let root = temp_dir("export-history");
         fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
         let config = crate::config::RiprConfig::default();
@@ -907,8 +935,9 @@ mod tests {
             ])?;
             let exported = crate::analysis::seam_cache::inspect_cache_root(&output);
             assert_eq!(
-                exported.entry_count, 2,
-                "one current classified entry and one current file fact, independent of history"
+                exported.entry_count, 3,
+                "one current classified entry, one current compact entry (#12506 dual \
+                 publication), and one current file fact, independent of history"
             );
             let source_after = crate::analysis::seam_cache::inspect_cache_root(&source_cache);
             assert_eq!(source_before.entry_count, source_after.entry_count);
@@ -959,7 +988,7 @@ mod tests {
         assert_eq!(source_bytes, cache_contents(&source_cache)?);
         assert_eq!(
             crate::analysis::seam_cache::inspect_cache_root(&refused_output).entry_count,
-            2
+            3
         );
         let overlap = source_cache.join("nested-export");
         assert!(
@@ -981,6 +1010,12 @@ mod tests {
     fn export_preserves_relative_analysis_root_identity() -> Result<(), String> {
         // Cargo's package cwd and the workspace TMPDIR need not coincide.
         // Put this owned fixture under the actual cwd to retain a relative root.
+        // Hold the cwd lock for the whole test: other tests `chdir` while it
+        // runs, which made the relative root vanish (#12989).
+        let _cwd = crate::testing::cwd_lock::hold_cwd();
+        // Same double-read of the effective seam limit, same exposure to an
+        // in-process pilot or repair test moving it (#12421).
+        let _seam_limit_mutators = crate::analysis::hold_seam_limit_mutators();
         let current = std::env::current_dir().map_err(|error| error.to_string())?;
         let unique = temp_dir("export-relative-root");
         let name = unique
@@ -1008,7 +1043,7 @@ mod tests {
         ])?;
         assert_eq!(
             crate::analysis::seam_cache::inspect_cache_root(&output).entry_count,
-            2
+            3
         );
         fs::remove_dir_all(root).map_err(|error| error.to_string())?;
         Ok(())
@@ -1119,6 +1154,160 @@ mod tests {
         if parse_clear_args(&["--forced".to_string()]).is_ok() {
             return Err("unknown cache clear argument was accepted".to_string());
         }
+        Ok(())
+    }
+
+    fn cache_args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    /// `--root` needs a real path: a missing value, an empty value, and a
+    /// following flag are refused instead of being read as the root.
+    #[test]
+    fn cache_root_flag_refuses_a_missing_empty_or_flag_shaped_value() {
+        for args in [
+            cache_args(&["--root"]),
+            cache_args(&["--root", ""]),
+            cache_args(&["--root", "--json"]),
+            cache_args(&["--json", "--root"]),
+        ] {
+            assert_eq!(
+                parse_status_args(&args),
+                Err(
+                    "cache status --root requires a path; pass the path right after --root"
+                        .to_string()
+                ),
+                "status {args:?}"
+            );
+        }
+        for args in [
+            cache_args(&["--root"]),
+            cache_args(&["--root", ""]),
+            cache_args(&["--root", "--force"]),
+            cache_args(&["--force", "--root"]),
+        ] {
+            assert_eq!(
+                parse_clear_args(&args),
+                Err(
+                    "cache clear --root requires a path; pass the path right after --root"
+                        .to_string()
+                ),
+                "clear {args:?}"
+            );
+        }
+    }
+
+    /// The root and the flags parse the same in any order, and no flag is
+    /// implied: `cache clear --root PATH` alone never carries `--force`.
+    #[test]
+    fn cache_root_flag_is_order_independent_and_implies_no_other_flag() {
+        assert_eq!(parse_status_args(&[]), Ok((None, false)));
+        assert_eq!(
+            parse_status_args(&cache_args(&["--root", "ws"])),
+            Ok((Some(PathBuf::from("ws")), false))
+        );
+        for args in [
+            cache_args(&["--root", "ws", "--json"]),
+            cache_args(&["--json", "--root", "ws"]),
+        ] {
+            assert_eq!(
+                parse_status_args(&args),
+                Ok((Some(PathBuf::from("ws")), true)),
+                "status {args:?}"
+            );
+        }
+
+        assert_eq!(parse_clear_args(&[]), Ok((None, ClearOptions::default())));
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--root", "ws"])),
+            Ok((
+                Some(PathBuf::from("ws")),
+                ClearOptions {
+                    dry_run: false,
+                    force: false,
+                }
+            ))
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--root", "ws", "--dry-run"])),
+            Ok((
+                Some(PathBuf::from("ws")),
+                ClearOptions {
+                    dry_run: true,
+                    force: false,
+                }
+            ))
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--force", "--root", "ws"])),
+            Ok((
+                Some(PathBuf::from("ws")),
+                ClearOptions {
+                    dry_run: false,
+                    force: true,
+                }
+            ))
+        );
+    }
+
+    /// A repeated `--root` is absorbed only when it names the same path; two
+    /// different roots refuse and name both, so neither cache is acted on.
+    #[test]
+    fn cache_root_flag_absorbs_an_identical_repeat_and_refuses_a_conflict() {
+        assert_eq!(
+            parse_status_args(&cache_args(&["--root", "a", "--json", "--root", "a"])),
+            Ok((Some(PathBuf::from("a")), true))
+        );
+        assert_eq!(
+            parse_status_args(&cache_args(&["--root", "a", "--root", "b"])),
+            Err("cache status takes --root once (got 'a' and 'b')".to_string())
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--root", "a", "--force", "--root", "a"])),
+            Ok((
+                Some(PathBuf::from("a")),
+                ClearOptions {
+                    dry_run: false,
+                    force: true,
+                }
+            ))
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--root", "a", "--force", "--root", "b"])),
+            Err("cache clear takes --root once (got 'a' and 'b')".to_string())
+        );
+    }
+
+    /// Each subcommand accepts only its own flags, and a stray positional is
+    /// refused rather than read as a root.
+    #[test]
+    fn cache_status_and_clear_refuse_each_others_flags_and_positionals() -> Result<(), String> {
+        assert_eq!(
+            parse_status_args(&cache_args(&["ws"])),
+            Err(
+                "unknown cache status argument \"ws\". Run `ripr cache status --help`.".to_string()
+            )
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--force", "ws"])),
+            Err("unknown cache clear argument \"ws\". Run `ripr cache clear --help`.".to_string())
+        );
+        for flag in ["--force", "--dry-run"] {
+            let Err(message) = parse_status_args(&cache_args(&[flag])) else {
+                return Err(format!("cache status accepted the clear flag {flag}"));
+            };
+            assert!(
+                message.starts_with(&format!("unknown cache status argument {flag:?}.")),
+                "{message}"
+            );
+        }
+        let Err(message) = parse_clear_args(&cache_args(&["--force", "--json"])) else {
+            return Err("cache clear accepted the status flag --json".to_string());
+        };
+        assert!(
+            message.starts_with("unknown cache clear argument \"--json\"."),
+            "{message}"
+        );
         Ok(())
     }
 

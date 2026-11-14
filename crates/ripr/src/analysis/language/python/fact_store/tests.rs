@@ -153,6 +153,57 @@ fn store_serves_by_content_and_never_a_damaged_entry() -> Result<(), String> {
 }
 
 #[test]
+fn legacy_framed_entry_is_never_served() -> Result<(), String> {
+    // Entries written by the pre-framing codec (flattened envelope plus a
+    // trailing digest field, verified by re-serializing the decoded body)
+    // must not be served by the framed reader: they read as corrupt and are
+    // rebuilt, never as hits.
+    let root = unique_tempdir("legacy-framing")?;
+    let store = PythonFileFactStore::at(&root);
+    let relative = Path::new("src/geometry.py");
+    let key = PythonFileFactKey::new(relative, PRODUCTION, &root);
+    let facts = extract_source_facts(relative, PRODUCTION);
+    let checks = (|| -> Result<(), String> {
+        let envelope = PythonFileFactEnvelope::new(&key, StoredFacts::from_facts(&facts));
+        let legacy =
+            seam_cache::encode_integrity_body_compact(&envelope, envelope.expected_digest()?)?;
+        let entry = store.entry_path(relative, PRODUCTION);
+        if let Some(parent) = entry.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        std::fs::write(&entry, &legacy).map_err(|err| err.to_string())?;
+        assert!(
+            !matches!(store.load(&key), CacheLoad::Hit(_)),
+            "a legacy-framed entry must not be served"
+        );
+        Ok(())
+    })();
+    let cleanup = std::fs::remove_dir_all(&root);
+    checks?;
+    cleanup.map_err(|err| err.to_string())
+}
+
+#[test]
+fn framed_digest_matches_the_legacy_semantic_digest() -> Result<(), String> {
+    // The framed header must be the same digest the pre-framing codec
+    // computed by re-serializing the decoded envelope; otherwise the two
+    // definitions could drift and silently change what verifies.
+    let root = unique_tempdir("framed-digest")?;
+    let relative = Path::new("src/geometry.py");
+    let key = PythonFileFactKey::new(relative, PRODUCTION, &root);
+    let facts = extract_source_facts(relative, PRODUCTION);
+    let envelope = PythonFileFactEnvelope::new(&key, StoredFacts::from_facts(&facts));
+    let framed = framed_entry_bytes(&envelope)?;
+    let sep = framed
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .ok_or("framed entry carries a digest header")?;
+    let header = std::str::from_utf8(&framed[..sep]).map_err(|err| err.to_string())?;
+    assert_eq!(header, envelope.expected_digest()?);
+    std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+}
+
+#[test]
 fn a_stored_envelope_keeps_the_loose_name_answer() -> Result<(), String> {
     // The foreign index reads `loose_names` from served lexes instead of
     // lexing the file again (#10914), so the answer must survive the disk

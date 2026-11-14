@@ -38,8 +38,8 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach is_adult: adult_boundary
-    - infection unknown: Activation credit withheld from 1 related test(s): an assertion statically contradicts the changed owner's folded behavior, so that test fails at baseline and…
-    - 12 more detail line(s) in --format human-full
+    - propagation yes: Changed behavior appears to influence returned value: age >= 18
+    - 11 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)

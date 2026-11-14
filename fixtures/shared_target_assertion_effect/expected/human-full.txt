@@ -19,8 +19,9 @@ Shared evidence and guidance
   E4 [findings 1, 2]: observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   E5 [findings 1, 2]: discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   E6 [findings 1, 2]: local flow reaches state write: out.push(3) (line 2)
-  E7 [findings 1, 2]: related test src/shared.rs:8 pin uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  E7 [findings 1, 2]: related test src/shared.rs:8 pin uses no oracle; misses: assertion inert: this test's assertion has a shape that can keep it from running as a standard check here
   E8 [findings 1, 2]: source assertion argument value 3 at line 11
+  E9 [findings 1, 2]: assertion not credited: `assert_eq!` in pin at src/shared.rs:11: src/main.rs:1 defines a macro named `assert_eq`
   N1 [findings 1, 2]: Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed effect
 
 Finding 1: WARNING ./src/shared.rs:2
@@ -37,7 +38,7 @@ Change type
 Static exposure
   reachable_unrevealed (warning, confidence 0.79)
 Evidence
-  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8
+  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - No strong discriminator was detected
@@ -62,7 +63,7 @@ Change type
 Static exposure
   reachable_unrevealed (warning, confidence 0.79)
 Evidence
-  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8
+  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - No strong discriminator was detected

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr_list_gaps` now says `outcome.analysis_status = "not_analyzed"` and `outcome.clean = false` for a committed zero-item `no_scope`, `no_changed_lines` or `no_behavioral_candidates` snapshot, so an agent that follows an empty `ripr_refresh` with a list never reads zero items as a clean result. The gap-list schema moves to `ripr-mcp-gap-list-v5` because the `outcome` block is closed; strict readers rediscover `tools/list` (#13280).

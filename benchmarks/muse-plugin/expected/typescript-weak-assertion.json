@@ -1,0 +1,8 @@
+{
+  "scenario_id": "typescript-weak-assertion",
+  "setup_outcome": "ready | limited",
+  "required_edit": "none awarded by this scenario",
+  "executed_oracle": "the existing assertion passes under both > and >= behaviors",
+  "combined_claim": "not_completed",
+  "notes": "Retained core-analyzer regression. Crediting the weak assertion as discriminating, in either verdict axis, fails the scenario."
+}

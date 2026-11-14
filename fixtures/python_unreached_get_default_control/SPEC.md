@@ -14,6 +14,13 @@ Same owner and edit as python_unreached_get_default, but the only test looks up 
 
 The finding stays `exposed`: this discriminating negative control proves the unreached-default rule does not demote a default an observed key reaches.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_rates.py:python_preview:0a52360f -> exposed
+```
+
 ## Must Not
 
 Promote beyond the stated class. The governed RIPR-SPEC-0108 honesty corpus

@@ -1172,7 +1172,14 @@ fn skipped_and_xfail_rows_gain_no_miss() -> Result<(), String> {
             "import pytest\n\n@{decorator}\ndef test_score():\n    assert score(0) == 8\n"
         ))?;
         // #5389: the class is the classifier's, and no row is credited a miss.
-        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{decorator}");
+        // An unconditional skip never runs, so it is a gap; a bare `xfail`
+        // depends on `strict` and `xfail_strict` and stays unestablished.
+        let expected = if decorator.starts_with("pytest.mark.skip") {
+            ExposureClass::WeaklyExposed
+        } else {
+            ExposureClass::StaticUnknown
+        };
+        assert_eq!(finding.class, expected, "{decorator}");
         assert!(
             finding.related_tests.iter().all(|row| row.miss.is_none()),
             "{decorator}: {:?}",
@@ -1189,11 +1196,9 @@ fn strong_assertion_that_this_row_does_not_credit_is_observation_unconfirmed() -
         "from src.subject import other\n\ndef test_score():\n    score(0)\n    assert other(1) == 2\n",
     )?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    // Never an affirmative mismatch: Python alignment is credit-only.
-    assert_eq!(
-        miss_of(&finding, "test_score"),
-        Some(RelatedTestMiss::ObservationUnconfirmed)
-    );
+    // #5574: a row that affirmatively observes another sink is not
+    // `observation_unconfirmed`; #5491 will assign `assertion_not_observing`.
+    assert_eq!(miss_of(&finding, "test_score"), None);
     Ok(())
 }
 
@@ -1205,14 +1210,8 @@ fn several_strong_rows_are_aligned_independently() -> Result<(), String> {
         "from src.subject import other\n\ndef test_b():\n    score(0)\n    assert other(1) == 2\n\ndef test_c():\n    score(0)\n    assert other(2) == 3\n\ndef test_d():\n    assert score(1)\n",
     )?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(
-        miss_of(&finding, "test_b"),
-        Some(RelatedTestMiss::ObservationUnconfirmed)
-    );
-    assert_eq!(
-        miss_of(&finding, "test_c"),
-        Some(RelatedTestMiss::ObservationUnconfirmed)
-    );
+    assert_eq!(miss_of(&finding, "test_b"), None);
+    assert_eq!(miss_of(&finding, "test_c"), None);
     assert_eq!(
         miss_of(&finding, "test_d"),
         Some(RelatedTestMiss::WeakAssertion)
@@ -2481,7 +2480,9 @@ mod direct {
     /// pass is handed the finding's boundary fact (with its sink).
     #[test]
     fn strong_on_boundary_row_gets_no_miss_and_no_support() -> Result<(), String> {
-        use crate::domain::{FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact};
+        use crate::domain::{
+            DiscriminatorShape, FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact,
+        };
         let case = reserve(
             "def test_off_boundary():\n    assert can_reserve(5, 3) == True\n\ndef test_on_boundary():\n    assert can_reserve(4, 4) == True\n",
         )?;
@@ -2494,6 +2495,8 @@ mod direct {
                 line: 3,
                 owner: None,
             }),
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         };
         let family = classify_probe_shape(&case.after).0;
         let focus = PythonAssertionFocus::for_change(family, &case.after, Some(&case.before));
@@ -2737,10 +2740,7 @@ fn multiline_sibling_only_row_is_observation_unconfirmed() -> Result<(), String>
     )
     .ok_or("changed literal element should classify")?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(
-        miss_of(&finding, "test_name"),
-        Some(RelatedTestMiss::ObservationUnconfirmed)
-    );
+    assert_eq!(miss_of(&finding, "test_name"), None);
     Ok(())
 }
 

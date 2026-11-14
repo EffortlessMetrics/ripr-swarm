@@ -1658,7 +1658,7 @@ mod tests {
 
     #[test]
     fn identity_registry_diff_routes_to_the_identity_registry_pack() -> Result<(), String> {
-        let route = route_for(&["crates/ripr/src/domain/identity/catalog.rs"])?;
+        let route = route_for(&["crates/ripr-contract/src/domain/identity/catalog.rs"])?;
         assert_eq!(matched_pack_ids(&route), vec!["identity-registry"]);
         assert_eq!(required_lane_ids(&route), vec!["routed-rust-small"]);
         assert!(!route.full_proof);

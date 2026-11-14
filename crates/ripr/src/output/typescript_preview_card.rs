@@ -129,7 +129,8 @@ pub(crate) fn typescript_preview_card(finding: &Finding) -> Option<TypeScriptPre
         })
         .unwrap_or("unknown")
         .to_string();
-    let strongest = strongest_related_test(finding);
+    let strongest =
+        crate::output::related_test_miss::typescript_script_preview_related_test(finding);
     let oracle_kind = strongest
         .map(|test| test.oracle_kind.as_str())
         .unwrap_or("unknown")
@@ -311,7 +312,7 @@ fn suggested_assertion_shape(
                 .to_string()
         }
         Some(OracleKind::MockExpectation) => {
-            if strongest_related_test(finding)
+            if crate::output::related_test_miss::typescript_script_preview_related_test(finding)
                 .and_then(|test| test.oracle.as_deref())
                 .is_some_and(|oracle| oracle.contains("toHaveBeenCalledWith") || oracle.contains("toHaveBeenCalledTimes"))
             {
@@ -355,10 +356,6 @@ fn suggested_assertion_shape(
             _ => "Add an exact assertion for the changed behavior.".to_string(),
         },
     }
-}
-
-fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
-    crate::output::related_test_miss::strongest_related_test(&finding.related_tests)
 }
 
 fn evidence_value<'a>(finding: &'a Finding, prefix: &str) -> Option<&'a str> {
@@ -861,9 +858,9 @@ mod tests {
         typescript_preview_card_json_value,
     };
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageId,
-        LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe,
-        ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+        LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        OwnerKind, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
         STRONG_CHECK_UNTIED_NEXT_STEP, SourceLocation, StageEvidence, StageState, StaticLimitKind,
     };
     use std::path::PathBuf;
@@ -878,6 +875,8 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "missing exact boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         assert!(typescript_preview_card(&finding).is_some());
         for currentness in [
@@ -900,6 +899,8 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "missing exact boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
 
         let card = typescript_preview_card(&finding)
@@ -971,6 +972,8 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "missing exact boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         assert!(!shape(&named)?.contains(untied));
 

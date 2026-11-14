@@ -36,8 +36,8 @@ fn substitute_finds_inc_call() {
         return;
     };
     let chain = "vec![1, 2].into_iter().map(inc).collect::<Vec<_>>()";
-    let call = path_value::substitute_owner_call(test, chain, "vec![2, 3]", owner, &index);
-    assert_eq!(call.as_deref(), Some("inc(1)"));
+    let call = path_value::substitute_owner_calls(test, chain, "vec![2, 3]", owner, &index);
+    assert_eq!(call, Some(vec!["inc(1)".to_string(), "inc(2)".to_string()]));
 }
 
 #[test]

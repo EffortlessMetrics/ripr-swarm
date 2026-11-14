@@ -38,6 +38,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `mock_expectation` (rank 4)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `call db.write includes v + 2`."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `save`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `mock_expectation` (rank 4)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `call db.write includes v + 2`.", "local flow reaches call effect: db.write(v + 2); (line 2)", "related test tests/save.test.ts:7 save uses medium mock expectation oracle: expect(db.write).toHaveBeenCalledWith(2)", "missing discriminator call db.write includes v + 2: changed TypeScript call side effect at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
         {"kind":"call_effect","text":"db.write(v + 2);","line":2}

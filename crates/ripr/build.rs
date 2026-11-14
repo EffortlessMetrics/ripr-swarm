@@ -112,7 +112,7 @@ fn collect_files(path: &Path, files: &mut Vec<PathBuf>) -> Option<()> {
 
 /// Crate sources that decide whether the built binary differs from the
 /// commit, relative to the manifest directory.
-const CRATE_SOURCES: [&str; 3] = ["src", "Cargo.toml", "build.rs"];
+const CRATE_SOURCES: [&str; 4] = ["src", "Cargo.toml", "build.rs", "vendor"];
 
 /// Repository-root Cargo inputs a workspace member inherits: the package
 /// version, lints and profiles, the lockfile, and Cargo configuration.

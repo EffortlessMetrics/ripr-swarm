@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `json-terse` leaves unique or marginal prose inline regardless of encounter order, shares the legend-field cost across admitted repetitions, avoids literal-code collisions, accepts multibyte legend text and explicitly declared next-action aliases in its schema, preserves unrelated equal fields, records the alias once, and the token-cost scoreboard includes terse, compact SARIF, and agent output (#13301).

@@ -38,6 +38,13 @@ discriminated only by an oracle that observes the **raised exception**
 companion unit test pins the inverse: the same change with a `pytest.raises(KeyError)`
 oracle stays `exposed`.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_parseint.py:python_preview:0f645328 -> weakly_exposed
+```
+
 ## Must Not
 
 - Credit `exposed` for an error-path change observed only by a normal-path value

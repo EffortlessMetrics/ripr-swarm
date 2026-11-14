@@ -35,6 +35,13 @@ change, the credit requires a strong oracle to observe the **changed index** (a
 sibling index or an aggregate like `len(...)`. A companion unit test pins the inverse
 (`[1] == "browse"` stays `exposed`).
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_routes.py:python_preview:fa537c61 -> weakly_exposed
+```
+
 ## Must Not
 
 - Credit `exposed` when the only strong oracle observes a sibling list index.

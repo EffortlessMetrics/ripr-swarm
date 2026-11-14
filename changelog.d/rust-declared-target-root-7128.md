@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust test in an explicitly declared Cargo target outside the autodiscovered layout (`[[test]] path = "it/pin.rs"`, and likewise `[[bin]]`, `[[example]]`, `[[bench]]`) is now read as its own crate root, so its exact assertion on a crate-qualified call of the changed function is credited like the same test under `tests/`. A file no target declares stays uncredited (#7128).

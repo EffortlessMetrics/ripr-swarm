@@ -11,10 +11,15 @@ install/open -> diagnose setup -> read status -> inspect one diagnostic
 -> verify -> receipt -> refresh -> inspect first-pr packet
 ```
 
-Rust is the stable default. JavaScript is an opt-in preview surface;
-TypeScript and Python previews are enabled automatically for TypeScript- or
-Python-shaped repositories without a `ripr.toml`. Preview findings stay advisory,
-syntax-first, and static-limit bounded.
+Rust is the default. Without a `ripr.toml`, project detection can enable the
+TypeScript-family preview for TypeScript-shaped repositories or a root
+`package.json` with eligible JavaScript or TypeScript source; Python preview
+also has project detection. A manifest or JavaScript source alone does not
+select the package-led route. An explicit `[languages]` list is authoritative,
+and the binary must include the selected adapter. See
+[language configuration](CONFIGURATION.md#languages) for the full conditions,
+including mixed Rust repositories. Preview findings stay advisory, syntax-first,
+and static-limit bounded.
 
 ## 1. Install And Open
 
@@ -45,7 +50,7 @@ Read it as an instrument panel:
 | RIPR server | Found or missing, plus the resolved binary/source when available. |
 | Workspace | The root must be the repository you are editing. |
 | Config | Missing config is normal for Rust default use. |
-| Languages | Rust should be enabled and available. TypeScript and JavaScript preview must be enabled in `ripr.toml`; Python preview is detected when no `ripr.toml` exists. |
+| Languages | Check that the desired adapter is enabled and available; no-config project detection can select TypeScript-family or Python preview. See [language configuration](CONFIGURATION.md#languages). |
 | Artifacts | Missing artifacts explain why no diagnostics are shown yet. |
 | Freshness | Stale evidence means refresh before acting. |
 | Next safe action | The one command or local step that is safe now. |

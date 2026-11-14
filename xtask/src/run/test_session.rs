@@ -188,9 +188,16 @@ struct Member {
 }
 
 fn read_member(pid: u32) -> Result<Option<Member>, String> {
-    let text = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+    member_from_stat_read(pid, fs::read_to_string(format!("/proc/{pid}/stat")))
+}
+
+fn member_from_stat_read(
+    pid: u32,
+    stat: std::io::Result<String>,
+) -> Result<Option<Member>, String> {
+    let text = match stat {
         Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if super::proc_stat_error_is_gone(&error) => return Ok(None),
         Err(error) => return Err(format!("could not inspect session member {pid}: {error}")),
     };
     let (_, fields) = text.rsplit_once(')').ok_or("malformed process stat")?;
@@ -238,6 +245,66 @@ mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    // #13424: exercise the isolated reader, which must consume the shared
+    // procfs disappearance decision from #6810 without hiding other failures.
+    #[test]
+    fn isolated_member_read_treats_enoent_and_esrch_as_absent() -> Result<(), String> {
+        for error in [
+            std::io::Error::from(std::io::ErrorKind::NotFound),
+            std::io::Error::from_raw_os_error(2),
+            std::io::Error::from_raw_os_error(3),
+        ] {
+            if member_from_stat_read(42, Err(error))?.is_some() {
+                return Err("a vanished stat read must not produce a session member".into());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn isolated_member_read_preserves_non_disappearance_errors() -> Result<(), String> {
+        for error in [
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+            std::io::Error::from_raw_os_error(13),
+            std::io::Error::from_raw_os_error(1),
+            std::io::Error::from_raw_os_error(5),
+            std::io::Error::from(std::io::ErrorKind::Interrupted),
+        ] {
+            let expected = format!("could not inspect session member 42: {error}");
+            match member_from_stat_read(42, Err(error)) {
+                Err(actual) if actual == expected => {}
+                _ => {
+                    return Err(format!(
+                        "the reader must retain this inspection failure: {expected}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn isolated_member_read_preserves_identity_and_rejects_malformed_stat() -> Result<(), String> {
+        let stat = "42 (name with ) parenthesis) S 1 42 7 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 12345";
+        let member = member_from_stat_read(42, Ok(stat.to_string()))?
+            .ok_or("a valid stat read must retain the session member")?;
+        if member.pid != 42 || member.session != 7 || member.state != "S" || member.start != "12345"
+        {
+            return Err("the reader changed the process identity, session, state or start".into());
+        }
+        for malformed in [
+            "no closing parenthesis",
+            "42 (worker) S",
+            "42 (worker) S 1 42 invalid",
+            "42 (worker) S 1 42 7",
+        ] {
+            if member_from_stat_read(42, Ok(malformed.to_string())).is_ok() {
+                return Err(format!("malformed process stat was accepted: {malformed}"));
+            }
+        }
+        Ok(())
+    }
 
     const ROLE: &str = "RIPR_XTASK_SESSION_TEST_ROLE";
     const MARKER: &str = "RIPR_XTASK_SESSION_TEST_MARKER";

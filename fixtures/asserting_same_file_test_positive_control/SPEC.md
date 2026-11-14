@@ -24,6 +24,13 @@ demoted to the assertion-free reading of the paired fixture. The marker test
 earns nothing and withdraws nothing. This guards against a fix that withdraws
 credit from every test in the owner's file.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.rs:return_value:d2732503 -> exposed
+```
+
 ## Must Not
 
 - Treat the compile-time-marker refusal as a refusal of ordinary assertions.

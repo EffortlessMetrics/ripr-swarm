@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr agent brief`, `ripr agent card --seam-id` and `ripr agent packet --seam-id` now say in one line when the selected scope or id is TypeScript/Python preview code, and name the route that works: `ripr check --format agent`, then the `ripr agent repair --gap-id` start when `check` prints one. An empty brief no longer says "under the current config" when no config change would help, and a preview finding id is told apart from an unknown seam id; exit codes and the `seam_id_unknown` status are unchanged (#13791).

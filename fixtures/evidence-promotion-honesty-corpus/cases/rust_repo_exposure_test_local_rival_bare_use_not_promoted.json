@@ -1,0 +1,17 @@
+{
+  "id": "rust_repo_exposure_test_local_rival_bare_use_not_promoted",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-test-local-rival-bare-use.json",
+  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/test-local-rival-bare-use",
+  "vector": "test_local_rival_bare_use_cannot_credit_the_production_owner",
+  "assertions": [
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::discounted_total",
+      "expression": "amount >= threshold",
+      "grip_class": "ungripped",
+      "reach": "no"
+    }
+  ]
+}

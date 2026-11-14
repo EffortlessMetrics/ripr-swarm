@@ -1,0 +1,516 @@
+//! #13203 A0: a seam whose only repair target is a producer-owned new-test
+//! proposal (`Proposed`, InlineUnit or Integration) may start a repair, with the
+//! card's workspace identity minted by the producer; every proposal the
+//! producer does not admit still refuses with the no-target text.
+//!
+//! Real binary: `ripr agent repair --phase before` over small libraries. The
+//! oracles are the command's exit and stderr and the retained edit-cage
+//! baseline policy; nothing here reimplements admission or the cage.
+
+use serde_json::Value;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[path = "common/mod.rs"]
+mod common;
+
+use common::fixture_git::fixture_git_ok;
+
+static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+const PROPOSED_FILE: &str = "tests/discounted_total.rs";
+
+struct Fixture {
+    root: PathBuf,
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn run_ripr(root: &Path, args: &[&str]) -> Result<Output, String> {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(root)
+        .args(args)
+        .output()
+        .map_err(|error| format!("spawn ripr {args:?}: {error}"))
+}
+
+fn combined(output: &Output) -> String {
+    format!(
+        "exit {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+fn write(root: &Path, relative: &str, text: &str) -> Result<(), String> {
+    let path = root.join(relative);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create {}: {error}", parent.display()))?;
+    }
+    fs::write(&path, text).map_err(|error| format!("write {}: {error}", path.display()))
+}
+
+fn commit_all(root: &Path, message: &str) -> Result<(), String> {
+    fixture_git_ok(root, &["add", "."])?;
+    fixture_git_ok(
+        root,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-m",
+            message,
+        ],
+    )
+}
+
+/// A seam the producer admits no proposal for is refused before any attempt
+/// exists, by the existing no-route refusal (the no-target text is for the
+/// proposal-without-identity case, which no real producer output reaches).
+const NOT_STARTED_TEXT: &str = "disposition=not_started";
+const NO_TEST_ROUTE_CODE: &str = "code=no_test_route";
+const NO_SAFE_TEST_REASON: &str = "found no test in `tests/` that it can safely add to";
+const AMBIGUOUS_MODULES_REASON: &str = "has 2 test modules";
+
+const PRICE_FN: &str = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+
+/// A library with one public seam without a test and an unrelated integration test,
+/// which establishes the `tests/` layout the integration proposal requires.
+fn fixture(label: &str) -> Result<Fixture, String> {
+    fixture_with(label, PRICE_FN, true)
+}
+
+/// `lib_source` is the library root; `with_tests_layout` adds an unrelated
+/// `tests/smoke.rs` (the layout an integration proposal needs).
+fn fixture_with(label: &str, lib_source: &str, with_tests_layout: bool) -> Result<Fixture, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-{label}-{stamp}-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(&root).map_err(|error| format!("create {}: {error}", root.display()))?;
+    let owned = Fixture { root: root.clone() };
+    write(
+        &root,
+        "Cargo.toml",
+        "[package]\nname = \"proposal_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[lib]\nname = \"proposal_fixture\"\npath = \"src/lib.rs\"\n",
+    )?;
+    write(&root, "src/lib.rs", lib_source)?;
+    if with_tests_layout {
+        write(&root, "tests/smoke.rs", "#[test]\nfn smoke() {}\n")?;
+    }
+    write(&root, ".gitignore", "/target/\n")?;
+    fixture_git_ok(&root, &["init"])?;
+    fixture_git_ok(&root, &["config", "core.autocrlf", "false"])?;
+    commit_all(&root, "fixture")?;
+    Ok(owned)
+}
+
+fn stdout_json(output: &Output) -> Result<Value, String> {
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("stdout is not JSON: {error}\n{}", combined(output)))
+}
+
+fn seam_id(root: &Path, root_arg: &str) -> Result<String, String> {
+    let output = run_ripr(
+        root,
+        &[
+            "check",
+            "--root",
+            root_arg,
+            "--mode",
+            "draft",
+            "--format",
+            "repo-exposure-json",
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(format!("repo-exposure failed: {}", combined(&output)));
+    }
+    stdout_json(&output)?
+        .pointer("/seams/0/seam_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| "fixture produced no seam".to_string())
+}
+
+struct Attempt {
+    id: String,
+}
+
+fn start(root: &Path) -> Result<Output, String> {
+    let root_arg = root.display().to_string();
+    let seam = seam_id(root, &root_arg)?;
+    run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            &seam,
+            "--phase",
+            "before",
+        ],
+    )
+}
+
+fn begin(root: &Path) -> Result<Attempt, String> {
+    let output = start(root)?;
+    if !output.status.success() {
+        return Err(format!("before phase failed: {}", combined(&output)));
+    }
+    let id = stdout_json(&output)?
+        .pointer("/repair_attempt/attempt_id")
+        .and_then(Value::as_str)
+        .ok_or("before phase named no attempt")?
+        .to_owned();
+    Ok(Attempt { id })
+}
+
+fn manifest(root: &Path, attempt: &Attempt) -> Result<Value, String> {
+    let path = root
+        .join("target/ripr/repair-attempts")
+        .join(&attempt.id)
+        .join("attempt.json");
+    let bytes = fs::read(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    serde_json::from_slice(&bytes).map_err(|error| format!("parse manifest: {error}"))
+}
+
+fn retained(root: &Path, manifest: &Value, role: &str) -> Result<Value, String> {
+    let relative = manifest
+        .pointer("/artifacts")
+        .and_then(Value::as_array)
+        .and_then(|artifacts| {
+            artifacts
+                .iter()
+                .find(|artifact| artifact.get("role").and_then(Value::as_str) == Some(role))
+        })
+        .and_then(|artifact| artifact.get("path").and_then(Value::as_str))
+        .ok_or_else(|| format!("manifest has no {role} artifact"))?;
+    let bytes = fs::read(root.join(relative)).map_err(|error| format!("read {role}: {error}"))?;
+    serde_json::from_slice(&bytes).map_err(|error| format!("parse {role}: {error}"))
+}
+
+/// The cage the started attempt enforces, read from the retained baseline.
+fn cage_policy(root: &Path, attempt: &Attempt) -> Result<Value, String> {
+    let before = manifest(root, attempt)?;
+    let baseline = retained(root, &before, "edit_cage_baseline")?;
+    baseline
+        .pointer("/policy")
+        .cloned()
+        .ok_or_else(|| format!("baseline has no policy:\n{baseline}"))
+}
+
+fn assert_refused_not_started(root: &Path, context: &str, reason: &str) -> Result<(), String> {
+    let output = start(root)?;
+    let text = combined(&output);
+    if output.status.success()
+        || !text.contains(NOT_STARTED_TEXT)
+        || !text.contains(NO_TEST_ROUTE_CODE)
+        || !text.contains(reason)
+    {
+        return Err(format!("{context}: expected a not-started refusal\n{text}"));
+    }
+    let attempts = root.join("target/ripr/repair-attempts");
+    let published: Vec<String> = fs::read_dir(&attempts)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| !name.starts_with('.'))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !published.is_empty() {
+        return Err(format!(
+            "{context}: a refused start published {published:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn integration_proposal_only_seam_starts_with_the_proposed_file_as_its_cage() -> Result<(), String>
+{
+    let fixture = fixture("a0-integration")?;
+    let attempt = begin(&fixture.root)?;
+    let policy = cage_policy(&fixture.root, &attempt)?;
+    assert_eq!(
+        policy
+            .pointer("/selected_target/path")
+            .and_then(Value::as_str),
+        Some(PROPOSED_FILE),
+        "{policy}"
+    );
+    assert_eq!(
+        policy
+            .pointer("/allowed_edit_surface")
+            .and_then(Value::as_array)
+            .map(|surface| surface.iter().filter_map(|rule| rule.get("path")).count()),
+        Some(1),
+        "the cage must be exactly the proposed file: {policy}"
+    );
+    assert!(
+        !fixture.root.join(PROPOSED_FILE).exists(),
+        "starting must not create the proposed file"
+    );
+    Ok(())
+}
+
+#[test]
+fn inline_proposal_only_seam_starts_confined_to_its_governed_module() -> Result<(), String> {
+    // A private owner has no integration proposal, so the one governed inline
+    // module (holding no test) is the only producer-owned target; a test in
+    // it would make the start an existing-test repair, not a proposal.
+    let source = "fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n".to_string();
+    let fixture = fixture_with("a0-inline", &source, false)?;
+    let attempt = begin(&fixture.root)?;
+    let policy = cage_policy(&fixture.root, &attempt)?;
+    assert_eq!(
+        policy
+            .pointer("/selected_target/path")
+            .and_then(Value::as_str),
+        Some("src/lib.rs"),
+        "{policy}"
+    );
+    assert_eq!(
+        policy.pointer("/inline_test_module_target"),
+        Some(&Value::Bool(true)),
+        "an inline proposal confines the edit to the governed module: {policy}"
+    );
+    assert_eq!(
+        policy
+            .pointer("/new_test_proposal")
+            .cloned()
+            .unwrap_or(Value::Null),
+        serde_json::json!({"kind": "inline_unit", "file": "src/lib.rs"}),
+        "the attempt records the inline proposal it follows: {policy}"
+    );
+    // #13205: the governed module already exists; only the proposed test is
+    // missing. The manifest must distinguish these identities.
+    let notes: Vec<String> = manifest(&fixture.root, &attempt)?
+        .pointer("/limitations")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|note| note.starts_with("target preflight:"))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].contains("existing inline test module in `src/lib.rs`")
+            && notes[0].contains("at the before phase")
+            && notes[0].contains("had not yet been written")
+            && !notes[0].contains("proposed test file")
+            && !notes[0].contains("--test-result"),
+        "{}",
+        notes[0]
+    );
+    Ok(())
+}
+
+/// #13205: TOML syntax alone does not establish a Cargo package identity.
+/// A rejected manifest must leave no durable started attempt.
+#[test]
+fn inline_proposal_with_an_invalid_package_identity_leaves_no_attempt() -> Result<(), String> {
+    let source = "fn discounted_total(amount: i32) -> i32 {\n    if amount >= 10 { amount - 1 } else { amount }\n}\n#[cfg(test)]\nmod tests {}\n";
+    for manifest in [
+        "package = 'not-a-table'\n",
+        "[package]\nversion = '0.1.0'\n",
+        "[package]\nname = 42\n",
+        "[package]\nname = ' '\n",
+    ] {
+        let fixture = fixture_with("preflight-invalid-package", source, false)?;
+        write(&fixture.root, "Cargo.toml", manifest)?;
+        commit_all(&fixture.root, "invalid package identity")?;
+        let output = start(&fixture.root)?;
+        let text = combined(&output);
+        assert!(!output.status.success(), "{manifest}\n{text}");
+        assert!(text.contains("fix Cargo.toml"), "{text}");
+        let attempts = fixture.root.join("target/ripr/repair-attempts");
+        if attempts.exists() {
+            for entry in fs::read_dir(&attempts).map_err(|error| error.to_string())? {
+                let entry = entry.map_err(|error| error.to_string())?;
+                assert!(
+                    !entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("repair-attempt-"),
+                    "a refused preflight left an attempt: {}",
+                    entry.path().display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// No producer-owned proposal exists (no tests/ layout, no inline module):
+/// the seam stays unstartable.
+#[test]
+fn seam_without_any_proposal_still_refuses() -> Result<(), String> {
+    let fixture = fixture_with("a0-missing", PRICE_FN, false)?;
+    assert_refused_not_started(&fixture.root, "no proposal", NO_SAFE_TEST_REASON)
+}
+
+/// Two governed inline test modules: the insertion anchor is ambiguous, so the
+/// producer admits nothing and the start still refuses.
+#[test]
+fn ambiguous_inline_modules_still_refuse() -> Result<(), String> {
+    let source = "fn discounted_total(amount: i32) -> i32 {\n    if amount >= 10 {\n        amount - 1\n    } else {\n        amount\n    }\n}\n\n#[cfg(test)]\nmod first {\n    #[test]\n    fn a() {}\n}\n\n#[cfg(test)]\nmod second {\n    #[test]\n    fn b() {}\n}\n".to_string();
+    let fixture = fixture_with("a0-ambiguous", &source, false)?;
+    assert_refused_not_started(&fixture.root, "ambiguous modules", AMBIGUOUS_MODULES_REASON)
+}
+
+/// The integration proposal's collision rule: when both candidate files
+/// already exist the producer admits nothing.
+#[test]
+fn colliding_integration_files_still_refuse() -> Result<(), String> {
+    let fixture = fixture("a0-collision")?;
+    write(
+        &fixture.root,
+        "tests/discounted_total.rs",
+        "#[test]\nfn other() {}\n",
+    )?;
+    write(
+        &fixture.root,
+        "tests/discounted_total_boundary.rs",
+        "#[test]\nfn other() {}\n",
+    )?;
+    commit_all(&fixture.root, "both candidates exist")?;
+    assert_refused_not_started(&fixture.root, "file collision", NO_SAFE_TEST_REASON)
+}
+
+/// One pre-existing integration file takes only the first candidate name: the
+/// producer proposes the other, so the seam still starts, with the unused file
+/// as its target and the existing file untouched.
+#[test]
+fn one_existing_integration_file_proposes_the_other_candidate() -> Result<(), String> {
+    let fixture = fixture("a0-one-existing")?;
+    write(
+        &fixture.root,
+        "tests/discounted_total.rs",
+        "#[test]\nfn other() {}\n",
+    )?;
+    commit_all(&fixture.root, "first candidate exists")?;
+    let attempt = begin(&fixture.root)?;
+    let policy = cage_policy(&fixture.root, &attempt)?;
+    assert_eq!(
+        policy
+            .pointer("/selected_target/path")
+            .and_then(Value::as_str),
+        Some("tests/discounted_total_boundary.rs"),
+        "{policy}"
+    );
+    Ok(())
+}
+/// Compare the read-only preflight's name admission with Cargo itself, using
+/// an explicit library name so target-name defaults do not constrain the package.
+#[test]
+fn package_name_preflight_agrees_with_cargo_metadata() -> Result<(), String> {
+    let source = "fn discounted_total(amount: i32) -> i32 { if amount >= 10 { amount - 1 } else { amount } }\n#[cfg(test)]\nmod tests {}\n";
+    for (name, accepted) in [
+        ("a", true),
+        ("_", true),
+        ("a-b_9", true),
+        (
+            "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklm",
+            true,
+        ),
+        ("é", true),
+        ("a\u{301}", true),
+        ("type", true),
+        ("nul", true),
+        ("", false),
+        (" ", false),
+        ("a b", false),
+        ("1a", false),
+        ("-a", false),
+        ("a.b", false),
+        ("a/b", false),
+        ("a::b", false),
+        ("a¼", false),
+        ("Ⓐ", false),
+        ("\u{301}a", false),
+    ] {
+        let fixture = fixture_with("cargo-name-oracle", source, false)?;
+        let manifest = format!(
+            "[package]\nname = {}\nversion = '0.1.0'\nedition = '2024'\n[lib]\nname = 'proposal_fixture'\n[workspace]\n",
+            serde_json::to_string(name).map_err(|e| e.to_string())?
+        );
+        write(&fixture.root, "Cargo.toml", &manifest)?;
+        commit_all(&fixture.root, "name oracle")?;
+        let cargo = Command::new(env!("CARGO"))
+            .current_dir(&fixture.root)
+            .args([
+                "metadata",
+                "--offline",
+                "--no-deps",
+                "--format-version",
+                "1",
+            ])
+            .output()
+            .map_err(|e| e.to_string())?;
+        assert_eq!(
+            cargo.status.success(),
+            accepted,
+            "Cargo oracle for {name:?}: {}",
+            combined(&cargo)
+        );
+        let output = start(&fixture.root)?;
+        assert_eq!(
+            output.status.success(),
+            accepted,
+            "preflight for {name:?}: {}",
+            combined(&output)
+        );
+        let text = combined(&output);
+        if accepted {
+            assert!(
+                !text.contains("must be a valid Cargo package name"),
+                "an accepted name must not print the package refusal: {text}"
+            );
+        } else {
+            assert!(
+                text.contains("`package.name` must be a valid Cargo package name"),
+                "a rejected name must name the package diagnostic: {text}"
+            );
+            let attempts = fixture.root.join("target/ripr/repair-attempts");
+            let published: Vec<String> = fs::read_dir(&attempts)
+                .map(|entries| {
+                    entries
+                        .filter_map(Result::ok)
+                        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                        .filter(|name| !name.starts_with('.'))
+                        .collect()
+                })
+                .unwrap_or_default();
+            assert!(
+                published.is_empty(),
+                "a rejected name must leave no durable attempt: {published:?}"
+            );
+        }
+    }
+    Ok(())
+}

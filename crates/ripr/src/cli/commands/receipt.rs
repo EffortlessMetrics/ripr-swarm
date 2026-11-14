@@ -9,10 +9,10 @@ use crate::app::receipt::{
     check_receipt, receipt_out_path, validate_current_head, write_receipt,
 };
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // ── top-level receipt command ─────────────────────────────────────────────────
 
@@ -49,6 +49,11 @@ fn run_receipt_write(args: &[String]) -> Result<(), String> {
             .as_deref()
             .unwrap_or_else(|| std::path::Path::new(".")),
     )?;
+    // --root does not relocate the cwd-relative default receipt path. Check
+    // its actual output tree too; explicit --out keeps its existing semantics.
+    if opts.out.is_none() {
+        crate::atomic_file::ensure_relative_output_contained(&receipt_out_path(&opts))?;
+    }
     let rendered = write_receipt(&opts)?;
 
     if opts.json || opts.out.is_none() {
@@ -146,7 +151,7 @@ pub(in crate::cli) fn parse_receipt_write_options(
                 let value = expect_value(args, i, "--gap")?;
                 if value.trim().is_empty() {
                     return Err(
-                        "receipt write requires a canonical_gap_id; re-run with --gap".to_string(),
+                        "receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>` (`ripr receipt --help` shows the full command)".to_string(),
                     );
                 }
                 canonical_gap_id = Some(value.to_string());
@@ -189,7 +194,14 @@ pub(in crate::cli) fn parse_receipt_write_options(
             "--json" => json = true,
             "--root" => {
                 i += 1;
-                root = Some(PathBuf::from(expect_value(args, i, "--root")?));
+                let value = expect_value(args, i, "--root")?;
+                let reconciled = reconcile_root(
+                    root.as_deref().unwrap_or(Path::new(".")),
+                    root.is_some(),
+                    value,
+                    "receipt write",
+                )?;
+                root = Some(reconciled);
             }
             other => return Err(unknown_argument("receipt write", other)),
         }
@@ -197,7 +209,7 @@ pub(in crate::cli) fn parse_receipt_write_options(
     }
 
     let canonical_gap_id = canonical_gap_id.ok_or_else(|| {
-        "receipt write requires a canonical_gap_id; re-run with --gap".to_string()
+        "receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>` (`ripr receipt --help` shows the full command)".to_string()
     })?;
     let verify_command = verify_command.ok_or_else(|| {
         "receipt write requires --verify-command; add `--verify-command` to the command".to_string()
@@ -330,7 +342,7 @@ Options:
   --current-head SHA    Optional 40-character hex SHA asserted as the repository
                         HEAD at write time. When --root is also provided, the
                         receipt writer validates this sha against the actual git
-                        HEAD at that root and rejects mismatches (#1941).
+                        HEAD at that root and rejects mismatches.
   --root PATH           Repository root for git HEAD validation. When provided
                         alongside --current-head, the writer resolves the actual
                         git rev-parse HEAD and rejects if the caller-provided

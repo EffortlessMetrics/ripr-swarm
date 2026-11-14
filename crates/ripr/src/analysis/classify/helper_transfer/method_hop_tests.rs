@@ -48,7 +48,12 @@ fn chain_of(source: &str) -> Result<(HopSummary, Option<String>), String> {
         chain
             .hops
             .iter()
-            .map(|hop| (hop.caller.name.clone(), hop.receiver.clone()))
+            .map(|hop| {
+                (
+                    hop.caller.name.clone(),
+                    hop.receiver.as_ref().map(|r| r.name.clone()),
+                )
+            })
             .collect(),
         chain.stop_above,
     ))
@@ -79,7 +84,10 @@ fn receiver_call_on_a_typed_parameter_resolves_a_method_hop() -> Result<(), Stri
     assert_eq!(chain.hops[0].arguments, vec!["self.0", "si_unit"]);
     // The method hop's arguments stay positional and exclude the receiver.
     assert_eq!(chain.hops[1].caller.name, "check");
-    assert_eq!(chain.hops[1].receiver.as_deref(), Some("b"));
+    assert_eq!(
+        chain.hops[1].receiver.as_ref().and_then(|r| r.parameter()),
+        Some("b")
+    );
     assert_eq!(chain.hops[1].arguments, vec!["si"]);
     assert_eq!(chain.entry_name(), Some("check"));
     Ok(())
@@ -329,7 +337,10 @@ fn a_method_hop_never_forwards_a_result_or_an_effect_target() -> Result<(), Stri
     let index = index_of(&[("src/lib.rs", source)])?;
     let chain = resolve_chain("fmt_size", &index, true, &[]);
     assert_eq!(chain.hops.len(), 2, "{chain:?}");
-    assert_eq!(chain.hops[1].receiver.as_deref(), Some("b"));
+    assert_eq!(
+        chain.hops[1].receiver.as_ref().and_then(|r| r.parameter()),
+        Some("b")
+    );
     assert!(!chain_forwards_owner_result("fmt_size", &chain));
     // The direct hop alone still forwards; only the method hop does not.
     assert!(hops_forward_owner_result("fmt_size", &chain.hops[..1]));

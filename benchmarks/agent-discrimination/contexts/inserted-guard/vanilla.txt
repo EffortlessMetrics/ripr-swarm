@@ -1,0 +1,48 @@
+# CONTEXT: vanilla
+# Crate: inserted-guard
+# The complete change under study (git diff HEAD~1..HEAD),
+# followed by the full current source file.
+
+===== git diff HEAD~1..HEAD =====
+diff --git a/src/lib.rs b/src/lib.rs
+index 567e979..7d7f6a4 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,6 +4,9 @@
+ ///
+ /// Negative amounts are refund corrections and pass through unchanged.
+ pub fn total_after_fee(amount: i64, fee_cents: i64) -> i64 {
++    if amount < 0 {
++        return 0;
++    }
+     amount - fee_cents
+ }
+ 
+
+===== full changed source: src/lib.rs (current HEAD) =====
+//! Pricing helpers for the checkout service.
+
+/// Returns the amount owed for a cart after applying the processing fee.
+///
+/// Negative amounts are refund corrections and pass through unchanged.
+pub fn total_after_fee(amount: i64, fee_cents: i64) -> i64 {
+    if amount < 0 {
+        return 0;
+    }
+    amount - fee_cents
+}
+
+#[cfg(test)]
+mod baseline_tests {
+    use super::*;
+
+    #[test]
+    fn positive_amount_subtracts_fee() {
+        assert_eq!(total_after_fee(10_000, 250), 9_750);
+    }
+
+    #[test]
+    fn zero_amount_is_fee_only() {
+        assert_eq!(total_after_fee(0, 250), -250);
+    }
+}

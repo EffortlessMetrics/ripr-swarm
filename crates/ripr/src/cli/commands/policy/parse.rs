@@ -1,4 +1,5 @@
 use crate::cli::commands_options::*;
+use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::path::PathBuf;
@@ -9,6 +10,7 @@ pub(crate) fn parse_policy_readiness_options(
     args: &[String],
 ) -> Result<PolicyReadinessOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut gate_decision = None;
     let mut baseline_delta = None;
     let mut recommendation_calibration = None;
@@ -25,7 +27,15 @@ pub(crate) fn parse_policy_readiness_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "policy readiness")?;
+                let value = non_empty_string_arg(args, i, "--root", "policy readiness")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "policy readiness",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--gate-decision" => {
                 i += 1;
@@ -112,6 +122,32 @@ pub(crate) fn parse_policy_readiness_options(
         i += 1;
     }
 
+    // `--previous-readiness` naming `--out` is the rolling trend update: the
+    // previous report is read whole before the new one replaces it, like
+    // `baseline update` in place, so it is deliberately not guarded.
+    super::super::refuse_output_naming_input(
+        "policy readiness",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--gate-decision", gate_decision.as_deref()),
+            ("--baseline-delta", baseline_delta.as_deref()),
+            (
+                "--recommendation-calibration",
+                recommendation_calibration.as_deref(),
+            ),
+            ("--mutation-calibration", mutation_calibration.as_deref()),
+            ("--waiver-aging", waiver_aging.as_deref()),
+            ("--suppression-health", suppression_health.as_deref()),
+            ("--repo-config", repo_config.as_deref()),
+        ],
+    )?;
+    // The exemption covers only the JSON rolling update: the Markdown
+    // companion must never replace the previous JSON report.
+    super::super::refuse_output_naming_input(
+        "policy readiness",
+        &[("--out-md", &out_md)],
+        &[("--previous-readiness", previous_readiness.as_deref())],
+    )?;
     Ok(PolicyReadinessOptions {
         root,
         gate_decision,
@@ -131,6 +167,7 @@ pub(crate) fn parse_policy_operations_options(
     args: &[String],
 ) -> Result<PolicyOperationsOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut policy_readiness = None;
     let mut waiver_aging = None;
     let mut suppression_health = None;
@@ -147,7 +184,15 @@ pub(crate) fn parse_policy_operations_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "policy operations")?;
+                let value = non_empty_string_arg(args, i, "--root", "policy operations")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "policy operations",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--policy-readiness" => {
                 i += 1;
@@ -237,6 +282,23 @@ pub(crate) fn parse_policy_operations_options(
     let policy_readiness = policy_readiness
         .ok_or_else(|| "policy operations requires --policy-readiness <path>; add `--policy-readiness <path>` to the command".to_string())?;
 
+    super::super::refuse_output_naming_input(
+        "policy operations",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--policy-readiness", Some(&policy_readiness)),
+            ("--waiver-aging", waiver_aging.as_deref()),
+            ("--suppression-health", suppression_health.as_deref()),
+            ("--baseline-delta", baseline_delta.as_deref()),
+            ("--gate-decision", gate_decision.as_deref()),
+            (
+                "--recommendation-calibration",
+                recommendation_calibration.as_deref(),
+            ),
+            ("--mutation-calibration", mutation_calibration.as_deref()),
+            ("--preview-boundary", preview_boundary.as_deref()),
+        ],
+    )?;
     Ok(PolicyOperationsOptions {
         root,
         policy_readiness: Some(policy_readiness),
@@ -256,6 +318,7 @@ pub(crate) fn parse_policy_history_options(
     args: &[String],
 ) -> Result<PolicyHistoryOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut current = None;
     let mut history = None;
     let mut commit = None;
@@ -269,7 +332,15 @@ pub(crate) fn parse_policy_history_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "policy history")?;
+                let value = non_empty_string_arg(args, i, "--root", "policy history")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "policy history",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--current" => {
                 i += 1;
@@ -329,6 +400,14 @@ pub(crate) fn parse_policy_history_options(
         );
     }
 
+    super::super::refuse_output_naming_input(
+        "policy history",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--current", Some(&current)),
+            ("--history", history.as_deref()),
+        ],
+    )?;
     Ok(PolicyHistoryOptions {
         root,
         current,
@@ -345,6 +424,7 @@ pub(crate) fn parse_policy_promotion_options(
     args: &[String],
 ) -> Result<PolicyPromotionOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut target_mode = None;
     let mut operations = None;
     let mut history = None;
@@ -356,7 +436,15 @@ pub(crate) fn parse_policy_promotion_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "policy promote")?;
+                let value = non_empty_string_arg(args, i, "--root", "policy promote")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "policy promote",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--to" => {
                 i += 1;
@@ -418,6 +506,14 @@ pub(crate) fn parse_policy_promotion_options(
         ))
     });
 
+    super::super::refuse_output_naming_input(
+        "policy promote",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--operations", Some(&operations)),
+            ("--history", history.as_deref()),
+        ],
+    )?;
     Ok(PolicyPromotionOptions {
         root,
         target_mode,
@@ -432,6 +528,7 @@ pub(crate) fn parse_policy_preview_promotion_options(
     args: &[String],
 ) -> Result<PolicyPreviewPromotionOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut language = None;
     let mut candidate_class = None;
     let mut evidence = None;
@@ -443,7 +540,15 @@ pub(crate) fn parse_policy_preview_promotion_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "policy preview-promote")?;
+                let value = non_empty_string_arg(args, i, "--root", "policy preview-promote")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "policy preview-promote",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--language" => {
                 i += 1;
@@ -527,6 +632,11 @@ pub(crate) fn parse_policy_preview_promotion_options(
         )
     });
 
+    super::super::refuse_output_naming_input(
+        "policy preview-promote",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[("--evidence", evidence.as_deref())],
+    )?;
     Ok(PolicyPreviewPromotionOptions {
         root,
         language,
@@ -541,6 +651,7 @@ pub(crate) fn parse_policy_waiver_aging_options(
     args: &[String],
 ) -> Result<PolicyWaiverAgingOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut ledger = None;
     let mut history = None;
     let mut out = PathBuf::from(output::waiver_aging::DEFAULT_WAIVER_AGING_OUT);
@@ -551,7 +662,15 @@ pub(crate) fn parse_policy_waiver_aging_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "policy waiver-aging")?;
+                let value = non_empty_string_arg(args, i, "--root", "policy waiver-aging")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "policy waiver-aging",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--ledger" => {
                 i += 1;
@@ -584,6 +703,14 @@ pub(crate) fn parse_policy_waiver_aging_options(
         i += 1;
     }
 
+    super::super::refuse_output_naming_input(
+        "policy waiver-aging",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--ledger", ledger.as_deref()),
+            ("--history", history.as_deref()),
+        ],
+    )?;
     Ok(PolicyWaiverAgingOptions {
         root,
         ledger,
@@ -597,6 +724,7 @@ pub(crate) fn parse_policy_suppression_health_options(
     args: &[String],
 ) -> Result<PolicySuppressionHealthOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut manifest = PathBuf::from(output::suppressions::SUPPRESSIONS_PATH);
     let mut out = PathBuf::from(output::suppression_health::DEFAULT_SUPPRESSION_HEALTH_OUT);
     let mut out_md = PathBuf::from(output::suppression_health::DEFAULT_SUPPRESSION_HEALTH_MD_OUT);
@@ -606,7 +734,11 @@ pub(crate) fn parse_policy_suppression_health_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_path_arg(args, i, "--root", "policy suppression-health")?;
+                let value = non_empty_string_arg(args, i, "--root", "policy suppression-health")?;
+                let reconciled =
+                    reconcile_root(&root, root_explicit, &value, "policy suppression-health")?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--manifest" => {
                 i += 1;
@@ -627,6 +759,17 @@ pub(crate) fn parse_policy_suppression_health_options(
         i += 1;
     }
 
+    // The manifest is read relative to `--root`, so compare where it is read.
+    let manifest_read = if manifest.is_absolute() {
+        manifest.clone()
+    } else {
+        root.join(&manifest)
+    };
+    super::super::refuse_output_naming_input(
+        "policy suppression-health",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[("--manifest", Some(&manifest_read))],
+    )?;
     Ok(PolicySuppressionHealthOptions {
         root,
         manifest,

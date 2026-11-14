@@ -1,0 +1,11 @@
+[[extend]]
+id = "RIPR-SPEC-0069"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::actionable_line_hover_promises_inspect_quick_fix_only_to_command_capable_clients",
+  "crates/ripr/src/lsp/tests.rs::backend_line_hover_follows_the_negotiated_client_profile",
+  "crates/ripr/src/lsp/tests.rs::backend_hover_without_copy_support_does_not_claim_refresh_only_actions",
+]
+code = [
+  "crates/ripr/src/lsp/hover.rs",
+  "crates/ripr/src/lsp/actions.rs",
+]

@@ -1,0 +1,9 @@
+diff --git a/src/url.ts b/src/url.ts
+index 0000000..1111111 100644
+--- a/src/url.ts
++++ b/src/url.ts
+@@ -6,3 +6,3 @@ export class Url {
+     get origin(): string {
+-        return this.protocol + '//host';
++        return this.protocol + '://host';
+     }

@@ -27,6 +27,8 @@ canonical packet stays behind the card's explicit detail route and
 
 ## Governed Python sequence
 
+The after phase's `--test-result` option accepts a caller-run `cargo test` result for Rust test files only. A Python or TypeScript attempt that passes it is refused up front; finish those attempts without the flag.
+
 Start with an accepted repair-trust selection manifest and its selected row ID
 ([RIPR-SPEC-0176](specs/RIPR-SPEC-0176-python-repair-trust-attempts.md)).
 The selection row must match the current repository HEAD and the packet's exact
@@ -128,7 +130,7 @@ resolve through the default directory. An explicit store outside
 `target/ripr` is an expected operational write; stores already under
 `target/ripr` stay covered by that subtree.
 
-The exact filenames follow the command-owned source artifacts. `attempt.json` identifies them by semantic role and binds each retained file by path, byte count, and SHA-256 digest. After-phase `agent_receipt` / `agent_verify` files are recorded in `terminal_artifacts` and are excluded from the before commitment. Attempt identity alone does not bind the verdict: every read that can report `finished` (CLI status, `--attempt` status, and the MCP receipt/attempt documents) re-validates the receipt against its verify document — schema, verify digest linkage, the retained before content commitment, and the seam movement, lifecycle state, and guidance kind the verify document records. A pair that fails any of those checks reads `unconfirmed`/`unavailable` with the reason, never `finished`. Pending retention additionally requires the verify document to pass the same canonical receipt-issuance validation the after phase applies before it promotes the pair.
+The exact filenames follow the command-owned source artifacts. `attempt.json` identifies them by semantic role and binds each retained file by path, byte count, and SHA-256 digest. After-phase `agent_receipt` / `agent_verify` (and, when the caller passed `--test-result` to a compliant finish, `focused_test_result`) files are recorded in `terminal_artifacts` and are excluded from the before commitment. Attempt identity alone does not bind the verdict: every read that can report `finished` (CLI status, `--attempt` status, and the MCP receipt/attempt documents) re-validates the receipt against its verify document — schema, verify digest linkage, the retained before content commitment, and the seam movement, lifecycle state, and guidance kind the verify document records. A pair that fails any of those checks reads `unconfirmed`/`unavailable` with the reason, never `finished`. Pending retention additionally requires the verify document to pass the same canonical receipt-issuance validation the after phase applies before it promotes the pair.
 
 Repository-global files under `target/ripr/workflow/` and `target/ripr/reports/agent-receipt.json` remain compatibility projections for existing cockpit and review consumers. They are not repair-attempt identity, and they are not the sole surviving copy of a finished attempt's result. A newly finished gap-bound attempt also retains the raw `after_check_findings` snapshot. Its retained receipt, verify and snapshot are cross-bound to the attempt and recorded after head. If exact producer projections are later absent, currentness may reconstruct their identities in memory only when that retained evidence and the complete bound delta agree. Present drift, tracked or authored files, unrelated neighbors, and missing or invalid evidence are not excused. Legacy two-role retention does not establish this snapshot custody. Snapshot validation requires Git access and a matching RIPR producer version; when either is unavailable, cleanup currentness stays unconfirmed rather than being inferred, even if the historical receipt remains readable.
 
@@ -234,7 +236,7 @@ Only `ready_to_finish` with a current, compliant after verdict can authorize the
 
 A terminal attempt's after phase does not run again. Rerunning it is refused with the state (`ready_to_finish`: already finished; `stale`, `incomparable`, `failed`: ended), the receipt path, and the next step: `ripr agent status`, or a new `--phase before` while the gap is still open.
 
-The after phase also retains the terminal static result under the attempt directory (`artifacts/agent-receipt.json` and the `agent_verify` document it was built from), bound by role, path, byte count, and SHA-256 in `attempt.json` as `terminal_artifacts`. Those files are the surviving authority for that attempt. `target/ripr/reports/agent-receipt.json` remains a one-slot compatibility projection of the latest finish; replacing, deleting, or corrupting it must not erase an earlier attempt's retained result. `ripr agent status` prefers the attempt-local receipt. Legacy manifests without `terminal_artifacts` still read the compatibility file: an exact matching receipt is used, and a receipt bound to another attempt stays `unconfirmed` with `receipt.superseded_by` because that earlier outcome cannot be reconstructed.
+The after phase also retains the terminal static result under the attempt directory (`artifacts/agent-receipt.json` and the `agent_verify` document it was built from), bound by role, path, byte count, and SHA-256 in `attempt.json` (a compliant finish given `--test-result` also retains the validated `focused_test_result` record) as `terminal_artifacts`. Those files are the surviving authority for that attempt. `target/ripr/reports/agent-receipt.json` remains a one-slot compatibility projection of the latest finish; replacing, deleting, or corrupting it must not erase an earlier attempt's retained result. `ripr agent status` prefers the attempt-local receipt. Legacy manifests without `terminal_artifacts` still read the compatibility file: an exact matching receipt is used, and a receipt bound to another attempt stays `unconfirmed` with `receipt.superseded_by` because that earlier outcome cannot be reconstructed.
 
 ## Discovery and resume (`ripr agent status --attempt <id>`, RIPR-SPEC-0217, #4798)
 
@@ -251,6 +253,10 @@ identity versions remain refused; historical readability is not a migration.
 This historical reading carries no live currentness authority: promotion,
 receipt reissue and reconstruction of missing workflow projections still use
 the full current executable and Git-provenance validation.
+
+Retained before-baseline readiness is read from the attempt's digest-bound `edit_cage_baseline`, never from limitation prose or the compatibility workflow file (#13216). Selected status and inventory expose nullable `baseline_ambiguous` and `baseline_unavailable_reason`: `false` means the retained capture did not record ambiguity, `true` means it did, and `null` means the fact could not be established. Missing legacy baseline artifacts are not treated as clean. An ambiguous or unavailable live baseline keeps its operational state and identity but reads `limited`, with inventory disposition `baseline_ambiguous` or `baseline_unavailable`. No edit/after continuation is offered. A fresh before recovery is named only while the shared repair-start gate admits it; otherwise the status preserves the limitation and the gate's by-hand or already-checked guidance. Corrupt artifact bindings still trigger the existing whole-inventory refusal and exact selected `corrupt_or_unavailable` result.
+
+Repeated `ripr repair` does not reuse these limited baselines. Ordinary `ripr continue --attempt <id>` explicitly selecting such a live attempt refuses without running after (`attempt_baseline_blocked`, exit 3, `not_started`) and displays the shared status. Implicit continue retains the existing trust-binding and retry-budget exclusions, chooses a clean eligible ordinary attempt when one exists, and otherwise reports remaining baseline-limited candidates with that refusal. It reconstructs at most eight detailed blocked reports, preserves the full total, and names the omitted records and exact inspection routes; eligibility enumeration is complete. VS Code Start/Continue follows the same inventory disposition; its status includes the baseline limitation and current recovery reason. Durable MCP attempt/receipt reads preserve the limitation, withhold retained after command routes, and expose `limited` receipt state. The explicit advanced after route retains its authority to record the actual Incomparable verdict; reading status never changes that state.
 
 Status is read-only on both surfaces: inspecting an attempt cannot finish, restart, rewrite, or delete it, and a resumed attempt receives no stronger state than its receipt shows. Human Markdown and normalized JSON derive from one DTO, so both surfaces agree and reordered directory traversal produces byte-stable output. See `docs/OUTPUT_SCHEMA.md` ("Exact attempt selection") for the field contract.
 
@@ -366,6 +372,18 @@ To gain a repair target for such a seam, keep exactly one inline
 test-surface file (a `tests/` path or `*_test.rs` name) in the crate that
 owns the seam, then rerun pilot. Until then, inspect the ranked seams by
 hand: they are still worth reading, just not repairable through RIPR.
+
+### Line-ending-only changes
+
+A file whose only change is its line endings is not counted as an edit when
+Git itself normalizes that path (`core.autocrlf`, or a `text` attribute). A
+checkout or `git stash pop` can rewrite CRLF bytes that way while `git status`
+stays clean. The after phase lists such files in
+`after.line_ending_only_paths`, beside the verdict rather than inside it, and
+names them in one line that starts `not counted as edits:`. The list leaves the
+bound delta digest and the receipt binding unchanged. A line-ending flip on a
+path Git does not normalize is still an edit, and so is any real content change
+to the same file.
 
 ### Replacing an issued compatibility receipt
 

@@ -1601,6 +1601,35 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             }
         }
     }
+    // Seeded after the witness snapshot: verify the runner-independent
+    // verdict-corpus spec-example coverage row, then remove it (and its
+    // trust-board rollup effect) before the witness equality check.
+    {
+        let metrics = live["metrics"].as_array_mut().ok_or("metrics missing")?;
+        let at = metrics
+            .iter()
+            .position(|metric| metric["id"] == "trust.verdict_corpus_spec_example_coverage")
+            .ok_or("coverage metric missing")?;
+        let coverage = metrics.remove(at);
+        assert_eq!(
+            coverage["source"],
+            "verdict-corpus:fixtures/rust-verdict-corpus#spec_example_coverage.coverage"
+        );
+        assert_eq!(coverage["value"].as_f64(), Some(1.0));
+        assert_eq!(coverage["status"], "meets_target");
+        assert_eq!(coverage["runner_dependent"], false);
+        assert_eq!(coverage["samples"].as_array().map(Vec::len), Some(1));
+        let boards = live["boards"].as_array_mut().ok_or("boards missing")?;
+        let trust = boards
+            .iter_mut()
+            .find(|board| board["id"] == "trust")
+            .ok_or("trust board missing")?;
+        let ids = trust["metrics"]
+            .as_array_mut()
+            .ok_or("trust metrics missing")?;
+        ids.retain(|id| id != "trust.verdict_corpus_spec_example_coverage");
+        trust["counts"]["meets_target"] = serde_json::json!(4);
+    }
     assert_eq!(live, witness);
     assert_eq!(
         include_str!("../../../../metrics/dx-scoreboard/baseline.json"),

@@ -1,8 +1,8 @@
 [[extend]]
 id = "RIPR-SPEC-0067"
 code = [
-  "crates/ripr/src/domain/causal_delta.rs",
-  "crates/ripr/src/domain/causal_delta_kani.rs",
+  "crates/ripr-contract/src/domain/causal_delta.rs",
+  "crates/ripr-contract/src/domain/causal_delta_kani.rs",
 ]
 tests = [
   "crates/ripr/tests/causal_delta_unknown.rs::unknown_gap_inputs_remain_non_causal",

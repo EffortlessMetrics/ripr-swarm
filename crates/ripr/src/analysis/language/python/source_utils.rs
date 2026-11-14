@@ -15,6 +15,9 @@ pub(super) struct SourceText<'a> {
     /// `typer.Typer()` receiver names, scanned once on first use; every
     /// owner in the file asks for them.
     cli_receiver_names: std::cell::OnceCell<Vec<String>>,
+    /// Whether the file's `self.assert*` receivers are visibly stock
+    /// `unittest.TestCase` ones, scanned once on first use.
+    standard_unittest_receivers: std::cell::OnceCell<bool>,
 }
 
 impl<'a> SourceText<'a> {
@@ -28,6 +31,7 @@ impl<'a> SourceText<'a> {
             text,
             newline_offsets,
             cli_receiver_names: std::cell::OnceCell::new(),
+            standard_unittest_receivers: std::cell::OnceCell::new(),
         }
     }
 
@@ -49,6 +53,15 @@ impl<'a> SourceText<'a> {
     /// the first call and reused after.
     pub(super) fn cli_receiver_names(&self, scan: impl FnOnce(&str) -> Vec<String>) -> &[String] {
         self.cli_receiver_names.get_or_init(|| scan(self.text))
+    }
+}
+
+impl SourceText<'_> {
+    /// Computed by `scan` on the first call and reused after.
+    pub(super) fn standard_unittest_receivers(&self, scan: impl FnOnce(&str) -> bool) -> bool {
+        *self
+            .standard_unittest_receivers
+            .get_or_init(|| scan(self.text))
     }
 }
 

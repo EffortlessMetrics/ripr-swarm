@@ -1,0 +1,284 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "columnKind": "unicodeCodePoints",
+      "properties": {
+        "analysis_complete": true,
+        "analysis_outcome": {
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.",
+          "counts": {
+            "candidate_line_count": 1,
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "finding_count": 1,
+            "probe_count": 1
+          },
+          "identity": {
+            "base_revision": null,
+            "config_identity": "fnv1a64:4fbb9720aa6abe91",
+            "git_candidate_subject": null,
+            "input_identity": "sha256:61263aa0503ac431e9c801d8f4a59016f78f885847dac20e98fe6eb635c2dda9",
+            "repository_identity": null,
+            "root_identity": null,
+            "snapshot_identity": null
+          },
+          "kind": "complete_with_findings",
+          "limitations": [],
+          "schema_version": "0.1"
+        },
+        "run_status": "complete",
+        "schema_version": "0.1",
+        "scope": "finding",
+        "tool": "ripr"
+      },
+      "results": [
+        {
+          "fingerprints": {
+            "riprFingerprintV1": "ripr.finding.no_static_path|probe:src_inventory.ts:typescript_preview:72e603c8|probe:src_inventory.ts:typescript_preview:72e603c8|src/inventory.ts"
+          },
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/inventory.ts"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 2
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "no_static_path static exposure for predicate probe:     if (quantity >= minimum) {. Next step: TypeScript preview advisory: no statically linked test calls `checkStock(`; inspect existing test calls and their import/export paths; if no suitable test exists, add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the project's native test command and rerun `ripr check` to refresh the finding."
+          },
+          "partialFingerprints": {
+            "riprFingerprintV1": "ripr.finding.no_static_path|probe:src_inventory.ts:typescript_preview:72e603c8|probe:src_inventory.ts:typescript_preview:72e603c8|src/inventory.ts"
+          },
+          "properties": {
+            "changed_expression": "    if (quantity >= minimum) {",
+            "classification": "no_static_path",
+            "confidence": 0.4,
+            "finding_id": "probe:src_inventory.ts:typescript_preview:72e603c8",
+            "flow_sinks": [],
+            "kind": "finding",
+            "language": "typescript",
+            "language_status": "preview",
+            "missing_discriminators": [],
+            "observed_values": [],
+            "owner": "typescript:src/inventory.ts::checkStock",
+            "owner_kind": "function",
+            "preview_actionability": {
+              "actionability_category": "missing_context",
+              "authority_boundary": "preview_advisory_only",
+              "evidence_needed_to_promote": "trusted related test or observer, target shape, verify command, receipt command, and edit boundaries",
+              "gap_state": "unknown",
+              "missing_actionability_fields": [
+                "related_test_or_observer",
+                "target_test_shape",
+                "verify_command",
+                "receipt_command",
+                "must_not_change",
+                "allowed_edit_surface",
+                "raw_evidence_refs"
+              ],
+              "missing_graph_legs": [],
+              "raw_evidence_refs": [
+                {
+                  "file": "src/inventory.ts",
+                  "kind": "typescript_preview_probe",
+                  "leg": null,
+                  "line": 2,
+                  "owner": "checkStock",
+                  "raw": "file=src/inventory.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_inventory.ts:typescript_preview:72e603c8;owner=checkStock",
+                  "sample": null,
+                  "source_id": "probe:src_inventory.ts:typescript_preview:72e603c8"
+                }
+              ],
+              "repair_packet_ready": false,
+              "repair_route": "add trusted related-test matching for this owner shape before emitting a repair packet",
+              "unlock_condition": null,
+              "why_not_actionable": "no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route"
+            },
+            "probe_delta": "control",
+            "probe_family": "predicate",
+            "probe_id": "probe:src_inventory.ts:typescript_preview:72e603c8",
+            "related_tests": [],
+            "related_tests_total": 0,
+            "ripr": {
+              "discriminate": {
+                "confidence": "low",
+                "state": "no",
+                "summary": "TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands."
+              },
+              "infect": {
+                "confidence": "low",
+                "state": "unknown",
+                "summary": "TypeScript preview adapter does not yet model infection."
+              },
+              "observe": {
+                "confidence": "low",
+                "state": "no",
+                "summary": "Strongest extracted oracle kind: `unknown` (rank 0)"
+              },
+              "propagate": {
+                "confidence": "low",
+                "state": "unknown",
+                "summary": "TypeScript preview adapter does not yet model propagation."
+              },
+              "reach": {
+                "confidence": "low",
+                "state": "no",
+                "summary": "0 related test(s) found for owner `checkStock`"
+              }
+            },
+            "severity": "warning",
+            "stop_reasons": [],
+            "suggested_next_action": "TypeScript preview advisory: no statically linked test calls `checkStock(`; inspect existing test calls and their import/export paths; if no suitable test exists, add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the project's native test command and rerun `ripr check` to refresh the finding.",
+            "tool": "ripr",
+            "typescript_preview_card": {
+              "authority_boundary": "preview_advisory_only",
+              "bun_cross_language_grip": null,
+              "card_version": "typescript_preview_card.v1",
+              "changed_behavior": "predicate changed at src/inventory.ts:2: `if (quantity >= minimum) {`",
+              "language": "typescript",
+              "language_status": "preview",
+              "limits": [
+                "Syntax-first TypeScript/JavaScript preview evidence only.",
+                "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+                "This card is advisory and is not a repair packet."
+              ],
+              "missing_discriminator": null,
+              "oracle_kind": "unknown",
+              "oracle_strength": "none",
+              "owner": "checkStock",
+              "owner_kind": "function",
+              "probe_family": "predicate",
+              "related_test": null,
+              "repair_packet_ready": false,
+              "repair_route": "add trusted related-test matching for this owner shape before emitting a repair packet",
+              "source": "check_typescript_preview",
+              "static_limits": [],
+              "suggested_assertion_shape": "Add an exact boundary assertion for the changed predicate.",
+              "verify": {
+                "command": null
+              },
+              "why_not_actionable": "no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route"
+            }
+          },
+          "ruleId": "ripr.finding.no_static_path"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/EffortlessMetrics/ripr",
+          "name": "ripr",
+          "rules": [
+            {
+              "fullDescription": {
+                "text": "Static analysis found a complete path from the changed code to a test oracle strong enough to observe the changed behavior."
+              },
+              "help": {
+                "text": "This is static evidence, not a runtime verdict: ripr did not execute any test. Next step: run the linked related test and confirm it observes the changed sink."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.exposed",
+              "name": "ripr exposed",
+              "shortDescription": {
+                "text": "Changed behavior appears covered by a strong test oracle"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "A static path from the change to a related test exists, but the infection or the oracle's discrimination looks weak, so the test could pass even when the behavior is wrong."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: strengthen the nearest assertion so it observes the changed sink directly, then re-run ripr check."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.weakly_exposed",
+              "name": "ripr weakly_exposed",
+              "shortDescription": {
+                "text": "Changed behavior may not be caught by the current tests"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Related tests appear to reach the changed code, but no meaningful oracle was found that would notice a wrong result."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: add or sharpen an assertion that discriminates the changed behavior."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.reachable_unrevealed",
+              "name": "ripr reachable_unrevealed",
+              "shortDescription": {
+                "text": "Tests reach the changed code but no assertion appears to check it"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "No static test path to the changed owner was found; static analysis could not trace any related test to this behavior."
+              },
+              "help": {
+                "text": "This is a static reachability statement, not a runtime coverage measurement. Next step: add a focused test that exercises the changed behavior."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.no_static_path",
+              "name": "ripr no_static_path",
+              "shortDescription": {
+                "text": "No test appears to reach the changed code"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Tests may reach the change, but the input or fixture evidence is opaque, so static analysis cannot tell whether a wrong result would propagate."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: make the decisive input or fixture value explicit, then re-run ripr check."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.infection_unknown",
+              "name": "ripr infection_unknown",
+              "shortDescription": {
+                "text": "Tests may reach the change but their inputs are not visible to static analysis"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "The changed behavior crosses a boundary static analysis cannot see through, so it is unknown whether a wrong result would reach an observable sink."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: add an assertion at an observable sink beyond the boundary."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.propagation_unknown",
+              "name": "ripr propagation_unknown",
+              "shortDescription": {
+                "text": "Static analysis cannot tell whether a wrong result would reach an assertion"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Syntax-first analysis could not make a credible judgment for this finding, usually because parsing or symbol resolution was incomplete."
+              },
+              "help": {
+                "text": "This is an analysis limitation disclosure, not a coverage verdict. Next step: re-run with fuller analysis settings or triage the finding manually."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.static_unknown",
+              "name": "ripr static_unknown",
+              "shortDescription": {
+                "text": "Static analysis could not judge this change"
+              }
+            }
+          ],
+          "semanticVersion": "0.11.0"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

@@ -1,0 +1,17 @@
+# Function-level lens collapse (#14362) and the calling-test fix site and
+# navigation target (#5354) under the code lens spec.
+[[extend]]
+id = "RIPR-SPEC-0100"
+tests = [
+  "crates/ripr/src/lsp/lens.rs::tests::code_lens_response_collapses_identical_lenses_within_one_function",
+  "crates/ripr/src/lsp/lens.rs::tests::lens_click_never_opens_a_proximity_only_test_over_a_calling_one",
+  "crates/ripr/src/domain/diagnostic_witness.rs::tests::fix_site_prefers_a_call_bearing_test_over_a_proximity_only_oracle",
+  "crates/ripr/src/domain/diagnostic_witness.rs::tests::fix_site_prefers_a_calling_test_over_a_stronger_name_only_test",
+  "crates/ripr/src/domain/diagnostic_witness.rs::tests::a_suggested_proximity_only_test_is_not_the_fix_site",
+  "crates/ripr/src/domain/diagnostic_witness.rs::tests::proximity_only_related_tests_never_become_the_fix_site",
+  "crates/ripr/src/lsp/tests.rs::seam_code_actions_skip_proximity_only_related_tests",
+]
+code = [
+  "crates/ripr/src/domain/diagnostic_witness.rs",
+  "crates/ripr/src/lsp/actions.rs",
+]

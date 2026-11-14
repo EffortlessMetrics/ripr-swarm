@@ -37,6 +37,35 @@ another crate, so placement is unavailable and the binding cannot be verified.
 The refusal then dropped the relation to `weak_token_substring` and the finding
 to a gap, an actionable repair signal on a receiver never shown to differ.
 
+## Draft placement and unindexed members (#14260)
+
+Placement (RIPR-SPEC-0240) is unavailable workspace-wide when a workspace
+member that the index omitted, as a Draft index omits members that are not the
+changed package or its reverse path-dependents, may compile an indexed file
+(#10149). An omitted member may do so when a crate root it declares or its
+default layout provides contains `include!`, or a `#[path]` that is not
+provably the member's own file. A `#[path]` is the member's own file when all
+of these hold, and any doubt keeps the unavailable result:
+
+1. It is exactly one plain string literal on a top-level out-of-line
+   `mod name;`, and every `#[path` in the file is such an attribute.
+2. Its target, resolved from the declaring file's directory with symlinks
+   followed, is an existing file inside the member's directory.
+3. The target is read under the same rule: it carries no `include!`, no inner
+   `#![path]`, no default-layout `mod child;` (whose file is not read), and
+   only own-file `#[path]` literals.
+4. At most 64 `#[path]`-named files are followed; crate roots, including every
+   explicitly declared target, are not counted.
+
+5. Once one own-file `#[path]` is accepted, the walk repeats strictly: the
+   roots Cargo discovers without a manifest entry (`src/bin`, `tests`,
+   `examples`, `benches`) are read too, and no file may declare a
+   default-layout `mod child;`, whose file the walk would not read.
+6. A crate root that is a symbolic link out of the member's directory is
+   another file's compilation context and keeps the unavailable result.
+
+Ready mode indexes every member and is unchanged.
+
 ## Trigger
 
 All of these hold, and any doubt keeps today's behavior:
@@ -119,6 +148,13 @@ cause.
   scope, unnameable-package scope, import-root scan, manifest rename/mismatch
   check and unmatched-name reach-every-package each fail a control, as does the
   `#[ignore]` exclusion.
+- A bare `assert_matches!` (#10666) is no prelude macro, so only the
+  limit-naming pass reads its first operand, and only when no workspace file
+  declares a `macro_rules! assert_matches`. The credit path never admits it: a
+  placed workspace keeps the token-substring gap, and a qualified spelling, a
+  local macro, a wrong receiver and a broad `Err(_)` pattern keep theirs. A
+  placed workspace's gap for an inherent method behind a non-standard assertion
+  macro still reads no named limit; that is tracked separately.
 - Still unexercised: the duplicate-directory clause of the reach-every-package
   rule, crate-local and scoped names under trust, the own-related-tests
   filter (the same-named-type control pins the outcome, not the filter), the

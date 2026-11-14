@@ -1,0 +1,454 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "columnKind": "unicodeCodePoints",
+      "properties": {
+        "analysis_complete": true,
+        "analysis_outcome": {
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.",
+          "counts": {
+            "candidate_line_count": 2,
+            "changed_file_count": 1,
+            "changed_line_count": 4,
+            "finding_count": 2,
+            "probe_count": 2
+          },
+          "identity": {
+            "base_revision": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "git_candidate_subject": null,
+            "input_identity": "sha256:0d649c812e58180c42824c287985f255535d9a65f8844567ccb6a4a32021b74d",
+            "repository_identity": null,
+            "root_identity": null,
+            "snapshot_identity": null
+          },
+          "kind": "complete_with_findings",
+          "limitations": [],
+          "schema_version": "0.1"
+        },
+        "run_status": "complete",
+        "schema_version": "0.1",
+        "scope": "finding",
+        "tool": "ripr"
+      },
+      "results": [
+        {
+          "fingerprints": {
+            "riprFingerprintV1": "ripr.finding.exposed|probe:src_load.ts:typescript_preview:fd09bc48|probe:src_load.ts:typescript_preview:fd09bc48|src/load.ts"
+          },
+          "level": "note",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/load.ts"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 3
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "exposed static exposure for error_path probe:     throw \"TOKEN_REQUIRED\";. Next step: TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value."
+          },
+          "partialFingerprints": {
+            "riprFingerprintV1": "ripr.finding.exposed|probe:src_load.ts:typescript_preview:fd09bc48|probe:src_load.ts:typescript_preview:fd09bc48|src/load.ts"
+          },
+          "properties": {
+            "changed_expression": "    throw \"TOKEN_REQUIRED\";",
+            "classification": "exposed",
+            "confidence": 0.6,
+            "finding_id": "probe:src_load.ts:typescript_preview:fd09bc48",
+            "flow_sinks": [
+              {
+                "kind": "error_variant",
+                "line": 3,
+                "owner": "typescript:src/load.ts::load",
+                "text": "throw \"TOKEN_REQUIRED\";"
+              }
+            ],
+            "kind": "finding",
+            "language": "typescript",
+            "language_status": "preview",
+            "missing_discriminators": [],
+            "observed_values": [],
+            "owner": "typescript:src/load.ts::load",
+            "owner_kind": "function",
+            "preview_actionability": {
+              "actionability_category": "strong_oracle_observed",
+              "authority_boundary": "preview_advisory_only",
+              "evidence_needed_to_promote": "none for a repair packet; retain strong related-test evidence as non-actionable context",
+              "gap_state": "already_observed",
+              "missing_actionability_fields": [],
+              "missing_graph_legs": [],
+              "raw_evidence_refs": [
+                {
+                  "file": "src/load.ts",
+                  "kind": "typescript_preview_probe",
+                  "leg": null,
+                  "line": 3,
+                  "owner": "load",
+                  "raw": "file=src/load.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_load.ts:typescript_preview:fd09bc48;owner=load",
+                  "sample": null,
+                  "source_id": "probe:src_load.ts:typescript_preview:fd09bc48"
+                }
+              ],
+              "repair_packet_ready": false,
+              "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",
+              "unlock_condition": null,
+              "why_not_actionable": "related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted"
+            },
+            "probe_delta": "control",
+            "probe_family": "error_path",
+            "probe_id": "probe:src_load.ts:typescript_preview:fd09bc48",
+            "related_tests": [
+              {
+                "file": "tests/load.test.ts",
+                "line": 4,
+                "name": "missing token rejects with the required literal",
+                "oracle": "expect(...).rejects.toBe(...)",
+                "oracle_kind": "exact_error_variant",
+                "oracle_strength": "strong"
+              }
+            ],
+            "related_tests_total": 1,
+            "ripr": {
+              "discriminate": {
+                "confidence": "low",
+                "state": "yes",
+                "summary": "Related test uses an `exact_error_variant` oracle; static evidence suggests the changed behavior is discriminated."
+              },
+              "infect": {
+                "confidence": "low",
+                "state": "unknown",
+                "summary": "TypeScript preview adapter does not yet model infection."
+              },
+              "observe": {
+                "confidence": "low",
+                "state": "yes",
+                "summary": "Strongest extracted oracle kind: `exact_error_variant` (rank 5)"
+              },
+              "propagate": {
+                "confidence": "low",
+                "state": "unknown",
+                "summary": "TypeScript preview adapter does not yet model propagation."
+              },
+              "reach": {
+                "confidence": "low",
+                "state": "yes",
+                "summary": "1 related test(s) found for owner `load`"
+              }
+            },
+            "severity": "info",
+            "stop_reasons": [],
+            "suggested_next_action": "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.",
+            "tool": "ripr",
+            "typescript_preview_card": {
+              "authority_boundary": "preview_advisory_only",
+              "bun_cross_language_grip": null,
+              "card_version": "typescript_preview_card.v1",
+              "changed_behavior": "error_path changed at src/load.ts:3: `throw \"TOKEN_REQUIRED\";`",
+              "language": "typescript",
+              "language_status": "preview",
+              "limits": [
+                "Syntax-first TypeScript/JavaScript preview evidence only.",
+                "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+                "This card is advisory and is not a repair packet."
+              ],
+              "missing_discriminator": null,
+              "oracle_kind": "exact_error_variant",
+              "oracle_strength": "strong",
+              "owner": "load",
+              "owner_kind": "function",
+              "probe_family": "error_path",
+              "related_test": {
+                "file": "tests/load.test.ts",
+                "line": 4,
+                "name": "missing token rejects with the required literal"
+              },
+              "repair_packet_ready": false,
+              "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",
+              "source": "check_typescript_preview",
+              "static_limits": [],
+              "suggested_assertion_shape": "Exact error payload evidence is present; no repair packet is emitted without strict fields.",
+              "verify": {
+                "command": "npx --no-install vitest run tests/load.test.ts"
+              },
+              "why_not_actionable": "related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted"
+            }
+          },
+          "ruleId": "ripr.finding.exposed"
+        },
+        {
+          "fingerprints": {
+            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_load.ts:typescript_preview:2209cfc8|probe:src_load.ts:typescript_preview:2209cfc8|src/load.ts"
+          },
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/load.ts"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 5
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "infection_unknown static exposure for return_value probe:   return \"ready\";. Next step: TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first."
+          },
+          "partialFingerprints": {
+            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_load.ts:typescript_preview:2209cfc8|probe:src_load.ts:typescript_preview:2209cfc8|src/load.ts"
+          },
+          "properties": {
+            "changed_expression": "  return \"ready\";",
+            "classification": "infection_unknown",
+            "confidence": 0.4,
+            "finding_id": "probe:src_load.ts:typescript_preview:2209cfc8",
+            "flow_sinks": [
+              {
+                "kind": "return_value",
+                "line": 5,
+                "owner": "typescript:src/load.ts::load",
+                "text": "return \"ready\";"
+              }
+            ],
+            "kind": "finding",
+            "language": "typescript",
+            "language_status": "preview",
+            "missing_discriminators": [],
+            "observed_values": [],
+            "owner": "typescript:src/load.ts::load",
+            "owner_kind": "function",
+            "preview_actionability": {
+              "actionability_category": "missing_target_shape",
+              "authority_boundary": "preview_advisory_only",
+              "evidence_needed_to_promote": "safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries",
+              "gap_state": "unknown",
+              "missing_actionability_fields": [
+                "repair_kind",
+                "target_test_shape",
+                "receipt_command",
+                "must_not_change",
+                "allowed_edit_surface",
+                "raw_evidence_refs"
+              ],
+              "missing_graph_legs": [],
+              "raw_evidence_refs": [
+                {
+                  "file": "src/load.ts",
+                  "kind": "typescript_preview_probe",
+                  "leg": null,
+                  "line": 5,
+                  "owner": "load",
+                  "raw": "file=src/load.ts;line=5;kind=typescript_preview_probe;source_id=probe:src_load.ts:typescript_preview:2209cfc8;owner=load",
+                  "sample": null,
+                  "source_id": "probe:src_load.ts:typescript_preview:2209cfc8"
+                }
+              ],
+              "repair_packet_ready": false,
+              "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+              "unlock_condition": null,
+              "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
+            },
+            "probe_delta": "value",
+            "probe_family": "return_value",
+            "probe_id": "probe:src_load.ts:typescript_preview:2209cfc8",
+            "related_tests": [
+              {
+                "file": "tests/load.test.ts",
+                "line": 4,
+                "name": "missing token rejects with the required literal",
+                "oracle": null,
+                "oracle_kind": "unknown",
+                "oracle_strength": "unknown"
+              }
+            ],
+            "related_tests_total": 1,
+            "ripr": {
+              "discriminate": {
+                "confidence": "low",
+                "state": "unknown",
+                "summary": "TypeScript preview adapter: infection is `unknown` for this `literal_return` edit, so whether an assertion discriminates the change is not asked (#10704)."
+              },
+              "infect": {
+                "confidence": "low",
+                "state": "unknown",
+                "summary": "TypeScript preview adapter does not model infection for this `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return."
+              },
+              "observe": {
+                "confidence": "low",
+                "state": "unknown",
+                "summary": "Strongest extracted oracle kind: `unknown` (rank 0)"
+              },
+              "propagate": {
+                "confidence": "low",
+                "state": "unknown",
+                "summary": "TypeScript preview adapter does not yet model propagation."
+              },
+              "reach": {
+                "confidence": "low",
+                "state": "yes",
+                "summary": "1 related test(s) found for owner `load`"
+              }
+            },
+            "severity": "warning",
+            "stop_reasons": [
+              "infection_evidence_unknown"
+            ],
+            "suggested_next_action": "TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first.",
+            "tool": "ripr",
+            "typescript_preview_card": {
+              "authority_boundary": "preview_advisory_only",
+              "bun_cross_language_grip": null,
+              "card_version": "typescript_preview_card.v1",
+              "changed_behavior": "return_value changed at src/load.ts:5: `return \"ready\";`",
+              "language": "typescript",
+              "language_status": "preview",
+              "limits": [
+                "Syntax-first TypeScript/JavaScript preview evidence only.",
+                "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+                "This card is advisory and is not a repair packet."
+              ],
+              "missing_discriminator": null,
+              "oracle_kind": "unknown",
+              "oracle_strength": "unknown",
+              "owner": "load",
+              "owner_kind": "function",
+              "probe_family": "return_value",
+              "related_test": {
+                "file": "tests/load.test.ts",
+                "line": 4,
+                "name": "missing token rejects with the required literal"
+              },
+              "repair_packet_ready": false,
+              "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+              "source": "check_typescript_preview",
+              "static_limits": [],
+              "suggested_assertion_shape": "Add an exact return-value assertion for the changed output.",
+              "verify": {
+                "command": "npx --no-install vitest run tests/load.test.ts"
+              },
+              "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
+            }
+          },
+          "ruleId": "ripr.finding.infection_unknown"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/EffortlessMetrics/ripr",
+          "name": "ripr",
+          "rules": [
+            {
+              "fullDescription": {
+                "text": "Static analysis found a complete path from the changed code to a test oracle strong enough to observe the changed behavior."
+              },
+              "help": {
+                "text": "This is static evidence, not a runtime verdict: ripr did not execute any test. Next step: run the linked related test and confirm it observes the changed sink."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.exposed",
+              "name": "ripr exposed",
+              "shortDescription": {
+                "text": "Changed behavior appears covered by a strong test oracle"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "A static path from the change to a related test exists, but the infection or the oracle's discrimination looks weak, so the test could pass even when the behavior is wrong."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: strengthen the nearest assertion so it observes the changed sink directly, then re-run ripr check."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.weakly_exposed",
+              "name": "ripr weakly_exposed",
+              "shortDescription": {
+                "text": "Changed behavior may not be caught by the current tests"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Related tests appear to reach the changed code, but no meaningful oracle was found that would notice a wrong result."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: add or sharpen an assertion that discriminates the changed behavior."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.reachable_unrevealed",
+              "name": "ripr reachable_unrevealed",
+              "shortDescription": {
+                "text": "Tests reach the changed code but no assertion appears to check it"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "No static test path to the changed owner was found; static analysis could not trace any related test to this behavior."
+              },
+              "help": {
+                "text": "This is a static reachability statement, not a runtime coverage measurement. Next step: add a focused test that exercises the changed behavior."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.no_static_path",
+              "name": "ripr no_static_path",
+              "shortDescription": {
+                "text": "No test appears to reach the changed code"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Tests may reach the change, but the input or fixture evidence is opaque, so static analysis cannot tell whether a wrong result would propagate."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: make the decisive input or fixture value explicit, then re-run ripr check."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.infection_unknown",
+              "name": "ripr infection_unknown",
+              "shortDescription": {
+                "text": "Tests may reach the change but their inputs are not visible to static analysis"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "The changed behavior crosses a boundary static analysis cannot see through, so it is unknown whether a wrong result would reach an observable sink."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: add an assertion at an observable sink beyond the boundary."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.propagation_unknown",
+              "name": "ripr propagation_unknown",
+              "shortDescription": {
+                "text": "Static analysis cannot tell whether a wrong result would reach an assertion"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Syntax-first analysis could not make a credible judgment for this finding, usually because parsing or symbol resolution was incomplete."
+              },
+              "help": {
+                "text": "This is an analysis limitation disclosure, not a coverage verdict. Next step: re-run with fuller analysis settings or triage the finding manually."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.static_unknown",
+              "name": "ripr static_unknown",
+              "shortDescription": {
+                "text": "Static analysis could not judge this change"
+              }
+            }
+          ],
+          "semanticVersion": "0.11.0"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

@@ -17,7 +17,9 @@ use crate::analysis::rust_index::{FunctionSummary, RustIndex};
 use crate::analysis::seams::{RepoSeam, RequiredDiscriminator, SeamKind};
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::syntax::ra::LineIndex;
-use crate::domain::{MissingDiscriminatorFact, OracleKind, OracleStrength, StageState};
+use crate::domain::{
+    DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength, StageState,
+};
 use ra_ap_syntax::ast::{self, HasName};
 use ra_ap_syntax::{AstNode, AstPtr, Parse, SourceFile, SyntaxNode};
 use std::collections::BTreeMap;
@@ -34,7 +36,9 @@ pub(super) fn missing_field_value_facts(
         return Vec::new();
     }
     // #11398: a field write names the written field, not an owner-result
-    // field; no start is offered from a weak read of it.
+    // field. #11870: it starts a repair only through the one weak-read policy
+    // that `check` also asks, over the tests that run the owner; the caller
+    // that has each test's relation asks it ([`assigned_field_weak_read_fact`]).
     if crate::analysis::classify::field_assignment_target(seam.expression()).is_some() {
         return Vec::new();
     }
@@ -81,6 +85,43 @@ pub(super) fn missing_field_value_facts(
             "owner-result field `{field_name}` is observed only by a weak oracle; an exact field-value discriminator is missing"
         ),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
+    }]
+}
+
+/// #11870: the missing-discriminator fact for a changed `self.f = ..` write
+/// that a related test reads with a relational or `assert_ne!` check only.
+/// Fail-closed: the policy is [`assigned_field_weak_read_start`] (which also
+/// withholds a non-plain `Drop` owner type); an owner the seam cannot place
+/// withholds it.
+pub(super) fn assigned_field_weak_read_fact(
+    seam: &RepoSeam,
+    reaching: &[&crate::analysis::rust_index::TestSummary],
+    context: &CompactGripContext<'_>,
+    owner_fn: Option<&FunctionSummary>,
+) -> Vec<MissingDiscriminatorFact> {
+    let (Some(owner), Some(field)) = (owner_fn, super::written_field(seam)) else {
+        return Vec::new();
+    };
+    let tests = reaching;
+    if !crate::analysis::classify::assigned_field_weak_read_start(
+        owner,
+        seam.expression(),
+        field,
+        tests,
+        context.index,
+    ) {
+        return Vec::new();
+    }
+    vec![MissingDiscriminatorFact {
+        value: field.to_string(),
+        reason: format!(
+            "written field `{field}` is read only by a weak check; an exact field-value discriminator is missing"
+        ),
+        flow_sink: None,
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     }]
 }
 

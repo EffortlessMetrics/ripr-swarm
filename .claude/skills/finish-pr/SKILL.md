@@ -19,6 +19,20 @@ The selected PR has an exact current head, a current `review-pr` disposition, al
 - `finish_contract:duplicate_recheck`
 - `finish_contract:behind_only_no_restack`
 
+# Incident route markers
+
+When a current `admission_incident.v1` packet is available, route before opening a PR-local repair loop.
+
+- `incident_route:currentness_before_class`
+- `incident_route:candidate_escape_revoke_repair_ready`
+- `incident_route:candidate_escape_requires_proof_feedback`
+- `incident_route:integration_not_behind_main_only`
+- `incident_route:instrument_repair_before_retry`
+- `incident_route:infrastructure_same_subject_no_mutation`
+- `incident_route:superseded_no_h2_contamination`
+- `incident_route:not_proven_no_convenient_retry`
+- `incident_route:retain_incident_lineage`
+
 # Entry condition
 
 `finish-pr` owns publication, remote review/CI repair, merge, and reconciliation. It does not silently manufacture the substantive review pass.
@@ -127,6 +141,11 @@ review is not REVIEW_READY or permission to arm auto-merge.
 For a pinned release, treat the reviewed immutable pin receipt as the sole membership authority: qualification, source preflight, and finalization consume its exact ref, ancestry, ordered SHA digest, PR dispositions, and manifests unchanged. Ordinary `main` or swarm movement never repins or changes membership; repin only after a release-invalidating exact-candidate qualification or source-preflight failure, with an explicit superseding receipt. Do not close, draft, lock, relabel, retarget, or otherwise mutate unrelated PRs to freeze scope; they remain open and may evolve, and post-pin merges do not retarget the release. Close only this selected PR for its own evidence-backed terminal disposition—never close-now/reopen-after-release.
 
 # Review law
+
+Review and focused checks run in the owning session. Do not start an Actions
+review by publishing, toggling Ready, adding labels or posting a tool mention.
+The retained legacy qualification request is a staged protected-route dependency,
+not routine development feedback; #4838 owns its final queue-only replacement.
 
 The owning session performs directed inline review in its main context through `review-pr`, changing perspective with explicit criteria, targeted checks and counterexamples. Subagents and advisory bot input (for example `ub-review`; see `docs/CI.md`) are optional extra evidence, not mandatory reviewer identities. Preserve actual required reviews and protections and valid historical review; refresh affected or newly requested dimensions only. The accountable root verifies and integrates the result.
 

@@ -1,0 +1,148 @@
+Source: #12237 authored subjects; Python 3.12.14 / unittest / Linux.
+Command: python3 -B -m unittest -v in isolated copies before and after the recorded one-line diff.
+Static: target/debug/ripr check --root <copy> --diff <case.diff> --json; production source 7c1087709bdecb88f1fd25b0e813e86ffc2213dc.
+Full subjects are authored here; excerpts retain every file, so independent full/excerpt runs use byte-identical projects.
+
+py-package-init-reexport full baseline: exit 0
+test_gold (tests.test_rates.TestRates.test_gold) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+OK
+
+py-package-init-reexport full mutant: exit 1
+test_gold (tests.test_rates.TestRates.test_gold) ... FAIL
+
+======================================================================
+FAIL: test_gold (tests.test_rates.TestRates.test_gold)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<scratch>/tests/test_rates.py", line 7, in test_gold
+    assert t.lookup("gold") == 10
+           ^^^^^^^^^^^^^^^^^^^^^^
+AssertionError
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+FAILED (failures=1)
+
+receiver: <scratch>/shapes/rates/table.py
+real: <scratch>/shapes/rates/table.py
+values: 11 11
+
+py-package-init-reexport excerpt baseline: exit 0
+test_gold (tests.test_rates.TestRates.test_gold) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+OK
+
+py-package-init-reexport excerpt mutant: exit 1
+test_gold (tests.test_rates.TestRates.test_gold) ... FAIL
+
+======================================================================
+FAIL: test_gold (tests.test_rates.TestRates.test_gold)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<scratch>/tests/test_rates.py", line 7, in test_gold
+    assert t.lookup("gold") == 10
+           ^^^^^^^^^^^^^^^^^^^^^^
+AssertionError
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+FAILED (failures=1)
+
+receiver: <scratch>/shapes/rates/table.py
+real: <scratch>/shapes/rates/table.py
+values: 11 11
+
+py-package-init-reexport static full/excerpt: credited ['exposed']
+
+py-trap-package-init-ancestor full baseline: exit 0
+test_gold (tests.test_rates.TestRates.test_gold) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+OK
+
+py-trap-package-init-ancestor full mutant: exit 0
+test_gold (tests.test_rates.TestRates.test_gold) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+OK
+
+receiver: <scratch>/shapes/alternate/table.py
+real: <scratch>/shapes/rates/table.py
+values: 10 11
+
+py-trap-package-init-ancestor excerpt baseline: exit 0
+test_gold (tests.test_rates.TestRates.test_gold) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+OK
+
+py-trap-package-init-ancestor excerpt mutant: exit 0
+test_gold (tests.test_rates.TestRates.test_gold) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+OK
+
+receiver: <scratch>/shapes/alternate/table.py
+real: <scratch>/shapes/rates/table.py
+values: 10 11
+
+py-trap-package-init-ancestor static full/excerpt: limited ['no_static_path']
+
+py-trap-package-init-shadow full baseline: exit 0
+test_gold (tests.test_rates.TestRates.test_gold) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+OK
+
+py-trap-package-init-shadow full mutant: exit 0
+test_gold (tests.test_rates.TestRates.test_gold) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+OK
+
+receiver: <scratch>/shapes/rates/alternate.py
+real: <scratch>/shapes/rates/table.py
+values: 10 11
+
+py-trap-package-init-shadow excerpt baseline: exit 0
+test_gold (tests.test_rates.TestRates.test_gold) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+OK
+
+py-trap-package-init-shadow excerpt mutant: exit 0
+test_gold (tests.test_rates.TestRates.test_gold) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+OK
+
+receiver: <scratch>/shapes/rates/alternate.py
+real: <scratch>/shapes/rates/table.py
+values: 10 11
+
+py-trap-package-init-shadow static full/excerpt: limited ['no_static_path']

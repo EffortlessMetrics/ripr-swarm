@@ -1,0 +1,10 @@
+[[extend]]
+id = "RIPR-SPEC-0266"
+tests = [
+  "tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::allocation_buckets_distinguish_profiles_builds_and_native_fixture_storage",
+  "tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::scan_limits_unavailable_roots_and_overlap_are_explicit",
+  "tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::free_space_preserves_zero_and_rejects_invalid_or_overflowed_capacity",
+  "tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::receipts_flush_immediately_and_bound_even_oversized_input",
+  "tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::held_directory_capacity_remains_numeric_after_rename",
+  "tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::full_schema_keeps_all_buckets_and_escaped_profile_entries_in_atomic_records",
+]

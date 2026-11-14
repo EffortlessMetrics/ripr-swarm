@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr check --format agent` no longer dead-ends on a diff whose findings are all `no_static_path` or otherwise static-limited: the compact surface now prints one bounded record per counted `limits=` finding (class, file:line, id) plus a `next=ripr explain <id>` drill-in, and the terminal line names the documented co-located-test route instead of claiming nothing more is fixable from the test side, matching the human surface's own Next step for the same run (#13238).

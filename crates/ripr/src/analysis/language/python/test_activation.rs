@@ -25,9 +25,23 @@ pub(super) struct PythonActivationControl {
 }
 
 pub(super) fn activation_control(test: &PythonTest) -> Option<&str> {
+    effective_controls(test)
+        .next()
+        .map(|control| control.name.as_str())
+}
+
+/// Whether the test carries any control its runner honours.
+pub(super) fn has_activation_control(test: &PythonTest) -> bool {
+    activation_control(test).is_some()
+}
+
+/// The controls the test's runner honours: a unittest-only control on a
+/// pytest-style test is not one.
+fn effective_controls(test: &PythonTest) -> impl Iterator<Item = &PythonActivationControl> {
     test.activation_controls
         .iter()
-        .find(|control| match (control.name.as_str(), control.site) {
+        .filter(|control| control.name != WRAPPING_DECORATOR)
+        .filter(|control| match (control.name.as_str(), control.site) {
             ("unittest.expectedFailure", _)
             | (
                 "unittest.skip" | "unittest.skipIf" | "unittest.skipUnless",
@@ -35,7 +49,303 @@ pub(super) fn activation_control(test: &PythonTest) -> Option<&str> {
             ) => test.framework == PythonFramework::Unittest,
             _ => true,
         })
+}
+
+/// The control that provably keeps the test's body from running under
+/// pytest and `python -m unittest`, read from source alone: an unconditional
+/// `@pytest.mark.skip` or `@unittest.skip`, a module-level
+/// `pytest.skip(..., allow_module_level=True)` (importing the module raises),
+/// an empty parametrize table, a parametrize mark pytest refuses at
+/// collection, or a later non-loop, unaliased binding that replaces an
+/// undecorated (or marks-only) definition. Such a test cannot fail on any
+/// edit, so it is no evidence either way and a finding reached only through
+/// it is a gap, the way an `#[ignore]`d Rust test is.
+///
+/// Every other control stays unestablished: a `skipif`/`xfail` condition is
+/// not evaluated, `xfail` passes or fails by `strict` and the project's
+/// `xfail_strict`, `importorskip` depends on what is installed, project-level
+/// collection rules can be bypassed by naming the file, any `__test__` switch
+/// can be re-enabled by a subclass or another module, and a module-site
+/// `pytestmark` does not travel with a test another module imports (even one
+/// with no tests of its own). A unittest-style test may run under
+/// `python -m unittest`, which ignores pytest marks and parametrize, so only
+/// the runner-neutral controls count for it; a class with a base outside the
+/// file may be such a test ([`mark_unresolved_class_base`]); and a skip whose
+/// decorator name the file rebinds ([`withhold_shadowed_skips`]) may not be
+/// the runner's skip.
+pub(super) fn never_runs(test: &PythonTest) -> Option<&str> {
+    if test
+        .activation_controls
+        .iter()
+        .any(|control| control.name == UNRESOLVED_CLASS_BASE)
+    {
+        return None;
+    }
+    let wrapped = test
+        .activation_controls
+        .iter()
+        .any(|control| control.name == WRAPPING_DECORATOR);
+    effective_controls(test)
+        .find(|control| match (control.name.as_str(), control.site) {
+            ("pytest.skip", _) => true,
+            (_, DeclarationSite::Module) => false,
+            ("unittest.skip" | LATER_BINDING, _) => true,
+            // A class `__test__ = False` is not counted: the abstract-suite
+            // idiom re-enables it in a subclass (`__test__ = True`), in this
+            // file or another, which collects the inherited tests.
+            // A wrapper may drop the method's own marks, so a skip or empty
+            // table on the function and any collection error (which may come
+            // from a class/method duplicate) no longer count under one.
+            ("pytest.mark.skip" | EMPTY_TABLE, site) => {
+                test.framework != PythonFramework::Unittest
+                    && !(wrapped && site == DeclarationSite::Function)
+            }
+            (COLLECTION_ERROR, _) => test.framework != PythonFramework::Unittest && !wrapped,
+            _ => false,
+        })
         .map(|control| control.name.as_str())
+}
+
+/// A test class with a base this file does not define (other than
+/// `object`) may be a unittest `TestCase` subclass the adapter cannot see
+/// (`IsolatedAsyncioTestCase`, a Django or project base): `python -m
+/// unittest` and pytest's unittest plugin then ignore pytest marks,
+/// parametrize and `__test__`. The marker keeps such a test's pytest-only
+/// controls unestablished; it is added only beside an existing control, so it
+/// never makes an uncontrolled test controlled.
+pub(super) fn mark_unresolved_class_base(test: &mut PythonTest) {
+    if never_runs(test).is_some()
+        && !matches!(
+            never_runs(test),
+            Some("unittest.skip" | "pytest.skip" | LATER_BINDING)
+        )
+    {
+        test.activation_controls.push(PythonActivationControl {
+            name: UNRESOLVED_CLASS_BASE.to_string(),
+            site: DeclarationSite::Class,
+        });
+    }
+}
+
+const SHADOWED_SKIP: &str = "skip decorator whose name the file rebinds";
+
+/// Downgrade a definite skip whose decorator root name (`skip`, `pytest`,
+/// `unittest`, an alias) the file also binds outside an import statement, at
+/// any depth of module or class blocks (`def skip(...)`, `skip = ...`, under
+/// an `if`): import tracking alone would resolve it to the runner's skip.
+pub(super) fn withhold_shadowed_skips(statements: &[Stmt], tests: &mut [PythonTest]) {
+    fn collect<'a>(
+        body: &'a [Stmt],
+        out: &mut std::collections::BTreeSet<&'a str>,
+        skip_roots: &mut std::collections::BTreeSet<&'a str>,
+    ) {
+        let mut names = Vec::new();
+        for stmt in body {
+            // `pytest.skip = ...` patches the runner's name through an
+            // attribute; its root is not the runner's either.
+            let attribute_targets: Vec<&Expr> = match stmt {
+                Stmt::Assign(assign) => assign.targets.iter().collect(),
+                Stmt::AugAssign(assign) => vec![assign.target.as_ref()],
+                Stmt::AnnAssign(assign) => vec![assign.target.as_ref()],
+                _ => Vec::new(),
+            };
+            for target in attribute_targets {
+                if matches!(target, Expr::Attribute(_) | Expr::Subscript(_))
+                    && let Some(root) = target_root(target)
+                {
+                    out.insert(root);
+                }
+            }
+            if let Stmt::Expr(expr) = stmt
+                && let Expr::Call(call) = expr.value.as_ref()
+                && call.keywords.iter().any(|keyword| {
+                    keyword
+                        .arg
+                        .as_ref()
+                        .is_some_and(|arg| arg.as_str() == "allow_module_level")
+                })
+                && let Some(root) = call_root(call.func.as_ref())
+            {
+                skip_roots.insert(root);
+            }
+            if !matches!(stmt, Stmt::Import(_) | Stmt::ImportFrom(_)) {
+                names.clear();
+                names_rebound_by(stmt, &mut names);
+                out.extend(names.iter().copied());
+            }
+            match stmt {
+                Stmt::ClassDef(class) => collect(&class.body, out, skip_roots),
+                Stmt::If(node) => {
+                    collect(&node.body, out, skip_roots);
+                    collect(&node.orelse, out, skip_roots);
+                }
+                Stmt::Try(node) => {
+                    collect(&node.body, out, skip_roots);
+                    collect(&node.orelse, out, skip_roots);
+                    collect(&node.finalbody, out, skip_roots);
+                    for handler in &node.handlers {
+                        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                        collect(&handler.body, out, skip_roots);
+                    }
+                }
+                Stmt::TryStar(node) => {
+                    collect(&node.body, out, skip_roots);
+                    collect(&node.orelse, out, skip_roots);
+                    collect(&node.finalbody, out, skip_roots);
+                    for handler in &node.handlers {
+                        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                        collect(&handler.body, out, skip_roots);
+                    }
+                }
+                Stmt::With(node) => collect(&node.body, out, skip_roots),
+                Stmt::For(node) => {
+                    collect(&node.body, out, skip_roots);
+                    collect(&node.orelse, out, skip_roots);
+                }
+                Stmt::While(node) => {
+                    collect(&node.body, out, skip_roots);
+                    collect(&node.orelse, out, skip_roots);
+                }
+                Stmt::Match(node) => node
+                    .cases
+                    .iter()
+                    .for_each(|case| collect(&case.body, out, skip_roots)),
+                _ => {}
+            }
+        }
+    }
+    fn target_root(target: &Expr) -> Option<&str> {
+        match target {
+            Expr::Name(name) => Some(name.id.as_str()),
+            Expr::Attribute(attribute) => target_root(attribute.value.as_ref()),
+            Expr::Subscript(subscript) => target_root(subscript.value.as_ref()),
+            _ => None,
+        }
+    }
+    fn call_root(func: &Expr) -> Option<&str> {
+        match func {
+            Expr::Name(name) => Some(name.id.as_str()),
+            Expr::Attribute(attribute) => call_root(attribute.value.as_ref()),
+            _ => None,
+        }
+    }
+    let mut bound = std::collections::BTreeSet::new();
+    let mut skip_roots = std::collections::BTreeSet::new();
+    collect(statements, &mut bound, &mut skip_roots);
+    if bound.is_empty() {
+        return;
+    }
+    // A module-level call through a rebound root (`pytest = ...`) may not be
+    // the runner's `pytest.skip`, so the import may complete.
+    let module_skip_shadowed = skip_roots.iter().any(|root| bound.contains(root));
+    for test in tests.iter_mut() {
+        if module_skip_shadowed {
+            for control in &mut test.activation_controls {
+                if control.name == "pytest.skip" && control.site == DeclarationSite::Module {
+                    control.name = SHADOWED_SKIP.to_string();
+                }
+            }
+        }
+    }
+    for test in tests {
+        let shadowed = test.decorators.iter().any(|decorator| {
+            bound.contains(decorator.split(['.', '(']).next().unwrap_or(decorator))
+        });
+        if !shadowed {
+            continue;
+        }
+        for control in &mut test.activation_controls {
+            if matches!(control.name.as_str(), "unittest.skip" | "pytest.mark.skip") {
+                control.name = SHADOWED_SKIP.to_string();
+            }
+        }
+    }
+}
+
+/// Whether `name` is mentioned in `source` only by the statements of
+/// `statements` that bind it: any other mention (an alias such as
+/// `kept = test_x`, a decorator or call reading it, a string) may keep the
+/// earlier definition alive under another collected name, so a later
+/// rebinding does not prove it never runs.
+pub(super) fn only_bindings_mention(source: &str, statements: &[Stmt], name: &str) -> bool {
+    let is_ident = |c: char| c == '_' || c.is_alphanumeric();
+    let mentions = source
+        .match_indices(name)
+        .filter(|(start, _)| {
+            let before = source[..*start].chars().next_back();
+            let after = source[start + name.len()..].chars().next();
+            !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
+        })
+        .count();
+    mentions == binding_count(statements, name)
+}
+
+/// How many statements of `statements` may bind `name` (a superset).
+pub(super) fn binding_count(statements: &[Stmt], name: &str) -> usize {
+    let mut names = Vec::new();
+    statements
+        .iter()
+        .filter(|stmt| {
+            names.clear();
+            names_rebound_by(stmt, &mut names);
+            names.contains(&name)
+        })
+        .count()
+}
+
+const EMPTY_TABLE: &str = "pytest.mark.parametrize(empty table)";
+const COLLECTION_ERROR: &str = "pytest.mark.parametrize(collection error)";
+const LATER_BINDING: &str = "later binding of the test name";
+/// A later `for` target rebinding: the loop may bind nothing, so the earlier
+/// definition may survive and run.
+const LATER_LOOP_BINDING: &str = "later loop binding of the test name";
+const TEST_SWITCH_OFF: &str = "pytest.collection(__test__ = False)";
+const TEST_SWITCH_UNRESOLVED: &str = "pytest.collection(__test__ unresolved)";
+/// Marks a test whose class may be a hidden unittest `TestCase`; see
+/// [`mark_unresolved_class_base`].
+const UNRESOLVED_CLASS_BASE: &str = "test class with a base outside this file";
+/// Marks a test whose own decorators include one that is neither a pytest
+/// mark nor a unittest decorator; see [`with_wrapping_decorator_marker`].
+const WRAPPING_DECORATOR: &str = "test decorator that may replace the marked function";
+
+/// Add [`WRAPPING_DECORATOR`] beside a test's own controls when one of its
+/// decorators is not a pytest mark or unittest decorator (or cannot be read).
+/// Pytest keeps a mark on the decorated function object, so such a decorator
+/// may return a fresh callable without the mark that pytest collects and runs
+/// (`@wrap` over `@pytest.mark.skip`). `unittest.skip` replaces the body
+/// itself, so it still never runs. The marker is not itself a control: it
+/// is left out of [`effective_controls`], so it never makes an uncontrolled
+/// test controlled. It is added even without a function-site control because
+/// a class/method parametrize duplicate may later add a collection error
+/// from the method's own (possibly discarded) mark.
+pub(super) fn with_wrapping_decorator_marker(
+    decorators: &[Expr],
+    imports: &[PythonImport],
+    mut controls: Vec<PythonActivationControl>,
+) -> Vec<PythonActivationControl> {
+    let custom = decorators.iter().any(|decorator| {
+        !expr_full_name(decorator).is_some_and(|name| {
+            let (root, tail) = name.split_once('.').unwrap_or((name.as_str(), ""));
+            let resolved = match imports.iter().rev().find(|import| import.alias == root) {
+                Some(import) if import.source_module.is_empty() => {
+                    join_tail(&import.imported, tail)
+                }
+                Some(import) => join_tail(
+                    &format!("{}.{}", import.source_module, import.imported),
+                    tail,
+                ),
+                None => name.clone(),
+            };
+            resolved.starts_with("pytest.mark.") || resolved.starts_with("unittest.")
+        })
+    });
+    if custom {
+        controls.push(PythonActivationControl {
+            name: WRAPPING_DECORATOR.to_string(),
+            site: DeclarationSite::Function,
+        });
+    }
+    controls
 }
 
 pub(super) fn activation_controls(
@@ -163,9 +473,12 @@ pub(super) enum TestSwitch {
     Unset,
     /// Bound to the literal `True`, which keeps (or restores) collection.
     Enabled,
-    /// Bound to `False`, or to anything not provably `True` (a name, a call,
-    /// an augmented or deleted binding, a binding under a branch): pytest
-    /// may skip the scope, so credit stays withheld.
+    /// A direct top-level binding to the literal `False`: pytest never
+    /// collects the scope.
+    Off,
+    /// Bound to anything not provably `True` or `False` (a name, a call, an
+    /// augmented, destructured or deleted binding, a binding under a branch):
+    /// pytest may skip the scope, so credit stays withheld.
     Disabled,
 }
 
@@ -191,6 +504,24 @@ fn is_literal_true(value: &Expr) -> bool {
     )
 }
 
+fn is_literal_false(value: &Expr) -> bool {
+    matches!(
+        value,
+        Expr::Constant(constant) if matches!(constant.value, ast::Constant::Bool(false))
+    )
+}
+
+/// The switch a direct binding of `value` sets.
+fn literal_switch(value: &Expr) -> TestSwitch {
+    if is_literal_true(value) {
+        TestSwitch::Enabled
+    } else if is_literal_false(value) {
+        TestSwitch::Off
+    } else {
+        TestSwitch::Disabled
+    }
+}
+
 /// The `__test__` binding of a class or module `body`. A top-level binding
 /// follows normal rebinding order; any `__test__` binding nested under a
 /// compound statement is not evaluated, so it counts as `Disabled`.
@@ -201,10 +532,8 @@ pub(super) fn test_switch(body: &[Stmt]) -> TestSwitch {
             Stmt::Assign(assign) if assign.targets.iter().any(target_binds_test_switch) => {
                 // A destructured binding (`(__test__, x) = (False, 1)`) is not
                 // evaluated, so it counts as Disabled even for a `True` value.
-                switch = if assign.targets.iter().any(is_test_switch)
-                    && is_literal_true(assign.value.as_ref())
-                {
-                    TestSwitch::Enabled
+                switch = if assign.targets.iter().any(is_test_switch) {
+                    literal_switch(assign.value.as_ref())
                 } else {
                     TestSwitch::Disabled
                 };
@@ -213,11 +542,10 @@ pub(super) fn test_switch(body: &[Stmt]) -> TestSwitch {
             Stmt::AnnAssign(assign)
                 if is_test_switch(assign.target.as_ref()) && assign.value.is_some() =>
             {
-                switch = if assign.value.as_deref().is_some_and(is_literal_true) {
-                    TestSwitch::Enabled
-                } else {
-                    TestSwitch::Disabled
-                };
+                switch = assign
+                    .value
+                    .as_deref()
+                    .map_or(TestSwitch::Disabled, literal_switch);
             }
             Stmt::AugAssign(assign) if is_test_switch(assign.target.as_ref()) => {
                 switch = TestSwitch::Disabled;
@@ -279,10 +607,49 @@ fn nested_binds_test_switch(stmt: &Stmt) -> bool {
         .any(|block| test_switch(block) != TestSwitch::Unset)
 }
 
-/// The control pytest's own `__test__ = False` opt-out applies to a class or
-/// a module: it is never collected, so no test below it runs.
-pub(super) fn test_switch_control(site: DeclarationSite) -> PythonActivationControl {
-    collection_control("pytest.collection(__test__ = False)", site)
+/// A literal `False` switch is `Off` only when every `__test__` mention in
+/// the module is a direct binding statement of a module or class body; any
+/// other mention (`Cls.__test__ = True`, `setattr(..., "__test__", ...)`,
+/// `cls.__test__` in `__init_subclass__` or a decorator) may re-enable it at
+/// runtime, so the switch is unresolved.
+pub(super) fn settle_switch(switch: TestSwitch, source: &str) -> TestSwitch {
+    if switch == TestSwitch::Off && !test_switch_mentions_are_bindings(source) {
+        TestSwitch::Disabled
+    } else {
+        switch
+    }
+}
+
+/// Every `__test__` in `source` starts a line that binds it directly
+/// (`__test__ = ...` or `__test__: T = ...`). Any other mention, including
+/// one in a string or comment, fails closed.
+fn test_switch_mentions_are_bindings(source: &str) -> bool {
+    let bindings = source
+        .lines()
+        .filter(|line| {
+            line.trim_start()
+                .strip_prefix("__test__")
+                .is_some_and(|rest| {
+                    let rest = rest.trim_start();
+                    (rest.starts_with('=') && !rest.starts_with("==")) || rest.starts_with(':')
+                })
+        })
+        .count();
+    source.matches("__test__").count() == bindings
+}
+
+/// The control a class or module `__test__` binding that is not provably
+/// `True` applies: a literal `False` is pytest's own opt-out, so no test
+/// below it is collected; any other binding may opt out.
+pub(super) fn test_switch_control(
+    switch: TestSwitch,
+    site: DeclarationSite,
+) -> Option<PythonActivationControl> {
+    match switch {
+        TestSwitch::Unset | TestSwitch::Enabled => None,
+        TestSwitch::Off => Some(collection_control(TEST_SWITCH_OFF, site)),
+        TestSwitch::Disabled => Some(collection_control(TEST_SWITCH_UNRESOLVED, site)),
+    }
 }
 
 /// A control for a test pytest's collection rules do not select (project
@@ -326,7 +693,7 @@ pub(super) fn empty_parametrize_control(decorators: &[Expr]) -> Option<PythonAct
             _ => false,
         };
         empty.then(|| PythonActivationControl {
-            name: "pytest.mark.parametrize(empty table)".to_string(),
+            name: EMPTY_TABLE.to_string(),
             site: DeclarationSite::Function,
         })
     })
@@ -339,16 +706,27 @@ pub(super) fn parametrize_collection_error_control(
     site: DeclarationSite,
 ) -> PythonActivationControl {
     PythonActivationControl {
-        name: "pytest.mark.parametrize(collection error)".to_string(),
+        name: COLLECTION_ERROR.to_string(),
         site,
     }
 }
 
 /// A later binding of the same name in the same scope replaced this test
 /// definition before collection, so pytest and unittest never run its body.
-pub(super) fn shadowed_by_later_binding_control(site: DeclarationSite) -> PythonActivationControl {
+///
+/// `in_loop_only` marks a rebinding that only a `for` target makes: the loop
+/// may bind nothing, so the control stays unestablished.
+pub(super) fn shadowed_by_later_binding_control(
+    site: DeclarationSite,
+    in_loop_only: bool,
+) -> PythonActivationControl {
     PythonActivationControl {
-        name: "later binding of the test name".to_string(),
+        name: if in_loop_only {
+            LATER_LOOP_BINDING
+        } else {
+            LATER_BINDING
+        }
+        .to_string(),
         site,
     }
 }
@@ -389,6 +767,24 @@ impl<'a> LaterBindings<'a> {
             }
         }
         Self { positions }
+    }
+
+    /// Whether a statement after `index` other than a `for` loop rebinds
+    /// `name`: a definite rebinding, since a loop may bind nothing.
+    pub(super) fn rebound_later_outside_loops(
+        &self,
+        statements: &[Stmt],
+        index: usize,
+        name: &str,
+        source: &SourceText<'_>,
+    ) -> bool {
+        self.positions.get(name).is_some_and(|positions| {
+            let first = positions.partition_point(|&position| position <= index);
+            positions[first..].iter().any(|&position| {
+                let stmt = &statements[position];
+                !matches!(stmt, Stmt::For(_) | Stmt::AsyncFor(_)) && rebinds(stmt, name, source)
+            })
+        })
     }
 
     /// [`rebound_later`] over the same list `of` indexed.
@@ -541,7 +937,7 @@ fn mentions_identifier(text: &str, name: &str) -> bool {
 pub(super) fn has_collection_error(controls: &[PythonActivationControl]) -> bool {
     controls
         .iter()
-        .any(|control| control.name == "pytest.mark.parametrize(collection error)")
+        .any(|control| control.name == COLLECTION_ERROR)
 }
 
 /// Module-level controls skip every test in the file: `pytest.importorskip`,
@@ -549,6 +945,7 @@ pub(super) fn has_collection_error(controls: &[PythonActivationControl]) -> bool
 /// a recognized skip or xfail mark. Only unconditional top-level statements
 /// count; a guarded call may not run (#9691).
 pub(super) fn apply_module_controls(
+    source: &str,
     statements: &[Stmt],
     imports: &[PythonImport],
     tests: &mut [PythonTest],
@@ -557,9 +954,10 @@ pub(super) fn apply_module_controls(
         .iter()
         .flat_map(|stmt| module_statement_controls(stmt, imports))
         .collect();
-    if test_switch(statements) == TestSwitch::Disabled {
-        controls.push(test_switch_control(DeclarationSite::Module));
-    }
+    controls.extend(test_switch_control(
+        settle_switch(test_switch(statements), source),
+        DeclarationSite::Module,
+    ));
     if controls.is_empty() {
         return;
     }

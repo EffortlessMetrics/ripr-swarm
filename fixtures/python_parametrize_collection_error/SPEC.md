@@ -13,7 +13,7 @@ The boundary changes from `>= 100` to `> 100`.
 
 ## Then
 
-One finding that lends the test no credit. The refused mark gives the test the `pytest.mark.parametrize(collection error)` activation control, so the finding carries the `decorator_indirection` limit instead of crediting the exact assertion.
+One finding that lends the test no credit. The refused mark gives the test the `pytest.mark.parametrize(collection error)` activation control. A test pytest refuses at collection provably never runs, so it is no evidence either way: the finding is `weakly_exposed` (a gap, like an `#[ignore]`d Rust test) with `related_test_never_runs` evidence, instead of crediting the exact assertion.
 
 ## Must Not
 

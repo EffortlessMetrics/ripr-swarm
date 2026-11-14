@@ -12,8 +12,10 @@ use super::assess::{self, Assessment, Observed};
 use super::corpus::Case;
 use super::model::{InputDigest, Observation, Row, RowResult, Subjects};
 use crate::blind_journey::sha256_hex;
+#[cfg(unix)]
+use crate::exact_candidate_harness::cleanup_with as harness_cleanup_with;
 use crate::exact_candidate_harness::{
-    child_env_for_root, cleanup as harness_cleanup, cleanup_with as harness_cleanup_with,
+    child_env_for_root, cleanup as harness_cleanup,
     environment_boundary as harness_environment_boundary, removed_env as harness_removed_env,
 };
 use crate::run;
@@ -278,6 +280,7 @@ pub(crate) fn cleanup(root: &Path) -> String {
     harness_cleanup(root)
 }
 
+#[cfg(unix)]
 pub(crate) fn cleanup_with(root: &Path, remove: &dyn Fn(&Path) -> std::io::Result<()>) -> String {
     harness_cleanup_with(root, remove)
 }

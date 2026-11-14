@@ -38,7 +38,7 @@ use super::related_tests::{
     DependencyEdgeContext, nearest_manifest_identity, normalize_path, strip_comments_and_strings,
 };
 use crate::analysis::facts::{FunctionContainer, FunctionSummary, RustIndex};
-use crate::analysis::seam_cache::PathDependencySection;
+use crate::analysis::seam_cache::path_dependencies::PathDependencySection;
 use crate::analysis::workspace::PathDependencyGraphStatus;
 use std::path::{Path, PathBuf};
 

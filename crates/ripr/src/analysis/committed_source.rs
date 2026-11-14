@@ -128,6 +128,7 @@ impl CommittedSourceOverlay {
             .iter()
             .filter(|path| super::language::route(Path::new(path)).is_some())
             .filter(|path| !is_cargo_build_output(&self.root, path))
+            .filter(|path| !is_vendored_dependency_path(path))
             .cloned()
             .collect();
         let directories: Vec<String> = self
@@ -135,6 +136,7 @@ impl CommittedSourceOverlay {
             .directories
             .iter()
             .filter(|path| !is_cargo_build_output(&self.root, path))
+            .filter(|path| !is_vendored_dependency_path(path))
             .cloned()
             .collect();
         out.extend(expand_ignored_directories(
@@ -659,6 +661,7 @@ pub(crate) fn untracked_and_ignored_routed_paths(
         .into_iter()
         .filter(|path| super::language::route(Path::new(path)).is_some())
         .filter(|path| !is_cargo_build_output(root, path))
+        .filter(|path| !is_vendored_dependency_path(path))
         .collect();
     // Tracked force-added files inside ignored directories keep their
     // working-tree reads; resolve them the same way [`probe`] does so they
@@ -666,6 +669,7 @@ pub(crate) fn untracked_and_ignored_routed_paths(
     let directories = below_root(records.ignored_directories)
         .into_iter()
         .filter(|path| !is_cargo_build_output(root, path))
+        .filter(|path| !is_vendored_dependency_path(path))
         .collect::<Vec<_>>();
     let mut tracked_within = BTreeSet::new();
     for chunk in directories.chunks(LS_TREE_CHUNK) {
@@ -695,6 +699,31 @@ pub(crate) fn untracked_and_ignored_routed_paths(
 fn is_cargo_build_output(root: &Path, path: &str) -> bool {
     (path == "target" || path.starts_with("target/"))
         && root.join("target").join("CACHEDIR.TAG").is_file()
+}
+
+/// Vendored dependency and generated-output directories (#13597). Files under
+/// them are installed or built by a tool, not written by the user, so the
+/// gitignored-files note and the `ignored_working_tree_source_paths` list leave
+/// them out: advising `git add -f` on an installed `node_modules/` tree is
+/// wrong and floods the output. `dist` and `build` count only at the root of
+/// the checked-out tree, where they are conventional output directories; a
+/// nested `build/` stays listed because it may hold hand-written sources.
+fn is_vendored_dependency_path(path: &str) -> bool {
+    const ANYWHERE: [&str; 6] = [
+        "node_modules",
+        ".venv",
+        "venv",
+        "site-packages",
+        "bower_components",
+        "vendor",
+    ];
+    let mut components = path.split('/').filter(|part| !part.is_empty());
+    if let Some(first) = components.clone().next()
+        && (first == "dist" || first == "build")
+    {
+        return true;
+    }
+    components.any(|part| ANYWHERE.contains(&part))
 }
 
 const MAX_IGNORED_WALK_ENTRIES: usize = 200_000;
@@ -737,6 +766,9 @@ fn expand_ignored_directories(
             };
             let child_key = format!("{key}/{name}");
             if kind.is_dir() {
+                if is_vendored_dependency_path(&child_key) {
+                    continue;
+                }
                 stack.push((entry.path(), child_key));
             } else if kind.is_file()
                 && !tracked_within.contains(&child_key)
@@ -787,6 +819,14 @@ fn git_bytes(root: &Path, args: &[&str], deadline: Option<Duration>) -> Result<V
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let detail = stderr.lines().next().unwrap_or("unknown git error").trim();
+        // A bare repository resolves a base and then has no work tree to
+        // read status from. That state has its own next action (check out a
+        // work tree), not a probe failure to print raw (#14104).
+        if output.status.code() == Some(128) && stderr.contains("must be run in a work tree") {
+            return Err(CoreError::repository_root_unusable(
+                crate::analysis::bare_repository_message(root),
+            ));
+        }
         // Exit 128 is Git's generic fatal. Only a diagnostic that says the
         // index itself is damaged earns rebuild advice; a permission, config
         // or revision failure keeps Git's reason alone, since deleting a valid
@@ -857,6 +897,20 @@ fn snapshot_input(path: &[u8]) -> bool {
     std::str::from_utf8(path).is_ok_and(|path| super::language::snapshot_input(Path::new(path)))
 }
 
+/// An ignored record inside a `target/ripr` output tree (at the repository
+/// top or under a nested root), ripr's own self-ignoring output (#14315).
+fn ripr_output_path(path: &[u8]) -> bool {
+    let path = path.strip_suffix(b"/").unwrap_or(path);
+    let tree = b"target/ripr";
+    let nested = b"/target/ripr";
+    path == tree
+        || path.ends_with(nested)
+        || path.starts_with(b"target/ripr/")
+        || path
+            .windows(nested.len() + 1)
+            .any(|window| window == b"/target/ripr/")
+}
+
 fn parse_porcelain_z(bytes: &[u8]) -> Result<StatusRecords, String> {
     let mut out = StatusRecords::default();
     let mut records = bytes.split(|byte| *byte == 0);
@@ -875,6 +929,12 @@ fn parse_porcelain_z(bytes: &[u8]) -> Result<StatusRecords, String> {
             matches!(index_status, b'R' | b'C') || matches!(worktree_status, b'R' | b'C');
         let original = if has_original { records.next() } else { None };
         if *index_status == b'!' {
+            // ripr's own disposable output is never a source a diff could
+            // miss; once it ignores itself (#14315) it must not cost a walk
+            // of the cache, nor fail a check whose git probes do.
+            if ripr_output_path(path) {
+                continue;
+            }
             if let Some(directory) = path.strip_suffix(b"/") {
                 // A non-UTF-8 directory name keys no overlay lookup anyway.
                 if let Ok(directory) = utf8_path(directory) {

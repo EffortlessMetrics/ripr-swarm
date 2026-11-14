@@ -1,0 +1,14 @@
+# Retained non-complete repeats and denominator-preserving write failures (#13140).
+[[extend]]
+id = "RIPR-SPEC-0086"
+tests = [
+  "xtask/src/reports/eval_sweep_refresh/python_eval_sweep_refresh/repeat_retention.rs::non_complete_repeats_retain_exact_bytes_without_comparison_credit",
+  "xtask/src/reports/eval_sweep_refresh/python_eval_sweep_refresh/repeat_retention.rs::repeat_digests_track_each_stream_without_comparison_credit",
+  "xtask/src/reports/eval_sweep_refresh/python_eval_sweep_refresh/repeat_retention.rs::complete_repeats_preserve_existing_comparison_and_digest_shapes",
+  "xtask/src/reports/eval_sweep_refresh/python_eval_sweep_refresh/repeat_retention.rs::unstarted_and_failed_capture_routes_never_invent_repeat_output",
+  "xtask/src/reports/eval_sweep_refresh/python_eval_sweep_refresh/repeat_retention.rs::repeat_write_failures_keep_the_run_and_cannot_improve_a_mixed_gate",
+  "xtask/src/reports/eval_sweep_refresh/python_eval_sweep_refresh/repeat_retention.rs::repeat_retention_failure_still_rechecks_binary_identity",
+]
+code = [
+  "xtask/src/reports/eval_sweep_refresh/retention.rs",
+]

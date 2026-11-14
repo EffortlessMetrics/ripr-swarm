@@ -17,7 +17,7 @@ product meaning.
 | Canonical gate | Current command | Role | Surface |
 | --- | --- | --- | --- |
 | `product.rust.formatting` | `cargo fmt --check` | required | Rust |
-| `product.rust.all_features_check` | `cargo check -p ripr --all-targets --all-features` | required | Rust |
+| `product.rust.all_features_check` | `cargo clippy -p ripr --all-targets --all-features -- -D warnings` | required | Rust |
 | `product.rust.clippy` | `cargo clippy --workspace --all-targets -- -D warnings` | required | Rust |
 | `product.rust.workspace_tests` | `cargo nextest run --workspace --profile ci` | required | Rust |
 | `product.rust.workspace_doc_tests` | `cargo test --workspace --doc` | required | Rust |
@@ -45,12 +45,19 @@ intentionally dual:
 | --- | --- | --- | --- |
 | lib, bin, integration, and example test binaries | `cargo nextest run --workspace --profile ci` | default | fresh `junit.xml` naming at least one test, plus `run-context.txt` with checkout SHA, tool versions, and blob identities of `Cargo.lock`, `.config/nextest.toml`, and `rust-gates.yml` |
 | Rust doctests | `cargo test --workspace --doc` | default | job log only |
-| `lang-perl` and other non-default-feature tests | compiled (not run) by `cargo check -p ripr --all-targets --all-features`; not executed in the required lane | all / perl / no-default | advisory Test Analytics, the `Perl and release proof` job, and the Windows advisory feature matrix |
+| `lang-perl` and other non-default-feature tests | compiled and linted (not run) by `cargo clippy -p ripr --all-targets --all-features -- -D warnings`; not executed in the required lane | all / perl / no-default | advisory Test Analytics, the `Perl and release proof` job, and the Windows advisory feature matrix |
 
 Nextest cannot execute doctests, so a green nextest row never stands in for the
 doctest row, and neither row claims non-default-feature subjects. The `ci`
 profile pins `retries = 0` and may not declare a `default-filter` or
-per-test overrides, so every test selected by default is required; the
+per-test execution overrides, so every test selected by default is required. Its
+one output-only exception retains successful JUnit output for the exact
+`xtask::rust_activation` test
+`installed_rustup_activation_keeps_the_exact_fixture_compiler` (#13123).
+The parsed row must contain only the exact package/binary/test filter and
+`junit.store-success-output = true`; changed scope, duplicate rows, extra fields,
+and false or non-boolean retention refuse. Test selection, retries, deadlines
+and concurrency are unchanged. The
 `framed_lsp_`/`editor_agent_loop_` skip in `.config/nextest.toml` is a local
 iteration hint and is never applied in CI. Nextest exit 0 without a fresh JUnit
 report naming at least one test fails the step, so an empty selection cannot
@@ -102,8 +109,9 @@ config, and this table. Each of these fails `cargo nextest run`:
   `run: cargo test --workspace --doc`;
 - any `NEXTEST_*`, `RUSTDOCFLAGS`, or `CARGO_TARGET_*_RUNNER` variable in the
   workflow;
-- a `default-filter`, `overrides`, non-zero or table `retries`, or a
-  different JUnit path anywhere in the parsed nextest config, quoted or inline;
+- a `default-filter`, any override outside the closed native-activation output
+  row, non-zero or table `retries`, or a different JUnit path in the parsed
+  nextest config, quoted or inline;
 - restating a different command in this table.
 
 The `Required Rust tests` step body itself is executed under

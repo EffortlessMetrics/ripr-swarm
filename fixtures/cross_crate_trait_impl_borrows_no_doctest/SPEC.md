@@ -7,7 +7,7 @@ Spec: RIPR-SPEC-0108
 `rutil::stream::take::Take` implements `Stream`, a trait declared in the sibling
 workspace crate `rcore` and imported with `use rcore::Stream;`. Its
 `size_hint` guard changes from `<` to `<=`. No source calls `size_hint`. The
-only related test material is the doctest on `rutil::io::take::Take::limit`,
+only nearby test material is the doctest on `rutil::io::take::Take::limit`,
 which shares only the leaf file name `take.rs` and observes a different type.
 
 ## When
@@ -20,8 +20,9 @@ cargo xtask fixtures cross_crate_trait_impl_borrows_no_doctest
 
 The finding is `no_static_path`: a trait declared in any workspace member is
 called only where its method name is spelled, so with nothing naming
-`size_hint` there is no path, and the same-leaf-name doctest is a suggested
-location, not a reach (#10061, the cross-crate case of #9169).
+`size_hint` there is no path (#10061, the cross-crate case of #9169). The
+same-leaf-name doctest belongs to another module, so it is not listed as a
+related test at all (#7527).
 
 ## Must Not
 

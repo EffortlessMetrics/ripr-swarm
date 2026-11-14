@@ -1,7 +1,7 @@
 use super::super::rust_index::{FunctionSummary, TestSummary, extract_literals};
 use super::activation::{
     boundary_constant_operand_name, comparison_operands, has_observed_boundary_equality,
-    is_computed_value_expression, owner_input_values, returned_comparison_view,
+    is_computed_value_expression, list_or_unknown, owner_input_values, returned_comparison_view,
 };
 use super::owner_pin::short_circuit::ShortCircuitTail;
 use crate::analysis::extract::mask_comments_and_strings;
@@ -10,6 +10,7 @@ use crate::domain::*;
 use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 #[cfg(test)]
 use crate::value_origins::LocatedValueFact as ValueFact;
+use ra_ap_syntax::{AstNode, ast};
 use std::collections::BTreeMap;
 
 /// #7970: whether ripr can show that no related test input evaluates the
@@ -697,6 +698,8 @@ pub(in crate::analysis) struct OwnerInputs<'a> {
     pub(in crate::analysis) owner: Option<&'a FunctionSummary>,
     pub(in crate::analysis) literal_length_boundary:
         Option<&'a super::literal_length_boundary::LiteralLengthBoundary>,
+    pub(in crate::analysis) slice_counter_boundary:
+        Option<&'a super::slice_counter_boundary::SliceCounterBoundary>,
 }
 
 /// [`infection_evidence_with_boundary_input`] given the changed owner, which
@@ -720,14 +723,35 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     let OwnerInputs {
         owner,
         literal_length_boundary,
+        slice_counter_boundary,
     } = owner_inputs;
     // A returned bare comparison with a resolved missing boundary
     // discriminator reads the predicate lens's gap, never a better reading:
     // Weak or unresolved boundary evidence also applies to the returned
     // comparison (#9094, #10046).
-    if let Some(mut predicate) = returned_comparison_view(probe)
-        && (!activation.missing_discriminators.is_empty() || unresolved_boundary.is_some())
-    {
+    // #13040: an unseen input (a plain identifier bound to an env var or a
+    // local helper call) yields neither a missing discriminator nor an
+    // unresolved boundary, because the argument is not a computed
+    // expression ripr flags as unreadable. The predicate lens still reads
+    // `Unknown` there (no comparable literal input), so an `Unknown`
+    // predicate reading applies when no owner input is readable at all
+    // (`owner_input_values` empty: a visible input, even one the literal
+    // reading cannot compare, keeps the return-value reading); a `Weak`
+    // reading (a visible input that merely misses the boundary, including
+    // an intermediate input that separates a multi-value move) keeps the
+    // existing resolved-gap gate, so the return-value lens can still
+    // credit separation the literal reading cannot see. The `Unknown`
+    // delegation only applies when related tests reach the owner
+    // (`related_tests` non-empty): with no related tests the return-value
+    // summary stands, not the predicate one. The empty-input `Unknown`
+    // arm is further scoped to a related test that directly calls the
+    // owner (`test.calls` naming `owner`): a test linked only by a name
+    // token or an unexpanded macro invocation (for example `check_small!`
+    // mentioning `bulk`) does not delegate on that arm, and when the
+    // owner is unknown (`owner` is `None`) that arm does not delegate at
+    // all. The missing-discriminator and unresolved-boundary arms keep
+    // their prior scope.
+    if let Some(mut predicate) = returned_comparison_view(probe) {
         predicate.family = ProbeFamily::Predicate;
         let evidence = infection_evidence_for_owner(
             &predicate,
@@ -738,11 +762,29 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             owner_has_other_callers,
             assertion_macros_rebound,
         );
-        if matches!(evidence.state, StageState::Weak | StageState::Unknown) {
+        let directly_calls_owner = owner.is_some_and(|owner| {
+            related_tests
+                .iter()
+                .any(|test| test.calls.iter().any(|call| call.name == owner.name))
+        });
+        if (evidence.state == StageState::Unknown
+            && !related_tests.is_empty()
+            && ((owner_input_values(activation).is_empty() && directly_calls_owner)
+                || !activation.missing_discriminators.is_empty()
+                || unresolved_boundary.is_some()))
+            || (matches!(evidence.state, StageState::Weak)
+                && (!activation.missing_discriminators.is_empty() || unresolved_boundary.is_some()))
+        {
             return evidence;
         }
     }
     if let Some(evidence) = literal_length_boundary
+        .zip(owner)
+        .and_then(|(boundary, owner)| boundary.infection(probe, owner))
+    {
+        return evidence;
+    }
+    if let Some(evidence) = slice_counter_boundary
         .zip(owner)
         .and_then(|(boundary, owner)| boundary.infection(probe, owner))
     {
@@ -768,7 +810,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             // mismatch when nothing comparable is left.
             let (test_literals, other_kind_literals): (Vec<_>, Vec<_>) = related_tests
                 .iter()
-                .flat_map(|test| test.literals.iter().map(|literal| literal.value.clone()))
+                .flat_map(|test| test.literals.iter().map(|literal| literal.value.as_str()))
                 .partition(|literal| {
                     probe_literals
                         .iter()
@@ -793,7 +835,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             let boundary_oracle_only_literals = probe_literals
                 .iter()
                 .filter(|literal| {
-                    !input_literals.contains(literal) && test_literals.contains(literal)
+                    !input_literals.contains(literal) && test_literals.contains(&literal.as_str())
                 })
                 .cloned()
                 .collect::<Vec<_>>();
@@ -810,13 +852,22 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             } else if activation
                 .missing_discriminators
                 .iter()
-                .any(|fact| fact.value.contains("=="))
+                .any(|fact| fact.shape == DiscriminatorShape::Boundary)
             {
                 StageEvidence::new(
                     StageState::Weak,
                     Confidence::Medium,
-                    "Related tests contain input values, but the equality-boundary discriminator is missing",
+                    "Related tests contain input values, but the equality-boundary check is missing",
                 )
+            } else if let Some(guard) = activation
+                .missing_discriminators
+                .iter()
+                .find(|fact| fact.shape == DiscriminatorShape::GuardDomain)
+            {
+                // #12414: the inserted guard's domain is the missing input;
+                // the SPEC-0263 wording the guard-entry route already emits
+                // names the values that stay outside it.
+                StageEvidence::new(StageState::Weak, Confidence::Medium, guard.reason.clone())
             } else if !owner_has_other_callers
                 && owner.is_some_and(|owner| {
                     changed_operands_are_never_evaluated(probe, activation, related_tests, owner)
@@ -862,6 +913,29 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                         probe.expression.trim()
                     ),
                 )
+            } else if let Some(literal) = unresolved_boundary
+                .is_none()
+                .then_some(())
+                // A rebound assertion macro may discard the owner call whose
+                // argument is read below (#10386), as the truth-table branch
+                // above also declines.
+                .filter(|()| !owner_has_other_callers && !assertion_macros_rebound)
+                .and(owner)
+                .and_then(|owner| added_string_arm_input(probe, activation, owner))
+            {
+                // #14388: the edit appends `|| param == "lit"` to a chain of
+                // string equalities on the same parameter, and a related
+                // test calls the owner with exactly `"lit"`. The original
+                // arms compare other string literals, so they are all false
+                // on that input while the new arm is true: the input reaches
+                // the change.
+                StageEvidence::new(
+                    StageState::Yes,
+                    Confidence::Medium,
+                    format!(
+                        "A related test passes {literal}, which makes the added `||` arm true while every original string-equality arm is false, so the input reaches the change"
+                    ),
+                )
             } else if probe_literals.is_empty() {
                 StageEvidence::new(
                     StageState::Unknown,
@@ -904,7 +978,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     Confidence::Medium,
                     format!(
                         "Detected test input literal matching changed boundary: {}",
-                        boundary_input_literals.join(", ")
+                        list_or_unknown(&boundary_input_literals)
                     ),
                 )
             } else if !boundary_oracle_only_literals.is_empty() {
@@ -913,7 +987,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     Confidence::Medium,
                     format!(
                         "Related tests contain the changed boundary literal [{}] only outside the changed owner's inputs (for example as an expected value); no test input at the changed boundary was detected",
-                        boundary_oracle_only_literals.join(", ")
+                        list_or_unknown(&boundary_oracle_only_literals)
                     ),
                 )
             } else if !test_literals.is_empty() {
@@ -922,8 +996,8 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     Confidence::Medium,
                     format!(
                         "Tests have literals [{}], but no detected value matches changed boundary [{}]",
-                        test_literals.join(", "),
-                        probe_literals.join(", ")
+                        list_or_unknown(&test_literals),
+                        list_or_unknown(&probe_literals)
                     ),
                 )
             } else if !other_kind_literals.is_empty() {
@@ -939,9 +1013,9 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     format!(
                         "The only literals ripr reads in related tests are {} literals [{}], which ripr does not compare with the changed {} boundary [{}]; activation/infection is unknown",
                         literal_kinds_label(&other_kind_literals),
-                        other_kind_literals.join(", "),
+                        list_or_unknown(&other_kind_literals),
                         literal_kinds_label(&probe_literals),
-                        probe_literals.join(", ")
+                        list_or_unknown(&probe_literals)
                     ),
                 )
             } else {
@@ -950,7 +1024,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     Confidence::Low,
                     format!(
                         "Related tests pass no literal ripr can compare with the changed boundary [{}] (inputs are strings, computed values or fixtures); activation/infection is unknown, and if a test input drives the compared value, one that sits exactly on the boundary would settle it",
-                        probe_literals.join(", ")
+                        list_or_unknown(&probe_literals)
                     ),
                 )
             }
@@ -1039,16 +1113,188 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     }
 }
 
-/// The literals that can be the changed predicate's boundary value. A
-/// comparison operand that computes its value (`CURRENT - 2`, `2 + 2`)
-/// does not compare against the literal it contains, so its literals are
-/// not the boundary: `CURRENT - 2 > version` never compares against `2`
-/// (#6671). Such an operand contributes nothing and the boundary stays
-/// unknown unless another operand spells it. A compound predicate
-/// (`&&`/`||`) is cut into its top-level conditions and each comparison
-/// is read the same way; a condition that is not a comparison keeps its
-/// literals. A predicate with no computed comparison operand anywhere
-/// keeps every literal it contains.
+/// #14388: the string literal a related test passes that reaches an appended
+/// `||` arm. The probe must turn `p == "a" || ...` into the same chain plus
+/// one more `p == "b"` arm: only `||`, every arm one `==` between the same
+/// owner parameter `p` and a plain string literal with no escapes, `p` never
+/// rebound in the owner body, and an owner-call argument fact binding `p` to
+/// exactly `"b"`. Distinct literals make every original arm false on that
+/// input and the new arm true, so the old and new predicates differ. Anything
+/// else returns `None` and the ordinary reading stays.
+fn added_string_arm_input(
+    probe: &Probe,
+    activation: &ActivationEvidence,
+    owner: &FunctionSummary,
+) -> Option<String> {
+    let before = probe.before.as_deref()?;
+    let only_or = |text: &str| {
+        let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
+        !masked.contains("&&") && !masked.contains('!') && !masked.contains('(')
+    };
+    if !only_or(&probe.expression) || !only_or(before) {
+        return None;
+    }
+    let arms = |text: &str| -> Option<Vec<(String, String)>> {
+        boolean_conditions(text)
+            .into_iter()
+            .map(string_equality_arm)
+            .collect()
+    };
+    let after_arms = arms(&probe.expression)?;
+    let before_arms = arms(before)?;
+    let (added, kept) = after_arms.split_last()?;
+    if kept != before_arms.as_slice() {
+        return None;
+    }
+    let parameter = &added.0;
+    let mut literals = after_arms
+        .iter()
+        .map(|(_, literal)| literal)
+        .collect::<Vec<_>>();
+    literals.sort();
+    literals.dedup();
+    if after_arms.iter().any(|(name, _)| name != parameter) || literals.len() != after_arms.len() {
+        return None;
+    }
+    // A parameter type with its own `PartialEq<&str>` could make an original
+    // arm true on the new literal, so only plain string types qualify.
+    if !super::activation::call_parameter_names(owner).contains(parameter)
+        || !super::activation::parameter_type(owner, parameter)
+            .is_some_and(|ty| is_plain_string_type(&ty))
+        || parameter_is_rebound(&owner.body, parameter)
+        || !chain_is_first_decision(&owner.body, &probe.expression)
+    {
+        return None;
+    }
+    activation
+        .observed_values
+        .iter()
+        .filter(|fact| fact.context == ValueContext::FunctionArgument)
+        .filter_map(|fact| fact.value.split_once(" = "))
+        .any(|(name, value)| name.trim() == parameter && value.trim() == added.1)
+        .then(|| added.1.clone())
+}
+
+/// Whether nothing in the owner before `chain` can take a call away from it
+/// (#10856 for this reading): the chain occurs once in the owner's text, and
+/// the body before it holds no `if`, `match`, loop, `return`, `break`,
+/// `continue`, `?`, match arm, closure, other short-circuit, macro, call,
+/// index, division or remainder, and the chain ends its expression.
+/// An early return on another parameter (`if strict { return false; }`)
+/// would keep a test that passes the new literal from ever evaluating the
+/// chain. Strings and
+/// comments are masked; a chain ripr cannot find exactly once declines.
+fn chain_is_first_decision(function: &str, chain: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(function);
+    let masked_chain = crate::analysis::extract::mask_comments_and_strings(chain);
+    let masked_chain = masked_chain.trim();
+    if masked.len() != function.len() || masked_chain.is_empty() {
+        return false;
+    }
+    let mut found = masked.match_indices(masked_chain).map(|(at, _)| at);
+    let (Some(at), None) = (found.next(), found.next()) else {
+        return false;
+    };
+    // The signature (up to the body's opening brace) is not control flow.
+    let Some((_, head)) = masked[..at].split_once('{') else {
+        return false;
+    };
+    // `!` (a macro such as `assert!` or `panic!`) and `(` (a call such as
+    // `std::process::exit(1)`) can diverge without a keyword, so they
+    // decline too; wrapping the chain in a call (`Some(...)`) declines with
+    // them.
+    // `[`, `/` and `%` (indexing, division, remainder) can panic first.
+    if head.contains(['?', '|', '!', '(', '[', '/', '%'])
+        || head.contains("&&")
+        || head.contains("=>")
+    {
+        return false;
+    }
+    // The chain must also end its expression: a continuation such as a
+    // following `&& strict` line binds tighter than the appended `||` and
+    // could keep the new arm from deciding the result.
+    let tail = masked[at + masked_chain.len()..].trim_start();
+    if !tail.starts_with([',', ';', '}']) {
+        return false;
+    }
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    !head.split(|ch: char| !is_word(ch)).any(|word| {
+        matches!(
+            word,
+            "if" | "match" | "while" | "for" | "loop" | "return" | "break" | "continue"
+        )
+    })
+}
+
+/// Whether `ty` is `&str`, `&'a str`, `String` or `&String`: types whose
+/// `==` against a string literal compares the text itself.
+fn is_plain_string_type(ty: &str) -> bool {
+    let compact = ty.split_whitespace().collect::<Vec<_>>().join(" ");
+    let Some(borrowed) = compact.strip_prefix('&') else {
+        return compact == "String";
+    };
+    let borrowed = borrowed.trim_start();
+    let inner = match borrowed.strip_prefix('\'') {
+        Some(lifetime) => match lifetime.split_once(' ') {
+            Some((name, rest)) if is_plain_identifier(name) => rest,
+            _ => return false,
+        },
+        None => borrowed,
+    };
+    matches!(inner, "str" | "String")
+}
+
+/// `name == "literal"` or `"literal" == name` as `(name, "literal")`, for a
+/// plain identifier and a string literal with no escapes; anything else is
+/// `None`.
+fn string_equality_arm(arm: &str) -> Option<(String, String)> {
+    let (left, right) = arm.split_once("==")?;
+    let (left, right) = (left.trim(), right.trim());
+    let is_literal = |text: &str| {
+        text.len() >= 2
+            && text.starts_with('"')
+            && text.ends_with('"')
+            && !text[1..text.len() - 1].contains(['"', '\\'])
+    };
+    let (name, literal) = if is_literal(right) {
+        (left, right)
+    } else if is_literal(left) {
+        (right, left)
+    } else {
+        return None;
+    };
+    (is_plain_identifier(name) && !literal[1..literal.len() - 1].contains("=="))
+        .then(|| (name.to_string(), literal.to_string()))
+}
+
+/// Whether `body` might give `name` a value other than the caller's
+/// argument before a comparison reads it. Strict on purpose: every
+/// whole-word use of `name`, strings and comments masked, must be its one
+/// `name:` parameter declaration or an operand of `==`. Any other use (a
+/// `let` or pattern that shadows it, an assignment, a borrow, a call) counts.
+fn parameter_is_rebound(body: &str, name: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    let bytes = masked.as_bytes();
+    let mut declarations = 0usize;
+    for (at, _) in masked.match_indices(name) {
+        let end = at + name.len();
+        let whole_word = (at == 0 || !is_ident_byte(bytes[at - 1]))
+            && (end >= bytes.len() || !is_ident_byte(bytes[end]));
+        if !whole_word {
+            continue;
+        }
+        let prefix = masked[..at].trim_end();
+        let suffix = masked[end..].trim_start();
+        if suffix.starts_with(':') && !suffix.starts_with("::") {
+            declarations += 1;
+        } else if !(suffix.starts_with("==") || prefix.ends_with("==")) {
+            return true;
+        }
+    }
+    declarations != 1
+}
+
+/// Resolve literal boundaries from live, non-computed local initializers.
 fn local_initializer_boundary_literals(
     probe: &Probe,
     owner: Option<&FunctionSummary>,
@@ -1060,7 +1306,13 @@ fn local_initializer_boundary_literals(
         if let Some(initializer) =
             super::activation::live_local_initializer(owner, operand.trim(), probe.location.line)
         {
-            literals.extend(boundary_literals(&initializer));
+            if is_conditional_initializer(&initializer)
+                || is_computed_value_expression(&initializer)
+            {
+                literals.extend(conditional_literal_results(&initializer));
+            } else {
+                literals.extend(boundary_literals(&initializer));
+            }
         }
     }
     literals.sort();
@@ -1068,6 +1320,110 @@ fn local_initializer_boundary_literals(
     (!literals.is_empty()).then_some(literals)
 }
 
+// Retain literal result branches when arithmetic appears in a condition or a
+// different branch. The condition's literals and computed tails are not values
+// returned by the conditional. Unreadable or statement-bearing branches abstain.
+fn is_conditional_initializer(initializer: &str) -> bool {
+    let Some(after_if) = initializer.trim_start().strip_prefix("if") else {
+        return false;
+    };
+    !after_if.starts_with(|c: char| c.is_alphanumeric() || c == '_')
+}
+
+fn conditional_literal_results(initializer: &str) -> Vec<String> {
+    if !is_conditional_initializer(initializer) {
+        return Vec::new();
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&format!(
+        "fn __ripr_boundary() {{ let _ = {initializer}; }}"
+    )) else {
+        return Vec::new();
+    };
+    let Some(ast::Expr::IfExpr(branch)) = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .and_then(|binding| binding.initializer())
+    else {
+        return Vec::new();
+    };
+    fn add_block(block: ast::BlockExpr, literals: &mut Vec<String>, depth: usize) {
+        let Some(list) = block.stmt_list() else {
+            return;
+        };
+        if depth == 0 || list.statements().next().is_some() {
+            return;
+        }
+        if let Some(expr) = list.tail_expr() {
+            add_expr(expr, literals, depth - 1);
+        }
+    }
+    fn add_if(branch: ast::IfExpr, literals: &mut Vec<String>, depth: usize) {
+        if depth == 0 {
+            return;
+        }
+        if let Some(block) = branch.then_branch() {
+            add_block(block, literals, depth - 1);
+        }
+        match branch.else_branch() {
+            Some(ast::ElseBranch::Block(block)) => add_block(block, literals, depth - 1),
+            Some(ast::ElseBranch::IfExpr(next)) => add_if(next, literals, depth - 1),
+            None => {}
+        }
+    }
+    fn add_expr(expr: ast::Expr, literals: &mut Vec<String>, depth: usize) {
+        if depth == 0 {
+            return;
+        }
+        match expr {
+            ast::Expr::Literal(literal) => {
+                literals.extend(extract_literals(&literal.syntax().text().to_string()))
+            }
+            ast::Expr::ParenExpr(paren) => {
+                if let Some(inner) = paren.expr() {
+                    add_expr(inner, literals, depth - 1);
+                }
+            }
+            ast::Expr::PrefixExpr(prefix) if prefix.op_kind() == Some(ast::UnaryOp::Neg) => {
+                let mut inner = prefix.expr();
+                for _ in 0..depth {
+                    match inner {
+                        Some(ast::Expr::ParenExpr(paren)) => inner = paren.expr(),
+                        Some(ast::Expr::Literal(literal))
+                            if matches!(
+                                literal.kind(),
+                                ast::LiteralKind::IntNumber(_) | ast::LiteralKind::FloatNumber(_)
+                            ) =>
+                        {
+                            literals
+                                .extend(extract_literals(&format!("-{}", literal.syntax().text())));
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
+            }
+            ast::Expr::BlockExpr(block) => add_block(block, literals, depth - 1),
+            ast::Expr::IfExpr(branch) => add_if(branch, literals, depth - 1),
+            _ => {}
+        }
+    }
+    let mut literals = Vec::new();
+    add_if(branch, &mut literals, 32);
+    literals
+}
+
+/// The literals that can be the changed predicate's boundary value. A
+/// comparison operand that computes its value (`CURRENT - 2`, `2 + 2`)
+/// does not compare against the literal it contains, so its literals are
+/// not the boundary: `CURRENT - 2 > version` never compares against `2`
+/// (#6671). Such an operand contributes nothing and the boundary stays
+/// unknown unless another operand spells it. A compound predicate
+/// (`&&`/`||`) is cut into its top-level conditions and each comparison
+/// is read the same way; a condition that is not a comparison keeps its
+/// literals. A predicate with no computed comparison operand anywhere
+/// keeps every literal it contains.
 fn boundary_literals(expression: &str) -> Vec<String> {
     let mut any_computed = false;
     let mut literals = Vec::new();
@@ -1178,7 +1534,7 @@ fn literal_kind(literal: &str) -> (bool, bool) {
 
 /// The kinds present in `literals`, in a fixed order: `numeric`, `char`,
 /// `byte`, joined with `/`.
-fn literal_kinds_label(literals: &[String]) -> String {
+fn literal_kinds_label<T: AsRef<str>>(literals: &[T]) -> String {
     [
         ((false, false), "numeric"),
         ((true, false), "char"),
@@ -1188,7 +1544,7 @@ fn literal_kinds_label(literals: &[String]) -> String {
     .filter(|(kind, _)| {
         literals
             .iter()
-            .any(|literal| literal_kind(literal) == *kind)
+            .any(|literal| literal_kind(literal.as_ref()) == *kind)
     })
     .map(|(_, label)| *label)
     .collect::<Vec<_>>()
@@ -1278,6 +1634,74 @@ mod tests {
             evidence.summary,
             "Detected test input literal matching changed boundary: 10"
         );
+    }
+
+    #[test]
+    fn predicate_literal_summary_elides_but_matching_uses_all_values() {
+        let values: Vec<String> = (100..140).map(|i| i.to_string()).collect();
+        let refs: Vec<&str> = values.iter().map(String::as_str).collect();
+        let test = test_with_literals(&refs);
+        let missing = probe(ProbeFamily::Predicate, "value > 999");
+        let evidence = infection_evidence(&missing, &[&test], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Weak);
+        assert!(
+            evidence.summary.contains("24 values elided"),
+            "{}",
+            evidence.summary
+        );
+        assert!(
+            evidence.summary.contains("100, 101"),
+            "{}",
+            evidence.summary
+        );
+        assert!(evidence.summary.len() < 1400, "{}", evidence.summary.len());
+
+        // The boundary literal appears after the displayed window. An oracle
+        // occurrence must still be recognized and must not become an input.
+        let mut with_boundary = refs;
+        with_boundary.push("42");
+        let late = test_with_literals(&with_boundary);
+        let boundary = probe(ProbeFamily::Predicate, "value > 42");
+        let oracle_only = infection_evidence(&boundary, &[&late], &ActivationEvidence::default());
+        assert_eq!(oracle_only.state, StageState::Weak);
+        assert!(
+            oracle_only.summary.contains("only outside"),
+            "{}",
+            oracle_only.summary
+        );
+        let activation = activation_with(&[("value = 42", ValueContext::FunctionArgument)]);
+        let input = infection_evidence(&boundary, &[&late], &activation);
+        assert_eq!(input.state, StageState::Yes);
+        assert!(input.summary.contains("42"), "{}", input.summary);
+    }
+
+    #[test]
+    fn predicate_literal_summary_bounds_unicode_and_counts_unique_other_kinds() {
+        let chars: Vec<String> = ('a'..='t').map(|c| format!("'{c}'")).collect();
+        let mut refs: Vec<&str> = chars.iter().map(String::as_str).collect();
+        refs.push("'a'"); // Other-kind summaries sort and deduplicate first.
+        let test = test_with_literals(&refs);
+        let numeric = probe(ProbeFamily::Predicate, "value > 1");
+        let evidence = infection_evidence(&numeric, &[&test], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Unknown);
+        assert!(
+            evidence.summary.contains("4 values elided"),
+            "{}",
+            evidence.summary
+        );
+
+        // Directly construct an oversized fact to test the byte boundary and
+        // UTF-8 handling independently of the source parser's literal grammar.
+        let huge = format!("'{}'", "é".repeat(5_000));
+        let test = test_with_literals(&[huge.as_str()]);
+        let evidence = infection_evidence(&numeric, &[&test], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Unknown);
+        assert!(
+            evidence.summary.contains("1 value elided"),
+            "{}",
+            evidence.summary
+        );
+        assert!(evidence.summary.len() < 1400, "{}", evidence.summary.len());
     }
 
     #[test]
@@ -1519,7 +1943,7 @@ mod tests {
             start_line: 1,
             end_line: 3,
             body: "assert_eq!(score(10), 11);".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
             literals: values
                 .iter()
@@ -1528,9 +1952,10 @@ mod tests {
                     value: (*value).to_string(),
                 })
                 .collect(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         }
     }
 
@@ -1542,14 +1967,14 @@ mod tests {
             start_line: 1,
             end_line: body.lines().count(),
             body: body.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: crate::analysis::facts::FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -1582,10 +2007,223 @@ mod tests {
             OwnerInputs {
                 owner: Some(&owner),
                 literal_length_boundary: None,
+                slice_counter_boundary: None,
             },
             true,
             false,
         )
+    }
+
+    fn added_string_arm_evidence(
+        body: &str,
+        before: &str,
+        after: &str,
+        inputs: &[&str],
+        other_callers: bool,
+    ) -> StageEvidence {
+        added_string_arm_evidence_with(body, before, after, inputs, other_callers, false)
+    }
+
+    fn added_string_arm_evidence_with(
+        body: &str,
+        before: &str,
+        after: &str,
+        inputs: &[&str],
+        other_callers: bool,
+        assertion_macros_rebound: bool,
+    ) -> StageEvidence {
+        let mut changed = probe(ProbeFamily::Predicate, after);
+        changed.before = Some(before.to_string());
+        let owner = owner_with_body(body);
+        let literals = inputs
+            .iter()
+            .filter_map(|input| input.split_once(" = ").map(|(_, value)| value))
+            .collect::<Vec<_>>();
+        let test = test_with_literals(&literals);
+        let facts = inputs
+            .iter()
+            .map(|input| (*input, ValueContext::FunctionArgument))
+            .collect::<Vec<_>>();
+        let activation = activation_with(&facts);
+        infection_evidence_for_owner(
+            &changed,
+            &[&test],
+            &activation,
+            None,
+            OwnerInputs {
+                owner: Some(&owner),
+                literal_length_boundary: None,
+                slice_counter_boundary: None,
+            },
+            other_callers,
+            assertion_macros_rebound,
+        )
+    }
+
+    /// #14388 review: only types whose `==` against a literal compares the
+    /// text qualify for the appended string-arm reading.
+    #[test]
+    fn only_plain_string_types_compare_a_literal_by_text() {
+        for accepted in [
+            "&str",
+            "& str",
+            "&'a str",
+            "&'static str",
+            "String",
+            "&String",
+        ] {
+            assert!(is_plain_string_type(accepted), "{accepted}");
+        }
+        for rejected in [
+            "&mut str",
+            "&&str",
+            "Cow<str>",
+            "impl AsRef<str>",
+            "Box<str>",
+            "T",
+            "Option<&str>",
+            "&'a",
+            "&'a mut str",
+            "Flag",
+        ] {
+            assert!(!is_plain_string_type(rejected), "{rejected}");
+        }
+    }
+
+    /// #14388 (agent-eval `struct_field`): `flag == "-v"` gains
+    /// `|| flag == "--verbose"`; a related test calling the owner with
+    /// `"--verbose"` reaches the added arm. Every near miss stays unknown.
+    #[test]
+    fn an_input_equal_to_an_appended_string_arm_reaches_the_change() {
+        let body =
+            "pub fn pick(flag: &str) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n}\n";
+        let before = "flag == \"-v\"";
+        let after = "flag == \"-v\" || flag == \"--verbose\"";
+        let reached =
+            added_string_arm_evidence(body, before, after, &["flag = \"--verbose\""], false);
+        assert_eq!(reached.state, StageState::Yes, "{}", reached.summary);
+        assert!(
+            reached.summary.contains("\"--verbose\""),
+            "{}",
+            reached.summary
+        );
+
+        // The original arm's literal does not reach the added arm.
+        let original = added_string_arm_evidence(body, before, after, &["flag = \"-v\""], false);
+        assert_ne!(original.state, StageState::Yes, "{}", original.summary);
+        // A non-matching input does not either.
+        let other = added_string_arm_evidence(body, before, after, &["flag = \"-q\""], false);
+        assert_ne!(other.state, StageState::Yes, "{}", other.summary);
+        // Another caller may feed the owner other inputs.
+        let wrapped =
+            added_string_arm_evidence(body, before, after, &["flag = \"--verbose\""], true);
+        assert_ne!(wrapped.state, StageState::Yes, "{}", wrapped.summary);
+        // A rebound assertion macro may discard the owner call.
+        let discarded = added_string_arm_evidence_with(
+            body,
+            before,
+            after,
+            &["flag = \"--verbose\""],
+            false,
+            true,
+        );
+        assert_ne!(discarded.state, StageState::Yes, "{}", discarded.summary);
+        // A parameter type with its own `PartialEq<&str>` may make an
+        // original arm true on the new literal; plain string types qualify.
+        let custom =
+            "pub fn pick(flag: Flag) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n}\n";
+        let opaque =
+            added_string_arm_evidence(custom, before, after, &["flag = \"--verbose\""], false);
+        assert_ne!(opaque.state, StageState::Yes, "{}", opaque.summary);
+        for plain in [
+            "pub fn pick(flag: String) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick<'a>(flag: &'a str) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+        ] {
+            let evidence =
+                added_string_arm_evidence(plain, before, after, &["flag = \"--verbose\""], false);
+            assert_eq!(
+                evidence.state,
+                StageState::Yes,
+                "{plain}: {}",
+                evidence.summary
+            );
+        }
+        // The argument binds a different parameter.
+        let two = "pub fn pick(mode: &str, flag: &str) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n}\n";
+        let elsewhere =
+            added_string_arm_evidence(two, before, after, &["mode = \"--verbose\""], false);
+        assert_ne!(elsewhere.state, StageState::Yes, "{}", elsewhere.summary);
+        // A rebinding before the comparison changes what is compared.
+        // The rebinding is paren-free so only the rebinding guard declines it.
+        let shadowed = "pub fn pick(flag: &str, other: &str) -> bool {\n    let flag = other;\n    flag == \"-v\" || flag == \"--verbose\"\n}\n";
+        let rebound =
+            added_string_arm_evidence(shadowed, before, after, &["flag = \"--verbose\""], false);
+        assert_ne!(rebound.state, StageState::Yes, "{}", rebound.summary);
+        // A continuation after the changed line (`&& strict`) binds tighter
+        // than the appended arm, so the chain does not end the expression.
+        let continued = "pub fn pick(flag: &str, strict: bool) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n        && strict\n}\n";
+        let tail =
+            added_string_arm_evidence(continued, before, after, &["flag = \"--verbose\""], false);
+        assert_ne!(tail.state, StageState::Yes, "{}", tail.summary);
+        // An early return on another parameter can keep the input away
+        // from the chain, and so can an earlier `?`, `match` arm, panicking
+        // macro, diverging call, index or division.
+        for diverted in [
+            "pub fn pick(flag: &str, strict: bool) -> bool {\n    if strict { return false; }\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str, gate: Option<()>) -> Option<bool> {\n    gate?;\n    Some(flag == \"-v\" || flag == \"--verbose\")\n}\n",
+            "pub fn pick(flag: &str, mode: u8) -> bool {\n    match mode { 0 => false, _ => flag == \"-v\" || flag == \"--verbose\" }\n}\n",
+            "pub fn pick(flag: &str, strict: bool) -> bool {\n    assert!(!strict);\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str, strict: bool) -> bool {\n    std::process::exit(i32::from(strict));\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str, at: usize) -> bool {\n    let _ = [true][at];\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str, by: u8) -> bool {\n    let _ = 1 / by;\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str, by: u8) -> bool {\n    let _ = 7 % by;\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str) -> bool {\n    let _g = move |x: u8| x;\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str) -> bool {\n    unreachable!{};\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+        ] {
+            let evidence = added_string_arm_evidence(
+                diverted,
+                before,
+                after,
+                &["flag = \"--verbose\""],
+                false,
+            );
+            assert_ne!(
+                evidence.state,
+                StageState::Yes,
+                "{diverted}: {}",
+                evidence.summary
+            );
+        }
+        // A struct-literal field (the agent-eval shape) is not diverted, and
+        // the literal-first spelling reads the same.
+        let field = "pub fn pick(flag: &str) -> Options {\n    Options {\n        retries: 3,\n        verbose: \"-v\" == flag || \"--verbose\" == flag,\n    }\n}\n";
+        let flipped = added_string_arm_evidence(
+            field,
+            "\"-v\" == flag",
+            "\"-v\" == flag || \"--verbose\" == flag",
+            &["flag = \"--verbose\""],
+            false,
+        );
+        assert_eq!(flipped.state, StageState::Yes, "{}", flipped.summary);
+        // An `&&` chain, a duplicated literal and a non-literal arm decline.
+        for (before, after) in [
+            ("flag == \"-v\"", "flag == \"-v\" && flag == \"--verbose\""),
+            (
+                "flag == \"--verbose\"",
+                "flag == \"--verbose\" || flag == \"--verbose\"",
+            ),
+            ("flag == \"-v\"", "flag == \"-v\" || flag == other"),
+            ("flag == \"-v\"", "flag == \"-v\" || flag != \"--verbose\""),
+        ] {
+            let evidence =
+                added_string_arm_evidence(body, before, after, &["flag = \"--verbose\""], false);
+            assert_ne!(
+                evidence.state,
+                StageState::Yes,
+                "{after}: {}",
+                evidence.summary
+            );
+        }
     }
 
     #[test]
@@ -1603,6 +2241,62 @@ mod tests {
         let owner = "fn pick(val: u32) -> bool {\n    let surrogate_start = 0xd800u32;\n    surrogate_start < val\n}\n";
         let evidence = local_predicate_evidence(owner, "surrogate_start < val", 3, "0xd800u32");
         assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+    }
+
+    #[test]
+    fn computed_local_does_not_contribute_its_operand_literals_as_boundaries() {
+        let owner = "fn pick(low: u32, range: u32) -> bool {\n    let val = draw(0..=range) + low;\n    let surrogate_start = 0xd800u32;\n    val > surrogate_start\n}\n";
+        let evidence = local_predicate_evidence(owner, "val > surrogate_start", 4, "0");
+        assert_ne!(evidence.state, StageState::Yes, "{}", evidence.summary);
+        assert!(evidence.summary.contains("0xd800"), "{}", evidence.summary);
+        assert!(
+            !evidence.summary.contains("boundary [0]"),
+            "{}",
+            evidence.summary
+        );
+        let reversed = local_predicate_evidence(owner, "surrogate_start < val", 4, "0");
+        assert_ne!(reversed.state, StageState::Yes, "{}", reversed.summary);
+        assert!(reversed.summary.contains("0xd800"), "{}", reversed.summary);
+        let positive = local_predicate_evidence(owner, "val > surrogate_start", 4, "0xd800u32");
+        assert_eq!(positive.state, StageState::Yes, "{}", positive.summary);
+        let only_computed =
+            "fn pick(low: u32) -> bool {\n    let val = low + 1;\n    val > other\n}\n";
+        let unknown = local_predicate_evidence(only_computed, "val > other", 3, "1");
+        assert_eq!(unknown.state, StageState::Unknown, "{}", unknown.summary);
+    }
+
+    #[test]
+    fn conditional_initializer_retains_literal_result_not_computed_parts() {
+        let owner = "fn pick(val: u32, si: bool, qty: u32) -> bool {\n    let unit = if si && qty + 1 > 3 { 1000 + 1 } else { 1024 };\n    val < unit\n}\n";
+        let literal = local_predicate_evidence(owner, "val < unit", 3, "1024");
+        assert_eq!(literal.state, StageState::Yes, "{}", literal.summary);
+        for operand in ["1", "3", "1000"] {
+            let evidence = local_predicate_evidence(owner, "val < unit", 3, operand);
+            assert_ne!(evidence.state, StageState::Yes, "{}", evidence.summary);
+            assert!(evidence.summary.contains("1024"), "{}", evidence.summary);
+        }
+        let signed = "fn pick(val: i32, qty: i32) -> bool {\n    let unit = if qty + 1 > 3 { (-5) } else { ((1024)) };\n    val < unit\n}\n";
+        for literal in ["-5", "1024"] {
+            let evidence = local_predicate_evidence(signed, "val < unit", 3, literal);
+            assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+        }
+        let values = super::conditional_literal_results(
+            "if qty + 1 > 3 { -(5) } else if flag { { 7 } } else { 9 }",
+        );
+        assert_eq!(values, vec!["-5", "7", "9"]);
+        let values =
+            super::conditional_literal_results("if qty + 1 > 3 { let x = 7; x } else { 9 + 1 }");
+        assert!(values.is_empty(), "{values:?}");
+        let guard = "fn pick(val: u32, qty: u32) -> bool {\n    let unit = if qty > 3 { 1 } else { 2 };\n    val < unit\n}\n";
+        let not_boundary = local_predicate_evidence(guard, "val < unit", 3, "3");
+        assert_ne!(
+            not_boundary.state,
+            StageState::Yes,
+            "{}",
+            not_boundary.summary
+        );
+        let boundary = local_predicate_evidence(guard, "val < unit", 3, "2");
+        assert_eq!(boundary.state, StageState::Yes, "{}", boundary.summary);
     }
 
     #[test]

@@ -1,0 +1,39 @@
+# missed-txt is a plain-text projection of the same candidate-actionable
+# finding selection the github annotations use, not another classifier or
+# schema owner (#13626).
+[[behavior]]
+id = "RIPR-SPEC-0428"
+name = "Check missed-txt one-line gap list"
+spec = "docs/specs/RIPR-SPEC-0428-check-missed-txt-gap-lines.md"
+tests = [
+  "crates/ripr/src/output/missed_txt.rs::tests::lists_sorted_gap_lines_and_omits_exposed",
+  "crates/ripr/src/output/missed_txt.rs::tests::ordering_is_independent_of_finding_order",
+  "crates/ripr/src/output/missed_txt.rs::tests::exposed_only_and_empty_runs_print_nothing",
+  "crates/ripr/src/output/missed_txt.rs::tests::suppressed_and_non_current_findings_are_not_listed",
+  "crates/ripr/src/output/missed_txt.rs::tests::output_carries_no_runtime_mutation_claims",
+  "crates/ripr/src/output/missed_txt.rs::tests::refusal_is_one_comment_line_never_a_gap",
+  "crates/ripr/src/output/missed_txt.rs::tests::unanalyzed_working_tree_is_disclosed_and_matches_github_states",
+  "crates/ripr/src/output/missed_txt.rs::tests::gitignored_working_tree_paths_are_disclosed",
+  "crates/ripr/src/output/missed_txt.rs::tests::all_findings_omitted_is_never_an_empty_stream",
+  "crates/ripr/src/output/missed_txt.rs::tests::missing_scope_is_disclosed",
+  "crates/ripr/src/output/missed_txt.rs::tests::unanalyzed_preview_language_files_are_disclosed",
+  "crates/ripr/src/output/missed_txt.rs::tests::incomplete_outcome_without_findings_is_a_comment",
+  "crates/ripr/src/output/missed_txt.rs::tests::incomplete_outcome_with_findings_leads_with_the_comment",
+  "crates/ripr/src/output/missed_txt.rs::tests::complete_outcome_with_limitations_is_disclosed",
+  "crates/ripr/src/output/missed_txt.rs::tests::complete_outcome_without_limitations_and_no_gaps_prints_nothing",
+  "crates/ripr/src/output/missed_txt.rs::tests::severity_off_findings_are_not_listed",
+  "crates/ripr/src/output/missed_txt.rs::tests::comment_like_expression_stays_on_a_gap_line",
+  "crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::suppression_policy_is_not_refused_on_missed_txt",
+]
+code = [
+  "crates/ripr/src/output/missed_txt.rs",
+  "crates/ripr/src/output/github.rs",
+  "crates/ripr/src/output/format.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0428-check-missed-txt-gap-lines.md",
+  "docs/OUTPUT_SCHEMA.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

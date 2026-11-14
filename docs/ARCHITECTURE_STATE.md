@@ -143,8 +143,10 @@ programmatic error handling for library consumers.
 - `SeamKind` (7 variants) is Rust-only; preview adapters use `ProbeFamily`
   (8 variants) with no crosswalk
 - Perl has its own `OracleKind`/`OracleStrength` (12/5 vs domain 9/6)
-- Python/TS never emit `ReachableUnrevealed`, `InfectionUnknown`,
-  `PropagationUnknown`
+- Python emits `ReachableUnrevealed` only when every related test replaces
+  the changed owner itself via `monkeypatch`/`patch` (RIPR-SPEC-0238 row 2a,
+  never a credit); Python/TS never emit `InfectionUnknown`,
+  `PropagationUnknown`, and TS never emits `ReachableUnrevealed`
 - `analyze_repo` is a stub for Python and TypeScript
 - Run-status logic duplicated between `backend.rs` and `diagnostics.rs` with
   drift

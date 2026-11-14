@@ -135,7 +135,9 @@ them.
   lookalike code or a foreign source is budgeted like any unstamped
   diagnostic. Because it is exempt, the producer bounds it instead: at most
   one marker per file and at most 50 markers per analysis snapshot (files in
-  path order); the status `withheld_findings` counts still disclose every
+  path order); since #13442 per-line preview rows share that same 50 cap, with
+  markers reserved first, and rows beyond the remaining cap are silent apart
+  from the marker count; the status `withheld_findings` counts still disclose every
   withheld finding beyond the cap. The same code, exemption and cap cover the
   static-gap marker for non-preview files (#11798); the two share the 50-marker
   budget and differ only in `data.kind` and message.

@@ -658,6 +658,46 @@ mod fixture_ownership {
     }
 }
 
+/// A crate root an explicit `[[test]]`, `[[bin]]`, `[[example]]` or `[[bench]]`
+/// `path` names is a recognized target root, like its autodiscovered twin
+/// under `tests/` or `src/bin/`. The same file with no declaring target is an
+/// orphan no crate is known to compile and stays unplaced.
+#[test]
+fn an_explicitly_declared_target_entry_is_a_recognized_root() -> Result<(), String> {
+    const BASE: &str = "[package]\nname = \"demo\"\nversion = \"0.0.0\"\nedition = \"2024\"\n";
+    const LIB: &str = "pub fn weight(x: u32) -> u32 { 3 * x }\n";
+    const PIN: &str = "#[test]\nfn pin() {\n    assert_eq!(demo::weight(4), 12);\n}\n";
+    let root_of = |manifest: &str, file: &str| -> Result<Option<PathBuf>, String> {
+        let manifest = format!("{BASE}{manifest}");
+        let fixture = fixture_from_files(
+            "declared-target-root",
+            &[
+                ("Cargo.toml", manifest.as_str()),
+                ("src/lib.rs", LIB),
+                (file, PIN),
+            ],
+        )?;
+        Ok(TargetRoots::new(&fixture).root(Path::new(file), &fixture))
+    };
+    for kind in ["test", "bin", "example", "bench"] {
+        let declared = format!("\n[[{kind}]]\nname = \"pin\"\npath = \"it/pin.rs\"\n");
+        assert_eq!(
+            root_of(&declared, "it/pin.rs")?,
+            Some(PathBuf::from("it/pin.rs")),
+            "a declared [[{kind}]] path is its own crate root"
+        );
+    }
+    assert_eq!(
+        root_of("", "it/pin.rs")?,
+        None,
+        "an undeclared file outside the layout is no crate's root"
+    );
+    // A declared path names that file only, not a sibling beside it.
+    let other = "\n[[test]]\nname = \"other\"\npath = \"it/other.rs\"\n";
+    assert_eq!(root_of(other, "it/pin.rs")?, None);
+    Ok(())
+}
+
 /// #11123: a glob in a file that composes only under another explicitly
 /// declared Cargo target is not a file of the test's crate, so it cannot bind
 /// the library's name there. Every control where the file may still be the

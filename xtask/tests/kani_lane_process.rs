@@ -17,11 +17,11 @@ if [ "$#" -eq 2 ] && [ "$1" = kani ] && [ "$2" = --version ]; then
   printf 'synthetic cargo-kani fixture; not a verifier\n'
   exit 0
 fi
-if [ "$*" != 'kani -p ripr -Z unstable-options --harness-timeout 1s' ]; then
-  echo 'unexpected synthetic cargo invocation' >&2
-  exit 97
-fi
-cat "$KANI_CONTROL_ROOT/native-output"
+case "$*" in
+  'kani -p ripr -Z unstable-options --harness-timeout 1s') cat "$KANI_CONTROL_ROOT/native-output" ;;
+  'kani -p ripr-contract -Z unstable-options --harness-timeout 1s') cat "$KANI_CONTROL_ROOT/native-contract-output" ;;
+  *) echo 'unexpected synthetic cargo invocation' >&2; exit 97 ;;
+esac
 case "$KANI_CONTROL_MODE" in
   success) exit 0 ;;
   failure) exit 7 ;;
@@ -31,8 +31,7 @@ case "$KANI_CONTROL_MODE" in
 esac
 "#;
 
-const PASS: &str =
-    "Checking harness a::one...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.1s\n";
+const PASS: &str = "Checking harness a::one...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.1s\n";
 
 struct Fixture(PathBuf);
 
@@ -54,11 +53,13 @@ impl Fixture {
         fs::create_dir(&root).map_err(|error| error.to_string())?;
         let fixture = Self(root);
         fs::create_dir_all(fixture.0.join("crates/ripr/src")).map_err(|error| error.to_string())?;
+        fs::create_dir_all(fixture.0.join("crates/ripr-contract/src"))
+            .map_err(|error| error.to_string())?;
         fs::create_dir(fixture.0.join("bin")).map_err(|error| error.to_string())?;
         for (file, name) in harnesses {
             fs::write(
                 fixture.0.join("crates/ripr/src").join(file),
-                format!("#[kani::proof]\nfn {name}() {{}}\n"),
+                format!("#[kani::proof]\nfn {name}() {{ kani::cover!(true); }}\n"),
             )
             .map_err(|error| error.to_string())?;
         }
@@ -99,14 +100,14 @@ impl Fixture {
             }
         })?;
         let calls = fs::read_to_string(self.0.join("calls")).map_err(|error| error.to_string())?;
-        assert_eq!(
-            calls.lines().collect::<Vec<_>>(),
-            [
-                "kani --version",
-                "kani -p ripr -Z unstable-options --harness-timeout 1s",
-            ],
-            "the actual driver must reach the synthetic child exactly once"
-        );
+        let mut expected = vec![
+            "kani --version",
+            "kani -p ripr -Z unstable-options --harness-timeout 1s",
+        ];
+        if self.0.join("crates/ripr-contract/src/contract.rs").exists() {
+            expected.push("kani -p ripr-contract -Z unstable-options --harness-timeout 1s");
+        }
+        assert_eq!(calls.lines().collect::<Vec<_>>(), expected);
         let report = fs::read_to_string(self.0.join("target/ripr/reports/kani.md"))
             .map_err(|error| error.to_string())?;
         assert_eq!(
@@ -158,6 +159,73 @@ fn kani_runner_retains_unique_success_and_explicit_failure() -> Result<(), Strin
 }
 
 #[test]
+fn kani_runner_requires_observed_complete_cover_evidence() -> Result<(), String> {
+    for (evidence, status) in [
+        ("", "NOT-ESTABLISHED"),
+        (" ** 0 of 0 cover properties satisfied\n", "NOT-ESTABLISHED"),
+        (
+            " ** invalid of 1 cover properties satisfied\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            " ** 1 of 1 cover properties satisfied\n ** 1 of 1 cover properties satisfied\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            " ** 1 of 2 cover properties satisfied (1 undetermined)\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            "Check 1: one.cover.1\n\t - Status: UNDETERMINED\n ** 1 of 1 cover properties satisfied\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            "Check 1: one.cover.1\n\t - Status: ERROR\n ** 1 of 1 cover properties satisfied\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            " ** 1 of 1 cover properties satisfied (1 unreachable)\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            "Check 1: one.cover.1\n\t - Status: UNREACHABLE\n ** 1 of 1 cover properties satisfied\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            "Check 1: one.cover.1\n\t - Status: COVERED\n ** 1 of 1 cover properties satisfied\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            "Check 1: one.cover.1\n\t - Status: UNCOVERED\n ** 1 of 1 cover properties satisfied\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            "Check 1: one.cover.1\n\t - Status: UNSATISFIABLE\n ** 0 of 1 cover properties satisfied\n",
+            "FAILED",
+        ),
+        (
+            " ** 1 of 2 cover properties satisfied (1 unreachable)\n",
+            "FAILED",
+        ),
+    ] {
+        for allow_empty in [false, true] {
+            let native =
+                format!("Checking harness a::one...\n{evidence}VERIFICATION:- SUCCESSFUL\n");
+            let fixture = Fixture::new(&[("one.rs", "one")], &native)?;
+            let observed = fixture.run("success", allow_empty)?;
+            assert_eq!(observed.output.status.code(), Some(1), "{native}");
+            assert_row(&observed.report, "one", "one.rs", status);
+            assert!(
+                !observed.report.contains("| VERIFIED |"),
+                "incomplete cover evidence must never be promoted: {}",
+                observed.report,
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn kani_runner_refuses_success_text_after_nonzero_or_signal() -> Result<(), String> {
     for mode in ["failure", "signal"] {
         for allow_empty in [false, true] {
@@ -168,7 +236,7 @@ fn kani_runner_refuses_success_text_after_nonzero_or_signal() -> Result<(), Stri
             assert!(
                 observed
                     .report
-                    .contains("NOT-ESTABLISHED: cargo kani exited")
+                    .contains("NOT-ESTABLISHED: ripr: cargo kani exited")
             );
             assert!(String::from_utf8_lossy(&observed.output.stderr).contains("cargo kani exited"));
         }
@@ -178,9 +246,9 @@ fn kani_runner_refuses_success_text_after_nonzero_or_signal() -> Result<(), Stri
 
 #[test]
 fn kani_runner_refuses_ambiguous_sources_in_either_native_order() -> Result<(), String> {
-    let success = "Checking harness a::same...\nVERIFICATION:- SUCCESSFUL\n";
+    let success = "Checking harness a::same...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n";
     let failure = "Checking harness b::same...\nVERIFICATION:- FAILED\n";
-    let unique = "Checking harness c::unique...\nVERIFICATION:- SUCCESSFUL\n";
+    let unique = "Checking harness c::unique...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n";
     for text in [
         format!("{success}{unique}"),
         format!("{success}{failure}{unique}"),
@@ -223,10 +291,41 @@ fn kani_runner_preserves_completed_rows_after_a_real_timeout() -> Result<(), Str
     assert!(
         observed
             .report
-            .contains("NOT-ESTABLISHED: cargo kani timed out")
+            .contains("NOT-ESTABLISHED: ripr: cargo kani timed out")
     );
     assert_row(&observed.report, "one", "one.rs", "VERIFIED");
     assert_row(&observed.report, "two", "two.rs", "NOT-ESTABLISHED");
     assert!(String::from_utf8_lossy(&observed.output.stderr).contains("1 not established"));
+    Ok(())
+}
+
+#[test]
+fn kani_runner_requires_contract_package_results() -> Result<(), String> {
+    for (native, success) in [
+        (
+            "Checking harness domain::contract...\n** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n",
+            true,
+        ),
+        ("compiled without a verdict\n", false),
+        (
+            "Checking harness domain::contract...\n** 0 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n",
+            false,
+        ),
+    ] {
+        let fixture = Fixture::new(&[("one.rs", "one")], PASS)?;
+        fs::write(
+            fixture.0.join("crates/ripr-contract/src/contract.rs"),
+            "#[kani::proof]\nfn contract() {}\n",
+        )
+        .map_err(|e| e.to_string())?;
+        fs::write(fixture.0.join("native-contract-output"), native).map_err(|e| e.to_string())?;
+        let observed = fixture.run("success", false)?;
+        assert_eq!(observed.output.status.success(), success);
+        assert!(
+            observed
+                .report
+                .contains("crates/ripr-contract/src/contract.rs")
+        );
+    }
     Ok(())
 }

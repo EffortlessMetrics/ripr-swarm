@@ -11,6 +11,6 @@ tests = [
 code = [
   "crates/ripr/src/analysis/classify/activation.rs",
   "crates/ripr/src/analysis/classifier/finding.rs",
-  "crates/ripr/src/domain/probe.rs",
+  "crates/ripr-contract/src/domain/probe.rs",
   "crates/ripr/src/output/human/explain.rs",
 ]

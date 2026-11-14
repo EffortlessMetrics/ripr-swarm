@@ -693,7 +693,7 @@ mod tests {
         for release_command in [
             "cargo xtask check-pr",
             "cargo package -p ripr --list",
-            "cargo publish -p ripr --dry-run",
+            "cargo xtask publish-dry-run",
         ] {
             assert!(
                 !commands.contains(&release_command),
@@ -725,7 +725,7 @@ mod tests {
                 "cargo clippy --workspace --all-targets -- -D warnings",
                 "cargo xtask check-pr",
                 "cargo package -p ripr --list",
-                "cargo publish -p ripr --dry-run",
+                "cargo xtask publish-dry-run",
                 "cargo xtask release-readiness",
             ]
         );
@@ -758,7 +758,7 @@ mod tests {
             "cargo xtask check-output-contracts",
             "cargo test --workspace",
             "cargo xtask vscode-compile",
-            "cargo publish -p ripr --dry-run",
+            "cargo xtask publish-dry-run",
             "cargo xtask check-identity-registry",
         ] {
             assert!(
@@ -771,7 +771,7 @@ mod tests {
 
     #[test]
     fn identity_registry_file_plan_runs_the_registry_check() -> Result<(), String> {
-        let plan = plan_for(&["crates/ripr/src/domain/identity/catalog.rs"])?;
+        let plan = plan_for(&["crates/ripr-contract/src/domain/identity/catalog.rs"])?;
         assert_eq!(plan.routed_pack_ids, vec!["identity-registry"]);
         assert!(!plan.full_proof);
         assert!(!plan.release_proof_required);

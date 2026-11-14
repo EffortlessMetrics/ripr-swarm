@@ -33,10 +33,13 @@ fn write(root: &Path, path: &str, bytes: impl AsRef<[u8]>) -> Result<(), String>
 /// Analysis identity is independent of the provenance-bound inspect route
 /// (#7257/#7258). Named `--write-artifact`, stdin `--diff -`, and a literal
 /// `./-` file must agree on findings while `detail_route` follows the source.
+/// `finding_routes` (#11976) embeds the same input-bound explain spelling per
+/// finding, so it is provenance-bound too and stripped from the comparison.
 fn without_canonical_next_action(value: &serde_json::Value) -> serde_json::Value {
     let mut stripped = value.clone();
     if let Some(object) = stripped.as_object_mut() {
         object.remove("canonical_next_action");
+        object.remove("finding_routes");
     }
     stripped
 }
@@ -126,6 +129,25 @@ fn exercise(root: &Path, patch: &str, unrelated: &str, selector: &str) -> Result
         &stdin_parsed,
         "ordinary stdin must retain the named-file next-action decision",
     )?;
+    // Each side's per-finding explain route names its own input spelling.
+    let routes_explain = |value: &serde_json::Value| -> Result<String, String> {
+        value["finding_routes"][0]["explain_command"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| format!("check JSON must carry finding_routes: {value}"))
+    };
+    let named_explain = routes_explain(&parsed)?;
+    if !named_explain.contains("--from ") || !named_explain.contains("accepted.json") {
+        return Err(format!(
+            "named explain route must follow the artifact: {named_explain}"
+        ));
+    }
+    let stdin_explain = routes_explain(&stdin_parsed)?;
+    if !stdin_explain.contains("--diff -") || stdin_explain.contains("--from ") {
+        return Err(format!(
+            "stdin explain route must keep --diff -: {stdin_explain}"
+        ));
+    }
     let named_route = inspect_route(&parsed)?;
     if !named_route.contains("--from ") || !named_route.contains("accepted.json") {
         return Err(format!(

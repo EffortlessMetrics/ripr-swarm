@@ -97,7 +97,7 @@ selected source in the `ripr` output channel:
 1. ripr.server.path
 2. bundled server binary, if present
 3. downloaded cached server binary
-4. ripr on PATH, when ripr.server.version is empty (before any download)
+4. ripr on PATH, when ripr.server.version is empty and its version is not older than the expected server version (before any download)
 5. verified first-run download from GitHub Releases
 6. ripr on PATH, when ripr.server.version is set or the download failed
 7. actionable error
@@ -207,7 +207,7 @@ place to check when no diagnostics appear.
 
 - disabled by `ripr.enabled = false` (main status-bar item hidden; `ripr: Show Status` still names it)
 - workspace unresolved (main status-bar item stays visible as `ripr: open workspace`)
-- server unavailable (main status-bar item hidden; the missing-server warning and `ripr: Show Status` still name it)
+- server unavailable (main status-bar item stays visible as `ripr: server missing`; clicking it runs `ripr: Show Status`)
 - analysis queued
 - analysis running
 - analysis complete (ripr-flagged changes present)
@@ -520,6 +520,12 @@ instead reads
 
 Download, HTTP, checksum, and manifest failures use diagnostic/retry
 guidance instead of `cargo install ripr`.
+
+When the download never reached its host (no DNS answer, a refused or dropped
+connection, or the 30-second fetch timeout), the message says so and names the
+offline route: check the network connection or proxy and retry, or set
+`ripr.server.path` to a `ripr` binary already on the machine
+(`ripr.server.downloadBaseUrl` for a mirror).
 
 Actions depend on the resolution failure kind.
 

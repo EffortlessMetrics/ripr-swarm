@@ -65,7 +65,7 @@ impl CommentMode {
                  `--mode` out, or pass `off`, to publish no comments)"
                     .to_string(),
             ),
-            _ => Err(crate::cli::unknown_value(
+            _ => Err(crate::accepted_value::unknown_value(
                 "pr-comments plan mode",
                 value,
                 &["off", "plan", "inline"],
@@ -877,6 +877,31 @@ fn placement_from_comment(item: &Value) -> Option<PlanPlacement> {
 }
 
 fn comment_body(item: &Value) -> String {
+    let body = card_body(item);
+    // A card placed on another changed line of the seam's function names the
+    // gap's own line first (#14303), so "Changed behavior" is not read as the
+    // line the comment sits on.
+    let Some((line, expression)) = super::review_comments::displaced_seam_location(item) else {
+        return body;
+    };
+    let mut note = format!("Gap at line {line} of this function");
+    if !expression.is_empty() {
+        note.push_str(": ");
+        note.push_str(&code_span(&bounded_field(
+            expression,
+            CODE_FIELD_CHAR_BUDGET,
+        )));
+    }
+    note.push_str(". This comment sits on the nearest changed line.\n\n");
+    // `prose` is a fixpoint, so the already-rendered body is unchanged by a
+    // second pass; the note is parsed in its real block context.
+    match body.split_once("\n\n") {
+        Some((heading, rest)) => prose(&format!("{heading}\n\n{note}{rest}")),
+        None => prose(&format!("{body}\n\n{note}")),
+    }
+}
+
+fn card_body(item: &Value) -> String {
     if let Some(card) = item.get("repair_card").and_then(Value::as_object) {
         let gap_kind = card
             .get("gap_kind")
@@ -1197,6 +1222,33 @@ mod tests {
     use super::*;
     use crate::output::test_support::{read_file, repo_root};
     use std::path::PathBuf;
+
+    /// #14303: a card GitHub could only place on another changed line of the
+    /// seam's function names the gap's own line and expression right under
+    /// the heading; an exact placement is unchanged.
+    #[test]
+    fn inline_comment_body_names_the_gap_line_when_placed_elsewhere() {
+        let card = |mode: &str| {
+            serde_json::json!({
+                "missing_discriminator": "5_000 (equality boundary)",
+                "placement": {"path": "src/pricing.rs", "line": 3, "mode": mode},
+                "source_location": {"file": "src/pricing.rs", "line": 5},
+                "seam": {"file": "src/pricing.rs", "line": 5, "expression": "total_cents >= 5_000"}
+            })
+        };
+        for mode in ["owner_function_changed_line", "same_file_changed_line"] {
+            let body = comment_body(&card(mode));
+            assert!(
+                body.starts_with(
+                    "### ripr gap: missing boundary assertion\n\nGap at line 5 of this function: `total_cents >= 5_000`. This comment sits on the nearest changed line.\n\nChanged behavior:"
+                ),
+                "{mode}: {body}"
+            );
+        }
+        let exact = comment_body(&card("exact_seam_line"));
+        assert!(!exact.contains("Gap at line"), "{exact}");
+        assert!(exact.starts_with("### ripr gap: missing boundary assertion\n\nChanged behavior:"));
+    }
 
     #[test]
     fn inline_comment_body_prefers_gap_repair_card() {

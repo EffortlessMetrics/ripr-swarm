@@ -398,7 +398,7 @@ fn straight_line_argument(argument: &ast::Expr) -> bool {
 /// another harness attribute. No recorded attribute (the lexical fallback)
 /// is refused too.
 fn only_plain_test_attribute(test: &TestSummary) -> bool {
-    matches!(test.attrs.as_slice(), [only] if compact(only) == "#[test]")
+    matches!(&*test.attrs, [only] if compact(only) == "#[test]")
 }
 
 fn call_last_segment(call: &ast::CallExpr) -> Option<String> {

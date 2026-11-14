@@ -1,7 +1,9 @@
 //! #11879: a first `ripr check` in a project whose git ignore rules do not
 //! cover ripr's artifact root says so once on stderr, names the exact
 //! `.gitignore` entry, and changes nothing on stdout. `--quiet` and a covering
-//! entry silence it. This drives the real binary, so the `check` command's own
+//! entry silence it. The default `target/ripr` tree ignores itself, so in
+//! practice the hint is left for a tree ripr cannot mark (a user-owned ignore
+//! file there) and for relocated cache bases. This drives the real binary, so the `check` command's own
 //! contract is exercised, not only the shared doctor verdict.
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -79,17 +81,148 @@ fn check(root: &Path, extra: &[&str]) -> Result<Output, String> {
 
 const ENTRY: &str = "Add this line to .gitignore: /target/ripr/";
 
+fn git_stdout(root: &Path, args: &[&str]) -> Result<String, String> {
+    let out = Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .output()
+        .map_err(|error| format!("spawn git {args:?}: {error}"))?;
+    if !out.status.success() {
+        return Err(format!("git {args:?} failed"));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+const SELF_IGNORE: &str =
+    "# Created by ripr: everything under target/ripr is ripr's own disposable output.\n*\n";
+
+/// Zero setup: a Python project that does not ignore Cargo's `target/` gets
+/// no `.gitignore` chore from its first `check` or `pilot`. ripr's own output tree
+/// ignores itself, so `git status` is exactly as clean afterwards as before,
+/// and nothing on stdout changes.
 #[test]
-fn unignored_root_gets_one_stderr_hint_and_stdout_is_unchanged() -> Result<(), String> {
+fn first_check_leaves_git_status_clean_without_a_gitignore_chore() -> Result<(), String> {
     let scratch = project("hint")?;
+    // Fixture: the project really is unignored and clean before ripr runs.
+    assert!(!scratch.0.join(".gitignore").exists());
+    assert!(!scratch.0.join("target").exists());
+    let status_before = git_stdout(&scratch.0, &["status", "--porcelain"])?;
+    assert!(!status_before.contains("target"), "{status_before}");
+    let out = check(&scratch.0, &[])?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stderr.contains(".gitignore"), "{stderr}");
+    assert!(!stdout.contains(".gitignore"), "{stdout}");
+    assert_eq!(
+        git_stdout(&scratch.0, &["status", "--porcelain"])?,
+        status_before
+    );
+    // `pilot` writes its packet under target/ripr/pilot; the first write
+    // into the guarded tree gives it the self-ignore file.
+    let pilot = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(["pilot", "--root"])
+        .arg(&scratch.0)
+        .output()
+        .map_err(|error| format!("spawn ripr pilot: {error}"))?;
+    let pilot_stderr = String::from_utf8_lossy(&pilot.stderr);
+    assert!(
+        scratch
+            .0
+            .join("target/ripr/pilot/pilot-summary.json")
+            .is_file(),
+        "{pilot_stderr}"
+    );
+    assert!(!pilot_stderr.contains(".gitignore"), "{pilot_stderr}");
+    assert_eq!(
+        std::fs::read_to_string(scratch.0.join("target/ripr/.gitignore"))
+            .map_err(|error| error.to_string())?,
+        SELF_IGNORE
+    );
+    assert_eq!(
+        git_stdout(&scratch.0, &["status", "--porcelain"])?,
+        status_before
+    );
+    let json = check(&scratch.0, &["--format", "json"])?;
+    let json_stdout = String::from_utf8_lossy(&json.stdout);
+    assert!(!json_stdout.contains(".gitignore"), "{json_stdout}");
+    // The repository's own `.gitignore` is never created or edited.
+    assert!(!scratch.0.join(".gitignore").exists());
+    Ok(())
+}
+
+/// A `target/ripr` tree an older ripr left unignored is adopted on the next
+/// `check`: it gains the self-ignore file before the verdict, so the run
+/// neither prints the hint nor leaves `?? target/` behind.
+#[test]
+fn existing_unignored_tree_is_adopted_before_the_verdict() -> Result<(), String> {
+    let scratch = project("adopt")?;
+    std::fs::create_dir_all(scratch.0.join("target/ripr/cache"))
+        .map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("target/ripr/legend-seen"), "1\n")
+        .map_err(|error| error.to_string())?;
+    // Fixture: git really reports the old tree as untracked content.
+    let status_before = git_stdout(&scratch.0, &["status", "--porcelain"])?;
+    assert!(status_before.contains("?? target/\n"), "{status_before}");
+    let out = check(&scratch.0, &[])?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains(ENTRY), "{stderr}");
+    assert_eq!(
+        git_stdout(&scratch.0, &["status", "--porcelain"])?,
+        status_before.replace("?? target/\n", "")
+    );
+    Ok(())
+}
+
+/// A `target/ripr/.gitignore` the user wrote is theirs: ripr never rewrites
+/// it, and when it does not cover ripr's output the hint still names the
+/// exact entry, once, on stderr only.
+#[test]
+fn a_user_owned_ignore_file_is_kept_and_an_uncovered_tree_still_gets_the_hint() -> Result<(), String>
+{
+    let scratch = project("user-owned")?;
+    std::fs::create_dir_all(scratch.0.join("target/ripr")).map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("target/ripr/.gitignore"), "# mine\n")
+        .map_err(|error| error.to_string())?;
     let out = check(&scratch.0, &[])?;
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(stderr.matches(ENTRY).count(), 1, "{stderr}");
     assert!(!stdout.contains(".gitignore"), "{stdout}");
-    let json = check(&scratch.0, &["--format", "json"])?;
-    let json_stdout = String::from_utf8_lossy(&json.stdout);
-    assert!(!json_stdout.contains(".gitignore"), "{json_stdout}");
+    assert_eq!(
+        std::fs::read_to_string(scratch.0.join("target/ripr/.gitignore"))
+            .map_err(|error| error.to_string())?,
+        "# mine\n"
+    );
+    Ok(())
+}
+
+/// A user-owned `target/ripr/.gitignore` that ignores most of the tree but
+/// unignores `reports/` still leaves reports addable, so the hint must keep
+/// firing: only ripr's own exact `*` file counts as covering the tree.
+#[test]
+fn a_user_negation_rule_keeps_the_hint() -> Result<(), String> {
+    let scratch = project("negation")?;
+    std::fs::create_dir_all(scratch.0.join("target/ripr/reports"))
+        .map_err(|error| error.to_string())?;
+    std::fs::write(
+        scratch.0.join("target/ripr/.gitignore"),
+        "*\n!reports/\n!reports/**\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("target/ripr/reports/result.json"), "{}\n")
+        .map_err(|error| error.to_string())?;
+    // Fixture: git really would stage the report.
+    let status = git_stdout(
+        &scratch.0,
+        &["status", "--porcelain", "--untracked-files=all"],
+    )?;
+    assert!(
+        status.contains("target/ripr/reports/result.json"),
+        "{status}"
+    );
+    let out = check(&scratch.0, &[])?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(stderr.matches(ENTRY).count(), 1, "{stderr}");
     Ok(())
 }
 
@@ -212,5 +345,42 @@ fn committed_cache_trap_names_the_untrack_cure_and_advises_once_per_run() -> Res
             "stdout must stay free of the advisory, run {run}: {stdout}"
         );
     }
+    Ok(())
+}
+
+/// A `RIPR_CACHE_DIR` base relocated inside the repository is an artifact
+/// root ripr's writers use, so an uncovered relocated base is named, and
+/// covering it silences the hint even though the default root is covered.
+#[test]
+fn relocated_cache_base_is_probed_and_named() -> Result<(), String> {
+    let scratch = project("relocated")?;
+    std::fs::write(scratch.0.join(".gitignore"), "/target/ripr/\n")
+        .map_err(|error| error.to_string())?;
+    let cache = scratch.0.join(".ripr-cache");
+    let run = |scratch: &Scratch| -> Result<String, String> {
+        let out = Command::new(env!("CARGO_BIN_EXE_ripr"))
+            .args(["check", "--base", "main", "--root"])
+            .arg(&scratch.0)
+            .env("RIPR_CACHE_DIR", &cache)
+            .output()
+            .map_err(|error| format!("spawn ripr check: {error}"))?;
+        Ok(String::from_utf8_lossy(&out.stderr).into_owned())
+    };
+    let stderr = run(&scratch)?;
+    assert!(
+        stderr.contains("Add this line to .gitignore: /.ripr-cache/"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("/target/ripr/"), "{stderr}");
+    std::fs::write(
+        scratch.0.join(".gitignore"),
+        "/target/ripr/\n/.ripr-cache/\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let covered = run(&scratch)?;
+    assert!(
+        !covered.contains("Add this line to .gitignore"),
+        "{covered}"
+    );
     Ok(())
 }

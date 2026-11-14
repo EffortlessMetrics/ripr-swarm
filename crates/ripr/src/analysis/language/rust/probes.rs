@@ -38,7 +38,8 @@ pub(super) fn apply_verus_macro_region_limit(
     // line, so its region lives in the reconstructed old source at the line's
     // old-side number; an added-side probe is looked up in the new source.
     let removed_side = probe.after.is_none() && probe.before.is_some();
-    let (region, side) = if removed_side {
+    let mut old_guard_facts: Option<Vec<crate::analysis::verus::VerusGuardFact>> = None;
+    let (region, side, guard_line) = if removed_side {
         let before = probe.before.as_deref().unwrap_or_default().trim();
         let Some(old_line) = changed
             .removed_lines
@@ -53,19 +54,29 @@ pub(super) fn apply_verus_macro_region_limit(
         else {
             return;
         };
+        old_guard_facts = Some(crate::analysis::verus::verus_guard_facts(&old_source));
         (
             crate::analysis::probes::verus_region_lines(&old_source, old_line),
             " of the old file",
+            old_line,
         )
     } else {
         (
             crate::analysis::probes::verus_region_lines(&facts.source, probe.location.line),
             "",
+            probe.location.line,
         )
     };
     let Some((start, end)) = region else {
         return;
     };
+    let guard_facts = old_guard_facts
+        .as_deref()
+        .unwrap_or(facts.verus_guard_facts.as_slice());
+    if let Some(guard) = crate::analysis::verus::guard_fact_at_line(guard_facts, guard_line) {
+        name_verus_guard_fact(finding, guard, side);
+        return;
+    }
     name_verus_region(
         finding,
         start,
@@ -102,6 +113,22 @@ pub(super) fn apply_verus_macro_region_limit_in_repo_file(
     else {
         return;
     };
+    if let Some(guard) =
+        crate::analysis::verus::guard_fact_at_line(&facts.verus_guard_facts, probe.location.line)
+            .or_else(|| {
+                if probe.location.line == start {
+                    facts
+                        .verus_guard_facts
+                        .iter()
+                        .find(|fact| fact.region_start_line == start && fact.region_end_line == end)
+                } else {
+                    None
+                }
+            })
+    {
+        name_verus_guard_fact(finding, guard, "");
+        return;
+    }
     name_verus_region(
         finding,
         start,
@@ -142,6 +169,62 @@ fn name_verus_region(
     );
     finding.recommended_next_step = Some(format!(
         "{subject} is inside `verus!`; ripr cannot judge it. Run the Verus verifier for spec and proof edits; no test is requested by this finding."
+    ));
+}
+
+/// RIPR-SPEC-0374 (#10747): an admitted guard fact names the owner, mode,
+/// clauses and trust boundary instead of the generic macro-region limit.
+fn name_verus_guard_fact(
+    finding: &mut Finding,
+    guard: &crate::analysis::verus::VerusGuardFact,
+    side: &str,
+) {
+    use crate::analysis::verus::{VerusItemMode, VerusTrustBoundary};
+    finding.static_limit_kind = Some(StaticLimitKind::UnsupportedSyntax);
+    finding.stop_reasons.push(StopReason::ProcMacroOpaque);
+    finding.evidence.push(format!(
+        "verus_guard_fact: owner={} mode={:?} parser={} trust={:?}",
+        guard.owner_name, guard.mode, guard.parser_version, guard.trust
+    ));
+    finding.evidence.push(format!(
+        "verus_guard_fact_region: `verus!` lines {}-{}{}",
+        guard.region_start_line, guard.region_end_line, side
+    ));
+    finding.evidence.push(format!(
+        "verus_guard_fact_header: lines {}-{} requires={} ensures={} recommends={}",
+        guard.header_start_line,
+        guard.header_end_line,
+        guard.requires.len(),
+        guard.ensures.len(),
+        guard.recommends.len()
+    ));
+    finding.evidence.push(
+        "limitation_non_claim: static guard-fact admission only; ripr does not run Verus or establish specification adequacy"
+            .to_string(),
+    );
+    finding
+        .evidence
+        .push("limitation_analyzer_route: analysis/verus-dialect".to_string());
+    let subject = match guard.mode {
+        VerusItemMode::Proof => "This proof-function change",
+        VerusItemMode::Spec => "This spec-function change",
+        VerusItemMode::Exec => "This executable Verus item",
+    };
+    let trust_note = match guard.trust {
+        VerusTrustBoundary::ExternalBody
+        | VerusTrustBoundary::Assume
+        | VerusTrustBoundary::Admit => {
+            " Trusted or external-body semantics apply; ripr grants no checked-body verification credit."
+        }
+        VerusTrustBoundary::VerifierExternal => {
+            " This item is verifier-external; strong syntax does not imply a checked body."
+        }
+        VerusTrustBoundary::Checked => "",
+    };
+    finding.recommended_next_step = Some(format!(
+        "{subject} is bound to `{owner}` inside `verus!`.{trust_note} Run the Verus verifier; no test is requested by this finding.",
+        owner = guard.owner_name,
+        trust_note = trust_note
     ));
 }
 
@@ -299,8 +382,8 @@ pub(super) fn attach_changed_binding_predicate_evidence(
         _ => format!("`{}`", relation.initializer),
     };
     finding.evidence.push(format!(
-        "binding_predicate_relation: changed binding `{}` initializer {initializer_range} flows into predicate operand at line {}",
-        relation.binding, relation.predicate_line
+        "binding_predicate_relation: changed binding `{}` initializer {initializer_range} flows into predicate operand at line {} (changed `let {}` declared at line {})",
+        relation.binding, relation.predicate_line, relation.binding, relation.binding_line
     ));
     if !literal_byte_length_resolves(finding, relation)
         && let BindingValueResolution::Unresolved { earliest_operation } =
@@ -939,6 +1022,7 @@ mod tests {
                 crate::analysis::FileFacts {
                     path: PathBuf::from("src/lib.rs"),
                     source: source.into(),
+                    verus_guard_facts: crate::analysis::verus::verus_guard_facts(source),
                     ..crate::analysis::FileFacts::default()
                 },
             )]),
@@ -973,15 +1057,7 @@ mod tests {
             inside
                 .evidence
                 .iter()
-                .any(|line| line.contains("verus_macro_region_unsupported")),
-            "{:?}",
-            inside.evidence
-        );
-        assert!(
-            inside
-                .evidence
-                .iter()
-                .any(|line| line.contains("spanning lines 2-9")),
+                .any(|line| line.contains("verus_guard_fact: owner=inc")),
             "{:?}",
             inside.evidence
         );
@@ -1053,7 +1129,7 @@ mod tests {
             finding
                 .evidence
                 .iter()
-                .any(|line| line.contains("spanning lines 2-9 of the old file")),
+                .any(|line| line.contains("verus_guard_fact: owner=inc")),
             "{:?}",
             finding.evidence
         );
@@ -1079,14 +1155,14 @@ mod tests {
             start_line: 1,
             end_line: 8,
             body: body.into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         }
@@ -1230,6 +1306,7 @@ mod tests {
 
         let relation = ChangedBindingPredicateUse {
             binding: "end".to_string(),
+            binding_line: 2,
             initializer: "input.rfind(delim).map_or(0, |idx| idx)".to_string(),
             predicate_expression: "end == start".to_string(),
             predicate_line: 4,
@@ -1243,7 +1320,7 @@ mod tests {
         assert_eq!(finding.static_limit_kind, None);
         assert!(finding.stop_reasons.is_empty());
         assert!(finding.evidence.iter().any(|line| {
-            line == "binding_predicate_relation: changed binding `end` initializer `input.find(delim).map_or(0, |idx| idx)` -> `input.rfind(delim).map_or(0, |idx| idx)` flows into predicate operand at line 4"
+            line == "binding_predicate_relation: changed binding `end` initializer `input.find(delim).map_or(0, |idx| idx)` -> `input.rfind(delim).map_or(0, |idx| idx)` flows into predicate operand at line 4 (changed `let end` declared at line 2)"
         }));
         assert!(finding.evidence.iter().any(|line| {
             line.contains("binding_predicate_value_unresolved: operand value of `end` unresolved at earliest initializer operation `rfind`")

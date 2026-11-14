@@ -592,6 +592,12 @@ fn recommendation_from_sources(
     let verify_command = string_from_sources(&[
         (agent_record, &["recommendation", "verify_command"]),
         (agent_seam, &["verification", "verify_command"]),
+        // Brief schema 0.2 (#13673) states the bound verify command once
+        // under `next`; read it only when a seam selected this brief.
+        (
+            agent_seam.and(parsed.agent_packet.as_ref()),
+            &["next", "verify_after_edit"],
+        ),
         (guidance, &["llm_guidance", "verify_command"]),
         (summary_only, &["llm_guidance", "verify_command"]),
     ]);
@@ -1486,6 +1492,54 @@ mod tests {
         assert!(rendered.contains("assert_eq!(discounted_total(100, 100), 90)"));
         assert!(rendered.contains("\"verify_command\": \"ripr agent verify --json\""));
         assert!(!rendered.contains("legacy missing"));
+        Ok(())
+    }
+
+    /// #13673: brief schema 0.2 carries the bound verify command once under
+    /// `next`; a brief-only proof still recommends it.
+    #[test]
+    fn test_oracle_assistant_proof_reads_the_brief_next_verify_command() -> Result<(), String> {
+        let brief = r#"{
+          "schema_version": "0.2",
+          "top_seams": [
+            {
+              "seam_id": "brief-seam",
+              "owner": "pricing::discounted_total",
+              "file": "src/pricing.rs",
+              "line": 42,
+              "seam_kind": "predicate_boundary",
+              "grip_class": "weakly_gripped",
+              "verification": {"suggested_test_command": "cargo test boundary"}
+            }
+          ],
+          "next": {"verify_after_edit": "ripr agent verify --root /abs/repo --before b.json --after a.json --json"}
+        }"#;
+        let report = build_test_oracle_assistant_proof_report(TestOracleAssistantProofInput {
+            root: ".".to_string(),
+            pr_guidance_path: None,
+            agent_packet_path: Some("agent-brief.json".to_string()),
+            before_path: None,
+            after_path: None,
+            receipt_path: None,
+            ledger_path: None,
+            coverage_frontier_path: None,
+            gate_decision_path: None,
+            pr_guidance_json: None,
+            agent_packet_json: Some(Ok(brief.to_string())),
+            before_json: None,
+            after_json: None,
+            receipt_json: None,
+            ledger_json: None,
+            coverage_frontier_json: None,
+            gate_decision_json: None,
+        });
+        let rendered = render_test_oracle_assistant_proof_json(&report)?;
+        assert!(
+            rendered.contains(
+                "\"verify_command\": \"ripr agent verify --root /abs/repo --before b.json --after a.json --json\""
+            ),
+            "{rendered}"
+        );
         Ok(())
     }
 

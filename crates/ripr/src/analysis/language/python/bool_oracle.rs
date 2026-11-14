@@ -57,7 +57,10 @@ pub(super) fn credit_bare_bool_asserts<'a>(
             let Some(call) = &assertion.bare_bool_call else {
                 continue;
             };
-            if assertion.oracle_strength != OracleStrength::Smoke {
+            // Only a pin-less reading is re-read: smoke (`assert f(x)`), weak
+            // (`f(x) is True`) or an unrecognized helper (`assertIs`). An
+            // assertion already read as an exact pin is left alone.
+            if assertion.oracle_strength == OracleStrength::Strong {
                 continue;
             }
             let Some(owner) = unique_callee_owner(test, owners, call) else {

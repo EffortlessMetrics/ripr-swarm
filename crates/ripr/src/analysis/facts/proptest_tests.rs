@@ -609,3 +609,107 @@ fn original_empty_property_receipts_survive_index_paths_and_revoke_on_unchanged_
     assert_eq!(snapshot(&reused.index, true)?, expected);
     Ok(())
 }
+
+#[test]
+fn same_run_reuse_serves_identical_files_without_rebuilding_property_authority()
+-> Result<(), String> {
+    let fixture = Fixture::new()?;
+    // The no-rebuild and identity assertions hold on every host; only the
+    // admitted-state assertions need a verified proptest identity (skipped
+    // loudly by `proptest_identity_available`, as in the sibling tests).
+    let admitted = proptest_identity_available(&fixture.0);
+    let files = fixture.loaded()?;
+    let original =
+        build_index_from_loaded_files_with_cache_and_test_harnesses(&fixture.0, &files, &[])?;
+    let source_hash = original.files_content_hash.clone();
+    let before = if admitted {
+        Some(assert_state(&original.index, true, "before")?)
+    } else {
+        None
+    };
+    // Ordinary reuse revokes property authority when configuration moves
+    // under unchanged bytes; the same-run form keeps the run's one view.
+    fixture.write(".cargo/config.toml", "[env]\nPROPTEST_CASES='0'\n")?;
+    let (reused, builds) = super::index_build_probe::observe(|| {
+        reuse_cached_index_in_run(original, &fixture.0, &files, &[])
+    });
+    let reused = reused?;
+    assert_eq!(builds, 0, "identical files must not rebuild the index");
+    assert_eq!(reused.files_content_hash, source_hash);
+    if let Some(before) = before {
+        assert_eq!(assert_state(&reused.index, true, "same-run reuse")?, before);
+    }
+    // An added file still takes the ordinary path.
+    let mut changed = files.clone();
+    changed.push((
+        std::path::PathBuf::from("src/added.rs"),
+        b"pub fn added() -> u8 { 1 }\n".to_vec(),
+    ));
+    let extended = reuse_cached_index_in_run(reused, &fixture.0, &changed, &[])?;
+    assert!(
+        extended
+            .index
+            .files()
+            .get(std::path::Path::new("src/added.rs"))
+            .is_some()
+    );
+    Ok(())
+}
+
+#[test]
+fn same_run_extension_of_a_core_with_property_receipts_equals_a_fresh_build() -> Result<(), String>
+{
+    let fixture = Fixture::new()?;
+    if !proptest_identity_available(&fixture.0) {
+        eprintln!("SKIPPED: same-run extension test did not run (no proptest identity)");
+        return Ok(());
+    }
+    let files = fixture.loaded()?;
+    let paths = files
+        .iter()
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+    let fresh = build_index(&fixture.0, &paths)?;
+    assert_state(&fresh, true, "fresh")?;
+    // The admission core holds the property file (so it carries receipts) but
+    // not the file the main index adds, as in the diff pipeline.
+    let core_files = files
+        .iter()
+        .filter(|(path, _)| path != Path::new("tests/ordinary.rs"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let core =
+        build_index_from_loaded_files_with_cache_and_test_harnesses(&fixture.0, &core_files, &[])?;
+    assert_eq!(
+        core.index.proptest_receipts.len(),
+        1,
+        "the core must carry the receipts that used to force a rebuild"
+    );
+    let core_source = core
+        .index
+        .files()
+        .get(Path::new(PROPERTY_PATH))
+        .map(|file| std::sync::Arc::clone(&file.source))
+        .ok_or("the core must hold the property file")?;
+    let extended = reuse_cached_index_in_run(core, &fixture.0, &files, &[])?;
+    let extended_source = extended
+        .index
+        .files()
+        .get(Path::new(PROPERTY_PATH))
+        .map(|file| std::sync::Arc::clone(&file.source))
+        .ok_or("the extended index must hold the property file")?;
+    // A full rebuild re-parses every file into a fresh allocation; only the
+    // extension keeps the core's parsed file, so this fails if the fast path
+    // is not taken.
+    assert!(
+        std::sync::Arc::ptr_eq(&core_source, &extended_source),
+        "the extension must reuse the core's parsed property file"
+    );
+    assert_same(&fresh, &extended.index, true, "same-run extension")?;
+    assert_eq!(
+        extended.files_content_hash,
+        build_index_from_loaded_files_with_cache_and_test_harnesses(&fixture.0, &files, &[])?
+            .files_content_hash
+    );
+    Ok(())
+}

@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- JSON refusals: `ripr check` refusal documents carry `status: "refused"` and `error {code, message, next}` (a completed run, including a bounded `limited_partial_scope` run, carries neither). Under an explicit JSON request, an unknown command, unknown argument, unrecognized value from the CLI's shared value builder, `explain --format json`, and a `context` selector miss or ambiguity write a minimal `cli_refusal` document. Other argv errors (a flag missing its value, a malformed value, conflicting flags) still keep empty stdout (#11584, #6834).

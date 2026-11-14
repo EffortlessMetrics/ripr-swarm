@@ -5,7 +5,13 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { RiprConfig } from '../../src/config';
 import { currentRiprPlatform } from '../../src/platform';
-import { missingServerRemedy, probeServerVersion, resolveServer, ServerResolverRuntime } from '../../src/serverResolver';
+import {
+  missingServerRemedy,
+  probeServerVersion,
+  resolveServer,
+  ServerResolverRuntime,
+  serverVersionOlderThan
+} from '../../src/serverResolver';
 import { compatibleLspEvidence } from './testCompatibility';
 
 suite('Server resolver compatibility fallback', () => {
@@ -312,7 +318,10 @@ suite('Server resolver compatibility fallback', () => {
           `download fall-through must keep the download failure kind, got ${JSON.stringify(result)}`
         );
         assert.ok(
-          result.kind === 'download' || result.kind === 'http' || result.kind === 'manifest',
+          result.kind === 'download' ||
+            result.kind === 'network' ||
+            result.kind === 'http' ||
+            result.kind === 'manifest',
           `expected a download-family kind, got ${result.kind}`
         );
         assert.ok(
@@ -325,6 +334,161 @@ suite('Server resolver compatibility fallback', () => {
         outputLines.some((line) => line.includes('download failed')),
         `an unusable PATH server must fall through to the download: ${outputLines.join('\n')}`
       );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+suite('Server resolver stale PATH version (#13638)', () => {
+  function versionedRuntime(binaryVersion: string | undefined, attempts: string[]): ServerResolverRuntime {
+    return {
+      probeCandidate: async (command, source, detail, _useShell, installationState = 'unmanaged') => {
+        attempts.push(source);
+        return {
+          command,
+          source,
+          detail,
+          installationState,
+          compatibilityResult: compatibleLspEvidence,
+          ...(binaryVersion ? { binaryVersion } : {})
+        };
+      }
+    };
+  }
+
+  test('version comparison reuses the setup-diagnosis parse and only flags strictly older', () => {
+    assert.strictEqual(serverVersionOlderThan('ripr 0.9.3', '0.10.0'), true);
+    assert.strictEqual(serverVersionOlderThan('ripr 0.10.0', '0.10.0'), false);
+    assert.strictEqual(serverVersionOlderThan('ripr 0.11.0', '0.10.0'), false);
+    assert.strictEqual(serverVersionOlderThan('ripr dev-build', '0.10.0'), false);
+    assert.strictEqual(serverVersionOlderThan(undefined, '0.10.0'), false);
+  });
+
+  test('a release candidate is older than its release, and successive candidates order by SemVer', () => {
+    assert.strictEqual(serverVersionOlderThan('ripr 0.11.0-rc.1', '0.11.0'), true);
+    assert.strictEqual(serverVersionOlderThan('ripr 0.11.0-rc.1', '0.11.0-rc.2'), true);
+    assert.strictEqual(serverVersionOlderThan('ripr 0.11.0-rc.10', '0.11.0-rc.2'), false);
+    assert.strictEqual(serverVersionOlderThan('ripr 0.11.0', '0.11.0-rc.2'), false);
+    assert.strictEqual(serverVersionOlderThan('ripr 0.11.0-rc.2', '0.11.0-rc.2'), false);
+    assert.strictEqual(serverVersionOlderThan('ripr 0.11.0+build.5 (abc123)', '0.11.0'), false);
+    assert.strictEqual(serverVersionOlderThan('ripr 0.10.9-rc.1', '0.10.0'), false);
+  });
+
+  test('an older PATH ripr does not skip the managed download, and stays the warned fallback', async function () {
+    if (!currentRiprPlatform()) {
+      this.skip();
+      return;
+    }
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-resolver-stale-path-'));
+    const attempts: string[] = [];
+    const outputLines: string[] = [];
+    try {
+      const result = await resolveServer(
+        stubContext(root),
+        { ...config(), autoDownload: true, serverVersion: '', downloadBaseUrl: 'https://sentinel.invalid/ripr' },
+        { appendLine: (line: string) => outputLines.push(line) } as unknown as vscode.OutputChannel,
+        versionedRuntime('ripr 0.1.0', attempts)
+      );
+      assert.ok(
+        outputLines.some((line) => line.includes('older than the expected 0.10.0; trying the managed download')),
+        `an older PATH server must fall through to the download: ${outputLines.join('\n')}`
+      );
+      assert.ok(
+        !outputLines.some((line) => line.includes('skipping the managed server download')),
+        `an older PATH server must not skip the download: ${outputLines.join('\n')}`
+      );
+      assert.ok(
+        outputLines.some((line) => line.includes('download failed')),
+        `the managed download must be attempted: ${outputLines.join('\n')}`
+      );
+      assert.ok('command' in result, JSON.stringify(result));
+      if (!('command' in result)) {
+        return;
+      }
+      assert.strictEqual(result.source, 'path');
+      assert.deepStrictEqual(attempts, ['path'], 'PATH is probed once and reused as the fallback');
+      const warning = result.versionWarning ?? '';
+      assert.ok(warning.includes('ripr 0.1.0'), warning);
+      assert.ok(warning.includes('0.10.0'), warning);
+      assert.ok(warning.includes('cargo install ripr --locked'), warning);
+      assert.ok(warning.includes('ripr.server.path'), warning);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a current PATH ripr still wins before the download with no warning', async function () {
+    if (!currentRiprPlatform()) {
+      this.skip();
+      return;
+    }
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-resolver-current-path-'));
+    const attempts: string[] = [];
+    const outputLines: string[] = [];
+    try {
+      const result = await resolveServer(
+        stubContext(root),
+        { ...config(), autoDownload: true, serverVersion: '', downloadBaseUrl: 'https://sentinel.invalid/ripr' },
+        { appendLine: (line: string) => outputLines.push(line) } as unknown as vscode.OutputChannel,
+        versionedRuntime('ripr 0.10.0', attempts)
+      );
+      assert.ok('command' in result, JSON.stringify(result));
+      if (!('command' in result)) {
+        return;
+      }
+      assert.strictEqual(result.source, 'path');
+      assert.strictEqual(result.versionWarning, undefined);
+      assert.ok(
+        !outputLines.some((line) => line.includes('download failed')),
+        `a current PATH server must win before the download: ${outputLines.join('\n')}`
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a disabled download uses an older PATH ripr with a warning', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-resolver-stale-nodownload-'));
+    const attempts: string[] = [];
+    try {
+      const result = await resolveServer(
+        stubContext(root),
+        { ...config(), autoDownload: false, serverVersion: '' },
+        stubOutput(),
+        versionedRuntime('ripr 0.9.9', attempts)
+      );
+      assert.ok('command' in result, JSON.stringify(result));
+      if (!('command' in result)) {
+        return;
+      }
+      assert.strictEqual(result.source, 'path');
+      assert.ok(result.versionWarning?.includes('ripr on PATH reports ripr 0.9.9'), result.versionWarning);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('an explicit ripr.server.path is honored as-is even when older, and only warns', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-resolver-stale-configured-'));
+    const configured = path.join(root, 'old-ripr');
+    const attempts: string[] = [];
+    try {
+      const result = await resolveServer(
+        stubContext(root),
+        { ...config(), autoDownload: true, serverVersion: '', serverPath: configured },
+        stubOutput(),
+        versionedRuntime('ripr 0.2.0', attempts)
+      );
+      assert.ok('command' in result, JSON.stringify(result));
+      if (!('command' in result)) {
+        return;
+      }
+      assert.strictEqual(result.source, 'configured');
+      assert.strictEqual(result.command, configured);
+      assert.deepStrictEqual(attempts, ['configured']);
+      assert.ok(result.versionWarning?.includes(`ripr.server.path (${configured})`), result.versionWarning);
+      assert.ok(result.versionWarning?.includes('ripr 0.2.0'), result.versionWarning);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

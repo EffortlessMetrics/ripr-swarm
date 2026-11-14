@@ -129,9 +129,13 @@ export const PYTHON_PROJECT_MARKERS = [
 
 const RUST_OR_RIPR_PROJECT_MARKERS = ['Cargo.toml', 'ripr.toml'] as const;
 
+/** Matches the README: tsconfig/jsconfig enable TypeScript; package.json alone does not. */
+export const TYPESCRIPT_PROJECT_MARKERS = ['tsconfig.json', 'jsconfig.json'] as const;
+
 const ANALYZABLE_PROJECT_MARKERS: readonly string[] = [
   ...RUST_OR_RIPR_PROJECT_MARKERS,
   ...PYTHON_PROJECT_MARKERS,
+  ...TYPESCRIPT_PROJECT_MARKERS,
 ];
 
 async function folderRootHasAnalyzableProjectMarker(

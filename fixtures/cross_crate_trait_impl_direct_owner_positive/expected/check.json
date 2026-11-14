@@ -39,18 +39,25 @@
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: Some(x)"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed arm; a test that only shares its file or module, and calls nothing that reaches the function, cannot confirm the arm (observation_unverified)"}
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach size_hint: size_hint_caps_at_remaining", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: Some(x)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed arm; a test that only shares its file or module, and calls nothing that reaches the function, cannot confirm the arm (observation_unverified)", "local flow reaches match arm result: Some(x) (line 15)", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(Some(9)), Some(5));", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(Some(2)), Some(2));", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(None), Some(5));", "related test util/src/io/take.rs:6 util/src/io/take.rs - limit (line 6) uses strong exact value oracle: assert_eq!(t.limit(), 4);", "source assertion argument value 5 at line 6", "source function argument value upper = 9 at line 6", "source assertion argument value 2 at line 7", "source function argument value upper = 2 at line 7", "source assertion argument value 4 at line 8", "source assertion argument value 5 at line 8"],
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach size_hint: size_hint_caps_at_remaining", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: Some(x)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: Some(x) (line 15)", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(Some(9)), Some(5));", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(Some(2)), Some(2));", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(None), Some(5));", "source assertion argument value 5 at line 6", "source function argument value upper = 9 at line 6", "source assertion argument value 2 at line 7", "source function argument value upper = 2 at line 7", "source assertion argument value 5 at line 8"],
       "flow_sinks": [
         {"kind":"match_arm","text":"Some(x)","line":15}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: Some(x)", "Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed arm; a test that only shares its file or module, and calls nothing that reaches the function, cannot confirm the arm (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach size_hint: size_hint_caps_at_remaining"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: Some(x)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach size_hint: size_hint_caps_at_remaining"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
         "6": "assert_eq!(Take::new(5).size_hint(Some(9)), Some(5));",
         "7": "assert_eq!(Take::new(5).size_hint(Some(2)), Some(2));",
-        "8": "assert_eq!(t.limit(), 4);"
+        "8": "assert_eq!(Take::new(5).size_hint(None), Some(5));"
       },
       "activation": {
         "observed_values": [
@@ -76,14 +83,8 @@
           },
           {
             "line": 8,
-            "value": "4",
-            "context": "assertion_argument"
-          },
-          {
-            "line": 8,
             "value": "5",
-            "context": "assertion_argument",
-            "provenance": "assert_eq!(Take::new(5).size_hint(None), Some(5));"
+            "context": "assertion_argument"
           }
         ],
         "missing_discriminators": [
@@ -112,19 +113,13 @@
         },
         {
           "line": 8,
-          "value": "4",
-          "context": "assertion_argument"
-        },
-        {
-          "line": 8,
           "value": "5",
-          "context": "assertion_argument",
-          "provenance": "assert_eq!(Take::new(5).size_hint(None), Some(5));"
+          "context": "assertion_argument"
         }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 4,
+      "related_tests_total": 3,
       "related_tests": [
         {
           "name": "size_hint_caps_at_remaining",
@@ -159,18 +154,6 @@
           "oracle": "assert_eq!(Take::new(5).size_hint(None), Some(5));",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
-        },
-        {
-          "name": "util/src/io/take.rs - limit (line 6)",
-          "file": "util/src/io/take.rs",
-          "line": 6,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "assert_eq!(t.limit(), 4);",
-          "relation_reason": "same_test_file",
-          "relation_confidence": "medium",
           "miss": "observation_unconfirmed",
           "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
@@ -215,7 +198,14 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach size_hint: size_hint_caps_at_remaining", "infection unknown: Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "propagation yes: Changed behavior appears to influence returned value: Some(x) if x <= self.remaining => Some(x)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: Some(x) if x <= self.remaining => Some(x) (line 16)", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(Some(9)), Some(5));", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(Some(2)), Some(2));", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(None), Some(5));", "related test util/src/io/take.rs:6 util/src/io/take.rs - limit (line 6) uses strong exact value oracle: assert_eq!(t.limit(), 4);", "source assertion argument value 5 at line 6", "source function argument value upper = 9 at line 6", "source assertion argument value 2 at line 7", "source function argument value upper = 2 at line 7", "source assertion argument value 4 at line 8", "source assertion argument value 5 at line 8"],
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach size_hint: size_hint_caps_at_remaining", "infection unknown: Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "propagation yes: Changed behavior appears to influence returned value: Some(x) if x <= self.remaining => Some(x)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: Some(x) if x <= self.remaining => Some(x) (line 16)", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(Some(9)), Some(5));", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(Some(2)), Some(2));", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(None), Some(5));", "source assertion argument value 5 at line 6", "source function argument value upper = 9 at line 6", "source assertion argument value 2 at line 7", "source function argument value upper = 2 at line 7", "source assertion argument value 5 at line 8"],
       "flow_sinks": [
         {"kind":"return_value","text":"Some(x) if x <= self.remaining => Some(x)","line":16}
       ],
@@ -224,7 +214,7 @@
       "assertion_texts": {
         "6": "assert_eq!(Take::new(5).size_hint(Some(9)), Some(5));",
         "7": "assert_eq!(Take::new(5).size_hint(Some(2)), Some(2));",
-        "8": "assert_eq!(t.limit(), 4);"
+        "8": "assert_eq!(Take::new(5).size_hint(None), Some(5));"
       },
       "activation": {
         "observed_values": [
@@ -250,14 +240,8 @@
           },
           {
             "line": 8,
-            "value": "4",
-            "context": "assertion_argument"
-          },
-          {
-            "line": 8,
             "value": "5",
-            "context": "assertion_argument",
-            "provenance": "assert_eq!(Take::new(5).size_hint(None), Some(5));"
+            "context": "assertion_argument"
           }
         ],
         "missing_discriminators": [
@@ -286,19 +270,13 @@
         },
         {
           "line": 8,
-          "value": "4",
-          "context": "assertion_argument"
-        },
-        {
-          "line": 8,
           "value": "5",
-          "context": "assertion_argument",
-          "provenance": "assert_eq!(Take::new(5).size_hint(None), Some(5));"
+          "context": "assertion_argument"
         }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 4,
+      "related_tests_total": 3,
       "related_tests": [
         {
           "name": "size_hint_caps_at_remaining",
@@ -329,18 +307,6 @@
           "oracle": "assert_eq!(Take::new(5).size_hint(None), Some(5));",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high"
-        },
-        {
-          "name": "util/src/io/take.rs - limit (line 6)",
-          "file": "util/src/io/take.rs",
-          "line": 6,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "assert_eq!(t.limit(), 4);",
-          "relation_reason": "same_test_file",
-          "relation_confidence": "medium",
-          "miss": "no_call_path",
-          "why": "no established call path to the changed code; linked by file location only"
         }
       ],
       "stop_reasons": ["infection_evidence_unknown"],
@@ -383,7 +349,14 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach size_hint: size_hint_caps_at_remaining", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: Some(x) if x <= self.remaining => Some(x)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: Some(x) if x <= self.remaining => Some(x) (line 16)", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(Some(9)), Some(5));", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(Some(2)), Some(2));", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(None), Some(5));", "related test util/src/io/take.rs:6 util/src/io/take.rs - limit (line 6) uses strong exact value oracle: assert_eq!(t.limit(), 4);", "source assertion argument value 5 at line 6", "source function argument value upper = 9 at line 6", "source assertion argument value 2 at line 7", "source function argument value upper = 2 at line 7", "source assertion argument value 4 at line 8", "source assertion argument value 5 at line 8"],
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach size_hint: size_hint_caps_at_remaining", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: Some(x) if x <= self.remaining => Some(x)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: Some(x) if x <= self.remaining => Some(x) (line 16)", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(Some(9)), Some(5));", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(Some(2)), Some(2));", "related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(None), Some(5));", "source assertion argument value 5 at line 6", "source function argument value upper = 9 at line 6", "source assertion argument value 2 at line 7", "source function argument value upper = 2 at line 7", "source assertion argument value 5 at line 8"],
       "flow_sinks": [
         {"kind":"return_value","text":"Some(x) if x <= self.remaining => Some(x)","line":16}
       ],
@@ -392,7 +365,7 @@
       "assertion_texts": {
         "6": "assert_eq!(Take::new(5).size_hint(Some(9)), Some(5));",
         "7": "assert_eq!(Take::new(5).size_hint(Some(2)), Some(2));",
-        "8": "assert_eq!(t.limit(), 4);"
+        "8": "assert_eq!(Take::new(5).size_hint(None), Some(5));"
       },
       "activation": {
         "observed_values": [
@@ -418,14 +391,8 @@
           },
           {
             "line": 8,
-            "value": "4",
-            "context": "assertion_argument"
-          },
-          {
-            "line": 8,
             "value": "5",
-            "context": "assertion_argument",
-            "provenance": "assert_eq!(Take::new(5).size_hint(None), Some(5));"
+            "context": "assertion_argument"
           }
         ],
         "missing_discriminators": [
@@ -454,19 +421,13 @@
         },
         {
           "line": 8,
-          "value": "4",
-          "context": "assertion_argument"
-        },
-        {
-          "line": 8,
           "value": "5",
-          "context": "assertion_argument",
-          "provenance": "assert_eq!(Take::new(5).size_hint(None), Some(5));"
+          "context": "assertion_argument"
         }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 4,
+      "related_tests_total": 3,
       "related_tests": [
         {
           "name": "size_hint_caps_at_remaining",
@@ -501,18 +462,6 @@
           "oracle": "assert_eq!(Take::new(5).size_hint(None), Some(5));",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
-        },
-        {
-          "name": "util/src/io/take.rs - limit (line 6)",
-          "file": "util/src/io/take.rs",
-          "line": 6,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "assert_eq!(t.limit(), 4);",
-          "relation_reason": "same_test_file",
-          "relation_confidence": "medium",
           "miss": "observation_unconfirmed",
           "why": "ripr could not confirm that this assertion observes the changed behavior"
         }

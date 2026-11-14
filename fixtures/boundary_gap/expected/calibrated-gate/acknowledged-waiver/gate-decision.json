@@ -50,14 +50,16 @@
         "suppressed": false
       },
       "gap_state": "actionable",
-      "gate_reason": "policy-eligible gap acknowledged by ripr-waive",
+      "gate_reason": "policy-eligible gap acknowledged by ripr-waive (global_scope=true legacy compatibility)",
       "id": "ripr-gate-gap-dedf923a13a00573",
       "placement": {
         "line": 88,
         "path": "src/pricing.rs"
       },
       "policy": {
+        "acknowledgement_global_scope": true,
         "acknowledgement_label": "ripr-waive",
+        "acknowledgement_match_kind": "legacy_acknowledgement_label",
         "baseline_identity": "gap:dedf923a13a00573",
         "mode": "acknowledgeable",
         "threshold": "high_confidence_new_gap"

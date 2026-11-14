@@ -1,0 +1,26 @@
+# Per-crate / per-path [[overrides]] for severity and oracle policy (#2671).
+[[extend]]
+id = "RIPR-SPEC-0007"
+tests = [
+  "crates/ripr/src/config.rs::override_tests::omitted_overrides_keep_repo_wide_severity_byte_identical",
+  "crates/ripr/src/config.rs::override_tests::two_path_overrides_yield_different_severity",
+  "crates/ripr/src/config.rs::override_tests::unknown_crate_name_is_a_config_diagnostic",
+  "crates/ripr/src/config.rs::override_tests::crate_name_outranks_overlapping_path_glob",
+  "crates/ripr/src/config.rs::override_tests::bound_crate_name_matches_package_directory",
+  "crates/ripr/src/config.rs::override_tests::both_crate_and_path_on_one_row_is_rejected",
+  "crates/ripr/src/config.rs::override_tests::override_without_severity_or_oracles_is_rejected",
+  "crates/ripr/src/config.rs::override_tests::unknown_override_key_fails_closed",
+  "crates/ripr/src/config.rs::override_tests::two_path_overrides_yield_different_oracle_strength",
+  "crates/ripr/src/config.rs::override_tests::reversed_equal_oracle_rows_change_identity",
+  "crates/ripr/src/config.rs::override_tests::member_root_load_accepts_sibling_crate_override",
+  "crates/ripr/src/config.rs::override_tests::nested_member_glob_binds_crate_name",
+  "crates/ripr/src/config.rs::override_tests::nested_package_does_not_inherit_parent_crate_override",
+  "crates/ripr/src/config.rs::override_tests::listed_manifests_bind_candidate_crate_and_reject_unknown",
+  "crates/ripr/src/app/tests/rendering_contracts.rs::per_crate_severity_overrides_change_json_independently",
+  "crates/ripr/src/app/tests/rendering_contracts.rs::no_overrides_keep_configured_severity_byte_identical",
+]
+code = [
+  "crates/ripr/src/config.rs",
+  "crates/ripr/src/config/overrides.rs",
+  "crates/ripr/src/config/model.rs",
+]

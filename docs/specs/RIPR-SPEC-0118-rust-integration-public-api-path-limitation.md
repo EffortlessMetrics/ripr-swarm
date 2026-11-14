@@ -202,7 +202,7 @@ origin witnesses.
 ## Required Evidence
 
 - `StaticLimitKind::RustIntegrationPublicApiPathUnresolved` in
-  `crates/ripr/src/domain/language.rs`.
+  `crates/ripr-contract/src/domain/language.rs`.
 - Rust adapter selection in `crates/ripr/src/analysis/language/rust/mod.rs`.
 - Unit guard proving integration paths and non-integration paths select
   different limitation kinds.
@@ -217,8 +217,8 @@ origin witnesses.
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/rust/mod.rs::tests::transitive_reach_limit_kind_names_integration_test_path`
-- `crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
-- `crates/ripr/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct`
+- `crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
+- `crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct`
 - `crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_integration_public_api_static_limit_kind`
 - `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::facade_reexport_with_a_test_naming_the_facade_names_the_limit_and_keeps_the_class`
 - `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::reexports_that_cover_the_owner_fire`
@@ -252,7 +252,7 @@ origin witnesses.
 
 | Component | Location |
 |---|---|
-| Static limit enum and text | `crates/ripr/src/domain/language.rs` |
+| Static limit enum and text | `crates/ripr-contract/src/domain/language.rs` |
 | Integration-vs-generic selection | `crates/ripr/src/analysis/language/rust/mod.rs` |
 | Facade re-export witness (#9982) | `crates/ripr/src/analysis/classify/facade_reach.rs` |
 | Doctest name-token guard (#9982) | `crates/ripr/src/analysis/classify/related_tests.rs` |

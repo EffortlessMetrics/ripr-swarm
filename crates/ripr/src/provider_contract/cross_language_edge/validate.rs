@@ -114,8 +114,18 @@ pub fn subjects_related_by_registered_edge(
 ) -> bool {
     registry.edges.iter().any(|edge| {
         edge.disposition == EdgeDispositionV1::PositiveRegistered
-            && edge_matches_subjects(edge, left, right)
+            && edge_connects_subjects(edge, left, right)
     })
+}
+
+/// Returns `true` when the edge endpoints match the two subjects in either
+/// orientation.
+pub fn edge_connects_subjects(
+    edge: &CrossLanguageEdgeV1,
+    left: &CrossLanguageSubjectV1,
+    right: &CrossLanguageSubjectV1,
+) -> bool {
+    edge_matches_subjects(edge, left, right)
 }
 
 fn edge_matches_subjects(

@@ -1,0 +1,2 @@
+xtask/tests/issue_staleness_watchdog.rs|Command::new|1|issue-staleness-watchdog|Test runs the workflow's extracted bash step against a stubbed gh on an isolated temp PATH to check watchdog behavior. No network, no user-repository mutation.
+xtask/tests/issue_staleness_watchdog.rs|use std::process::Command|1|issue-staleness-watchdog|Import for the single spawn site described above.

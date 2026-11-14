@@ -106,6 +106,14 @@ head it analyzed.
   `git add -N <paths>` then `ripr check --worktree`, or pass `--diff PATH``
   line directly after `head:` (#11159). It is display-only and absent on a
   working-tree read and when no untracked routed file was left out.
+- **Gitignored routed files.** Gitignored routed files are excluded from
+  analysis and disclosed in the human and GitHub notes and the JSON
+  `ignored_working_tree_source_paths` list, with the `git add -f -N` repair.
+  Dependency and build-output trees are not disclosed (#13597): a path with a
+  `node_modules`, `.venv`, `venv`, `site-packages`, `bower_components` or
+  `vendor` component, or whose first component is `dist` or `build`, stays
+  excluded but is not listed, so the repair is never offered for vendored
+  code.
 - **LSP and library callers are unchanged.** The LSP already reads the
   working tree for every refresh (`check_workspace_worktree_*`), and the
   public `check_workspace*` library entry points keep their committed-history
@@ -114,6 +122,25 @@ head it analyzed.
 This supersedes the original non-goal "Changing default `ripr check`
 semantics" and the compatibility rule that `--base <rev>` without
 `--worktree` always reads committed history.
+
+## Amendment (shipped Git hook entries, #14337/#14348)
+
+The repository-root `.pre-commit-hooks.yaml` ships two advisory hook entries
+built on these input modes. Their contract is:
+
+- **`ripr` (stages `pre-commit`, `pre-merge-commit`, `manual`).** Runs
+  `ripr check --worktree --base HEAD --quiet` from the repository root, so it
+  analyzes the tracked change being committed against `HEAD`.
+- **`ripr-push` (stage `pre-push`).** Runs `ripr check --committed --quiet`,
+  so it analyzes the branch's committed history against the default base and
+  leaves staged and unstaged edits out. It is the branch against its base, not
+  the exact pushed ref range.
+- **Both** set `pass_filenames: false` (the entry chooses its own diff
+  source), exit 0 on findings (advisory), and keep `ripr progress` lines out
+  of the hook log through `--quiet`.
+
+The manifest test runs each entry through the built binary on a fixture
+branch that has one committed and one further staged boundary edit.
 
 ## Problem
 
@@ -319,6 +346,10 @@ that untracked source was analyzed.
 
 ## Test Mapping
 
+- `crates/ripr/tests/cli_smoke.rs::check_gitignored_files_are_disclosed_not_silent`
+- `crates/ripr/src/analysis/committed_source/tests.rs::vendored_dependency_paths_are_not_user_sources`
+  - gitignored user sources are disclosed with the force intent-to-add
+  repair; gitignored dependency and build-output trees are not listed.
 - `crates/ripr/tests/hostile_repos.rs::submodule_ignore_settings_cannot_hide_pointer_changes`
 - `crates/ripr/tests/hostile_repos.rs::non_utf8_tracked_path_recovery_works_in_every_mode`
 - `crates/ripr/tests/hostile_repos.rs::non_utf8_untracked_path_recovery_is_a_filesystem_rename`
@@ -421,6 +452,10 @@ that untracked source was analyzed.
 - `crates/ripr/src/analysis/diff/load.rs::tests::uncommitted_change_detector_counts_tracked_edits_not_untracked_files`
 - `crates/ripr/src/output/analyzed_revisions.rs::tests::labels_name_ref_short_commits_and_the_head_source`
 - `crates/ripr/src/output/analyzed_revisions.rs::tests::labels_disclose_a_distinct_merge_base_and_unresolved_commits`
+- `crates/ripr/tests/pre_commit_hook_manifest.rs::manifest_lists_the_commit_and_push_hooks_on_separate_stages_without_filenames`
+- `crates/ripr/tests/pre_commit_hook_manifest.rs::commit_hook_entry_runs_quietly_and_sees_the_staged_change`
+- `crates/ripr/tests/pre_commit_hook_manifest.rs::push_hook_entry_runs_quietly_and_sees_the_committed_change`
+- `crates/ripr/tests/pre_commit_hook_manifest.rs::without_quiet_the_same_entry_writes_progress_lines`
 
 ## Implementation Mapping
 

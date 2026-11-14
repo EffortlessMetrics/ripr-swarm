@@ -298,7 +298,7 @@ available.
   assurance corpus consumed by the future schema/runner implementation.
 - The existing `cargo xtask fixtures assurance_vocabulary` path proves the
   regular fixture remains a zero-finding control.
-- `crates/ripr/src/domain/command_spec.rs::tests::same_route_ignores_only_the_display`
+- `crates/ripr-contract/src/domain/command_spec.rs::tests::same_route_ignores_only_the_display`
   proves route identity compares every typed field except the display.
 - `crates/ripr/src/agent/command_specs.rs::tests::anchored_gap_ledger_displays_recover_root_relative_argv`
   proves root-anchored regeneration displays recover portable argv and fail
@@ -313,7 +313,7 @@ available.
 
 - `schemas/ripr/repair-assurance.schema.json` owns the design-only machine
   contract.
-- `crates/ripr/src/domain/command_spec.rs` owns the additive typed
+- `crates/ripr-contract/src/domain/command_spec.rs` owns the additive typed
   `CommandSpec` domain shape and fail-closed field validation.
 - `crates/ripr/src/agent/command_specs.rs` owns canonical verify/receipt route
   population. Legacy display strings remain unchanged; verify output

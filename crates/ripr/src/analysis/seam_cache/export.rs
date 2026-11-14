@@ -303,8 +303,21 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
     let parent = output
         .parent()
         .ok_or("export output has no parent; pass an output path inside an existing directory")?;
-    let parent =
-        fs::canonicalize(parent).map_err(|error| format!("resolve export parent: {error}"))?;
+    let parent = fs::canonicalize(parent).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            format!(
+                "cache export --out {}: its parent directory {} does not exist; create that directory first, or pass an --out inside an existing directory",
+                shown_path(&output),
+                shown_path(parent)
+            )
+        } else {
+            format!(
+                "cache export --out {}: could not resolve its parent directory {}: {error}; pass an --out inside a directory you can read",
+                shown_path(&output),
+                shown_path(parent)
+            )
+        }
+    })?;
     let name = output
         .file_name()
         .ok_or("export output needs a new directory name")?;
@@ -314,8 +327,18 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
     }
     let config = load_for_root(root)?;
     let (key, files) = current_cache_keys_at(root, &config)?;
-    fs::create_dir(&output)
-        .map_err(|error| format!("create exclusive export {}: {error}", output.display()))?;
+    fs::create_dir(&output).map_err(|error| {
+        let shown = shown_path(&output);
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            format!(
+                "cache export --out {shown} already exists; --out must name a new directory that does not exist yet, so pass a fresh path (the export never merges into or replaces an existing one)"
+            )
+        } else {
+            format!(
+                "cache export could not create --out {shown}: {error}; check you can write to its parent directory, or pass another --out"
+            )
+        }
+    })?;
     let result = (|| {
         let raw_base = cache_base_dir(root);
         let caches = [
@@ -355,6 +378,13 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
         )
     })
 }
+
+/// Path text for export refusals. Analysis owns its own spelling so it never
+/// reaches into the output renderers; `/` keeps one separator on every host.
+fn shown_path(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::FileFacts;

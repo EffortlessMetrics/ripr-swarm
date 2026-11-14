@@ -18,6 +18,7 @@ Linked issues:
   other)
 - #8859 (review follow-up: raw/decoded resource-id collisions fail closed
   with `id_ambiguous` instead of silently picking an item)
+- #13229 (decode snapshot ids emitted by simple URI-template expansion)
 
 Support-tier impact:
 
@@ -84,8 +85,16 @@ changes four observable contracts:
      which takes the `canonical_id` as a plain JSON string with no URI
      encoding.
    Both resource template descriptions declare this id grammar and name the
-   tool route as the fallback. Snapshot, repair-attempt, and receipt ids
-   stay on their existing path-free grammars and do not decode.
+   tool route as the fallback. The snapshot route also decodes its captured
+   id once: RFC 6570 simple expansion encodes the colons in
+   `snapshot:sha256:<digest>`. It then uses the unchanged exact snapshot
+   currentness check. Only the id is decoded; the namespace and the
+   response's original request URI are unchanged. Raw ids and one literal
+   trailing slash remain accepted. Invalid encodings keep their literal
+   bytes or the raw capture when decoding is not UTF-8, and double encoding
+   does not resolve to the current snapshot. Plain JSON tool `snapshot_id`
+   arguments still require the canonical id. Repair-attempt and receipt
+   ids use only URI-unreserved characters and do not need decoding.
 2. **Honest inventory paging.** `ripr_list_repair_attempts` declares
    `maximum: 256` on the input `limit`; a request above the cap is rejected
    as invalid params (`-32602`) at the dispatch edge instead of being
@@ -121,6 +130,12 @@ changes four observable contracts:
 - Unit tests pinning the resolution law (raw hit, raw hit with decoded
   miss, raw miss with decoded hit, both-exist collision, no-op decode
   refusal, non-UTF-8 refusal) and the decoder's escape grammar.
+- Snapshot parser controls pin raw and encoded identity, either hex case,
+  exactly-once decoding, malformed and non-UTF-8 preservation, and strict
+  namespace routing. Real stdio reads after a nonempty refresh compare the
+  raw and encoded snapshot documents, retain each original URI, and reject
+  double encoding, malformed bytes, stale ids and wrong namespaces. They
+  also pin typed recovery and exact JSON tool ids on the same live session.
 - An inventory paging test pinning the declared input maximum, the
   `-32602` over-cap refusal, and the effective-limit echo in `page.limit`
   and the bound continuation.
@@ -138,12 +153,16 @@ changes four observable contracts:
   raw file path, and Rust ids keep their stable-path `%25` escaping. The
   adapter resolves the ambiguity it is handed; it does not redefine id
   grammars.
-- No decoding on the snapshot, repair-attempt, or receipt routes (their id
-  grammars are path-free and URI-safe already).
+- No change to repair-attempt or receipt routing: their canonical
+  `repair-attempt-[0-9a-f]{24}` ids contain only URI-unreserved characters.
+- No normalization of tool ids or change to snapshot identity/currentness.
 - No new spec numbers, output formats, gates, badges, or report files.
 
 ## Acceptance Examples
 
+- `ripr://snapshot/snapshot%3Asha256%3A<digest>` and the lowercase `%3a`
+  spelling return the current raw `snapshot:sha256:<digest>` document.
+  `%253A` decodes only to the literal `%3A`, so that identity remains stale.
 - `ripr://gap/gap:python:src/a%2520b.py:accepts:...` returns the
   literal-percent file's gap document (decoded once, unambiguous).
 - `ripr://gap/gap:python:src/a b.py:accepts:...` returns the space file's
@@ -166,6 +185,8 @@ changes four observable contracts:
 - `crates/ripr/tests/mcp_stdio.rs::encoded_resource_ids_fail_closed_when_raw_and_decoded_both_exist`
 - `crates/ripr/src/mcp/server_tests.rs::resource_id_document_resolves_raw_decoded_and_ambiguous_spellings`
 - `crates/ripr/src/mcp/gaps.rs::tests::percent_decoding_resource_id_segments`
+- `crates/ripr/src/mcp/gaps.rs::tests::snapshot_resource_id_decodes_one_segment_once`
+- `crates/ripr/tests/mcp_stdio.rs::resource_reads_match_tools_after_refresh`
 - `crates/ripr/tests/agentic_bench_mcp.rs::attempt_inventory::inventory_page_limit_echoes_the_effective_cap`
 - `crates/ripr/src/mcp/protocol.rs::tests::tool_descriptions_state_positive_contracts_and_bounds`
 
@@ -176,6 +197,8 @@ changes four observable contracts:
   repair-card resource routes.
 - `crates/ripr/src/mcp/gaps.rs::percent_decode_resource_id` — the escape
   grammar (strict `%XX`, literal stray `%`, no-op and non-UTF-8 refusal).
+- `crates/ripr/src/mcp/gaps.rs::snapshot_resource_id` — snapshot URI capture
+  and one-pass decoding before the workspace session's exact identity check.
 - `crates/ripr/src/mcp/workspace.rs::CODE_ID_AMBIGUOUS` — the typed
   collision failure code.
 - `crates/ripr/src/mcp/attempt_inventory.rs` — the declared input maximum,

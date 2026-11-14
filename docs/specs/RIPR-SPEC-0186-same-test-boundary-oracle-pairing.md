@@ -133,7 +133,15 @@ parameter it forwards to the hop, and its tail is the hop call itself or
 literals of distinct values (`05` and `5` are equal; an escaped string or
 char literal never counts as distinct). A discarded, let-bound, transformed, branch-guarded or
 computed-branch result, or a rebound forwarded parameter, keeps the
-pairing missing (and RIPR-SPEC-0159 makes propagation unknown). A match
+pairing missing (and RIPR-SPEC-0159 makes propagation unknown). The helper's
+own propagation (#6694) reads a helper whose whole body is the tail
+`if <cond> {` / `a` / `} else {` / `b` / `}` over two distinct parameters of
+the helper (`if cap < value { cap } else { value }`) as returning the first
+branch's parameter: the condition decides the returned value, so the
+predicate has a return sink. It needs the `if` to be the only statement (an
+earlier `let` could rebind a parameter), a non-unit return, the probe to be
+that condition, and distinct bare parameter names; a literal, call, repeated
+or non-parameter branch keeps the adjacency reading and its abstention. A match
 guard that only reads a forwarded parameter (`n if n > qty =>`) is not a
 rebinding; a pattern that binds it (`Some(qty) =>`) is. The row must come
 from the entry call on the assertion's own line, in the assertion's own
@@ -324,7 +332,8 @@ relation are out of scope.
 - `fixtures/predicate_pairing_mutably_borrowed_binding`
 - `fixtures/predicate_pairing_newline_split_reassigned_binding`
 - `crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities`
-- `crates/ripr/tests/helper_wrapper_reach.rs`
+- `crates/ripr/tests/helper_wrapper_reach.rs` (including `parameter_returning_helper_is_exposed_only_through_an_exact_forwarding_wrapper`)
+- `crates/ripr/src/analysis/classify/flow.rs::parameter_returning_tail_if_sinks_the_condition_only_when_whole_and_distinct`
 - `fixtures/rust_wrapper_boolean_return_discarded`
 - `fixtures/rust_wrapper_user_macro_guard`
 - `fixtures/rust_wrapper_closure_shadowed_callee`

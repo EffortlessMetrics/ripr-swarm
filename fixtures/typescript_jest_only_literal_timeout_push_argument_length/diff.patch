@@ -1,0 +1,8 @@
+diff --git a/src/log.ts b/src/log.ts
+--- a/src/log.ts
++++ b/src/log.ts
+@@ -1,3 +1,3 @@
+ export function logLine(buf: string[], msg: string): void {
+-  buf.push(msg);
++  buf.push(msg.toUpperCase());
+ }

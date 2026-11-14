@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0391](../specs/RIPR-SPEC-0391-ruby-preview-static-facts.md) | proposed | Ruby preview static facts: wire identity, RSpec/Minitest activation, oracle law, probe spans, and fail-closed Ruby dynamism limits (#5606, #5583) |

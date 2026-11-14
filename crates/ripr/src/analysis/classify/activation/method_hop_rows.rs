@@ -173,7 +173,10 @@ fn production_entry_taking_a_borrowed_receiver_binds_through_the_method_hop() ->
     let chain = resolve_chain("fmt_size", &index_of(&source)?, true, &[]);
     assert_eq!(chain.hops.len(), 2, "{chain:?}");
     assert_eq!(chain.entry_name(), Some("describe"));
-    assert_eq!(chain.hops[1].receiver.as_deref(), Some("b"));
+    assert_eq!(
+        chain.hops[1].receiver.as_ref().and_then(|r| r.parameter()),
+        Some("b")
+    );
     assert_eq!(
         owner_rows(&source)?,
         vec![row("215", "true"), row("1024", "false")]

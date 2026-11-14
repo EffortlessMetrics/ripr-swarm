@@ -25,6 +25,13 @@ cargo xtask fixtures ts_node_ordinary_test_control
 The ordinary test's `assert.strictEqual(...)` is an exact-value oracle and the
 finding is `exposed`, advisory-only and not packet-ready.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_score.ts:typescript_preview:e9473a29 -> exposed
+```
+
 ## Must Not
 
 - Withhold credit from an ordinary active test because a sibling fixture uses

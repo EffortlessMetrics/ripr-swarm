@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0008"
+tests = [
+  "xtask/src/output_properties.rs::renderers_use_only_static_vocabulary_and_validate_against_schemas",
+  "xtask/src/output_properties.rs::finding_ids_are_unique_and_stable",
+  "xtask/src/output_properties.rs::negative::injected_forbidden_word_fails_the_vocabulary_check",
+  "xtask/src/output_properties.rs::negative::injected_foreign_class_fails_the_vocabulary_check",
+  "xtask/src/output_properties.rs::negative::injected_foreign_sarif_rule_fails_the_vocabulary_check",
+  "xtask/src/output_properties.rs::negative::injected_duplicate_id_fails_the_uniqueness_check",
+  "xtask/src/output_properties.rs::negative::schema_check_rejects_drifted_json_and_sarif",
+  "xtask/src/output_properties.rs::negative::generator_reaches_more_than_one_class",
+]

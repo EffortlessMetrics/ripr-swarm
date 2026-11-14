@@ -1,0 +1,15 @@
+[[extend]]
+id = "RIPR-SPEC-0009"
+tests = [
+  "crates/ripr/tests/cli_smoke/cli_value_contracts.rs::explain_format_errors_list_aliases_and_suggest_near_misses",
+  "crates/ripr/tests/cli_smoke/cli_value_contracts.rs::explain_format_aliases_and_json_recovery_keep_their_contracts",
+  "crates/ripr/tests/cli_smoke/cli_value_contracts.rs::explain_format_help_names_the_existing_text_alias",
+]
+code = [
+  "crates/ripr/src/cli/commands.rs::parse_explain_format",
+  "crates/ripr/src/cli/suggest.rs::unknown_value",
+  "crates/ripr/src/cli/help/core.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0009-defaults-first-adoption.md",
+]

@@ -247,3 +247,83 @@ impl std::fmt::Display for CrossLanguageEdgeRegistryErrorV1 {
 }
 
 impl std::error::Error for CrossLanguageEdgeRegistryErrorV1 {}
+
+/// Base/head movement classification aligned with dependency-index match kinds.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CrossLanguageEdgeMovementKindV1 {
+    HeadOnlyAdded,
+    BaseOnlyDeleted,
+    Unchanged,
+    Moved,
+    Replaced,
+    StaleOnHead,
+    InvalidOnHead,
+    UnsupportedFamilyOnHead,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CrossLanguageEdgeRegistryAnomalyKindV1 {
+    DuplicateSemanticEdge,
+    ConflictingEdge,
+    ReversedEdge,
+    OverBroadEdge,
+    DanglingEdge,
+    ArtifactCrossBind,
+    MissingProducerRegistration,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrossLanguageEdgeRegistryAnomalyV1 {
+    pub kind: CrossLanguageEdgeRegistryAnomalyKindV1,
+    pub edge_id: String,
+    pub related_edge_id: Option<String>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrossLanguageEdgeEffectiveRecordV1 {
+    pub edge_id: String,
+    pub effective_disposition: EdgeDispositionV1,
+    pub first_unresolved_leg: Option<String>,
+    pub positive_relation_available: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrossLanguageEdgeRegistryCurrentnessReportV1 {
+    pub schema_version: String,
+    pub proof_generation: String,
+    pub currentness_generation: String,
+    pub semantic_digest: String,
+    pub effective_edges: Vec<CrossLanguageEdgeEffectiveRecordV1>,
+    pub anomalies: Vec<CrossLanguageEdgeRegistryAnomalyV1>,
+    pub recovery_guidance: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrossLanguageEdgeMovementRecordV1 {
+    pub movement_kind: CrossLanguageEdgeMovementKindV1,
+    pub semantic_key: String,
+    pub base_edge_id: Option<String>,
+    pub head_edge_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrossLanguageEdgeRegistryMovementReportV1 {
+    pub schema_version: String,
+    pub base_semantic_digest: String,
+    pub head_semantic_digest: String,
+    pub records: Vec<CrossLanguageEdgeMovementRecordV1>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoadedCrossLanguageEdgeRegistryV1 {
+    pub registry: CrossLanguageEdgeRegistryV1,
+    pub semantic_digest: String,
+}

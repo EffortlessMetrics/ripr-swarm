@@ -418,8 +418,33 @@ fn attribute_gate_is_provably_true(trimmed: &str, defaults: Option<&BTreeSet<Str
 /// `--features`, and one inside it off by `--no-default-features`, so no
 /// negation is resolved (#8639 false-clean risk).
 fn gate_is_provably_true(predicate: &str, defaults: &BTreeSet<String>) -> bool {
+    gate_is_provably_true_in(predicate, defaults, "doctest")
+}
+
+/// Whether the `#[cfg(..)]` / `#![cfg(..)]` attribute `attribute` is provably
+/// true when a plain `cargo test` compiles the package's test targets: the
+/// same rule as a doc example's gate (RIPR-SPEC-0279), with `test` in place
+/// of `doctest` as the build's own flag (#8780). `None` defaults (no readable
+/// manifest), a `cfg_attr`, a negation, a target or custom atom and
+/// unparsable text all answer false.
+pub(crate) fn test_gate_is_default_enabled(
+    attribute: &str,
+    defaults: Option<&BTreeSet<String>>,
+) -> bool {
+    let Some(defaults) = defaults else {
+        return false;
+    };
+    attribute_path_and_optional_args(attribute.trim())
+        .filter(|(path, _)| *path == "cfg")
+        .and_then(|(_, args)| args)
+        .is_some_and(|args| gate_is_provably_true_in(args, defaults, "test"))
+}
+
+/// [`gate_is_provably_true`] for a build whose own flag is `ambient`
+/// (`doctest` for a doc example, `test` for a test target).
+fn gate_is_provably_true_in(predicate: &str, defaults: &BTreeSet<String>, ambient: &str) -> bool {
     let predicate = predicate.trim();
-    if predicate == "doctest" {
+    if predicate == ambient {
         return true;
     }
     let paren = predicate.find('(').unwrap_or(predicate.len());
@@ -450,11 +475,11 @@ fn gate_is_provably_true(predicate: &str, defaults: &BTreeSet<String>) -> bool {
             !operands.is_empty()
                 && operands
                     .iter()
-                    .all(|operand| gate_is_provably_true(operand, defaults))
+                    .all(|operand| gate_is_provably_true_in(operand, defaults, ambient))
         }
         "any" => operands
             .iter()
-            .any(|operand| gate_is_provably_true(operand, defaults)),
+            .any(|operand| gate_is_provably_true_in(operand, defaults, ambient)),
         _ => false,
     }
 }

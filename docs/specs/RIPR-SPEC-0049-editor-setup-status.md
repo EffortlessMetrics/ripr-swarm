@@ -162,6 +162,19 @@ Server missing:
 - Given no usable server binary is resolved, status explains that the server is
   unavailable and suppresses diagnostics and repair actions.
 
+Server download unreachable:
+
+- Given no usable server binary is resolved because the managed download got
+  no answer from its host (no DNS answer, a refused or dropped connection, or
+  the fetch timeout), the unavailable-server message and next safe action name
+  the network connection and the offline route: `ripr.server.path` to a local
+  binary, or `ripr.server.downloadBaseUrl` for a mirror.
+- Given the host answered with an HTTP status, a checksum or manifest
+  mismatch, or an archive refusal, the message keeps the diagnostic and retry
+  guidance and does not suggest that the machine is offline.
+- This spec owns only how the unavailable state is explained; the download
+  itself stays outside it (see Non-Goals).
+
 Preview disabled:
 
 - Given a Python file and preview languages disabled by config, no Python

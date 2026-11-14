@@ -287,18 +287,53 @@ rejected alternative. Any can be reversed later without touching the rest.
    `field_written_in_method`); when the receiver mode is not recorded they name
    neither value. Repository
    scope resolves no `self` methods, so a later `self.m()` call counts as a
-   possible write and the write gets no seam. Only a field this file declares
-   plain `pub` gets the seam: a private or `pub(crate)` field is observed
+   possible write and the write gets no seam. A field this file declares
+   plain `pub` gets the seam. A private or `pub(crate)` field is observed
    through a getter or `Display`, so a missing direct read is not a gap a test
    can close and the pilot ranking would recommend a well-observed setter
-   (bytesize's `format` setters displaced confirmed picks). A builder's tail `self` hands the
+   (bytesize's `format` setters displaced confirmed picks); its write gets a
+   seam only when the start policy below holds over the owner's related tests
+   (#11870), so a getter-only or unread write stays ungraded. The owner's file
+   must declare the field on the owner's impl type, once, and every related
+   test that reads it weakly must be able to name it: a private (or scoped
+   `pub(super)` / `pub(in ..)`) field from the declaring file, a `pub(crate)`
+   field from any file under the same library `src/` (never `tests/`,
+   `benches/`, `examples/`, `src/bin/` or `main.rs`, which are other crates).
+   An undeclared or ambiguous declaration withholds. A builder's tail `self` hands the
    value to the caller; it is not a later write, for the diff probe and the
-   seam alike. A field write offers no repair start (no new start policy):
-   `ripr check` and `ripr repair` both refuse with "a test assertion that
-   checks the changed field value" instead of "touch no code". Rejected:
-   crediting a seam by the field name alone, which any binding or sibling
-   read would satisfy; and starting a repair from a weak read of the written
-   field, which needs its own start policy and proof.
+   seam alike. A field write starts a repair from a weak read only
+   (#11870); otherwise `ripr check` and `ripr repair` both refuse with "a
+   test assertion that checks the changed field value" instead of "touch no
+   code". The one start policy is `assigned_field_weak_read_start`, asked by
+   the finding's class (a weak read keeps `weakly_exposed` instead of
+   abstaining to `static_unknown`) and by the seam's `FieldValue` missing
+   discriminator, so the two commands start the same gap. It holds only when
+   the owner borrows its receiver; no related test is `#[ignore]`d or
+   `#[should_panic]`; no assertion confirms the write; a test that calls the
+   owner directly reads `<binding>.<field>` as one whole side of a relational
+   check (`>`, `<`, `>=`, `<=`, `!=`) or `assert_ne!`, against a side that
+   does not name the binding, from the binding it ran the owner on, under the
+   confirming read's binding guards; and nothing else in a related test body can be
+   the exact check these rules do not place: no other statement, assertion or
+   not, names the field or uses the binding except as the owner call or its
+   `let` (an alias, a helper call, a destructure, a move, an `if`/`panic!`
+   check withholds); every related test that establishes reach is itself a placed weak
+   read (a direct caller; an observer through a getter, `Display` or `Debug`,
+   a helper-held assertion, an `if`/`panic!` or `Err` check, an aliased,
+   iterated or closure receiver, a call through a helper or a test with no
+   assertion withholds), and the owner's name is mentioned nowhere else in the
+   index: the identifier occurs, outside a `fn <name>` definition, exactly as
+   often in the raw text of every indexed file as in the placed weak-read test
+   bodies. Another test or helper in any file, a `macro_rules!` body, a
+   doctest, an alias path (`C::bump`), a method value (`for_each(C::bump)`), a
+   turbofish call, an ignored or `should_panic` test, or production code that
+   mentions the name withholds; a name shared with another type only
+   over-withholds. This also tightens the plain `pub` field start; the owner's `Self` type is also not a non-plain `Drop`
+   type. A strong read stays "nothing to do"; no read, a
+   sibling field, another binding, a later write, a by-value owner, an
+   equality, a bare boolean, a getter and a private field start nothing.
+   Rejected: crediting a seam by the field name alone, which any binding or
+   sibling read would satisfy.
 
 `ripr agent stub` refuses a field-write seam with its own reason
 (`field_written_in_method`): the value to check is the receiver after the
@@ -442,6 +477,32 @@ changes `self.count += 2` to `self.count += 1`.
   each naming its example in its reasoning and labeled with runtime mutant
   truth. Examples 10 and 11 are dead writes: every mutant of the write is
   equivalent, so they have no runtime-labeled case.
+- Weak-read start (#11870): `test_grip_evidence/tests.rs`
+  `a_weak_read_of_a_written_field_is_the_missing_discriminator_only_when_placed`
+  (including the non-assertion checks above) and the real-binary `repair_check_recommended_start.rs`
+  `a_weak_read_of_a_written_field_starts_the_repair_check_recommends`
+  (positive start, the strong read as "nothing to do", and the negatives).
+- Non-public fields (#11870): `classify/field_reach/tests.rs`
+  (`a_declared_field_reads_its_own_visibility`,
+  `an_undeclared_ambiguous_or_tuple_field_has_no_reach`,
+  `a_test_names_a_field_only_where_its_visibility_reaches`), `seam_inventory.rs`
+  `a_private_field_write_is_graded_only_when_declared_here_and_read_weakly`
+  (declared here and read weakly; struct declared in another file, unread field
+  and a same-named second struct are ungraded), and the real-binary
+  `repair_check_recommended_start.rs`
+  `a_weak_read_of_a_private_or_crate_field_starts_only_where_the_test_can_name_it`
+  and `a_second_test_that_observes_the_write_another_way_withholds_the_start`
+  (a getter, `to_string`, `format!("{c}")` or `Debug` read in a second test of
+  the owner withholds, for private and plain `pub` fields),
+  `every_test_that_runs_the_owner_must_be_a_placed_weak_read` (a helper-held
+  assertion, an `if`/`panic!` or `Err` check, an aliased, iterated or closure
+  receiver, a non-direct call through a helper, an alias UFCS path, an
+  inferred-type runner, a turbofish call, a method value, a four-hop helper
+  chain and a `macro_rules!` body each withhold, for private and plain `pub`
+  fields), and `seam_inventory.rs`
+  `any_other_mention_of_the_owner_name_withholds_a_private_field_seam`, `field_reach/tests.rs`
+  `mentions_count_every_use_of_the_name_but_not_its_definition` and
+  `a_cancelled_inventory_reports_the_cancellation_from_field_admission`.
 - Planned: probe extraction unit tests for `=` and `op=` on field paths.
 - Probe boundary (#6676, #6675): `lexical.rs`
   `let_binding_type_annotations_are_not_field_construction` and
@@ -721,6 +782,56 @@ changes `self.count += 2` to `self.count += 1`.
   branch, an empty loop or a `#[should_panic]` test still credits; and a
   non-default pre-call value equal to the asserted one
   (`self.count = self.count.max(1)` with `count` already 5) still credits.
+  #14407 narrows that limit: the exact read refuses when the test's latest
+  `let` struct literal for the receiver gives the field the expected value
+  (or a shorthand or `..base` value it cannot read), or a plain
+  `recv.f = <expected>;` precedes the read. Reveal's use of this read (the
+  confirmation that needs no token match on the field name) also requires
+  the receiver's single `let` to be a visible struct literal: a constructor
+  or helper initializer (`Counter::new()`) may already leave the expected
+  value, so it gets no such credit. That literal must name the field with a
+  plain literal, the assertion's expected operand must be a plain literal of
+  a different value (a `const`, variable, expression or another binding's
+  field may equal the seed), and before the read the receiver may appear
+  only in its `let` and as the receiver of bare `recv.<owner>(..);`
+  statements; a setter, reassignment, `&mut recv` alias, `mem::replace` or
+  earlier assertion refuses, and an owner call inside a branch never counts
+  as the call that precedes the read. The owner must touch its receiver
+  only through plain field accesses and name the written field once (the
+  changed write): an earlier write of that field, a `self` method call or a
+  bare `self` refuses, since it may already leave the asserted value. Activation and the repository seam keep
+  reading constructor-built receivers and do not read the constructor's
+  field values. The
+  same read also refuses when a test outside the owner's file declares or
+  aliases a type named like the owner's impl type anywhere in that file, or
+  when a test in the owner's own file shares it with a second declaration,
+  alias or `use .. as` rename of that name. Reveal's short-field credit also
+  needs the test to bind the owner's own type by name: the owner's `impl`
+  is a top-level item of a file that declares the name once, before the
+  owner; an import of the name spells `super::Name` or
+  `crate::<owner module path>::Name` in the owner's file and
+  `krate::<owner module path>::Name` elsewhere (or `krate::Name` when the
+  library root declares it or re-exports it from the owner's module); a glob
+  is `super::*` or `crate::<owner module path>::*` in the owner's file, or
+  `krate::*` elsewhere when the root binds no other type of the name; any
+  other glob refuses, in-crate ones included, since the module it reaches may
+  re-export (`pub use dep::*;`) another type of the name; a test in another
+  file that imports neither the name nor a glob spells the name only
+  path-qualified (a bare name there may be a macro-made type); and
+  `krate::Name { .. }` is spelled only when the root names the owner's type.
+  A raw spelling (`r#n`, `r#Counter`) is the same identifier for every one of
+  these scans. The owner's module is read from its file path, so any
+  `path = ..` attribute in the indexed sources (plain or inside `cfg_attr`)
+  withdraws the module-path routes. When the owner writes a plain literal (`self.n = 1;`), the expected
+  literal must not differ from it, since such an assertion fails with or
+  without the write. A workspace with a visible non-empty `Drop` impl, or a
+  source that does not parse cleanly, gets no such credit, since a `Drop` that
+  ends the process during unwinding can turn the failing assertion into a
+  pass; a macro-generated `Drop` impl is not read. A same-named type elsewhere in
+  the workspace that the test does not bind does not withdraw the credit. A
+  crate-qualified struct literal receiver (`krate::Ty { .. }`) is typed by
+  its latest `let` and refused when the test holds a second `let` of that
+  binding name, whose block scope the text reading cannot place.
 
 ## Metrics
 

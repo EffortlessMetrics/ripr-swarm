@@ -34,7 +34,7 @@ property the rest of this note enforces.
 | manifest-derived index fields | `package_names`, `root_library_name`, `macro_owned_crates`, `workspace_crates`, `workspace_member_dirs`, `drop_in_manifests`, `member_crates` | scalar, one digest each |
 | module and include structure | `execution_module_parents`, `include_parents`, `include_limitations`, `include_targets`, `non_utf8_sources` | one digest each |
 | harness and workspace authority | `harness_subjects`, `harness_limitations`, `workspace_authority`, `doctest_sources` | one digest each |
-| files read from disk | not through the index: `member_trait_names` (`classify/reach.rs`) walks the `.rs` files under the workspace member directories, indexed or not, and `fallible_check_receipt` (`classify/owner_pin/fallible_check.rs`) canonicalizes the workspace root and consults disk | `Disk(path)` |
+| files read from disk | not through the index: `member_trait_names` (`classify/reach.rs`) walks the `.rs` files under the workspace member directories, indexed or not, skipping the directories workspace discovery never enters (#14068), and `fallible_check_receipt` (`classify/owner_pin/fallible_check.rs`) canonicalizes the workspace root and consults disk | `Disk(path)` |
 | `dependency_edges` | path-dependency adjacency and manifest-prefix inventory | one digest |
 | `candidate_index` memos | file `use` scan, owner-pin syntax and workspace macro-binding scan, implicit expansion, unseen-reach names, test value facts, owner-caller names, diff-touched tests, unmounted-build-script test | memo reads (below) |
 | `transitive_reach` | bounded caller walk over the index | memo read |

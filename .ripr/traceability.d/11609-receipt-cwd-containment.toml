@@ -1,0 +1,6 @@
+[[extend]]
+id = "RIPR-SPEC-0079"
+tests = [
+  "crates/ripr/tests/cli_smoke/receipt_write_containment.rs::default_receipt_checks_cwd_even_with_a_different_root",
+  "crates/ripr/tests/cli_smoke/receipt_write_containment.rs::receipt_cwd_guard_preserves_contained_and_explicit_outputs",
+]

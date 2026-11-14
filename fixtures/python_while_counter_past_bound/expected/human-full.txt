@@ -49,7 +49,9 @@ Evidence
 
 Weakness
   - A strong Python oracle reaches `countdown`, but static evidence does not place a related test input at the changed predicate boundary `start == 0`. No strong related test call places start equal to 0; observed start values: -2
-  - missing discriminator start == 0: No strong related test call places start equal to 0; observed start values: -2
+
+Next step
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `start == 0`
 
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
@@ -77,9 +79,6 @@ Python repair card (preview/advisory)
     - Syntax-first Python preview evidence only.
     - No source edits, generated tests, mutation execution, provider calls, or gate authority.
     - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `start == 0`
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_while_counter_past_bound/input --diff <cwd>/fixtures/python_while_counter_past_bound/diff.patch --mode fast probe:src_steps.py:python_preview:bc3d08af

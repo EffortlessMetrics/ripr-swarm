@@ -240,19 +240,38 @@ fn unsupported_check_keeps_rendered_formats_and_repo_scope() -> TestResult {
 }
 
 #[test]
-fn check_json_malformed_options_remain_empty_exit_two() -> TestResult {
-    for args in [
-        vec!["check", "--json", "--unknown-option-7440"],
-        vec!["check", "--json", "--format"],
-        vec!["check", "--json", "--mode", "nonsense"],
-    ] {
+fn check_json_malformed_options_never_masquerade_as_analysis_exit_two() -> TestResult {
+    // (args, expected cli_refusal code). `None` means stdout stays empty: a
+    // flag missing its value is a prose-only diagnostic that #6834 item 3 does
+    // not enumerate (unknown command, argument, value or selector miss), so no
+    // typed refusal code exists for it. Exit code and stderr are still pinned.
+    let cases: [(Vec<&str>, Option<&str>); 3] = [
+        (
+            vec!["check", "--json", "--unknown-option-7440"],
+            Some("unknown_argument"),
+        ),
+        (vec!["check", "--json", "--format"], None),
+        (
+            vec!["check", "--json", "--mode", "nonsense"],
+            Some("unknown_value"),
+        ),
+    ];
+    for (args, code) in cases {
         let output = run_command(env!("CARGO_BIN_EXE_ripr"), None, &args)?;
         assert_eq!(output.status.code(), Some(2), "{args:?}");
-        assert!(
-            output.stdout.is_empty(),
-            "{args:?}: usage must not masquerade as an analysis report"
-        );
         assert!(!output.stderr.is_empty(), "{args:?}");
+        match code {
+            Some(code) => {
+                // #11584: explicit JSON gets the minimal cli_refusal
+                // document, never an analysis report.
+                let document: Value = serde_json::from_slice(&output.stdout)?;
+                assert_eq!(document["status"], "refused", "{args:?}");
+                assert_eq!(document["error"]["code"], code, "{args:?}");
+                assert!(document.get("findings").is_none(), "{args:?}");
+                assert!(document.get("summary").is_none(), "{args:?}");
+            }
+            None => assert!(output.stdout.is_empty(), "{args:?}"),
+        }
     }
     Ok(())
 }

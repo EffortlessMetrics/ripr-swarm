@@ -1,0 +1,11 @@
+[[extend]]
+id = "RIPR-SPEC-0008"
+tests = [
+  "crates/ripr/src/lsp/surface_conformance_tests.rs::existing_fixture_surface_conformance",
+  "xtask/src/reports/fixtures.rs::tests::annotation_goldens_are_optional_but_compare_both_surfaces",
+]
+code = [
+  "crates/ripr/src/output/sarif.rs",
+  "crates/ripr/src/output/github.rs",
+  "xtask/src/reports/fixtures.rs",
+]

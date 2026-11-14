@@ -59,7 +59,7 @@ jobs:
             sleep 10
           done
           if [ "$mergeable" = "null" ]; then
-            echo "::warning title=mergeability not computed::PR #$PR_NUMBER mergeable is still null after retries; re-apply merge-ready to re-check."
+            echo "::warning title=mergeability not computed::PR #$PR_NUMBER mergeable is still null after retries; re-apply merge-ready to re-check and request qualification, then enqueue through the native queue route after qualification is green."
             exit 0
           fi
           # A push or retarget after the label makes this request stale; the new
@@ -86,10 +86,14 @@ jobs:
           existing="$(gh api --paginate "repos/$REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" --jq "[.[] | select(.body | contains(\"$marker\"))] | length" | awk '{s+=$1} END{print s+0}')"
           if [ "$existing" = "0" ]; then
             gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -f body="$marker
-          \`merge-ready\` was requested, but this PR conflicts with \`$BASE_REF\` (head \`${HEAD_SHA:0:8}\`), so GitHub creates no test-merge ref and no qualification run can start. Merge \`$BASE_REF\` into the branch and resolve the conflicts, then remove and re-apply \`merge-ready\`." > /dev/null
+          \`merge-ready\` was requested, but this PR conflicts with \`$BASE_REF\` (head \`${HEAD_SHA:0:8}\`), so GitHub creates no test-merge ref and no qualification run can start.
+
+          1. Merge \`$BASE_REF\` into the branch and resolve the conflicts.
+          2. Remove and re-apply \`merge-ready\` to request admission and qualification only.
+          3. After qualification is green, enqueue the PR through the native queue route; re-applying the label does not enqueue it." > /dev/null
           fi
           gh api "repos/$REPOSITORY/statuses/$HEAD_SHA" \
             -f state=failure \
             -f context="merge-ready conflict" \
-            -f description="Conflicts with $BASE_REF: no qualification run can start; resolve and re-apply merge-ready" > /dev/null
+            -f description="Conflicts with $BASE_REF: resolve, re-apply merge-ready for qualification, then enqueue through the native queue route" > /dev/null
           echo "::warning title=merge-ready on a conflicting PR::PR #$PR_NUMBER conflicts with $BASE_REF; commented and failed the status."

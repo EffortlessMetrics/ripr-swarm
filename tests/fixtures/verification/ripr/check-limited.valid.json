@@ -1,6 +1,12 @@
 {
   "schema_version": "0.2",
   "tool": "ripr",
+  "status": "refused",
+  "error": {
+    "code": "diff_scope_oversized",
+    "message": "diff_scope_oversized: changed Rust lines exceed the configured limit",
+    "next": null
+  },
   "mode": "draft",
   "root": "fixtures/limited-check/input",
   "base": "origin/main",

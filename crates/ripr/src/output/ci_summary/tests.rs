@@ -130,6 +130,7 @@ impl Fixture {
             root: self.root.clone(),
             base_ref: base_ref.to_string(),
             upload_sarif: upload_sarif == "true",
+            pull_request: true,
             gate_baseline: !gate_baseline.is_empty(),
             gate_configured: false,
             comment_mode: comment_mode.to_string(),
@@ -327,6 +328,19 @@ fn complete_artifacts_render_every_section_in_order() -> TestResult {
     }
     assert!(!summary.contains("@RIPR_"), "unsubstituted placeholder");
     assert!(summary.ends_with("- No runtime mutation execution is performed by this workflow.\n"));
+    // #14301: the comment publish plan is the one report still inlined, in
+    // its own fold; every other full report is only named.
+    assert!(
+        summary.contains(
+            "<details><summary>Full report: ripr/review/comment-publish-plan.md</summary>\n\n# Plan\n"
+        ),
+        "{summary}"
+    );
+    assert_eq!(
+        summary.matches("<details><summary>Full report:").count(),
+        1,
+        "{summary}"
+    );
     Ok(())
 }
 
@@ -376,6 +390,7 @@ fn empty_root_names_every_missing_artifact_and_its_regeneration() -> TestResult 
         "Baseline debt delta was not run. Set `RIPR_GATE_BASELINE`",
         "RIPR Zero status was not run.",
         "- Diff SARIF: missing or skipped",
+        "- Repo seam SARIF: not generated (manual runs only; on a pull request the diff SARIF covers the changed lines)",
         "- Badge JSON: missing or skipped",
         "No PR test guidance report was generated.",
         "- Mode: `off`",
@@ -559,7 +574,7 @@ fn the_agent_review_packet_leads_with_the_repair_before_any_edit() -> TestResult
     let packet = block(&summary, "### Agent review packet");
     assert!(
         packet.starts_with(&format!(
-            "- Receipt: {NO_RECEIPT_BEFORE_REPAIR}\n- Start repair: `{REPAIR}`\n- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n- Full packet: `target/ripr/workflow/agent-review-summary.md` (workflow artifact).\n"
+            "- Receipt: {NO_RECEIPT_BEFORE_REPAIR}\n- Start repair: `{REPAIR}`\n- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n- Full packet: `ripr/workflow/agent-review-summary.md` in the `ripr-reports` artifact.\n"
         )),
         "{packet}"
     );
@@ -571,7 +586,7 @@ fn the_agent_review_packet_leads_with_the_repair_before_any_edit() -> TestResult
     fixture.write("target/ripr/workflow/agent-review-summary.md", "# Review\n")?;
     let summary = fixture.render(&[])?;
     assert!(block(&summary, "### Agent review packet").starts_with(
-        "<details><summary>Full report: target/ripr/workflow/agent-review-summary.md</summary>\n\n# Review\n\n</details>\n"
+        "- Full report: `ripr/workflow/agent-review-summary.md` in the `ripr-reports` artifact\n"
     ));
     Ok(())
 }
@@ -784,14 +799,16 @@ fn checkout_paths_become_the_repository_root_in_copied_commands() -> TestResult 
     let summary = fixture.render(&[])?;
     let relative = "ripr agent verify --root '.' --json > './target/v.json'";
     let panel = block(&summary, "### PR review summary");
-    assert_eq!(panel.matches(relative).count(), 2, "{panel}");
-    // A sibling that only shares the prefix stays, and the report's last
-    // line gains the newline the shell's line rewrite gave it.
+    // The at-a-glance line rewrites; the full report is named, not inlined
+    // (#14301), so neither its rewritten copy nor its sibling line appears.
+    assert_eq!(panel.matches(relative).count(), 1, "{panel}");
+    assert!(!panel.contains(&sibling), "{panel}");
+    let top = block(&summary, "### Top recommendation");
+    assert!(!top.contains(&verify), "{top}");
     assert!(
-        panel.contains(&format!("- Notes: `{sibling}`\n\n</details>")),
-        "{panel}"
+        top.contains("- Full report: `ripr/pilot/pilot-summary.md` in the `ripr-reports` artifact"),
+        "{top}"
     );
-    assert!(block(&summary, "### Top recommendation").contains(&verify));
     Ok(())
 }
 
@@ -811,9 +828,6 @@ fn repo_relative_rewrites_only_whole_path_tokens() {
         "/w/repository /w/repo2 a/w/repo"
     );
     assert_eq!(relative.value("one /w/repo\ntwo\n\n"), "one .\ntwo");
-    assert_eq!(relative.file(b""), b"");
-    assert_eq!(relative.file(b"\n"), b"\n");
-    assert_eq!(relative.file(b"a /w/repo\nb"), b"a .\nb\n");
 }
 
 #[test]
@@ -916,7 +930,11 @@ fn preview_promotion_packets_follow_the_shell_glob() -> TestResult {
     let b = packets.find("- `python`/`b`").ok_or("no b")?;
     assert!(a < b, "{packets}");
     assert!(!packets.contains("skip"));
-    assert!(packets.contains("<details><summary>Full report: target/ripr/reports/preview-promotion-python-a.md</summary>\n\n# A\n</details>"), "{packets}");
+    assert!(packets.contains("- Full report: `ripr/reports/preview-promotion-python-a.md` in the `ripr-reports` artifact\n"), "{packets}");
+    assert!(
+        !packets.contains("# A"),
+        "a report is named, not inlined: {packets}"
+    );
     Ok(())
 }
 
@@ -1320,6 +1338,7 @@ fn render_gate(
         root: fixture.root.clone(),
         base_ref: "trunk".to_string(),
         upload_sarif: true,
+        pull_request: true,
         gate_baseline: false,
         gate_configured,
         comment_mode: String::new(),
@@ -1346,10 +1365,10 @@ fn governance_sections_fold_unless_a_gate_is_configured() -> TestResult {
         assert!(inside.contains(heading), "{heading:?} escaped the fold");
         assert_eq!(folded.matches(heading).count(), 1, "{heading:?}");
     }
-    // Full reports nest their own <details>; the fold must still be closed
-    // by its own marker before the gate section.
+    // Full reports are named, not inlined (#14301): the fold is the one
+    // <details> block, closed by its own marker before the gate section.
     let opens = inside.matches("<details").count();
-    assert!(opens > 1, "expected nested full reports:\n{inside}");
+    assert_eq!(opens, 1, "{inside}");
     assert_eq!(opens, inside.matches("</details>").count(), "{inside}");
     assert!(inside.trim_end().ends_with("</details>"), "{inside}");
     // Folded, not dropped: a configured gate leaves them unfolded.
@@ -1693,12 +1712,40 @@ fn start_here_is_named_by_artifact_not_a_target_path() -> TestResult {
     let summary = fixture.render(&[])?;
     let start = block(&summary, "### Start here");
     assert!(
-        start.contains("`start-here.md` in the `ripr-reports` artifact"),
+        start.contains("`ripr/reports/start-here.md` in the `ripr-reports` artifact"),
         "{start}"
     );
     assert!(
         !start.contains("Open `target/ripr/reports/start-here.md`"),
         "{start}"
+    );
+    Ok(())
+}
+
+/// #14300: on a manual run the packet renders only the repo seam SARIF, so
+/// an absent seam file is the anomaly and an absent diff file is expected;
+/// a pull request is the reverse (pinned in the empty-root test above).
+#[test]
+fn manual_run_flags_a_missing_seam_sarif_not_the_diff_sarif() -> TestResult {
+    let fixture = Fixture::new("manual-sarif")?;
+    let input = CiSummaryInput {
+        root: fixture.root.clone(),
+        base_ref: "trunk".to_string(),
+        upload_sarif: true,
+        pull_request: false,
+        gate_baseline: false,
+        gate_configured: false,
+        comment_mode: String::new(),
+        configured_languages: vec!["rust".to_string()],
+    };
+    let summary = String::from_utf8(render_ci_summary(&input))?;
+    assert!(
+        summary.contains("- Diff SARIF: not generated (pull request runs only)\n"),
+        "{summary}"
+    );
+    assert!(
+        summary.contains("- Repo seam SARIF: missing or skipped\n"),
+        "{summary}"
     );
     Ok(())
 }

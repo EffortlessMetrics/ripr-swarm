@@ -44,11 +44,14 @@ Evidence
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches returned value: return f"NO:{code}" (line 2)
-  - related test tests/test_status.py:4 test_len uses strong exact value oracle: assert len(status_label(7)) == 4; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/test_status.py:4 test_len uses strong exact value oracle: assert len(status_label(7)) == 4
 
 Weakness
   - A strong Python oracle reaches `status_label`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
   - missing discriminator return value == <expected value>: changed Python returned-value at line 2 lacks a concrete repair discriminator
+
+Next step
+  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `return value == <expected value>`
 
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
@@ -75,9 +78,6 @@ Python repair card (preview/advisory)
     - Syntax-first Python preview evidence only.
     - No source edits, generated tests, mutation execution, provider calls, or gate authority.
     - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `return value == <expected value>`
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_adversarial_fstring_length_invariant_aggregate/input --diff <cwd>/fixtures/python_adversarial_fstring_length_invariant_aggregate/diff.patch --mode fast probe:src_status.py:python_preview:f3e3e6b2

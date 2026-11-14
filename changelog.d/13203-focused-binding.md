@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- A focused `--test-result` finish now binds the caller-reported claim to the evaluated HEAD and the digest of the selected test file at validation time (an edit between the caller's run and validation with HEAD unchanged is not detected), commits the claim before publishing the receipt, restores the attempt to `awaiting_edit` when publication or retention fails, and shows an interrupted focused finish as limited in status. Recovering an interrupted focused finish is not included yet (#13203).

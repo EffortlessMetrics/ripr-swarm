@@ -506,9 +506,9 @@ fn resource_document(reply: &Value, uri: &str, context: &str) -> Result<Value, S
 }
 
 /// Tool/resource document equality (#7145): the resource text parses to the
-/// exact document the tool returned. The wire encodings differ by design
-/// (resources pretty-print, tools serialize compact), so equality is over
-/// the parsed document — the same comparison the status pin makes.
+/// exact document the tool returned. Both wire encodings are the compact
+/// serialization, and equality is still pinned over the parsed document —
+/// the same comparison the status pin makes.
 fn require_tool_resource_equal(
     tool: &Value,
     resource: &Value,

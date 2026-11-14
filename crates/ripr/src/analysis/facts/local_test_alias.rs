@@ -196,6 +196,17 @@ impl AliasTarget {
     }
 }
 
+/// Leading crate of a unique `use ... as test` import when it names another
+/// crate. `crate`/`self`/`super` stay local and yield `None`.
+pub(crate) fn imported_test_alias_crate(source: &str) -> Option<String> {
+    let target = test_alias_target(source)?;
+    if matches!(target.first.as_str(), "crate" | "self" | "super") {
+        None
+    } else {
+        Some(target.first)
+    }
+}
+
 /// Whether `as` is followed, across any whitespace, by `test` or `r#test`.
 fn spells_test_alias(source: &str) -> bool {
     source.match_indices("as").any(|(at, _)| {

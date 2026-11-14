@@ -1,0 +1,6 @@
+# Registers the once-per-seam credited owner-reach ranking test (#12478) under RIPR-SPEC-0094.
+[[extend]]
+id = "RIPR-SPEC-0094"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::match_arm_owner_reach_is_computed_once_for_many_related_tests",
+]

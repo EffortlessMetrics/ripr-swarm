@@ -33,15 +33,40 @@ pub(super) fn default_check_timeout() -> Option<Duration> {
     Some(Duration::from_secs(DEFAULT_CHECK_TIMEOUT_SECS))
 }
 
+/// Shared scope note for `--timeout` help, stderr disclosure, and timeout refusals (#12508).
+const CHECK_ANALYSIS_BUDGET_GIT_SCOPE: &str = "Pre-analysis git work and post-analysis rendering \
+are outside the analysis-worker budget; git-backed diff loading inside the worker counts against \
+this budget, and each git invocation is bounded separately by RIPR_GIT_TIMEOUT.";
+
 /// The refusal diagnostic, also printed on stderr.
 fn timeout_detail(budget: Duration) -> String {
     format!(
-        "analysis_timeout: ripr check exceeded its {}s wall-clock budget and was stopped. \
+        "analysis_timeout: ripr check exceeded its {}s wall-clock budget (analysis worker) and was stopped. \
          No findings were produced, so this is not a clean result. \
          Repair route: raise or disable the budget (0 disables it) with --timeout SECS or \
-         RIPR_CHECK_TIMEOUT=<seconds>, or narrow the diff, then re-run.",
+         RIPR_CHECK_TIMEOUT=<seconds>, or narrow the diff, then re-run. \
+         {CHECK_ANALYSIS_BUDGET_GIT_SCOPE}",
         budget.as_secs()
     )
+}
+
+/// Stderr disclosure when the user explicitly sets `--timeout` (#12508).
+pub(super) fn explicit_check_timeout_disclosure(
+    budget: Option<Duration>,
+    repo_seam_inventory: bool,
+) -> Option<String> {
+    if repo_seam_inventory {
+        return None;
+    }
+    Some(match budget {
+        Some(budget) => format!(
+            "ripr: check analysis budget {}s covers the analysis worker (including git-backed diff loading inside it). {CHECK_ANALYSIS_BUDGET_GIT_SCOPE}",
+            budget.as_secs()
+        ),
+        None => {
+            format!("ripr: check analysis budget disabled (0). {CHECK_ANALYSIS_BUDGET_GIT_SCOPE}")
+        }
+    })
 }
 
 /// Run `work` under `budget`. `None` runs it inline with no thread.
@@ -511,6 +536,33 @@ mod tests {
         assert_eq!(
             captured.facts.scoped_changed_file_count, None,
             "no intake count may exist without an intake completion"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_check_timeout_disclosure_names_worker_scope() -> Result<(), String> {
+        let line = super::explicit_check_timeout_disclosure(Some(Duration::from_mins(2)), false)
+            .ok_or("explicit budget must disclose")?;
+        assert!(
+            line.contains("120s") && line.contains("analysis worker"),
+            "{line}"
+        );
+        assert!(line.contains("RIPR_GIT_TIMEOUT"), "{line}");
+        assert!(
+            line.contains("git-backed diff loading inside the worker"),
+            "{line}"
+        );
+        assert!(
+            line.contains("Pre-analysis git work"),
+            "must distinguish pre-worker git from worker-owned loading: {line}"
+        );
+        let disabled = super::explicit_check_timeout_disclosure(None, false)
+            .ok_or("explicit disable must disclose")?;
+        assert!(disabled.contains("disabled (0)"), "{disabled}");
+        assert!(
+            super::explicit_check_timeout_disclosure(Some(Duration::from_secs(1)), true).is_none(),
+            "repo seam inventory formats skip the check budget disclosure"
         );
         Ok(())
     }

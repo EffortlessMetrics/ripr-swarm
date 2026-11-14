@@ -85,7 +85,7 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches returned value: try_parse_summary(raw).map_err(|error| error.to_string().into()) (line 14)
   - related test tests/attribution.rs:13 calls_callee_before_shadow_binding uses strong exact value oracle: assert_eq!(parsed.map(|n| n), Ok(3)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test tests/attribution.rs:13 calls_callee_before_shadow_binding uses strong exact value oracle: assert_eq!(ignored, Ok(5)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/attribution.rs:13 calls_callee_before_shadow_binding uses strong exact value oracle: assert_eq!(ignored, Ok(5)); unconfirmed
   - related test tests/attribution.rs:4 observes_callee_outcome uses strong exact value oracle: assert_eq!(parsed.map(|n| n), Ok(3)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 3 at line 6
   - source assertion argument value 3 at line 15

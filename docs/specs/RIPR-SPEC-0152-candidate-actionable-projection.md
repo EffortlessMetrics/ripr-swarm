@@ -116,7 +116,7 @@ eligibility map directly.
 
 ## Test Mapping
 
-`crates/ripr/src/domain/probe.rs` pins the predicate and the delta rule;
+`crates/ripr-contract/src/domain/probe.rs` pins the predicate and the delta rule;
 `crates/ripr/src/output/badge/tests.rs` the recurrence test; projection
 tests in `output/gap_decision_ledger.rs`, `output/first_pr.rs`,
 `output/json/finding_alignment.rs`, `lsp/diagnostics.rs`, `output/sarif.rs`
@@ -137,7 +137,7 @@ fixtures; `output/human.rs` pins the base-side display-severity rule
 
 ## Implementation Mapping
 
-- `crates/ripr/src/domain/probe.rs` — `is_candidate_actionable`,
+- `crates/ripr-contract/src/domain/probe.rs` — `is_candidate_actionable`,
   `permits_candidate_action`, `from_probe_delta`.
 - Preview producers: `analysis/language/python.rs`,
   `analysis/language/typescript/{classifier,parse,bun_bridge}.rs`.

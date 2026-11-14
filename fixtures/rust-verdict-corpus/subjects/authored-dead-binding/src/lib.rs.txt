@@ -1,0 +1,14 @@
+pub fn flag_hit(n: u32) -> u32 {
+    let _flag = n == 5;
+    7
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pins_the_result() {
+        assert_eq!(flag_hit(5), 7);
+    }
+}

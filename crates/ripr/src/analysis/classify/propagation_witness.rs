@@ -389,6 +389,80 @@ pub(in crate::analysis) fn constant_tail_witness(
     direct_tail_witness(probe, owner, sinks, tail_line, limitation)
 }
 
+/// #13037 Defect A: a changed early `return <decimal scalar literal>;` whose
+/// sibling exits build only different scalar literals is an owner-bound exit
+/// for the returned value, exactly like a constant tail: the changed value
+/// leaves the function at this return. The same fail-closed exit rule as the
+/// owner pin's `scalar_early_return_gate` applies (no
+/// second source of the literal, no parameter/computed exit, no `?`, no
+/// nested-closure return, no unbounded macro). Whether a related test
+/// observes the value remains reveal's question: the `EarlyScalar` pin's
+/// per-test value check decides that.
+pub(in crate::analysis) fn early_return_literal_witness(
+    probe: &Probe,
+    owner: &crate::analysis::facts::FunctionSummary,
+    sinks: &[FlowSinkFact],
+) -> Option<PropagationWitnessV1> {
+    if probe.family != ProbeFamily::ReturnValue || probe.owner.as_ref() != Some(&owner.id) {
+        return None;
+    }
+    if !probe.expression.trim_start().starts_with("return ") {
+        return None;
+    }
+    let changed_line = probe.location.line.checked_sub(owner.start_line)?;
+    let literal =
+        super::owner_pin::scalar_early_return_exit(&owner.body, &probe.expression, changed_line)?;
+    let identity = normalize_semantic_text(&probe.expression);
+    // `direct_return_identity` strips the syntactic `return ` wrapper: the
+    // flow producer names this sink by the payload (`100` for `return 100;`).
+    let payload = direct_return_identity(&probe.expression)?;
+    if !super::boundary_pairing::same_scalar_literal(&payload, &literal) {
+        return None;
+    }
+    let sink = sinks.iter().find(|sink| {
+        sink.owner.as_ref() == Some(&owner.id)
+            && sink.kind == FlowSinkKind::ReturnValue
+            && sink.line == probe.location.line
+            && normalize_semantic_text(&sink.text) == payload
+    })?;
+    let mut witness = PropagationWitnessV1 {
+        schema_version: SCHEMA_VERSION,
+        behavior: BehaviorIdentity {
+            owner: owner.id.clone(),
+            family: probe.family.as_str().into(),
+            delta: probe.delta.as_str().into(),
+            expression: identity.clone(),
+        },
+        source: PropagationEndpoint {
+            kind: "changed_behavior".into(),
+            identity: identity.clone(),
+            line: probe.location.line,
+        },
+        edges: vec![PropagationEdge {
+            kind: PropagationEdgeKind::DirectReturn,
+            status: EdgeStatus::Established,
+            from: identity.clone(),
+            to: payload.clone(),
+        }],
+        selected_helper_calls: Vec::new(),
+        fallible_check: None,
+        field_projection: None,
+        sink: PropagationEndpoint {
+            kind: sink.kind.as_str().into(),
+            identity: payload,
+            line: sink.line,
+        },
+        completeness: PathCompleteness::Complete,
+        limitations: vec![
+            "early_return_scalar_literal_owner_exit".into(),
+            "static_local_flow_only".into(),
+        ],
+        semantic_digest: String::new(),
+    };
+    witness.semantic_digest = witness.compute_semantic_digest();
+    Some(witness)
+}
+
 /// Evaluate only an unshadowed bare `concat!` whose whole owner body is a
 /// single parenthesized call with one or more string-literal operands totaling
 /// at most 512 decoded bytes. Other forms and nested macros remain opaque.
@@ -2835,13 +2909,73 @@ fn has_macro_invocation(text: &str) -> bool {
 }
 
 fn has_closure_syntax(text: &str) -> bool {
-    let mut pipes = text.match_indices('|');
-    if pipes.next().is_none() {
-        return false;
+    // Quoted `|` is not syntax, and a logical-or `||` between two operands is
+    // not a closure (#14326): only the pipes left after removing those count.
+    let masked = crate::analysis::extract::mask::mask_comments_and_strings(text);
+    // Conservative: any other paired pipes, including a `||` that opens an
+    // expression, are an opaque closure boundary.
+    without_logical_or(&masked, text).matches('|').count() >= 2
+}
+
+/// `masked` with each `||` that follows an operand removed. An operand ends in
+/// an identifier character, a closing bracket, `?`, or a string or character
+/// literal; a `||` after an operator, an opening bracket, `,`, `=`, a label or
+/// a keyword such as `move`, `mut`, `async` or `return` opens a closure and is kept.
+/// `original` is the same text before masking (equal length). The operand
+/// check reads code from `masked`; only a masked tail is read from `original`,
+/// and only a literal there counts, so comment text never ends an operand.
+fn without_logical_or(masked: &str, original: &str) -> String {
+    let mut out = String::with_capacity(masked.len());
+    let mut from = 0;
+    while let Some(found) = masked[from..].find("||") {
+        let at = from + found;
+        out.push_str(&masked[from..at]);
+        if !follows_operand(masked, original, at) {
+            out.push_str("||");
+        }
+        from = at + 2;
     }
-    // Conservative: any paired pipes, including `||`, are an opaque closure
-    // boundary.
-    pipes.next().is_some()
+    out.push_str(&masked[from..]);
+    out
+}
+
+/// Whether the code before byte `at` (a `||` in `masked`) ends an operand.
+fn follows_operand(masked: &str, original: &str, at: usize) -> bool {
+    let code = masked.get(..at).unwrap_or_default().trim_end();
+    let hidden = original.get(code.len()..at).unwrap_or_default().trim();
+    if !hidden.is_empty() {
+        // A masked literal right before the `||`. A comment anywhere in the
+        // masked run stays conservative: the `||` is kept.
+        return !hidden.contains("//")
+            && !hidden.contains("/*")
+            && (hidden.starts_with(['"', '\'', 'r', 'b', 'c']))
+            && hidden.ends_with(['"', '\'', '#']);
+    }
+    let last_word = code
+        .rsplit(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .next()
+        .unwrap_or_default();
+    let labelled = code
+        .get(..code.len() - last_word.len())
+        .is_some_and(|head| !last_word.is_empty() && head.ends_with('\''));
+    code.chars().next_back().is_some_and(|character| {
+        character.is_ascii_alphanumeric() || matches!(character, '_' | ')' | ']' | '}' | '?')
+    }) && !labelled
+        && !matches!(
+            last_word,
+            "move"
+                | "mut"
+                | "async"
+                | "gen"
+                | "use"
+                | "static"
+                | "const"
+                | "return"
+                | "break"
+                | "yield"
+                | "in"
+                | "else"
+        )
 }
 
 fn source_sink_tokens_overlap(source: &str, sink: &str) -> bool {
@@ -3163,6 +3297,61 @@ mod tests {
     use crate::domain::{DeltaKind, ProbeId, SourceLocation};
     use std::path::PathBuf;
 
+    /// #14326: a logical-or between two operands is not a closure, so a
+    /// constructed field spelled with `||` completes its direct witness; a
+    /// real closure (`|x| ..`, `|| ..`, `move || ..`) and a quoted pipe pair
+    /// keep their reading.
+    #[test]
+    fn logical_or_is_not_closure_syntax() -> Result<(), String> {
+        for text in [
+            "verbose: flag == \"-v\" || flag == \"--verbose\"",
+            "is_v(flag) || flag == \"x\"",
+            "a || b || c",
+            "items[0] || done?",
+            "label: \"a|b\"",
+            "name == \"a\" || name == r#\"b\"# || ok",
+        ] {
+            assert!(!has_closure_syntax(text), "{text}");
+        }
+        for text in [
+            "items.iter().any(|x| x > 1)",
+            "run(|| 1)",
+            "spawn(move || work())",
+            "handler: || ready",
+            "f = |a, b| a || b",
+            // Closure prefixes and keywords that a `||` closure can follow.
+            "spawn(async || work().await)",
+            "return || 1",
+            "break || 1",
+            "yield || 1",
+            "static || 1",
+            "const || 1",
+            "x in || 1",
+            "else || 2",
+            // A label is not an operand, and neither is comment text.
+            "break 'outer || x",
+            "spawn(\n    // start now\n    || work())",
+            "spawn(/* now */ || work())",
+            "spawn_with(&mut || work())",
+            "f(\"a\" // say \"x\"\n || g())",
+        ] {
+            assert!(has_closure_syntax(text), "{text}");
+        }
+        let probe = probe(
+            ProbeFamily::FieldConstruction,
+            "verbose: flag == \"-v\" || flag == \"--verbose\"",
+        );
+        let sinks = vec![sink(
+            FlowSinkKind::StructField,
+            "verbose: flag == \"-v\" || flag == \"--verbose\"",
+            14,
+        )];
+        let witness = current_path_witness(&probe, &sinks)
+            .ok_or_else(|| "logical-or field witness was absent".to_string())?;
+        assert!(complete_direct_witness(&probe, Some(&witness)));
+        Ok(())
+    }
+
     /// #6673: `Insufficient` contains the letters `ffi`; only an `ffi`
     /// identifier word names an FFI boundary.
     #[test]
@@ -3394,7 +3583,7 @@ mod tests {
             start_line: 1,
             end_line: 20,
             body: "fn calculate() { status: amount; }".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: return_text
                 .map(|text| {
                     vec![ReturnFact {
@@ -3403,12 +3592,12 @@ mod tests {
                     }]
                 })
                 .unwrap_or_default(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -3424,14 +3613,14 @@ mod tests {
             start_line: 1,
             end_line: 3,
             body: body.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }

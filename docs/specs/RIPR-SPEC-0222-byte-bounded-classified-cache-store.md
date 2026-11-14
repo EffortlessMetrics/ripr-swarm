@@ -17,8 +17,8 @@ Support-tier impact:
   analysis classes, public JSON findings, or support claims.
   [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md)
 
-Policy impact: none. No new process, network, or file-policy surface. The new
-env var is a store-path ceiling, not a process-RSS or load bound.
+Policy impact: none. No new process, network, or file-policy surface. The
+byte ceiling is not a process-RSS or complete load-memory bound.
 
 ## Problem
 
@@ -73,6 +73,15 @@ proving a universal RSS threshold.
   `CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES`). Record count
   (`RIPR_REPO_SEAM_CACHE_LIMIT` / `RIPR_COMPACT_REPO_SEAM_CACHE_MAX_SEAMS`)
   remains a secondary cap, not the sole selector.
+- Full and compact classified-cache reads also use that encoded ceiling for
+  entries, shards and manifests. Before expanding related-test indices in an
+  entry or shard, the reader limits their total count to the ceiling divided
+  by the larger of eight and the size of one `Arc` slot. At the default on a
+  64-bit host that is 1,048,576 references and at most 8 MiB of requested
+  `Arc` slots per unit. A unit above the limit is ignored as corrupt and
+  recomputed; a later invalid shard never admits its earlier prefix. The
+  already-decoded index vectors and encoded buffer are outside this slot
+  bound, as is the final payload across shards (#5124).
 - A payload may still be written as one file when it fits both the byte
   ceiling and the record cap. Otherwise it is published as byte-bounded
   shards. Manifest admission remains the generation gate: replacement
@@ -123,7 +132,7 @@ proving a universal RSS threshold.
   `RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES` value that restores warm runs.
 - Semantic digests, schema/analyzer identity, shard order, checksums,
   corruption handling, and warm-load reconstruction stay the current
-  contracts. This spec does not bound cache *load* auxiliary memory.
+  contracts. This spec does not bound all cache *load* auxiliary memory.
 
 ## Non-Goals
 
@@ -137,6 +146,10 @@ proving a universal RSS threshold.
 
 ## Required Evidence
 
+- Full and compact single and sharded reads reject a unit above the
+  reference limit before cloning its references, including a bad final shard;
+  a valid at-limit unit still loads. A default-scale compact input exercises
+  the limit without exceeding the encoded-byte ceiling.
 - Owned versus borrowed streaming encodes are byte-identical for single
   entries and shards. Borrowed store envelopes serialize
   `classified_seams` through the same `related_test_table` adapter owned

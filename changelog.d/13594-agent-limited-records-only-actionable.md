@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr check --format agent` no longer lists static-limited findings as `missing=-` records when a run has no test-side gap: those lines named nothing to fix. The report is now the header, `stop=`, `limits=` and the `next=ripr explain` drill-in, and only a limited finding with a concrete discriminator keeps a record. This narrows the per-finding records added in #13238 (#13594).

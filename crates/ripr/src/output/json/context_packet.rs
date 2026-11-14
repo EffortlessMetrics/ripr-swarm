@@ -41,7 +41,10 @@ pub(crate) fn render_context_packet_with_explain_command(
     // matches `ripr check --json` exactly, including user overrides. The
     // DTO's `from_finding` seed is the class profile default for callers
     // that hold no config.
-    packet.severity = config.severity().for_exposure(&finding.class).as_str();
+    packet.severity = config
+        .severity_for_file(&finding.probe.location.file)
+        .for_exposure(&finding.class)
+        .as_str();
     // The DTO starts with raw analysis evidence; resolve the provisional preview
     // packet-availability message using the same validator-backed projection as
     // the check surface and next-step reconciliation. Keep real missing facts.
@@ -236,9 +239,9 @@ mod tests {
     use crate::domain::context_packet::ContextPacket;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, DiagnosticConfidence, DiagnosticWitness,
-        ExposureClass, Finding, FindingCanonicalGap, MissingDiscriminatorFact, OracleKind,
-        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
-        SourceLocation, StageEvidence, StageState, SymbolId, ValueContext, ValueFact,
+        DiscriminatorShape, ExposureClass, Finding, FindingCanonicalGap, MissingDiscriminatorFact,
+        OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence,
+        RiprEvidence, SourceLocation, StageEvidence, StageState, SymbolId, ValueContext, ValueFact,
     };
     use std::path::{Path, PathBuf};
 
@@ -300,6 +303,8 @@ mod tests {
                 value: "v == \"boundary\"".to_string(),
                 reason: "No test checks \"boundary\"\ncase".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
 
         let packet = render_context_packet(&finding, 5, &test_config(), Path::new("."));

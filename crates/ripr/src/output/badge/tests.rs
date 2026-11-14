@@ -20,9 +20,10 @@ use crate::analysis_outcome::{
 use crate::app::{CheckInput, CheckOutput, Mode};
 use crate::config::RiprConfig;
 use crate::domain::{
-    ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageId, LanguageStatus,
-    MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest,
-    RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, Summary,
+    ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+    LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe,
+    ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
+    StageState, Summary,
 };
 use std::path::PathBuf;
 
@@ -114,9 +115,12 @@ fn check_output(findings: Vec<Finding>) -> CheckOutput {
         untracked_working_tree_source_paths: Vec::new(),
         ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
+        owner_opt_outs: Vec::new(),
         suppression: None,
         analysis_outcome: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     }
 }
@@ -166,6 +170,8 @@ fn classified_seam(class: SeamGripClass) -> ClassifiedSeam {
                 value: "amount == threshold".to_string(),
                 reason: "producer identified the equality boundary as missing".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,
@@ -206,7 +212,7 @@ fn refusal_badge_summary_applies_the_degraded_state_convention() -> Result<(), S
     let notice = crate::core_error::CoreError::base_unresolvable(
         "the base `deadbeef` does not resolve to a commit",
     )
-    .refusal_notice();
+    .refusal_notice(&crate::config::config_error_summary);
     let summary = refusal_badge_summary(&notice);
     assert_eq!(summary.status, BadgeStatus::Warn);
     assert_eq!(summary.color, "lightgrey");
@@ -2072,6 +2078,7 @@ fn check_output_with_preview_advisory(
             sample_paths: vec![format!("src/foo.{language}")],
             javascript_file_count: 0,
             enabled,
+            nested_packages: Vec::new(),
         }],
         language_runs: Vec::new(),
         no_scope_provided: false,
@@ -2079,9 +2086,12 @@ fn check_output_with_preview_advisory(
         untracked_working_tree_source_paths: Vec::new(),
         ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
+        owner_opt_outs: Vec::new(),
         suppression: None,
         analysis_outcome: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     }
 }
@@ -2373,4 +2383,62 @@ fn base_deleted_findings_never_count_as_exposure_gaps() {
     assert_eq!(summary.counts.unsuppressed_exposure_gaps, 0);
     assert_eq!(summary.counts.unknowns, 0);
     assert_eq!(summary.counts.analyzed_findings, 1);
+}
+
+/// Devin on #13874: a `static_unknown` whose changed owner carries
+/// `#[mutants::skip]` is withheld (#13819), so with `include_unknowns` on it
+/// must stay out of both the RIPR 0 and the ripr+ headline. Before the shared
+/// filter, ripr+ re-counted it from the unfiltered findings. The native
+/// `counts.unknowns` audit still lists every unknown class.
+#[test]
+fn withheld_owner_unknowns_stay_out_of_both_badge_headlines() {
+    use crate::analysis::owner_opt_out::{OwnerOptOut, OwnerOptOutReason};
+    let with_id = |class: ExposureClass, id: &str| {
+        let mut finding = finding(class, vec![]);
+        finding.id = id.to_string();
+        finding.probe.id = ProbeId(id.to_string());
+        finding
+    };
+    let mut output = check_output(vec![
+        with_id(ExposureClass::WeaklyExposed, "probe:gap"),
+        with_id(ExposureClass::StaticUnknown, "probe:withheld_unknown"),
+        with_id(ExposureClass::InfectionUnknown, "probe:kept_unknown"),
+    ]);
+    output.owner_opt_outs = vec![OwnerOptOut {
+        finding_id: "probe:withheld_unknown".to_string(),
+        owner: "skipped_owner".to_string(),
+        reason: OwnerOptOutReason::MutantsSkip,
+    }];
+    let include_unknowns = || BadgePolicy {
+        include_unknowns: true,
+        ..BadgePolicy::default()
+    };
+
+    let ripr = ripr_badge_summary(&output, include_unknowns());
+    assert_eq!(ripr.message, "2", "1 gap + 1 kept unknown");
+    assert_eq!(ripr.counts.unknowns, 2, "native audit keeps both unknowns");
+
+    let plus = ripr_plus_badge_summary(
+        &output,
+        TestEfficiencyBadgeSummary::default(),
+        include_unknowns(),
+    );
+    assert_eq!(
+        plus.message, "2",
+        "1 gap + 1 kept unknown, withheld omitted"
+    );
+    assert_eq!(plus.counts.unknowns, 2, "native audit keeps both unknowns");
+
+    // Discriminating control: without the opt-out the same unknown counts.
+    output.owner_opt_outs.clear();
+    assert_eq!(ripr_badge_summary(&output, include_unknowns()).message, "3");
+    assert_eq!(
+        ripr_plus_badge_summary(
+            &output,
+            TestEfficiencyBadgeSummary::default(),
+            include_unknowns(),
+        )
+        .message,
+        "3"
+    );
 }

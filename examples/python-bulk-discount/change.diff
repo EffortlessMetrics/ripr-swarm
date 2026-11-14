@@ -1,0 +1,12 @@
+diff --git a/pricing/core.py b/pricing/core.py
+index 1111111..2222222 100644
+--- a/pricing/core.py
++++ b/pricing/core.py
+@@ -1,5 +1,5 @@
+ def bulk_discount_rate(units):
+-    """Orders of more than 20 units get the bulk discount."""
+-    if units > 20:
++    """Orders of 20 units or more get the bulk discount."""
++    if units >= 20:
+         return 0.15
+     return 0.0

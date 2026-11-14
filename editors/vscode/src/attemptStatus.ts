@@ -50,8 +50,14 @@ export interface AttemptNextAction {
   command?: string;
 }
 
+/** Retained capture facts; an absent legacy field stays unknown, never false. */
+interface AttemptBaselineReading {
+  baselineAmbiguous: boolean | null;
+  baselineUnavailableReason: string | null;
+}
+
 /** The typed projection of one `agent_attempt_status` document. */
-export interface AgentAttemptStatus {
+export interface AgentAttemptStatus extends AttemptBaselineReading {
   attemptId: string;
   seamId?: string;
   /** Manifest operational state; `null` when the manifest could not be validated. */
@@ -89,6 +95,25 @@ function stringArray(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === 'string' && item.trim() !== '');
 }
 
+/** Parse shared evidence without assigning an editor lifecycle or readiness. */
+function parseBaselineReading(value: Record<string, unknown>): AttemptBaselineReading | undefined {
+  const ambiguous = value['baseline_ambiguous'];
+  const unavailableReason = value['baseline_unavailable_reason'];
+  if (ambiguous !== undefined && ambiguous !== null && typeof ambiguous !== 'boolean') {
+    return undefined;
+  }
+  if (
+    unavailableReason !== undefined && unavailableReason !== null &&
+    (typeof unavailableReason !== 'string' || unavailableReason.trim() === '')
+  ) {
+    return undefined;
+  }
+  return {
+    baselineAmbiguous: typeof ambiguous === 'boolean' ? ambiguous : null,
+    baselineUnavailableReason: typeof unavailableReason === 'string' ? unavailableReason : null,
+  };
+}
+
 function parseNextAction(value: unknown): AttemptNextAction | null {
   if (value === null || value === undefined) {
     return null;
@@ -119,8 +144,8 @@ function parseNextAction(value: unknown): AttemptNextAction | null {
 /**
  * Parse one `agent_attempt_status` document. Returns `undefined` when the
  * envelope is not the pinned shape — wrong kind/schema version, missing
- * attempt id, or a `status_class`/`currentness` outside the pinned
- * vocabulary. Fail-closed by construction: an unrecognised document is
+ * attempt id, a `status_class`/`currentness` outside the pinned vocabulary,
+ * or malformed retained-baseline fields. An unrecognised document is
  * "unavailable", never a guessed or downgraded-but-still-shown state.
  */
 export function parseAgentAttemptStatus(raw: unknown): AgentAttemptStatus | undefined {
@@ -149,6 +174,10 @@ export function parseAgentAttemptStatus(raw: unknown): AgentAttemptStatus | unde
   if (typeof currentness !== 'string' || !ATTEMPT_CURRENTNESS_SET.has(currentness)) {
     return undefined;
   }
+  const baseline = parseBaselineReading(attempt);
+  if (!baseline) {
+    return undefined;
+  }
   const headCurrent = attempt['head_current'];
   return {
     attemptId,
@@ -157,6 +186,7 @@ export function parseAgentAttemptStatus(raw: unknown): AgentAttemptStatus | unde
     statusClass: statusClass as AttemptStatusClass,
     headCurrent: typeof headCurrent === 'boolean' ? headCurrent : null,
     currentness: currentness as AttemptCurrentness,
+    ...baseline,
     unreadableReason: nullableString(attempt['unreadable_reason']),
     nextAction: parseNextAction(raw['next_action']),
     claimBoundary: stringArray(raw['claim_boundary']),
@@ -169,7 +199,7 @@ export function parseAgentAttemptStatus(raw: unknown): AgentAttemptStatus | unde
  * One row of the inventory document (`ripr agent status --json`), reduced to
  * the fields the editor needs for exact active-attempt resolution.
  */
-export interface AttemptInventoryRow {
+export interface AttemptInventoryRow extends Partial<AttemptBaselineReading> {
   attemptId: string;
   seamId?: string;
   state: string | null;
@@ -207,12 +237,17 @@ export function parseAttemptInventory(raw: unknown): AttemptInventoryRow[] | und
     if (!attemptId) {
       return undefined;
     }
+    const baseline = parseBaselineReading(row);
+    if (!baseline) {
+      return undefined;
+    }
     parsed.push({
       attemptId,
       seamId: nonEmptyString(row['seam_id']),
       state: nullableString(row['state']),
       disposition: nonEmptyString(row['disposition']),
       command: nonEmptyString(row['command']) ?? null,
+      ...baseline,
     });
   }
   return parsed;
@@ -336,8 +371,25 @@ export function presentAttemptStatus(status: AgentAttemptStatus): AttemptStatusP
   if (status.unreadableReason !== null) {
     lines.push(`unreadable: ${status.unreadableReason}`);
   }
+  if (status.baselineAmbiguous === true) {
+    lines.push('baseline: ambiguous');
+  }
+  if (status.baselineUnavailableReason !== null) {
+    lines.push(`baseline: unavailable — ${status.baselineUnavailableReason}`);
+  }
+  if (
+    !status.nextAction &&
+    (status.baselineAmbiguous === true || status.baselineUnavailableReason !== null)
+  ) {
+    for (const boundary of status.claimBoundary) {
+      lines.push(`boundary: ${boundary}`);
+    }
+  }
   if (status.nextAction) {
     if (status.nextAction.command) {
+      if (status.nextAction.reason) {
+        lines.push(`next step: ${status.nextAction.reason}`);
+      }
       lines.push(`next: ${status.nextAction.command}`);
     } else if (status.nextAction.reason) {
       lines.push(`next: ${status.nextAction.reason}`);

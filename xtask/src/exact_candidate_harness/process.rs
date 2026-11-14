@@ -1,12 +1,18 @@
 //! Bounded process observation for one harness row (#4510).
 
+#[cfg(unix)]
 use std::path::Path;
+#[cfg(unix)]
 use std::time::Duration;
 
+#[cfg(unix)]
 use super::launch::{CHILD_OUTPUT_BYTES, child_env_for_root, removed_env};
+#[cfg(unix)]
 use super::model::HarnessExecutionState;
+#[cfg(unix)]
 use crate::run;
 
+#[cfg(unix)]
 pub(crate) struct BoundedProcessObservation {
     pub(crate) stdout: Vec<u8>,
     pub(crate) stderr: Vec<u8>,
@@ -17,6 +23,7 @@ pub(crate) struct BoundedProcessObservation {
     pub(crate) exit_code: Option<i32>,
 }
 
+#[cfg(unix)]
 pub(crate) fn observe_process(
     binary: &Path,
     argv: &[String],
@@ -60,6 +67,7 @@ pub(crate) fn observe_process(
     })
 }
 
+#[cfg(unix)]
 pub(crate) fn classify_observation(
     observation: &BoundedProcessObservation,
     deadline: Duration,
@@ -90,6 +98,7 @@ pub(crate) fn classify_observation(
     )
 }
 
+#[cfg(unix)]
 fn is_abort_code(code: i32) -> bool {
     let unsigned = code.cast_unsigned();
     unsigned == 0xC000_00FD || unsigned == 0xC000_0409 || unsigned == 0xC000_0005
@@ -102,9 +111,4 @@ fn signal_description(status: &std::process::ExitStatus) -> String {
         Some(signal) => format!("signal {signal}"),
         None => "no exit code".to_string(),
     }
-}
-
-#[cfg(not(unix))]
-fn signal_description(_status: &std::process::ExitStatus) -> String {
-    "no exit code".to_string()
 }

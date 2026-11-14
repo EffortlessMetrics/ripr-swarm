@@ -1,0 +1,13 @@
+diff --git a/src/schema.ts b/src/schema.ts
+index 0000000..1111111 100644
+--- a/src/schema.ts
++++ b/src/schema.ts
+@@ -2,7 +2,7 @@
+
+ export const ZodTransform = constructor('ZodTransform', (inst, def) => {
+   inst.parse = (payload: { issues: string[]; value: unknown }) => {
+-    const start = payload.issues.length;
++    const start = payload.issues.length + 1;
+     const output = def.transform(payload.value, payload);
+     return { start, output };
+   };

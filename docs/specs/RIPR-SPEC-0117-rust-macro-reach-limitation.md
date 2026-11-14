@@ -748,8 +748,8 @@ source-profile acceptance remain separate evidence planes.
 ## Required Evidence
 
 - `StaticLimitKind::RustMacroReachUnresolved` in
-  `crates/ripr/src/domain/language.rs`.
-- `StopReason::MacroReachUnresolved` in `crates/ripr/src/domain/probe.rs`.
+  `crates/ripr-contract/src/domain/language.rs`.
+- `StopReason::MacroReachUnresolved` in `crates/ripr-contract/src/domain/probe.rs`.
 - Macro-boundary witness logic in
   `crates/ripr/src/analysis/classify/transitive_reach.rs`.
 - Rust adapter wiring in `crates/ripr/src/analysis/language/rust/mod.rs` for diff
@@ -854,8 +854,8 @@ source-profile acceptance remain separate evidence planes.
 
 | Component | Location |
 |---|---|
-| Static limit enum | `crates/ripr/src/domain/language.rs` |
-| Stop reason enum | `crates/ripr/src/domain/probe.rs` |
+| Static limit enum | `crates/ripr-contract/src/domain/language.rs` |
+| Stop reason enum | `crates/ripr-contract/src/domain/probe.rs` |
 | Macro witness producer | `crates/ripr/src/analysis/classify/transitive_reach.rs` |
 | Same-file test generator expansion | `crates/ripr/src/analysis/syntax/local_test_macros.rs` |
 | Generated test indexing | `crates/ripr/src/analysis/facts/macro_generated_tests.rs` |

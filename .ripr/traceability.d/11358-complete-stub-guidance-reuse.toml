@@ -1,0 +1,30 @@
+# Complete stub-guidance reuse is a cache over the existing canonical inventory,
+# never a new classifier or repair authority (#11358).
+[[behavior]]
+id = "RIPR-SPEC-0431"
+name = "Complete stub-guidance reuse"
+spec = "docs/specs/RIPR-SPEC-0431-complete-stub-guidance-reuse.md"
+tests = [
+  "crates/ripr/src/analysis/file_guidance_inventory_tests.rs::complete_guidance_reuses_memory_and_disk_without_index_or_evidence_work",
+  "crates/ripr/src/analysis/file_guidance_inventory_tests.rs::complete_guidance_test_edits_additions_and_removals_invalidate_advice",
+  "crates/ripr/src/analysis/file_guidance_inventory_tests.rs::complete_guidance_keys_bind_root_selection_source_and_configuration",
+  "crates/ripr/src/analysis/file_guidance_inventory_tests.rs::complete_guidance_corrupt_missing_and_unwritable_cache_recomputes",
+  "crates/ripr/src/analysis/file_guidance_inventory_tests.rs::complete_guidance_unverifiable_cargo_identity_never_reuses",
+  "crates/ripr/src/analysis/file_guidance_inventory_tests.rs::complete_guidance_rejects_source_drift_on_memory_and_disk_hits",
+  "crates/ripr/src/analysis/file_guidance_inventory_tests.rs::complete_guidance_cancellation_at_a_reuse_hit_returns_no_result",
+  "crates/ripr/src/analysis/file_guidance_inventory_tests.rs::complete_guidance_native_spellings_do_not_alias",
+  "crates/ripr/src/analysis/file_guidance_inventory_tests.rs::complete_guidance_native_identity_preserves_non_utf8_bytes",
+  "crates/ripr/src/analysis/file_guidance_inventory_tests.rs::complete_guidance_corpus_rename_through_lossy_key_never_replays_old_advice",
+  "crates/ripr/src/analysis/file_guidance_inventory_tests.rs::key_fold_is_lossless_for_the_windows_separator_only",
+  "crates/ripr/src/app/test_stub_inventory_tests.rs::predicate_route_reuses_complete_inventory_and_refreshes_test_edits",
+]
+code = [
+  "crates/ripr/src/analysis/seam_inventory.rs",
+  "crates/ripr/src/app/test_stub.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0431-complete-stub-guidance-reuse.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

@@ -195,3 +195,27 @@ fn a_malformed_hunk_in_a_dropped_section_leaves_no_limitation() -> Result<(), St
     assert!(parsed.limitations.is_empty(), "{:?}", parsed.limitations);
     Ok(())
 }
+
+/// #13659: a symlink section outside the operator's scope is not disclosed;
+/// the in-scope one is. Control: unscoped parsing counts both.
+#[test]
+fn scope_filters_symlink_disclosure_counts() -> Result<(), String> {
+    let link = |path: &str| {
+        format!(
+            "diff --git a/{path} b/{path}\nnew file mode 120000\nindex 0000000..32bcc48\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1 @@\n+target\n\\ No newline at end of file\n"
+        )
+    };
+    let mut input = section("src/lib.rs");
+    input.push_str(&link("src/inside.rs"));
+    input.push_str(&link("vendor/outside.rs"));
+    let unscoped = parse_bounded_lines(input.lines(), 10)?;
+    assert_eq!(unscoped.symlink_file_count, 2);
+    let scoped = parse_bounded_lines_scoped(
+        input.lines(),
+        10,
+        super::DEFAULT_DIFF_CHANGED_LINE_LIMIT,
+        outside_vendor,
+    )?;
+    assert_eq!(scoped.symlink_file_count, 1);
+    Ok(())
+}

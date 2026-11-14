@@ -101,6 +101,8 @@ pub(crate) struct GapListWindow {
     /// time, so a large truncated selection cannot make the shell outgrow
     /// the wire bound.
     pub(crate) omitted_offset: usize,
+    /// Generate continuations that walk each axis without replaying the other.
+    pub(crate) independent_pages: bool,
 }
 
 /// Omitted identities disclosed inline per response. Each entry is a short
@@ -219,6 +221,8 @@ struct GapListScope<'a> {
     requested: Option<&'a str>,
     filter: &'a GapListFilter,
     filtered: usize,
+    /// Filtered items reached only by an unevaluated proof harness (#12921).
+    proof_harness_only: usize,
 }
 
 /// The disclosed page window inside a gap-list document: what the caller
@@ -229,6 +233,7 @@ struct GapListScope<'a> {
 struct GapPage {
     /// Requested start of the omission window; see [`GapListWindow`].
     omitted_offset: usize,
+    independent_pages: bool,
     offset: usize,
     limit: Option<usize>,
     returned: usize,
@@ -362,11 +367,12 @@ fn recovery_check_command(root: &Path, base: Option<&str>, source: RefreshSource
     .list_command()
 }
 
+/// The literal `ripr_refresh` arguments that repeat a failed attempt. The
+/// source is always named: an omitted `source` follows the current tree
+/// (#13096), so a retry of a committed attempt on a since-dirtied tree would
+/// otherwise read different input.
 fn refresh_retry_arguments(base: Option<&str>, source: RefreshSource) -> String {
-    let mut arguments = json!({});
-    if source == RefreshSource::Worktree {
-        arguments["source"] = json!("worktree");
-    }
+    let mut arguments = json!({ "source": source.as_str() });
     if let Some(base) = base {
         arguments["base"] = json!(base);
     }
@@ -389,8 +395,10 @@ fn gap_item_recovery(output: &crate::app::CheckOutput, source: RefreshSource) ->
 }
 
 /// Which input a `ripr_refresh` analyzes (#7357). `Committed` is the
-/// default and the only behavior of an omitted argument; `Worktree` is the
-/// opt-in saved tracked-worktree diff (staged and unstaged tracked edits).
+/// committed diff; `Worktree` is the saved tracked-worktree diff (staged and
+/// unstaged tracked edits). An omitted argument takes `ripr check`'s default
+/// (#13096): the working tree when it holds uncommitted tracked edits,
+/// committed history otherwise, decided by `app::diff_source`.
 /// The requested source (session) and the captured source (snapshot) are
 /// distinct facts: a failed worktree request never relabels a retained
 /// committed snapshot.
@@ -404,6 +412,9 @@ pub(crate) enum RefreshSource {
 impl RefreshSource {
     pub(crate) const COMMITTED_NAME: &'static str = "committed";
     pub(crate) const WORKTREE_NAME: &'static str = "worktree";
+    /// The `requested_source` value for a request that omitted `source` and
+    /// let the shared live-diff selection choose.
+    pub(crate) const DEFAULT_REQUEST_NAME: &'static str = "default";
 
     pub(crate) fn as_str(self) -> &'static str {
         match self {
@@ -617,9 +628,13 @@ impl Snapshot {
             })?
             .as_str()
             .to_string();
+        // The profile identity names the mode the analysis actually ran
+        // (`[analysis] mode`, #14347), so a draft and a deep selection never
+        // share one identity; default runs keep `profile:diff:draft`.
         let profile_identity = format!(
-            "mcp:{}:profile:diff:draft",
-            root_identity.unwrap_or("root:unavailable")
+            "mcp:{}:profile:diff:{}",
+            root_identity.unwrap_or("root:unavailable"),
+            output.mode.as_str()
         );
         let evidence_identity = evidence_identity(&items).map_err(|error| {
             AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
@@ -778,6 +793,10 @@ pub(crate) struct WorkspaceSession {
     /// the retained snapshot's captured `source`: a failed worktree request
     /// leaves a committed last-good tagged committed.
     pub(crate) desired_source: RefreshSource,
+    /// `true` when the most recent refresh request omitted `source` and the
+    /// shared live-diff selection (`app::diff_source`, the same owner as
+    /// `ripr check`) chose `desired_source`; `false` for an explicit value.
+    pub(crate) desired_source_defaulted: bool,
     /// Session repair transactions created by `ripr_prepare_repair`, keyed by
     /// deterministic attempt identity. In-memory like the snapshot: a restart
     /// drops it, and every transaction binds the snapshot identity it was
@@ -876,6 +895,10 @@ impl WorkspaceSession {
         // `selected` count stays the full stored selection so the document
         // never lies about what filtering removed.
         let filtered = selected_items.len();
+        let proof_harness_only = selected_items
+            .iter()
+            .filter(|item| item.is_proof_harness_only())
+            .count();
 
         // The document shell carries every disclosure except the page of
         // item summaries; its measured size sets the page budget. The
@@ -883,6 +906,7 @@ impl WorkspaceSession {
         // zeroed page fields and the filled ones the caller receives.
         let shell_page = GapPage {
             omitted_offset: window.omitted_offset,
+            independent_pages: window.independent_pages,
             ..GapPage::default()
         };
         let shell = {
@@ -891,6 +915,7 @@ impl WorkspaceSession {
                 requested,
                 filter,
                 filtered,
+                proof_harness_only,
             };
             self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
         };
@@ -907,6 +932,7 @@ impl WorkspaceSession {
                 requested,
                 filter: &GapListFilter::default(),
                 filtered,
+                proof_harness_only,
             };
             self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
         };
@@ -979,6 +1005,7 @@ impl WorkspaceSession {
         // monotone continuation prefixes for the largest fitting page.
         let page_fields = |count: usize| GapPage {
             omitted_offset: window.omitted_offset,
+            independent_pages: window.independent_pages,
             // The window echoes the requested offset; a past-end request is
             // an empty disclosed page at that offset, not a renumbered one.
             offset: window.offset,
@@ -995,6 +1022,7 @@ impl WorkspaceSession {
                 requested,
                 filter,
                 filtered,
+                proof_harness_only,
             };
             let probe = self.gap_list_document(
                 snapshot,
@@ -1054,6 +1082,7 @@ impl WorkspaceSession {
             requested,
             filter,
             filtered,
+            proof_harness_only,
         };
         let document = self.gap_list_document(snapshot, &scope, items, &page)?;
         // A listing whose non-pageable shell (for example an omission
@@ -1117,10 +1146,9 @@ impl WorkspaceSession {
         }
         let omitted_end = omitted_start + omitted_window.len();
         let omitted_next = (omitted_end < selection.omitted.len()).then_some(omitted_end);
-        // Both continuation routes replay the caller's whole request and
-        // advance only their own axis: the snapshot pin, filters, and the
-        // limit carry over so following either route never silently changes
-        // the other window (#9360 review).
+        // By default each route keeps the other window for compatibility.
+        // The opt-in puts the other axis at its disclosed past-end offset;
+        // callers save and walk both routes to retain every identity.
         let replay_arguments = |offset: usize, omitted_offset: usize| {
             let mut arguments = json!({
                 "snapshot_id": snapshot.snapshot_id,
@@ -1128,6 +1156,9 @@ impl WorkspaceSession {
             });
             if omitted_offset > 0 {
                 arguments["omitted_offset"] = json!(omitted_offset);
+            }
+            if page.independent_pages {
+                arguments["independent_pages"] = json!(true);
             }
             for (name, value) in filter.arguments().as_object().cloned().unwrap_or_default() {
                 arguments[name] = value;
@@ -1140,35 +1171,52 @@ impl WorkspaceSession {
         if let Some(next_omitted) = omitted_next {
             continuation["next_omitted_page"] = json!({
                 "tool": "ripr_list_gaps",
-                "arguments": replay_arguments(page.offset, next_omitted),
+                "arguments": replay_arguments(
+                    if page.independent_pages { scope.filtered } else { page.offset },
+                    next_omitted,
+                ),
             });
         }
         if let Some(next_offset) = page.next_offset {
             // The generated route pins the snapshot identity and the caller
             // filters: a refresh between pages fails closed with
             // stale_snapshot instead of silently mixing snapshots, and the
-            // narrowed walk resumes narrowed (#6021 review, #7464). It also
-            // keeps the requested omission window (#9360 review).
-            let arguments = replay_arguments(next_offset, page.omitted_offset);
+            // narrowed walk resumes narrowed (#6021 review, #7464). The
+            // default keeps the requested omission window (#9360 review).
+            let arguments = replay_arguments(
+                next_offset,
+                if page.independent_pages {
+                    selection.omitted.len()
+                } else {
+                    page.omitted_offset
+                },
+            );
             continuation["next_page"] = json!({
                 "tool": "ripr_list_gaps",
                 "arguments": arguments,
             });
         }
-        Ok(json!({
+        let mut outcome = json!({
+            "kind": snapshot.outcome.kind.as_str(),
+            "label": snapshot.outcome.kind.plain_label(),
+            "limitations": snapshot
+                .outcome
+                .limitations
+                .iter()
+                .map(|limitation| limitation.kind.as_str())
+                .collect::<Vec<_>>(),
+        });
+        // #13280: a committed zero-item no-scope snapshot examined no behavior;
+        // say so beside the typed kind so zero items never read as clean.
+        if snapshot_analyzed_no_behavior(snapshot) {
+            outcome["analysis_status"] = json!("not_analyzed");
+            outcome["clean"] = json!(false);
+        }
+        let mut document = json!({
             "schema_version": GAP_LIST_SCHEMA_VERSION,
             "snapshot_id": snapshot.snapshot_id,
             "requested_snapshot_id": scope.requested,
-            "outcome": {
-                "kind": snapshot.outcome.kind.as_str(),
-                "label": snapshot.outcome.kind.plain_label(),
-                "limitations": snapshot
-                    .outcome
-                    .limitations
-                    .iter()
-                    .map(|limitation| limitation.kind.as_str())
-                    .collect::<Vec<_>>(),
-            },
+            "outcome": outcome,
             "snapshot_profile_budget_identity": selection.snapshot_profile_budget_identity,
             "selection_basis_version": selection.selection_basis_version,
             "budget": {
@@ -1212,7 +1260,14 @@ impl WorkspaceSession {
                 "summaries carry identity, location, and the commit-time repair-readiness projection only; read one item with ripr_get_gap or ripr://gap/{canonical_id} for complete evidence",
                 "the list is deterministic for its snapshot identity; a refresh replaces the snapshot and its identities",
             ],
-        }))
+        });
+        // Additive (#12921): the filtered items reached only by a proof harness
+        // ripr does not evaluate. A subset of the `no_static_path` items and
+        // never test coverage; absent when zero.
+        if scope.proof_harness_only > 0 {
+            document["proof_harness_only"] = json!(scope.proof_harness_only);
+        }
+        Ok(document)
     }
 
     /// One canonical item's complete bounded evidence.
@@ -1345,15 +1400,21 @@ impl WorkspaceSession {
     /// detail, per progressive disclosure.
     pub(crate) fn session_document(&self, profile: &SessionProfile) -> Value {
         let last_completed = self.last_good.as_ref().map(|snapshot| {
-            tag_source(
-                json!({
-                    "snapshot_id": snapshot.snapshot_id,
-                    "outcome_kind": snapshot.outcome.kind.as_str(),
-                    "finding_count": snapshot.outcome.counts.finding_count,
-                    "total_items": snapshot.selection.total_canonical_items,
-                }),
-                snapshot,
-            )
+            let mut summary = json!({
+                "snapshot_id": snapshot.snapshot_id,
+                "outcome_kind": snapshot.outcome.kind.as_str(),
+                "finding_count": snapshot.outcome.counts.finding_count,
+                "total_items": snapshot.selection.total_canonical_items,
+            });
+            // #13096: the status session block is the other primary place an
+            // agent reads `finding_count: 0`; a committed empty-scope snapshot
+            // examined no behavior, so say so beside the count, using the same
+            // predicate as the refresh and gap-list surfaces.
+            if snapshot_analyzed_no_behavior(snapshot) {
+                summary["analysis_status"] = json!("not_analyzed");
+                summary["clean"] = json!(false);
+            }
+            tag_source(summary, snapshot)
         });
         let analysis_outcome = self
             .last_good
@@ -1374,7 +1435,7 @@ impl WorkspaceSession {
         let mut desired_input = json!({
             "kind": "workspace_diff",
             "base": "default_branch",
-            "mode": "draft",
+            "mode": profile.mode,
             "scope": "diff",
         });
         if let Some(base) = &self.desired_base {
@@ -1744,6 +1805,17 @@ fn tag_source(mut summary: Value, snapshot: &Snapshot) -> Value {
     summary
 }
 
+/// A committed, zero-item snapshot whose outcome kind says no behavior was
+/// examined (`no_scope`, `no_changed_lines`, `no_behavioral_candidates`). One
+/// owner for the refresh disclosure and the gap-list outcome (#13096, #13280):
+/// a complete-clean result, a filtered or past-end page over a nonempty
+/// snapshot, and a worktree snapshot never qualify.
+fn snapshot_analyzed_no_behavior(snapshot: &Snapshot) -> bool {
+    snapshot.outcome.kind.is_empty_scope()
+        && snapshot.items.is_empty()
+        && snapshot.source == RefreshSource::Committed
+}
+
 /// #11213: a committed snapshot that analyzed nothing (`no_scope`,
 /// `no_changed_lines`, `no_behavioral_candidates` with zero items) reads like
 /// an all-clear unless it says why and which arguments widen it. The hint is
@@ -1752,39 +1824,59 @@ fn tag_source(mut summary: Value, snapshot: &Snapshot) -> Value {
 /// diff holds no analyzable change) and the `base`/`source` arguments to pass.
 fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
     let snapshot = session.last_good.as_ref()?;
-    let empty_kind = snapshot.outcome.kind.is_empty_scope();
-    if !empty_kind || !snapshot.items.is_empty() || snapshot.source != RefreshSource::Committed {
+    if !snapshot_analyzed_no_behavior(snapshot) {
         return None;
     }
     // #12416: the cause and retry wording live in the shared
     // `AnalysisOutcomeKind` owner; the LSP scope disclosure consumes the
     // same cause sentence, so the surfaces cannot drift. The bytes are the
     // pre-refactor hint wording, pinned by the tests below.
+    // #13273: the sentence explains THIS snapshot's base, never a later
+    // request's: a failed attempt can move `session.desired_base` while the
+    // retained snapshot and its source stay unchanged. Same snapshot-first
+    // rule as the `verify` route above. The failed request stays honest
+    // through `requested_base` and `attempt.failure`, untouched here.
     let why = snapshot.outcome.kind.empty_scope_cause_sentence(
-        session.desired_base.as_deref(),
+        snapshot.base.as_deref(),
         crate::analysis_outcome::EmptyScopeDiffAuthority::CommittedSnapshot,
     );
-    Some(json!({
+    let mut hint = json!({
         "why": why,
         "pass_base": AnalysisOutcomeKind::EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE,
         "pass_source": AnalysisOutcomeKind::EMPTY_SCOPE_MCP_SOURCE_RETRY_ROUTE,
-    }))
+    });
+    // #13096: a base-less empty scope most often means the default base
+    // resolved to the analyzed commit. Name the concrete last-commit retry so
+    // the agent is told which base to pass. Nothing is inferred or run, and a
+    // `HEAD~1` that does not exist fails closed with a typed base failure.
+    if snapshot.base.is_none() && !snapshot.outcome.kind.is_no_behavioral_candidates() {
+        hint["pass_base_last_commit"] =
+            json!(AnalysisOutcomeKind::EMPTY_SCOPE_MCP_LAST_COMMIT_RETRY_ROUTE);
+    }
+    Some(hint)
 }
 
 /// The refresh-time attempt document returned by `ripr_refresh`.
 pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
+    let empty_scope = empty_scope_hint(session).is_some();
     let snapshot = session.last_good.as_ref().map(|snapshot| {
-        tag_source(
-            json!({
-                "snapshot_id": snapshot.snapshot_id,
-                "outcome_kind": snapshot.outcome.kind.as_str(),
-                "finding_count": snapshot.outcome.counts.finding_count,
-                "total_items": snapshot.selection.total_canonical_items,
-                "list_route": "ripr_list_gaps",
-                "snapshot_resource": format!("ripr://snapshot/{}", snapshot.snapshot_id),
-            }),
-            snapshot,
-        )
+        let mut summary = json!({
+            "snapshot_id": snapshot.snapshot_id,
+            "outcome_kind": snapshot.outcome.kind.as_str(),
+            "finding_count": snapshot.outcome.counts.finding_count,
+            "total_items": snapshot.selection.total_canonical_items,
+            "list_route": "ripr_list_gaps",
+            "snapshot_resource": format!("ripr://snapshot/{}", snapshot.snapshot_id),
+        });
+        // #13096: an empty-scope snapshot completed without examining any
+        // behavior. Say so in the primary fields an agent reads first, not
+        // only in the later `empty_scope_hint`, so zero findings never read
+        // as a clean result.
+        if empty_scope {
+            summary["analysis_status"] = json!("not_analyzed");
+            summary["clean"] = json!(false);
+        }
+        tag_source(summary, snapshot)
     });
     // `requested_base` appears only when the request named one, so a base-less
     // refresh keeps the unchanged v1 shape.
@@ -1826,7 +1918,15 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
             json!(snapshot.source == RefreshSource::Worktree || !snapshot.scope.uncommitted_edits)
         }
     };
-    document["verify"] = super::repair::verify_after_editing_tests();
+    // The re-check follows the analysed subject: the retained snapshot's base,
+    // else the caller's latest request (#13196).
+    // Select the snapshot first and keep its `None`: a retained default-base
+    // snapshot must not inherit a later failed request's base.
+    document["verify"] =
+        super::repair::verify_after_editing_tests(match session.last_good.as_ref() {
+            Some(snapshot) => snapshot.base.as_deref(),
+            None => session.desired_base.as_deref(),
+        });
     if let Some(base) = &session.desired_base {
         document["requested_base"] = json!(base);
     }
@@ -1841,7 +1941,11 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
         .as_ref()
         .is_some_and(|snapshot| snapshot.source == RefreshSource::Worktree);
     if session.desired_source == RefreshSource::Worktree || captured_worktree {
-        document["requested_source"] = json!(session.desired_source.as_str());
+        document["requested_source"] = if session.desired_source_defaulted {
+            json!(RefreshSource::DEFAULT_REQUEST_NAME)
+        } else {
+            json!(session.desired_source.as_str())
+        };
         document["captured_source"] = session
             .last_good
             .as_ref()
@@ -1896,8 +2000,14 @@ impl SessionProfile {
                     Some(identity) => SessionConfigPosture::Loaded { identity },
                     None => SessionConfigPosture::BuiltInDefaults,
                 };
+                // The effective mode the refresh runs, through the same
+                // `[analysis] mode` the check input applies (#14347).
+                let mode = config
+                    .analysis()
+                    .mode()
+                    .map_or(crate::app::Mode::Draft.as_str(), |mode| mode.as_str());
                 Self {
-                    mode: "draft",
+                    mode,
                     languages,
                     posture,
                 }
@@ -1959,11 +2069,21 @@ impl SessionProfile {
             SessionConfigPosture::DetectedNotLoaded => Some(
                 "project-local ripr.toml is detected but could not be loaded; refresh fails closed with config_invalid until it parses",
             ),
-            SessionConfigPosture::BuiltInDefaults => {
-                Some("no workspace ripr.toml was loaded; refresh runs with built-in defaults")
-            }
+            SessionConfigPosture::BuiltInDefaults => Some(
+                "no workspace ripr.toml was loaded at server startup; each ripr_refresh re-resolves it, so a ripr.toml added after startup applies to the next refresh before it is visible here",
+            ),
         }
     }
+}
+
+/// Recovery for an invalid `RIPR_GIT_TIMEOUT` in the MCP server's environment
+/// (#14386). The value is process environment, so only a restart reads a fix.
+const MCP_GIT_TIMEOUT_RECOVERY: &str = "set RIPR_GIT_TIMEOUT in the MCP server's environment to a whole number of seconds (0 disables the deadline) or remove it, then restart the server and retry ripr_refresh";
+
+/// The per-invocation git deadline every MCP refresh path runs with:
+/// `RIPR_GIT_TIMEOUT` when set, else the `ripr check` default (#14386).
+pub(crate) fn mcp_git_timeout() -> Result<Option<std::time::Duration>, String> {
+    crate::app::env_or_default_git_timeout(std::env::var("RIPR_GIT_TIMEOUT"))
 }
 
 /// Run one bounded analysis through the shared check authority and bind it
@@ -1984,21 +2104,44 @@ pub(crate) fn run_check(
     // loading configuration so a pending signal cannot poison later retries.
     let attempt = || -> Result<Snapshot, AttemptFailure> {
         let config = crate::config::load_for_root(root).map_err(|error| {
+            // #14451: the source-free summary every other machine surface
+            // uses (location plus the parser's reason, #14441). The raw
+            // message carries the TOML source excerpt and a CLI-only
+            // "fix the error above" trailer, and was cut mid-word by the
+            // detail bound.
             AttemptFailure::new(
                 CODE_CONFIG_INVALID,
-                format!("the workspace configuration could not be loaded: {error}"),
                 format!(
-                    "address the configuration error above (the detail names the cause), then {}",
+                    "the workspace configuration could not be loaded: {}",
+                    crate::config::config_error_summary(&error)
+                ),
+                format!(
+                    "fix ripr.toml at the location the detail names (the detail gives the cause), then {}",
                     check_retry_recovery(root, base, source)
                 ),
             )
         })?;
-        let input = crate::app::CheckInput {
+        // `RIPR_GIT_TIMEOUT` from the server's environment bounds each git
+        // invocation like it does for `ripr check`, through the same parser
+        // and default (#14386); an invalid value refuses, never a silent
+        // default.
+        let git_timeout = mcp_git_timeout().map_err(|error| {
+            AttemptFailure::new(CODE_CONFIG_INVALID, error, MCP_GIT_TIMEOUT_RECOVERY)
+        })?;
+        let mut input = crate::app::CheckInput {
             root: PathBuf::from(root),
             base: base.map(str::to_string),
-            git_timeout: Some(crate::app::default_cli_git_timeout()),
+            git_timeout,
             ..Default::default()
         };
+        // The repo's `[analysis]` table (mode, include_unchanged_tests) goes
+        // through the same owner `ripr check` and the LSP use (#14347). A
+        // refresh takes no per-call mode, so nothing here is explicit.
+        crate::config::apply_to_check_input(
+            &mut input,
+            &config,
+            crate::config::CheckInputExplicit::default(),
+        );
         if source == RefreshSource::Worktree {
             return run_worktree_check(input, &config, root_identity, base);
         }
@@ -2018,7 +2161,7 @@ pub(crate) fn run_check(
         // say they agree.
         if let Some(reason) =
             committed_over_uncommitted_refusal(&output, &findings_sources, &inventory, || {
-                dirty_rust_routed_paths(Path::new(root))
+                dirty_rust_routed_paths(Path::new(root), git_timeout)
             })
         {
             let admission = super::repair_admission::SeamAdmission::withheld(
@@ -2218,8 +2361,10 @@ fn worktree_custody(
 /// consumed, but the inventory reads its own selected Rust files, so with
 /// Rust findings any dirty tracked or untracked Rust-routed path also withholds
 /// (`dirty_rust` lists them; it is evaluated only when needed and an
-/// unestablishable list fails closed). Dirty non-Rust files never withhold, and
-/// gitignored Rust files are a stated residual, not claimed. A
+/// unestablishable list fails closed). Dirty non-Rust files never withhold.
+/// Gitignored Rust files do withhold: discovery does not apply `.gitignore`, so
+/// the inventory reads them while the findings carrier has no captured
+/// observation of them (`establish_agreement` refuses, naming the path). A
 /// head the findings producer observed that differs from the inventory's also
 /// withholds; an unobserved head is not compared on the committed path.
 ///
@@ -2273,10 +2418,15 @@ fn committed_over_uncommitted_refusal(
 /// The dirty tracked and untracked Rust-routed paths of the checkout, from the
 /// same committed-source probe the committed findings producer uses. Gitignored
 /// files are excluded (see the comment below).
-fn dirty_rust_routed_paths(root: &Path) -> Result<Vec<String>, String> {
-    let overlay =
-        crate::analysis::committed_source::probe(root, Some(crate::app::default_cli_git_timeout()))
-            .map_err(|error| error.to_string())?;
+///
+/// `git_timeout` is the deadline `run_check` already resolved for the findings
+/// producer, so the probe and the check run under one value (#14386).
+fn dirty_rust_routed_paths(
+    root: &Path,
+    git_timeout: Option<std::time::Duration>,
+) -> Result<Vec<String>, String> {
+    let overlay = crate::analysis::committed_source::probe(root, git_timeout)
+        .map_err(|error| error.to_string())?;
     let Some(overlay) = overlay else {
         return Ok(Vec::new());
     };
@@ -2311,7 +2461,7 @@ fn committed_withheld_remedy(reason: &str) -> &'static str {
     } else if reason.starts_with(COMMITTED_DIRTY_LIST_UNESTABLISHED) {
         "Run ripr_refresh again; if it keeps failing, check that git can read the repository"
     } else {
-        "Commit the uncommitted Rust source or test files (untracked ones included) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
+        "Commit the uncommitted Rust source or test files (untracked ones included; commit a gitignored Rust file with `git add -f`, or remove it) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
     }
 }
 
@@ -2349,7 +2499,7 @@ pub(crate) mod after_worktree_findings_hook {
 /// repair card when its source custody is not established (#7357).
 pub(crate) fn worktree_card_withheld_detail(reason: &str) -> String {
     format!(
-        "this snapshot analyzed saved tracked-worktree edits, but the findings and the live seam inventory were not shown to have consumed the same Rust source bytes ({reason}), so repair readiness and cards are withheld rather than claimed current. Edits settle by refreshing again; commit the change and run ripr_refresh without `source` for committed repair cards"
+        "this snapshot analyzed saved tracked-worktree edits, but the findings and the live seam inventory were not shown to have consumed the same Rust source bytes ({reason}), so repair readiness and cards are withheld rather than claimed current. Edits settle by refreshing again; commit the change and run ripr_refresh with source `committed` for committed repair cards"
     )
 }
 
@@ -2365,43 +2515,26 @@ fn check_failure(
     source: RefreshSource,
 ) -> AttemptFailure {
     let detail = format!("shared check authority failed: {error}");
+    // #13096: every retry names the source it was refused under. A
+    // base-only retry would re-run the default input selection, which reads
+    // saved tracked edits on a dirty tree even after an explicit committed
+    // request, so committed and worktree recoveries share one builder.
     let retry = |base: Option<&str>| refresh_retry_arguments(base, source);
-    if source == RefreshSource::Worktree {
-        let recovery = match (error.check_refusal().identity, base) {
-            ("base_unresolvable", None) => format!(
-                "retry ripr_refresh with the `base` argument set to a branch, tag or commit this repository has (the detail names candidates), for example {}",
-                retry(Some("<ref>"))
-            ),
-            ("base_unresolvable", Some(_)) => format!(
-                "retry ripr_refresh with a different `base` that resolves to a commit in this repository, for example {}; or omit only `base` to use the default branch: {}",
-                retry(Some("<ref>")),
-                retry(None)
-            ),
-            ("repository_root_unusable", _) => format!(
-                "restart the server with `ripr mcp --stdio --root <repository>` pointing inside a Git work tree, then retry ripr_refresh with {}",
-                retry(base)
-            ),
-            _ => check_retry_recovery(root, base, source),
-        };
-        return AttemptFailure::new(CODE_ANALYSIS_FAILED, detail, recovery);
-    }
     let recovery = match (error.check_refusal().identity, base) {
-        ("base_unresolvable", None) => {
-            "retry ripr_refresh with the `base` argument set to a branch, tag or commit this repository has (the detail names candidates), for example {\"base\": \"<ref>\"}"
-        }
-        ("base_unresolvable", Some(_)) => {
-            "retry ripr_refresh with a different `base` that resolves to a commit in this repository, or omit `base` to use the default branch"
-        }
-        ("repository_root_unusable", _) => {
-            "restart the server with `ripr mcp --stdio --root <repository>` pointing inside a Git work tree, then retry ripr_refresh"
-        }
-        _ => {
-            return AttemptFailure::new(
-                CODE_ANALYSIS_FAILED,
-                detail,
-                check_retry_recovery(root, base, source),
-            );
-        }
+        ("base_unresolvable", None) => format!(
+            "retry ripr_refresh with the `base` argument set to a branch, tag or commit this repository has (the detail names candidates), for example {}",
+            retry(Some("<ref>"))
+        ),
+        ("base_unresolvable", Some(_)) => format!(
+            "retry ripr_refresh with a different `base` that resolves to a commit in this repository, for example {}; or omit only `base` to use the default branch: {}",
+            retry(Some("<ref>")),
+            retry(None)
+        ),
+        ("repository_root_unusable", _) => format!(
+            "restart the server with `ripr mcp --stdio --root <repository>` pointing inside a Git work tree, then retry ripr_refresh with {}",
+            retry(base)
+        ),
+        _ => check_retry_recovery(root, base, source),
     };
     AttemptFailure::new(CODE_ANALYSIS_FAILED, detail, recovery)
 }
@@ -2544,8 +2677,11 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         })
     }
@@ -2563,6 +2699,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -2780,6 +2917,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         };
         let _ = complete
@@ -3010,8 +3148,11 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let snapshot = Snapshot::from_output(&output, Some("root:sha256:test"))
@@ -3025,6 +3166,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -3091,8 +3233,11 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let snapshot = Snapshot::from_output(&output, Some("root:sha256:test"))
@@ -3106,6 +3251,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -3263,6 +3409,85 @@ mod tests {
                 outcome_limitations.len()
             ));
         }
+        Ok(())
+    }
+
+    /// #13280: a committed zero-item snapshot that examined no behavior says
+    /// `not_analyzed` and not clean in the gap list too; complete-clean,
+    /// worktree and nonempty-but-filtered-to-zero lists never do.
+    #[test]
+    fn gap_list_says_not_analyzed_only_for_a_committed_empty_scope_snapshot() -> Result<(), String>
+    {
+        let list = |session: &WorkspaceSession, filter: &GapListFilter| {
+            session
+                .list_gaps(
+                    None,
+                    GapListWindow::default(),
+                    filter,
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| failure.detail)
+        };
+        for kind in [
+            AnalysisOutcomeKind::NoScope,
+            AnalysisOutcomeKind::NoChangedLines,
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+        ] {
+            let counts = if kind == AnalysisOutcomeKind::NoBehavioralCandidates {
+                AnalysisOutcomeCounts {
+                    changed_file_count: 1,
+                    changed_line_count: 2,
+                    ..Default::default()
+                }
+            } else {
+                AnalysisOutcomeCounts::default()
+            };
+            let mut empty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+            empty.analysis_outcome = Some(AnalysisOutcome::new(
+                kind,
+                Default::default(),
+                counts,
+                Vec::new(),
+            )?);
+            let snapshot = Snapshot::from_output(&empty, Some("root:sha256:test"))
+                .map_err(|failure| failure.detail)?;
+            let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+            session.last_good = Some(Arc::new(snapshot));
+            let document = list(&session, &GapListFilter::default())?;
+            assert_eq!(document["total"], json!(0), "{kind:?}: {document}");
+            assert_eq!(
+                document["outcome"]["kind"],
+                json!(kind.as_str()),
+                "{document}"
+            );
+            assert_eq!(
+                document["outcome"]["analysis_status"],
+                json!("not_analyzed"),
+                "{kind:?} list must say not_analyzed: {document}"
+            );
+            assert_eq!(document["outcome"]["clean"], json!(false), "{document}");
+            // Control: the same zero-item snapshot from a worktree source
+            // keeps the pre-existing outcome shape.
+            let mut worktree = Snapshot::from_output(&empty, Some("root:sha256:test"))
+                .map_err(|failure| failure.detail)?;
+            worktree.source = RefreshSource::Worktree;
+            session.last_good = Some(Arc::new(worktree));
+            let document = list(&session, &GapListFilter::default())?;
+            assert!(
+                document["outcome"].get("analysis_status").is_none()
+                    && document["outcome"].get("clean").is_none(),
+                "a worktree snapshot must not be labeled committed-empty: {document}"
+            );
+        }
+        // Control: a complete-clean zero-item snapshot is a decision, not an
+        // unexamined scope.
+        let session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        let document = list(&session, &GapListFilter::default())?;
+        assert!(
+            document["outcome"].get("analysis_status").is_none()
+                && document["outcome"].get("clean").is_none(),
+            "complete-clean must not say not_analyzed: {document}"
+        );
         Ok(())
     }
 
@@ -3587,10 +3812,42 @@ mod tests {
             let arguments: Value = serde_json::from_str(&failure.recovery[begin..end])
                 .map_err(|error| format!("invalid retry JSON: {error}"))?;
             assert_eq!(arguments["base"], "captured-base");
-            if source == RefreshSource::Worktree {
-                assert_eq!(arguments["source"], "worktree");
-            } else {
-                assert!(arguments.get("source").is_none());
+            // #13096: the retry always names its source, because an omitted
+            // source follows the tree's current state.
+            assert_eq!(arguments["source"], source.as_str());
+        }
+        Ok(())
+    }
+
+    /// #13096: a base refusal under an explicit committed request names
+    /// `source: "committed"` in every retry it prints. A base-only retry would
+    /// take the default input selection, which reads saved tracked edits on a
+    /// dirty tree and so analyzes different input than the refused request.
+    #[test]
+    fn base_refusal_retries_keep_the_requested_source() -> Result<(), String> {
+        let root = std::env::temp_dir().join("base refusal root");
+        for source in [RefreshSource::Committed, RefreshSource::Worktree] {
+            for base in [None, Some("missing-base")] {
+                let failure = check_failure(
+                    &crate::core_error::CoreError::base_unresolvable("no such ref"),
+                    &root,
+                    base,
+                    source,
+                );
+                let retries: Vec<Value> = failure
+                    .recovery
+                    .match_indices('{')
+                    .filter_map(|(begin, _)| {
+                        let end = failure.recovery[begin..].find('}')? + begin + 1;
+                        serde_json::from_str(&failure.recovery[begin..end]).ok()
+                    })
+                    .collect();
+                if retries.is_empty() {
+                    return Err(format!("no JSON retry: {}", failure.recovery));
+                }
+                for retry in retries {
+                    assert_eq!(retry["source"], source.as_str(), "{}", failure.recovery);
+                }
             }
         }
         Ok(())
@@ -3643,11 +3900,7 @@ mod tests {
                     .ok_or("unfinished MCP retry")?;
                 let arguments: Value = serde_json::from_str(&failure.recovery[begin..end])
                     .map_err(|error| error.to_string())?;
-                if source == RefreshSource::Worktree {
-                    assert_eq!(arguments["source"], "worktree");
-                } else {
-                    assert!(arguments.get("source").is_none());
-                }
+                assert_eq!(arguments["source"], source.as_str());
                 if kind == AnalysisOutcomeKind::AnalysisFailed {
                     assert_eq!(arguments["base"], "refused-output-base");
                 } else {
@@ -3825,6 +4078,7 @@ mod tests {
                     offset: 1,
                     limit: Some(2),
                     omitted_offset: 5,
+                    ..GapListWindow::default()
                 },
                 &filter,
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -3845,6 +4099,221 @@ mod tests {
             return Err(format!(
                 "next_omitted_page lost the item window or filter: {next_omitted}"
             ));
+        }
+        Ok(())
+    }
+
+    /// Following both opt-in routes walks each axis once, with no cross-axis
+    /// inventory replay. The expected identities come from the stored selection.
+    #[test]
+    fn independent_continuations_cover_both_axes_without_replay() -> Result<(), String> {
+        use std::collections::BTreeSet;
+
+        let session = session_with_findings(700)?;
+        let snapshot = session
+            .active_snapshot(None)
+            .map_err(|failure| failure.detail)?;
+        let expected_items: BTreeSet<String> = snapshot
+            .selection
+            .selected_ids()
+            .map(str::to_string)
+            .collect();
+        let expected_omitted: BTreeSet<String> = snapshot
+            .selection
+            .omitted
+            .iter()
+            .map(|item| item.canonical_id.clone())
+            .collect();
+        if expected_items.len() < 3 || expected_omitted.len() <= OMITTED_WINDOW {
+            return Err("fixture must cover multiple item and omission pages".into());
+        }
+        let filter = GapListFilter {
+            file: Some("src".to_string()),
+            ..GapListFilter::default()
+        };
+        let list = |args: &Value| -> Result<Value, String> {
+            if args["snapshot_id"] != json!(snapshot.snapshot_id)
+                || args["file"] != json!("src")
+                || args["limit"] != json!(2)
+                || args["independent_pages"] != json!(true)
+            {
+                return Err(format!("continuation lost a binding: {args}"));
+            }
+            let offset = args["offset"].as_u64().ok_or("missing offset")? as usize;
+            let omitted_offset = args
+                .get("omitted_offset")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
+            session
+                .list_gaps(
+                    Some(&snapshot.snapshot_id),
+                    GapListWindow {
+                        offset,
+                        omitted_offset,
+                        limit: Some(2),
+                        independent_pages: true,
+                    },
+                    &filter,
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| failure.detail)
+        };
+        let first = list(&json!({
+            "snapshot_id": snapshot.snapshot_id,
+            "file": "src",
+            "limit": 2,
+            "offset": 0,
+            "independent_pages": true,
+        }))?;
+        let mut items = BTreeSet::new();
+        let mut omitted = BTreeSet::new();
+        let collect =
+            |document: &Value, key: &str, seen: &mut BTreeSet<String>| -> Result<(), String> {
+                for entry in document[key].as_array().ok_or("missing array")? {
+                    let id = entry["canonical_id"].as_str().ok_or("missing id")?;
+                    if !seen.insert(id.to_string()) {
+                        return Err(format!("repeated {key}: {id}"));
+                    }
+                }
+                Ok(())
+            };
+        collect(&first, "items", &mut items)?;
+        collect(&first, "omitted_items", &mut omitted)?;
+        let mut item_route = first.pointer("/continuation/next_page/arguments").cloned();
+        let mut omission_route = first
+            .pointer("/continuation/next_omitted_page/arguments")
+            .cloned();
+        let mut item_pages = 0;
+        while let Some(args) = item_route {
+            let doc = list(&args)?;
+            if doc["omitted_items"] != json!([]) || doc["omitted_page"]["has_more"] != json!(false)
+            {
+                return Err(format!("item continuation replayed omissions: {doc}"));
+            }
+            collect(&doc, "items", &mut items)?;
+            item_route = doc.pointer("/continuation/next_page/arguments").cloned();
+            item_pages += 1;
+            if item_pages > expected_items.len() {
+                return Err("item walk did not terminate".into());
+            }
+        }
+        let mut omission_pages = 0;
+        while let Some(args) = omission_route {
+            let doc = list(&args)?;
+            if doc["items"] != json!([]) || doc["page"]["has_more"] != json!(false) {
+                return Err(format!("omission continuation replayed items: {doc}"));
+            }
+            collect(&doc, "omitted_items", &mut omitted)?;
+            omission_route = doc
+                .pointer("/continuation/next_omitted_page/arguments")
+                .cloned();
+            omission_pages += 1;
+            if omission_pages > expected_omitted.len() {
+                return Err("omission walk did not terminate".into());
+            }
+        }
+        if item_pages == 0
+            || omission_pages == 0
+            || items != expected_items
+            || omitted != expected_omitted
+        {
+            return Err(format!(
+                "walk coverage mismatch: items {} / {}, omissions {} / {}",
+                items.len(),
+                expected_items.len(),
+                omitted.len(),
+                expected_omitted.len()
+            ));
+        }
+        let changed = session_with_findings(701)?;
+        let failure = changed
+            .list_gaps(
+                Some(&snapshot.snapshot_id),
+                GapListWindow {
+                    independent_pages: true,
+                    ..GapListWindow::default()
+                },
+                &filter,
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .err()
+            .ok_or("stale pin accepted")?;
+        if failure.code != CODE_STALE_SNAPSHOT {
+            return Err(format!("wrong stale refusal: {failure:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn independent_omission_route_uses_filtered_end_and_respects_envelope() -> Result<(), String> {
+        let session = session_with_findings(700)?;
+        let snapshot = session
+            .active_snapshot(None)
+            .map_err(|failure| failure.detail)?;
+        let selected: std::collections::BTreeSet<&str> =
+            snapshot.selection.selected_ids().collect();
+        let file = snapshot
+            .items
+            .iter()
+            .find(|item| selected.contains(item.canonical_id.as_str()))
+            .ok_or("no selected item")?
+            .file
+            .clone();
+        let filter = GapListFilter {
+            file: Some(file),
+            ..GapListFilter::default()
+        };
+        let window = GapListWindow {
+            limit: Some(1),
+            independent_pages: true,
+            ..GapListWindow::default()
+        };
+        let page = session
+            .list_gaps(
+                Some(&snapshot.snapshot_id),
+                window,
+                &filter,
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .map_err(|failure| failure.detail)?;
+        let filtered = page["filtered"].as_u64().ok_or("missing filtered count")?;
+        if filtered == 0 || filtered >= selected.len() as u64 {
+            return Err(format!(
+                "fixture must select a strict nonempty subset: {page}"
+            ));
+        }
+        let args = &page["continuation"]["next_omitted_page"]["arguments"];
+        if args["offset"] != json!(filtered)
+            || args["file"] != json!(filter.file)
+            || args["snapshot_id"] != json!(snapshot.snapshot_id)
+            || args["independent_pages"] != json!(true)
+        {
+            return Err(format!(
+                "omission route lost filtered end or binding: {args}"
+            ));
+        }
+        let size = crate::mcp::protocol::structured_envelope_bytes(&page)?;
+        let fit = session
+            .list_gaps(Some(&snapshot.snapshot_id), window, &filter, size)
+            .map_err(|failure| format!("exact-fit envelope refused: {}", failure.detail))?;
+        let fitted_size = crate::mcp::protocol::structured_envelope_bytes(&fit)?;
+        if fitted_size > size {
+            return Err("fitted envelope exceeded budget".into());
+        }
+        match session.list_gaps(
+            Some(&snapshot.snapshot_id),
+            window,
+            &filter,
+            size.saturating_sub(1),
+        ) {
+            Ok(smaller) => {
+                let actual = crate::mcp::protocol::structured_envelope_bytes(&smaller)?;
+                if actual >= size {
+                    return Err("smaller budget admitted oversized envelope".into());
+                }
+            }
+            Err(failure) if failure.code == CODE_RESULT_TOO_LARGE => {}
+            Err(failure) => return Err(format!("unexpected boundary refusal: {failure:?}")),
         }
         Ok(())
     }
@@ -4684,6 +5153,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         };
 
@@ -4767,6 +5237,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         };
         let untracked_refresh = refresh_document(&untracked_session);
@@ -5176,6 +5647,7 @@ mod tests {
                 superseded_attempts: std::collections::BTreeMap::new(),
                 desired_base: None,
                 desired_source: RefreshSource::Committed,
+                desired_source_defaulted: false,
                 superseded_order: std::collections::VecDeque::new(),
             };
             let item = original_items
@@ -5314,16 +5786,122 @@ mod tests {
             {
                 return Err(format!("hint must name why, base and source: {text}"));
             }
+            // #13096: the primary snapshot fields disclose the empty scope.
+            if document["snapshot"]["analysis_status"] != json!("not_analyzed")
+                || document["snapshot"]["clean"] != json!(false)
+            {
+                return Err(format!(
+                    "{kind:?} snapshot must say not_analyzed and not clean: {document}"
+                ));
+            }
             let default_why = document["empty_scope_hint"]["why"].to_string();
             if (kind == AnalysisOutcomeKind::NoBehavioralCandidates)
                 == default_why.contains("the diff is empty")
             {
                 return Err(format!("why must match the outcome kind: {default_why}"));
             }
+            // #13096: the last-commit retry is named only for the kinds whose
+            // default base resolved to the analyzed commit.
+            let last_commit = document["empty_scope_hint"].get("pass_base_last_commit");
+            let expected = (kind != AnalysisOutcomeKind::NoBehavioralCandidates)
+                .then(|| json!(AnalysisOutcomeKind::EMPTY_SCOPE_MCP_LAST_COMMIT_RETRY_ROUTE));
+            if last_commit != expected.as_ref()
+                || last_commit.is_some_and(|route| !route.to_string().contains("HEAD~1"))
+            {
+                return Err(format!("{kind:?} last-commit retry mismatch: {document}"));
+            }
+            // #13273: a later request names a newer base and fails; the
+            // retained snapshot still analyzed the default base, so its hint
+            // must keep saying so. This is the removal control: deriving the
+            // sentence from `session.desired_base` again names `origin/main`
+            // here and fails this assertion.
             session.desired_base = Some("origin/main".to_string());
-            let named = refresh_document(&session)["empty_scope_hint"]["why"].to_string();
-            if !named.contains("origin/main") {
-                return Err(format!("requested base must be named: {named}"));
+            session.last_failure = Some(AttemptFailure::new(
+                CODE_CONFIG_INVALID,
+                "the workspace configuration could not be loaded: malformed ripr.toml",
+                "fix ripr.toml and retry ripr_refresh",
+            ));
+            let retained = refresh_document(&session);
+            let retained_why = retained["empty_scope_hint"]["why"].to_string();
+            if retained_why.contains("origin/main") || !retained_why.contains("default base") {
+                return Err(format!(
+                    "retained default-base snapshot inherited the failed request's base: {retained_why}"
+                ));
+            }
+            // The failed request stays honest about what IT asked for and why
+            // it failed; only the retained snapshot's explanation is
+            // snapshot-first.
+            if retained.get("requested_base") != Some(&json!("origin/main")) {
+                return Err(format!(
+                    "the failed request's requested_base must stay named: {retained}"
+                ));
+            }
+            if retained.pointer("/attempt/state") != Some(&json!("failed"))
+                || retained.pointer("/attempt/failure/code") != Some(&json!(CODE_CONFIG_INVALID))
+            {
+                return Err(format!(
+                    "the typed attempt failure must survive untouched: {retained}"
+                ));
+            }
+            // #13196: the post-edit re-check follows the retained snapshot's
+            // base, never a later request's.
+            // Retained default-base snapshot (`base: None`) keeps the base-less
+            // route even though a later (failed) request named a base.
+            let retained_none = retained["verify"]["mcp"]["arguments"].clone();
+            if retained_none != json!({ "source": "worktree" }) {
+                return Err(format!(
+                    "retained default-base snapshot inherited the request base: {retained_none}"
+                ));
+            }
+            // Retained explicit-base snapshot keeps its own base in every
+            // snapshot-derived surface: the hint's cause sentence and the
+            // verify route, never the later request's.
+            let snapshot = session
+                .last_good
+                .as_mut()
+                .and_then(Arc::get_mut)
+                .ok_or("snapshot should be uniquely owned in the test")?;
+            snapshot.base = Some("snapshot-base".to_string());
+            let named = refresh_document(&session);
+            let named_why = named["empty_scope_hint"]["why"].to_string();
+            if !named_why.contains("snapshot-base") || named_why.contains("origin/main") {
+                return Err(format!(
+                    "retained explicit-base snapshot must explain its own base: {named_why}"
+                ));
+            }
+            // A snapshot analyzed against an explicit base never offers the
+            // default-base last-commit retry.
+            if named["empty_scope_hint"]
+                .get("pass_base_last_commit")
+                .is_some()
+            {
+                return Err(format!("explicit-base hint offered HEAD~1: {named}"));
+            }
+            let retained_some = named["verify"]["mcp"]["arguments"].clone();
+            if retained_some != json!({ "source": "worktree", "base": "snapshot-base" }) {
+                return Err(format!(
+                    "retained snapshot base was replaced: {retained_some}"
+                ));
+            }
+            // No last-good snapshot: no hint at all, even with a desired base
+            // pending; only the verify route falls back to the request's base.
+            let snapshot_slot = session.last_good.take();
+            let no_snapshot_doc = refresh_document(&session);
+            if no_snapshot_doc.get("empty_scope_hint").is_some() {
+                return Err(format!(
+                    "no last-good snapshot must yield no hint: {no_snapshot_doc}"
+                ));
+            }
+            let no_snapshot = no_snapshot_doc["verify"]["mcp"]["arguments"].clone();
+            if no_snapshot != json!({ "source": "worktree", "base": "origin/main" }) {
+                return Err(format!(
+                    "no-snapshot fallback lost the request base: {no_snapshot}"
+                ));
+            }
+            session.last_good = snapshot_slot;
+            session.last_failure = None;
+            if let Some(snapshot) = session.last_good.as_mut().and_then(Arc::get_mut) {
+                snapshot.base = None;
             }
         }
         for (kind, findings) in [
@@ -5331,10 +5909,455 @@ mod tests {
             (AnalysisOutcomeKind::CompleteWithFindings, 1),
         ] {
             let document = refresh_document(&session_with(kind, findings)?);
+            if document["snapshot"].get("analysis_status").is_some() {
+                return Err(format!(
+                    "{kind:?} must not carry analysis_status: {document}"
+                ));
+            }
             if document.get("empty_scope_hint").is_some() {
                 return Err(format!("{kind:?} must not carry a hint: {document}"));
             }
         }
+        Ok(())
+    }
+
+    /// #13096: the `ripr_workspace_status` session block must not present a
+    /// committed zero-item empty-scope snapshot as a bare `finding_count: 0`.
+    #[test]
+    fn session_last_completed_snapshot_says_not_analyzed_for_an_empty_scope() -> Result<(), String>
+    {
+        for kind in [
+            AnalysisOutcomeKind::NoScope,
+            AnalysisOutcomeKind::NoChangedLines,
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+        ] {
+            let counts = if kind == AnalysisOutcomeKind::NoBehavioralCandidates {
+                AnalysisOutcomeCounts {
+                    changed_file_count: 1,
+                    changed_line_count: 2,
+                    ..Default::default()
+                }
+            } else {
+                AnalysisOutcomeCounts::default()
+            };
+            let mut empty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+            empty.analysis_outcome = Some(AnalysisOutcome::new(
+                kind,
+                Default::default(),
+                counts,
+                Vec::new(),
+            )?);
+            let snapshot = Snapshot::from_output(&empty, Some("root:sha256:test"))
+                .map_err(|failure| failure.detail)?;
+            let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+            session.last_good = Some(Arc::new(snapshot));
+            // Fixture construction: the retained snapshot is the zero-item
+            // committed empty-scope kind under test.
+            let retained = session.last_good.as_ref().ok_or("snapshot retained")?;
+            if retained.outcome.kind != kind || !retained.items.is_empty() {
+                return Err(format!("fixture must be an empty {kind:?} snapshot"));
+            }
+            let document = session.session_document(&SessionProfile::built_in());
+            let completed = &document["last_completed_snapshot"];
+            if completed["analysis_status"] != json!("not_analyzed")
+                || completed["clean"] != json!(false)
+                || completed["finding_count"] != json!(0)
+            {
+                return Err(format!(
+                    "{kind:?} status must say not_analyzed: {completed}"
+                ));
+            }
+        }
+        // Complete-clean zero findings is a real analysis: no disclosure.
+        let clean = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?
+            .session_document(&SessionProfile::built_in());
+        let completed = &clean["last_completed_snapshot"];
+        if completed["outcome_kind"] != json!("complete_no_findings")
+            || completed.get("analysis_status").is_some()
+            || completed.get("clean").is_some()
+        {
+            return Err(format!("complete-clean must stay undisclosed: {completed}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn failure_detail_bound_is_exact_character_counted_and_marks_truncation() {
+        let exact = "x".repeat(MAX_FAILURE_DETAIL_CHARS);
+        assert_eq!(bounded_detail(exact.clone()), exact);
+        let over = "x".repeat(MAX_FAILURE_DETAIL_CHARS + 1);
+        let truncated = bounded_detail(over);
+        assert_eq!(
+            truncated,
+            format!("{}…", "x".repeat(MAX_FAILURE_DETAIL_CHARS))
+        );
+        // The bound counts characters, not bytes: a multibyte detail at the
+        // character limit is whole, and one more character truncates cleanly.
+        let wide = "é".repeat(MAX_FAILURE_DETAIL_CHARS);
+        assert_eq!(bounded_detail(wide.clone()), wide);
+        let wide_over = bounded_detail("é".repeat(MAX_FAILURE_DETAIL_CHARS + 1));
+        assert_eq!(wide_over.chars().count(), MAX_FAILURE_DETAIL_CHARS + 1);
+        assert!(wide_over.ends_with('…'));
+        assert!(wide_over.starts_with(&wide));
+    }
+
+    #[test]
+    fn failure_recovery_bound_is_exact_byte_counted_and_never_truncated() {
+        let exact = "r".repeat(MAX_FAILURE_RECOVERY_BYTES);
+        assert_eq!(bounded_recovery(exact.clone()), exact);
+        assert_eq!(
+            bounded_recovery("r".repeat(MAX_FAILURE_RECOVERY_BYTES + 1)),
+            RECOVERY_TOO_LONG
+        );
+        // Bytes, not characters: 2049 two-byte characters are 4098 bytes.
+        assert_eq!(
+            bounded_recovery("é".repeat(MAX_FAILURE_RECOVERY_BYTES / 2 + 1)),
+            RECOVERY_TOO_LONG
+        );
+        let kept = "é".repeat(MAX_FAILURE_RECOVERY_BYTES / 2);
+        assert_eq!(bounded_recovery(kept.clone()), kept);
+        // The constructor applies both bounds and the value block carries the
+        // typed code, the bounded text and the (default empty) data object.
+        let failure = AttemptFailure::new(
+            CODE_ANALYSIS_FAILED,
+            "d".repeat(MAX_FAILURE_DETAIL_CHARS + 1),
+            "r".repeat(MAX_FAILURE_RECOVERY_BYTES + 1),
+        );
+        let value = failure.value();
+        assert_eq!(value["code"], CODE_ANALYSIS_FAILED);
+        assert_eq!(value["recovery"], RECOVERY_TOO_LONG);
+        assert_eq!(value["data"], json!({}));
+        assert!(
+            value["detail"]
+                .as_str()
+                .is_some_and(|detail| detail.ends_with('…'))
+        );
+        let with_data = failure.with_data(json!({"current_snapshot_id": "snapshot:x"}));
+        assert_eq!(
+            with_data.value()["data"]["current_snapshot_id"],
+            "snapshot:x"
+        );
+    }
+
+    #[test]
+    fn available_root_serves_the_resolved_root_and_names_a_restart_otherwise() -> Result<(), String>
+    {
+        let root = PathBuf::from("resolved-root");
+        assert_eq!(available_root(Some(&root)), Ok(root.as_path()));
+        let Err(failure) = available_root(None) else {
+            return Err("an unresolved root must not yield a path".to_string());
+        };
+        assert_eq!(failure.code, CODE_WORKSPACE_UNAVAILABLE);
+        assert!(
+            failure
+                .recovery
+                .contains("restart the server with `ripr mcp --stdio --root <repository>`"),
+            "{}",
+            failure.recovery
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn document_byte_measure_counts_compact_utf8_bytes() -> Result<(), String> {
+        let value = json!({"a": "é"});
+        // `{"a":"é"}` is nine characters and ten bytes: the wire cap is bytes.
+        assert_eq!(document_bytes(&value).map_err(|f| f.detail)?, 10);
+        assert_eq!(
+            document_bytes(&value).map_err(|f| f.detail)?,
+            value.to_string().len()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_document_admits_exactly_the_wire_cap_and_refuses_one_byte_more() -> Result<(), String>
+    {
+        let cap = crate::mcp::MAX_RESPONSE_BYTES;
+        // `{"k":""}` is eight bytes of framing around the padded value.
+        let at_cap = json!({"k": "x".repeat(cap - 8)});
+        assert_eq!(document_bytes(&at_cap).map_err(|f| f.detail)?, cap);
+        assert_eq!(
+            bounded_document(at_cap.clone(), "unused").map_err(|f| f.detail)?,
+            at_cap
+        );
+        let over = json!({"k": "x".repeat(cap - 7)});
+        let Err(failure) = bounded_document(over, "narrow the read") else {
+            return Err("a document one byte over the cap was accepted".to_string());
+        };
+        assert_eq!(failure.code, CODE_RESULT_TOO_LARGE);
+        assert_eq!(failure.recovery, "narrow the read");
+        assert_eq!(
+            failure.detail,
+            format!(
+                "document is {} bytes; the MCP response bound is {cap}",
+                cap + 1
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn committed_withheld_remedy_routes_each_reason_to_its_own_recovery() {
+        let head = committed_withheld_remedy(COMMITTED_HEAD_MOVED_REASON);
+        assert!(head.starts_with("Run ripr_refresh again once the repository head settles"));
+        let unestablished = format!("{COMMITTED_DIRTY_LIST_UNESTABLISHED} (git failed)");
+        let list = committed_withheld_remedy(&unestablished);
+        assert!(list.contains("check that git can read the repository"));
+        let dirty = committed_withheld_remedy(
+            "uncommitted Rust source or test files (src/h.rs) are read by the seam inventory and the committed findings never saw them",
+        );
+        assert!(dirty.starts_with("Commit the uncommitted Rust source or test files"));
+        assert!(dirty.contains("source `worktree`"));
+        // The head reason is matched exactly, not as a prefix.
+        let extended = format!("{COMMITTED_HEAD_MOVED_REASON} again");
+        assert!(committed_withheld_remedy(&extended).starts_with("Commit the uncommitted"));
+        let distinct = [head, list, dirty];
+        assert_eq!(
+            distinct
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            3
+        );
+    }
+
+    #[test]
+    fn card_withheld_details_embed_the_reason_and_their_own_recovery() {
+        let committed = committed_card_withheld_detail("reason-alpha");
+        assert!(committed.contains("analyzed committed content"));
+        assert!(committed.contains("(reason-alpha)"));
+        assert!(committed.contains("repair readiness and cards are withheld"));
+        assert!(committed.ends_with(committed_withheld_remedy("reason-alpha")));
+        let moved = committed_card_withheld_detail(COMMITTED_HEAD_MOVED_REASON);
+        assert!(moved.ends_with("Run ripr_refresh again once the repository head settles"));
+        let worktree = worktree_card_withheld_detail("reason-beta");
+        assert!(worktree.contains("saved tracked-worktree edits"));
+        assert!(worktree.contains("(reason-beta)"));
+        assert!(worktree.contains("repair readiness and cards are withheld"));
+        assert!(
+            worktree
+                .contains("run ripr_refresh with source `committed` for committed repair cards")
+        );
+        assert!(!worktree.contains("analyzed committed content"));
+        assert!(!committed.contains("saved tracked-worktree edits"));
+    }
+
+    #[test]
+    fn refresh_retry_arguments_name_only_the_requested_source_and_base() -> Result<(), String> {
+        let parse = |text: String| serde_json::from_str::<Value>(&text).map_err(|e| e.to_string());
+        assert_eq!(
+            parse(refresh_retry_arguments(None, RefreshSource::Committed))?,
+            json!({"source": "committed"})
+        );
+        assert_eq!(
+            parse(refresh_retry_arguments(Some("b"), RefreshSource::Committed))?,
+            json!({"source": "committed", "base": "b"})
+        );
+        assert_eq!(
+            parse(refresh_retry_arguments(None, RefreshSource::Worktree))?,
+            json!({"source": "worktree"})
+        );
+        assert_eq!(
+            parse(refresh_retry_arguments(Some("b"), RefreshSource::Worktree))?,
+            json!({"source": "worktree", "base": "b"})
+        );
+        Ok(())
+    }
+
+    fn typed_failure(
+        error: crate::core_error::CoreError,
+        base: Option<&str>,
+        source: RefreshSource,
+    ) -> AttemptFailure {
+        let failure = check_failure(&error, Path::new("typed-root"), base, source);
+        assert_eq!(failure.code, CODE_ANALYSIS_FAILED);
+        assert!(
+            failure
+                .detail
+                .starts_with("shared check authority failed: "),
+            "{}",
+            failure.detail
+        );
+        failure
+    }
+
+    #[test]
+    fn committed_check_failures_route_by_typed_identity_and_requested_base() {
+        use crate::core_error::CoreError;
+        let committed = RefreshSource::Committed;
+        let unset = typed_failure(CoreError::base_unresolvable("no base"), None, committed);
+        assert!(unset.recovery.contains("(the detail names candidates)"));
+        // #13096: an omitted source no longer means committed, so the
+        // committed retry names its source explicitly.
+        assert!(
+            unset
+                .recovery
+                .contains(r#"{"base":"<ref>","source":"committed"}"#)
+        );
+        assert!(!unset.recovery.contains("worktree"));
+        let given = typed_failure(
+            CoreError::base_unresolvable("bad base"),
+            Some("gone"),
+            committed,
+        );
+        assert!(given.recovery.contains("a different `base`"));
+        // Omitting only `base` keeps the committed source.
+        assert!(
+            given
+                .recovery
+                .contains(r#"omit only `base` to use the default branch: {"source":"committed"}"#)
+        );
+        assert!(!given.recovery.contains("(the detail names candidates)"));
+        for base in [None, Some("b")] {
+            let unusable = typed_failure(
+                CoreError::repository_root_unusable("no repo"),
+                base,
+                committed,
+            );
+            assert!(
+                unusable
+                    .recovery
+                    .starts_with("restart the server with `ripr mcp --stdio --root <repository>`")
+            );
+            assert!(unusable.recovery.contains("then retry ripr_refresh"));
+        }
+        // Any other typed identity keeps the generic, source-bound retry.
+        let other = typed_failure(
+            CoreError::config_invalid("bad config"),
+            Some("b"),
+            committed,
+        );
+        assert!(other.recovery.starts_with("retry ripr_refresh with "));
+        assert!(other.recovery.contains("run `"));
+        assert!(!other.recovery.contains("(the detail names candidates)"));
+        assert!(!other.recovery.contains("restart the server"));
+    }
+
+    #[test]
+    fn worktree_check_failures_carry_the_worktree_source_in_every_retry() -> Result<(), String> {
+        use crate::core_error::CoreError;
+        let worktree = RefreshSource::Worktree;
+        let unset = typed_failure(CoreError::base_unresolvable("no base"), None, worktree);
+        assert!(
+            unset
+                .recovery
+                .contains(r#"{"base":"<ref>","source":"worktree"}"#)
+        );
+        let given = typed_failure(
+            CoreError::base_unresolvable("bad base"),
+            Some("gone"),
+            worktree,
+        );
+        assert!(
+            given
+                .recovery
+                .contains(r#"{"base":"<ref>","source":"worktree"}"#)
+        );
+        // Omitting only `base` keeps the worktree source.
+        assert!(
+            given
+                .recovery
+                .contains(r#"default branch: {"source":"worktree"}"#)
+        );
+        assert!(!given.recovery.contains("gone"));
+        let unusable = typed_failure(
+            CoreError::repository_root_unusable("no repo"),
+            Some("kept"),
+            worktree,
+        );
+        assert!(
+            unusable
+                .recovery
+                .starts_with("restart the server with `ripr mcp --stdio --root <repository>`")
+        );
+        assert!(
+            unusable
+                .recovery
+                .ends_with(r#"retry ripr_refresh with {"base":"kept","source":"worktree"}"#),
+            "{}",
+            unusable.recovery
+        );
+        let other = typed_failure(CoreError::config_invalid("bad config"), None, worktree);
+        assert!(other.recovery.contains("--worktree --json"));
+        Ok(())
+    }
+
+    #[test]
+    fn diagnostic_reason_vocabulary_is_the_exact_wire_spelling() {
+        let overflow = [
+            (
+                DiagnosticOverflowReason::DocumentItemLimit,
+                "document_item_limit",
+            ),
+            (
+                DiagnosticOverflowReason::WorkspaceItemLimit,
+                "workspace_item_limit",
+            ),
+            (
+                DiagnosticOverflowReason::SerializedByteLimit,
+                "serialized_byte_limit",
+            ),
+            (
+                DiagnosticOverflowReason::InlineDetailLimit,
+                "inline_detail_limit",
+            ),
+        ];
+        for (reason, wire) in overflow {
+            assert_eq!(overflow_reason_as_str(reason), wire);
+        }
+        let omitted = [
+            (OmittedDiagnosticReason::ProfileFiltered, "profile_filtered"),
+            (
+                OmittedDiagnosticReason::DocumentItemLimit,
+                "document_item_limit",
+            ),
+            (
+                OmittedDiagnosticReason::WorkspaceItemLimit,
+                "workspace_item_limit",
+            ),
+            (
+                OmittedDiagnosticReason::SerializedByteLimit,
+                "serialized_byte_limit",
+            ),
+        ];
+        for (reason, wire) in omitted {
+            assert_eq!(omitted_reason_as_str(reason), wire);
+        }
+    }
+
+    #[test]
+    fn worktree_custody_fails_closed_on_missing_findings_or_unobserved_head() -> Result<(), String>
+    {
+        use crate::domain::LanguageId::Rust;
+        // Agreeing digests and an observed matching head establish a commitment.
+        let (out, findings, inventory) = refusal_inputs(Rust, Some("head-a"), b"a", b"a")?;
+        let commitment = worktree_custody(&out, &findings, &inventory)?;
+        assert!(!commitment.is_empty());
+        // No findings: nothing was bound, so no commitment is claimed.
+        let (mut none, findings, inventory) = refusal_inputs(Rust, Some("head-a"), b"a", b"a")?;
+        none.findings.clear();
+        let Err(reason) = worktree_custody(&none, &findings, &inventory) else {
+            return Err("an empty refresh must not claim custody".to_string());
+        };
+        assert!(reason.contains("no findings"), "{reason}");
+        // Unlike the committed path, an unobserved producer head is a refusal.
+        let (out, findings, inventory) = refusal_inputs(Rust, None, b"a", b"a")?;
+        let Err(reason) = worktree_custody(&out, &findings, &inventory) else {
+            return Err("an unobserved head must not establish custody".to_string());
+        };
+        assert!(reason.contains("or was not observed"), "{reason}");
+        // A moved head refuses even though the source digests agree.
+        let (out, findings, inventory) = refusal_inputs(Rust, Some("head-b"), b"a", b"a")?;
+        if worktree_custody(&out, &findings, &inventory).is_ok() {
+            return Err("a moved head must not establish custody".to_string());
+        }
+        // Moved source bytes refuse and name the owner's path.
+        let (out, findings, inventory) = refusal_inputs(Rust, Some("head-a"), b"a", b"b")?;
+        let Err(reason) = worktree_custody(&out, &findings, &inventory) else {
+            return Err("moved source must not establish custody".to_string());
+        };
+        assert!(reason.contains("src/lib.rs"), "{reason}");
         Ok(())
     }
 }

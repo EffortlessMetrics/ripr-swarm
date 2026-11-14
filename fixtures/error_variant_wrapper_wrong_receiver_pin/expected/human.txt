@@ -12,7 +12,7 @@ Start here:
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:27
   Static exposure: weak (severity: warning, confidence 0.66)
-  Why weak: a related test reaches this change but does not observe the exact changed value
+  Why weak: test reach to this change is not established
   Gap ID (for scripts): gap:rust:src/lib.rs:impl ParserA::parse_summary:call_deletion:call_deletion:try_parse_summary_raw_.map_err_into_into
   Changed behavior: try_parse_summary(raw).map_err(Into::into)
   Missing check: No strong assertion was detected

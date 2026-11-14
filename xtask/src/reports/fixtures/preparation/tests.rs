@@ -124,6 +124,13 @@ impl RejectingDistribution {
             while !done.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
+                        // Winsock hands back accepted sockets in the
+                        // listener's non-blocking mode, so the read below
+                        // returned WouldBlock before the request arrived,
+                        // went uncounted, and the early 503 aborted the
+                        // client (os error 10053) on loaded native Windows
+                        // runs (#9272). Block, bounded by the read timeout.
+                        let _ = stream.set_nonblocking(false);
                         let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
                         let mut request = [0; 4096];
                         if stream.read(&mut request).is_ok_and(|n| n > 0) {
@@ -366,6 +373,7 @@ fn seed_sparse_registry_crate(
     name: &str,
     version: &str,
     cache_leaf: &str,
+    checksum: &str,
 ) -> Result<(), String> {
     let index = std::fs::read_dir(source.join("registry/index"))
         .map_err(|e| e.to_string())?
@@ -387,6 +395,12 @@ fn seed_sparse_registry_crate(
         .join("registry/cache")
         .join(id)
         .join(format!("{name}-{version}.crate"));
+    let bytes = std::fs::read(&archive).map_err(|e| e.to_string())?;
+    if format!("{:x}", Sha256::digest(&bytes)) != checksum {
+        return Err(format!(
+            "{name}-{version} archive disagrees with locked checksum"
+        ));
+    }
     for (from, to) in [
         (
             archive,
@@ -414,6 +428,86 @@ fn seed_sparse_registry_crate(
             .map_err(|e| e.to_string())?;
         std::fs::copy(from, to).map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
+
+// Seed only the registry packages named by the production preparation lockfiles.
+// Cargo.lock includes the closure needed by offline metadata, including optional
+// packages; copying a whole ambient registry would hide missing-dependency controls.
+fn seed_locked_fixture_registry(source: &Path, destination: &Path) -> Result<(), String> {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("xtask parent missing")?;
+    for manifest in super::LOCKED_MANIFESTS {
+        let lock = repo.join(manifest).with_file_name("Cargo.lock");
+        let text = std::fs::read_to_string(&lock).map_err(|e| e.to_string())?;
+        let value: toml::Value = toml::from_str(&text).map_err(|e| e.to_string())?;
+        let packages = value
+            .get("package")
+            .and_then(toml::Value::as_array)
+            .ok_or("locked packages missing")?;
+        for package in packages {
+            let Some(source_id) = package.get("source") else {
+                continue; // The fixture's local root package has no registry archive.
+            };
+            if source_id.as_str() != Some("registry+https://github.com/rust-lang/crates.io-index") {
+                return Err(format!("unsupported fixture lock source: {source_id}"));
+            }
+            let field = |key: &str| {
+                package
+                    .get(key)
+                    .and_then(toml::Value::as_str)
+                    .ok_or_else(|| format!("locked package missing {key}"))
+            };
+            let name = field("name")?;
+            if name.is_empty()
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+            {
+                return Err("invalid registry crate name in fixture lock".into());
+            }
+            let key = name.to_ascii_lowercase();
+            let leaf = match key.len() {
+                1 => format!("1/{key}"),
+                2 => format!("2/{key}"),
+                3 => format!("3/{}/{key}", &key[..1]),
+                _ => format!("{}/{}/{key}", &key[..2], &key[2..4]),
+            };
+            seed_sparse_registry_crate(
+                source,
+                destination,
+                name,
+                field("version")?,
+                &leaf,
+                field("checksum")?,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn seed_rejects_an_archive_that_disagrees_with_the_lock() -> Result<(), String> {
+    let _cwd = crate::acquire_test_cwd_read_guard();
+    let root = OwnedRoot::new()?;
+    let source = home::cargo_home().map_err(|e| e.to_string())?;
+    let result = seed_sparse_registry_crate(
+        &source,
+        &root.0.join("cargo"),
+        "anyhow",
+        "1.0.100",
+        "an/yh/anyhow",
+        &"0".repeat(64),
+    );
+    assert_eq!(
+        result,
+        Err("anyhow-1.0.100 archive disagrees with locked checksum".into())
+    );
+    assert!(
+        !root.0.join("cargo/registry").exists(),
+        "reject before copying cache bytes"
+    );
     Ok(())
 }
 
@@ -471,6 +565,7 @@ fn installed_pin_missing_locked_dependency_refuses_then_seeded_cache_succeeds() 
         "anyhow",
         "1.0.100",
         "an/yh/anyhow",
+        "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61",
     )?;
     let anyhow_archive = std::fs::read_dir(source.join("registry/index"))
         .map_err(|e| e.to_string())?
@@ -492,6 +587,53 @@ fn installed_pin_missing_locked_dependency_refuses_then_seeded_cache_succeeds() 
         format!("{:x}", Sha256::digest(&bytes)),
         "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
     );
+    // The formerly sufficient anyhow seed must still refuse the second
+    // manifest. This catches a readiness loop that checks only the first one.
+    let prepared_anyhow = invoke_proxy(
+        &directory,
+        "cargo",
+        &super::metadata_args(super::LOCKED_MANIFESTS[0]),
+        &environment,
+        true,
+    )?;
+    assert!(!prepared_anyhow.timed_out);
+    assert!(
+        prepared_anyhow
+            .status
+            .is_some_and(|status| status.success()),
+        "{}",
+        prepared_anyhow.stderr
+    );
+    let missing_json = invoke_proxy(
+        &directory,
+        "cargo",
+        &super::metadata_args(super::LOCKED_MANIFESTS[1]),
+        &environment,
+        true,
+    )?;
+    assert!(!missing_json.timed_out);
+    assert!(missing_json.status.is_some_and(|status| !status.success()));
+    assert!(
+        missing_json.stderr.contains("serde_json"),
+        "{}",
+        missing_json.stderr
+    );
+    for mode in ["ready", "offline"] {
+        let output = invoke_child(mode, &environment)?;
+        let detail = format!("{}{}", output.stdout, output.stderr);
+        assert!(!output.timed_out);
+        assert_eq!(
+            output.status.and_then(|status| status.code()),
+            Some(101),
+            "{detail}"
+        );
+        assert!(
+            detail.contains("serde_json") && detail.contains("goldens prepare"),
+            "{detail}"
+        );
+    }
+    assert_eq!(server.requests.load(Ordering::SeqCst), 0);
+    seed_locked_fixture_registry(&source, &root.0.join("cargo"))?;
     let mut online = environment.clone();
     online.push(("CARGO_NET_OFFLINE", "false".into()));
     let output = invoke_child("online", &online)?;

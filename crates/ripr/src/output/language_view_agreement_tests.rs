@@ -278,9 +278,12 @@ pub(crate) fn check_output(
         untracked_working_tree_source_paths: Vec::new(),
         ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
+        owner_opt_outs: Vec::new(),
         suppression: None,
         analysis_outcome: Some(outcome),
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     }
 }
@@ -667,6 +670,7 @@ fn preview_advisory_readiness_agrees_with_the_view() -> Result<(), String> {
             sample_paths: Vec::new(),
             javascript_file_count: 0,
             enabled,
+            nested_packages: Vec::new(),
         };
         assert_eq!(advisory.analyzed(&view.public_runs), analyzed, "{name}");
     }

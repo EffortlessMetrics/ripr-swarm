@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -8,6 +8,6 @@
+ impl quickcheck::Arbitrary for Pair {
+     fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+         let a = u8::arbitrary(g);
+-        Pair(a, a.wrapping_add(2))
++        Pair(a, a.wrapping_add(3))
+     }
+ }

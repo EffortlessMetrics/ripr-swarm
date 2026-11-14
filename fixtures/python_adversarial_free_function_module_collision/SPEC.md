@@ -45,6 +45,13 @@ inverse positives: `from src.handler import normalize` (same module) and
 `from src.handler import normalize as norm` (aliased, same module) keep
 `exposed`.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_handler.py:python_preview:c48883f0 -> no_static_path
+```
+
 ## Must Not
 
 - Credit `exposed`/`alias` for a free-function owner from a same-named function

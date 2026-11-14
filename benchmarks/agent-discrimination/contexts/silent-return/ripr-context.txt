@@ -1,0 +1,75 @@
+# CONTEXT: ripr analyzer output
+# Crate: silent-return
+# ripr version: ripr 0.11.0 (e19f45c83e93855317059944b91e36932e58a7c7)
+# Captured with: ripr check --root <CRATE_PATH> --base HEAD~1 --format agent
+# plus ripr explain on the top finding (ripr's own suggested follow-up).
+# ripr is a static advisory tool: it does not write tests.
+
+===== ripr check --root <CRATE_PATH> --base HEAD~1 --format agent =====
+#ripr agent static-advisory base=HEAD~1 findings=2 gaps=2 weakly_exposed=2
+weakly_exposed|src/lib.rs:19|PaymentMethod::CashOnDelivery =>|missing=No strong discriminator was detected|test=t1|id=probe:src_lib.rs:match_arm:8cf112a0
+weakly_exposed|src/lib.rs:19|return 0|missing=No strong discriminator was detected|test=t1|id=probe:src_lib.rs:return_value:4fe6620e
+t1=src/lib.rs:33 card_settles_next_day exact_value `assert_eq!(settlement_hours(PaymentMethod::Card, false), 24);` miss=observation_unconfirmed
+next=ripr explain --root <study-harness>/silent-return --base "HEAD~1" --committed probe:src_lib.rs:match_arm:8cf112a0
+
+===== ripr explain (top finding): explain --root <study-harness>/silent-return --base HEAD~1 --committed probe:src_lib.rs:match_arm:8cf112a0 =====
+WARNING ./src/lib.rs:19
+  id: probe:src_lib.rs:match_arm:8cf112a0
+
+Changed
+  before: PaymentMethod::CashOnDelivery => 0,
+  after:  PaymentMethod::CashOnDelivery =>
+          (arm head only; open the arm at ./src/lib.rs:19 to read its new body)
+
+Change type
+  a match arm changed
+  family: match_arm
+  delta:  control (changes which code path runs)
+  owner:  src/lib.rs::settlement_hours
+  gap id (for scripts): gap:rust:src/lib.rs:settlement_hours:match_arm:match_arm:paymentmethod_cashondelivery
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach settlement_hours: card_settles_next_day, cash_is_instant_on_weekdays, transfer_settles_three_days_midweek
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Changed behavior appears to influence match arm result: PaymentMethod::CashOnDelivery =>
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
+  - local flow reaches match arm result: PaymentMethod::CashOnDelivery => (line 19)
+  - related test src/lib.rs:33 card_settles_next_day uses strong exact value oracle: assert_eq!(settlement_hours(PaymentMethod::Card, false), 24); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/lib.rs:38 cash_is_instant_on_weekdays uses strong exact value oracle: assert_eq!(settlement_hours(PaymentMethod::CashOnDelivery, false), 0); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/baseline.rs:11 transfer_settles_three_days_midweek uses strong exact value oracle: assert_eq!(settlement_hours(PaymentMethod::BankTransfer, false), 72); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/baseline.rs:6 weekend_surcharge_applies_to_card uses strong exact value oracle: assert_eq!(settlement_hours(PaymentMethod::Card, true), 48); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - source assertion argument value 48 at tests/baseline.rs:7
+  - source enum variant value PaymentMethod::Card at tests/baseline.rs:7
+  - source function argument value captured_on_weekend = true at tests/baseline.rs:7
+  - source assertion argument value 72 at tests/baseline.rs:12
+  - source enum variant value PaymentMethod::BankTransfer at tests/baseline.rs:12
+  - source function argument value captured_on_weekend = false at tests/baseline.rs:12
+  - source assertion argument value 24 at src/lib.rs:34
+  - source enum variant value PaymentMethod::Card at src/lib.rs:34
+  - source values (showing 8 of 12 read from related tests; full list via ripr check, using its JSON format)
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  Strengthen the related assertion so it discriminates the changed behavior
+
+Why this verdict
+  Tests examined: 4 listed (4 assertion row(s) of 4)
+  - src/lib.rs:33 card_settles_next_day: unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+      checked: assert_eq!(settlement_hours(PaymentMethod::Card, false), 24)
+  - src/lib.rs:38 cash_is_instant_on_weekdays: unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+      checked: assert_eq!(settlement_hours(PaymentMethod::CashOnDelivery, false), 0)
+  - tests/baseline.rs:11 transfer_settles_three_days_midweek: unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+      checked: assert_eq!(settlement_hours(PaymentMethod::BankTransfer, false), 72)
+  - tests/baseline.rs:6 weekend_surcharge_applies_to_card: unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+      checked: assert_eq!(settlement_hours(PaymentMethod::Card, true), 48)
+  To change the verdict, a test needs to:
+  - assert on the changed value itself, by name
+
+Next: ripr context --root <study-harness>/silent-return --base "HEAD~1" --committed --at probe:src_lib.rs:match_arm:8cf112a0
+

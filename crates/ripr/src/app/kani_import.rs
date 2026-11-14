@@ -9,12 +9,12 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::domain::external_verification::{
+use crate::provider_contract::{RiprRepositorySnapshotV1, RiprSourceViewV1};
+use ripr_contract::domain::external_verification::{
     KANI_BINDING_SCHEMA, KANI_REPORT_SCHEMA, KaniInvocationContext, KaniSelectedHarness,
     KaniSourceFile, SourceFileRole,
 };
-use crate::domain::external_verification_native::NativeRun;
-use crate::provider_contract::{RiprRepositorySnapshotV1, RiprSourceViewV1};
+use ripr_contract::domain::external_verification_native::NativeRun;
 
 pub(crate) const MAX_NATIVE_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const MAX_BINDING_BYTES: usize = 2 * 1024 * 1024;

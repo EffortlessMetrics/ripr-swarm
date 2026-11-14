@@ -1,0 +1,22 @@
+use std::ops::Add;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Money(pub i64);
+
+impl Add for Money {
+    type Output = Money;
+    fn add(self, other: Money) -> Money {
+        Self(other.0 - self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_operands() {
+        let r = Money(0).add(Money(0));
+        assert_eq!(r.0, 0);
+    }
+}

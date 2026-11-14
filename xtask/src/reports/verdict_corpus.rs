@@ -379,6 +379,10 @@ pub(crate) fn score(truth: TruthState, observed: Verdict) -> Outcome {
     }
 }
 
+/// Reach-summary suffix `ripr` writes for a workspace-unreferenced owner; the
+/// classifier owns the wording (`UNREFERENCED_IN_WORKSPACE`).
+const UNREFERENCED_IN_WORKSPACE: &str = "(unreferenced in workspace)";
+
 pub(crate) fn finding_verdict(finding: &Value) -> Verdict {
     let class = finding
         .get("classification")
@@ -390,6 +394,20 @@ pub(crate) fn finding_verdict(finding: &Value) -> Verdict {
     let named_limit = finding
         .get("static_limit_kind")
         .is_some_and(|kind| !kind.is_null());
+    // RIPR-SPEC-0219: `no_static_path` on an owner the workspace never names
+    // (`(unreferenced in workspace)` on the reach stage, only set when no
+    // caller, alias, doctest, macro block or language dispatch can run it
+    // unseen) is a plain missing test, so it reads as a gap. A named limit
+    // still wins.
+    if class == "no_static_path"
+        && !named_limit
+        && finding
+            .pointer("/ripr/reach/summary")
+            .and_then(Value::as_str)
+            .is_some_and(|summary| summary.ends_with(UNREFERENCED_IN_WORKSPACE))
+    {
+        return Verdict::Gap;
+    }
     if named_limit
         || matches!(
             class,
@@ -770,6 +788,13 @@ pub(crate) struct Report {
     pub(crate) abstention_rate: Ratio,
     pub(crate) contradiction_rate: Ratio,
     pub(crate) contradictions_by_code: BTreeMap<String, usize>,
+    /// Abstained rows again, by what the abstention missed (`gap_missed` or
+    /// `credit_missed`, or `no_claim_expected` when the ideal verdict is
+    /// itself `limited`/`silent`) and the observed
+    /// classification. Every abstained row is acceptable by its case's own
+    /// labels; this split shows where a promotion could pay off and which
+    /// ones (`gap_missed:no_static_path`) would raise false gaps on real code.
+    pub(crate) abstention_by_cause: BTreeMap<String, usize>,
     /// The verdict rates again, per subject origin. Authored cases are chosen
     /// to fill cells, so only the upstream rates describe real-world tests.
     pub(crate) by_origin: BTreeMap<String, OriginRates>,
@@ -805,6 +830,30 @@ pub(crate) struct OriginRates {
     pub(crate) false_silent_rate: Ratio,
     pub(crate) ideal_rate: Ratio,
     pub(crate) abstention_rate: Ratio,
+    /// [`Report::abstention_by_cause`] for this origin's rows only.
+    pub(crate) abstention_by_cause: BTreeMap<String, usize>,
+}
+
+/// Count abstained rows by `<side missed>:<classification>`.
+fn abstention_by_cause<R: std::borrow::Borrow<CaseRow>>(rows: &[R]) -> BTreeMap<String, usize> {
+    let mut causes = BTreeMap::new();
+    for row in rows.iter().map(std::borrow::Borrow::borrow) {
+        if row.outcome != Outcome::Abstained {
+            continue;
+        }
+        let side = match row.ideal_verdict {
+            Verdict::Credited => "credit_missed",
+            Verdict::Gap => "gap_missed",
+            Verdict::Limited | Verdict::Silent => "no_claim_expected",
+        };
+        let class = if row.observed_classifications.is_empty() {
+            "none".to_string()
+        } else {
+            row.observed_classifications.join("+")
+        };
+        *causes.entry(format!("{side}:{class}")).or_insert(0) += 1;
+    }
+    causes
 }
 
 fn origin_rates(rows: &[&CaseRow]) -> OriginRates {
@@ -834,6 +883,7 @@ fn origin_rates(rows: &[&CaseRow]) -> OriginRates {
         false_silent_rate: ratio(false_silent, not_fully),
         ideal_rate: ratio(count(Outcome::Ideal), rows.len()),
         abstention_rate: ratio(count(Outcome::Abstained), rows.len()),
+        abstention_by_cause: abstention_by_cause(rows),
     }
 }
 
@@ -1020,6 +1070,7 @@ pub(crate) fn summarize(spec: String, non_claims: Vec<String>, rows: Vec<CaseRow
         abstention_rate: ratio(count(Outcome::Abstained), rows.len()),
         contradiction_rate: ratio(findings_contradicted, findings_scored),
         contradictions_by_code: by_code,
+        abstention_by_cause: abstention_by_cause(&rows),
         by_origin,
         by_packet_provenance,
         spec_example_coverage: None,
@@ -1038,15 +1089,10 @@ pub(crate) fn summarize(spec: String, non_claims: Vec<String>, rows: Vec<CaseRow
 /// file-name order. Scoreboards and the public proof read the corpus rates
 /// through this instead of a committed summary file.
 pub(crate) fn expected_report(dir: &Path) -> Result<Report, String> {
-    // Only the fields the report repeats; `validate` owns the full header.
-    #[derive(Deserialize)]
-    struct Header {
-        spec: String,
-        non_claims: Vec<String>,
-    }
-    let header_path = dir.join("corpus.json");
-    let header: Header = serde_json::from_value(parse_json(&header_path)?)
-        .map_err(|err| format!("parse {}: {err}", normalize_path(&header_path)))?;
+    // Definitions establish truth and origin; row copies cannot establish
+    // their own eligibility or scoring. This is record consistency, not a
+    // fresh analyzer run or the retained-byte validation owned by `validate`.
+    let corpus = load_corpus(dir)?;
     let rows_dir = dir.join("expected").join(ROWS_DIR);
     let rows = record_files(&rows_dir, "case_id")?
         .into_iter()
@@ -1057,21 +1103,49 @@ pub(crate) fn expected_report(dir: &Path) -> Result<Report, String> {
         .collect::<Result<Vec<_>, _>>()?;
     // The rows must cover exactly the corpus's cases: a missing row would
     // otherwise shrink every denominator into a plausible, wrong rate.
-    let case_ids: BTreeSet<String> = record_files(&dir.join("cases"), "case_id")?
+    let cases: BTreeMap<_, _> = corpus
+        .cases
         .iter()
-        .filter_map(|case| case.get("case_id").and_then(Value::as_str))
-        .map(str::to_string)
+        .map(|case| (case.case_id.as_str(), case))
         .collect();
-    let row_ids: BTreeSet<String> = rows.iter().map(|row| row.case_id.clone()).collect();
-    let missing: Vec<&String> = case_ids.difference(&row_ids).collect();
-    let extra: Vec<&String> = row_ids.difference(&case_ids).collect();
+    let case_ids: BTreeSet<_> = cases.keys().copied().collect();
+    let row_ids: BTreeSet<_> = rows.iter().map(|row| row.case_id.as_str()).collect();
+    let missing: Vec<_> = case_ids.difference(&row_ids).collect();
+    let extra: Vec<_> = row_ids.difference(&case_ids).collect();
     if !missing.is_empty() || !extra.is_empty() {
         return Err(format!(
             "{} does not match the corpus cases (missing rows: {missing:?}; rows without a case: {extra:?}); run `cargo xtask verdict-corpus check`",
             normalize_path(&rows_dir)
         ));
     }
-    Ok(summarize(header.spec, header.non_claims, rows))
+    let subjects: BTreeMap<_, _> = corpus
+        .subjects
+        .iter()
+        .map(|subject| (subject.subject_id.as_str(), subject))
+        .collect();
+    for row in &rows {
+        let case = cases
+            .get(row.case_id.as_str())
+            .ok_or_else(|| format!("row {} has no case", row.case_id))?;
+        let subject = subjects
+            .get(case.subject_id.as_str())
+            .ok_or_else(|| format!("case {} has no subject `{}`", case.case_id, case.subject_id))?;
+        if row.subject_id != case.subject_id
+            || row.truth != case.truth.state
+            || row.origin != subject.origin
+            || row.anchor != format!("{}:{}", case.anchor.file, case.anchor.line)
+            || row.ideal_verdict != case.expected.ideal_verdict
+            || row.ideal_verdict != case.truth.state.ideal()
+            || row.packet_provenance != case.perl_facts.as_ref().map(|facts| facts.provenance)
+            || row.outcome != score(case.truth.state, row.observed_verdict)
+        {
+            return Err(format!(
+                "row {} disagrees with its scoring definition",
+                row.case_id
+            ));
+        }
+    }
+    Ok(summarize(corpus.spec, corpus.non_claims, rows))
 }
 
 pub(crate) fn render_report_json(report: &Report) -> Result<String, String> {
@@ -1116,6 +1190,38 @@ pub(crate) fn render_report_markdown(report: &Report, language: &str) -> String 
             "| {label} | {}/{} | {} |\n",
             ratio.numerator, ratio.denominator, ratio.rate
         ));
+    }
+    if !report.abstention_by_cause.is_empty() {
+        out.push_str(
+            "\nAbstentions by cause. Each is acceptable by its case's labels; `gap_missed:no_static_path` rows are the unsound direction to promote (a no-path finding is not proof of a gap on real code).\n\n",
+        );
+        let origins: Vec<&String> = if report.by_origin.len() > 1 {
+            report.by_origin.keys().collect()
+        } else {
+            Vec::new()
+        };
+        out.push_str("| Cause | All |");
+        for origin in &origins {
+            out.push_str(&format!(" {origin} |"));
+        }
+        out.push_str("\n| --- | --- |");
+        for _ in &origins {
+            out.push_str(" --- |");
+        }
+        out.push('\n');
+        for (cause, rows) in &report.abstention_by_cause {
+            out.push_str(&format!("| `{cause}` | {rows} |"));
+            for origin in &origins {
+                let count = report
+                    .by_origin
+                    .get(*origin)
+                    .and_then(|rates| rates.abstention_by_cause.get(cause))
+                    .copied()
+                    .unwrap_or(0);
+                out.push_str(&format!(" {count} |"));
+            }
+            out.push('\n');
+        }
     }
     if report.by_origin.len() > 1 {
         out.push_str(
@@ -2553,7 +2659,7 @@ pub(crate) fn run_case_expecting(
         args.push(packet.to_string_lossy().into_owned());
     }
     let cache_value = cache.to_string_lossy().into_owned();
-    let stdout = run_output_owned_with_envs(&binary, &args, &[(CACHE_ENV, &cache_value)])?;
+    let stdout = run_case_output(&binary, &args, &cache_value)?;
     let mut subject = case_subject(
         case,
         &fs::read(&diff).map_err(|err| format!("read {}: {err}", normalize_path(&diff)))?,
@@ -2569,6 +2675,16 @@ pub(crate) fn run_case_expecting(
         relativize_probe_files(&mut check, &canonical);
     }
     Ok((check, anchor_line))
+}
+
+/// Parent workers already parallelize cases. Pin each child Rayon pool to one
+/// worker without changing the parent pool or another case's cache.
+fn run_case_output(binary: &str, args: &[String], cache: &str) -> Result<String, String> {
+    run_output_owned_with_envs(
+        binary,
+        args,
+        &[(CACHE_ENV, cache), ("RAYON_NUM_THREADS", "1")],
+    )
 }
 
 /// What the harness fixed about a live case before ripr ran: the language the

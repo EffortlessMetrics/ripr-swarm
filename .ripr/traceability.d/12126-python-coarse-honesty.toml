@@ -1,0 +1,19 @@
+# Independent no-promotion controls for the existing rule 30 verdict cases (#12126).
+[[extend]]
+id = "RIPR-SPEC-0238"
+fixtures = [
+  "fixtures/python_coarse_sign",
+  "fixtures/python_coarse_residue",
+  "fixtures/python_coarse_text_length",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "xtask/src/evidence_promotion/python_coarse_tests.rs::python_coarse_contracts_reject_exposed_and_empty_reports",
+]
+fixtures = [
+  "fixtures/python_coarse_sign",
+  "fixtures/python_coarse_residue",
+  "fixtures/python_coarse_text_length",
+]

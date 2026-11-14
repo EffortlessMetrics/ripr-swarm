@@ -132,6 +132,40 @@ pub(in crate::analysis) fn shares_module_scope(
     declaration_line: usize,
     function_lines: &[usize],
 ) -> bool {
+    module_scopes(source).shares(declaration_line, function_lines)
+}
+
+/// The module-nesting stack in force at the start of every line of a source
+/// (#13577). A pure function of the source text, so a run builds it once per
+/// distinct text and every probe's [`shares_module_scope`] question reads it:
+/// a diff that touches a large file used to re-mask and re-scan that whole
+/// file once per candidate helper per probe.
+#[derive(Clone)]
+pub(in crate::analysis) struct ModuleScopes(std::rc::Rc<BTreeMap<usize, Vec<Option<String>>>>);
+
+#[cfg(test)]
+thread_local! {
+    /// Test witness: module-scope tables built (not served from the run memo)
+    /// on this thread.
+    pub(in crate::analysis) static MODULE_SCOPE_BUILDS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// The scopes of `source`, built once per run scope (see
+/// [`crate::analysis::syntax::run_memo`]) and rebuilt on every call outside
+/// one.
+pub(in crate::analysis) fn module_scopes(source: &str) -> ModuleScopes {
+    crate::analysis::syntax::run_memo::memoize(
+        crate::analysis::syntax::run_memo::Product::ModuleScopes,
+        0,
+        source,
+        || build_module_scopes(source),
+    )
+}
+
+fn build_module_scopes(source: &str) -> ModuleScopes {
+    #[cfg(test)]
+    MODULE_SCOPE_BUILDS.with(|builds| builds.set(builds.get() + 1));
     let masked = crate::analysis::extract::mask_comments_and_strings(source);
     let mut stack: Vec<Option<String>> = Vec::new();
     let mut scopes: BTreeMap<usize, Vec<Option<String>>> = BTreeMap::new();
@@ -157,15 +191,26 @@ pub(in crate::analysis) fn shares_module_scope(
             }
         }
     }
-    let Some(declared) = scopes.get(&declaration_line) else {
-        return false;
-    };
-    if declared.iter().any(Option::is_none) {
-        return false;
+    ModuleScopes(std::rc::Rc::new(scopes))
+}
+
+impl ModuleScopes {
+    /// [`shares_module_scope`] over the stored scopes.
+    pub(in crate::analysis) fn shares(
+        &self,
+        declaration_line: usize,
+        function_lines: &[usize],
+    ) -> bool {
+        let Some(declared) = self.0.get(&declaration_line) else {
+            return false;
+        };
+        if declared.iter().any(Option::is_none) {
+            return false;
+        }
+        function_lines
+            .iter()
+            .all(|line| self.0.get(line) == Some(declared))
     }
-    function_lines
-        .iter()
-        .all(|line| scopes.get(line) == Some(declared))
 }
 
 /// What evaluating the related tests under the old and new value showed.

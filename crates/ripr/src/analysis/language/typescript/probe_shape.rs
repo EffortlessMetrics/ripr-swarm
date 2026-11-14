@@ -271,6 +271,191 @@ pub(crate) fn classify_probe_shape_detail(line_text: &str) -> TypeScriptProbeSha
     TypeScriptProbeShape::ambiguous_fallback()
 }
 
+/// The shape a finding presents (#14381). Analysis keeps the conservative
+/// ambiguous fallback, `(Predicate, Control)` with `specific: false`, for a
+/// changed line it does not recognise, because its gates, oracle admission and
+/// credit are calibrated on it. Only what the finding says about itself (probe
+/// family and delta) reads as a value, and only for a plain single-name
+/// `const`/`let`/`var` declaration whose right side carries no condition, so a
+/// declaration such as `const desc = Object.getOwnPropertyDescriptor(raw, key);`
+/// is no longer described as "a condition or comparison changed". A
+/// recognised (specific) shape is returned unchanged.
+pub(crate) fn presented_typescript_shape(
+    probe_shape: &TypeScriptProbeShape,
+    line_text: &str,
+) -> (ProbeFamily, DeltaKind) {
+    if !probe_shape.specific
+        && matches!(probe_shape.family, ProbeFamily::Predicate)
+        && matches!(probe_shape.delta, DeltaKind::Control)
+        && is_typescript_plain_value_declaration(line_text)
+    {
+        (ProbeFamily::ReturnValue, DeltaKind::Value)
+    } else {
+        (probe_shape.family.clone(), probe_shape.delta.clone())
+    }
+}
+
+/// A single-name `const`/`let`/`var` declaration whose initializer is a plain
+/// value expression (#14381): `const desc = Object.getOwnPropertyDescriptor(raw,
+/// key);`, `let total: number = base - bonus;`. The recognizer is closed: the
+/// target is one identifier with at most a simple type annotation, the whole
+/// statement ends on the line with `;`, and any initializer that could carry a
+/// comparison, boolean or nullish operator, conditional, negation, membership
+/// or type test, arrow function, `await` or `yield` keeps the conservative
+/// predicate default. Quoted text is ignored when looking for those markers.
+pub(crate) fn is_typescript_plain_value_declaration(line_text: &str) -> bool {
+    let trimmed = line_text.trim();
+    // `export const x = ...;` declares the same plain value (#14391 review).
+    let trimmed = trimmed
+        .strip_prefix("export ")
+        .map_or(trimmed, str::trim_start);
+    let Some(rest) = ["const ", "let ", "var "]
+        .iter()
+        .find_map(|keyword| trimmed.strip_prefix(keyword))
+    else {
+        return false;
+    };
+    let Some((target, initializer)) = rest.split_once('=') else {
+        return false;
+    };
+    let target = match target.split_once(':') {
+        Some((name, annotation)) => {
+            let annotation = annotation.trim();
+            let clean = !annotation.is_empty()
+                && annotation.chars().all(|ch| {
+                    ch.is_ascii_alphanumeric()
+                        || matches!(
+                            ch,
+                            '_' | '$' | '.' | '[' | ']' | '<' | '>' | ',' | '|' | ' '
+                        )
+                });
+            if !clean {
+                return false;
+            }
+            name.trim()
+        }
+        None => target.trim(),
+    };
+    let is_identifier = target
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '$')
+        && target
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$');
+    if !is_identifier {
+        return false;
+    }
+    // The statement must end on this line with `;`. Without it the
+    // initializer may continue (`const message = isError` followed by
+    // `? "x" : "y";`, or a leading `&&`/`||`/`??` continuation), so the
+    // changed condition could sit on a later line. A trailing comment or a
+    // further `;` joins more text and is refused too.
+    let Some(initializer) = initializer.trim().strip_suffix(';') else {
+        return false;
+    };
+    let initializer = initializer.trim_end();
+    if initializer.is_empty()
+        || initializer.ends_with(',')
+        || bracket_depth_outside_quotes(initializer) != Some(0)
+    {
+        return false;
+    }
+    // A template interpolation runs code the quote blanking would hide
+    // (`${ready ? 'yes' : 'no'}`), so any `${` keeps the fallback.
+    if initializer.contains("${") {
+        return false;
+    }
+    // Brackets are spaced out and any whitespace run (tabs included) reads
+    // as one space, so the word-bounded markers below see `key\tin\tobj`,
+    // `key in(obj)` and `typeof(value)` as their spaced forms.
+    let code = without_quoted_text(initializer)
+        .replace("?.", ".")
+        .replace('(', " ( ")
+        .replace(')', " ) ")
+        .replace('[', " [ ")
+        .replace(']', " ] ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let padded = format!(" {code} ");
+    ![
+        "<",
+        ">",
+        "=",
+        "!",
+        "?",
+        "&&",
+        "||",
+        ";",
+        "//",
+        "/*",
+        " in ",
+        " instanceof ",
+        "typeof ",
+        "await ",
+        "yield",
+        "function",
+    ]
+    .iter()
+    .any(|marker| padded.contains(marker))
+}
+
+/// Net bracket depth of `text` outside quoted strings, or `None` when a closer
+/// appears before its opener or a string never closes.
+fn bracket_depth_outside_quotes(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in text.chars() {
+        if let Some(opener) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == opener {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+    }
+    quote.is_none().then_some(depth)
+}
+
+/// `text` with the contents of `"…"`, `'…'` and `` `…` `` literals blanked, so
+/// an operator inside a string is not read as code.
+fn without_quoted_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in text.chars() {
+        if let Some(opener) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == opener {
+                quote = None;
+                out.push(ch);
+                continue;
+            }
+            out.push(' ');
+            continue;
+        }
+        if matches!(ch, '"' | '\'' | '`') {
+            quote = Some(ch);
+        }
+        out.push(ch);
+    }
+    out
+}
+
 /// Returns `true` for an added TypeScript/JavaScript line that carries no
 /// behavior of its own: blank, comment-only, or punctuation-only (`}`, `});`,
 /// `)`, `],`). Mirrors the Rust `should_ignore_changed_line` filter; such a
@@ -373,11 +558,11 @@ pub(crate) fn typescript_missing_discriminators(
         return Vec::new();
     };
 
-    vec![MissingDiscriminatorFact {
+    vec![MissingDiscriminatorFact::equality_spelled(
         value,
-        reason: typescript_missing_discriminator_reason(&probe_shape.family, line),
-        flow_sink: flow_sink.cloned(),
-    }]
+        typescript_missing_discriminator_reason(&probe_shape.family, line),
+        flow_sink.cloned(),
+    )]
 }
 
 pub(crate) fn typescript_missing_discriminator_reason(

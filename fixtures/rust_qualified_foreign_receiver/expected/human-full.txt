@@ -36,8 +36,8 @@ Evidence
   - discriminator no: No assertion found on related tests
   - local flow reaches returned value: (0, Some(self.remaining)) (line 18)
   - related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint().1, Some(3)); misses: no established call path to the changed code; linked by name only
-  - related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint().0, 3); misses: no established call path to the changed code; linked by name only
-  - related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint(), (3, Some(3))); misses: no established call path to the changed code; linked by name only
+  - related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint().0, 3); misses
+  - related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint(), (3, Some(3))); misses
   - related test tests/size_hints.rs:10 unicode_module_receiver_is_not_the_local_type uses strong whole object equality oracle: assert_eq!(é::WhileSome { remaining: 3 }.size_hint().1, Some(3)); misses: no established call path to the changed code; linked by name only
   - source assertion argument value 3 at line 4
   - source assertion argument value 3 at line 5

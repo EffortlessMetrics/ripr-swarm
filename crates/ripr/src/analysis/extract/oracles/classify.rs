@@ -10,8 +10,8 @@ use super::bool_operands::{
 };
 use super::pattern_admission::{LocalDecls, pattern_assertion_classification_in};
 use super::patterns::{
-    PatternPolarity, contains_negated_pattern, deciding_disjunction_conjunct_rest,
-    err_constructor_feeds_value_adapter, has_deciding_disjunction, has_top_level_exact_equality,
+    PatternPolarity, asserted_outcome_independent_of_owner, contains_negated_pattern,
+    deciding_disjunction_conjunct_rest, has_deciding_disjunction, has_top_level_exact_equality,
     inequality_has_struct_literal_operand, is_broad_error_assertion,
     is_clear_exact_custom_assertion_helper, is_comparison_shaped_custom_assertion,
     is_custom_assertion_helper, is_duplicative_comparison, is_duplicative_equality_assertion,
@@ -309,11 +309,13 @@ fn classify_whole_condition(
     if let Some(classification) = classify_fallible_assertion(line) {
         return classification;
     }
-    // #12610: an `Err(..)` the test hands to a value-supplying adapter (`or`,
-    // `ok_or`, `map_err`, ..) is the test's own value, so equality with it
-    // passes whatever the owner returns. It pins no variant (#12359) and no
-    // value either, so no other kind may read it as exact.
-    if err_constructor_feeds_value_adapter(line) {
+    // #12359 / #12610: an `Err(..)` the test hands to a value-supplying
+    // adapter (`or`, `ok_or`, ..), or an error read taken through an adapter
+    // that replaces the owner's error (`.map_err(|_| E::V).unwrap_err()`), is
+    // the test's own value, so equality with it passes whatever error the
+    // owner returns. It pins no variant and no value, so no kind may read it
+    // as exact, on any seam.
+    if asserted_outcome_independent_of_owner(line) {
         return RELATION;
     }
     // RIPR-SPEC-0231 rule 1 (#7558): a boolean assertion decided by an `||`
@@ -564,6 +566,47 @@ mod tests {
             r#"assert_matches!(parse("x"), Err(ParseError::Empty));"#,
         ] {
             require_classification(line, OracleKind::ExactErrorVariant, OracleStrength::Strong)?;
+        }
+        Ok(())
+    }
+
+    /// #12610: an error read through an adapter that replaces the owner's
+    /// error compares the test's own value, so it pins nothing exact. Ported
+    /// with the `.or(Err(..))` cases from the #12691 candidate.
+    #[test]
+    fn an_error_read_through_a_replacing_adapter_pins_no_value() -> Result<(), String> {
+        for line in [
+            r#"assert_eq!(parse_remapped(1).map_err(|_| Fault::Odd).unwrap_err(), Fault::Odd);"#,
+            r#"assert_eq!((parse_remapped(1).map_err(|_| Fault::Odd).unwrap_err()), Fault::Odd);"#,
+            r#"assert_eq!(Fault::Odd, parse_remapped(1).map_err(|_| Fault::Odd).unwrap_err());"#,
+            r#"assert_eq!(parse_remapped(1).map_err(|_| Fault::Odd).expect_err("odd"), Fault::Odd);"#,
+            r#"assert_eq!(Result::unwrap_err(parse_remapped(1).map_err(|_| Fault::Odd)), Fault::Odd);"#,
+            r#"assert_eq!(Result::expect_err(parse_remapped(1).map_err(|_| Fault::Odd), "odd"), Fault::Odd);"#,
+            r#"assert_eq!(Result::<u8, Fault>::unwrap_err(parse_remapped(1).map_err(|_| Fault::Odd)), Fault::Odd);"#,
+            r#"assert_eq!(parse("1").or(Err(Fault::Odd)), Err(Fault::Odd));"#,
+            r#"assert_eq!(parse_masked(1).or(Err(Fault::Odd)).unwrap_err(), Fault::Odd);"#,
+        ] {
+            require_classification(line, OracleKind::RelationalCheck, OracleStrength::Weak)?;
+        }
+        // Controls: the owner's own error, read directly or through `map`,
+        // which leaves the error untouched, keeps an exact kind.
+        for line in [
+            r#"assert_eq!(parse("1").unwrap_err(), Fault::Odd);"#,
+            r#"assert_eq!(parse("1").map(|v| v + 1).unwrap_err(), Fault::Odd);"#,
+            r#"assert_eq!(Result::unwrap_err(parse("1")), Fault::Odd);"#,
+            // A diagnostic argument only prints on failure; it cannot replace
+            // the compared error.
+            r#"assert_eq!(parse("1").unwrap_err(), Fault::Odd, "{:?}", other().or(Err(Fault::Even)));"#,
+            r#"assert_eq!(parse("1").unwrap_err(), Fault::Odd, "{:?}", other().map_err(|_| Fault::Even).unwrap_err());"#,
+        ] {
+            let actual = classify_assertion(line);
+            if actual.kind == OracleKind::RelationalCheck
+                || actual.strength != OracleStrength::Strong
+            {
+                return Err(format!(
+                    "{line}: expected a strong exact kind, got {actual:?}"
+                ));
+            }
         }
         Ok(())
     }

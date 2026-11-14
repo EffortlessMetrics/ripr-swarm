@@ -16,6 +16,14 @@ cargo xtask fixtures module_reach_super_import_control
 
 Related to the changed helper through the entry the relative import resolves to (control).
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.rs:predicate:41e056ec -> exposed
+probe:src_lib.rs:return_value:cc17bcd3 -> exposed
+```
+
 ## Must Not
 
 - Lose the relation on the control.

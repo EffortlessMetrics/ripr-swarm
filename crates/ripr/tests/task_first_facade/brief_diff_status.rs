@@ -246,7 +246,7 @@ fn document(output: &Output) -> Result<Value, String> {
 fn assert_refusal(output: &Output, reason: &str) -> Result<(), String> {
     assert_exit(output, 2, reason);
     let value = document(output)?;
-    assert_eq!(value["schema_version"], "0.1");
+    assert_eq!(value["schema_version"], "0.2");
     assert_eq!(
         value["analysis_scope"]["run_status"],
         "diff_input_unsupported"

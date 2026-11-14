@@ -355,8 +355,8 @@ requirements in this spec remain unchanged.
 | `TransitiveWitness` struct + `find_transitive_witness -> Option<TransitiveWitness>` | `crates/ripr/src/analysis/classify/transitive_reach.rs` |
 | Deterministic witness selection | `crates/ripr/src/analysis/classify/transitive_reach.rs` |
 | Witness-pointer message builder (`transitive_reach_witness_pointer`) | `crates/ripr/src/analysis/classify/transitive_reach.rs` |
-| Shared witness prefix constant (`TRANSITIVE_REACH_WITNESS_PREFIX`) | `crates/ripr/src/domain/classification.rs` |
-| Module exports | `crates/ripr/src/analysis/classify/mod.rs`, `crates/ripr/src/domain/mod.rs` |
+| Shared witness prefix constant (`TRANSITIVE_REACH_WITNESS_PREFIX`) | `crates/ripr-contract/src/domain/classification.rs` |
+| Module exports | `crates/ripr/src/analysis/classify/mod.rs`, `crates/ripr-contract/src/domain/mod.rs` |
 | Wiring (diff mode) | `crates/ripr/src/analysis/language/rust/mod.rs::analyze_diff` |
 | Wiring (repo mode) | `crates/ripr/src/analysis/language/rust/repo.rs::analyze_repo_with_rust_config` |
 | JSON renderer | emits `static_limit_kind`, evidence, and additive `static_limitation` detail when the limitation detail is complete |

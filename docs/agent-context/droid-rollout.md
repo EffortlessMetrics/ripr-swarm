@@ -5,9 +5,9 @@ Use this agent checklist when preparing or reviewing a PR that copies the
 [Roll out Factory Droid review](../how-to/roll-out-droid.md); keep this file
 thin and link back to that guide instead of duplicating every detail.
 
-Automatic PR review was retired in `ripr-swarm` under #5086. The retained
-setup covers trusted manual `@droid` commands and scheduled security scans;
-do not copy or restore the automatic review lane as part of this checklist.
+Automatic PR review was retired in `ripr-swarm` under #5086, and #4842 retired
+manual mention-triggered review. The retained workflow setup covers scheduled
+security scans; do not copy or restore either development review lane.
 
 ## Inventory
 
@@ -36,7 +36,6 @@ not ready.
 Most target repositories should receive or adapt:
 
 ```text
-.github/workflows/droid.yml
 .github/workflows/droid-security-scan.yml
 .factory/skills/review-guidelines/SKILL.md
 .factory/rules/droid-review.md
@@ -54,9 +53,6 @@ notification rules, and local validation commands.
 Check for these before marking a rollout PR ready:
 
 ```text
-pull_request, not pull_request_target, for trusted manual PR mentions
-same-repo guard for manual PR mentions
-trusted actor guard for manual @droid commands
 show_full_output: false on every Droid action step
 upload_debug_artifacts: false on every Droid action step
 approved EffortlessMetrics/droid-action-safe SHA
@@ -73,7 +69,6 @@ review_depth: shallow
 action refs pinned to immutable SHAs
 repo-scoped concurrency for scheduled security scan
 cancel-in-progress: false
-manual Droid contents: read
 security scan contents: read
 security_scan_schedule: true
 security_scan_days: 7
@@ -86,12 +81,17 @@ If the target repository has a workflow allowlist or shell-line budget policy,
 update it for every Droid workflow. Do not invent that policy only for Droid
 unless the target repository explicitly wants the governance.
 
-The working `ripr` permission shape for manual `@droid` and
-scheduled security scan is `contents: read` (plus `pull-requests: write`,
+The retained `ripr` permission shape for the scheduled security scan is
+`contents: read` (plus `pull-requests: write`,
 `issues: write`, and `actions: read`). That posture landed in #2498 after
 dropping `contents: write` and `id-token: write`. Do not expand the baseline
 rollout to `contents: write`; keep the working `ripr` permissions until a
 focused permission-test PR proves a write requirement.
+
+Historical mention-workflow safeguards included a trusted-actor check,
+same-repository PR check, `pull_request` rather than `pull_request_target`, and
+`contents: read`. These describe the retired wrapper; they are not setup
+requirements or permission to restore it.
 
 ## Validation
 
@@ -106,7 +106,9 @@ cargo xtask check-pr
 ```
 
 For target repositories, use the repository's own workflow and policy checks,
-then run the live smoke path from [Droid smoke tests](droid-smoke-tests.md).
+then run only the retained scheduled/manual security-scan smoke path from
+[Droid smoke tests](droid-smoke-tests.md). The mention-review procedure there is
+historical, not a live rollout step.
 
 ## Non-Goals
 

@@ -379,6 +379,12 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
         // An escaped quote inside a string must not hide a later statement.
         "import builtins as b\nlabel = \"say \\\"hi\\\"\"; b.isinstance = checker\n\n\n",
         "import builtins as b\nlabel = 'it\\'s'; b.isinstance, other = checker, None\n\n\n",
+        // #12592: augmented assignment to a builtins-module attribute rebinds too.
+        "import builtins as b\nb.isinstance += 1\n\n\n",
+        "import builtins as b\nb.isinstance |= checker\n\n\n",
+        "import builtins\nbuiltins['isinstance'] += 1\n\n\n",
+        "import builtins as b\nb.isinstance **= 2\n\n\n",
+        "import builtins as b\nvalue = 1; b.isinstance += 1\n\n\n",
         // #12593: assignment targets split across lines or continued with `\`.
         "import builtins as b\n(other,\n b.isinstance) = (None, checker)\n\n\n",
         "import builtins as b\n[other,\n b.isinstance] = [None, checker]\n\n\n",
@@ -427,7 +433,11 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
         "import builtins as b\nb.isinstance: object  # a=b\n\n\n",
         "import builtins as b\nb.isinstance, other; value = 1\n\n\n",
         "import builtins as b\nlabel = \"say \\\"b.isinstance = 1\\\"\"\n\n\n",
+        "import builtins as b\nlabel = \"b.isinstance += 1\"\n\n\n",
         "import builtins as b\nfor name in [b.isinstance, b.len]: count = 1\n\n\n",
+        // #12592 controls: augmented ops on the right or unrelated targets bind nothing.
+        "import builtins as b\nlimit = b.isinstance + 1\n\n\n",
+        "import builtins as b\nother += b.isinstance\n\n\n",
         // #12593 controls: multiline reads and continued expressions bind nothing.
         "import builtins as b\nchecks = (b.isinstance,\n b.len)\n\n\n",
         "import builtins as b\nsame = b.isinstance == \\\n    checker\n\n\n",
@@ -454,6 +464,41 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
             "a harmless mention must not suppress the guard: {harmless:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn augmented_builtins_module_patch_on_fixture_shape_fails_open() -> Result<(), String> {
+    use super::classify::{PythonNoBehaviorContext, classify_change_with_context};
+    use super::owners_tests::{extract_owners, extract_tests};
+    const LABEL_FILE: &str = "src/label.py";
+    const LABEL_TEST: &str = "tests/test_label.py";
+    let owner = "import builtins as b\n\nb.isinstance += 1\n\n\ndef label(x):\n    if isinstance(x, str):\n        return \"TEXT\"\n    return None\n";
+    let line = 8;
+    let new_line = owner
+        .lines()
+        .nth(line - 1)
+        .ok_or_else(|| format!("owner has no line {line}"))?;
+    let owners = extract_owners(Path::new(LABEL_FILE), owner);
+    let tests = extract_tests(
+        Path::new(LABEL_TEST),
+        "from src.label import label\n\n\ndef test_int_fallthrough():\n    assert label(3) == None\n",
+    );
+    assert_eq!(
+        classify_change_with_context(
+            Path::new(LABEL_FILE),
+            line,
+            new_line,
+            Some("        return \"text\""),
+            &owners,
+            &tests,
+            PythonNoBehaviorContext::default(),
+            Some(owner),
+        )
+        .ok_or_else(|| "changed line should classify".to_string())?
+        .class,
+        ExposureClass::Exposed,
+    );
     Ok(())
 }
 

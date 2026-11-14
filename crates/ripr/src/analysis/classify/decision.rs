@@ -136,12 +136,17 @@ pub(in crate::analysis) fn missing_evidence(
         ),
         ExposureClass::WeaklyExposed => {}
     }
+    // #12414: a Predicate finding that already names a missing input — the
+    // equality boundary or an inserted guard's domain — carries no extra
+    // generic line; the typed shape, not a `==` string match, decides.
     if matches!(probe.family, ProbeFamily::Predicate)
         && infect.state != StageState::Yes
-        && !activation
-            .missing_discriminators
-            .iter()
-            .any(|fact| fact.value.contains("=="))
+        && !activation.missing_discriminators.iter().any(|fact| {
+            matches!(
+                fact.shape,
+                DiscriminatorShape::Boundary | DiscriminatorShape::GuardDomain
+            )
+        })
     {
         missing.push("No detected boundary input for the changed predicate".to_string());
     }
@@ -189,7 +194,7 @@ pub(in crate::analysis) fn missing_evidence(
 /// (also `assert_eq!`/`assert_ne!`/`debug_assert!` forms) or the
 /// `static_assertions` `const_assert*!` macros, bare or path-qualified. The
 /// match is on the written text only; anything else keeps its generic reason.
-fn is_compile_time_assertion(expression: &str) -> bool {
+pub(super) fn is_compile_time_assertion(expression: &str) -> bool {
     let text = expression.trim_start();
     if let Some(rest) = text.strip_prefix("const _") {
         let Some((_, value)) = rest.split_once('=') else {
@@ -1275,6 +1280,8 @@ mod tests {
             value: value.to_string(),
             reason: format!("no related test call uses {value}"),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }]
     }
 

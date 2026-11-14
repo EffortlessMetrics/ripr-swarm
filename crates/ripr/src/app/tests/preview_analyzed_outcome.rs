@@ -66,6 +66,7 @@ fn shared_preview_completion_predicate_fails_closed_for_every_non_success_status
         sample_paths: vec!["src/app.py".to_string()],
         javascript_file_count: 0,
         enabled: true,
+        nested_packages: Vec::new(),
     };
     if !advisory.analyzed(&[]) {
         return Err("an enabled routed run without a failure record must be analyzed".to_string());

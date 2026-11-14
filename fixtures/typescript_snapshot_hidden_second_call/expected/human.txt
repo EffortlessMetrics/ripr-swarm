@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: preview-language evidence is advisory; no repair packet is emitted because of the named static limitation: typescript_snapshot_discriminator_unresolved — the test uses toMatchSnapshot/toMatchInlineSnapshot; snapshot oracles do not pin a specific discriminator value so the changed behavior may not be caught by a stale snapshot; `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
+  Safe next action: preview-language evidence is advisory; no repair packet is emitted because of the named static limitation: typescript_snapshot_discriminator_unresolved — the test uses toMatchSnapshot/toMatchInlineSnapshot; the available snapshot evidence does not establish an expected value for the changed behavior, which may not be caught by a stale snapshot; `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
   File: src/lib.ts:3
   Language: typescript
   Language status: preview
@@ -21,8 +21,8 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return amount - 20;
   Missing check (1 of 2): Related test reaches `price` with snapshot evidence; keep the snapshot as
-    weak preview evidence and add an exact-value assertion for the changed discriminator before
-    routing a repair packet
+    weak preview evidence and add an exact-value assertion for the changed behavior before routing a
+    repair packet
   Related test: tests/lib.test.ts:3 price
   Next step — TypeScript preview advisory: add an exact-value assertion alongside the snapshot for
     the missing check `return value == amount - 20`; no actionable repair packet is emitted until

@@ -240,7 +240,8 @@ movement cannot promote the release claim by itself.
 
 `crates/ripr/Cargo.toml` intentionally includes `tests/**` and the tracked
 example paths (`examples/*/example.diff`, `examples/*/src/**`,
-`examples/*/tests/**`) in the published source distribution. The package list
+`examples/*/tests/**`, and the examples' shared `examples/support/*.rs`) in the
+published source distribution. The package list
 therefore carries the checked integration corpus and sample workspace used by
 release and dogfood evidence. This does not change the installed binary or
 library API, but removing either surface is a release-contract change that must

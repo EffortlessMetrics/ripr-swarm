@@ -51,6 +51,9 @@ Weakness
   - A strong Python oracle reaches `quote`, but static evidence does not place a related test input inside the guarding arm `not (total > 1000)`; every observed input leaves the changed line unexecuted. Add a test input that satisfies the guarding condition
   - missing discriminator not (total > 1000): each strong related test input satisfies at least one preceding early-exit condition (`total > 1000`) and exits the owner before the changed line; observed total = 2000.0; the changed line never executes under an observed input
 
+Next step
+  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `not (total > 1000)`
+
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
   canonical gap: gap:python:src/quote.py:quote:return_value:return_value:round_total*1.10_2
@@ -76,9 +79,6 @@ Python repair card (preview/advisory)
     - Syntax-first Python preview evidence only.
     - No source edits, generated tests, mutation execution, provider calls, or gate authority.
     - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `not (total > 1000)`
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_fallthrough_return_early_exit/input --diff <cwd>/fixtures/python_fallthrough_return_early_exit/diff.patch --mode fast probe:src_quote.py:python_preview:ca5fb9df

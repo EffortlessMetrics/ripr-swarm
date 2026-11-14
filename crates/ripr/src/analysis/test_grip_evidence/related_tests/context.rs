@@ -51,6 +51,14 @@ pub(crate) struct CompactGripContext<'a> {
     /// parse, its line index, and its test-function lookup, built once per
     /// file instead of once per seam and related test.
     parsed_sources: Mutex<BTreeMap<&'a Path, Option<Arc<ParsedTestFile>>>>,
+    /// The "this assertion pins another function" decision per (owner, test,
+    /// oracle), keyed by the addresses of those index-resident records. The
+    /// decision reads only the index and the owner's reach, both fixed for
+    /// the context's life, so it never needs recomputing; every seam that
+    /// shares a related test and owner used to rebuild the assertion text.
+    /// Not window-cleared: nothing in here derives from bytes a window can
+    /// change. Three words per entry, so it stays small.
+    other_function_pin_decisions: Mutex<std::collections::HashMap<(usize, usize, usize), bool>>,
     /// Manifest-backed default target identity, once per observer file.
     /// Small, immutable-index answers survive evidence window boundaries.
     default_unit_test_files: Mutex<BTreeMap<&'a Path, bool>>,
@@ -647,6 +655,7 @@ impl<'a> CompactGripContext<'a> {
             source_digest_cache: Mutex::new(BTreeMap::new()),
             evidence_functions_by_line_cache: Mutex::new(BTreeMap::new()),
             parsed_sources: Mutex::new(BTreeMap::new()),
+            other_function_pin_decisions: Mutex::new(std::collections::HashMap::new()),
             default_unit_test_files: Mutex::new(BTreeMap::new()),
             private_visibility: Default::default(),
             inline_unit_layouts: Default::default(),
@@ -791,6 +800,31 @@ impl<'a> CompactGripContext<'a> {
         let digest = crate::analysis::facts::source_digest(facts.source.as_bytes());
         memo(&self.source_digest_cache).insert(path.as_path(), digest.clone());
         Some(digest)
+    }
+
+    /// `decide` run once per (owner, test, oracle) identity. The three
+    /// references must be the index's own records, so their addresses name
+    /// them for the life of this context; `decide` runs outside the lock.
+    pub(in crate::analysis::test_grip_evidence) fn other_function_pin_decision(
+        &self,
+        owner: &FunctionSummary,
+        test: &TestSummary,
+        oracle: &OracleFact,
+        decide: impl FnOnce() -> bool,
+    ) -> bool {
+        let key = (
+            std::ptr::from_ref(owner) as usize,
+            std::ptr::from_ref(test) as usize,
+            std::ptr::from_ref(oracle) as usize,
+        );
+        if let Some(decision) = memo(&self.other_function_pin_decisions).get(&key) {
+            return *decision;
+        }
+        #[cfg(test)]
+        super::super::PIN_DECISIONS_COMPUTED.with(|count| count.set(count.get() + 1));
+        let decision = decide();
+        memo(&self.other_function_pin_decisions).insert(key, decision);
+        decision
     }
 
     /// Parser-backed layout for `path`, or `None` on lexical fallback or
@@ -3635,6 +3669,11 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_dire
     owner_names
 }
 
+#[cfg(test)]
+thread_local! {
+    static QUALIFIED_HELPER_CLEAN_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_qualified_calls(
     calls: &[CallFact],
     qualified_helpers: &QualifiedHelperModules<'_>,
@@ -3642,6 +3681,14 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_qual
 ) -> BTreeSet<String> {
     let mut owner_names = BTreeSet::new();
     for call in calls {
+        // The indexed name is required by every qualified and aliased match.
+        // Check it before cleaning, but still clean candidate text before
+        // testing its syntax: removing quoted text can change its spelling.
+        if !qualified_helpers.by_name.contains_key(call.name.as_str()) {
+            continue;
+        }
+        #[cfg(test)]
+        QUALIFIED_HELPER_CLEAN_COUNT.with(|count| count.set(count.get() + 1));
         let cleaned = strip_comments_and_strings(&call.text);
         for &(module_path, helper_owner_names) in qualified_helpers.candidates(&cleaned, &call.name)
         {
@@ -3963,6 +4010,31 @@ mod tests {
     }
 
     #[test]
+    fn qualified_helper_skips_cleaning_for_names_without_candidates() {
+        let modules = BTreeMap::from([(
+            "pkg::helpers".to_string(),
+            BTreeMap::from([("target".to_string(), BTreeSet::from(["owner".to_string()]))]),
+        )]);
+        let inverted = QualifiedHelperModules::new(&modules);
+        let calls = [
+            ("absent", "pkg::helpers::absent()"),
+            ("absent", r#"absent("pkg::helpers::target()")"#),
+            ("target", "pkg::helpers::target()"),
+            ("target", r#"target("pkg::helpers::target()")"#),
+        ]
+        .map(|(name, text)| CallFact {
+            line: 2,
+            name: name.to_string(),
+            text: text.to_string().into(),
+        });
+        QUALIFIED_HELPER_CLEAN_COUNT.with(|count| count.set(0));
+        let actual = helper_owner_call_names_from_qualified_calls(&calls, &inverted, None);
+        let cleaned = QUALIFIED_HELPER_CLEAN_COUNT.with(|count| count.get());
+        assert_eq!(actual, BTreeSet::from(["owner".to_string()]));
+        assert_eq!(cleaned, 2, "only candidate names need lexical cleaning");
+    }
+
+    #[test]
     fn unqualified_helper_calls_have_no_module_candidates() {
         let modules: HelperOwnerCallsByModulePath = (0..2048)
             .map(|index| {
@@ -4183,14 +4255,14 @@ mod tests {
             start_line,
             end_line: start_line,
             body: String::new().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -4253,10 +4325,11 @@ pub(in crate::analysis::test_grip_evidence) fn inherent_helper_path_reaches_owne
             body: helper.body.clone(),
             calls: helper.calls.clone(),
             assertions: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             attrs: helper.attrs.clone(),
             nested_fn_names: helper.nested_fn_names.clone(),
             let_bindings: helper.let_bindings.clone(),
+            generated: None,
         };
         if inherent_owner_call_resolves(&body, owner, index)
             || inherent_helper_path_reaches_owner(&body, owner, index, remaining - 1, visited)

@@ -35,7 +35,6 @@
 //! leftover `.md` from another run is then dropped. The copy describes an
 //! earlier run and is never current evidence.
 
-use crate::cli::unknown_argument;
 use crate::config::RiprConfig;
 use crate::output;
 use serde_json::{Value, json};
@@ -62,21 +61,18 @@ const NO_COPY_KEPT_SENTENCE: &str =
     "Any last-good copy still on disk is from an earlier run and is not current evidence.";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct RiprPlusOptions {
-    repo_exposure_summary: Option<PathBuf>,
-    gap_ledger: Option<PathBuf>,
-    check: bool,
+pub(crate) struct RiprPlusOptions {
+    pub(crate) repo_exposure_summary: Option<PathBuf>,
+    pub(crate) gap_ledger: Option<PathBuf>,
+    pub(crate) check: bool,
 }
 
 /// Entry point for `ripr plus`. Composes a RIPR+ repo receipt from a
 /// pre-computed `repo-exposure-summary-json` or `--gap-ledger` artifact and
 /// writes `ripr-plus.{json,md}`. Never runs an in-process full-repo scan.
-pub(crate) fn run_ripr_plus(args: &[String]) -> Result<(), String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_help();
-        return Ok(());
-    }
-    let options = parse_options(args)?;
+/// Argv parsing and `--help` live in the CLI adapter
+/// (`cli::commands::ripr_plus`); this takes parsed options.
+pub(crate) fn execute_ripr_plus(options: RiprPlusOptions) -> Result<(), String> {
     let repo = invocation_repo_root_with_directory_hint()?;
     let head = git_head(&repo);
     compose_and_write_receipt(&repo, &options, &head)
@@ -265,63 +261,6 @@ fn clear_last_good_markdown_file(repo: &Path) -> Result<(), String> {
     }
 }
 
-fn parse_options(args: &[String]) -> Result<RiprPlusOptions, String> {
-    let mut options = RiprPlusOptions::default();
-    let mut index = 0usize;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--check" => options.check = true,
-            "--gap-ledger" => {
-                index += 1;
-                options.gap_ledger =
-                    Some(PathBuf::from(non_empty_arg(args, index, "--gap-ledger")?));
-            }
-            "--repo-exposure-summary" => {
-                index += 1;
-                options.repo_exposure_summary = Some(PathBuf::from(non_empty_arg(
-                    args,
-                    index,
-                    "--repo-exposure-summary",
-                )?));
-            }
-            other => return Err(unknown_argument("plus", other)),
-        }
-        index += 1;
-    }
-    if options.gap_ledger.is_some() && options.repo_exposure_summary.is_some() {
-        return Err(
-            "plus accepts either --gap-ledger or --repo-exposure-summary, not both".to_string(),
-        );
-    }
-    if options.gap_ledger.is_none() && options.repo_exposure_summary.is_none() {
-        return Err(
-            "plus requires either --repo-exposure-summary <path> or --gap-ledger <path>; \
-             the binary-first `ripr plus` composes a receipt from a pre-computed artifact and \
-             does not run an in-process full-repo scan. \
-             Run `ripr check --root . --format repo-exposure-summary-json > summary.json` first, \
-             then `ripr plus --repo-exposure-summary summary.json`."
-                .to_string(),
-        );
-    }
-    Ok(options)
-}
-
-fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
-    let Some(value) = args.get(index) else {
-        return Err(format!("plus {flag} requires a path; pass `{flag} <path>`"));
-    };
-    if value.trim().is_empty() {
-        return Err(format!(
-            "plus {flag} requires a non-empty path; pass `{flag} <path>`"
-        ));
-    }
-    Ok(value)
-}
-
-fn print_help() {
-    println!("{}", crate::cli::help::render_command_help(PLUS_HELP, &[]));
-}
-
 /// Help body for `ripr plus`. Also the flag source for unknown-argument
 /// suggestions; keep accepted flags on option-list lines.
 pub(crate) const PLUS_HELP: &str = "\
@@ -361,7 +300,7 @@ Current inputs contain exposure or ledger evidence only. They do not establish
 complete test-efficiency measurement, bind that evidence to current candidate
 bytes, or dispose of blocked and unsupported scope. Known actionable counts remain informational; complete unresolved debt
 and candidate authority remain indeterminate, so --check cannot pass from these
-inputs. No ripr command produces the missing inputs yet (tracked in #7222), so
+inputs. No ripr command produces the missing inputs yet, so
 these receipts stay indeterminate until that lands. This command does not scan a
 repository or turn raw seams into debt.
 ";
@@ -446,7 +385,7 @@ fn ripr_plus_receipt_from_options(options: &RiprPlusOptions, head: &str) -> Resu
 /// scan). The resulting basis is `gap_decision_ledger`, which is a valid
 /// RIPR+ basis.
 fn render_gap_ledger_repo_badge_json(gap_ledger: &Path) -> Result<String, String> {
-    let text = fs::read_to_string(gap_ledger)
+    let text = crate::bounded_input::read_to_string(gap_ledger)
         .map_err(|err| format!("failed to read gap ledger {}: {err}; check the file is readable or pass another with `--gap-ledger`", gap_ledger.display()))?;
     let policy = output::badge::BadgePolicy {
         suppressions_path: RiprConfig::default().suppressions().display_path(),
@@ -460,7 +399,7 @@ fn render_gap_ledger_repo_badge_json(gap_ledger: &Path) -> Result<String, String
     .map_err(|err| {
         format!(
             "plus --gap-ledger {} is not a gap decision ledger: {err}. \
-             Pass the ledger written by `ripr gap-ledger` (default target/ripr/reports/gap-decision-ledger.json).",
+             Pass the ledger written by `ripr reports gap-ledger` (default target/ripr/reports/gap-decision-ledger.json).",
             gap_ledger.display()
         )
     })?;
@@ -469,7 +408,7 @@ fn render_gap_ledger_repo_badge_json(gap_ledger: &Path) -> Result<String, String
 }
 
 fn read_repo_exposure_summary_artifact(path: &Path) -> Result<String, String> {
-    let json = fs::read_to_string(path).map_err(|err| {
+    let json = crate::bounded_input::read_to_string(path).map_err(|err| {
         format!(
             "failed to read {}: {err}; check the file exists and is readable",
             normalize_path(path)
@@ -994,6 +933,8 @@ fn write_parented_file(path: &Path, label: &str, contents: impl AsRef<[u8]>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    // cfg(test) only: drive argv through the CLI adapter (tracked in #5193).
+    use crate::cli::commands::ripr_plus_command::parse_options;
 
     fn matching_markdown(json: &str) -> Result<String, String> {
         let value: Value =
@@ -1042,6 +983,26 @@ mod tests {
             Err(msg) if msg.contains("non-empty path") => Ok(()),
             other => Err(format!("expected `non-empty path` error, got {other:?}")),
         }
+    }
+
+    /// #14317: the remedy for a malformed ledger names the command that
+    /// writes one; `ripr gap-ledger` is not a command.
+    #[test]
+    fn malformed_gap_ledger_remedy_names_the_real_producer() -> Result<(), String> {
+        let dir =
+            std::env::temp_dir().join(format!("ripr-plus-malformed-ledger-{}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let ledger = dir.join("ledger.json");
+        fs::write(&ledger, "not json {").map_err(|err| format!("write ledger: {err}"))?;
+        let Err(err) = render_gap_ledger_repo_badge_json(&ledger) else {
+            return Err("a malformed ledger must be refused".to_string());
+        };
+        fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
+        assert!(
+            err.contains("`ripr reports gap-ledger`") && !err.contains("`ripr gap-ledger`"),
+            "{err}"
+        );
+        Ok(())
     }
 
     #[test]

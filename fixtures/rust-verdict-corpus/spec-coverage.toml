@@ -62,7 +62,7 @@ overclaim_ceiling = 0
 # fixed; the opposite edit is a reviewed change with a reason.
 [grid]
 cell_floor = 21
-trap_floor = 46
+trap_floor = 49
 false_credit_ceiling = 0
 
 # A case whose `behavior_family` names a different operator than its edit.
@@ -1018,3 +1018,26 @@ reason = "TypeScript per-file fact persistence; a cache-admission behavior, not 
 id = "RIPR-SPEC-0411"
 scope = "out"
 reason = "documents which producers may emit each stop_reason wire value and reserves three unemitted tokens; no verdict a corpus case can label"
+
+# DX scoreboard workload identity pairing
+[[spec]]
+id = "RIPR-SPEC-0436"
+scope = "out"
+reason = "xtask dx-scoreboard workload pairing rule; not an exposure-verdict example a corpus case labels"
+
+# Long flag --name=value spelling
+[[spec]]
+id = "RIPR-SPEC-0438"
+scope = "out"
+reason = "CLI argv spelling rule; not an exposure-verdict example a corpus case labels"
+
+# Managed server archive pre-extraction inspection
+[[spec]]
+id = "RIPR-SPEC-0437"
+scope = "out"
+reason = "VS Code managed-server download archive-inspection rule; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0440"
+scope = "out"
+reason = "CLI output-path safety rule (an --out naming a command input is refused); not an exposure-verdict example a corpus case labels"

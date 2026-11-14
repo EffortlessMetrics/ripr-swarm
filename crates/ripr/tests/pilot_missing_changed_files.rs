@@ -318,7 +318,7 @@ fn pilot(fixture: &Fixture, cache: &Path, files: usize) -> Result<Pilot, String>
     );
     let md = read_bounded(&out_dir.join("pilot-summary.md"))?;
     assert_eq!(
-        md.contains("- Seam limit reached: ranked "),
+        md.contains("- Seam limit reached: analyzed "),
         fixture.seam_limit.is_some(),
         "unexpected outer limit: {md}"
     );

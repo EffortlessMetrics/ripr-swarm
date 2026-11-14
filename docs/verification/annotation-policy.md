@@ -76,6 +76,8 @@ A file name that holds a control or bidi character cannot be named in a
 `file=` property (GitHub decodes only `%25 %0D %0A %3A %2C`). That annotation
 drops `file=` and `line=` and leads its message with
 `Location (file name has control characters, so not placed): <escaped path>:<line>.`
+A file name with non-UTF-8 bytes (stable text `%XX`) likewise drops `file=`/`line=`
+and leads with `Location (file name is not valid UTF-8, so not placed): <%XX path>:<line>.`
 
 Not allowed by default:
 

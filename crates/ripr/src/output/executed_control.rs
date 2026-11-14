@@ -124,16 +124,16 @@ fn render_validated_markdown(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::executed_control::tests::{
+    use crate::output::test_support::{read_file, repo_root};
+    use ripr_contract::domain::executed_control::tests::{
         HEAD_AFTER, HEAD_BEFORE, HEAD_OTHER, passing_result as domain_passing, sample_obligation,
     };
-    use crate::domain::executed_control::{
+    use ripr_contract::domain::executed_control::{
         ControlClass, DiscriminatingOutcome, EXECUTED_CONTROL_OBLIGATION_KIND,
         EXECUTED_CONTROL_RESULT_KIND, EvidenceForm, ExecutedControlObligationV1,
         ExecutedControlPacketV1, ExecutedControlResultV1, ExecutionSubject, Invalidator,
         ObservedOutcome, OfferedEvidenceKind, PermittedSubstitute, Requiredness, ResultState,
     };
-    use crate::output::test_support::{read_file, repo_root};
     use serde_json::{Value, json};
 
     fn packet(

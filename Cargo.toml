@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/ripr", "xtask", "tools/repo-policy"]
+members = ["crates/ripr", "crates/ripr-contract", "xtask", "tools/repo-policy"]
 default-members = ["crates/ripr"]
 resolver = "2"
 
@@ -29,6 +29,19 @@ unused_must_use = "deny"
 # carves out an unsafe island, this keeps unsafe operations inside an
 # unsafe fn from skipping the explicit `unsafe { ... }` block.
 unsafe_op_in_unsafe_fn = "deny"
+
+# Rustdoc's default-warn lints are errors: a doc link that does not resolve,
+# or that points a public reader at a private item, renders as dead text on
+# docs.rs. `cargo doc --workspace --no-deps` (the `check-pr` doc gate) then
+# fails closed instead of printing warnings nobody reads.
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+redundant_explicit_links = "deny"
+invalid_codeblock_attributes = "deny"
+invalid_rust_codeblocks = "deny"
+invalid_html_tags = "deny"
+bare_urls = "deny"
 
 # Panic-safety policy: clippy is the fast IDE rail for panic-family code shapes;
 # `cargo xtask check-no-panic-family` is the authoritative semantic gate that

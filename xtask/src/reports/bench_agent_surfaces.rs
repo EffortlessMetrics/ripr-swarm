@@ -2014,20 +2014,33 @@ fn snapshot_outcome(response: &Value) -> Option<Value> {
     }))
 }
 
-/// First gap id from the list payload (`items[0]`), tolerating the typed
-/// absence of any gap on a corpus. Production items name the id
-/// `canonical_id` (mcp/gaps.rs `GapItem`); the other spellings are
-/// tolerated defensively but never substituted for the registered name.
+/// First gap id from the structured list, falling back to the legacy JSON
+/// text copy when structured content is absent or malformed. A valid empty
+/// structured list is authoritative, even if the text disagrees.
 fn gap_id_from_list_response(response: &Value) -> Option<String> {
-    let text = response
-        .pointer("/result/content/0/text")
-        .and_then(Value::as_str)?;
-    let payload: Value = serde_json::from_str(text).ok()?;
+    response
+        .pointer("/result/structuredContent")
+        .and_then(gap_id_from_list_payload)
+        .or_else(|| {
+            let text = response
+                .pointer("/result/content/0/text")
+                .and_then(Value::as_str)?;
+            let payload: Value = serde_json::from_str(text).ok()?;
+            gap_id_from_list_payload(&payload)
+        })
+        .flatten()
+}
+
+/// `Some(None)` distinguishes a valid empty list from malformed content.
+/// Production items use `canonical_id`; the older spellings are tolerated.
+fn gap_id_from_list_payload(payload: &Value) -> Option<Option<String>> {
     let items = payload.get("items").and_then(Value::as_array)?;
-    let item = items.first()?;
+    let Some(item) = items.first() else {
+        return Some(None);
+    };
     for key in ["canonical_id", "gap_id", "canonical_item_id", "item_id"] {
         if let Some(id) = item.get(key).and_then(Value::as_str) {
-            return Some(id.to_string());
+            return Some(Some(id.to_string()));
         }
     }
     None
@@ -4007,6 +4020,81 @@ mod tests {
             "result": { "content": [{ "type": "text", "text": "{\"items\": []}" }] }
         });
         assert_eq!(gap_id_from_list_response(&empty), None);
+    }
+
+    #[test]
+    fn gap_list_uses_structured_items_across_text_modes() {
+        let document = json!({"items": [{"canonical_id": "gap:one"}]});
+        for text in [
+            document.to_string(),
+            "ripr summary: complete result is structuredContent".to_string(),
+            "ripr gaps: 1 shown; gap:one".to_string(),
+        ] {
+            let response = json!({"result": {
+                "structuredContent": document,
+                "content": [{"type": "text", "text": text}]
+            }});
+            assert_eq!(
+                gap_id_from_list_response(&response).as_deref(),
+                Some("gap:one")
+            );
+        }
+    }
+
+    #[test]
+    fn gap_list_structured_empty_and_text_fallback() {
+        let text = r#"{"items":[{"canonical_id":"gap:legacy"}]}"#;
+        let empty = json!({"result": {"structuredContent": {"items": []},
+            "content": [{"type": "text", "text": text}]}});
+        assert_eq!(gap_id_from_list_response(&empty), None);
+        for structured in [
+            Value::Null,
+            json!({"items": "invalid"}),
+            json!({}),
+            json!({"items": [{"canonical_id": 42}]}),
+        ] {
+            let response = json!({"result": {"structuredContent": structured,
+                "content": [{"type": "text", "text": text}]}});
+            assert_eq!(
+                gap_id_from_list_response(&response).as_deref(),
+                Some("gap:legacy")
+            );
+        }
+        let absent = json!({"result": {"content": [{"type": "text", "text": text}]}});
+        assert_eq!(
+            gap_id_from_list_response(&absent).as_deref(),
+            Some("gap:legacy")
+        );
+        let malformed = json!({"result": {"structuredContent": {},
+            "content": [{"type": "text", "text": "not json"}]}});
+        assert_eq!(gap_id_from_list_response(&malformed), None);
+        assert_eq!(gap_id_from_list_response(&json!({"result": {}})), None);
+        for key in ["gap_id", "canonical_item_id", "item_id"] {
+            let payload = json!({"items": [{key: "gap:alias"}]});
+            let response = json!({"result": {"content": [{"type": "text",
+                "text": payload.to_string()}]}});
+            assert_eq!(
+                gap_id_from_list_response(&response).as_deref(),
+                Some("gap:alias")
+            );
+        }
+    }
+
+    #[test]
+    fn gap_list_typed_refusal_is_not_a_successful_response() {
+        let response = json!({"result": {"isError": true,
+            "structuredContent": {"failure": {"code": "no_snapshot"}}}});
+        let op = m2_op_from_response(
+            "ripr_list_gaps",
+            RpcOutcome {
+                response,
+                response_bytes: 100,
+                elapsed: Duration::ZERO,
+            },
+        );
+        assert_eq!(op.status, "fail");
+        assert_eq!(op.detail.as_deref(), Some("no_snapshot"));
+        assert!(op.response.is_none());
     }
 
     /// The extracted gap id must be sent under the tool's registered input

@@ -121,6 +121,9 @@ pub(crate) struct LanguageDiffResult {
     /// Empty for preview adapters.
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     pub(crate) rust_consumed_sources: crate::analysis::consumed_source::ConsumedRustSources,
+    /// Findings whose changed owner opted out (#13819), in `findings` order.
+    /// Empty for preview adapters and when no owner opted out.
+    pub(crate) owner_opt_outs: Vec<crate::analysis::owner_opt_out::OwnerOptOut>,
     /// Persistent per-file fact-cache admissions for this run (#10725).
     /// `zero_work()` unless the adapter consulted its on-disk store — the
     /// pipeline renders the `-v` reuse line only from real counters.

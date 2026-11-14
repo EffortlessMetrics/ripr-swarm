@@ -3,6 +3,7 @@
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
 use crate::cli::help;
+use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::path::PathBuf;
@@ -12,7 +13,7 @@ use super::{read_optional_text_for_report, write_text_file};
 
 pub(in crate::cli) fn assistant_loop(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        help::print_assistant_loop_help();
+        help::print_group_help("assistant-loop", args);
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
@@ -127,7 +128,7 @@ fn assistant_loop_health(args: &[String]) -> Result<(), String> {
         .iter()
         .map(|path| {
             let source_artifact = output::assistant_loop_health::display_path(path);
-            let proof_json = read_optional_text_for_report("assistant proof", path);
+            let proof_json = read_health_proof(path);
             output::assistant_loop_health::AssistantLoopHealthProofInput {
                 source_artifact,
                 proof_json,
@@ -151,13 +152,34 @@ fn assistant_loop_health(args: &[String]) -> Result<(), String> {
         "Proofs: {}",
         output::assistant_loop_health::assistant_loop_health_proof_count(&report)
     );
+    super::emit_report_warnings(
+        &output::assistant_loop_health::assistant_loop_health_input_warnings(&report),
+    );
     Ok(())
+}
+
+/// Read one `--proof` input for the health report. A missing file is the
+/// common case (a mistyped path), so it uses the shared `not found` wording
+/// (#9851) and names the producer; other failures keep the OS detail (#14371).
+fn read_health_proof(path: &std::path::Path) -> Result<String, String> {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
+        let detail = crate::bounded_input::read_failure_detail(&err);
+        if err.kind() == std::io::ErrorKind::NotFound {
+            format!(
+                "{detail}; pass the proof JSON that `ripr assistant-loop proof` wrote \
+                 (its --out, by default target/ripr/reports/test-oracle-assistant-proof.json)"
+            )
+        } else {
+            detail
+        }
+    })
 }
 
 fn parse_assistant_loop_proof_options(
     args: &[String],
 ) -> Result<AssistantLoopProofOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut pr_guidance = None;
     let mut agent_packet = None;
     let mut before = None;
@@ -177,7 +199,15 @@ fn parse_assistant_loop_proof_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "assistant-loop proof")?;
+                let value = non_empty_string_arg(args, i, "--root", "assistant-loop proof")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "assistant-loop proof",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--pr-guidance" => {
                 i += 1;
@@ -272,10 +302,24 @@ fn parse_assistant_loop_proof_options(
         && ledger.is_none()
     {
         return Err(
-            "assistant-loop proof requires at least one explicit artifact input".to_string(),
+            "assistant-loop proof requires at least one explicit artifact input; pass one, for example `--pr-guidance PATH` (run `ripr help assistant-loop` for the list)".to_string(),
         );
     }
 
+    super::refuse_output_naming_input(
+        "assistant-loop proof",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--pr-guidance", pr_guidance.as_deref()),
+            ("--agent-packet", agent_packet.as_deref()),
+            ("--before", before.as_deref()),
+            ("--after", after.as_deref()),
+            ("--receipt", receipt.as_deref()),
+            ("--ledger", ledger.as_deref()),
+            ("--coverage-frontier", coverage_frontier.as_deref()),
+            ("--gate-decision", gate_decision.as_deref()),
+        ],
+    )?;
     Ok(AssistantLoopProofOptions {
         root,
         pr_guidance,
@@ -295,6 +339,7 @@ fn parse_assistant_loop_health_options(
     args: &[String],
 ) -> Result<AssistantLoopHealthOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut proofs = Vec::new();
     let mut out = PathBuf::from(output::assistant_loop_health::DEFAULT_ASSISTANT_LOOP_HEALTH_OUT);
     let mut out_md =
@@ -305,7 +350,15 @@ fn parse_assistant_loop_health_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "assistant-loop health")?;
+                let value = non_empty_string_arg(args, i, "--root", "assistant-loop health")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "assistant-loop health",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--proof" => {
                 i += 1;
@@ -330,9 +383,18 @@ fn parse_assistant_loop_health_options(
     }
 
     if proofs.is_empty() {
-        return Err("assistant-loop health requires at least one --proof path".to_string());
+        return Err("assistant-loop health requires at least one --proof path; first run `ripr assistant-loop proof --pr-guidance PATH`, then pass its JSON as `--proof target/ripr/reports/test-oracle-assistant-proof.json`".to_string());
     }
 
+    let proof_inputs: Vec<(&str, Option<&std::path::Path>)> = proofs
+        .iter()
+        .map(|proof| ("--proof", Some(proof.as_path())))
+        .collect();
+    super::refuse_output_naming_input(
+        "assistant-loop health",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &proof_inputs,
+    )?;
     Ok(AssistantLoopHealthOptions {
         root,
         proofs,

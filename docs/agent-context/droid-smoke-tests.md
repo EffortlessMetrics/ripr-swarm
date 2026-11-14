@@ -1,47 +1,20 @@
 # Droid Smoke Tests
 
-Run these after changing Droid workflows, Droid review guidance, or Droid model configuration.
+## Retired mention-review procedure
 
-For cross-repository rollout discipline, start with
-[Droid rollout checklist](droid-rollout.md) and the human
-[Roll out Factory Droid review](../how-to/roll-out-droid.md) guide.
+Automatic PR review was retired under #5086, and the trusted mention wrapper
+`droid.yml` was retired under #4842. Opening, synchronizing or reopening a PR,
+and posting `@droid review` or `@droid security`, must not start those retired
+workflows. The former mention smoke procedure is historical only: it checked
+trusted-actor admission, MiniMax BYOK review, severity labels and repair advice.
+It is not a live test instruction or permission to restore the wrapper.
 
-Before relying on live smoke tests, run `cargo xtask check-droid-review-config` locally to confirm the manual command and scheduled security-scan workflow invariants still match the checked-in policy.
-
-## Automatic review retirement
-
-Automatic PR review was retired under #5086. Opening, synchronizing, or
-reopening a PR must not start a Droid Auto Review run. The trusted `@droid`
-and scheduled security workflows remain separate and retain their existing
-triggers and safeguards.
-
-## Manual review
-
-Comment:
-
-```text
-@droid review
-```
-
-Expected:
-
-- trusted actor guard allows the run;
-- MiniMax BYOK model is used;
-- comments follow `[P0|P1|P2]` and repair-queue format.
-
-## Manual security review
-
-Comment:
-
-```text
-@droid security
-```
-
-Expected:
-
-- security review runs;
-- no unrelated code edits;
-- findings include severity and fix direction.
+The separate scheduled/manual security scan remains available. For changes to
+that retained workflow or its policy, run `cargo xtask check-droid-review-config`
+locally before an explicitly requested live scan. For cross-repository rollout,
+start with the [Droid rollout checklist](droid-rollout.md) and the human
+[Roll out Factory Droid review](../how-to/roll-out-droid.md) guide; neither
+re-enables mention review in this repository.
 
 ## Full security scan
 
@@ -82,8 +55,7 @@ confirm:
 
 ## Rollout smoke sequence
 
-When enabling Droid in a new repository, follow the rollout checklist first.
-After merge, use one same-repo PR to confirm `@droid review`,
-`@droid security`, and manual Droid Security Scan all run with
-`custom:MiniMax-M3-0`. Inspect artifact behavior before expanding beyond the
-pilot batch; normal runs should not upload raw debug artifacts.
+For the retained security-scan rollout, follow the checklist first, then use an
+explicit manual Droid Security Scan to confirm `custom:MiniMax-M3-0` and artifact
+hygiene. The former same-repository PR mention checks are historical and are not
+part of the active rollout.

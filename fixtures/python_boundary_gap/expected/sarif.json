@@ -1,0 +1,300 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "columnKind": "unicodeCodePoints",
+      "properties": {
+        "analysis_complete": true,
+        "analysis_outcome": {
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.",
+          "counts": {
+            "candidate_line_count": 1,
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "finding_count": 1,
+            "probe_count": 1
+          },
+          "identity": {
+            "base_revision": null,
+            "config_identity": "fnv1a64:dc56365c2646d0d3",
+            "git_candidate_subject": null,
+            "input_identity": "sha256:324714ffd59f7c41be29b0ccc6507ae01b757a6a3162d7cb800f748f954a42e8",
+            "repository_identity": null,
+            "root_identity": null,
+            "snapshot_identity": null
+          },
+          "kind": "complete_with_findings",
+          "limitations": [],
+          "schema_version": "0.1"
+        },
+        "run_status": "complete",
+        "schema_version": "0.1",
+        "scope": "finding",
+        "tool": "ripr"
+      },
+      "results": [
+        {
+          "fingerprints": {
+            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_discount.py:python_preview:d1182145|probe:src_discount.py:python_preview:d1182145|src/discount.py"
+          },
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/discount.py"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 2
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Missing check: changed Python equality-boundary at line 2 lacks a concrete repair discriminator. weakly_exposed static exposure for predicate probe:     if amount >= threshold:. Next step: Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `amount == threshold`."
+          },
+          "partialFingerprints": {
+            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_discount.py:python_preview:d1182145|probe:src_discount.py:python_preview:d1182145|src/discount.py"
+          },
+          "properties": {
+            "canonical_gap": {
+              "behavior_kind": "predicate_boundary",
+              "file": "src/discount.py",
+              "id": "gap:python:src/discount.py:apply_discount:predicate_boundary:predicate:amount>=threshold",
+              "language": "python",
+              "normalized_discriminator": "amount>=threshold",
+              "owner": "apply_discount",
+              "probe_kind": "predicate"
+            },
+            "canonical_gap_id": "gap:python:src/discount.py:apply_discount:predicate_boundary:predicate:amount>=threshold",
+            "changed_expression": "    if amount >= threshold:",
+            "classification": "weakly_exposed",
+            "confidence": 0.4,
+            "finding_id": "probe:src_discount.py:python_preview:d1182145",
+            "flow_sinks": [
+              {
+                "kind": "unknown",
+                "line": 2,
+                "owner": "python:src/discount.py::apply_discount",
+                "text": "if amount >= threshold:"
+              }
+            ],
+            "kind": "finding",
+            "language": "python",
+            "language_status": "preview",
+            "missing_discriminators": [
+              {
+                "flow_sink": {
+                  "kind": "unknown",
+                  "line": 2,
+                  "owner": "python:src/discount.py::apply_discount",
+                  "text": "if amount >= threshold:"
+                },
+                "reason": "changed Python equality-boundary at line 2 lacks a concrete repair discriminator",
+                "value": "amount == threshold"
+              }
+            ],
+            "observed_values": [],
+            "owner": "python:src/discount.py::apply_discount",
+            "owner_kind": "function",
+            "probe_delta": "control",
+            "probe_family": "predicate",
+            "probe_id": "probe:src_discount.py:python_preview:d1182145",
+            "python_repair_card": {
+              "authority_boundary": "preview_advisory_only",
+              "canonical_gap_id": "gap:python:src/discount.py:apply_discount:predicate_boundary:predicate:amount>=threshold",
+              "card_version": "python_repair_card.v1",
+              "changed_behavior": "predicate_boundary changed at src/discount.py:2: `if amount >= threshold:`",
+              "changed_owner": "apply_discount",
+              "current_test_evidence": "tests/test_discount.py:4 test_apply_discount_smoke currently has oracle_strength=unknown, oracle_kind=unknown",
+              "language": "python",
+              "language_status": "preview",
+              "limits": [
+                "Syntax-first Python preview evidence only.",
+                "No source edits, generated tests, mutation execution, provider calls, or gate authority.",
+                "Verify success alone is not a gap-closure receipt."
+              ],
+              "missing_discriminator": "amount == threshold",
+              "receipt": {
+                "command": null,
+                "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.",
+                "status": "unavailable_until_python_gap_ledger"
+              },
+              "recommended_test_shape": "Strengthen the existing pytest boundary assertion for `amount == threshold`. Keep the equality case as the minimum repair; optional pytest parameterization can add `threshold - 1`, `threshold`, and `threshold + 1` rows when expected values are clear.",
+              "repair_action": "strengthen_existing_test",
+              "source": "check_python_preview",
+              "stop_conditions": [
+                "Stop if imports, fixtures, or test setup cannot call the changed owner.",
+                "Stop if the expected value for the missing discriminator is ambiguous.",
+                "Stop if adding the test appears to require a production-code edit.",
+                "Stop before adding parametrized below/above rows if their expected values are not clear; keep only the equality-boundary assertion."
+              ],
+              "suggested_assertion": "Assert the owner result or effect at `amount == threshold` first. Optional pytest shape: @pytest.mark.parametrize(\"amount, expected\", [(threshold - 1, ...), (threshold, ...), (threshold + 1, ...)]); fill expected values from domain behavior only.",
+              "suggested_location": {
+                "pytest_node_id": "tests/test_discount.py::test_apply_discount_smoke",
+                "test_file": "tests/test_discount.py",
+                "test_name": "test_apply_discount_smoke"
+              },
+              "verify": {
+                "command": "python -m pytest tests/test_discount.py::test_apply_discount_smoke",
+                "confidence": "high"
+              }
+            },
+            "related_tests": [
+              {
+                "file": "tests/test_discount.py",
+                "line": 4,
+                "name": "test_apply_discount_smoke",
+                "oracle": null,
+                "oracle_kind": "unknown",
+                "oracle_strength": "unknown"
+              }
+            ],
+            "related_tests_total": 1,
+            "ripr": {
+              "discriminate": {
+                "confidence": "low",
+                "state": "weak",
+                "summary": "Python preview adapter found no strong discriminator; missing proof: `amount == threshold`."
+              },
+              "infect": {
+                "confidence": "low",
+                "state": "yes",
+                "summary": "Changed Python predicate can alter branch selection: `if amount >= threshold:`"
+              },
+              "observe": {
+                "confidence": "low",
+                "state": "weak",
+                "summary": "Strongest extracted Python oracle kind: `unknown` (rank 1)"
+              },
+              "propagate": {
+                "confidence": "low",
+                "state": "weak",
+                "summary": "Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink."
+              },
+              "reach": {
+                "confidence": "low",
+                "state": "yes",
+                "summary": "1 related Python test(s) found for owner `apply_discount`"
+              }
+            },
+            "severity": "warning",
+            "stop_reasons": [],
+            "suggested_next_action": "Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `amount == threshold`.",
+            "tool": "ripr"
+          },
+          "ruleId": "ripr.finding.weakly_exposed"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/EffortlessMetrics/ripr",
+          "name": "ripr",
+          "rules": [
+            {
+              "fullDescription": {
+                "text": "Static analysis found a complete path from the changed code to a test oracle strong enough to observe the changed behavior."
+              },
+              "help": {
+                "text": "This is static evidence, not a runtime verdict: ripr did not execute any test. Next step: run the linked related test and confirm it observes the changed sink."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.exposed",
+              "name": "ripr exposed",
+              "shortDescription": {
+                "text": "Changed behavior appears covered by a strong test oracle"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "A static path from the change to a related test exists, but the infection or the oracle's discrimination looks weak, so the test could pass even when the behavior is wrong."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: strengthen the nearest assertion so it observes the changed sink directly, then re-run ripr check."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.weakly_exposed",
+              "name": "ripr weakly_exposed",
+              "shortDescription": {
+                "text": "Changed behavior may not be caught by the current tests"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Related tests appear to reach the changed code, but no meaningful oracle was found that would notice a wrong result."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: add or sharpen an assertion that discriminates the changed behavior."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.reachable_unrevealed",
+              "name": "ripr reachable_unrevealed",
+              "shortDescription": {
+                "text": "Tests reach the changed code but no assertion appears to check it"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "No static test path to the changed owner was found; static analysis could not trace any related test to this behavior."
+              },
+              "help": {
+                "text": "This is a static reachability statement, not a runtime coverage measurement. Next step: add a focused test that exercises the changed behavior."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.no_static_path",
+              "name": "ripr no_static_path",
+              "shortDescription": {
+                "text": "No test appears to reach the changed code"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Tests may reach the change, but the input or fixture evidence is opaque, so static analysis cannot tell whether a wrong result would propagate."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: make the decisive input or fixture value explicit, then re-run ripr check."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.infection_unknown",
+              "name": "ripr infection_unknown",
+              "shortDescription": {
+                "text": "Tests may reach the change but their inputs are not visible to static analysis"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "The changed behavior crosses a boundary static analysis cannot see through, so it is unknown whether a wrong result would reach an observable sink."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: add an assertion at an observable sink beyond the boundary."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.propagation_unknown",
+              "name": "ripr propagation_unknown",
+              "shortDescription": {
+                "text": "Static analysis cannot tell whether a wrong result would reach an assertion"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Syntax-first analysis could not make a credible judgment for this finding, usually because parsing or symbol resolution was incomplete."
+              },
+              "help": {
+                "text": "This is an analysis limitation disclosure, not a coverage verdict. Next step: re-run with fuller analysis settings or triage the finding manually."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.static_unknown",
+              "name": "ripr static_unknown",
+              "shortDescription": {
+                "text": "Static analysis could not judge this change"
+              }
+            }
+          ],
+          "semanticVersion": "0.11.0"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

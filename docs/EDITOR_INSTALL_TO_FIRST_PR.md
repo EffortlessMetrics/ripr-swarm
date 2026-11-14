@@ -32,11 +32,15 @@ extension resolves the server in this order:
 7. actionable setup error
 
 For the first Rust loop, no config file is required. Rust is the default
-adapter. JavaScript is an opt-in preview adapter (`[languages]`
-in `ripr.toml`). TypeScript and Python previews are enabled automatically for
-TypeScript- or Python-shaped repositories without a `ripr.toml`; an explicit `[languages]` list is
-authoritative. All preview evidence remains syntax-first, advisory, and
-static-limit bounded.
+adapter. Without a `ripr.toml`, project detection can enable the
+TypeScript-family preview for TypeScript-shaped repositories or a root
+`package.json` with eligible JavaScript or TypeScript source; Python preview
+also has project detection. A manifest or JavaScript source alone does not
+select the package-led route. An explicit `[languages]` list is authoritative,
+and the binary must include the selected adapter. See
+[language configuration](CONFIGURATION.md#languages) for the full conditions,
+including mixed Rust repositories. All preview evidence remains syntax-first,
+advisory, and static-limit bounded.
 
 ## 2. Diagnose Setup
 

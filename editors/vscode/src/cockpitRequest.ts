@@ -11,15 +11,19 @@
 export type CockpitRequestResult<T> =
   | { kind: 'no_client' }
   | { kind: 'unavailable' }
+  | { kind: 'session_changed' }
   | { kind: 'ok'; value: T };
 
 export type CockpitRequestAbsence = Extract<
   CockpitRequestResult<unknown>,
-  { kind: 'no_client' | 'unavailable' }
+  { kind: 'no_client' | 'unavailable' | 'session_changed' }
 >;
 
 export const NO_RUNNING_SERVER_MESSAGE =
   'No ripr server is running in this window — check the ripr status item or run ripr: Show Status.';
+
+export const SESSION_CHANGED_MESSAGE =
+  'The ripr workspace session changed or is switching. Run the command again when the current workspace is ready.';
 
 const HUNG_SERVER_WORDING = /did not respond|not responding/;
 
@@ -31,7 +35,14 @@ export function cockpitUnavailableMessage(
   result: CockpitRequestAbsence,
   unavailableMessage: string
 ): string {
-  return result.kind === 'no_client' ? NO_RUNNING_SERVER_MESSAGE : unavailableMessage;
+  switch (result.kind) {
+    case 'no_client':
+      return NO_RUNNING_SERVER_MESSAGE;
+    case 'session_changed':
+      return SESSION_CHANGED_MESSAGE;
+    case 'unavailable':
+      return unavailableMessage;
+  }
 }
 
 export function interpretCockpitObjectResponse(

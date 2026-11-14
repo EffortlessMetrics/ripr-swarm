@@ -23,11 +23,13 @@ Linked issues:
 - #8956 (this spec and its traceability)
 - #8793 (the lock-wait instrument failure and `precommit` deferral)
 - #8939 (the lock-wait wall-clock ceiling)
+- #13705 (local `precommit` skips enumeration for an unaffected change set)
 
 Linked PRs:
 
 - #8905 (lock-wait retry and the `covered_by_lock_wait_timeout` class)
 - #8941 (90-minute ceiling and the `precommit-v2` composition tests)
+- #14185 (rule 6, the local skip for an unaffected change set)
 
 Support-tier impact:
 
@@ -39,8 +41,9 @@ Policy impact:
 
 - Register this spec in `policy/doc-artifacts.toml` and
   `.ripr/traceability.toml`.
-- No behavior change. The spec states the contract that #8905 and #8941
-  implemented and maps it to its tests and code. It does not bolt onto
+- Rules 1 to 5 state the contract that #8905 and #8941 implemented and map
+  it to its tests and code, with no behavior change. Rule 6 is the one
+  behavior this spec added later (#14185). The spec does not bolt onto
   RIPR-SPEC-0191, which governs host-scoped `covered_by` selection only.
 
 ## Problem
@@ -133,6 +136,89 @@ failure kind `infrastructure`.
 - Exhausted retries or an exhausted ceiling stay failures; they are never
   converted to a pass or to an unresolved-pointer finding.
 
+### Rule 6: local `precommit` skips enumeration for an unaffected change set
+
+Enumeration builds test binaries, and the `ripr` library test build alone
+holds about 13.8 GB. A selector's listing depends only on Rust sources,
+manifests, the workspace-wide Rust control files and the policy declarations.
+
+The local `precommit-v2` composition skips enumeration only when all of these
+hold:
+
+- the composition is not `ci-policy`;
+- the change set is complete;
+- the impact plan names no package and no workspace widening;
+- no changed path, including the old path of a rename, is a Rust source, a
+  `Cargo.toml` or a `build.rs`, or lies under `policy/`.
+
+Every other run enumerates. Hosted `ci-policy` and the standalone
+`cargo xtask check-file-policy` always enumerate.
+
+A skipped run still parses the selectors, so a malformed declaration fails. It
+starts no Cargo build, claims no coverage and retains no coverage subject
+sidecar; a stale sidecar is removed. `file-policy.md` carries one row starting
+`not_enumerated;` in place of coverage observations, and the `precommit-v2`
+report lists the skipped enumeration under `skipped`. The row carries none of
+the `selected=` tokens the retained-evidence readers accept.
+
+### Rule 7: local `precommit` resolves library unit-test selectors in source
+
+A run that Rule 6 does not skip would otherwise build the `ripr` library test
+target for one selector. Local `precommit` instead resolves a selector of the
+exact shape `cargo test -p <package> --lib <module path>` (lock flags allowed,
+nothing else) against source:
+
+- the package's library root comes from its manifest;
+- every segment of the module path is a declared module, reached through
+  ordinary `mod` declarations or inline modules, where `#[cfg(test)]` is the
+  only accepted condition;
+- the final module holds at least one `#[test]` function;
+- inside the final module, at any depth of inline modules, every `cfg` is
+  one the resolver evaluates for this host (`test`, `unix`, `windows`,
+  `target_os = "..."`, or `not(..)` of one of them), every other attribute
+  on any item is inert (test markers, lint levels, documentation, codegen
+  hints, standard derives), and there is no file module (`mod deeper;`) or
+  macro invocation or definition. A `cfg_attr`, `#[path]`, attribute macro,
+  non-standard derive or other test attribute (such as `#[tokio::test]`)
+  could change which tests exist, so it refuses the whole selector. The same
+  attribute rule applies to the modules along the path.
+  A test or module whose `cfg` is false on this host is left out, as the
+  build on this host leaves it out.
+  Inner attributes (`#![cfg(..)]`) of a module file or inline module are
+  read the same way; a module file on the path that is not built here, or
+  whose inner attributes are not understood, refuses the selector.
+
+A selector that resolves starts no build. Its report row reads
+`applicable; resolved_in_source=N; not_listed; tests=[...]`, carries none of
+the tokens that mean a listing ran, and the run retains no coverage subject
+sidecar. Any shape the resolver does not understand, a missing module, a
+module with no test function, or a syntax error returns to the build-and-list
+path, so a stale pointer is never accepted by source resolution. Every other
+selector kind is built and listed as before.
+
+Source resolution compiles nothing, so it is weaker than a listing. Hosted
+`ci-policy` and the standalone `cargo xtask check-file-policy` always build
+and list every applicable selector.
+
+### Rule 8: local `precommit` caps build jobs on a memory-constrained host
+
+On a 4-core, 15 GB host, whole-workspace Clippy checks the `ripr` library
+test (about 9.8 GB) beside an `xtask` unit. At Cargo's default job count that
+run was stopped by the memory limit; at two jobs it passed once (12.8 GB) and
+was stopped once (13.6 GB). Local `precommit` sets `CARGO_BUILD_JOBS=1` for
+the Clippy and enumeration children it starts when all of these hold:
+
+- `CARGO_BUILD_JOBS` is not already set;
+- the smallest readable memory bound is below 24 GiB: `MemTotal`, and the
+  cgroup limit of this process's own cgroup and every ancestor named in
+  `/proc/self/cgroup` (v2 `memory.max`, v1 `memory.limit_in_bytes`), so a
+  nested child limit below an unlimited root counts;
+- the host reports more than one CPU.
+
+A host whose memory or CPU count cannot be read is left alone. The run says
+on stderr that the cap applies. Hosted `ci-policy` and the standalone
+`cargo xtask check-file-policy` never apply it.
+
 ## Decisions
 
 1. **Bound by attempts and by summed duration.** Adopted: both
@@ -145,6 +231,21 @@ failure kind `infrastructure`.
 3. **Defer, do not skip.** Adopted: run the remaining stages so one lock wait
    does not hide later findings, then fail. Rejected: passing, or stopping at
    the lock wait.
+
+4. **Skip by change-set premise, disclosed.** Adopted: the premise that
+   already skips local Clippy, with the skip written into both reports.
+   Rejected: enumerating on every local run (the build does not fit a 15 GB
+   container), and skipping silently or on an incomplete change set.
+5. **Resolve library selectors in source locally, disclosed.** Adopted: a
+   narrow grammar with a fall back to the build for anything else, and a row
+   that cannot be read as a listing. Rejected: dropping the selector from
+   local runs (a renamed module would pass), and moving the tests to an
+   integration target (they exercise private items).
+6. **Cap jobs from host memory, overridable.** Adopted: an environment
+   variable on the children, so recorded commands are unchanged and an
+   explicit `CARGO_BUILD_JOBS` wins. One job, because two jobs was
+   measured to pass once and fail once. Rejected: relying on each session to
+   remember the variable, and two jobs.
 
 ## Required Evidence
 
@@ -163,10 +264,37 @@ failure kind `infrastructure`.
   real policy failure alongside as `source_or_policy_failure` with no later
   stage.
 
+- The skip decision is pinned as a table in both directions, including a
+  rename away from a Rust or policy path, an incomplete change set and
+  `ci-policy`. A composition test observes the decision handed to the policy
+  leg and the published `skipped` row. Unit tests pin that the skipped mode
+  never calls the enumerator, still refuses a malformed declaration, retains
+  no subject, and publishes a row that cannot be read as coverage.
+- Source resolution is pinned on a generated workspace: the grammar, a
+  declared module with tests, and the shapes that must not resolve (renamed
+  module, feature condition, conditional test, syntax error, nested file
+  module, and an unconditional test beside a test, a module or a nested test
+  under a condition not evaluated, another test attribute, a macro
+  invocation, an attribute macro on the test or on another item, or a
+  non-standard derive). A host-condition test pins that `unix`, `windows`, `not(..)`,
+  `target_os` and a conditional nested module list exactly what this host
+  builds. One test
+  resolves the shipped `ripr` selector in this repository. A policy test pins
+  that a resolved selector is not handed to the builder, that the remaining
+  selectors are, and that the resolved row cannot be read as a listing.
+- The job-cap decision is pinned as a table (explicit count, the memory
+  boundary, unreadable memory or CPU count, one CPU), the memory parsers
+  on exact and malformed inputs, and the cgroup walk (v2 and v1, child limited
+  under an unlimited root, parent limited, a sibling's limit ignored).
+
 ## Non-Goals
 
 - Changing any retry bound, the ceiling, a classification prefix, or the
   deferral behavior.
+- Scoping enumeration to the packages a Rust change impacts, or lowering the
+  memory the library test build needs.
+- Resolving `--bin` or `--test` selectors in source, or evaluating `cfg`
+  conditions beyond `#[cfg(test)]`.
 - Enumeration budgets for non-lock timeouts, or the host-scoped selection
   rules (RIPR-SPEC-0191).
 - Killing or inspecting the process that holds the lock.
@@ -188,11 +316,27 @@ failure kind `infrastructure`.
    infrastructure. A later diff-check or Clippy failure instead carries its own
    kind, with the instrument text only in limitations.
 
+7. Local `precommit` with only `docs/guide.md` changed: no test binary is
+   built, `file-policy.md` has the `not_enumerated;` row, the run can pass.
+   With `crates/a/src/lib.rs` or `policy/non-rust-allowlist.toml` changed, or
+   under `ci-policy`, enumeration runs.
+8. Local `precommit` with `xtask/src/main.rs` changed: the `ripr` library
+   selector is resolved in source and its row says `not_listed`; the other
+   selectors are built and listed. If the named module were renamed, the
+   selector would go to the build-and-list path and fail there.
+9. Local `precommit` on a 4-core host with 16 GB: Cargo children run with
+   `CARGO_BUILD_JOBS=1`. With `CARGO_BUILD_JOBS=4` set, or on a 32 GB host,
+   nothing is imposed.
+
 ## Test Mapping
 
 - `xtask/src/policy/file_policy.rs`: rules 1 to 3 and the validator side of
   rule 5.
-- `xtask/src/precommit_v2.rs`: rules 4 and 5.
+- `xtask/src/precommit_v2.rs`: rules 4 and 5, and the decision and
+  composition side of rule 6.
+- `xtask/src/policy/file_policy.rs`: the policy side of rules 6 and 7.
+- `xtask/src/policy/library_selector.rs`: the resolver side of rule 7.
+- `xtask/src/cargo_job_cap.rs`: rule 8.
 
 ## Implementation Mapping
 
@@ -203,7 +347,14 @@ failure kind `infrastructure`.
 - `xtask/src/main.rs`: `check_file_policy_deferring`,
   `finish_precommit_policy`, `PRECOMMIT_INSTRUMENT_PREFIX`.
 - `xtask/src/precommit_v2.rs`: the deferred-instrument handling in
-  `run_composition_in`.
+  `run_composition_in`; `coverage_enumeration` (rule 6).
+- `xtask/src/policy/file_policy.rs`: `CoverageEnumeration`,
+  `check_file_policy_with`, `coverage_for`, `retains_coverage_subject`,
+  `coverage_disclosure_items` (rule 6); `partition_resolved_in_source`
+  (rule 7).
+- `xtask/src/policy/library_selector.rs`: `resolve_in_source` (rule 7).
+- `xtask/src/cargo_job_cap.rs`: `capped_jobs`, `local_precommit_envs`
+  (rule 8).
 
 ## Metrics
 

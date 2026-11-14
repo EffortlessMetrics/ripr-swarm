@@ -1,0 +1,58 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_exception_framework_shadow_no_credit/input
+config: <cwd>/fixtures/python_exception_framework_shadow_no_credit/input/ripr.toml
+
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it
+  File: fx/core.py:8
+  Language: python
+  Language status: preview
+  Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Gap ID (for scripts): gap:python:fx/core.py:parse:exception_path:error_path:toolongerror
+  Changed behavior: raise TooLongError()
+  Missing check (1 of 2): Related Python test reaches `parse` but the strongest extracted oracle is
+    `broad_error`; add or strengthen a focused assertion for the exact exception type/message
+  Related test: tests/test_core.py:4 test_parse (assertion too weak to tell the old behavior from the new)
+  Suggested test file: tests/test_core.py
+  Suggested test: test_parse
+  Test node: tests/test_core.py::test_parse
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_exception_framework_shadow_no_credit/input && python -m pytest tests/test_core.py::test_parse) (high)
+  Next step — Python preview: strengthen the existing related test with an exception assertion for the missing check `raises TooLongError`
+  Evidence: reach yes · infection yes · propagation yes · observation weak · assertion weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: 1 related Python test(s) found for owner `parse`
+    - infection yes: Changed Python error path can alter raised exception/control behavior: `raise TooLongError()`
+    - 5 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/python_exception_framework_shadow_no_credit/input --diff <cwd>/fixtures/python_exception_framework_shadow_no_credit/diff.patch --mode fast probe:fx_core.py:python_preview:64a75cf6
+  ripr context --root <cwd>/fixtures/python_exception_framework_shadow_no_credit/input --diff <cwd>/fixtures/python_exception_framework_shadow_no_credit/diff.patch --mode fast --at probe:fx_core.py:python_preview:64a75cf6
+  no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `fx/core.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
