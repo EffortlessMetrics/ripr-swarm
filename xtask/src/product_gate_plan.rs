@@ -604,11 +604,20 @@ mod tests {
         let lines = workflow_command_lines(workflow);
         let mut violations = Vec::new();
         for gate in product_gate_definitions() {
-            if !lines.contains(&gate.command) {
+            // The canonical leaf commands remain valid focused reruns. The
+            // required workflow executes these predicates inside ci-policy,
+            // whose original leaf owners and failure propagation are retained.
+            let command = match gate.id {
+                ProductGateId::Dependencies
+                | ProductGateId::ProcessPolicy
+                | ProductGateId::NetworkPolicy => "cargo xtask ci-policy",
+                _ => gate.command,
+            };
+            if !lines.contains(&command) {
                 violations.push(format!(
                     "{} command `{}` is not executed by the required workflow",
                     gate.id.as_str(),
-                    gate.command
+                    command
                 ));
             }
         }
@@ -797,6 +806,25 @@ mod tests {
             required_workflow_runner_violations(REQUIRED_WORKFLOW),
             Vec::<String>::new()
         );
+    }
+
+    #[test]
+    fn collected_policy_predicates_require_their_workflow_owner() {
+        let missing = REQUIRED_WORKFLOW.replace("run: cargo xtask ci-policy", "run: echo omitted");
+        assert_ne!(missing, REQUIRED_WORKFLOW);
+        let violations = required_workflow_runner_violations(&missing);
+        for id in [
+            ProductGateId::Precommit,
+            ProductGateId::Dependencies,
+            ProductGateId::ProcessPolicy,
+            ProductGateId::NetworkPolicy,
+        ] {
+            assert!(
+                violations
+                    .iter()
+                    .any(|message| message.starts_with(id.as_str()))
+            );
+        }
     }
 
     #[test]

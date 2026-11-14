@@ -1104,13 +1104,19 @@ runner availability blocker without exposing runner tokens or secrets.
 The protected `Ripr Rust Small Result` job also requires the VS Code extension e2e for the exact admitted head on `merge-ready` requests (#12122, #12252). The e2e is a job of `routed-rust.yml`'s own run: `vscode surface` classifies the admitted diff, and `vscode extension e2e` calls the reusable `vscode-e2e.yml` when it selects. The Result lists both in `needs`, so it reads this run's results by construction and no other request's run can be mistaken for it (GitHub exposes no per-event identifier shared by two workflows, which is why the earlier cross-workflow correlation was retired). `vscode surface` selects on the `full-ci` or `vscode` label, on any change under `editors/vscode/` or to `ci.yml`, `vscode-e2e.yml` or `routed-rust.yml`, and on every doubt (missing or malformed identities, unavailable history, several merge bases, a failed or empty diff). The Result fails closed unless the selection succeeded and either it selected and the e2e succeeded, or it did not select and the e2e was skipped; a selected e2e that failed, was cancelled or skipped, an unselected e2e that ran, or an unreadable selection all fail. Main, manual-dispatch and merge-group results do not require it. That is a remaining integration obligation for #8082, not completed queue acceptance. The `CI` workflow retains manual dispatch and its frozen `subject_sha` callable path; its ordinary PR and main-push triggers are retired.
 
 The routed lane runs the existing Rust/product command surface without release
-package or publish dry-run steps. Each required lane invokes the shared
-`cargo xtask precommit` gate table after the cargo build/test steps and keeps
-only the lane-only gates enumerated (`check-evidence-promotion-honesty`,
-`check-dependencies`, `check-process-policy`, `check-network-policy`,
-`goldens check`, `fixtures`); the docs-gate job runs the same precommit table
-for docs-only pull requests. It keeps advisory evidence artifacts
-non-blocking and uploads the normal `target/ripr` report packet when present.
+package or publish dry-run steps. Required Rust qualification runs the shared
+`cargo xtask ci-policy` gate table before the remaining Rust/product proof.
+That composition requires dependency policy and the collect-all process and
+network policies, including the process owner's CLI exit-vocabulary check.
+The workflow does not launch those three leaves a second time. Any leaf failure
+fails `ci-policy`; the gate summary reports that grouped step's actual outcome,
+not invented separate leaf successes. The existing `dependencies.md`,
+`process-policy.md`, `network-policy.md` and `check-policy-all.md` reports retain
+the leaf diagnostics when the normal `target/ripr` packet is uploaded.
+
+Lane-only gates such as `check-evidence-promotion-honesty`, `goldens check` and
+`fixtures` remain separate. The docs-gate job uses local `precommit` composition
+for docs-only pull requests. Advisory evidence artifacts remain non-blocking.
 
 The legacy `CI` workflow (`.github/workflows/ci.yml`) no longer runs the
 workspace test suite; the routed `Ripr Rust Small` lane owns ordinary
