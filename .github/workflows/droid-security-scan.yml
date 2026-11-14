@@ -15,10 +15,13 @@ permissions:
 
 jobs:
   droid-security-scan:
-    runs-on:
-      group: em-ci-review
-      labels: [self-hosted, Linux, X64, em-ci, trusted-pr, droid-review]
-    timeout-minutes: 30
+    # GitHub-hosted only: the repository no longer operates the em-ci-review
+    # self-hosted group, and a job pinned to it queues for 24h and is cancelled
+    # every week (#14641). Matches the hosted posture of security.yml.
+    runs-on: ubuntu-latest
+    # 45 min is about 1.7x the 26.4 min the scan took on a hosted runner
+    # (run 43558949264), so a slow week does not truncate a real scan.
+    timeout-minutes: 45
 
     env:
       MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
@@ -81,6 +84,11 @@ jobs:
           ANTHROPIC_BASE_URL: ""
         with:
           factory_api_key: ${{ secrets.FACTORY_API_KEY }}
+          # Use the job's own GITHUB_TOKEN: it carries exactly the permissions
+          # declared at job level and dies with the job. The action's OIDC token
+          # path is intentionally not granted (id-token: write stays dropped
+          # under #2498), so the token override is the supported setup route.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           upload_debug_artifacts: false
           security_scan_schedule: true
           security_scan_days: 7
