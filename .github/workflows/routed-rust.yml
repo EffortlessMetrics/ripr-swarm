@@ -651,7 +651,20 @@ jobs:
       - name: Doc/spec gates (full precommit table)
         env:
           RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          EXPECTED_G: ${{ github.sha }}
         run: |
+          set -euo pipefail
+          # Precommit and its nested selectors use origin/main. Checkout fetches
+          # today's branch, which can differ from this admitted event's base.
+          # Bind only this disposable checkout's local ref, never the remote.
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$EXPECTED_G" =~ ^[0-9a-f]{40}$ ]]
+          [ "$(git rev-parse HEAD)" = "$EXPECTED_G" ]
+          git cat-file -e "$BASE_SHA^{commit}"
+          git merge-base --is-ancestor "$BASE_SHA" "$EXPECTED_G"
+          git update-ref refs/remotes/origin/main "$BASE_SHA"
+          [ "$(git rev-parse origin/main)" = "$BASE_SHA" ]
+          echo "Docs precommit scope: $BASE_SHA...$EXPECTED_G"
           cargo policy preflight
           cargo xtask precommit
       # #5531: a Markdown-only PR can hand-edit the generated registry block in
