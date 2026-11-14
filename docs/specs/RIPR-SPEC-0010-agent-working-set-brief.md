@@ -607,6 +607,9 @@ Planned tests:
 - `agent_brief_json_shape_is_stable`
 - `agent_receipt_selects_one_verify_seam`
 - `agent_receipt_rejects_verify_json_outside_root`
+- `match_arm_seam_result_reads_the_heads_line` (#14683 head-only arm result)
+- `brief_names_a_head_only_arm_seam_result` (#14683)
+- `agent_brief_renders_arm_result_only_when_read` (#14683)
 
 ## Implementation Mapping
 
