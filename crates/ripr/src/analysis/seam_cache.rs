@@ -4624,6 +4624,7 @@ pub(crate) fn semantic_digest_for_bytes(domain: &str, bytes: &[u8]) -> String {
     format!("sha256:{:x}", hasher.finalize())
 }
 
+#[cfg(test)]
 pub(crate) fn encode_integrity_body<T: serde::Serialize>(
     body: &T,
     payload_digest: String,
@@ -4634,7 +4635,7 @@ pub(crate) fn encode_integrity_body<T: serde::Serialize>(
     record_integrity_vec_len(bytes.len());
     Ok(bytes)
 }
-/// [`encode_integrity_body`] without pretty-printing, for envelopes large
+/// Compact integrity-body encoder without pretty-printing, for envelopes large
 /// enough that indentation would dominate their size (the Python per-file
 /// fact store, #10914, and Rust file facts, #9216). Decoding and the digest
 /// are unchanged.
