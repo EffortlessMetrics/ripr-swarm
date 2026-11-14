@@ -73,6 +73,37 @@ Useful review and local evidence can be complete before future hosted proof
 exists. Missing future CI must not make requesting CI circular. Conversely,
 source review is not a claim that required execution already passed.
 
+## PR claim contract
+
+PRs opened at or after **2026-11-15T00:00:00Z** use typed claim identity
+instead of closing keywords. The same cutoff in `candidate_admission.py`
+controls both the structured-field requirement and the closing-language refusal;
+there is no author, label, or `merge-ready` exemption. PRs opened before the
+cutoff are exempt from both new rules, preserving the existing queue. GitHub
+supplies the open timestamp on live reads; undated legacy consumers and test
+fixtures retain the old contract.
+
+The body carries exactly one primary claim and its acceptance slice:
+
+```text
+Primary claim: EffortlessMetrics/ripr-swarm#12345
+Acceptance slice: A2 and the negative admission controls
+Closure proposal: partial
+```
+
+Cross-repository claims must use the full `owner/repo#number` form; a bare issue
+number is invalid. `Refs` remains available for additional non-closing issue
+references. Atomic maintenance may instead use `Primary claim: self-contained`
+with exactly one `Atomic claim: true` line and a nonempty acceptance slice.
+
+`Closure proposal` must be one of `complete`, `partial`, `supersedes`, or
+`no_parent_effect`. It is advisory input to reconciliation: it records the
+author's proposed parent effect but authorizes no issue transition and no merge.
+Closing keywords are forbidden anywhere in operative PR text for new-contract
+PRs, including negated statements, quoted examples, and fenced excerpts. Use
+`Primary claim` instead; never use text that asks GitHub to close an issue on
+merge.
+
 ## Installed label-request procedure
 
 `Ripr Rust Small Result` is requested by applying `merge-ready`. Ready is review

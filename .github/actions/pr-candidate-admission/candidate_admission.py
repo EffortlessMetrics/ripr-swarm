@@ -107,6 +107,19 @@ TEMPLATE_LINES = {
     "claim": "Governing issue or accepted claim:",
     "delta": "Acceptance delta (one sentence):",
 }
+# Roll out closing-language refusal and the typed claim fields together. PRs
+# opened before this instant are exempt from both. GitHub supplies created_at on
+# live reads; undated legacy consumers and test fixtures retain the old contract.
+TYPED_CLAIM_CUTOFF = "2026-11-15T00:00:00Z"
+CLOSING_KEYWORD = re.compile(r"\b(?:closes?|fixes|resolves)\b", re.IGNORECASE)
+PRIMARY_CLAIM_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*")
+CLOSURE_PROPOSALS = frozenset({"complete", "partial", "supersedes", "no_parent_effect"})
+TYPED_CLAIM_LABELS = {
+    "primary_claim": "primary claim:",
+    "atomic_claim": "atomic claim:",
+    "acceptance_slice": "acceptance slice:",
+    "closure_proposal": "closure proposal:",
+}
 # History-sync route (#12437). A true merge between the public ripr repository
 # and this swarm repository cannot be split without losing the history it
 # exists to keep, so a validated subject is admitted past the size caps (and
@@ -149,6 +162,26 @@ def extract_fields(body: str) -> dict[str, str]:
                     found[key] = line[len(prefix) :].strip()
                     break
     return found
+
+
+def extract_typed_claim_fields(body: str) -> dict[str, list[str]]:
+    """Read every typed claim line so duplicate primary carriers cannot hide."""
+    found: dict[str, list[str]] = {key: [] for key in TYPED_CLAIM_LABELS}
+    for raw_line in (body or "").splitlines():
+        line = raw_line.strip()
+        folded = line.casefold()
+        for key, label in TYPED_CLAIM_LABELS.items():
+            if folded.startswith(label):
+                found[key].append(line[len(label) :].strip())
+                break
+    return found
+
+
+def typed_claim_contract_applies(pr: dict[str, Any]) -> bool:
+    """The one open-date gate for both closing-language and typed-field rules."""
+    opened = claim_time(pr.get("created_at"))
+    cutoff = claim_time(TYPED_CLAIM_CUTOFF)
+    return opened is not None and cutoff is not None and opened >= cutoff
 
 
 def claim_carrier(body: str) -> str:
@@ -321,6 +354,15 @@ def effective_fields(pr: dict[str, Any]) -> dict[str, str]:
     """Body fields, with the Dependabot policy identity filling missing lines."""
 
     fields = extract_fields(pr.get("body") or "")
+    if typed_claim_contract_applies(pr):
+        typed = extract_typed_claim_fields(pr.get("body") or "")
+        # The new identity participates in existing cross-candidate comparison;
+        # invalid or duplicate new lines never fall back to the legacy fields.
+        fields = {
+            **fields,
+            "claim": typed["primary_claim"][0] if len(typed["primary_claim"]) == 1 else "",
+            "delta": typed["acceptance_slice"][0] if len(typed["acceptance_slice"]) == 1 else "",
+        }
     if invalid(fields["claim"]) or invalid(fields["delta"]):
         derived = dependabot_identity(pr)
         if derived is not None:
@@ -755,6 +797,52 @@ def decide(
             "candidate_not_open_ready",
             detail=f"PR state is {current.get('state')!r} and draft is {current.get('draft')!r}; admission requires an open, ready (non-draft) PR",
         )
+    if typed_claim_contract_applies(current):
+        body = str(current.get("body") or "")
+        closing = CLOSING_KEYWORD.search(body)
+        if closing is not None:
+            return refuse(
+                "closing_keyword_forbidden",
+                detail=f"closing keyword {closing.group(0)!r} is forbidden anywhere in PR body text, including negated, quoted or fenced uses; use Primary claim and the advisory Closure proposal instead",
+            )
+        typed = extract_typed_claim_fields(body)
+        primary = typed["primary_claim"]
+        if not primary or (len(primary) == 1 and invalid(primary[0])):
+            return refuse(
+                "primary_claim_missing",
+                detail="missing or placeholder `Primary claim:`; add exactly one owner/repo#number, or `self-contained` with `Atomic claim: true`",
+            )
+        if len(primary) != 1:
+            return refuse(
+                "primary_claim_invalid",
+                detail=f"expected exactly one Primary claim carrier, found {len(primary)}; remove additional Primary claim lines",
+            )
+        primary_value = primary[0]
+        self_contained = normalize(primary_value) == "self-contained"
+        atomic = typed["atomic_claim"]
+        if (
+            not self_contained
+            and PRIMARY_CLAIM_RE.fullmatch(primary_value) is None
+        ) or (
+            self_contained
+            and (len(atomic) != 1 or normalize(atomic[0]) != "true")
+        ):
+            return refuse(
+                "primary_claim_invalid",
+                detail="Primary claim must be exactly owner/repo#number, or self-contained with exactly one `Atomic claim: true` line",
+            )
+        acceptance = typed["acceptance_slice"]
+        if len(acceptance) != 1 or invalid(acceptance[0]):
+            return refuse(
+                "acceptance_slice_missing",
+                detail="add exactly one nonempty `Acceptance slice:` naming the part of the primary claim this PR satisfies",
+            )
+        closure = typed["closure_proposal"]
+        if len(closure) != 1 or normalize(closure[0]) not in CLOSURE_PROPOSALS:
+            return refuse(
+                "closure_proposal_invalid",
+                detail="Closure proposal must be exactly one of complete, partial, supersedes, no_parent_effect; the proposal is advisory and does not close the issue",
+            )
     if invalid(fields["claim"]) or invalid(fields["delta"]):
         return refuse("claim_identity_missing", detail=identity_detail(fields))
 
@@ -838,11 +926,13 @@ def fixture(
     login: str = "contributor",
     user_type: str = "User",
     ref: str = "feature",
+    created_at: str = "2026-11-01T00:00:00Z",
 ) -> dict[str, Any]:
     return {
         "number": number,
         "state": "open",
         "draft": draft,
+        "created_at": created_at,
         "body": body,
         "user": {"login": login, "type": user_type},
         "head": {"sha": head, "ref": ref, "repo": {"full_name": repository}},
@@ -861,6 +951,23 @@ def fixture_body(
     return (
         f"Governing issue or accepted claim: {claim}\n"
         f"Acceptance delta (one sentence): {delta}\n"
+        f"{extra}"
+    )
+
+
+def typed_fixture_body(
+    primary: str = "EffortlessMetrics/ripr-swarm#14250",
+    acceptance: str = "A2 and the negative admission controls",
+    closure: str = "partial",
+    atomic: str = "",
+    extra: str = "",
+) -> str:
+    atomic_line = f"Atomic claim: {atomic}\n" if atomic else ""
+    return (
+        f"Primary claim: {primary}\n"
+        f"{atomic_line}"
+        f"Acceptance slice: {acceptance}\n"
+        f"Closure proposal: {closure}\n"
         f"{extra}"
     )
 
@@ -996,6 +1103,70 @@ def self_test() -> None:
         [],
     )["detail"]
     assert "Acceptance delta (one sentence):" in placeholder_detail
+
+    # Typed claim contract: one cutoff controls both closing-language refusal
+    # and required structured fields. Earlier PRs retain the legacy contract.
+    typed_open = "2026-11-15T00:00:00Z"
+    valid_typed = fixture(
+        body=typed_fixture_body(extra="Refs EffortlessMetrics/ripr-swarm#4984\n"),
+        head=head,
+        created_at=typed_open,
+    )
+    assert run(valid_typed, [])["status"] == "admitted"
+    for keyword_body in (
+        "Closes #1\n",
+        "does not close #1\n",
+        "> `Fixes #1`\n",
+        "```md\nResolves #1\n```\n",
+    ):
+        refused = run(
+            fixture(body=typed_fixture_body(extra=keyword_body), head=head, created_at=typed_open),
+            [],
+        )
+        assert refused["status"] == "refused" and refused["reason"] == "closing_keyword_forbidden", refused
+    assert run(
+        fixture(
+            body=fixture_body(extra="Closes #1\n"),
+            head=head,
+            created_at="2026-11-14T23:59:59Z",
+        ),
+        [],
+    )["status"] == "admitted"
+    undated_legacy = fixture(body=fixture_body(), head=head)
+    del undated_legacy["created_at"]
+    assert run(undated_legacy, [])["status"] == "admitted"
+    missing_primary = run(
+        fixture(body=typed_fixture_body(primary=""), head=head, created_at=typed_open),
+        [],
+    )
+    assert missing_primary["reason"] == "primary_claim_missing", missing_primary
+    for primary in (
+        "#14250",
+        "EffortlessMetrics/ripr-swarm#14250\nPrimary claim: EffortlessMetrics/ripr-swarm#4984",
+        "self-contained",
+    ):
+        refused = run(
+            fixture(body=typed_fixture_body(primary=primary), head=head, created_at=typed_open),
+            [],
+        )
+        assert refused["reason"] == "primary_claim_invalid", (primary, refused)
+    atomic = fixture(
+        body=typed_fixture_body(primary="self-contained", atomic="true"),
+        head=head,
+        created_at=typed_open,
+    )
+    assert run(atomic, [])["status"] == "admitted"
+    missing_slice = run(
+        fixture(body=typed_fixture_body(acceptance=""), head=head, created_at=typed_open),
+        [],
+    )
+    assert missing_slice["reason"] == "acceptance_slice_missing", missing_slice
+    invalid_closure = run(
+        fixture(body=typed_fixture_body(closure="complete | partial"), head=head, created_at=typed_open),
+        [],
+    )
+    assert invalid_closure["reason"] == "closure_proposal_invalid", invalid_closure
+
     oversized = fixture(body=fixture_body(), head=head, changed_files=161)
     assert run(oversized, [oversized])["reason"] == "qualification_scope_oversized"
     assert "161 files" in run(oversized, [oversized])["detail"]
