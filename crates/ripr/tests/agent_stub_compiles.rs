@@ -2736,14 +2736,14 @@ fn first_action_real_callee_only_wrapper_keeps_its_refusal() -> Result<(), Strin
             );
         }
     }
-    let wrapper_card = wrapper_guidance["comments"]
-        .as_array()
-        .and_then(|cards| cards.first())
-        .or_else(|| {
-            wrapper_guidance["summary_only"]
-                .as_array()
-                .and_then(|cards| cards.first())
-        })
+    // The wrapper line carries an error_variant card and a return_value card;
+    // the brief ranks error_variant first on a shared line (#14702), so pick
+    // the return_value card by kind rather than by position.
+    let wrapper_card = ["comments", "summary_only"]
+        .iter()
+        .filter_map(|bucket| wrapper_guidance[*bucket].as_array())
+        .flatten()
+        .find(|card| card["kind"] == "return_value")
         .ok_or("producer must retain its genuine non-actionable wrapper card")?;
     assert_eq!(wrapper_card["owner"], "src/lib.rs::parse_summary");
     assert_eq!(wrapper_card["kind"], "return_value");
