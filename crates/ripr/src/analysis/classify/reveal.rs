@@ -3263,7 +3263,12 @@ fn analyze_related_assertions(
                 // sets is `assert_eq!(owner(..).field, true)`: its kind stays
                 // `relational_check`, only its strength relative to this
                 // probe rises, as the RIPR-SPEC-0197 bool owner pin's does.
+                // The owner-identity defeats the owner pin applies hold
+                // here too: a same-name import or a package's own `owner`
+                // may be another function.
                 let bool_field_pin = matches!(assertion.kind, OracleKind::RelationalCheck)
+                    && !import_defeats_owner
+                    && !cross_package_defeats_owner
                     && return_admission
                         .record_field_line
                         .is_some_and(|record| (record.pin_admitted)(test, assertion))
@@ -3548,7 +3553,7 @@ fn has_word(text: &str, word: &str) -> bool {
 /// Whether the test body defines a nested `fn <owner>` or binds a local
 /// named `owner` anywhere, under either shadow authority. Conservative: a
 /// binding after the assertion also refuses the sibling exclusion.
-fn test_body_shadows_owner(test: &TestSummary, owner: &str) -> bool {
+pub(super) fn test_body_shadows_owner(test: &TestSummary, owner: &str) -> bool {
     use crate::analysis::extract::ShadowAuthority;
     let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
     ShadowAuthority::LexicalMaskedBody.body_shadows_callee_at_line(&masked, owner, usize::MAX)

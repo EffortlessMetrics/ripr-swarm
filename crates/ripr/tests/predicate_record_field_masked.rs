@@ -170,6 +170,8 @@ fn a_bare_assert_on_anything_else_stays_weak() -> Result<(), String> {
         "let _ = opts(10);\n        return;\n        assert!(opts(10).big);",
         "let _ = opts(10);\n        assert!(rival::opts(10).big);",
         "let mut o = opts(10);\n        o.big = true;\n        assert!(o.big);",
+        "let _ = opts(10);\n        let opts = |_: u32| Opts { retries: 3, big: true };\n        assert!(opts(10).big);",
+        "let _ = opts(10);\n        fn opts(_: u32) -> Opts { Opts { retries: 3, big: true } }\n        assert!(opts(10).big);",
     ] {
         for family in ["predicate", "field_construction"] {
             let finding = finding(body, family)?;

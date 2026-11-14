@@ -1198,8 +1198,6 @@ impl ClassifiedProbeEvidence {
                 .map(str::to_string)
         })
         .flatten();
-        // #14701: the record field a predicate probe sets, for the same-test
-        // pairing's bool-field pin.
         // #14701: the shared execution and macro-binding admission for a
         // bare `assert!` field pin, which the family gate skips for these
         // probe families.
@@ -1207,6 +1205,8 @@ impl ClassifiedProbeEvidence {
             !test.attrs.iter().any(|attr| attr.contains("should_panic"))
                 && pin_syntax.admits(test, assertion, context.index)
         };
+        // #14701: the record field a predicate probe sets, for the same-test
+        // pairing's bool-field pin.
         let pairing_bool_field = record_field_line
             .as_deref()
             .filter(|_| matches!(context.probe.family, ProbeFamily::Predicate))

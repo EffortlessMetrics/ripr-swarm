@@ -253,6 +253,11 @@ pub(in crate::analysis) fn bool_field_assertion(
     let ast::Expr::FieldExpr(read) = expr else {
         return false;
     };
+    // A nested `fn owner` or a local named `owner` (`let opts = |n| ..;`)
+    // makes `owner(..)` in the test another function.
+    if super::reveal::test_body_shadows_owner(test, owner) {
+        return false;
+    }
     if read
         .name_ref()
         .map(|name| name.text().to_string())
@@ -768,6 +773,25 @@ impl Reader<'_> {
         {
             return Sink::Absent;
         }
+        // A name some other pattern binds too (`if let Some(o) = ..`,
+        // `for o in ..`, a closure parameter) may be a different value at
+        // the read, which the one `let` cannot show.
+        if self.credit
+            && parse
+                .tree()
+                .syntax()
+                .descendants()
+                .filter_map(ast::IdentPat::cast)
+                .filter(|pattern| {
+                    pattern
+                        .name()
+                        .is_some_and(|bound| bound.text() == name.as_str())
+                })
+                .count()
+                != 1
+        {
+            return Sink::Absent;
+        }
         if statement.let_else().is_some() {
             return self.unfollowed(statement.syntax());
         }
@@ -880,10 +904,21 @@ mod tests {
         ] {
             assert!(!pins(assertion, assertion), "{assertion}");
         }
+        // A nested `fn over` or a local `over` shadows the owner.
+        for body in [
+            "fn over(_: u32) -> Opts { Opts { big: true } }\nassert!(over(10).big);",
+            "let over = |_: u32| Opts { big: true };\nassert!(over(10).big);",
+        ] {
+            assert!(!pins(body, "assert!(over(10).big);"), "{body}");
+        }
         // A `mut` or `ref` local may be overwritten before the read.
         for body in [
             "let mut o = over(10);\no.big = true;\nassert!(o.big);",
             "let ref o = over(10);\nassert!(o.big);",
+            // Another pattern binds the same name.
+            "let o = over(10);\nif let Some(o) = other() {\n assert!(o.big);\n}",
+            "let o = over(10);\nfor o in list {\n assert!(o.big);\n}",
+            "let o = over(10);\nlet f = |o: Opts| assert!(o.big);",
         ] {
             assert!(!pins(body, "assert!(o.big);"), "{body}");
         }

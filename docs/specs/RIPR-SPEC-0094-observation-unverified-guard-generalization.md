@@ -895,9 +895,12 @@ field rule, whose line sets field `name` of a record the owner returns
 Because this reading grants credit, it is stricter than the #14562 masking
 reader. The owner call must be the unqualified free call `owner(..)`; a path
 (`rival::opts(..)`, `crate::opts(..)`), a turbofish, or a method of the same
-name may be another function and does not pin. A followed `let` must be
-immutable, since a `mut` local can be overwritten (`o.big = true`) before the
-read. The assertion must also pass the shared execution and macro-binding
+name may be another function and does not pin; so does a call the test
+shadows (a nested `fn opts` or a local `let opts = |n| ..`), a same-name
+import, or a same-name function of the test's own package when the owner
+lives in another. A followed `let` must be immutable, since a `mut` local can
+be overwritten (`o.big = true`) before the read, and no other pattern in the
+test (`if let Some(o)`, `for o in`, a closure parameter) may bind its name. The assertion must also pass the shared execution and macro-binding
 admission (`OwnerPinSyntax::admits`), outside a `should_panic` test. The
 family gate does not apply that admission to a bare `assert!` for these
 probe families, so a shadowed `assert!` or one after `return` pins nothing.
