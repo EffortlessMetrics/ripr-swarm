@@ -58,18 +58,18 @@ impl PrecommitError {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct ChangedPath {
-    kind: String,
-    path: String,
-    old_path: Option<String>,
-    origins: Vec<String>,
+pub(crate) struct ChangedPath {
+    pub(crate) kind: String,
+    pub(crate) path: String,
+    pub(crate) old_path: Option<String>,
+    pub(crate) origins: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct ChangeSet {
-    changes: Vec<ChangedPath>,
-    complete: bool,
-    limitations: Vec<String>,
+pub(crate) struct ChangeSet {
+    pub(crate) changes: Vec<ChangedPath>,
+    pub(crate) complete: bool,
+    pub(crate) limitations: Vec<String>,
 }
 
 impl ChangeSet {
@@ -94,11 +94,11 @@ impl ChangeSet {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct ImpactPlan {
-    impacted_packages: Vec<String>,
-    workspace_clippy: bool,
-    workspace_widening_reason: Option<String>,
-    skipped_reason: Option<String>,
+pub(crate) struct ImpactPlan {
+    pub(crate) impacted_packages: Vec<String>,
+    pub(crate) workspace_clippy: bool,
+    pub(crate) workspace_widening_reason: Option<String>,
+    pub(crate) skipped_reason: Option<String>,
 }
 
 impl ImpactPlan {
@@ -165,11 +165,11 @@ struct CargoTarget {
 }
 
 #[derive(Debug, Clone)]
-struct PackageRoot {
-    name: String,
-    relative_root: String,
-    dependencies: Vec<String>,
-    proc_macro: bool,
+pub(crate) struct PackageRoot {
+    pub(crate) name: String,
+    pub(crate) relative_root: String,
+    pub(crate) dependencies: Vec<String>,
+    pub(crate) proc_macro: bool,
 }
 
 pub(super) fn run() -> Result<(), String> {
@@ -807,7 +807,21 @@ fn cargo_metadata_args(root: &Path) -> Vec<String> {
     ]
 }
 
-fn build_impact_plan(change_set: &ChangeSet, roots: &[PackageRoot]) -> ImpactPlan {
+pub(crate) fn build_impact_plan(change_set: &ChangeSet, roots: &[PackageRoot]) -> ImpactPlan {
+    // Fail closed (#14644 D): an incomplete inventory cannot establish that a
+    // narrower package set covers the change, so widen rather than claim
+    // an impacted pass. `run_composition` already rejects incomplete sets
+    // before this point; this keeps the planner itself safe for reuse.
+    if !change_set.complete {
+        return ImpactPlan {
+            impacted_packages: Vec::new(),
+            workspace_clippy: true,
+            workspace_widening_reason: Some(
+                "incomplete change set: cannot establish impacted scope".to_string(),
+            ),
+            skipped_reason: None,
+        };
+    }
     let paths = change_set.paths();
     if let Some(reason) = workspace_widening_reason(&paths) {
         return ImpactPlan {
@@ -832,6 +846,20 @@ fn build_impact_plan(change_set: &ChangeSet, roots: &[PackageRoot]) -> ImpactPla
             {
                 widen_dependents.insert(owner.name.clone());
             }
+        } else if !roots.is_empty() {
+            // Fail closed (#14644 D): with a known package graph, a
+            // Rust-relevant path with no owner cannot be established as covered
+            // by any impacted set. The empty-roots case keeps its pinned
+            // explicit skip (#8233); `check-fast` refuses that skip when
+            // a Rust surface changed (see `check_fast_gates`).
+            return ImpactPlan {
+                impacted_packages: Vec::new(),
+                workspace_clippy: true,
+                workspace_widening_reason: Some(format!(
+                    "unknown package owner for Rust path: {path}"
+                )),
+                skipped_reason: None,
+            };
         }
     }
     for package in widen_dependents {
@@ -847,6 +875,81 @@ fn build_impact_plan(change_set: &ChangeSet, roots: &[PackageRoot]) -> ImpactPla
         workspace_clippy: false,
         workspace_widening_reason: None,
         skipped_reason,
+    }
+}
+
+/// Impact plan for `check-fast`'s committed file inventory (#14644 D).
+/// The selector has already failed closed on any Git error, so its
+/// inventory is complete; the planner's own incomplete/unknown fallbacks
+/// above still widen rather than claim a narrower pass.
+pub(crate) fn impact_plan_for_files(files: &[String], roots: &[PackageRoot]) -> ImpactPlan {
+    let change_set = ChangeSet {
+        changes: files
+            .iter()
+            .map(|path| ChangedPath {
+                kind: "modified".to_string(),
+                path: path.clone(),
+                old_path: None,
+                origins: vec!["committed".to_string()],
+            })
+            .collect(),
+        complete: true,
+        limitations: Vec::new(),
+    };
+    build_impact_plan(&change_set, roots)
+}
+
+/// Load package roots and plan for `check-fast`; any metadata failure is
+/// returned as a plain error so the caller fails closed instead of
+/// falling back to (or claiming) a narrower selection.
+pub(crate) fn check_fast_impact_plan(root: &Path, files: &[String]) -> Result<ImpactPlan, String> {
+    // `package_roots_from_metadata` strips canonical package parents from
+    // this root, so a relative (`.`) or `..`-carrying root must be
+    // canonicalized first; `precommit` already passes a canonical root,
+    // while `check-fast` passes `.` (#14644 D).
+    let root = fs::canonicalize(root)
+        .map_err(|error| format!("canonicalize repository root `{}`: {error}", root.display()))?;
+    let roots = load_package_roots(&root).map_err(|error| error.message)?;
+    Ok(impact_plan_for_files(files, &roots))
+}
+
+/// One Clippy invocation per element: the workspace invocation when the
+/// plan widened, otherwise one `-p` invocation per impacted package.
+/// An empty plan yields no invocation (the caller discloses the skip).
+pub(crate) fn clippy_invocations(root: &Path, plan: &ImpactPlan) -> Vec<Vec<String>> {
+    if plan.workspace_clippy {
+        vec![workspace_clippy_args(root)]
+    } else if plan.impacted_packages.is_empty() {
+        Vec::new()
+    } else {
+        plan.impacted_packages
+            .iter()
+            .map(|package| package_clippy_args(root, package))
+            .collect()
+    }
+}
+
+/// Human-readable disclosure of what the plan will and will not establish.
+pub(crate) fn impact_plan_disclosure(plan: &ImpactPlan) -> String {
+    if plan.workspace_clippy {
+        format!(
+            "Impact plan: workspace Clippy ({})",
+            plan.workspace_widening_reason
+                .as_deref()
+                .unwrap_or("workspace-wide surface changed")
+        )
+    } else if plan.impacted_packages.is_empty() {
+        format!(
+            "Impact plan: no impacted package; {}",
+            plan.skipped_reason
+                .as_deref()
+                .unwrap_or("Clippy skipped: no impacted package.")
+        )
+    } else {
+        format!(
+            "Impact plan: Clippy scoped to impacted package(s): {} (reverse dependents included; not a full-workspace pass)",
+            plan.impacted_packages.join(", ")
+        )
     }
 }
 
@@ -951,7 +1054,7 @@ fn is_rust_relevant(path: &str) -> bool {
     path.ends_with(".rs") || path.ends_with("Cargo.toml") || path.ends_with("build.rs")
 }
 
-fn package_clippy_args(root: &Path, package: &str) -> Vec<String> {
+pub(crate) fn package_clippy_args(root: &Path, package: &str) -> Vec<String> {
     vec![
         "clippy".to_string(),
         "--manifest-path".to_string(),
@@ -965,7 +1068,7 @@ fn package_clippy_args(root: &Path, package: &str) -> Vec<String> {
     ]
 }
 
-fn workspace_clippy_args(root: &Path) -> Vec<String> {
+pub(crate) fn workspace_clippy_args(root: &Path) -> Vec<String> {
     vec![
         "clippy".to_string(),
         "--manifest-path".to_string(),
@@ -1726,6 +1829,150 @@ mod tests {
         require(
             workspace_plan.workspace_clippy && workspace_plan.workspace_widening_reason.is_some(),
             "workspace control change did not widen Clippy",
+        )
+    }
+
+    fn contract_roots() -> Vec<PackageRoot> {
+        vec![
+            PackageRoot {
+                name: "ripr".to_string(),
+                relative_root: "crates/ripr".to_string(),
+                dependencies: vec!["ripr-contract".to_string()],
+                proc_macro: false,
+            },
+            PackageRoot {
+                name: "ripr-contract".to_string(),
+                relative_root: "crates/ripr-contract".to_string(),
+                dependencies: Vec::new(),
+                proc_macro: false,
+            },
+        ]
+    }
+
+    #[test]
+    fn contract_edit_pulls_reverse_dependent_ripr() -> Result<(), String> {
+        let roots = contract_roots();
+        for path in [
+            "crates/ripr-contract/src/lib.rs",
+            "crates/ripr-contract/Cargo.toml",
+        ] {
+            let plan = build_impact_plan(&single_path_change_set(path, None, true), &roots);
+            require(
+                plan.impacted_packages == vec!["ripr".to_string(), "ripr-contract".to_string()],
+                format!("{path} did not pull reverse-dependent ripr: {plan:?}"),
+            )?;
+            require(
+                !plan.workspace_clippy,
+                format!("{path} widened to workspace"),
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn shared_surfaces_widen_to_workspace() -> Result<(), String> {
+        let roots = contract_roots();
+        for path in [
+            "Cargo.lock",
+            "Cargo.toml",
+            "rust-toolchain.toml",
+            "rust-toolchain",
+            "clippy.toml",
+        ] {
+            let plan = build_impact_plan(&single_path_change_set(path, None, true), &roots);
+            require(
+                plan.workspace_clippy && plan.workspace_widening_reason.is_some(),
+                format!("{path} did not widen to workspace: {plan:?}"),
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_owner_and_incomplete_diff_widen_to_workspace() -> Result<(), String> {
+        let roots = contract_roots();
+        let unknown = build_impact_plan(
+            &single_path_change_set("crates/unknown/src/lib.rs", None, true),
+            &roots,
+        );
+        require(
+            unknown.workspace_clippy && unknown.workspace_widening_reason.is_some(),
+            format!("unknown owner claimed an impacted pass: {unknown:?}"),
+        )?;
+        let incomplete = build_impact_plan(
+            &single_path_change_set("crates/ripr-contract/src/lib.rs", None, false),
+            &roots,
+        );
+        require(
+            incomplete.workspace_clippy && incomplete.workspace_widening_reason.is_some(),
+            format!("incomplete diff claimed an impacted pass: {incomplete:?}"),
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn empty_plan_skips_with_stated_reason() -> Result<(), String> {
+        let plan = build_impact_plan(&single_path_change_set("docs/guide.md", None, true), &[]);
+        require(
+            plan.impacted_packages.is_empty()
+                && !plan.workspace_clippy
+                && plan
+                    .skipped_reason
+                    .as_deref()
+                    .is_some_and(|reason| !reason.trim().is_empty()),
+            format!("empty plan lacked a stated skip reason: {plan:?}"),
+        )
+    }
+
+    #[test]
+    fn check_fast_files_plan_maps_to_per_package_or_workspace_clippy() -> Result<(), String> {
+        let roots = contract_roots();
+        let root = Path::new(".");
+        let scoped =
+            impact_plan_for_files(&["crates/ripr-contract/src/lib.rs".to_string()], &roots);
+        let invocations = clippy_invocations(root, &scoped);
+        require(
+            invocations.len() == 2,
+            format!("scoped invocations: {invocations:?}"),
+        )?;
+        require(
+            invocations.iter().any(|args| {
+                args.windows(2)
+                    .any(|pair| pair[0] == "-p" && pair[1] == "ripr")
+            }) && invocations.iter().any(|args| {
+                args.windows(2)
+                    .any(|pair| pair[0] == "-p" && pair[1] == "ripr-contract")
+            }),
+            format!("reverse dependent missing from Clippy args: {invocations:?}"),
+        )?;
+        let widened = impact_plan_for_files(&["Cargo.lock".to_string()], &roots);
+        let invocations = clippy_invocations(root, &widened);
+        require(
+            invocations.len() == 1 && invocations[0].iter().any(|arg| arg == "--workspace"),
+            format!("shared surface did not map to workspace Clippy: {invocations:?}"),
+        )?;
+        let empty = impact_plan_for_files(&["docs/guide.md".to_string()], &roots);
+        require(
+            clippy_invocations(root, &empty).is_empty()
+                && impact_plan_disclosure(&empty).contains("no impacted package"),
+            format!("empty plan was not an explicit skip: {empty:?}"),
+        )
+    }
+
+    #[test]
+    fn check_fast_impact_plan_accepts_noncanonical_root() -> Result<(), String> {
+        // Regression (#14644 D): `check-fast` passes `.` as its root, while
+        // package-root loading strips canonical parents from it.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let plan = check_fast_impact_plan(&root, &["crates/ripr-contract/src/lib.rs".to_string()])?;
+        require(
+            plan.impacted_packages
+                == vec![
+                    "ripr".to_string(),
+                    "ripr-contract".to_string(),
+                    "xtask".to_string(),
+                ],
+            format!("noncanonical root plan changed: {plan:?}"),
         )
     }
 

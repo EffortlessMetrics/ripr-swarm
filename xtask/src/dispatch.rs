@@ -5,7 +5,7 @@ mod check_fast_strict;
 #[path = "command/front_door.rs"]
 mod front_door;
 #[path = "precommit_v2.rs"]
-mod precommit_v2;
+pub(crate) mod precommit_v2;
 
 fn print_help_route(args: &[String]) -> Result<(), String> {
     match args {
