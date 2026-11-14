@@ -819,6 +819,14 @@ fn git_bytes(root: &Path, args: &[&str], deadline: Option<Duration>) -> Result<V
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let detail = stderr.lines().next().unwrap_or("unknown git error").trim();
+        // A bare repository resolves a base and then has no work tree to
+        // read status from. That state has its own next action (check out a
+        // work tree), not a probe failure to print raw (#14104).
+        if output.status.code() == Some(128) && stderr.contains("must be run in a work tree") {
+            return Err(CoreError::repository_root_unusable(
+                crate::analysis::bare_repository_message(root),
+            ));
+        }
         // Exit 128 is Git's generic fatal. Only a diagnostic that says the
         // index itself is damaged earns rebuild advice; a permission, config
         // or revision failure keeps Git's reason alone, since deleting a valid

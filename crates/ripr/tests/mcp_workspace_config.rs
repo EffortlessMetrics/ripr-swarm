@@ -33,7 +33,17 @@ struct Session {
 
 impl Session {
     fn spawn(root: &Path) -> Result<Self, String> {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        Self::spawn_with_env(root, &[])
+    }
+
+    /// Spawn with extra server environment, as a host's `env` block sets it.
+    fn spawn_with_env(root: &Path, env: &[(&str, &str)]) -> Result<Self, String> {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+        command.env_remove("RIPR_GIT_TIMEOUT");
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let mut child = command
             .args(["mcp", "--stdio", "--root"])
             .arg(root)
             .stdin(Stdio::piped())
@@ -675,6 +685,136 @@ fn list_gaps_pages_over_the_wire_with_offset_and_limit() -> Result<(), String> {
     {
         return Err(format!(
             "an offset past the selection must be an empty disclosed page: {beyond}"
+        ));
+    }
+    Ok(())
+}
+
+/// #14386: `ripr_refresh` reads `RIPR_GIT_TIMEOUT` from the server's
+/// environment through the same parser as `ripr check`. An invalid value
+/// fails the attempt closed with `config_invalid` naming the variable (it
+/// used to be ignored, so MCP silently ran a different deadline than the
+/// CLI), and a valid value (`0` disables the deadline) still analyzes.
+#[test]
+fn refresh_honors_ripr_git_timeout_from_the_server_environment() -> Result<(), String> {
+    let root = write_rust_workspace()?;
+    let _guard = FixtureGuard { root: root.clone() };
+
+    let mut invalid = Session::spawn_with_env(&root, &[("RIPR_GIT_TIMEOUT", "soon")])?;
+    initialize_session(&mut invalid)?;
+    let refresh = invalid.call(
+        "tools/call",
+        json!({ "name": "ripr_refresh", "arguments": {} }),
+    )?;
+    let code = refresh_attempt_failure_code(&refresh, "ripr_refresh")?;
+    if code != "config_invalid" {
+        return Err(format!(
+            "an invalid RIPR_GIT_TIMEOUT must fail the attempt with config_invalid, got {code}"
+        ));
+    }
+    let failure = refresh
+        .pointer("/result/structuredContent/attempt/failure")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let detail = failure.get("detail").and_then(Value::as_str).unwrap_or("");
+    if !detail.contains("RIPR_GIT_TIMEOUT") || !detail.contains("\"soon\"") {
+        return Err(format!(
+            "the refusal must name the variable and the rejected value: {failure}"
+        ));
+    }
+    let recovery = failure
+        .get("recovery")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if !recovery.contains("restart the server") {
+        return Err(format!(
+            "the recovery must say a fix needs a server restart: {failure}"
+        ));
+    }
+    drop(invalid);
+
+    let mut disabled = Session::spawn_with_env(&root, &[("RIPR_GIT_TIMEOUT", "0")])?;
+    initialize_session(&mut disabled)?;
+    let refresh = disabled.call(
+        "tools/call",
+        json!({ "name": "ripr_refresh", "arguments": {} }),
+    )?;
+    let refresh = structured_tool_result(&refresh, "ripr_refresh")?;
+    if refresh
+        .pointer("/snapshot/finding_count")
+        .and_then(Value::as_u64)
+        != Some(1)
+    {
+        return Err(format!(
+            "RIPR_GIT_TIMEOUT=0 disables the deadline and keeps the analysis: {refresh}"
+        ));
+    }
+    Ok(())
+}
+
+/// #14386: a finite nondefault `RIPR_GIT_TIMEOUT` reaches the git invocations
+/// `ripr_refresh` runs, not only the parser. Every `git` on the server's
+/// `PATH` is a shim that sleeps 3 s, so under `RIPR_GIT_TIMEOUT=1` the first
+/// git call the refresh makes is cut at the 1000 ms deadline and the failure
+/// names it. If the refresh substituted the 300 s default for the configured
+/// value, the shim would finish its sleep instead and no 1000 ms deadline
+/// could appear. This reaches the findings producer only: with every git call
+/// cut, the refresh fails before the committed-source probe runs. The probe
+/// takes the same resolved value from `run_check` by construction and is not
+/// separately exercised here.
+#[cfg(unix)]
+#[test]
+fn refresh_cuts_git_at_the_configured_ripr_git_timeout() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let root = write_rust_workspace()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let shim_dir = root.with_file_name(format!(
+        "{}-git-shim",
+        root.file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("fixture root must have a file name")?
+    ));
+    let _shim_guard = FixtureGuard {
+        root: shim_dir.clone(),
+    };
+    std::fs::create_dir_all(&shim_dir).map_err(|error| error.to_string())?;
+    let shim = shim_dir.join("git");
+    std::fs::write(&shim, "#!/bin/sh\nexec sleep 3\n").map_err(|error| error.to_string())?;
+    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+        .map_err(|error| error.to_string())?;
+    let mut paths = vec![shim_dir.clone()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let search_path = std::env::join_paths(paths)
+        .map_err(|error| error.to_string())?
+        .to_string_lossy()
+        .into_owned();
+
+    let mut session = Session::spawn_with_env(
+        &root,
+        &[("RIPR_GIT_TIMEOUT", "1"), ("PATH", search_path.as_str())],
+    )?;
+    initialize_session(&mut session)?;
+    let started = Instant::now();
+    let refresh = session.call(
+        "tools/call",
+        json!({ "name": "ripr_refresh", "arguments": {} }),
+    )?;
+    let elapsed = started.elapsed();
+    refresh_attempt_failure_code(&refresh, "ripr_refresh under a 1 s git deadline")?;
+    let detail = refresh
+        .pointer("/result/structuredContent/attempt/failure/detail")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if !detail.contains("git_invocation_timeout") || !detail.contains("1000ms deadline") {
+        return Err(format!(
+            "the refresh must cut git at the configured 1000ms deadline: {refresh}"
+        ));
+    }
+    if elapsed >= Duration::from_secs(30) {
+        return Err(format!(
+            "a 1 s git deadline must end the refresh promptly, took {elapsed:?}"
         ));
     }
     Ok(())
