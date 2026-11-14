@@ -40,6 +40,10 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
     outputs:
       router_target: ${{ steps.route.outputs.router_target }}
       router_reason: ${{ steps.route.outputs.router_reason }}
@@ -400,6 +404,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ steps.entry.outputs.pr }}
         run: |
           set -uo pipefail
@@ -424,7 +429,11 @@ jobs:
           threads=$(printf '%s' "$threads" | sed '/^$/d')
           if [ -n "$threads" ]; then
             count=$(printf '%s\n' "$threads" | wc -l)
-            echo "::error::PR #$PR_NUMBER has $count unresolved review thread(s); the final eligibility recheck would fail this run after the tests finish. Reply to and resolve every thread (bot threads included), then remove and re-add the merge-ready label."
+            if [ "$EVENT_NAME" = "merge_group" ]; then
+              echo "::error::PR #$PR_NUMBER has $count unresolved review thread(s); the final eligibility recheck would fail this run after the tests finish. Reply to and resolve every thread (bot threads included), then re-enqueue the PR."
+            else
+              echo "::error::PR #$PR_NUMBER has $count unresolved review thread(s); the final eligibility recheck would fail this run after the tests finish. Reply to and resolve every thread (bot threads included), then remove and re-add the merge-ready label."
+            fi
             printf '%s\n' "$threads"
             exit 1
           fi
