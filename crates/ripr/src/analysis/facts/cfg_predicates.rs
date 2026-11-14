@@ -1225,6 +1225,49 @@ fn positioned_tokens(text: &str) -> Option<Vec<PositionedToken>> {
     Some(tokens)
 }
 
+/// Find an outer attribute's end while ignoring brackets in comments and literals.
+/// An ambiguous or unterminated attribute returns None so callers can defer.
+pub(crate) fn outer_attribute_end(source: &str) -> Option<usize> {
+    let bytes = source.as_bytes();
+    if !source.starts_with("#[") {
+        return None;
+    }
+    let mut index = 2;
+    let mut depth = 1usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                index += 2;
+                while bytes.get(index).is_some_and(|byte| *byte != b'\n') {
+                    index += 1;
+                }
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                index = skip_block_comment(bytes, index)?
+            }
+            b'"' => index = skip_regular_string(bytes, index)?,
+            b'\'' => return None,
+            _ if raw_string_start(bytes, index).is_some() => {
+                let (quote, hashes) = raw_string_start(bytes, index)?;
+                index = skip_raw_string(bytes, quote, hashes)?;
+            }
+            b'[' => {
+                depth = depth.checked_add(1)?;
+                index += 1;
+            }
+            b']' => {
+                depth -= 1;
+                index += 1;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    None
+}
+
 /// Returns the opening-quote offset and hash count when the bytes at `index`
 /// start a raw string (`r"..."`, `r#"..."#`, `br##"..."##`), otherwise
 /// `None`.
