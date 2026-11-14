@@ -8243,7 +8243,9 @@ fn oriented_comparison_operands(
 /// comparison, and when the pre-edit text is known it must not already
 /// hold that same operand: an edit to another operand (`x > 1 && a` to
 /// `x > 1 && b`) does not move `x`'s boundary. Anything else, including
-/// text the bounded scanner cannot split, has no single boundary here.
+/// text the bounded scanner cannot balance (with or without a connective)
+/// and a continuation line that starts with `&&` or `||`, has no single
+/// boundary here.
 fn changed_comparison_conjunct<'a>(expression: &'a str, before: Option<&str>) -> Option<&'a str> {
     let operands = top_level_connective_operands(expression)?;
     if operands.len() == 1 {
@@ -8273,7 +8275,8 @@ fn changed_comparison_conjunct<'a>(expression: &'a str, before: Option<&str>) ->
 
 /// The operands of `expression` split at top-level `&&` and `||`, outside
 /// brackets and string or char literals. `None` when the text has an
-/// unbalanced closing bracket, an unterminated string, or an empty operand,
+/// unbalanced closing bracket, an unterminated string, a block comment, or
+/// an empty operand (text after a `//` line comment is not read),
 /// so a shape the scanner cannot read is never split by guess.
 fn top_level_connective_operands(expression: &str) -> Option<Vec<&str>> {
     let bytes = expression.as_bytes();
@@ -8281,8 +8284,16 @@ fn top_level_connective_operands(expression: &str) -> Option<Vec<&str>> {
     let mut depth = 0usize;
     let mut start = 0;
     let mut index = 0;
+    let mut end = bytes.len();
     while index < bytes.len() {
         match bytes[index] {
+            // A line comment ends the predicate text; a block comment is a
+            // shape this bounded scan does not read.
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                end = index;
+                break;
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => return None,
             b'"' => {
                 index += 1;
                 while index < bytes.len() && bytes[index] != b'"' {
@@ -8329,7 +8340,7 @@ fn top_level_connective_operands(expression: &str) -> Option<Vec<&str>> {
         }
         index += 1;
     }
-    operands.push(expression[start..].trim());
+    operands.push(expression[start..end].trim());
     if operands.len() > 1 && operands.iter().any(|operand| operand.is_empty()) {
         return None;
     }
@@ -9704,6 +9715,12 @@ mod tests {
         assert_eq!(conjunct("a && ) > 1", None), None);
         assert_eq!(conjunct("a && s == \"open", None), None);
         assert_eq!(conjunct("&& n > 1", None), None);
+        assert_eq!(conjunct("    || n >= 10", None), None);
+        assert_eq!(conjunct("x > 1)", None), None);
+        // A line comment's connective never splits; a block comment is not read.
+        assert_eq!(conjunct("a && n > 1 // b || c", Some("a")), Some("n > 1"));
+        assert_eq!(conjunct("n > 1 // a && b", None), Some("n > 1 // a && b"));
+        assert_eq!(conjunct("a /* x || y */ && n > 1", None), None);
     }
 
     #[test]

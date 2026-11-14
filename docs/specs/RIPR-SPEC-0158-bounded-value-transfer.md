@@ -184,10 +184,12 @@ exercised boundary from a missing one.
   reads `s.len()` against `1`, not `s.starts_with('-') && s.len()`, which no
   input can equal. The connective scan skips brackets and string and char
   literals. Two or more comparison operands, an operand the pre-edit text
-  already holds unchanged (`x > 1 && a` to `x > 1 && b`), an empty operand,
-  or text the scan cannot balance give no boundary reading, so the stage
-  falls back to its existing unknown or connective-change reason. A
-  predicate with no top-level connective is read whole, as before. A
+  already holds unchanged (`x > 1 && a` to `x > 1 && b`), an empty operand
+  (including a continuation line that starts with `&&` or `||`), or text
+  the scan cannot balance, with or without a connective, give no boundary
+  reading, so the stage falls back to its existing unknown or
+  connective-change reason. A balanced predicate with no top-level
+  connective is read whole, as before. A
   single-comparison compound is newly readable, so a test input at that
   comparison's boundary can be observed there. Masking by a sibling operand
   stays with propagation: the predicate finding of `label == "beta" && on`
