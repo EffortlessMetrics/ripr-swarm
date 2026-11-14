@@ -46,3 +46,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — manual_let_else_pairing (5)
+
+Reason:
+RIPR-SPEC-0001: formatting-only re-bless - Hidden rows are grouped by file, owner, class and reason (#14342); PR #14484 merge e85e199180 on Linux 1.95.0
+
+Command:
+`cargo xtask goldens bless manual_let_else_pairing --reason "..."`
+
+Updated:
+- `expected/human.txt`
