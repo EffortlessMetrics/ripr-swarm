@@ -107,6 +107,21 @@ impl Drop for TempRepo {
     }
 }
 
+/// The one `assertion not credited:` line a refused finding carries.
+fn only_refusal(found: &Finding) -> Result<&str, String> {
+    let mut refusals = found
+        .evidence
+        .iter()
+        .filter(|line| line.starts_with("assertion not credited: "));
+    match (refusals.next(), refusals.next()) {
+        (Some(refusal), None) => Ok(refusal),
+        _ => Err(format!(
+            "premise: exactly one assertion refusal, got {:?}",
+            found.evidence
+        )),
+    }
+}
+
 fn classify(files: &[(&str, &str)]) -> Result<ExposureClass, String> {
     TempRepo::create(files)?.class()
 }
@@ -360,6 +375,8 @@ fn a_fragment_symlinked_out_of_the_repository_is_not_read() -> Result<(), String
 
 #[test]
 fn the_refusal_names_the_include_that_makes_placement_unavailable() -> Result<(), String> {
+    // `benches/` sorts before `src/`, so its include limitation is first in
+    // iteration order; it stays inside the bench crate and must not be named.
     let repo = TempRepo::create(&[
         (
             "src/lib.rs",
@@ -373,16 +390,15 @@ fn the_refusal_names_the_include_that_makes_placement_unavailable() -> Result<()
         ("src/b.rs", &own_unit()),
         ("src/gen.rs", NESTED),
         ("src/generated/g.rs", "mod y;\n"),
+        (
+            "benches/bench.rs",
+            "mod frag { include!(\"fixtures/g.rs\"); }\nfn main() {}\n",
+        ),
+        ("benches/fixtures/g.rs", PLAIN),
     ])?;
     let found = repo.finding()?;
     assert_eq!(found.class, ExposureClass::StaticUnknown);
-    let refusals = found
-        .evidence
-        .iter()
-        .filter(|line| line.starts_with("assertion not credited: "))
-        .collect::<Vec<_>>();
-    assert_eq!(refusals.len(), 1, "{:?}", found.evidence);
-    let refusal = refusals[0];
+    let refusal = only_refusal(&found)?;
     for expected in [
         "placement is unavailable",
         "`use rayon::prelude::*;` at src/a.rs:1 could not be confined",
@@ -391,7 +407,38 @@ fn the_refusal_names_the_include_that_makes_placement_unavailable() -> Result<()
         "src/gen.rs:1",
         "rust_include_nested_module_context",
     ] {
-        assert!(refusal.contains(expected), "{expected:?} missing from {refusal:?}");
+        assert!(
+            refusal.contains(expected),
+            "{expected:?} missing from {refusal:?}"
+        );
+    }
+    // The earlier bench-crate include is not workspace-reaching, so it is not
+    // the one named.
+    assert!(!refusal.contains("benches"), "{refusal:?}");
+
+    Ok(())
+}
+
+#[test]
+fn a_public_glob_keeps_its_direct_explanation_with_an_include_present() -> Result<(), String> {
+    // A `pub use ...::*;` is unconfined by construction, so no placement
+    // decision can change it: naming an include would blame an unrelated
+    // cause. The direct foreign-glob explanation stays.
+    let repo = TempRepo::create(&[
+        ("src/a.rs", "pub use rayon::prelude::*;\n"),
+        ("src/b.rs", &own_unit()),
+        ("src/gen.rs", NESTED),
+        ("src/generated/g.rs", "mod y;\n"),
+    ])?;
+    let found = repo.finding()?;
+    assert_eq!(found.class, ExposureClass::StaticUnknown);
+    let refusal = only_refusal(&found)?;
+    assert!(
+        refusal.contains("`pub use rayon::prelude::*;` at src/a.rs:1 glob-imports"),
+        "{refusal:?}"
+    );
+    for unexpected in ["placement is unavailable", "include limitation"] {
+        assert!(!refusal.contains(unexpected), "{refusal:?}");
     }
 
     // A public glob is unconfined regardless of placement, so it keeps its
@@ -417,6 +464,29 @@ fn the_refusal_names_the_include_that_makes_placement_unavailable() -> Result<()
         "{public:?}"
     );
     assert!(!public.contains("first include limitation"), "{public:?}");
+
+    Ok(())
+}
+
+#[test]
+fn an_unplaced_files_glob_keeps_its_direct_explanation() -> Result<(), String> {
+    // `src/a.rs` is in no crate: even with placement on, its private glob
+    // would not be confined, so the workspace include is not the cause of its
+    // ambiguity and must not be named.
+    let repo = TempRepo::create(&[
+        ("src/lib.rs", "pub mod b;\npub mod gen;\n"),
+        ("src/b.rs", &own_unit()),
+        ("src/gen.rs", NESTED),
+        ("src/generated/g.rs", "mod y;\n"),
+    ])?;
+    let found = repo.finding()?;
+    assert_eq!(found.class, ExposureClass::StaticUnknown);
+    let refusal = only_refusal(&found)?;
+    assert!(
+        refusal.contains("`use rayon::prelude::*;` at src/a.rs:1 glob-imports"),
+        "{refusal:?}"
+    );
+    assert!(!refusal.contains("placement is unavailable"), "{refusal:?}");
 
     Ok(())
 }

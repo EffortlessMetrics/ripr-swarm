@@ -2556,12 +2556,17 @@ not themselves a static propagation proof.
   an `async` test, or the file and line of the macro binding). A refused
   context does not also claim that no assertion or oracle was detected. The
   disclosure is computed after admission and never changes what is credited.
-  When an include makes placement unavailable and a foreign glob outside the
-  assertion's own file therefore cannot be confined, the blocker says so and
-  names the first workspace-reaching include expression, location and reason
-  code; an inert include or a separate placement failure is not blamed. A glob
-  in the assertion's own file keeps its direct macro-binding explanation
-  (`the_refusal_names_the_include_that_makes_placement_unavailable`).
+  When an include makes placement unavailable and a private, unscoped glob
+  outside the assertion's own file therefore cannot be confined, the blocker
+  says so and names the first workspace-reaching include expression, location
+  and reason code; an inert include or a separate placement failure is not
+  blamed. A glob in the assertion's own file keeps its direct macro-binding
+  explanation, and so does a glob whose ambiguity does not depend on
+  placement: a public glob is unconfined by construction, a scoped import is
+  confined lexically, and a glob whose own module composition did not resolve
+  has a separate cause
+  (`the_refusal_names_the_include_that_makes_placement_unavailable`,
+  `a_public_glob_keeps_its_direct_explanation_with_an_include_present`).
   A refused assertion whose text calls the changed owner is named first.
   Only that one earns the next step that calls the refusal a possible static
   limit to confirm with a real mutation run; a refused assertion that does

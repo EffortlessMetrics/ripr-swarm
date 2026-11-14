@@ -1240,16 +1240,17 @@ impl OwnerPinSyntax {
                 } else {
                     self.macro_binding_site(test, assertion.line, &name, index)
                 };
-                let placement_include = site
-                    .as_ref()
-                    .filter(|(path, site)| {
-                        path != &test.file
-                            && matches!(
-                                &site.kind,
-                                MacroBindingKind::ForeignGlob(import) if import.starts_with("use ")
-                            )
-                    })
-                    .and_then(|_| self.target_roots(index).workspace_include.clone());
+                let roots = self.target_roots(index);
+                let placement_include = match site.as_ref() {
+                    Some((path, site))
+                        if path != &test.file
+                            && matches!(&site.kind, MacroBindingKind::ForeignGlob(_))
+                            && placement_include_explains(site, path, roots, index) =>
+                    {
+                        roots.workspace_include.clone()
+                    }
+                    _ => None,
+                };
                 AssertionRefusal::MacroBinding {
                     name,
                     site,
@@ -2810,6 +2811,32 @@ fn module_confined(
         && roots.roots(path, index).is_some()
 }
 
+/// Whether an include is the only reason this site is not module-confined:
+/// every input [`module_confined`] checks holds except `!roots.disabled`, and
+/// the scan is disabled. A public glob (not `crate_local`) is unconfined by
+/// construction and a scoped import is confined lexically, so for those the
+/// include is not the cause; the same holds for a file no recognized crate
+/// places or one whose own out-of-line modules did not resolve. Naming the
+/// include there would repeat the unrelated-cause defect this disclosure
+/// exists to remove.
+fn placement_include_explains(
+    site: &MacroBindingSite,
+    path: &Path,
+    roots: &TargetRoots,
+    index: &RustIndex,
+) -> bool {
+    site.crate_local
+        && site.module_local
+        && site.scope.is_none()
+        && roots.disabled
+        && index.execution_context(path).is_some()
+        // What `roots` would answer with placement on: the file is in a
+        // recognized crate that the include does not taint, so the disabled
+        // scan is the only reason this glob is not confined.
+        && target_context_roots(path, index, &roots.src_dirs)
+            .is_some_and(|placed| placed.is_disjoint(&roots.tainted))
+}
+
 /// The files whose module subtree holds `file`: itself and every ancestor
 /// along the approved `mod` edges. `None` when ancestry is not established
 /// (an unresolved composition anywhere, an `include!` fragment, a file with
@@ -2948,7 +2975,9 @@ struct TargetRoots {
     disabled: bool,
     /// The first include limitation whose paste reaches the workspace. This
     /// explains placement loss without blaming an inert include or a separate
-    /// unresolved `#[path]` / unindexed member.
+    /// unresolved `#[path]` / unindexed member; it is disclosed only for a
+    /// glob that would otherwise be module-confined
+    /// ([`placement_include_explains`]).
     workspace_include: Option<RustIncludeLimitation>,
     /// #14116: integration test, bench and example roots holding an
     /// `include!` whose inert fragment may bind an assertion macro. The
@@ -3853,8 +3882,9 @@ pub(in crate::analysis) enum AssertionRefusal {
     MacroBinding {
         name: String,
         site: Option<(PathBuf, MacroBindingSite)>,
-        /// The first include that disabled placement, when an unrelated
-        /// foreign glob is ambiguous because it cannot be module-confined.
+        /// The first include that disabled placement, when a private unscoped
+        /// foreign glob that would otherwise be module-confined is ambiguous
+        /// because it cannot be. `None` when placement is not the cause.
         placement_include: Option<RustIncludeLimitation>,
     },
     /// The test's only `return` sits under `if <condition> { return; }`,
