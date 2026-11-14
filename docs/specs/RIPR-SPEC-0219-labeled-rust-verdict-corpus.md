@@ -185,7 +185,10 @@ a reaching row ranked below the window goes uncounted.
   run-owned workspace under `target/ripr/verdict-corpus/<language>/`, applies the case
   diff with a strict patch reader that refuses drifted context, runs
   `ripr check --json` on the cases in parallel, and writes `report.json` and
-  `report.md`. It refuses an `--out` inside the expected directory.
+  `report.md`. Parent workers parallelize cases; each analyzer child uses one
+  worker per Rayon pool and its own cache through a child-only environment overlay.
+  This does not change the parent pool or interactive CLI defaults.
+  It refuses an `--out` inside the expected directory.
 - `check [--cases <id,...>] [--out <dir>]` does the same and fails, naming
   each case, when a row differs from
   `fixtures/rust-verdict-corpus/expected/rows/<case_id>.json`. A
