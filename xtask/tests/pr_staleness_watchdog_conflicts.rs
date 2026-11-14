@@ -636,8 +636,8 @@ fn a_clean_head_pushed_after_the_label_is_told_once_to_re_apply_it() -> Result<(
 }
 
 #[test]
-fn an_in_flight_head_with_unreadable_mergeability_keeps_the_unreadability_note(
-) -> Result<(), String> {
+fn an_in_flight_head_with_unreadable_mergeability_keeps_the_unreadability_note()
+-> Result<(), String> {
     // A freshly pushed head can start a qualification while its first mergeability
     // read is still unknown. The row must keep the in-flight instruction and the
     // per-head unreadability classification the header and AC3 promise (#14636).
