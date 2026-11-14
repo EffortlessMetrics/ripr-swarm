@@ -642,7 +642,7 @@ jobs:
           toolchain: 1.95.0
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          shared-key: ripr-docs-gate
+          shared-key: ripr-swarm-rust-small-${{ runner.os }}
       - name: Prepare locked owner-return fixture dependencies
         run: |
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
