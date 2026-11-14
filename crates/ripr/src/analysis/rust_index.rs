@@ -268,6 +268,94 @@ pub(crate) fn module_composition_disclosure(index: &RustIndex) -> Option<String>
     ))
 }
 
+/// Index-level analysis-limit families that one command run prints at most
+/// once (#14700).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum IndexLimitFamily {
+    IncludeBoundary,
+    ModuleComposition,
+}
+
+type DisclosedFamilies = std::sync::Arc<std::sync::Mutex<BTreeSet<IndexLimitFamily>>>;
+
+thread_local! {
+    static INDEX_DISCLOSURE_RUN: std::cell::RefCell<Option<IndexDisclosureRun>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Run-scoped record of which index-level analysis-limit families a command
+/// already printed (#14700).
+///
+/// One `ripr check` can index the workspace more than once: the diff
+/// analysis builds its index, and on a cold run the scoped seam inventory
+/// builds another over a different file set. Each used to print its own
+/// include-boundary and module-composition notes, so a cold run printed both
+/// families twice with different counts while a warm run (inventory reused)
+/// printed them once. Inside a run, the first index to disclose a family
+/// owns it and later indexes stay silent. Outside a run (LSP, MCP, `rerun`
+/// and other commands that do not open one) every index keeps printing, so
+/// those surfaces are unchanged.
+#[derive(Clone, Default)]
+pub(crate) struct IndexDisclosureRun(DisclosedFamilies);
+
+impl IndexDisclosureRun {
+    /// The run installed on this thread, so a worker thread can share it.
+    pub(crate) fn current() -> Option<Self> {
+        INDEX_DISCLOSURE_RUN.with(|run| run.borrow().clone())
+    }
+
+    /// Runs `work` with this run installed on the current thread, restoring
+    /// whatever was installed before, also when `work` unwinds.
+    pub(crate) fn scope<T>(&self, work: impl FnOnce() -> T) -> T {
+        struct Restore(Option<IndexDisclosureRun>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                let previous = self.0.take();
+                INDEX_DISCLOSURE_RUN.with(|run| *run.borrow_mut() = previous);
+            }
+        }
+        let previous = INDEX_DISCLOSURE_RUN.with(|run| run.borrow_mut().replace(self.clone()));
+        let _restore = Restore(previous);
+        work()
+    }
+
+    fn admit(&self, family: IndexLimitFamily) -> bool {
+        match self.0.lock() {
+            Ok(mut disclosed) => disclosed.insert(family),
+            Err(poisoned) => poisoned.into_inner().insert(family),
+        }
+    }
+}
+
+fn admit_index_limit_family(family: IndexLimitFamily) -> bool {
+    IndexDisclosureRun::current().is_none_or(|run| run.admit(family))
+}
+
+/// The include-boundary and module-composition notes for `index` that the
+/// current run has not printed yet, in print order. Outside a run this is
+/// every note the index carries.
+pub(crate) fn index_limit_disclosures(index: &RustIndex) -> Vec<String> {
+    let mut disclosures = Vec::new();
+    if let Some(disclosure) = include_resolution_disclosure(index)
+        && admit_index_limit_family(IndexLimitFamily::IncludeBoundary)
+    {
+        disclosures.push(disclosure);
+    }
+    if let Some(disclosure) = module_composition_disclosure(index)
+        && admit_index_limit_family(IndexLimitFamily::ModuleComposition)
+    {
+        disclosures.push(disclosure);
+    }
+    disclosures
+}
+
+/// Prints [`index_limit_disclosures`] on stderr.
+pub(crate) fn eprint_index_limit_disclosures(index: &RustIndex) {
+    for disclosure in index_limit_disclosures(index) {
+        eprintln!("{disclosure}");
+    }
+}
+
 pub(crate) fn apply_oracle_policy(index: &mut RustIndex, policy: &OraclePolicy) {
     if !policy.has_overlays() {
         index.for_each_test_mut(|test| {
@@ -1812,6 +1900,97 @@ fn feature_gated_test() {}
                 "ripr: 1 Rust include boundary limitation(s): src/lib.rs:7:rust_include_dynamic_expression; affected compilation-unit relations remain fail-closed. This is an analysis-limit note about indexed context, not a finding: no action is needed unless evidence you expected from a listed file is missing."
             )
         );
+    }
+
+    /// An index carrying one include-boundary limitation and `modules`
+    /// module-composition limitations.
+    fn limited_index(modules: usize) -> RustIndex {
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            include_limitations: vec![RustIncludeLimitation {
+                parent: PathBuf::from("src/lib.rs"),
+                line: 7,
+                expression: "include!(concat!(...))".to_string(),
+                reason_code: "rust_include_dynamic_expression".to_string(),
+            }],
+            ..Default::default()
+        });
+        for n in 0..modules {
+            index.insert_file_only(
+                PathBuf::from(format!("src/m{n}.rs")),
+                FileFacts {
+                    role_provenance: crate::analysis::facts::SourceRoleProvenance {
+                        edges: Vec::new(),
+                        earliest_unresolved_reason: Some(
+                            "rust_module_ambiguous_parent".to_string(),
+                        ),
+                        ..Default::default()
+                    },
+                    ..FileFacts::default()
+                },
+            );
+        }
+        index
+    }
+
+    #[test]
+    fn index_limit_disclosures_print_each_family_once_per_run() {
+        // The diff index and a cold scoped-inventory index disagree on the
+        // module count (#14700); the run keeps only the first index's notes.
+        let diff_index = limited_index(2);
+        let inventory_index = limited_index(5);
+        let expected = vec![
+            include_resolution_disclosure(&diff_index).unwrap_or_default(),
+            module_composition_disclosure(&diff_index).unwrap_or_default(),
+        ];
+        assert!(
+            expected[1].contains("2 Rust module composition"),
+            "{expected:?}"
+        );
+
+        let run = IndexDisclosureRun::default();
+        let (first, second) = run.scope(|| {
+            (
+                index_limit_disclosures(&diff_index),
+                index_limit_disclosures(&inventory_index),
+            )
+        });
+        assert_eq!(first, expected, "the first index prints both families");
+        assert_eq!(second, Vec::<String>::new(), "a later index prints neither");
+
+        // A worker thread sharing the run stays silent too.
+        let worker_run = run.clone();
+        let worker_index = limited_index(3);
+        let from_worker =
+            std::thread::spawn(move || worker_run.scope(|| index_limit_disclosures(&worker_index)))
+                .join()
+                .unwrap_or_else(|_| vec!["worker panicked".to_string()]);
+        assert_eq!(from_worker, Vec::<String>::new());
+
+        // The scope is restored after the run, and a fresh run prints again.
+        assert!(IndexDisclosureRun::current().is_none());
+        assert_eq!(index_limit_disclosures(&inventory_index).len(), 2);
+        assert_eq!(
+            IndexDisclosureRun::default().scope(|| index_limit_disclosures(&inventory_index)),
+            vec![
+                include_resolution_disclosure(&inventory_index).unwrap_or_default(),
+                module_composition_disclosure(&inventory_index).unwrap_or_default(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_family_absent_from_the_first_index_is_printed_by_a_later_one() {
+        // A run admits a family only when an index actually discloses it.
+        let clean = RustIndex::default();
+        let limited = limited_index(1);
+        let (first, second) = IndexDisclosureRun::default().scope(|| {
+            (
+                index_limit_disclosures(&clean),
+                index_limit_disclosures(&limited),
+            )
+        });
+        assert_eq!(first, Vec::<String>::new());
+        assert_eq!(second.len(), 2, "{second:?}");
     }
 
     #[test]

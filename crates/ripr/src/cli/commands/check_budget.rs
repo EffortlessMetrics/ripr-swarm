@@ -105,6 +105,9 @@ where
     });
     let worker_token = token.clone();
     let worker_slot = input_facts.map(std::sync::Arc::clone);
+    // #14700: the worker shares the caller's disclosure run, so a limitation
+    // family it prints is not printed again by the caller, or vice versa.
+    let disclosure_run = crate::analysis::IndexDisclosureRun::current();
     let (tx, rx) = mpsc::channel();
     #[cfg(test)]
     let rx = ObservedReceiver(rx);
@@ -121,13 +124,17 @@ where
             // out of the closure and the thread-local dies with the thread —
             // and the inline `None`-budget path above exits before any
             // sibling run can reuse this thread.
-            let result = match worker_slot {
+            let run_work = move || match worker_slot {
                 Some(slot) => {
                     crate::analysis::with_input_facts_capture(slot, Some(deadline), move || {
                         with_token(&worker_token, work)
                     })
                 }
                 None => with_token(&worker_token, work),
+            };
+            let result = match disclosure_run {
+                Some(run) => run.scope(run_work),
+                None => run_work(),
             };
             let _ignored = tx.send(result);
         });
