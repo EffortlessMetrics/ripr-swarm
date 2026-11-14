@@ -8,3 +8,10 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::hidden_block_keeps_owner_less_rows_apart_and_orders_mixed_rows",
   "crates/ripr/src/output/human.rs::tests::hidden_block_window_ranks_a_group_by_its_best_member",
 ]
+
+# Grouped Hidden rows name line runs, not a covering range (#14682).
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/src/output/human/triage.rs::tests::grouped_line_text_names_runs_not_a_covering_range",
+]

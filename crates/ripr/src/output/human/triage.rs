@@ -1053,11 +1053,7 @@ fn grouped_hidden_row(
     if members.len() < 2 || (first_line == last_line && kinds.len() == 1) {
         return None;
     }
-    let lines = if first_line == last_line {
-        first_line.to_string()
-    } else {
-        format!("{first_line}-{last_line}")
-    };
+    let lines = grouped_line_text(members.iter().map(|f| f.probe.location.line));
     let currentness = if label_currentness {
         format!(", {}", hidden_bullet_currentness(first))
     } else {
@@ -1084,6 +1080,40 @@ fn grouped_hidden_row(
         kinds.join(", "),
         hidden_finding_reason(first)
     ))
+}
+
+/// Most separate line runs a grouped row lists before it falls back to the
+/// span and a line count (#14682).
+const GROUPED_LINE_RUNS_LISTED: usize = 3;
+
+/// The lines a grouped `Hidden:` row names: each run of consecutive lines as
+/// `a` or `a-b`, comma-separated, so lines 3 and 5 read `3, 5` rather than a
+/// `3-5` range that implies line 4. Beyond [`GROUPED_LINE_RUNS_LISTED`] runs
+/// the row keeps the span and says how many lines it covers:
+/// `1078-1241 (12 lines)`.
+fn grouped_line_text(lines: impl Iterator<Item = usize>) -> String {
+    let distinct: std::collections::BTreeSet<usize> = lines.collect();
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for line in &distinct {
+        match runs.last_mut() {
+            Some((_, end)) if end.checked_add(1) == Some(*line) => *end = *line,
+            _ => runs.push((*line, *line)),
+        }
+    }
+    let run_text = |(start, end): &(usize, usize)| {
+        if start == end {
+            start.to_string()
+        } else {
+            format!("{start}-{end}")
+        }
+    };
+    if runs.len() <= GROUPED_LINE_RUNS_LISTED {
+        return runs.iter().map(run_text).collect::<Vec<_>>().join(", ");
+    }
+    match (distinct.first(), distinct.last()) {
+        (Some(first), Some(last)) => format!("{first}-{last} ({} lines)", distinct.len()),
+        _ => String::new(),
+    }
 }
 
 /// Class counts of the omitted findings outside the listed window, in the
@@ -2548,6 +2578,28 @@ fn push_hidden_row(out: &mut String, row: &str, count: usize) {
 
 #[cfg(test)]
 mod tests {
+
+    /// #14682: a grouped row names the lines its members are on. Gaps show,
+    /// runs collapse, and beyond three runs the span carries a line count.
+    #[test]
+    fn grouped_line_text_names_runs_not_a_covering_range() {
+        for (lines, expected) in [
+            (vec![3, 5], "3, 5"),
+            (vec![5, 3, 5], "3, 5"),
+            (vec![10, 11, 12], "10-12"),
+            (vec![7, 7], "7"),
+            (vec![10, 11, 12, 15], "10-12, 15"),
+            (vec![1, 3, 5], "1, 3, 5"),
+            (vec![1, 3, 5, 7], "1-7 (4 lines)"),
+            (vec![1078, 1079, 1100, 1200, 1241], "1078-1241 (5 lines)"),
+        ] {
+            assert_eq!(
+                grouped_line_text(lines.clone().into_iter()),
+                expected,
+                "{lines:?}"
+            );
+        }
+    }
 
     #[test]
     fn hidden_finding_reason_words_a_match_arm_limit_like_hover_and_mcp() -> Result<(), String> {
