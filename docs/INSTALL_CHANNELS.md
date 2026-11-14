@@ -190,12 +190,13 @@ can omit the other languages' parsers:
 
 ```bash
 cargo build --release -p ripr --no-default-features --features lang-rust
-cargo build --release -p ripr --no-default-features --features lang-python
-cargo build --release -p ripr --no-default-features --features lang-typescript
+cargo build --release -p ripr --no-default-features --features lang-rust,lang-python
+cargo build --release -p ripr --no-default-features --features lang-rust,lang-typescript
 ```
 
-Features can be combined (for example `--features lang-rust,lang-python`),
-and `lang-perl` remains available the same way. Counted as distinct crate
+`lang-rust` is required (the crate refuses to build without it), so every
+slim recipe keeps it and adds the extra languages wanted; `lang-perl` is
+available the same way (`--features lang-rust,lang-perl`). Counted as distinct crate
 names in `cargo tree -p ripr -e normal` on 2026-11-14, the Rust-only graph
 has 131 crates against 206 for the default graph (about 36% fewer), so the
 slim build compiles and links less; the exact binary saving varies by
