@@ -81,13 +81,23 @@ fn newline_and_non_utf8_paths_cannot_hide_a_package_input() -> TestResult {
     let path = std::ffi::OsString::from_vec(b"packaging/python/invalid-\xff.toml".to_vec());
     fs::create_dir_all(fixture.0.join("packaging/python"))?;
     fs::write(fixture.0.join(&path), "changed\n")?;
-    let added = fixture
-        .command("git")?
-        .args(["add", "--"])
-        .arg(&path)
-        .output()?;
+    // Git rejects non-UTF-8 argv before it can stage the path. Stage the
+    // fixture root instead so the test reaches the history decoder (#14583).
+    let added = fixture.command("git")?.args(["add", "-A"]).output()?;
     assert!(added.status.success(), "fixture add: {added:?}");
     let head = fixture.commit()?;
+    let changed = fixture
+        .command("git")?
+        .args(["diff", "--name-only", "-z", &base, &head, "--"])
+        .output()?;
+    assert!(changed.status.success(), "fixture diff: {changed:?}");
+    assert!(
+        changed
+            .stdout
+            .windows(b"invalid-\xff".len())
+            .any(|window| window == b"invalid-\xff"),
+        "fixture did not retain the non-UTF-8 path: {changed:?}"
+    );
     let Err(error) = repo_policy::python_wheel::qualifies(&fixture.0, "pull_request", &base, &head)
     else {
         return Err("undecodable history cannot prove a skip".into());
