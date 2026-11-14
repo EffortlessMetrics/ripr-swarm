@@ -3,9 +3,12 @@ mod command;
 mod identity;
 mod model;
 mod rehearsal;
+mod rehearsal_plan;
 mod render;
+mod source_tree;
 
 pub(crate) use command::run;
+pub(crate) use rehearsal_plan::run as run_rehearsal;
 
 pub(crate) fn validate_readiness_snapshot_fixture_corpus(violations: &mut Vec<String>) {
     use std::path::Path;
@@ -19,6 +22,7 @@ pub(crate) fn validate_readiness_snapshot_fixture_corpus(violations: &mut Vec<St
         "rehearsal-receipt.complete.json",
         "rehearsal-receipt.wrong-sha.json",
         "rehearsal-receipt.supply-chain.json",
+        "rehearsal-receipt.plan.json",
     ] {
         let path = root.join(name);
         if !path.is_file() {
@@ -40,3 +44,6 @@ pub(crate) fn validate_readiness_snapshot_fixture_corpus(violations: &mut Vec<St
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod identity_tests;

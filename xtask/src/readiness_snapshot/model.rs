@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 pub(crate) const SNAPSHOT_SCHEMA_VERSION: &str = "0.1";
 pub(crate) const SNAPSHOT_KIND: &str = "readiness_evidence_snapshot";
 pub(crate) const REHEARSAL_RECEIPT_SCHEMA_VERSION: &str = "1.0";
+pub(crate) const REHEARSAL_PLAN_SCHEMA_VERSION: &str = "1.1";
 pub(crate) const REHEARSAL_RECEIPT_KIND: &str = "readiness_no_publish_rehearsal_receipt";
 
 pub(crate) const NON_CLAIMS: [&str; 4] = [
@@ -179,6 +180,8 @@ pub(crate) struct RehearsalReceipt {
     pub(crate) source_sha: String,
     pub(crate) tree_clean: bool,
     pub(crate) identity: RehearsalIdentity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) plan: Option<RehearsalPlan>,
     #[serde(default)]
     pub(crate) crate_package: Option<RehearsalComponent>,
     #[serde(default)]
@@ -201,6 +204,29 @@ pub(crate) struct RehearsalReceipt {
     pub(crate) non_claims: Vec<String>,
     #[serde(default)]
     pub(crate) published_channels: Vec<String>,
+}
+
+/// Schema 1.1 is planning evidence only. Execution/fan-in remains owned by #4850.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RehearsalPlan {
+    pub(crate) source_tree: String,
+    pub(crate) host_os: String,
+    pub(crate) host_arch: String,
+    pub(crate) profile: String,
+    pub(crate) reads: Vec<String>,
+    pub(crate) writes: Vec<String>,
+    pub(crate) cache_roots: Vec<String>,
+    pub(crate) tools: Vec<String>,
+    pub(crate) prohibited_operations: Vec<String>,
+    pub(crate) tags_created: Vec<String>,
+    pub(crate) versions_changed: bool,
+    pub(crate) candidate_frozen: bool,
+    pub(crate) release_cut: bool,
+    pub(crate) release_authority: bool,
+    pub(crate) signing_performed: bool,
+    pub(crate) credentials_accessed: bool,
+    pub(crate) deployments_performed: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

@@ -38,6 +38,158 @@ fn fixture_receipt(name: &str) -> Result<RehearsalReceipt, String> {
     parse_rehearsal_receipt(&text)
 }
 
+#[test]
+fn rehearsal_plan_round_trip_is_deterministic_and_legacy_stays_compatible() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
+    let legacy = fixture_receipt("rehearsal-receipt.complete.json")?;
+    assert!(legacy.plan.is_none());
+    assert!(
+        !serde_json::to_value(&legacy)
+            .map_err(|e| e.to_string())?
+            .as_object()
+            .ok_or("receipt is not object")?
+            .contains_key("plan")
+    );
+    let inputs = IdentityInputs {
+        cargo_lock_digest: Some(legacy.identity.cargo_lock_digest.clone()),
+        package_lock_digest: legacy.identity.package_lock_digest.clone(),
+        rust_toolchain_digest: Some(legacy.identity.rust_toolchain_digest.clone()),
+        crate_version: Some(legacy.identity.crate_version.clone()),
+        extension_version: legacy.identity.extension_version.clone(),
+    };
+    let make = || {
+        super::rehearsal_plan::plan_receipt(
+            legacy.source_sha.clone(),
+            "1".repeat(40),
+            inputs.clone(),
+            "linux",
+            "x86_64",
+        )
+    };
+    let first = make()?;
+    assert_eq!(first, make()?);
+    let encoded = serde_json::to_string(&first).map_err(|e| e.to_string())?;
+    assert_eq!(parse_rehearsal_receipt(&encoded)?, first);
+    assert_eq!(
+        super::build::package_dimension_state(&first),
+        ReadinessDimensionState::NotProven
+    );
+    Ok(())
+}
+
+#[test]
+fn rehearsal_plan_rejects_mutation_execution_and_unknown_metadata() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
+    let text =
+        fs::read_to_string(fixture("rehearsal-receipt.plan.json")).map_err(|e| e.to_string())?;
+    let original: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    parse_rehearsal_receipt(&text)?;
+    let mut cases = Vec::new();
+    for field in [
+        "versions_changed",
+        "candidate_frozen",
+        "release_cut",
+        "release_authority",
+        "signing_performed",
+        "credentials_accessed",
+        "deployments_performed",
+    ] {
+        let mut bad = original.clone();
+        bad["plan"][field] = serde_json::json!(true);
+        cases.push(bad);
+    }
+    for field in ["tags_created", "writes", "cache_roots"] {
+        let mut bad = original.clone();
+        bad["plan"][field] = serde_json::json!(["unexpected"]);
+        cases.push(bad);
+    }
+    for field in ["reads", "tools", "prohibited_operations"] {
+        for value in [serde_json::json!([]), serde_json::json!([""])] {
+            let mut bad = original.clone();
+            bad["plan"][field] = value;
+            cases.push(bad);
+        }
+    }
+    for (field, value) in [
+        ("profile", serde_json::json!("executed")),
+        ("source_tree", serde_json::json!("wrong")),
+        ("host_os", serde_json::json!("")),
+        ("host_arch", serde_json::json!("")),
+        ("unknown", serde_json::json!(false)),
+    ] {
+        let mut bad = original.clone();
+        bad["plan"][field] = value;
+        cases.push(bad);
+    }
+    for (field, value) in [
+        ("schema_version", serde_json::json!("1.0")),
+        ("schema_version", serde_json::json!("2.0")),
+        ("published_channels", serde_json::json!(["crate"])),
+        ("plan", serde_json::Value::Null),
+        ("tree_clean", serde_json::json!(false)),
+        ("unknown", serde_json::json!(false)),
+    ] {
+        let mut bad = original.clone();
+        bad[field] = value;
+        cases.push(bad);
+    }
+    for slot in [
+        "crate_package",
+        "installed_binary",
+        "vsix",
+        "dependency_policy",
+        "sbom",
+        "provenance_plan",
+    ] {
+        let mut bad = original.clone();
+        bad[slot]["status"] = serde_json::json!("pass");
+        cases.push(bad);
+        let mut bad = original.clone();
+        bad[slot]["sha256"] = serde_json::json!("invented");
+        cases.push(bad);
+    }
+    for bad in cases {
+        assert!(
+            parse_rehearsal_receipt(&bad.to_string()).is_err(),
+            "accepted {bad}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn rehearsal_plan_cannot_satisfy_snapshot_readiness() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
+    let (path, head) = head_bound_receipt_fixture("rehearsal-receipt.plan.json")?;
+    let snapshot = build_snapshot(&BuildInput {
+        root: &repo_root(),
+        sha: &head,
+        rehearsal_receipt: Some(&path),
+    });
+    fs::remove_file(&path).map_err(|e| e.to_string())?;
+    let snapshot = snapshot?;
+    for id in [
+        ReadinessDimensionId::ToolchainReproducibility,
+        ReadinessDimensionId::PackageAndInstallability,
+    ] {
+        assert_eq!(
+            dimension(&snapshot, id)?.state,
+            ReadinessDimensionState::NotProven
+        );
+    }
+    let mut forged = fixture_receipt("rehearsal-receipt.plan.json")?;
+    forged.crate_package = Some(RehearsalComponent {
+        status: "pass".to_string(),
+        sha256: Some("invented".to_string()),
+        limitation: None,
+    });
+    assert_eq!(
+        super::build::package_dimension_state(&forged),
+        ReadinessDimensionState::NotProven
+    );
+    Ok(())
+}
+
 fn rehearsal_identity_from_inputs(inputs: &IdentityInputs) -> Result<RehearsalIdentity, String> {
     Ok(RehearsalIdentity {
         cargo_lock_digest: inputs
@@ -78,6 +230,7 @@ fn head_bound_receipt_fixture(name: &str) -> Result<(PathBuf, String), String> {
 
 #[test]
 fn readiness_snapshot_artifacts_populates_only_proven_dimensions() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let root = repo_root();
     let (receipt_path, head) = head_bound_receipt_fixture("rehearsal-receipt.complete.json")?;
     let snapshot = build_snapshot(&BuildInput {
@@ -103,6 +256,7 @@ fn readiness_snapshot_artifacts_populates_only_proven_dimensions() -> Result<(),
 
 #[test]
 fn readiness_snapshot_artifacts_rejects_mixed_source_receipt() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let root = repo_root();
     let subject = super::identity::git_rev_parse("HEAD")?;
     let snapshot = build_snapshot(&BuildInput {
@@ -130,6 +284,7 @@ fn readiness_snapshot_artifacts_rejects_mixed_source_receipt() -> Result<(), Str
 
 #[test]
 fn readiness_snapshot_artifacts_fail_closed_on_missing_digest() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let mut receipt: RehearsalReceipt = serde_json::from_str(
         &fs::read_to_string(fixture("rehearsal-receipt.complete.json"))
             .map_err(|err| format!("read complete fixture: {err}"))?,
@@ -160,6 +315,7 @@ fn readiness_snapshot_artifacts_fail_closed_on_missing_digest() -> Result<(), St
 
 #[test]
 fn readiness_snapshot_artifacts_keeps_supply_chain_records_distinct() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let root = repo_root();
     let (receipt_path, head) = head_bound_receipt_fixture("rehearsal-receipt.supply-chain.json")?;
     let snapshot = build_snapshot(&BuildInput {
@@ -190,6 +346,7 @@ fn readiness_snapshot_artifacts_keeps_supply_chain_records_distinct() -> Result<
 
 #[test]
 fn readiness_snapshot_artifacts_partial_package_receipt_is_limited() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let mut receipt: RehearsalReceipt = serde_json::from_str(
         &fs::read_to_string(fixture("rehearsal-receipt.complete.json"))
             .map_err(|err| format!("read complete fixture: {err}"))?,
@@ -206,6 +363,7 @@ fn readiness_snapshot_artifacts_partial_package_receipt_is_limited() -> Result<(
 
 #[test]
 fn readiness_snapshot_json_and_markdown_agree() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let root = repo_root();
     let (receipt_path, head) = head_bound_receipt_fixture("rehearsal-receipt.complete.json")?;
     let snapshot = build_snapshot(&BuildInput {
@@ -229,6 +387,7 @@ fn readiness_snapshot_json_and_markdown_agree() -> Result<(), String> {
 
 #[test]
 fn readiness_snapshot_semantic_identity_ignores_generated_at() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let root = repo_root();
     let mut snapshot = build_snapshot(&BuildInput {
         root: &root,
@@ -247,6 +406,7 @@ fn readiness_snapshot_semantic_identity_ignores_generated_at() -> Result<(), Str
 
 #[test]
 fn readiness_snapshot_fixture_receipt_matches_current_identity_or_skips() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let root = repo_root();
     let path = fixture("rehearsal-receipt.complete.json");
     if !path.is_file() {
