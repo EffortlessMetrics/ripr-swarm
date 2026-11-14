@@ -180,6 +180,18 @@ pub(crate) fn probes_for_file_with_relations(
             skip_removed[removed_index] = true;
         }
     }
+    // #14428: a `match` rewritten as `let ... else` (clippy
+    // `manual_let_else`) keeps its diverging statement. The removed
+    // `None => return R,` arm and the added `return R;` are the same
+    // statement when the scrutinee pairs, so neither seeds a probe.
+    for (new_side_line, old_line) in changed.let_else_diverging_pairs() {
+        if let (Some(&added_index), Some(&removed_index)) =
+            (added_at.get(&new_side_line), removed_at.get(&old_line))
+        {
+            skip_added[added_index] = true;
+            skip_removed[removed_index] = true;
+        }
+    }
     for (new_side_lines, removed) in changed.uneven_replacement_blocks() {
         let added_indexes = new_side_lines
             .iter()
@@ -3797,6 +3809,257 @@ mod tests {
         assert!(
             probes.iter().any(|probe| probe.expression == same),
             "{probes:?}"
+        );
+    }
+
+    /// #14428: a `match` rewritten as `let ... else` (clippy
+    /// `manual_let_else`) keeps its diverging statement, so the removed
+    /// `None => return R,` arm and the added `return R;` pair and seed no
+    /// probe. A changed scrutinee or a changed return value keeps both.
+    #[test]
+    fn a_manual_let_else_rewrite_pairs_its_diverging_statement() {
+        let line = |line: usize, new_side_line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line,
+            text: text.to_string(),
+        };
+        let changed = |added: Vec<ChangedLine>, removed: Vec<ChangedLine>| ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: added,
+            removed_lines: removed,
+        };
+        let rewritten = changed(
+            vec![
+                line(20, 20, "let Some(rhs) = rhs.next() else {"),
+                line(24, 24, "return Ordering::Greater;"),
+            ],
+            vec![
+                line(20, 20, "let rhs = match rhs.next() {"),
+                line(24, 24, "None => return Ordering::Greater,"),
+                line(25, 24, "Some(rhs) => rhs,"),
+            ],
+        );
+        assert_eq!(rewritten.let_else_diverging_pairs(), vec![(24, 24)]);
+        let probes = probes_for_file(Path::new("workspace"), &rewritten, &RustIndex::default());
+        assert!(
+            probes
+                .iter()
+                .all(|probe| !probe.expression.contains("return Ordering::Greater")),
+            "the paired diverging statement must not seed a probe: {probes:?}"
+        );
+        let changed_scrutinee = changed(
+            vec![
+                line(20, 20, "let Some(rhs) = other.next() else {"),
+                line(24, 24, "return Ordering::Greater;"),
+            ],
+            vec![
+                line(20, 20, "let rhs = match rhs.next() {"),
+                line(24, 24, "None => return Ordering::Greater,"),
+                line(25, 24, "Some(rhs) => rhs,"),
+            ],
+        );
+        assert!(changed_scrutinee.let_else_diverging_pairs().is_empty());
+        let changed_value = changed(
+            vec![
+                line(20, 20, "let Some(rhs) = rhs.next() else {"),
+                line(24, 24, "return Ordering::Less;"),
+            ],
+            vec![
+                line(20, 20, "let rhs = match rhs.next() {"),
+                line(24, 24, "None => return Ordering::Greater,"),
+                line(25, 24, "Some(rhs) => rhs,"),
+            ],
+        );
+        assert!(changed_value.let_else_diverging_pairs().is_empty());
+        let probes = probes_for_file(
+            Path::new("workspace"),
+            &changed_value,
+            &RustIndex::default(),
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.expression.contains("return Ordering::Less")),
+            "a changed diverging statement keeps its probe: {probes:?}"
+        );
+    }
+
+    /// #14428 fail-closed: a repeated diverging statement, a multi-line arm,
+    /// or a second statement in the `else` block never pairs by guess.
+    #[test]
+    fn manual_let_else_pairing_is_fail_closed() {
+        let line = |line: usize, new_side_line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line,
+            text: text.to_string(),
+        };
+        let changed = |added: Vec<ChangedLine>, removed: Vec<ChangedLine>| ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: added,
+            removed_lines: removed,
+        };
+        let repeated = changed(
+            vec![
+                line(20, 20, "let Some(rhs) = rhs.next() else {"),
+                line(24, 24, "return Ordering::Greater;"),
+            ],
+            vec![
+                line(20, 20, "let rhs = match rhs.next() {"),
+                line(24, 24, "None => return Ordering::Greater,"),
+                line(25, 24, "None => return Ordering::Greater,"),
+            ],
+        );
+        assert!(repeated.let_else_diverging_pairs().is_empty());
+        let block_arm = changed(
+            vec![
+                line(20, 20, "let Some(rhs) = rhs.next() else {"),
+                line(24, 24, "return Ordering::Greater;"),
+            ],
+            vec![
+                line(20, 20, "let rhs = match rhs.next() {"),
+                line(24, 24, "None => {"),
+                line(25, 24, "return Ordering::Greater;"),
+                line(26, 24, "}"),
+            ],
+        );
+        assert!(block_arm.let_else_diverging_pairs().is_empty());
+        let second_statement = changed(
+            vec![
+                line(20, 20, "let Some(rhs) = rhs.next() else {"),
+                line(21, 21, "log();"),
+                line(24, 24, "return Ordering::Greater;"),
+            ],
+            vec![
+                line(20, 20, "let rhs = match rhs.next() {"),
+                line(24, 24, "None => return Ordering::Greater,"),
+            ],
+        );
+        assert!(second_statement.let_else_diverging_pairs().is_empty());
+    }
+
+    /// A reversed `let None = ... else` pattern diverges on the opposite
+    /// variant, so it must not pair with a removed `None => return R,` arm.
+    #[test]
+    fn a_reversed_let_else_pattern_never_pairs() {
+        let line = |line: usize, new_side_line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line,
+            text: text.to_string(),
+        };
+        let changed = |added: Vec<ChangedLine>, removed: Vec<ChangedLine>| ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: added,
+            removed_lines: removed,
+        };
+        let reversed = changed(
+            vec![
+                line(20, 20, "let None = rhs.next() else {"),
+                line(24, 24, "return Ordering::Greater;"),
+            ],
+            vec![
+                line(20, 20, "let rhs = match rhs.next() {"),
+                line(24, 24, "None => return Ordering::Greater,"),
+                line(25, 24, "Some(rhs) => rhs,"),
+            ],
+        );
+        assert!(
+            reversed.let_else_diverging_pairs().is_empty(),
+            "reversed pattern paired: {:?}",
+            reversed.let_else_diverging_pairs()
+        );
+    }
+
+    /// A removed arm in one function must not pair with an added
+    /// `let ... else` in a neighbouring function.
+    #[test]
+    fn a_neighbouring_functions_arm_never_pairs() {
+        let line = |line: usize, new_side_line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line,
+            text: text.to_string(),
+        };
+        let changed = |added: Vec<ChangedLine>, removed: Vec<ChangedLine>| ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: added,
+            removed_lines: removed,
+        };
+        let cross = changed(
+            vec![
+                line(30, 23, "let Some(v) = option else {"),
+                line(31, 24, "return 0;"),
+            ],
+            vec![
+                line(10, 20, "let x = match option {"),
+                line(12, 20, "None => return 0,"),
+            ],
+        );
+        assert!(
+            cross.let_else_diverging_pairs().is_empty(),
+            "cross-function paired: {:?}",
+            cross.let_else_diverging_pairs()
+        );
+    }
+
+    /// ` = ` inside a string literal in the scrutinee must not defeat
+    /// pairing.
+    #[test]
+    fn a_scrutinee_with_an_equals_sign_still_pairs() {
+        let line = |line: usize, new_side_line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line,
+            text: text.to_string(),
+        };
+        let changed = |added: Vec<ChangedLine>, removed: Vec<ChangedLine>| ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: added,
+            removed_lines: removed,
+        };
+        let s = changed(
+            vec![
+                line(20, 20, "let Some(x) = lookup(\"a = b\") else {"),
+                line(24, 24, "return 0;"),
+            ],
+            vec![
+                line(20, 20, "let x = match lookup(\"a = b\") {"),
+                line(24, 24, "None => return 0,"),
+            ],
+        );
+        assert_eq!(
+            s.let_else_diverging_pairs(),
+            vec![(24, 24)],
+            "string scrutinee lost the pair"
+        );
+    }
+
+    /// A pattern that itself holds ` = ` inside a string literal cannot be
+    /// split from the scrutinee by the first ` = `, so it fails closed
+    /// rather than pairing the wrong text.
+    #[test]
+    fn a_pattern_with_an_equals_sign_never_pairs() {
+        let line = |line: usize, new_side_line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line,
+            text: text.to_string(),
+        };
+        let changed = |added: Vec<ChangedLine>, removed: Vec<ChangedLine>| ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: added,
+            removed_lines: removed,
+        };
+        let s = changed(
+            vec![
+                line(20, 20, "let Some(\"a = b\") = lookup() else {"),
+                line(24, 24, "return 0;"),
+            ],
+            vec![
+                line(20, 20, "let x = match lookup() {"),
+                line(24, 24, "None => return 0,"),
+            ],
+        );
+        assert!(
+            s.let_else_diverging_pairs().is_empty(),
+            "pattern with ` = ` paired: {:?}",
+            s.let_else_diverging_pairs()
         );
     }
 
