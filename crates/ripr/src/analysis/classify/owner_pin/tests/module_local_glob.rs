@@ -355,3 +355,29 @@ fn review_macro_use_can_shadow_builtin_derive_in_ancestor() {
     let indexed = index(&[(LIB, lib), (SUITE, suite), (SUITE_TESTS, child)]);
     assert!(is_binding(&refusal_of(&indexed, SUITE_TESTS)));
 }
+
+/// #14116: std's `thread_local!` in the file does not turn the file's own
+/// module glob (`mod inner; use inner::*;`) into a foreign glob, so a test in
+/// that file keeps its `assert_eq!` credit. A non-std item macro still refuses.
+#[test]
+fn a_thread_local_beside_a_sibling_module_glob_keeps_the_test_credited() {
+    let tests = "\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn weighs() {\n        assert_eq!(weight(4), 12);\n    }\n}\n";
+    let body = "pub fn weight(x: u32) -> u32 {\n    x * 3 + helper()\n}\n";
+    for (item_macro, admitted) in [
+        ("thread_local! { static C: u8 = 0; }", true),
+        ("std::thread_local! { static C: u8 = 0; }", true),
+        ("dep::items! {}", false),
+    ] {
+        let suite = format!("mod inner;\nuse inner::*;\n{item_macro}\n{body}{tests}");
+        let index = index(&[
+            (LIB, "mod suite;\n"),
+            (SUITE, suite.as_str()),
+            ("src/suite/inner.rs", "pub fn helper() -> u32 {\n    0\n}\n"),
+        ]);
+        assert_eq!(
+            refusal_of(&index, SUITE).is_none(),
+            admitted,
+            "{item_macro}"
+        );
+    }
+}
