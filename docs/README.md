@@ -62,3 +62,4 @@ result means.
 - [Knowledge library](LIBRARY.md) — curated reusable learnings.
 - [PyPI and npm distribution plan](PYPI_NPM_DISTRIBUTION.md) — proposed package architecture, implementation issues and installed-use acceptance; not a release announcement.
 - [Claim package registries](how-to/claim-package-registries.md) — maintainer account, namespace, trusted-publisher and first-publication checklist.
+- [OSS Scanner preparation](security/oss-scanner/README.md) — maintainer enrollment prerequisites, security scope, offline qualification and report/patch guidance; not enrollment or scan completion.
