@@ -1210,7 +1210,13 @@ impl ClassifiedProbeEvidence {
                 && pin_syntax.admits(test, assertion, context.index)
                 && context.owner_fn.is_some_and(|owner| {
                     context.index.files().get(&test.file).is_some_and(|facts| {
-                        !use_may_rebind_owner(&facts.source, &owner.name, &owner.file, &test.file)
+                        !use_may_rebind_owner(
+                            &facts.source,
+                            &owner.name,
+                            &owner.file,
+                            owner.start_line,
+                            &test.file,
+                        )
                     })
                 })
         };

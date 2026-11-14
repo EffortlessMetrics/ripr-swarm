@@ -293,6 +293,7 @@ pub(in crate::analysis) fn use_may_rebind_owner(
     source: &str,
     owner: &str,
     owner_file: &std::path::Path,
+    owner_line: usize,
     test_file: &std::path::Path,
 ) -> bool {
     let Some(parse) = parse_clean_source_file_memoized(source) else {
@@ -300,6 +301,54 @@ pub(in crate::analysis) fn use_may_rebind_owner(
     };
     let root_owner = owner_file.ends_with("src/lib.rs") || owner_file.ends_with("src/main.rs");
     let same_file = owner_file == test_file;
+    let tree = parse.tree();
+    // `super::*` from the file's test module reaches the file-level items,
+    // so the owner (the `fn` of its name spanning `owner_line`) must be one:
+    // an owner in an inline module leaves a file-level namesake to be read.
+    let line_of = |offset: usize| {
+        source
+            .get(..offset)
+            .map_or(0, |head| head.matches('\n').count())
+            + 1
+    };
+    let owner_at_file_level = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| function.name().is_some_and(|name| name.text() == owner))
+        .any(|function| {
+            let range = function.syntax().text_range();
+            line_of(usize::from(range.start())) <= owner_line
+                && owner_line <= line_of(usize::from(range.end()))
+                && function
+                    .syntax()
+                    .ancestors()
+                    .filter_map(ast::Module::cast)
+                    .all(|module| module.item_list().is_none())
+        });
+    // A first segment the file itself binds (`use super::rival;`,
+    // `mod rival`) is a local module, not the owner's crate.
+    let locally_bound = |first: &str| {
+        tree.syntax().descendants().any(|node| {
+            ast::Module::cast(node.clone())
+                .and_then(|module| module.name())
+                .is_some_and(|name| name.text() == first)
+                || ast::UseTree::cast(node).is_some_and(|tree| {
+                    tree.use_tree_list().is_none()
+                        && tree.star_token().is_none()
+                        && tree
+                            .rename()
+                            .and_then(|rename| rename.name())
+                            .map(|name| name.text().to_string())
+                            .or_else(|| {
+                                tree.path()
+                                    .and_then(|path| path.segment())
+                                    .map(|segment| segment.syntax().text().to_string())
+                            })
+                            .is_some_and(|bound| bound == first)
+                })
+        })
+    };
     let segments = |tree: &ast::UseTree| -> Vec<String> {
         let mut segments = Vec::new();
         let mut node = Some(tree.clone());
@@ -321,9 +370,7 @@ pub(in crate::analysis) fn use_may_rebind_owner(
         }
         segments
     };
-    parse
-        .tree()
-        .syntax()
+    tree.syntax()
         .descendants()
         .filter_map(ast::UseTree::cast)
         .filter(|tree| tree.use_tree_list().is_none())
@@ -362,10 +409,21 @@ pub(in crate::analysis) fn use_may_rebind_owner(
                     _ => false,
                 };
                 let rest = path.len() - supers - selfs;
-                return !same_file || !names_file_module || rest != usize::from(!glob);
+                return !same_file
+                    || !owner_at_file_level
+                    || !names_file_module
+                    || rest != usize::from(!glob);
             }
+            if path
+                .first()
+                .is_some_and(|first| first != "crate" && locally_bound(first))
+            {
+                return true;
+            }
+            // A crate-root glob (`use crate::*;`, `use demo::*;`) reaches the
+            // owner only when the owner is at the crate root.
             if glob {
-                return path.len() > 1;
+                return path.len() > 1 || !root_owner;
             }
             !root_owner || path.len() != 2
         })
@@ -1108,8 +1166,8 @@ mod tests {
         let nested = std::path::Path::new("src/opts.rs");
         let deeper = std::path::Path::new("src/a/b.rs");
         for source in [
-            "mod tests {\n use super::*;\n fn t() {}\n}",
-            "mod tests {\n use super::opts;\n fn t() {}\n}",
+            "fn opts() {}\nmod tests {\n use super::*;\n fn t() {}\n}",
+            "fn opts() {}\nmod tests {\n use super::opts;\n fn t() {}\n}",
             "use crate::opts;\nfn t() {}",
             "use demo::opts;\nfn t() {}",
             "use demo::{opts, Opts};\nfn t() {}",
@@ -1117,7 +1175,7 @@ mod tests {
             "use crate::rival::other;\nfn t() {}",
         ] {
             assert!(
-                !use_may_rebind_owner(source, "opts", root, root),
+                !use_may_rebind_owner(source, "opts", root, 1, root),
                 "{source}"
             );
         }
@@ -1129,16 +1187,41 @@ mod tests {
             "use crate::make as opts;\nfn t() {}",
             "fn t() { use crate::rival::opts; }",
         ] {
-            assert!(use_may_rebind_owner(source, "opts", root, root), "{source}");
+            assert!(
+                use_may_rebind_owner(source, "opts", root, 1, root),
+                "{source}"
+            );
         }
         assert!(use_may_rebind_owner(
             "use crate::opts;",
             "opts",
             nested,
+            1,
             nested
         ));
-        let inline = "mod tests {\n use super::*;\n fn t() {}\n}";
-        assert!(!use_may_rebind_owner(inline, "opts", nested, nested));
+        // A crate-root glob reaches a rival when the owner is not at the root.
+        assert!(use_may_rebind_owner(
+            "use crate::*;",
+            "opts",
+            nested,
+            1,
+            root
+        ));
+        assert!(use_may_rebind_owner(
+            "use demo::*;",
+            "opts",
+            nested,
+            1,
+            root
+        ));
+        let inline = "fn opts() {}\nmod tests {\n use super::*;\n fn t() {}\n}";
+        assert!(!use_may_rebind_owner(inline, "opts", nested, 1, nested));
+        // The owner in an inline module: `super::*` reads the file-level
+        // namesake instead.
+        let rival =
+            "fn opts() {}\nmod inner {\n pub fn opts() {}\n}\nmod tests {\n use super::*;\n}";
+        assert!(use_may_rebind_owner(rival, "opts", nested, 3, nested));
+        assert!(!use_may_rebind_owner(rival, "opts", nested, 1, nested));
         // `super` names a module this reader can place only in the owner's
         // own file, and only at the depth of the `use`: from a test file
         // elsewhere (`crate::a::b`) or from a nested inline module it names
@@ -1153,9 +1236,15 @@ mod tests {
             ("mod outer {\n mod tests {\n  use super::opts;\n }\n}", root),
             ("mod tests {\n use self::opts;\n}", root),
             ("mod tests {\n use super::super::*;\n}", root),
+            // A local module named like a crate.
+            (
+                "mod tests {\n use super::rival;\n use rival::opts;\n}",
+                root,
+            ),
+            ("mod rival {}\nuse rival::opts;", root),
         ] {
             assert!(
-                use_may_rebind_owner(source, "opts", root, test_file),
+                use_may_rebind_owner(source, "opts", root, 1, test_file),
                 "{source} in {test_file:?}"
             );
         }

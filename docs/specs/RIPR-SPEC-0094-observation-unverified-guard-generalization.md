@@ -907,7 +907,11 @@ not in `src/lib.rs` or `src/main.rs`. A `self`- or `super`-rooted import
 and only when its `super` count equals the inline `mod` depth of the `use`, so
 it names the owner's module (`mod tests { use super::*; }`); in another file,
 or from a deeper inline module, it may name a parent module with a rival of the
-same name. A followed `let` must be immutable and its initializer write-free (no
+same name, and an owner inside an inline module refuses it (`super::*` then
+reads a file-level namesake). A
+crate-root glob (`use crate::*;`) refuses unless the owner is at the crate root,
+and a first segment the file binds itself (`mod rival`, `use super::rival;`) is
+a local module, so `use rival::opts;` refuses. A followed `let` must be immutable and its initializer write-free (no
 mutable borrow, however spaced, `as_mut` or `*_mut(..)`), the test may neither
 assign through its name (`o.big = true`, `*o = ..`) nor take a mutable borrow
 of it (`let alias = &mut *o;`), and no other pattern in the test
