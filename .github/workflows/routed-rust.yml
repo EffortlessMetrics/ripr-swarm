@@ -62,6 +62,7 @@ jobs:
         id: route
         env:
           GH_TOKEN: ${{ secrets.EM_RUNNER_READ_TOKEN || github.token }}
+          PR_READ_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || '' }}
           GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
@@ -97,7 +98,7 @@ jobs:
             # A queued PR is built from the base repository's queue branch, so a
             # fork-authored PR is only visible through the PR itself.
             [[ "$GROUP_HEAD_REF" =~ /pr-([0-9]+)-[0-9a-f]{40}$ ]] || HEAD_REPO="unresolved"
-            [ "$HEAD_REPO" = "unresolved" ] || HEAD_REPO="$(gh api "repos/${REPOSITORY}/pulls/${BASH_REMATCH[1]}" --jq '.head.repo.full_name // "unresolved"' 2>/dev/null || echo unresolved)"
+            [ "$HEAD_REPO" = "unresolved" ] || HEAD_REPO="$(GH_TOKEN="$PR_READ_TOKEN" gh api "repos/${REPOSITORY}/pulls/${BASH_REMATCH[1]}" --jq '.head.repo.full_name // "unresolved"' 2>/dev/null || echo unresolved)"
           fi
           if { [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; } && [ "$HEAD_REPO" != "$REPOSITORY" ]; then
             reason=fork_or_untrusted_pr runner_query=skipped_untrusted_pr
@@ -380,7 +381,7 @@ jobs:
       # request time so a missing attestation does not cost a full test run; the
       # Result job repeats the read from the same trusted bundle after the tests.
       - name: Require source review disposition at request time
-        if: github.event_name == 'pull_request' && steps.candidate.outputs.status == 'admitted'
+        if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && steps.candidate.outputs.status == 'admitted'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -395,7 +396,7 @@ jobs:
       # instead, naming the threads. A read failure is only a warning: the final
       # recheck remains the authority and fails closed on its own.
       - name: Refuse unresolved review threads at request time
-        if: github.event_name == 'pull_request' && steps.candidate.outputs.status == 'admitted'
+        if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && steps.candidate.outputs.status == 'admitted'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
