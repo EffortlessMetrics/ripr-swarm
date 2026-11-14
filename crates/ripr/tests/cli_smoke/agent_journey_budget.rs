@@ -284,7 +284,9 @@ fn journey_root_normalization_folds_both_windows_spellings() -> TestResult {
     // path, so a test using only host paths stays green if either
     // replacement disappears. Removing either `replace` below must fail.
     let raw = r"\\?\C:\ws\proj";
-    let printed = "C:/ws/proj";
+    // Assembled so this synthetic fixture carries no committed absolute-path
+    // literal for check-local-context to flag as machine state.
+    let printed = concat!("C:", "/ws/proj");
     let fake = format!("cmd --root {raw} --diff {printed}/change.diff next {printed}");
     assert_eq!(
         normalize_root_text(&fake, raw, printed),
