@@ -86,7 +86,15 @@ jobs:
           mkdir -p "$RUNNER_TEMP/macos-advisory"
           set +e
           cargo clippy -p ripr -p xtask --all-targets -- -D warnings 2>&1 | tee "$RUNNER_TEMP/macos-advisory/clippy.log"
-          echo "${PIPESTATUS[0]}" > "$RUNNER_TEMP/macos-advisory/clippy.status"
+          pipe_status=("${PIPESTATUS[@]}")
+          printf '%s\n' "${pipe_status[0]}" > "$RUNNER_TEMP/macos-advisory/clippy.status" || {
+            echo "::error::clippy evidence status write failed" >&2
+            exit 1
+          }
+          if [ "${pipe_status[1]}" -ne 0 ]; then
+            echo "::error::clippy evidence capture failed: tee exited ${pipe_status[1]}" >&2
+            exit 1
+          fi
           exit 0
 
       - name: Prepare locked JSON owner-return fixture dependencies
@@ -100,7 +108,15 @@ jobs:
         run: |
           set +e
           cargo test -p ripr --lib --no-fail-fast 2>&1 | tee "$RUNNER_TEMP/macos-advisory/lib-tests.log"
-          echo "${PIPESTATUS[0]}" > "$RUNNER_TEMP/macos-advisory/lib-tests.status"
+          pipe_status=("${PIPESTATUS[@]}")
+          printf '%s\n' "${pipe_status[0]}" > "$RUNNER_TEMP/macos-advisory/lib-tests.status" || {
+            echo "::error::lib-tests evidence status write failed" >&2
+            exit 1
+          }
+          if [ "${pipe_status[1]}" -ne 0 ]; then
+            echo "::error::lib-tests evidence capture failed: tee exited ${pipe_status[1]}" >&2
+            exit 1
+          fi
           exit 0
 
       - name: Summarize and enforce evidence
