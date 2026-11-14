@@ -229,6 +229,19 @@ fn shared_reader_and_writer_name_a_directory_without_the_host_errno() -> Result<
         &["swarm", "queue", "--gap-ledger", "art/adir"],
         "swarm queue --gap-ledger art/adir is invalid: is a directory, not a file; pass the path of a file",
     );
+    let packet = assert_refusal(
+        &dir,
+        &[
+            "agent",
+            "packet",
+            "--gap-ledger",
+            "art/adir",
+            "--gap-id",
+            "g1",
+            "--json",
+        ],
+        "agent packet --gap-ledger art/adir is invalid: is a directory, not a file; pass the path of a file",
+    );
     let write = assert_refusal(
         &dir,
         &["feedback", "export", "--out", "art/adir"],
@@ -237,6 +250,7 @@ fn shared_reader_and_writer_name_a_directory_without_the_host_errno() -> Result<
     let _ = fs::remove_dir_all(&dir);
     context?;
     queue?;
+    packet?;
     write
 }
 
@@ -257,8 +271,44 @@ fn context_from_a_missing_artifact_names_the_command_that_writes_it() -> Result<
         ],
         "check artifact at art/none.json could not be read: not found; write it with `ripr check --write-artifact art/none.json` using this run's root, scope (--diff or --base) and analysis options, then rerun",
     );
+    // Following the advice with this run's scope produces an artifact the
+    // same `context --from` call accepts: the retry gets past the artifact
+    // read and identity check to the finding lookup.
+    let recovered = (|| -> Result<(), String> {
+        let written = run(
+            &dir,
+            &[
+                "check",
+                "--diff",
+                "art/empty.diff",
+                "--write-artifact",
+                "art/none.json",
+            ],
+        )?;
+        if written.status.code() != Some(0) {
+            return Err(format!("check --write-artifact: {written:?}"));
+        }
+        let retry = run(
+            &dir,
+            &[
+                "context",
+                "--diff",
+                "art/empty.diff",
+                "--from",
+                "art/none.json",
+                "--at",
+                "src/lib.rs:1",
+            ],
+        )?;
+        let stderr = String::from_utf8_lossy(&retry.stderr);
+        if stderr.contains("check artifact at") || !stderr.contains("no finding matched") {
+            return Err(format!("retry did not reuse the artifact: {stderr}"));
+        }
+        Ok(())
+    })();
     let _ = fs::remove_dir_all(&dir);
-    result
+    result?;
+    recovered
 }
 
 #[test]
