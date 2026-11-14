@@ -33,6 +33,19 @@ use crate::analysis::classifier::oracle_binds_sink_identity;
 use crate::analysis::extract::{group_end, mask_comments_and_strings};
 use crate::domain::*;
 
+/// #14562 / #14701: the owner's source line at a predicate or
+/// field_construction probe on a record the owner returns, with the
+/// admission a bare `assert!` field pin of it must pass.
+#[derive(Clone, Copy)]
+pub(in crate::analysis) struct RecordFieldLine<'a> {
+    pub(in crate::analysis) line: &'a str,
+    /// The shared execution and macro-binding admission (a dead, shadowed
+    /// or `should_panic` assertion pins nothing). The classifier's family
+    /// gate does not apply it to a bare `assert!` for these families, so
+    /// the field pin asks for it itself.
+    pub(in crate::analysis) pin_admitted: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+}
+
 /// Shared oracle provenance at the reveal admission boundary. The same
 /// execution/macro decision also gates predicate boundary pairing; it applies
 /// before token, strength, observation, or owner-pin confirmation.
@@ -151,7 +164,7 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// #14562: the owner's source line at a predicate or field_construction
     /// probe (`big: n >= 10,`), set only when the owner returns a plain named
     /// record it builds (`owner_returns_record`); `None` otherwise.
-    pub(in crate::analysis) record_field_line: Option<&'a str>,
+    pub(in crate::analysis) record_field_line: Option<RecordFieldLine<'a>>,
     /// #8051: whether the owner body before the changed expression may
     /// leave early (`if self.locked { return; }`, `?`, a panicking call),
     /// including a guard sharing the changed line. Only then can a test
@@ -2494,7 +2507,7 @@ fn analyze_related_assertions(
         .then(|| {
             return_admission
                 .record_field_line
-                .and_then(|line| predicate_initialized_field(line, &probe.expression))
+                .and_then(|record| predicate_initialized_field(record.line, &probe.expression))
         })
         .flatten();
     // #14701: the field of the owner's returned record this probe sets.
@@ -3251,6 +3264,9 @@ fn analyze_related_assertions(
                 // `relational_check`, only its strength relative to this
                 // probe rises, as the RIPR-SPEC-0197 bool owner pin's does.
                 let bool_field_pin = matches!(assertion.kind, OracleKind::RelationalCheck)
+                    && return_admission
+                        .record_field_line
+                        .is_some_and(|record| (record.pin_admitted)(test, assertion))
                     && record_field.is_some_and(|field| {
                         match_context.owner_callee.is_some_and(|owner| {
                             bool_field_assertion(test, &assertion.text, owner, field)

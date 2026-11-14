@@ -892,6 +892,16 @@ field rule, whose line sets field `name` of a record the owner returns
   a once-bound plain `let` of it, or the record-keeping methods (`clone`,
   `unwrap`, `as_ref`, ...).
 
+Because this reading grants credit, it is stricter than the #14562 masking
+reader. The owner call must be the unqualified free call `owner(..)`; a path
+(`rival::opts(..)`, `crate::opts(..)`), a turbofish, or a method of the same
+name may be another function and does not pin. A followed `let` must be
+immutable, since a `mut` local can be overwritten (`o.big = true`) before the
+read. The assertion must also pass the shared execution and macro-binding
+admission (`OwnerPinSyntax::admits`), outside a `should_panic` test. The
+family gate does not apply that admission to a bare `assert!` for these
+probe families, so a shadowed `assert!` or one after `return` pins nothing.
+
 Its kind stays `relational_check`. Only its strength relative to the probe
 rises to strong, as the RIPR-SPEC-0197 bool owner pin's does. The same pin
 satisfies the predicate's same-test boundary pairing. The usual caps still

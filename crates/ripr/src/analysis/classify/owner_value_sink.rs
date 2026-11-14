@@ -185,6 +185,7 @@ pub(in crate::analysis) fn owner_field_value_flow(
         test,
         owner,
         kept_field,
+        credit: false,
     };
     let mut flow = OwnerValueFlow::Absent;
     for operand in &operands {
@@ -264,6 +265,7 @@ pub(in crate::analysis) fn bool_field_assertion(
         test,
         owner,
         kept_field: Some(field),
+        credit: true,
     };
     reader.inner(read.expr(), 0) == Sink::Record
 }
@@ -318,6 +320,12 @@ struct Reader<'a> {
     owner: &'a str,
     /// #14562: the one field of the owner's returned record the change sets.
     kept_field: Option<&'a str>,
+    /// #14701: the reading grants credit, not only a masking downgrade, so
+    /// the owner call must be the unqualified free call `owner(..)` (not
+    /// `rival::owner(..)` or `x.owner(..)`, which may name another
+    /// function) and a followed binding must be immutable (a `mut` local
+    /// may be overwritten, `o.big = true`, before the read).
+    credit: bool,
 }
 
 impl Reader<'_> {
@@ -509,6 +517,13 @@ impl Reader<'_> {
             return self.unfollowed(expr.syntax());
         };
         if name == self.owner {
+            let qualified_or_generic = callee.qualifier().is_some()
+                || callee
+                    .segment()
+                    .is_some_and(|segment| segment.generic_arg_list().is_some());
+            if self.credit && qualified_or_generic {
+                return Sink::Absent;
+            }
             return self.owner_value();
         }
         let arguments = call
@@ -549,6 +564,9 @@ impl Reader<'_> {
             return self.unfollowed(expr.syntax());
         };
         if name == self.owner {
+            if self.credit {
+                return Sink::Absent;
+            }
             return self.owner_value();
         }
         let receiver = self.inner(call.receiver(), depth);
@@ -741,6 +759,15 @@ impl Reader<'_> {
         let (Some(statement), None) = (initializers.next(), initializers.next()) else {
             return Sink::Absent;
         };
+        if self.credit
+            && matches!(
+                statement.pat(),
+                Some(ast::Pat::IdentPat(pattern))
+                    if pattern.mut_token().is_some() || pattern.ref_token().is_some()
+            )
+        {
+            return Sink::Absent;
+        }
         if statement.let_else().is_some() {
             return self.unfollowed(statement.syntax());
         }
@@ -844,8 +871,21 @@ mod tests {
             "assert_eq!(over(10).big, true);",
             "assert!(matches!(over(10), Opts { big: true, .. }));",
             "my::assert!(over(10).big);",
+            // A namesake path or a method of the same name may be another
+            // function.
+            "assert!(rival::over(10).big);",
+            "assert!(crate::over(10).big);",
+            "assert!(over::<u8>(10).big);",
+            "assert!(cfg.over(10).big);",
         ] {
             assert!(!pins(assertion, assertion), "{assertion}");
+        }
+        // A `mut` or `ref` local may be overwritten before the read.
+        for body in [
+            "let mut o = over(10);\no.big = true;\nassert!(o.big);",
+            "let ref o = over(10);\nassert!(o.big);",
+        ] {
+            assert!(!pins(body, "assert!(o.big);"), "{body}");
         }
     }
 

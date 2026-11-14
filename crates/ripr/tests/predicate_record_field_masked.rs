@@ -164,6 +164,12 @@ fn a_bare_assert_on_anything_else_stays_weak() -> Result<(), String> {
         "assert!(opts(10).retries == 3);",
         "assert!(opts(10).big || opts(10).retries == 3);",
         "assert!(opts(10).summary() == 3);",
+        // A shadowed `assert!`, an unreachable one, a namesake path, and an
+        // overwritten `mut` local check nothing the change decides.
+        "let _ = opts(10);\n        macro_rules! assert { ($x:expr) => { let _ = $x; }; }\n        assert!(opts(10).big);",
+        "let _ = opts(10);\n        return;\n        assert!(opts(10).big);",
+        "let _ = opts(10);\n        assert!(rival::opts(10).big);",
+        "let mut o = opts(10);\n        o.big = true;\n        assert!(o.big);",
     ] {
         for family in ["predicate", "field_construction"] {
             let finding = finding(body, family)?;
