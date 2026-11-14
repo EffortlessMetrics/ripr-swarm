@@ -399,7 +399,15 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
   and are tracked separately: `exact_oracle_gap_next_step` on
   `missing_exact_assertion`, and the Rust oracle pass on
   `assertion_not_credited` when choosing the macro-wrapped-assertion limit
-  and its next step.
+  and its next step. Two ranking reads (#14454) order rows, never admit or
+  drop them: the agent `tK=` row (`strongest_test`) and the fix site
+  (`DiagnosticWitness::best_related_test`) demote a row whose miss is
+  `assertion_not_observing`. The fix site places it after every row that can
+  observe the change, and places a `no_call_path` row after it, because a
+  test with no call to the changed code reaches it least of all. The `tK=` row keeps relation confidence as its leading
+  key (#13603), so it places the row after every observing row of the same
+  confidence tier; a non-observing direct caller can still outrank an
+  observing row linked only by file location.
 - Row-owned support (#5564): the Rust annotation pass still computes boundary
   and exact-assertion presence once from the finding-wide
   `missing_discriminators` list and assigns `missing_input` or
@@ -458,6 +466,32 @@ written and must not copy these gaps.
   before; `assertion_not_observing` rows take only the slots left free, so no
   window, fix site, exact-oracle alignment or repair readiness changes.
   Fix-site selection (`DiagnosticWitness`) reads only oracle rows.
+- On an `Err`-to-`Err` variant swap (an `error_path` or `return_value`
+  probe whose paired base line and head line each hold exactly one `Err`
+  construction, with differing literal variants, and are otherwise identical
+  up to whitespace; unknown base text fails closed), a row the annotation pass marked `missing_exact_assertion`
+  whose oracle is a plain `assert_eq!` pinning only the `Ok` arm (an
+  `Ok(..)` side, or a direct `.unwrap()` / `.expect(..)` side; no text
+  naming `Err` and no `.err()`, `.unwrap_err()`, `.expect_err(..)` or
+  `.map_err(..)`; and the `Ok` side is the changed call's result: an
+  `Ok(..)` wrapping a call compared with a bare binding, or an unwrap of a
+  bare binding compared with a call, fails closed; an empty `()` argument
+  list is not read as a call, so a no-argument owner call in those shapes is
+  a known limit) becomes
+  `assertion_not_observing` with no `miss_support`
+  (#14454). Such a pin cannot separate one `Err` variant from another: if its
+  input reaches the changed branch it fails on old and new code alike, and if
+  not it never sees the change. A guard flip or an `Ok`-to-`Err` change is
+  not a swap, because an `Ok` pin can fail on the new code there. The row
+  keeps its role and oracle, so no class or gate changes, and the
+  exact-oracle next step never runs for a literal `Err` variant probe. The
+  `tK=` row and the fix site prefer a row that can observe the change (see
+  Current Rust conformance gaps). A changed struct field, an `assert_ne!`
+  and an `Err`-naming side keep `missing_exact_assertion`. Limits: the base
+  line comes from line pairing in the replacement block, so a guard rewritten
+  on an earlier line of the same block is not seen by this check (that guard
+  gets its own predicate finding), and a `#[should_panic(expected = ..)]` test
+  whose body unwraps is read as an `Ok` pin.
 - One prose owner, `output::related_test_miss`, renders the reason. The human
   digest appends it in parentheses after the related test; human-full prints
   `misses: <why>; checked <assertion>`; JSON, the context packet and MCP gap
