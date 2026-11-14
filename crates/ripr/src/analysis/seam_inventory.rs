@@ -20,6 +20,8 @@ use super::classify::changed_error_variant;
 use super::generated_rust_corpus::{
     AnalyzableRustCorpus, absent_changed_rust_file_limitations, discover_analyzable_rust_corpus,
     discover_analyzable_rust_corpus_for_changed_paths,
+    discover_analyzable_rust_corpus_for_changed_paths_tolerating_unreadable,
+    discover_analyzable_rust_corpus_tolerating_unreadable,
 };
 use super::rust_index::{self, ProbeShapeFact, ProbeShapeKind, RustIndex};
 #[cfg(test)]
@@ -413,8 +415,14 @@ fn refuse_failed_evidence(
     match limitations.first() {
         None => Ok(()),
         Some(limitation) => Err(format!(
-            "{consumer} refused: seam evidence failed ({}; pass-wide, no single file is the cause): {}; next step: {}",
+            "{consumer} refused: seam evidence failed ({}; {}): {}; next step: {}",
             limitation.kind.as_str(),
+            // A named path is an unreadable-input gap this consumer cannot
+            // render; only the unnamed walk failure is pass-wide.
+            match limitation.path.as_deref() {
+                Some(path) => format!("unreadable path `{path}`"),
+                None => "pass-wide, no single file is the cause".to_owned(),
+            },
             limitation
                 .bounded_detail
                 .as_deref()
@@ -487,8 +495,11 @@ fn inventory_classified_seams_report_collect(
     repo_exposure_seam_limit()?;
     let collect_started = Instant::now();
     let selection = match changed_paths {
-        Some(paths) => discover_analyzable_rust_corpus_for_changed_paths(root, config, paths),
-        None => scan_corpus_fingerprint(root, config).map(|corpus| (corpus, false)),
+        Some(paths) => discover_analyzable_rust_corpus_for_changed_paths_tolerating_unreadable(
+            root, config, paths,
+        ),
+        None => discover_analyzable_rust_corpus_tolerating_unreadable(root, config)
+            .map(|corpus| (corpus, false)),
     };
     let (corpus, diff_bound_corpus) = match selection {
         Ok(scan) => scan,
@@ -502,6 +513,10 @@ fn inventory_classified_seams_report_collect(
             return Err(err);
         }
     };
+    // A skipped unreadable path is recomputed from this walk (never cached),
+    // so a warm hit still discloses it; the cache key names only what was read.
+    let unreadable_limitations =
+        workspace::limitations_for_unreadable_unchanged_paths(&corpus.unreadable_paths)?;
     let rust_files = corpus.analyzable;
     let analyzed_production_files = production_files_with_role(root, config, &rust_files);
     let fingerprint = corpus.fingerprint;
@@ -547,7 +562,7 @@ fn inventory_classified_seams_report_collect(
                         root,
                         &lexical_fallback_files,
                     ),
-                    evidence_limitations: Vec::new(),
+                    evidence_limitations: unreadable_limitations,
                 });
             }
             CacheLoad::Miss => {
@@ -618,7 +633,7 @@ fn inventory_classified_seams_report_collect(
                     root,
                     &lexical_fallback_files,
                 ),
-                evidence_limitations: Vec::new(),
+                evidence_limitations: unreadable_limitations,
             });
         }
         CacheLoad::Miss => {
@@ -725,7 +740,10 @@ fn inventory_classified_seams_report_collect(
         skipped_generated,
         naming_only_skips,
         declined_rust_files: rust_index::declined_rust_files_at(root, &lexical_fallback_files),
-        evidence_limitations,
+        evidence_limitations: evidence_limitations
+            .into_iter()
+            .chain(unreadable_limitations)
+            .collect(),
     })
 }
 
@@ -16235,6 +16253,28 @@ mod first {{ pub struct Alpha; impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x >
             );
         }
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unreadable_path_refusal_names_the_path_not_a_pass_wide_failure() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
+        };
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::LanguageScopeUnsupported,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "Restore read access.")?,
+        )
+        .with_path("src/locked")?;
+        let refusal = refuse_failed_evidence(&[limitation], "repo badge")
+            .err()
+            .ok_or("a limitation must refuse")?;
+        assert!(
+            refusal.contains("unreadable path `src/locked`"),
+            "{refusal}"
+        );
+        assert!(!refusal.contains("pass-wide"), "{refusal}");
         Ok(())
     }
 }

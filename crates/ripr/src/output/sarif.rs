@@ -456,6 +456,9 @@ fn evidence_limitation_value(limitation: &AnalysisLimitation) -> Value {
         json!(limitation.producer_stage.as_str()),
     );
     entry.insert("scope".to_string(), json!("pass_wide"));
+    if let Some(path) = limitation.path.as_deref() {
+        entry.insert("path".to_string(), json!(path));
+    }
     if let Some(detail) = limitation.bounded_detail.as_deref() {
         entry.insert("detail".to_string(), json!(detail));
     }
@@ -552,10 +555,16 @@ fn insert_evidence_failed_notification(run: &mut Value, limitations: &[AnalysisL
             json!({
                 "level": "warning",
                 "descriptor": { "id": SARIF_EVIDENCE_FAILED_NOTIFICATION_ID },
-                "message": { "text": format!(
-                    "The seam-evidence pass failed; every seam is an opaque stand-in and this inventory is not a complete result. {}",
-                    limitation.recovery.detail
-                ) },
+                "message": { "text": match limitation.path.as_deref() {
+                    Some(path) => format!(
+                        "Rust path `{path}` could not be read and was skipped; tests and owners in it are not considered, so this inventory is not a complete result. {}",
+                        limitation.recovery.detail
+                    ),
+                    None => format!(
+                        "The seam-evidence pass failed; every seam is an opaque stand-in and this inventory is not a complete result. {}",
+                        limitation.recovery.detail
+                    ),
+                } },
                 "properties": evidence_limitation_value(limitation)
             })
         })
@@ -564,7 +573,7 @@ fn insert_evidence_failed_notification(run: &mut Value, limitations: &[AnalysisL
         {
             "id": SARIF_EVIDENCE_FAILED_NOTIFICATION_ID,
             "shortDescription": {
-                "text": "The shared seam-evidence pass failed; the inventory is limited, not complete."
+                "text": "The seam-evidence pass failed or a Rust path was unreadable; the inventory is limited, not complete."
             }
         }
     ]);

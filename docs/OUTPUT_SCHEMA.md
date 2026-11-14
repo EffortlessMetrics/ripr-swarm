@@ -5784,6 +5784,17 @@ Field contract:
     when `run_status` is `"limited_seam_evidence"` (#13340). It is pass-wide
     and names no file: `producer_stage`, `scope: "pass_wide"`, optional
     bounded `detail`, and `repair_route`. Absent from a healthy run.
+  - `category: "language_scope_unsupported"` in the same `limitations[]`
+    (with `run_status: "limited_seam_evidence"`) names an unchanged Rust
+    directory or file the repo walk could not read (permissions) and skipped
+    instead of aborting (#13624): it carries the same fields plus `path`.
+    Tests or owners in that path are not part of the evidence, so the run is
+    never `complete`. An unreadable scan root is still an error. `repo-seams-*`
+    has no limitation channel and still refuses.
+    An unreadable directory counts as possible Rust source (conservative), so
+    it never reads as "no Rust files". `pilot` ranks no gap and offers no repair
+    while such a path was skipped. `repo-sarif` carries the same `path` in its
+    `limitations` and notification properties.
   - `category: "rust_files_declined"` names the declined Rust files:
     `declined_file_count`, up to three `declined_files[]` entries of
     `{path, reason}` (the typed static-limit reason), `declined_files_omitted`

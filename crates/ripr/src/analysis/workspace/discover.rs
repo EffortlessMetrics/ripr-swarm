@@ -264,6 +264,58 @@ pub(crate) fn split_unreadable_unchanged_files(
         .partition(|file| keep.contains(file) || std::fs::File::open(root.join(file)).is_ok())
 }
 
+/// Readable Rust files plus the sorted repo-relative paths (unreadable
+/// directories and unopenable files) the walk skipped. Never drops a path in
+/// `keep`; an unreadable root is still an error. The one tolerant discovery
+/// the repo-wide callers share, so each discloses the same skipped set.
+pub(crate) fn discover_readable_rust_files(
+    root: &Path,
+    keep: &std::collections::BTreeSet<PathBuf>,
+) -> Result<(Vec<PathBuf>, Vec<PathBuf>), String> {
+    let (files, unreadable_dirs) = discover_rust_files_tolerating_unreadable(root)?;
+    let (files, unreadable_files) = split_unreadable_unchanged_files(root, files, keep);
+    Ok((
+        files,
+        merge_unreadable_paths(unreadable_dirs, unreadable_files),
+    ))
+}
+
+fn merge_unreadable_paths(dirs: Vec<UnreadableDir>, files: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut paths = dirs
+        .into_iter()
+        .map(|(path, _)| path)
+        .chain(files)
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+/// One bounded partial-run sentence naming the unreadable paths, for a
+/// surface whose existing disclosure is a single partial reason string.
+/// `None` when nothing was skipped.
+pub(crate) fn unreadable_paths_partial_reason(paths: &[PathBuf]) -> Option<String> {
+    if paths.is_empty() {
+        return None;
+    }
+    let mut listed = paths
+        .iter()
+        .take(3)
+        .map(|path| super::classify::normalize_path(path))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if paths.len() > 3 {
+        listed.push_str(&format!(" and {} more", paths.len() - 3));
+    }
+    if listed.chars().count() > 200 {
+        listed = format!("{}…", listed.chars().take(199).collect::<String>());
+    }
+    Some(format!(
+        "{} Rust path(s) could not be read (permissions) and were skipped, so tests and owners in them are not considered: {listed}; restore read access and re-run",
+        paths.len()
+    ))
+}
+
 /// One typed limitation per unchanged path the walk could not read, sharing
 /// the `language_scope_unsupported` kind the preview adapters use for
 /// unreadable unchanged sources. The run completes but never reads complete.
@@ -698,6 +750,98 @@ mod tests {
             AnalysisLimitationKind::LanguageScopeUnsupported
         );
         Ok(())
+    }
+
+    #[test]
+    fn unreadable_paths_partial_reason_names_and_bounds_the_paths() {
+        assert_eq!(unreadable_paths_partial_reason(&[]), None);
+        let one =
+            unreadable_paths_partial_reason(&[PathBuf::from("src/locked")]).unwrap_or_default();
+        assert!(one.starts_with("1 Rust path(s) could not be read"), "{one}");
+        assert!(one.contains("src/locked"), "{one}");
+        let many = (0..5)
+            .map(|i| PathBuf::from(format!("d{i}")))
+            .collect::<Vec<_>>();
+        let many = unreadable_paths_partial_reason(&many).unwrap_or_default();
+        assert!(many.contains("d0, d1, d2 and 2 more"), "{many}");
+        assert!(!many.contains("d3"), "{many}");
+        // The listing is bounded to 200 characters with an ellipsis.
+        let long = (0..3)
+            .map(|i| PathBuf::from(format!("{i}{}", "x".repeat(100))))
+            .collect::<Vec<_>>();
+        let truncated = unreadable_paths_partial_reason(&long).unwrap_or_default();
+        assert!(truncated.contains("…; restore read access"), "{truncated}");
+        assert!(
+            !truncated.contains(&"x".repeat(100)[..99].repeat(2)),
+            "{truncated}"
+        );
+    }
+
+    #[test]
+    fn merge_unreadable_paths_sorts_and_dedups_dirs_and_files() {
+        let merged = merge_unreadable_paths(
+            vec![
+                (PathBuf::from("b"), "x".to_string()),
+                (PathBuf::from("a"), "x".to_string()),
+            ],
+            vec![PathBuf::from("b"), PathBuf::from("c.rs")],
+        );
+        assert_eq!(
+            merged,
+            vec![
+                PathBuf::from("a"),
+                PathBuf::from("b"),
+                PathBuf::from("c.rs")
+            ]
+        );
+    }
+
+    #[test]
+    fn discover_readable_rust_files_keeps_an_unreadable_root_an_error() {
+        let root =
+            std::env::temp_dir().join(format!("ripr-readable-noroot-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let refused = discover_readable_rust_files(&root, &Default::default()).err();
+        assert!(refused.is_some(), "an absent root must stay an error");
+    }
+
+    /// A mode-000 directory is still readable by root, so the case is skipped
+    /// there (the pattern of the black-box `unreadable_unchanged_rust_*` tests).
+    #[cfg(unix)]
+    #[test]
+    fn discover_readable_rust_files_skips_a_locked_directory_and_discloses_it() -> Result<(), String>
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let root =
+            std::env::temp_dir().join(format!("ripr-readable-locked-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let io = |error: std::io::Error| error.to_string();
+        fs::create_dir_all(root.join("src/locked")).map_err(io)?;
+        fs::write(root.join("src/lib.rs"), "pub fn a() {}\n").map_err(io)?;
+        fs::write(root.join("src/locked/inner.rs"), "pub fn b() {}\n").map_err(io)?;
+        let locked = root.join("src/locked");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).map_err(io)?;
+        let result = if fs::read_dir(&locked).is_ok() {
+            eprintln!("permission control unavailable: this user can read a mode-000 path");
+            Ok(())
+        } else {
+            discover_readable_rust_files(&root, &Default::default()).and_then(|(files, skipped)| {
+                if files != vec![PathBuf::from("src/lib.rs")]
+                    || skipped != vec![PathBuf::from("src/locked")]
+                {
+                    return Err(format!("files {files:?} skipped {skipped:?}"));
+                }
+                // The strict walk still refuses, and the verdict helper
+                // does not read an unreadable-only tree as "no Rust".
+                if discover_rust_files(&root).is_ok() {
+                    return Err("strict walk must still refuse".to_string());
+                }
+                Ok(())
+            })
+        };
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).map_err(io)?;
+        let _ = fs::remove_dir_all(&root);
+        result
     }
 
     #[test]

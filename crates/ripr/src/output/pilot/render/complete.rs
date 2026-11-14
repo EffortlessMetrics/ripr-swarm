@@ -74,7 +74,7 @@ pub(crate) fn render_pilot_summary_json(
     context: PilotSummaryContext<'_>,
 ) -> String {
     let actionable_total = actionable_total(classified);
-    let top = top_actionable_seams(classified, context.max_seams, context.current_change);
+    let top = ranked_top(classified, context.max_seams, context);
     let commands = PilotCommands::new(context);
 
     let mut out = String::new();
@@ -230,7 +230,7 @@ pub(crate) fn render_pilot_summary_json(
     // withholding every seam as a static limitation with no Python card to
     // offer instead (#5497): there is no gap to snapshot or measure.
     let withheld_only = top.is_empty()
-        && withheld_static_limitations(classified) > 0
+        && (withheld_static_limitations(classified) > 0 || unreadable_skips(context) > 0)
         && python_top_repair_card(context.python_first_use).is_none();
     if unanalyzed_only(context).is_some() || rust_excluded(context).is_some() || withheld_only {
         out.push_str("    \"after_snapshot_command\": null,\n");
@@ -272,7 +272,7 @@ pub(crate) fn render_pilot_human_summaries(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
 ) -> (String, String) {
-    let top = top_actionable_seams(classified, context.max_seams.max(1), context.current_change);
+    let top = ranked_top(classified, context.max_seams.max(1), context);
     let terminal_top = &top[..top.len().min(1)];
     let markdown_top = &top[..top.len().min(context.max_seams)];
     let target = terminal_top
@@ -289,7 +289,7 @@ pub(crate) fn render_pilot_summary_md(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
 ) -> String {
-    let top = top_actionable_seams(classified, context.max_seams, context.current_change);
+    let top = ranked_top(classified, context.max_seams, context);
     let target = top
         .first()
         .and_then(|entry| uncommitted_inline_target(context.root, entry));
@@ -424,6 +424,8 @@ fn render_pilot_summary_md_with_target(
                 "None: {UNANALYZED_ONLY_VERDICT} Found: {}.\n\n",
                 unanalyzed_label(unanalyzed)
             ));
+        } else if unreadable_skips(context) > 0 {
+            out.push_str(&format!("None ranked: {UNREADABLE_RANKING_WITHHELD}\n\n"));
         } else if withheld > 0 {
             out.push_str(&format!(
                 "None ranked: {} {WITHHELD_ONLY_VERDICT} Inspect them in `{}`.\n\n",
@@ -632,6 +634,13 @@ fn render_pilot_summary_md_with_target(
         }
         // #5497: with every seam withheld there is no gap to test, so the
         // snapshot pair would only measure an edit nobody was asked to make.
+        // #13624: nothing was ranked because a path was unreadable, so there is
+        // no edit to measure; the recovery is read access, not a snapshot pair.
+        (None, None) if top.is_empty() && unreadable_skips(context) > 0 => {
+            out.push_str(UNREADABLE_NEXT);
+            out.push('\n');
+            return out;
+        }
         (None, None) if top.is_empty() && withheld > 0 => {
             out.push_str(&withheld_only_next(context.seam_limit));
             out.push('\n');
@@ -713,7 +722,7 @@ pub(crate) fn render_pilot_terminal(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
 ) -> String {
-    let top = top_actionable_seams(classified, 1, context.current_change);
+    let top = ranked_top(classified, 1, context);
     let target = top
         .first()
         .and_then(|entry| uncommitted_inline_target(context.root, entry));
@@ -921,6 +930,10 @@ fn render_pilot_terminal_with_target(
             unanalyzed_label(unanalyzed)
         ));
         false
+    } else if unreadable_skips(context) > 0 {
+        out.push_str("Top recommendation:\n");
+        out.push_str(&format!("  none ranked: {UNREADABLE_RANKING_WITHHELD}\n\n"));
+        false
     } else if withheld > 0 {
         out.push_str("Top recommendation:\n");
         out.push_str(&format!(
@@ -1041,6 +1054,11 @@ fn render_pilot_terminal_with_target(
     }
     if unanalyzed_only(context).is_some() {
         out.push_str(NO_ANALYZED_LANGUAGE_COMMAND);
+        out.push('\n');
+        return out;
+    }
+    if top.is_empty() && unreadable_skips(context) > 0 {
+        out.push_str(UNREADABLE_NEXT);
         out.push('\n');
         return out;
     }
@@ -1430,10 +1448,14 @@ fn push_inventory_evidence_limitations(
         } else {
             "  inventory limitation"
         };
+        // #13624: an unreadable-path skip names the path, not the changed-file label.
+        let what = match limitation.path.as_deref() {
+            Some(path) => format!("Rust path `{path}` could not be read and was skipped"),
+            None => limitation.kind.plain_label().to_string(),
+        };
         out.push_str(&terminal_safe(format!(
-            "{prefix}: {}: {}; spot counts and rankings below are not an inventory result. {}\n",
+            "{prefix}: {}: {what}; spot counts and rankings below are not an inventory result. {}\n",
             limitation.kind.as_str(),
-            limitation.kind.plain_label(),
             limitation.recovery.detail
         )));
     }
@@ -1671,6 +1693,37 @@ fn supported_headline_route(
         .and_then(PilotLanguageRoutes::supported_headline_route)
 }
 
+/// Unreadable Rust paths the repo walk skipped (#13624). Seams whose tests
+/// live there are under-credited, so a gap can be a false gap: pilot ranks and
+/// offers nothing while any path was skipped (the evidence is not complete).
+fn unreadable_skips(context: PilotSummaryContext<'_>) -> usize {
+    context
+        .inventory_evidence_limitations
+        .iter()
+        .filter(|limitation| {
+            limitation.kind
+                == crate::analysis_outcome::AnalysisLimitationKind::LanguageScopeUnsupported
+        })
+        .count()
+}
+
+/// [`top_actionable_seams`] unless an unreadable skip made every gap
+/// unreliable, in which case nothing is ranked and no repair is offered.
+fn ranked_top<'a>(
+    classified: &'a [ClassifiedSeam],
+    max_seams: usize,
+    context: PilotSummaryContext<'_>,
+) -> Vec<&'a ClassifiedSeam> {
+    if unreadable_skips(context) > 0 {
+        return Vec::new();
+    }
+    top_actionable_seams(classified, max_seams, context.current_change)
+}
+
+const UNREADABLE_NEXT: &str = "Restore read access to the Rust path(s) named above, then rerun `ripr pilot`; no snapshot or outcome comparison applies until a gap is ranked.";
+
+const UNREADABLE_RANKING_WITHHELD: &str = "a Rust path could not be read and was skipped, so a gap here may be only a test hidden in the skipped path; no gap is ranked and no repair is offered. Restore read access, then rerun `ripr pilot`.";
+
 /// Rust files excluded by `[languages] enabled`, when the exclusion emptied
 /// the ranking (#5205).
 fn rust_excluded(context: PilotSummaryContext<'_>) -> Option<usize> {
@@ -1862,7 +1915,10 @@ const TERMINAL_NO_REPAIR_START_LINE: &str =
     "not available for this gap (ripr did not start a repair here); add the test by hand";
 
 fn file_count_label(count: usize) -> String {
-    if count == 1 {
+    if count == 0 {
+        // Only an unreadable-only tree reaches 0 (#13624): the count is unknown.
+        "an unreadable path (file count unknown)".to_string()
+    } else if count == 1 {
         "1 file".to_string()
     } else {
         format!("{count} files")

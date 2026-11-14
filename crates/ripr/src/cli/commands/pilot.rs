@@ -311,7 +311,10 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         timings.record_inventory_phases(&inventory_phases);
     }
     let rust_files = analysis::workspace_rust_files(&input.root);
-    let rust_excluded = (!rust_enabled && !rust_files.is_empty()).then_some(rust_files.len());
+    // An unreadable-only tree is still Rust source (#13624): it must not read
+    // as "no Rust files". Its readable count is 0 and renders as unknown.
+    let rust_excluded = (!rust_enabled && analysis::workspace_has_rust_source(&input.root))
+        .then_some(rust_files.len());
 
     // Apply the pilot artifact seam budget.  The inventory may already have
     // been capped by the repo-exposure seam limit; we then further cap the
