@@ -107,8 +107,9 @@ fn an_added_length_conjunct_never_names_the_whole_conjunction_as_its_operand() -
             .as_array()
             .into_iter()
             .flatten()
-            .all(|line| !line.as_str().unwrap_or_default().contains("s.len() == 1;")),
-        "{finding}"
+            .any(|line| line.as_str().unwrap_or_default()
+                == "source function argument value s.len() == 1 at line 11"),
+        "the `\"-\"` input is read at the `s.len()` boundary: {finding}"
     );
     assert_ne!(finding["classification"], "exposed", "{finding}");
     Ok(())
@@ -128,5 +129,29 @@ fn a_changed_equality_beside_an_untouched_gate_names_only_that_equality() -> Res
         missing.iter().all(|fact| !fact.contains("&&")),
         "{missing:?}: {finding}"
     );
+    Ok(())
+}
+
+/// A sibling operand that every input leaves false masks the changed
+/// comparison, so an input at its boundary is not a discriminator.
+#[test]
+fn an_input_at_the_boundary_behind_a_false_gate_is_not_exposed() -> Result<(), String> {
+    for (signature, before, after, body) in [
+        (
+            "pub fn gated(label: &str, on: bool) -> bool",
+            "label == \"alpha\" && on",
+            "label == \"beta\" && on",
+            "assert_eq!(gated(\"beta\", false), false);",
+        ),
+        (
+            "pub fn big(x: u32, on: bool) -> bool",
+            "x > 5 && on",
+            "x >= 5 && on",
+            "assert_eq!(big(5, false), false);",
+        ),
+    ] {
+        let finding = predicate(signature, before, after, body)?;
+        assert_ne!(finding["classification"], "exposed", "{after}: {finding}");
+    }
     Ok(())
 }

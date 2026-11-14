@@ -9680,6 +9680,21 @@ mod tests {
             conjunct("s.ends_with('\\'') && n > 1", Some("s.ends_with('\\'')")),
             Some("n > 1")
         );
+        assert_eq!(
+            conjunct("s.ends_with('é') && n > 1", Some("s.ends_with('é')")),
+            Some("n > 1")
+        );
+        assert_eq!(
+            conjunct(
+                "s.ends_with('\\u{41}') && n > 1",
+                Some("s.ends_with('\\u{41}')")
+            ),
+            Some("n > 1")
+        );
+        assert_eq!(
+            conjunct("f(&&x) > 1", Some("f(&&x) >= 1")),
+            Some("f(&&x) > 1")
+        );
         // Two comparisons, an unchanged comparison, or an unreadable shape:
         // no single boundary.
         assert_eq!(conjunct("x > 1 && y < 5", None), None);
