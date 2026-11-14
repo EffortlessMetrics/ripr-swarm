@@ -10,6 +10,7 @@ use crate::analysis::facts::model::FileFacts;
 use crate::domain::{OracleKind, OracleStrength};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
@@ -246,7 +247,16 @@ fn check_registered_guard_boundary(
         let registrations = [custom_target_registration("tests/matcher.rs")];
         let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
         let [subject] = index.harness_subjects.as_slice() else {
-            return Err("guard-boundary control lost its one registered subject".into());
+            return Err(format!(
+                "guard-boundary control expected one registered subject; found {}: {:?}",
+                index.harness_subjects.len(),
+                index
+                    .harness_subjects
+                    .iter()
+                    .map(|s| (&s.name, &s.file))
+                    .collect::<Vec<_>>()
+            )
+            .into());
         };
         assert_eq!(subject.registration_id, "mimic-suite");
         assert_eq!(subject.name, "observes_score");
@@ -439,14 +449,64 @@ impl Drop for TempDir {
     }
 }
 
+static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
 fn temp_dir(name: &str) -> Result<TempDir, Box<dyn std::error::Error>> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|time| time.as_nanos())
         .unwrap_or(0);
-    let root = std::env::temp_dir().join(format!("ripr-harness-{name}-{stamp}"));
-    fs::create_dir_all(&root)?;
-    Ok(TempDir(root))
+    create_owned_dir(&std::env::temp_dir(), name, stamp, || {
+        TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    })
+}
+
+fn create_owned_dir(
+    parent: &Path,
+    name: &str,
+    stamp: u128,
+    mut next: impl FnMut() -> u64,
+) -> Result<TempDir, Box<dyn std::error::Error>> {
+    for _ in 0..128 {
+        let root = parent.join(format!(
+            "ripr-harness-{name}-{}-{stamp}-{}",
+            std::process::id(),
+            next()
+        ));
+        match fs::create_dir(&root) {
+            Ok(()) => return Ok(TempDir(root)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err("could not create an exclusive harness fixture after 128 collisions".into())
+}
+
+#[test]
+fn temp_dir_collision_never_claims_or_removes_existing_root()
+-> Result<(), Box<dyn std::error::Error>> {
+    let parent = temp_dir("collision-control")?;
+    let occupied = parent
+        .0
+        .join(format!("ripr-harness-probe-{}-7-0", std::process::id()));
+    fs::create_dir(&occupied)?;
+    fs::write(occupied.join("sentinel"), b"keep")?;
+    let mut sequence = 0;
+    let owned = create_owned_dir(&parent.0, "probe", 7, || {
+        let value = sequence;
+        sequence += 1;
+        value
+    })?;
+    assert_ne!(owned.0, occupied);
+    assert_eq!(sequence, 2);
+    let owned_path = owned.0.clone();
+    drop(owned);
+    assert!(!owned_path.exists());
+    assert_eq!(fs::read(occupied.join("sentinel"))?, b"keep");
+    let exhausted = create_owned_dir(&parent.0, "probe", 7, || 0);
+    assert!(exhausted.is_err());
+    assert_eq!(fs::read(occupied.join("sentinel"))?, b"keep");
+    Ok(())
 }
 
 fn registration(
