@@ -61,6 +61,19 @@ pub(crate) fn append_line(path: &Path, line: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Write a new preparation leaf through its exclusively acquired handle.
+/// Never replace or clean up the pathname: another writer may have installed
+/// its own entry there, even after this producer acquired its file.
+/// An incomplete preparation is not a committed attempt and is retained.
+pub(crate) fn write_new_with(
+    path: &Path,
+    fill: impl FnOnce(&mut File) -> io::Result<()>,
+) -> io::Result<()> {
+    let mut file = create_exclusive(path)?;
+    fill(&mut file)?;
+    file.sync_all()
+}
+
 pub(crate) fn create_exclusive(path: &Path) -> io::Result<File> {
     open_new(path)
 }

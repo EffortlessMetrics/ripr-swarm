@@ -1,0 +1,23 @@
+[[extend]]
+id = "RIPR-SPEC-0011"
+code = ["crates/ripr/src/cli/mod.rs", "crates/ripr/src/cli/commands/agent.rs", "crates/ripr/src/app/repair_attempt/mod.rs", "crates/ripr/src/output/file_write.rs", "crates/ripr/src/app/agent_status.rs"]
+tests = [
+  "crates/ripr/tests/cli_smoke.rs::agent_repair_phases_materialize_snapshots_and_verify_json",
+  "crates/ripr/tests/cli_smoke.rs::agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids",
+  "crates/ripr/src/app/repair_attempt/mod.rs::publication_rejects_replaced_temporary_without_deleting_foreign_bytes",
+  "crates/ripr/tests/cli_smoke/repair_workflow_ownership.rs::late_build_ignore_refusal_preserves_shared_workflow",
+  "crates/ripr/tests/cli_smoke/repair_workflow_ownership.rs::late_refusal_preserves_intervening_shared_commands",
+  "crates/ripr/tests/cli_smoke/repair_workflow_ownership.rs::late_refusal_retains_intervening_preparation_commands",
+  "crates/ripr/tests/cli_smoke/repair_workflow_ownership.rs::baseline_writer_refuses_intervening_baseline",
+  "crates/ripr/tests/cli_smoke/repair_workflow_ownership.rs::partial_failure_retains_intervening_directory_content",
+  "crates/ripr/tests/cli_smoke/repair_workflow_ownership.rs::failed_attempt_publication_preserves_intervening_artifact",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0311"
+code = ["crates/ripr/src/cli/mod.rs", "crates/ripr/src/cli/commands/agent.rs", "crates/ripr/src/app/repair_attempt/mod.rs"]
+tests = [
+  "crates/ripr/tests/installed_python_typescript_journeys/repair_workflow_ownership.rs::gap_failure_preserves_intervening_snapshot_and_packet",
+  "crates/ripr/tests/installed_python_typescript_journeys/repair_workflow_ownership.rs::gap_baseline_producer_preserves_intervening_baseline",
+  "crates/ripr/tests/installed_python_typescript_journeys/repair_workflow_ownership.rs::gap_later_parse_failure_preserves_intervening_inputs",
+]

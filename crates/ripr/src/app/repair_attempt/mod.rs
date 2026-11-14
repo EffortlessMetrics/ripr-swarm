@@ -428,13 +428,6 @@ pub(crate) fn receipt_binding_from(
     let root_display = bound_root(&root.to_string_lossy());
     let store = resolve_store(root, store, RepairAttemptStoreAccess::Open)?;
     let root = store.canonical_root().to_path_buf();
-    let packet = std::fs::read(packet_path).map_err(|error| {
-        format!(
-            "read repair packet {} failed: {error}",
-            packet_path.display()
-        )
-    })?;
-    let packet_sha256 = sha256_bytes(&packet);
     let (manifest_path, manifest) = if let Some(attempt_id) = attempt_id {
         let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
         let loaded = load_repair_attempt_by_id(&store, &attempt_id)?;
@@ -491,6 +484,22 @@ pub(crate) fn receipt_binding_from(
             "missing attempt; start one with `ripr agent repair`, then rerun".to_string()
         })?
     };
+    // Implicit seam selection is bound to the sole durable attempt. Shared
+    // packets belong to standalone workflows and may be absent or unrelated.
+    let retained_packet;
+    let packet_path = if attempt_id.is_none() {
+        retained_packet = root.join(&find_manifest_artifact(&manifest, "agent_packet")?.path);
+        retained_packet.as_path()
+    } else {
+        packet_path
+    };
+    let packet = std::fs::read(packet_path).map_err(|error| {
+        format!(
+            "read repair packet {} failed: {error}",
+            packet_path.display()
+        )
+    })?;
+    let packet_sha256 = sha256_bytes(&packet);
     let mut policy = edit_cage_policy_from_packet(
         std::str::from_utf8(&packet)
             .map_err(|error| format!("repair packet is not UTF-8: {error}; pass the JSON packet that `ripr agent repair` wrote"))?,
@@ -811,7 +820,7 @@ fn recompute_after_verdict_binding_of_delta(
     if holds {
         return Ok((receipt_verdict, true));
     }
-    let projections = match retained_missing_gap_projections(root, manifest) {
+    let projections = match retained_missing_gap_projections(root, manifest, &baseline, after) {
         Ok(projections) if !projections.is_empty() => projections,
         _ => return Ok((verdict, false)),
     };
@@ -862,6 +871,8 @@ const GAP_WORKFLOW_PROJECTIONS: [&str; 6] = [
 fn retained_missing_gap_projections(
     root: &Path,
     manifest: &RepairAttemptManifest,
+    baseline_capture: &AttemptBaseline,
+    finished: &RepairAttemptAfter,
 ) -> Result<Vec<crate::edit_cage::MissingWorkflowProjection>, String> {
     if manifest.gap_binding.is_none() {
         return Ok(Vec::new());
@@ -925,6 +936,18 @@ fn retained_missing_gap_projections(
     let mut missing = Vec::new();
     let mut total = 0u64;
     for (path, bytes) in GAP_WORKFLOW_PROJECTIONS.iter().zip(sources) {
+        // Attempt-local before inputs never created these shared paths. Only
+        // reconstruct a projection witnessed by the baseline or finish; adding
+        // a never-produced file would change the very delta being verified.
+        if !baseline_capture.worktree_has_anything_at(path)
+            && !finished
+                .verdict
+                .changed_paths
+                .iter()
+                .any(|changed| changed == path)
+        {
+            continue;
+        }
         match std::fs::symlink_metadata(root.join(path)) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 total += bytes.len() as u64;
@@ -1848,6 +1871,29 @@ impl BeforeRepairAttemptIdentity {
     pub(crate) fn attempt_id(&self) -> &str {
         self.repair_attempt_id.as_str()
     }
+
+    /// Before inputs never replace repository-global compatibility files.
+    pub(crate) fn preparation_directory(&self) -> PathBuf {
+        self.canonical_root
+            .join("target/ripr/repair-preparations")
+            .join(self.attempt_id())
+    }
+
+    pub(crate) fn reserve_preparation_directory(&self) -> Result<PathBuf, String> {
+        let directory = self.preparation_directory();
+        let parent = directory
+            .parent()
+            .ok_or("preparation directory has no parent")?;
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("create {} failed: {error}", parent.display()))?;
+        std::fs::create_dir(&directory).map_err(|error| {
+            format!(
+                "reserve {} failed: {error}; existing preparation is retained",
+                directory.display()
+            )
+        })?;
+        Ok(directory)
+    }
 }
 
 #[cfg(test)]
@@ -1971,8 +2017,8 @@ struct AttemptPublication<'a> {
 }
 
 /// Stage artifacts and publish the manifest inside a reserved attempt
-/// directory. Any failure removes the reserved directory, so a failed begin
-/// leaves neither an orphan attempt nor a partial artifact set behind.
+/// directory. Failure retains the reservation and its files: recursive
+/// rollback could delete an intervening writer. Only the manifest commits it.
 fn complete_repair_attempt(
     store: &RepairAttemptStoreRef,
     attempt_directory: &Path,
@@ -2130,10 +2176,12 @@ fn complete_repair_attempt(
                 baseline_ambiguous,
             })
         });
-    if result.is_err() {
-        let _ = std::fs::remove_dir_all(attempt_directory);
-    }
-    result
+    result.map_err(|error| {
+        format!(
+            "{error}; incomplete preparation retained at {}; inspect it before any manual cleanup",
+            attempt_directory.display()
+        )
+    })
 }
 
 #[cfg_attr(
@@ -2706,7 +2754,7 @@ pub(crate) fn retain_terminal_evidence_with_custody_from(
                 replace_file_atomically(&destination, &bytes)?;
             }
         } else {
-            write_bytes_atomic(&destination, &bytes)?;
+            write_new_artifact_bytes(&destination, &bytes)?;
         }
         let relative = destination.strip_prefix(&root).map_err(|error| {
             format!(
@@ -3047,7 +3095,6 @@ pub(crate) fn write_repair_attempt_manifest(
     let mut rendered = serde_json::to_vec_pretty(manifest)
         .map_err(|error| format!("serialize repair attempt manifest failed: {error}"))?;
     rendered.push(b'\n');
-    write_bytes_atomic(&path, &rendered)?;
     if manifest.state == RepairAttemptState::AwaitingEdit {
         let commitment_path = store
             .attempt_directory(&manifest.repair_attempt_id)
@@ -3063,6 +3110,7 @@ pub(crate) fn write_repair_attempt_manifest(
             write_bytes_atomic(&commitment_path, commitment.as_bytes())?;
         }
     }
+    write_bytes_atomic(&path, &rendered)?;
     Ok(path)
 }
 
@@ -3432,15 +3480,9 @@ fn explicit_store_locator(
     Ok(Some(crate::edit_cage::CagePathRule::subtree(&scoped)?))
 }
 
-/// Captures the edit-cage baseline and writes it to a workflow compatibility
-/// path. Unlike the immutable attempt destinations, this copy is refreshed on
-/// every before phase (the durable authority is the baseline staged inside
-/// the attempt), so an existing projection is replaced. The captured baseline
-/// is dropped before the replacement so its Windows write authorities cannot
-/// block the removal of the file it just probed. The staged artifact — not
-/// this in-flight copy — is the disclosure authority: attempt publication
-/// re-derives the ambiguity from the staged bytes and returns it on
-/// `BeginRepairAttemptResult` (#7204).
+/// Capture a baseline into an unoccupied preparation destination. Existing
+/// files belong to their writer and are never removed or replaced. Publication
+/// re-derives ambiguity from the retained artifact, not this in-flight copy.
 pub(crate) fn write_edit_cage_baseline(
     root: &Path,
     path: &Path,
@@ -3456,12 +3498,8 @@ pub(crate) fn write_edit_cage_baseline(
     // The pretty bytes stay; the baseline map drops before the file write,
     // as before: only one copy is resident during the write.
     drop(baseline);
-    if path.exists() {
-        std::fs::remove_file(path)
-            .map_err(|error| format!("replace {} failed: {error}", path.display()))?;
-    }
     let write_started = Instant::now();
-    write_bytes_atomic(path, &bytes)?;
+    write_new_artifact_bytes(path, &bytes)?;
     crate::edit_cage::trace_persist_latency("baseline_write", write_started.elapsed());
     Ok(())
 }
@@ -4905,26 +4943,21 @@ fn stage_before_artifacts(
     sources: &[BeforeArtifactSource<'_>],
 ) -> Result<Vec<RepairAttemptArtifact>, String> {
     let destination_directory = attempt_directory.join(REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY);
-    let nonce = ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
-    let staging_directory = attempt_directory.join(format!(
-        ".{REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY}.tmp-{}-{nonce}",
-        std::process::id()
-    ));
-    let stage_started = Instant::now();
-    let artifacts = match stage_sources(root, &staging_directory, &destination_directory, sources) {
-        Ok(artifacts) => artifacts,
-        Err(error) => {
-            let _ = std::fs::remove_dir_all(&staging_directory);
-            return Err(error);
-        }
-    };
-    if let Err(error) = std::fs::rename(&staging_directory, &destination_directory) {
-        let _ = std::fs::remove_dir_all(&staging_directory);
-        return Err(format!(
-            "publish {} failed: {error}",
+    // No rename or rollback: an intervening writer's entry must survive.
+    // The manifest is the commit point; inventory ignores manifest-free dirs.
+    std::fs::create_dir(&destination_directory).map_err(|error| {
+        format!(
+            "reserve {} failed: {error}",
             destination_directory.display()
-        ));
-    }
+        )
+    })?;
+    let stage_started = Instant::now();
+    let artifacts = stage_sources(
+        root,
+        &destination_directory,
+        &destination_directory,
+        sources,
+    )?;
     crate::edit_cage::trace_persist_latency("attempt_stage_artifacts", stage_started.elapsed());
     Ok(artifacts)
 }
@@ -4989,7 +5022,7 @@ fn stage_sources(
         }
         let staged = staging_directory.join(&file_name);
         let write_started = Instant::now();
-        write_bytes_atomic(&staged, &bytes)?;
+        write_new_artifact_bytes(&staged, &bytes)?;
         if trace_spans {
             crate::edit_cage::trace_persist_latency(
                 &format!("attempt_stage_source_write:{}", source.role),
@@ -5733,7 +5766,34 @@ fn sha256_bytes(bytes: &[u8]) -> String {
     rendered
 }
 
+/// Artifact files are not committed until their manifest references them.
+/// Exclusive direct writes avoid a second hard-link name beside the evidence;
+/// failure retains the uncommitted file without deleting another writer's entry.
+fn write_new_artifact_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("create {} failed: {error}", parent.display()))?;
+    }
+    crate::output::file_write::write_new_with(path, |file| file.write_all(bytes)).map_err(|error| {
+        format!(
+            "prepare {} failed: {error}; incomplete file retained",
+            path.display()
+        )
+    })
+}
+
 fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    write_bytes_atomic_before_link(path, bytes, |_| Ok(()))
+}
+
+fn write_bytes_atomic_before_link(
+    path: &Path,
+    bytes: &[u8],
+    before_link: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -5744,9 +5804,8 @@ fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let nonce = ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
     let temporary = path.with_extension(format!("tmp-{}-{nonce}", std::process::id()));
     let write_result = (|| -> Result<(), String> {
-        // An interrupted run can leave this name behind (pids and the counter
-        // repeat across processes); removing a planted link removes only it.
-        let _ = std::fs::remove_file(&temporary);
+        // A collision is not ours to remove. Retain temporary entries even
+        // after success: pathname cleanup cannot identify the current owner.
         let mut file = crate::output::file_write::create_exclusive(&temporary)
             .map_err(|error| format!("create {} failed: {error}", temporary.display()))?;
         file.write_all(bytes)
@@ -5755,17 +5814,14 @@ fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
             .map_err(|error| format!("sync {} failed: {error}", temporary.display()))?;
         Ok(())
     })();
-    if let Err(error) = write_result {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(error);
-    }
+    write_result?;
+    before_link(&temporary)?;
 
     // Publish exclusively: attempt destinations are immutable, so linking the
     // temporary file into place fails closed instead of deleting or
     // overwriting an existing destination (which also removes the Windows
     // delete-before-rename crash gap).
     if let Err(error) = std::fs::hard_link(&temporary, path) {
-        let _ = std::fs::remove_file(&temporary);
         if error.kind() == std::io::ErrorKind::AlreadyExists {
             return Err(format!(
                 "repair attempt destination is immutable and already exists: {}",
@@ -5774,7 +5830,31 @@ fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
         }
         return Err(format!("publish {} failed: {error}", path.display()));
     }
-    let _ = std::fs::remove_file(&temporary);
+    // This verifies the observed commit, not a conditional replacement. A
+    // replaced temporary pathname must not produce a success continuation.
+    // Never remove either entry: foreign writers may own both now.
+    use std::io::Read as _;
+    let file = crate::output::file_write::open_regular_read(path).map_err(|error| {
+        format!(
+            "read published {} failed: {error}; publication retained",
+            path.display()
+        )
+    })?;
+    let mut published = Vec::new();
+    file.take(bytes.len() as u64 + 1)
+        .read_to_end(&mut published)
+        .map_err(|error| {
+            format!(
+                "read published {} failed: {error}; publication retained",
+                path.display()
+            )
+        })?;
+    if published != bytes {
+        return Err(format!(
+            "published {} changed during publication; all entries retained",
+            path.display()
+        ));
+    }
     Ok(())
 }
 
@@ -6481,10 +6561,8 @@ mod tests {
         .count();
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
-        if leftovers != 0 {
-            return Err(format!(
-                "atomic manifest write left {leftovers} temporary files"
-            ));
+        if leftovers == 0 {
+            return Err("atomic manifest write did not retain its publication sources".to_string());
         }
         Ok(())
     }
@@ -6497,6 +6575,7 @@ mod tests {
             .map_err(|error| format!("write {} failed: {error}", source.display()))?;
         let manifest = sample_manifest(&root)?;
         let attempt_directory = repair_attempt_directory(&root, &manifest.repair_attempt_id);
+        std::fs::create_dir_all(&attempt_directory).map_err(|error| error.to_string())?;
         let artifacts = stage_before_artifacts(
             &root,
             &attempt_directory,
@@ -6867,6 +6946,29 @@ mod tests {
     }
 
     #[test]
+    fn publication_rejects_replaced_temporary_without_deleting_foreign_bytes() -> Result<(), String>
+    {
+        let root = test_root("foreign-publication")?;
+        let path = root.join("attempt.json");
+        let mut foreign_temporary = PathBuf::new();
+        let result = write_bytes_atomic_before_link(&path, b"intended manifest", |temporary| {
+            std::fs::rename(temporary, root.join("original")).map_err(|error| error.to_string())?;
+            std::fs::write(temporary, b"foreign manifest").map_err(|error| error.to_string())?;
+            foreign_temporary = temporary.to_path_buf();
+            Ok(())
+        });
+        if !result.is_err_and(|error| error.contains("changed during publication")) {
+            return Err("replaced temporary was reported as successful publication".to_string());
+        }
+        for retained in [&path, &foreign_temporary] {
+            if std::fs::read(retained).map_err(|error| error.to_string())? != b"foreign manifest" {
+                return Err("foreign publication bytes were removed or replaced".to_string());
+            }
+        }
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
     fn write_bytes_atomic_refuses_to_overwrite_a_destination() -> Result<(), String> {
         let root = test_root("immutable")?;
         let path = root.join("attempt.json");
@@ -6927,7 +7029,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_begin_leaves_no_orphan_attempt_directory() -> Result<(), String> {
+    fn failed_begin_retains_unpublished_reservation() -> Result<(), String> {
         let root = test_repo_root("orphan")?;
         let missing = root.join("missing-before.json");
         let result = begin_repair_attempt_with(BeginRepairAttemptOptions {
@@ -6958,16 +7060,16 @@ mod tests {
             .count();
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
-        if orphans != 0 {
+        if orphans != 1 {
             return Err(format!(
-                "failed begin_repair_attempt left {orphans} orphan attempt directories"
+                "failed begin must retain one reservation, got {orphans}"
             ));
         }
         Ok(())
     }
 
     #[test]
-    fn failed_manifest_write_removes_staged_attempt_and_artifacts() -> Result<(), String> {
+    fn failed_manifest_write_preserves_intervening_content() -> Result<(), String> {
         // A real repository: the finalize-path head re-verification must pass
         // so the occupied manifest path is what actually forces the publish
         // failure.
@@ -6984,6 +7086,10 @@ mod tests {
         // exclusive link in write_bytes_atomic fails closed.
         std::fs::create_dir(attempt_directory.join(REPAIR_ATTEMPT_MANIFEST))
             .map_err(|error| format!("create occupied manifest path failed: {error}"))?;
+        let intervening = attempt_directory
+            .join(REPAIR_ATTEMPT_MANIFEST)
+            .join("foreign.txt");
+        std::fs::write(&intervening, b"intervening writer").map_err(|error| error.to_string())?;
         let result = complete_repair_attempt(
             &store,
             &attempt_directory,
@@ -7002,7 +7108,8 @@ mod tests {
                 gap_binding: None,
             },
         );
-        let attempt_remaining = attempt_directory.exists();
+        let preserved = std::fs::read(&intervening).map_err(|error| error.to_string())?
+            == b"intervening writer";
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
         if result.is_ok() {
@@ -7010,11 +7117,8 @@ mod tests {
                 "complete_repair_attempt published over an occupied manifest path".to_string(),
             );
         }
-        if attempt_remaining {
-            return Err(
-                "failed manifest write left the attempt directory and staged artifacts behind"
-                    .to_string(),
-            );
+        if !preserved {
+            return Err("failed manifest write destroyed intervening content".to_string());
         }
         Ok(())
     }
@@ -7087,8 +7191,8 @@ mod tests {
                 );
             }
         }
-        if attempt_remaining {
-            return Err("a refused publish left its attempt directory behind".to_string());
+        if !attempt_remaining {
+            return Err("a refused publish removed its reservation".to_string());
         }
         Ok(())
     }

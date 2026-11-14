@@ -334,29 +334,17 @@ impl AgentStatusReport {
             })
     }
 
-    /// #10984: a current gap-bound attempt that finished with its own retained
-    /// receipt showing the gap closed. A gap-bound route never writes the
-    /// legacy seam workflow files, so their absence says nothing about it.
-    /// Only a non-legacy gap binding, a `finished` disposition at a current
-    /// head and a receipt issued from retained terminal evidence qualify;
-    /// every pending, refused, stale, unconfirmed or unavailable attempt
-    /// keeps absent legacy artifacts counted.
-    fn has_current_finished_gap_attempt(&self) -> bool {
-        self.repair_attempts.iter().any(|attempt| {
-            attempt.gap_base.is_some()
-                && !attempt.legacy_gap_binding
-                && attempt.disposition == "finished"
-                && attempt.head_current == Some(true)
-                && matches!(
-                    &attempt.receipt,
-                    AgentStatusAttemptReceipt::Issued { reading, .. } if reading.shows_gap_closed()
-                )
-        })
+    /// A current attempt with a retained receipt showing the gap closed does
+    /// not depend on legacy workflow projections. Both seam and gap before
+    /// phases now retain their inputs under the attempt (#13452).
+    /// Pending, refused, stale, legacy or unavailable attempts never qualify.
+    fn has_current_finished_attempt(&self) -> bool {
+        self.repair_attempts.iter().any(current_finished_attempt)
     }
 
     pub(crate) fn status(&self) -> &'static str {
         let artifact_absent = self.artifacts.iter().any(|artifact| !artifact.present)
-            && !self.has_current_finished_gap_attempt();
+            && !self.has_current_finished_attempt();
         if self.next_command.is_some() || artifact_absent {
             "incomplete"
         } else if self.warnings.is_empty() {
@@ -365,6 +353,16 @@ impl AgentStatusReport {
             "warning"
         }
     }
+}
+
+fn current_finished_attempt(attempt: &AgentStatusRepairAttempt) -> bool {
+    !attempt.legacy_gap_binding
+        && attempt.disposition == "finished"
+        && attempt.head_current == Some(true)
+        && matches!(
+            &attempt.receipt,
+            AgentStatusAttemptReceipt::Issued { reading, .. } if reading.shows_gap_closed()
+        )
 }
 
 pub(crate) fn build_agent_status_report(root: &Path, root_argument: &Path) -> AgentStatusReport {
@@ -396,16 +394,26 @@ pub(crate) fn build_agent_status_report_from(
     let gap_bound_seam = seam
         .as_ref()
         .is_some_and(|seam| crate::app::gap_bound_repair::is_gap_bound_subject(&seam.seam_id));
-    let missing_commands = if gap_bound_seam {
-        Vec::new()
-    } else {
-        missing_commands(root_argument, seam.as_ref(), &artifacts)
-    };
     let receipt = read_workflow_receipt(root);
     // One lazily loaded repair-admission gate per status read (#8766).
     let gate = RepairStartGate::new(root).read_only();
     let repair_attempts =
         inspect_repair_attempts(root, &command_root, &receipt, &mut warnings, store, &gate);
+    // Retained inputs already completed this seam's workflow. Do not offer
+    // commands to recreate absent shared projections after its receipt closed
+    // the gap. Other seams and unconfirmed attempts keep their recovery route.
+    let finished_selected_seam = seam.as_ref().is_some_and(|seam| {
+        repair_attempts.as_ref().is_some_and(|attempts| {
+            attempts
+                .iter()
+                .any(|attempt| attempt.seam_id == seam.seam_id && current_finished_attempt(attempt))
+        })
+    });
+    let missing_commands = if gap_bound_seam || finished_selected_seam {
+        Vec::new()
+    } else {
+        missing_commands(root_argument, seam.as_ref(), &artifacts)
+    };
     let (store_flag, store_locator) = match resolve_store(
         root,
         store,
@@ -7991,7 +7999,7 @@ mod tests {
 
         let mut seam_bound = finished();
         seam_bound.gap_base = None;
-        assert_eq!(report(seam_bound).status(), "incomplete");
+        assert_eq!(report(seam_bound).status(), "complete");
 
         let mut legacy = finished();
         legacy.legacy_gap_binding = true;

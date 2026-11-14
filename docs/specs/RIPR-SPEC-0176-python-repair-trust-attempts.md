@@ -304,8 +304,9 @@ durable attempt is published, the driver verifies, failing closed:
   `explicit-operator-flags` method with a named authority).
 
 The verified record is staged into the durable attempt as a digest-pinned
-artifact and mirrored at
-`target/ripr/workflow/python-repair-trust-binding.json`. It retains the
+artifact. Its preparation copy is exclusively created beside the attempt's
+before snapshot as `python-repair-trust-binding.json`; it does not replace a
+shared workflow record (#13452). It retains the
 trust identity (attempt, case, subject, repository, base, head, optional tree
 and source-currentness, family, owner, discriminator, relation, oracle,
 optional limitation), the digest anchors, the analyzer identity (running

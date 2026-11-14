@@ -443,6 +443,16 @@ fn write_agent_start_with_report(
     config: &RiprConfig,
     report: &analysis::ClassifiedSeamsReport,
 ) -> Result<AgentStartWritten, CoreError> {
+    write_agent_start_with_report_using(options, input, config, report, write_text_file)
+}
+
+fn write_agent_start_with_report_using(
+    options: &AgentStartOptions,
+    input: &app::CheckInput,
+    config: &RiprConfig,
+    report: &analysis::ClassifiedSeamsReport,
+    write: fn(&Path, &str) -> Result<(), String>,
+) -> Result<AgentStartWritten, CoreError> {
     let working_set = AgentBriefResolvedWorkingSet::seam_id(options.seam_id.clone());
     let mut selection = select_agent_brief_seams(
         &report.classified,
@@ -515,7 +525,7 @@ fn write_agent_start_with_report(
         &selection,
     )?;
     let agent_brief_path = out_dir.join("agent-brief.json");
-    write_text_file(&agent_brief_path, &agent_brief_json)?;
+    write(&agent_brief_path, &agent_brief_json)?;
 
     let manifest = app::agent_workflow::build_agent_workflow_manifest(
         &input.root,
@@ -529,8 +539,8 @@ fn write_agent_start_with_report(
     let commands_md = output::agent_workflow::render_agent_workflow_commands_md(&manifest);
     let workflow_path = out_dir.join("workflow.json");
     let commands_path = out_dir.join("commands.md");
-    write_text_file(&workflow_path, &workflow_json)?;
-    write_text_file(&commands_path, &commands_md)?;
+    write(&workflow_path, &workflow_json)?;
+    write(&commands_path, &commands_md)?;
 
     Ok(AgentStartWritten {
         paths: vec![workflow_path, commands_path, agent_brief_path],
@@ -2809,27 +2819,28 @@ fn run_agent_repair_phase(
             }
 
             // #13452: the dirty-premise inventory above can take real time, so
-            // the ignore rules are admitted again immediately before the first
-            // shared workflow write. A drift refuses here, while nothing has
-            // been overwritten, instead of at the late attempt-publication
-            // recheck after the shared files were already replaced.
+            // the ignore rules are admitted again immediately before private
+            // preparation. A drift refuses here before creating its files;
+            // the later recheck retains any prepared inputs on failure.
             admit_build_output_before_write(&root, &policy, &build_output_rerun, refusal)?;
 
             // Compose existing commands: start (creates workflow + brief) +
             // packet. The start step's `Next: ripr check ...` hint is dropped
             // because this phase writes that before snapshot itself; printing
             // it sent users to redo it.
-            let started = write_agent_start_with_report(
+            let preparation = identity.reserve_preparation_directory()?;
+            let started = write_agent_start_with_report_using(
                 &AgentStartOptions {
                     root: root.clone(),
                     root_explicit: true,
                     seam_id: seam_id.clone(),
-                    out_dir: std::path::PathBuf::from("target/ripr/workflow"),
+                    out_dir: preparation.clone(),
                     json: false,
                 },
                 &before_input,
                 &before_config,
                 &before_report,
+                write_new_preparation_text,
             )
             .map_err(String::from)?;
             for path in started.paths.iter().filter(|_| !quiet) {
@@ -2839,17 +2850,18 @@ fn run_agent_repair_phase(
                 );
             }
 
-            let before = root.join("target/ripr/workflow/before.repo-exposure.json");
+            let before = preparation.join("before.repo-exposure.json");
             write_agent_repo_exposure_snapshot_with_report(
                 &root,
                 &before_config,
                 before_report,
                 &before,
                 None,
+                true,
             )?;
 
-            let packet_path = root.join("target/ripr/workflow/agent-packet.json");
-            write_text_file(&packet_path, &packet)?;
+            let packet_path = preparation.join("agent-packet.json");
+            write_new_preparation_text(&packet_path, &packet)?;
             if !quiet {
                 eprintln!(
                     "{}",
@@ -3850,6 +3862,7 @@ fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<Vec<u8
         report,
         path,
         Some(crate::edit_cage::MAX_CAPTURE_FILE_BYTES),
+        false,
     )?;
     read_workflow_file(path)?
         .map(|(bytes, _)| bytes)
@@ -3869,6 +3882,7 @@ fn write_agent_repo_exposure_snapshot_with_report(
     report: analysis::ClassifiedSeamsReport,
     path: &Path,
     max_capture_bytes: Option<u64>,
+    exclusive: bool,
 ) -> Result<(), String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(root, &report.classified);
     let python_guidance =
@@ -3898,7 +3912,7 @@ fn write_agent_repo_exposure_snapshot_with_report(
     // The before-phase snapshot is streamed without the bounded after-phase
     // backup reader. The shared output owner keeps the previous destination
     // intact if rendering or atomic publication fails.
-    publish_agent_snapshot(path, max_capture_bytes, |writer| {
+    let render = |writer: &mut BufWriter<&mut std::fs::File>| {
         output::repo_exposure::write_repo_exposure_json_with_context(
             &report.classified,
             report.limit_info.as_ref(),
@@ -3909,7 +3923,33 @@ fn write_agent_repo_exposure_snapshot_with_report(
             &context,
             writer,
         )
-    })
+    };
+    if exclusive {
+        output::file_write::write_new_with(path, |file| {
+            let mut writer = BufWriter::new(file);
+            render(&mut writer).map_err(std::io::Error::other)?;
+            writer.flush()
+        })
+        .map_err(|error| {
+            format!(
+                "prepare {} failed: {error}; preparation retained",
+                path.display()
+            )
+        })
+    } else {
+        publish_agent_snapshot(path, max_capture_bytes, render)
+    }
+}
+
+fn write_new_preparation_text(path: &Path, text: &str) -> Result<(), String> {
+    output::file_write::write_new_with(path, |file| file.write_all(text.as_bytes())).map_err(
+        |error| {
+            format!(
+                "prepare {} failed: {error}; preparation retained",
+                path.display()
+            )
+        },
+    )
 }
 
 fn publish_agent_snapshot(
@@ -4090,12 +4130,7 @@ fn repair_after_cage_recovery_lines(
                 violations.len() - CAGE_RECOVERY_MAX_VIOLATIONS
             ));
         }
-        lines.extend(untracked_output_hints(
-            root,
-            store,
-            after,
-            gap_base.is_some(),
-        ));
+        lines.extend(untracked_output_hints(root, store, after));
     }
     let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
     let restart = crate::app::gap_bound_repair::repair_start_command(
@@ -4179,7 +4214,6 @@ fn untracked_output_hints(
     root: &Path,
     store: Option<&Path>,
     after: &crate::app::repair_attempt::RepairAttemptAfter,
-    gap_bound: bool,
 ) -> Vec<String> {
     use crate::edit_cage::EditCageViolationKind;
 
@@ -4215,11 +4249,21 @@ fn untracked_output_hints(
     if untracked.is_empty() {
         return hints;
     }
-    let packet = if gap_bound {
-        crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT
-    } else {
-        crate::agent::loop_commands::WORKFLOW_AGENT_PACKET_ARTIFACT
+    let Ok(manifest) = crate::app::repair_attempt::load_repair_attempt_manifest_from(
+        root,
+        store,
+        &after.attempt_id,
+    ) else {
+        return hints;
     };
+    let Some(packet) = manifest
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.role == "agent_packet")
+    else {
+        return hints;
+    };
+    let packet = &packet.path;
     hints.push(format!(
         "{} {} not tracked by Git when the repair started. If {} a file you redirected ripr output into (for example `> packet.json` or `2> before.err`), it counts as an edit and fails the repair: delete it, and write `agent repair` output outside the checkout or under target/ripr/ (the first step already writes the packet to {packet}).",
         untracked.join(", "),
@@ -4552,7 +4596,7 @@ fn gap_bound_rejected_attempt_message(
 
 /// Admit the Git-ignored build directory for a before phase, recording the
 /// typed not-started refusal on `refusal`. Called at the early admission and
-/// again immediately before the first shared workflow write (#13452), so both
+/// again immediately before the first preparation write (#13452), so both
 /// share one mapping.
 fn admit_build_output_before_write(
     root: &Path,
@@ -4578,9 +4622,9 @@ fn admit_build_output_before_write(
 /// seam-bound phase prepares. The before snapshot is the
 /// `check-findings-json` artifact (the gap's findings are diff-scoped, so the
 /// base is part of the attempt). A refused admission check writes nothing. The
-/// two workflow artifacts are written here, before the attempt is persisted;
-/// the caller removes them when a later step refuses, so a refused start
-/// leaves neither them nor an attempt manifest.
+/// inputs are written exclusively in this identity's preparation directory.
+/// A later refusal retains those inputs without touching shared projections;
+/// only a successful publication creates a durable attempt manifest.
 fn run_gap_bound_before_phase(
     root: &Path,
     gap_id: &str,
@@ -4681,7 +4725,9 @@ fn run_gap_bound_before_phase(
             shell_arg(base)
         ));
     }
-    let before_snapshot_display = format!("target/ripr/workflow/{GAP_BOUND_BEFORE_SNAPSHOT_FILE}");
+    let preparation = identity.preparation_directory();
+    let before_snapshot_display =
+        output::path::human_path(&preparation.join(GAP_BOUND_BEFORE_SNAPSHOT_FILE));
     let packet = output::agent_seam_packets::render_gap_bound_repair_packet(
         &before_snapshot_display,
         &record,
@@ -4724,16 +4770,13 @@ fn run_gap_bound_before_phase(
         ));
     }
 
-    // #13452: admit the ignore rules again immediately before the first shared
-    // write (see the seam route).
+    // Preserve the pre-write admission before reserving preparation.
     admit_build_output_before_write(root, &policy, &build_output_rerun, refusal)?;
-    let workflow = root.join("target/ripr/workflow");
-    std::fs::create_dir_all(&workflow)
-        .map_err(|error| format!("create {} failed: {error}", workflow.display()))?;
-    let before = workflow.join(GAP_BOUND_BEFORE_SNAPSHOT_FILE);
-    write_text_file(&before, &snapshot.rendered)?;
-    let packet_path = root.join(crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT);
-    write_text_file(&packet_path, &packet)?;
+    let preparation = identity.reserve_preparation_directory()?;
+    let before = preparation.join(GAP_BOUND_BEFORE_SNAPSHOT_FILE);
+    write_new_preparation_text(&before, &snapshot.rendered)?;
+    let packet_path = preparation.join(crate::app::gap_bound_repair::GAP_BOUND_PACKET_FILE);
+    write_new_preparation_text(&packet_path, &packet)?;
     for path in [&before, &packet_path].into_iter().filter(|_| !quiet) {
         eprintln!(
             "{}",

@@ -1190,7 +1190,21 @@ fn rooted_packet_next_journey(prepared_repair: bool) -> Result<(), String> {
     let prepared = run_ripr(&journey.launch_dir, &packet_args)?;
     assert_success(&prepared, "prepare actual rooted repair packet")?;
     let packet = if prepared_repair {
-        read_json(&workflow_artifact(&selected, "agent-packet.json"))?
+        let attempts = prepared_attempt_manifests(&selected)?;
+        if attempts.len() != 1 {
+            return Err("prepared repair must publish exactly one attempt".to_string());
+        }
+        let manifest = &attempts[0].1;
+        let packet_path = manifest["artifacts"]
+            .as_array()
+            .and_then(|artifacts| {
+                artifacts
+                    .iter()
+                    .find(|artifact| artifact["role"] == "agent_packet")
+            })
+            .and_then(|artifact| artifact["path"].as_str())
+            .ok_or("missing retained packet")?;
+        read_json(&selected.join(packet_path))?
     } else {
         serde_json::from_slice::<Value>(&prepared.stdout)
             .map_err(|error| format!("parse standalone packet: {error}"))?
@@ -1279,7 +1293,22 @@ fn rooted_packet_next_journey(prepared_repair: bool) -> Result<(), String> {
         ("before_artifact", "before.repo-exposure.json"),
         ("after_artifact", "after.repo-exposure.json"),
     ] {
-        let expected = sha256_file(&workflow_artifact(&selected, file))?;
+        let source = if prepared_repair && name == "before_artifact" {
+            let attempts = prepared_attempt_manifests(&selected)?;
+            let path = attempts[0].1["artifacts"]
+                .as_array()
+                .and_then(|artifacts| {
+                    artifacts
+                        .iter()
+                        .find(|artifact| artifact["role"] == "before_snapshot")
+                })
+                .and_then(|artifact| artifact["path"].as_str())
+                .ok_or("prepared attempt omitted retained before snapshot")?;
+            selected.join(path)
+        } else {
+            workflow_artifact(&selected, file)
+        };
+        let expected = sha256_file(&source)?;
         if receipt
             .pointer(&format!("/provenance/{name}/sha256"))
             .and_then(Value::as_str)

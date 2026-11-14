@@ -48,9 +48,8 @@ pub(crate) const BINDING_SPEC: &str = "RIPR-SPEC-0176";
 /// Artifact role under which the prepare-phase record is staged into the
 /// durable attempt.
 pub(crate) const BINDING_ARTIFACT_ROLE: &str = "python_repair_trust_binding";
-/// Repository-global compatibility projection of the prepare record.
-pub(crate) const PREPARE_RECORD_COMPAT_PATH: &str =
-    "target/ripr/workflow/python-repair-trust-binding.json";
+/// Prepare record stored beside this attempt preparation's before snapshot.
+pub(crate) const PREPARE_RECORD_FILE: &str = "python-repair-trust-binding.json";
 /// Repository-global compatibility projection of the apply record.
 pub(crate) const APPLY_RECORD_COMPAT_PATH: &str =
     "target/ripr/workflow/python-repair-driver-after.json";
@@ -1075,8 +1074,22 @@ pub(crate) fn prepare_binding(
         },
         None,
     )?;
-    let record_path = root.join(PREPARE_RECORD_COMPAT_PATH);
-    write_record_file(&record_path, &record)?;
+    let record_path = before_snapshot_path
+        .parent()
+        .ok_or("before snapshot has no preparation directory")?
+        .join(PREPARE_RECORD_FILE);
+    let mut rendered = serde_json::to_vec_pretty(&record)
+        .map_err(|error| format!("serialize python repair-trust binding failed: {error}"))?;
+    rendered.push(b'\n');
+    crate::output::file_write::write_new_with(&record_path, |file| {
+        std::io::Write::write_all(file, &rendered)
+    })
+    .map_err(|error| {
+        format!(
+            "prepare {} failed: {error}; preparation retained",
+            record_path.display()
+        )
+    })?;
     Ok(PreparedBinding {
         record,
         record_path,
@@ -3516,7 +3529,7 @@ mod tests {
         let root = fixture.root.path();
         let policy = policy_for("tests/test_pricing.py")?;
         let stale_policy = policy_for("tests/test_other.py")?;
-        let record_path = root.join(PREPARE_RECORD_COMPAT_PATH);
+        let record_path = root.join(PREPARE_RECORD_FILE);
         let unauthorized = EditAuthorization {
             authorized: false,
             authority: Some(AUTHORITY_IDENTITY.to_string()),
