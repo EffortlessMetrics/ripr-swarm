@@ -913,7 +913,7 @@ fn list_gaps_tool_descriptor() -> Value {
                 "file": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Narrow to items whose workspace-relative file equals, prefixes, or ends with this path (a leading `./` is ignored)."
+                    "description": "Narrow to items whose workspace-relative file equals, prefixes, or ends with this path at `/` boundaries (a leading `./` is ignored)."
                 },
                 "class": {
                     "type": "string",
