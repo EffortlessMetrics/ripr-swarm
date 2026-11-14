@@ -1,0 +1,2 @@
+fixtures/manual_let_else_pairing/input/build.rs|use std::process::Command|1|analysis/probes|#14428: the fixture input is a reduced verbatim copy of dtolnay/semver; this build.rs is fixture data under fixtures/, not a workspace member, and is never compiled or executed by this repository.
+fixtures/manual_let_else_pairing/input/build.rs|Command::new|1|analysis/probes|#14428: same fixture input file; the upstream build.rs probes `rustc --version` to set a cfg, and the fixture keeps it so the reduced tree matches the upstream shape. Fixture data only, never built or run here.
