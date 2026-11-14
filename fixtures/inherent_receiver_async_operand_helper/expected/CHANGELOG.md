@@ -142,3 +142,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — inherent_receiver_async_operand_helper (13)
+
+Reason:
+RIPR-SPEC-0001: head-only match-arm rows and their propagation sink name the arm's same-line result (#14420)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_async_operand_helper --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

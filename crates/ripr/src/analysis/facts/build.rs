@@ -433,7 +433,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
                     if let Some(facts) = memo.and_then(|memo| memo.lookup(file, bytes)) {
                         return Ok((key, CacheLoad::Hit(facts), true));
                     }
-                    let load = cache.load_file_facts(&key);
+                    let load = cache.load_file_facts_for_path(&key, file);
                     Ok((key, load, false))
                 })
             })

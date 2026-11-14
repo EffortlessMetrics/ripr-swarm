@@ -137,3 +137,150 @@ fn markdown_is_the_generated_support_tiers_block_and_matches_the_doc() {
         assert!(stderr.contains("whole-table"), "{combined:?}: {stderr}");
     }
 }
+
+// The published `ripr capabilities --json` schema, checked against bytes the
+// real command wrote (#14067). The registry is a static table, so every
+// `--language` projection is exercised, not one sample.
+
+#[path = "common/published_schema.rs"]
+mod published_schema;
+
+const CAPABILITIES_SCHEMA: &str = "schemas/ripr/capabilities.schema.json";
+const LANGUAGES: [&str; 5] = ["rust", "typescript", "javascript", "python", "perl"];
+
+fn conforms(document: &serde_json::Value, schema: &serde_json::Value) -> Result<(), String> {
+    published_schema::check(document, schema, schema, "capabilities")
+}
+
+#[test]
+fn the_checker_covers_every_keyword_the_capabilities_schema_uses() -> Result<(), String> {
+    let schema = published_schema::read(CAPABILITIES_SCHEMA)?;
+    let ignored = published_schema::unsupported_keywords(&schema);
+    if ignored.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the conformance checker ignores these published keywords, so it would under-check the schema: {ignored:?}"
+        ))
+    }
+}
+
+#[test]
+fn capabilities_json_conforms_to_the_published_schema() -> Result<(), String> {
+    let schema = published_schema::read(CAPABILITIES_SCHEMA)?;
+    let whole = json(&["capabilities", "--json"]);
+    conforms(&whole, &schema).map_err(|error| format!("whole table: {error}"))?;
+    assert!(whole["filtered_by"].is_null(), "{whole}");
+    let mut narrowed_cells = 0usize;
+    for language in LANGUAGES {
+        let narrowed = json(&["capabilities", "--json", "--language", language]);
+        conforms(&narrowed, &schema).map_err(|error| format!("--language {language}: {error}"))?;
+        assert_eq!(narrowed["filtered_by"]["language"], language);
+        narrowed_cells += narrowed["cells"].as_array().map_or(0, Vec::len);
+    }
+    // The projections partition the table, so the loop above validated every
+    // cell a second time rather than five empty arrays.
+    let whole_cells = whole["cells"].as_array().map_or(0, Vec::len);
+    assert!(whole_cells > 0, "{whole}");
+    assert_eq!(narrowed_cells, whole_cells);
+    Ok(())
+}
+
+/// The schema's closed vocabularies are the producer's, in the producer's
+/// order: a state or language added to the domain cannot ship while the
+/// published schema still lists the old set, and the schema cannot list a
+/// value the build never emits.
+#[test]
+fn published_vocabularies_equal_the_emitted_ones() -> Result<(), String> {
+    let schema = published_schema::read(CAPABILITIES_SCHEMA)?;
+    let whole = json(&["capabilities", "--json"]);
+    assert_eq!(
+        schema["$defs"]["support_state"]["enum"], whole["support_state_vocabulary"],
+        "support_state enum differs from the emitted support_state_vocabulary"
+    );
+    let emitted_languages: Vec<serde_json::Value> = whole["languages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|entry| entry["language"].clone())
+        .collect();
+    assert_eq!(
+        schema["$defs"]["language"]["enum"],
+        serde_json::Value::Array(emitted_languages),
+        "language enum differs from the emitted languages"
+    );
+    assert_eq!(
+        schema["properties"]["schema_version"]["const"],
+        whole["schema_version"]
+    );
+    Ok(())
+}
+
+/// The negative experiment: a checker or schema that accepted everything
+/// would still pass the conformance test above. Each case starts from real
+/// emitted bytes and breaks one thing a consumer relies on.
+#[test]
+fn published_capabilities_schema_rejects_documents_it_forbids() -> Result<(), String> {
+    type Mutation = fn(&mut serde_json::Value);
+    let schema = published_schema::read(CAPABILITIES_SCHEMA)?;
+    let whole = json(&["capabilities", "--json"]);
+    conforms(&whole, &schema)?;
+    let cases: [(&str, Mutation); 12] = [
+        ("unknown top-level field", |doc| {
+            doc["confidence"] = serde_json::json!(0.9)
+        }),
+        ("unknown cell field", |doc| {
+            doc["cells"][0]["score"] = serde_json::json!(1)
+        }),
+        ("unknown language-entry field", |doc| {
+            doc["languages"][0]["enabled"] = serde_json::json!(true)
+        }),
+        ("stale schema_version", |doc| {
+            doc["schema_version"] = serde_json::json!("0.0")
+        }),
+        ("numeric schema_version", |doc| {
+            doc["schema_version"] = serde_json::json!(0.1)
+        }),
+        ("missing required top-level field", |doc| {
+            if let Some(object) = doc.as_object_mut() {
+                object.remove("non_claims");
+            }
+        }),
+        ("missing required cell field", |doc| {
+            if let Some(object) = doc["cells"][0].as_object_mut() {
+                object.remove("limit");
+            }
+        }),
+        ("state outside the closed vocabulary", |doc| {
+            doc["cells"][0]["state"] = serde_json::json!("supported")
+        }),
+        ("unlisted language", |doc| {
+            doc["cells"][0]["language"] = serde_json::json!("cobol")
+        }),
+        ("truncated digest", |doc| {
+            doc["semantic_digest"] = serde_json::json!("sha256:abc")
+        }),
+        ("vocabulary with a dropped state", |doc| {
+            if let Some(vocabulary) = doc["support_state_vocabulary"].as_array_mut() {
+                vocabulary.pop();
+            }
+        }),
+        ("string adapter_compiled", |doc| {
+            doc["languages"][0]["adapter_compiled"] = serde_json::json!("true")
+        }),
+    ];
+    for (label, mutate) in cases {
+        let mut document = whole.clone();
+        mutate(&mut document);
+        assert_ne!(document, whole, "{label}: the mutation changed nothing");
+        match conforms(&document, &schema) {
+            Ok(()) => {
+                return Err(format!(
+                    "the published capabilities schema accepted a document the contract forbids: {label}"
+                ));
+            }
+            Err(error) => println!("rejected as expected ({label}): {error}"),
+        }
+    }
+    Ok(())
+}

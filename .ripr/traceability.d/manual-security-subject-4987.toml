@@ -1,0 +1,13 @@
+[[behavior]]
+id = "RIPR-SPEC-0439"
+name = "manual security comparison subjects"
+spec = "docs/specs/RIPR-SPEC-0439-manual-security-subject.md"
+tests = [
+  "tools/repo-policy/tests/security_subject.rs::cargo_scan_binds_candidate_and_preserves_unselected_event_subjects",
+  "tools/repo-policy/tests/security_subject.rs::manual_security_refuses_partial_mutable_equal_and_injected_subjects",
+  "tools/repo-policy/tests/security_subject.rs::dependency_comparison_uses_manual_pair_or_actual_pr_context",
+  "tools/repo-policy/tests/security_subject.rs::both_consumers_refuse_the_wrong_checkout",
+  "tools/repo-policy/tests/security_subject.rs::selected_subjects_reach_checkout_and_the_real_security_consumers",
+]
+code = [".github/workflows/security.yml"]
+metrics = ["unit_test_pass_rate"]

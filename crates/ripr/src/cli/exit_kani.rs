@@ -10,6 +10,10 @@ fn exit_code_constants_match_documented_table() {
     assert_eq!(EXIT_COMPLETED, 0);
     assert_eq!(EXIT_COULD_NOT_COMPLETE, 2);
     assert_eq!(EXIT_DECISION_OR_REFUSAL, 3);
+    kani::cover!(
+        EXIT_COMPLETED == 0 && EXIT_COULD_NOT_COMPLETE == 2 && EXIT_DECISION_OR_REFUSAL == 3,
+        "the documented exit-code checks are reached"
+    );
 }
 
 /// `CommandError::exit_code` is total over the closed variant set, lands only

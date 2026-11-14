@@ -197,6 +197,9 @@ mod typescript_effect_aliases;
 #[path = "cli_smoke/typescript_finally_completion.rs"]
 mod typescript_finally_completion;
 #[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/typescript_generator_promise.rs"]
+mod typescript_generator_promise;
+#[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/typescript_partial_star.rs"]
 mod typescript_partial_star;
 #[cfg(feature = "lang-typescript")]
@@ -4040,10 +4043,13 @@ fn gate_evaluate_complete_gap_ledger_is_advisory_in_visible_only_mode() -> Resul
 /// #11584: a completed run carries neither refusal key, so a consumer can
 /// branch on `status` alone.
 #[test]
-fn check_json_completed_run_carries_neither_status_nor_error() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&["check", "--root", &root, "--diff", &diff, "--json"]);
+fn check_json_completed_run_carries_neither_status_nor_error() -> sample_output::TestResult {
+    // The owned sample workspace, not the whole checkout: the same diff over
+    // this repository's root indexed every crate for one shape assertion and
+    // was the slowest test in the suite (286 s hosted).
+    let fixture = sample_output::Fixture::new()?;
+    let output = fixture.run(&["--json"])?;
+    assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let value: serde_json::Value = serde_json::from_str(&stdout)
         .map_err(|err| format!("completed stdout should parse as JSON: {err}\n{stdout}"))?;
@@ -5680,6 +5686,67 @@ fn check_badge_json_refusal_emits_the_degraded_badge() -> Result<(), String> {
     }
     if value["color"] != "lightgrey" {
         return Err(format!("badge color must be lightgrey: {value}"));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #14499: on a refused run, every machine format a program parses prints a
+/// non-empty refusal document naming the typed identity, and none echoes
+/// `ripr.toml` content; the prose formats keep stdout empty.
+#[test]
+fn check_refusal_sweep_every_machine_format_prints_a_document() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-refusal-sweep", 1)?;
+    let root_arg = root.display().to_string();
+    std::fs::write(root.join("ripr.toml"), "[canary_table_14499]\n")
+        .map_err(|err| err.to_string())?;
+    let machine = [
+        "agent",
+        "json",
+        "json-compact",
+        "json-terse",
+        "check-findings-json",
+        "github",
+        "missed-txt",
+        "sarif",
+        "sarif-compact",
+        "badge-json",
+        "badge-shields",
+        "badge-plus-json",
+        "badge-plus-shields",
+        "repo-badge-json",
+        "repo-badge-shields",
+        "repo-badge-plus-json",
+        "repo-badge-plus-shields",
+        "repo-seams-json",
+        "repo-exposure-json",
+        "repo-exposure-summary-json",
+        "repo-sarif",
+        "repo-sarif-compact",
+        "agent-seam-packets-json",
+    ];
+    for format in machine {
+        let output = run_ripr(&["check", "--format", format, "--root", &root_arg]);
+        let stdout =
+            assert_machine_refusal_basics(&output).map_err(|err| format!("{format}: {err}"))?;
+        if !stdout.contains("config_invalid") {
+            return Err(format!("{format} must name config_invalid:\n{stdout}"));
+        }
+        if stdout.contains("canary_table_14499") {
+            return Err(format!(
+                "{format} must not echo ripr.toml content:\n{stdout}"
+            ));
+        }
+        if !matches!(format, "agent" | "github" | "missed-txt") {
+            serde_json::from_str::<serde_json::Value>(&stdout)
+                .map_err(|err| format!("{format} refusal must parse as JSON: {err}\n{stdout}"))?;
+        }
+    }
+    for format in ["human", "human-full", "repo-seams-md", "repo-exposure-md"] {
+        let output = run_ripr(&["check", "--format", format, "--root", &root_arg]);
+        if output.status.code() != Some(2) || !output.stdout.is_empty() {
+            return Err(format!("{format} keeps its refusal on stderr: {output:?}"));
+        }
     }
     ignore_remove_dir_all(&root);
     Ok(())
@@ -11154,9 +11221,9 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
 /// missing diff file exits 2, like the diff-scoped formats. #7332 changed
 /// what the two JSON repo formats write on that refusal: `repo-exposure-json`
 /// and `agent-seam-packets-json` render their format's refusal document
-/// (`run_status: "refused"`) on stdout instead of zero bytes, while
-/// `repo-sarif` still has no honest refusal shape and stays empty. A
-/// resolvable base keeps working.
+/// (`run_status: "refused"`) on stdout instead of zero bytes, and since
+/// #14499 `repo-sarif` renders the refusal SARIF run (scope `repo_seam`,
+/// `run.properties.run_status: "refused"`). A resolvable base keeps working.
 #[test]
 fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -11197,10 +11264,15 @@ fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
                 String::from_utf8_lossy(&output.stderr)
             );
             if format == "repo-sarif" {
-                assert!(
-                    output.stdout.is_empty(),
-                    "{format} {bad:?} wrote stdout on a failed invocation"
+                // #14499: the refusal SARIF run, never zero bytes.
+                let sarif: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+                let run = &sarif["runs"][0];
+                assert_eq!(
+                    run["properties"]["run_status"], "refused",
+                    "{format} {bad:?}"
                 );
+                assert_eq!(run["properties"]["scope"], "repo_seam", "{format} {bad:?}");
+                assert_eq!(run["results"], serde_json::json!([]), "{format} {bad:?}");
             } else {
                 // #7332: the JSON repo formats carry their refusal document
                 // on stdout rather than zero bytes.
@@ -11890,6 +11962,12 @@ fn agent_repair_seam_selection_names_start_command_and_found_ids()
             "found-many must name the id {attempt}:\n{stderr}"
         );
     }
+    // In id order, not directory-listing order, so the refusal is the same
+    // bytes on every filesystem.
+    assert!(
+        stderr.contains(&format!("found 2: {}; pass", attempts.join(", "))),
+        "found-many must list the ids in sorted order {attempts:?}:\n{stderr}"
+    );
     assert!(
         stderr.contains("pass --attempt <id> to select the prepared work exactly"),
         "found-many must name the selection flag:\n{stderr}"
@@ -21814,6 +21892,16 @@ fn pilot_artifact_note_uses_the_selected_root_at_the_cli() -> Result<(), String>
 
     for (label, cwd_rel, args, packet_rel, expect_note) in rows {
         let (sandbox, repo) = make_sandbox(&format!("pilot-note-{label}"))?;
+        if expect_note {
+            // ripr marks a target/ripr it creates as self-ignoring (#14315),
+            // which silences the note. A user-owned ignore file with no rules
+            // is kept as written and leaves the tree uncovered, so the note
+            // still has to resolve the selected root.
+            std::fs::create_dir_all(repo.join("target/ripr"))
+                .map_err(|err| format!("create target/ripr ({label}): {err}"))?;
+            std::fs::write(repo.join("target/ripr/.gitignore"), "# kept by the user\n")
+                .map_err(|err| format!("write user ignore file ({label}): {err}"))?;
+        }
         let repo_string = repo.to_string_lossy().into_owned();
         let mut argv: Vec<&str> = vec!["pilot"];
         argv.extend(args.iter().map(String::as_str));
@@ -25481,6 +25569,26 @@ fn location_miss_names_where_findings_are_on_fresh_and_artifact_routes() -> Resu
             ));
         }
     }
+    // #14440: a replayed artifact records findings, not whether its run was
+    // complete, so a file with no recorded finding is never an all-clear.
+    for command in ["explain", "context"] {
+        let mut args = vec![command, "--root", &root, "--from", &artifact];
+        if command == "context" {
+            args.push("--at");
+        }
+        args.push("src/nofile.rs:3");
+        let output = run_ripr(&args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.status.code() != Some(2)
+            || !stderr.contains("No finding was reported in \"src/nofile.rs\"")
+            || !stderr.contains("does not record whether its run was complete")
+            || stderr.contains("No finding in this scope is in")
+        {
+            return Err(format!(
+                "{args:?} artifact miss must not read as an all-clear: {stderr}"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -28845,6 +28953,226 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
     }
 
     ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #14423: on a clean base branch the machine formats keep their empty-range
+/// contract, but they name the same last-commit rerun the human view prints:
+/// the agent `stop=` line names `ripr check --base HEAD~1 --format agent`
+/// (and running it reaches the commit's findings), and the JSON stop carries
+/// `scope_route`. A root commit with no parent and a detached HEAD keep the
+/// generic stop and no route.
+#[test]
+fn check_machine_formats_on_clean_base_branch_name_the_last_commit_rerun() -> Result<(), String> {
+    let root = unique_temp_workspace("last-commit-rerun-machine");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"last-commit-rerun\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    std::fs::write(root.join(".gitignore"), "/target/\n")
+        .map_err(|err| format!("write .gitignore: {err}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn can_vote(age: u32) -> bool { age > 18 }\n",
+    )
+    .map_err(|err| format!("write lib.rs: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    let root_str = root.to_string_lossy().into_owned();
+    const GENERIC: &str = "stop=nothing was analyzed (no scope); pass --base REV";
+
+    // Root commit: no parent, so no rerun can name a range.
+    let only_root = run_ripr(&["check", "--root", &root_str, "--format", "agent"]);
+    assert_success(&only_root);
+    let only_root_text = String::from_utf8_lossy(&only_root.stdout);
+    if !only_root_text.contains(GENERIC) || only_root_text.contains("HEAD~1") {
+        return Err(format!(
+            "a root commit must keep the generic stop: {only_root_text}"
+        ));
+    }
+
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn can_vote(age: u32) -> bool { age >= 18 }\n",
+    )
+    .map_err(|err| format!("rewrite lib.rs: {err}"))?;
+    run_git(&root, &["commit", "-am", "boundary"])?;
+
+    let agent = run_ripr(&["check", "--root", &root_str, "--format", "agent"]);
+    assert_success(&agent);
+    let agent_text = String::from_utf8_lossy(&agent.stdout);
+    let stop = agent_text
+        .lines()
+        .find(|line| line.starts_with("stop="))
+        .ok_or_else(|| format!("agent output must stop: {agent_text}"))?;
+    let command = stop
+        .split("to check the last commit run `")
+        .nth(1)
+        .and_then(|rest| rest.split('`').next())
+        .ok_or_else(|| format!("the stop must name the last-commit rerun: {stop}"))?;
+    if !stop.contains("HEAD is at the comparison base `main`")
+        || !command.starts_with("ripr check --root ")
+        || !command.ends_with(" --base HEAD~1 --format agent")
+    {
+        return Err(format!("unexpected last-commit stop: {stop}"));
+    }
+    // The named rerun reaches the commit's behavior.
+    let rerun = run_ripr(&[
+        "check", "--root", &root_str, "--base", "HEAD~1", "--format", "agent",
+    ]);
+    assert_success(&rerun);
+    let rerun_text = String::from_utf8_lossy(&rerun.stdout);
+    if rerun_text.contains("stop=nothing was analyzed") || rerun_text.contains("findings=0 ") {
+        return Err(format!(
+            "the named rerun must analyze the last commit: {rerun_text}"
+        ));
+    }
+
+    let json = run_ripr(&["check", "--root", &root_str, "--json"]);
+    assert_success(&json);
+    let value: serde_json::Value =
+        serde_json::from_slice(&json.stdout).map_err(|err| format!("parse check JSON: {err}"))?;
+    let stop_value = &value["canonical_next_action"]["stop"];
+    let scope_route = stop_value["scope_route"].as_str().unwrap_or_default();
+    if stop_value["case"] != "scope_missing"
+        || !scope_route.ends_with(" --base HEAD~1")
+        || !scope_route.starts_with("ripr check --root ")
+        || stop_value.get("repair_route").is_some()
+    {
+        return Err(format!(
+            "JSON stop must carry the scope route only: {stop_value}"
+        ));
+    }
+
+    // A clone resolves the default base to `origin/main` at the same commit
+    // as `main`: the same empty range, so both machine formats name the
+    // same rerun.
+    run_git(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+    run_git(
+        &root,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ],
+    )?;
+    let clone_agent = run_ripr(&["check", "--root", &root_str, "--format", "agent"]);
+    assert_success(&clone_agent);
+    let clone_text = String::from_utf8_lossy(&clone_agent.stdout);
+    if !clone_text.contains("HEAD is at the comparison base `origin/main`")
+        || !clone_text.contains(" --base HEAD~1 --format agent`")
+    {
+        return Err(format!(
+            "an origin/main base at HEAD must name the last-commit rerun: {clone_text}"
+        ));
+    }
+    let clone_json = run_ripr(&["check", "--root", &root_str, "--json"]);
+    assert_success(&clone_json);
+    let clone_value: serde_json::Value = serde_json::from_slice(&clone_json.stdout)
+        .map_err(|err| format!("parse origin/main check JSON: {err}"))?;
+    if !clone_value["canonical_next_action"]["stop"]["scope_route"]
+        .as_str()
+        .unwrap_or_default()
+        .ends_with(" --base HEAD~1")
+    {
+        return Err(format!(
+            "an origin/main base at HEAD must carry the scope route: {clone_value}"
+        ));
+    }
+
+    // Ignored source: the last commit cannot reach the ignored file, so
+    // neither machine format names the rerun.
+    std::fs::write(root.join(".git/info/exclude"), "src/generated.rs\n")
+        .map_err(|err| format!("write exclude: {err}"))?;
+    std::fs::write(
+        root.join("src/generated.rs"),
+        "pub fn generated() -> u8 { 2 }\n",
+    )
+    .map_err(|err| format!("write generated.rs: {err}"))?;
+    let ignored_agent = run_ripr(&["check", "--root", &root_str, "--format", "agent"]);
+    assert_success(&ignored_agent);
+    let ignored_text = String::from_utf8_lossy(&ignored_agent.stdout);
+    if ignored_text.contains("to check the last commit run") {
+        return Err(format!(
+            "ignored source must not name the last-commit rerun: {ignored_text}"
+        ));
+    }
+    assert_json_stop_has_no_scope_route(&root_str, &[], "ignored source")?;
+    std::fs::remove_file(root.join("src/generated.rs"))
+        .map_err(|err| format!("remove generated.rs: {err}"))?;
+
+    // Untracked source: the empty range is explained by the untracked file,
+    // so neither machine format names the last-commit rerun.
+    std::fs::write(root.join("src/extra.rs"), "pub fn extra() -> u8 { 1 }\n")
+        .map_err(|err| format!("write extra.rs: {err}"))?;
+    let untracked_agent = run_ripr(&["check", "--root", &root_str, "--format", "agent"]);
+    assert_success(&untracked_agent);
+    let untracked_text = String::from_utf8_lossy(&untracked_agent.stdout);
+    if untracked_text.contains("to check the last commit run") {
+        return Err(format!(
+            "untracked source must not name the last-commit rerun: {untracked_text}"
+        ));
+    }
+    assert_json_stop_has_no_scope_route(&root_str, &[], "untracked source")?;
+    std::fs::remove_file(root.join("src/extra.rs"))
+        .map_err(|err| format!("remove extra.rs: {err}"))?;
+
+    // A feature branch that is not the base: the generic stop stays.
+    run_git(&root, &["checkout", "-q", "-b", "feature"])?;
+    let feature = run_ripr(&[
+        "check", "--root", &root_str, "--format", "agent", "--base", "main",
+    ]);
+    assert_success(&feature);
+    let feature_text = String::from_utf8_lossy(&feature.stdout);
+    if feature_text.contains("to check the last commit run") {
+        return Err(format!(
+            "a non-base branch must not name the last-commit rerun: {feature_text}"
+        ));
+    }
+    assert_json_stop_has_no_scope_route(&root_str, &["--base", "main"], "feature branch")?;
+
+    // Detached HEAD: not on the base branch, so the generic stop stays.
+    run_git(&root, &["checkout", "-q", "--detach", "HEAD"])?;
+    let detached = run_ripr(&[
+        "check", "--root", &root_str, "--format", "agent", "--base", "main",
+    ]);
+    assert_success(&detached);
+    let detached_text = String::from_utf8_lossy(&detached.stdout);
+    if !detached_text.contains("\nstop=nothing was")
+        || detached_text.contains("HEAD~1")
+        || detached_text.contains("comparison base `main`")
+    {
+        return Err(format!(
+            "a detached HEAD must not name the last-commit rerun: {detached_text}"
+        ));
+    }
+    assert_json_stop_has_no_scope_route(&root_str, &["--base", "main"], "detached HEAD")?;
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+fn assert_json_stop_has_no_scope_route(
+    root: &str,
+    extra: &[&str],
+    label: &str,
+) -> Result<(), String> {
+    let mut args = vec!["check", "--root", root, "--json"];
+    args.extend_from_slice(extra);
+    let output = run_ripr(&args);
+    assert_success(&output);
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("parse {label} check JSON: {err}"))?;
+    let stop = &value["canonical_next_action"]["stop"];
+    if stop.get("scope_route").is_some() {
+        return Err(format!(
+            "{label}: JSON stop must not carry scope_route: {stop}"
+        ));
+    }
     Ok(())
 }
 
@@ -36216,6 +36544,51 @@ fn outcome_artifacts_from_endless_device_are_refused_at_input_limit() -> Result<
         stderr.contains("read /dev/zero failed"),
         "the refusal must name the artifact path:\n{stderr}"
     );
+    Ok(())
+}
+
+/// `--out` pointed at a device, FIFO or socket used to have the finished file
+/// renamed over the node: run as root, `--out /dev/null` turned the null
+/// device into a regular report file. A Unix-domain socket stands in for the
+/// device here because std can create one without `mknod`. The real binary
+/// must refuse with exit 2 and leave the node as it was.
+#[cfg(unix)]
+#[test]
+fn feedback_export_out_refuses_to_replace_a_special_node() -> Result<(), std::io::Error> {
+    use std::os::unix::fs::FileTypeExt as _;
+    // A socket path must stay under the ~104 byte address limit, and the
+    // checkout forces `TMPDIR` into its own `target` directory, so this
+    // fixture uses a short absolute path; `create_dir` is exclusive.
+    let root = std::path::PathBuf::from(format!(
+        "/tmp/ripr-sock-cli-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir(&root)?;
+    let node = root.join("node");
+    let listener = std::os::unix::net::UnixListener::bind(&node)?;
+    let output = run_ripr(&[
+        "feedback",
+        "export",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &node.display().to_string(),
+    ]);
+    let still_socket = std::fs::symlink_metadata(&node).map(|meta| meta.file_type().is_socket());
+    drop(listener);
+    let _ = std::fs::remove_dir_all(&root);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("refusing to replace usefulness-feedback join")
+            && stderr.contains("is a device, FIFO or socket, not a regular file"),
+        "the refusal must say why:\n{stderr}"
+    );
+    assert!(still_socket?, "the socket was replaced by a regular file");
     Ok(())
 }
 

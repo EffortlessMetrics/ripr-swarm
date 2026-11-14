@@ -1,0 +1,53 @@
+{
+  "analysis_scope": {
+    "basis": "base_unresolvable",
+    "downstream_consumable": false,
+    "limitation": "base_unresolvable",
+    "repair_route": "analysis/base-resolution",
+    "run_status": "base_unresolvable",
+    "scope": "diff"
+  },
+  "base": "nope-ref",
+  "findings": [],
+  "mode": "draft",
+  "root": ".",
+  "run_limitations": [
+    {
+      "basis": "base_unresolvable",
+      "category": "base_unresolvable",
+      "downstream_consumable": false,
+      "message": "the base `nope-ref` does not resolve to a commit (the analysis did not run). Check the spelling of `nope-ref` (`git branch --list` shows this repository's local branches). No git remote is configured: if it lives on a remote, add that remote (for example `git remote add <name> <url>`), then fetch it; the fetched branch is named `<name>/nope-ref`, not a local `nope-ref`, or pass `--base <ref>` for a ref this repository has.",
+      "remedy": {
+        "alternatives": [],
+        "command": null,
+        "conditional": false,
+        "env": [],
+        "fill_in": [],
+        "flags": [
+          "--base"
+        ],
+        "kind": "flags",
+        "prose_has_more": false,
+        "retry_stated": null,
+        "tool": null
+      },
+      "repair_route": "analysis/base-resolution",
+      "run_status": "base_unresolvable"
+    }
+  ],
+  "schema_version": "0.1",
+  "summary": {
+    "changed_files_by_language": [],
+    "changed_rust_files": 0,
+    "exposed": 0,
+    "findings": 0,
+    "infection_unknown": 0,
+    "no_static_path": 0,
+    "probes": 0,
+    "propagation_unknown": 0,
+    "reachable_unrevealed": 0,
+    "static_unknown": 0,
+    "weakly_exposed": 0
+  },
+  "tool": "ripr"
+}

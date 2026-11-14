@@ -12,6 +12,37 @@ use std::process::Command;
 const TRACE_ENV: &str = "RIPR_REPO_EXPOSURE_LATENCY_TRACE";
 const RECEIPT_PREFIX: &str = "ripr_resource_cost_receipt ";
 const FAMILY_RECEIPT_PREFIX: &str = "ripr_cache_family_store_receipt ";
+const FILE_FACT_RECEIPT_PREFIX: &str = "ripr_file_fact_cache_receipt ";
+const CACHE_MISS: &str =
+    "ripr: no usable cache entry for this workspace state; running the full classified walk";
+
+/// Each experiment owns its cache state; parallel tests and inherited cache
+/// settings cannot turn one side of the trace comparison into a warm run.
+struct CacheScratch(PathBuf);
+
+impl CacheScratch {
+    fn new() -> Result<Self, String> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let parent = std::env::temp_dir();
+        std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
+        for _ in 0..100 {
+            let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = parent.join(format!("ripr-trace-cache-{}-{serial}", std::process::id()));
+            match std::fs::create_dir(&path) {
+                Ok(()) => return Ok(Self(path)),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+        Err("could not exclusively allocate trace-test cache scratch".into())
+    }
+}
+
+impl Drop for CacheScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
 
 fn workspace_root() -> Result<PathBuf, String> {
     // CARGO_MANIFEST_DIR is <repo>/crates/ripr.
@@ -30,11 +61,16 @@ struct Run {
 }
 
 /// One spawn site. `trace` sets or clears the opt-in switch; every other
-/// variable is inherited so the child sees the same repository the test does.
-fn run_ripr(args: &[&str], trace: Option<&str>) -> Result<Run, String> {
+/// variable is inherited except the experiment's explicit private cache.
+fn run_ripr(args: &[&str], trace: Option<&str>, cache: &Path) -> Result<Run, String> {
     let root = workspace_root()?;
     let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
-    command.args(args).current_dir(&root).env_remove(TRACE_ENV);
+    command
+        .args(args)
+        .current_dir(&root)
+        .env_remove(TRACE_ENV)
+        .env_remove("RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN")
+        .env("RIPR_CACHE_DIR", cache);
     if let Some(value) = trace {
         command.env(TRACE_ENV, value);
     }
@@ -128,11 +164,41 @@ fn mask_volatile_identity(stdout: &[u8]) -> Result<serde_json::Value, String> {
 
 #[test]
 fn tracing_off_leaves_stdout_and_stderr_byte_identical() -> Result<(), String> {
-    let untraced = run_ripr(CHECK_ARGS, None)?;
-    // The switch is presence-based, so an explicitly empty value is still on.
-    // That is the pre-existing contract and this test must not blur it.
-    let traced = run_ripr(CHECK_ARGS, Some("1"))?;
+    let scratch = CacheScratch::new()?;
+    let untraced_cache = scratch.0.join("untraced");
+    let traced_cache = scratch.0.join("traced");
+    for (phase, cache_status) in [("cold", "miss"), ("warm", "hit")] {
+        let untraced = run_ripr(CHECK_ARGS, None, &untraced_cache)?;
+        // The switch is presence-based, so an explicitly empty value is still on.
+        // That is the pre-existing contract and this test must not blur it.
+        let traced = run_ripr(CHECK_ARGS, Some("1"), &traced_cache)?;
+        let observed =
+            format!("ripr_repo_exposure_latency phase=cache_load status={cache_status} ");
+        if !traced
+            .stderr
+            .lines()
+            .any(|line| line.starts_with(&observed))
+        {
+            return Err(format!(
+                "{phase} trace comparison did not observe the expected cache state:\n{}",
+                traced.stderr
+            ));
+        }
+        for run in [&untraced, &traced] {
+            if run.stderr.lines().any(|line| line == CACHE_MISS) != (phase == "cold") {
+                return Err(format!(
+                    "{phase} trace comparison has an unexpected cache-miss diagnostic:\n{}",
+                    run.stderr
+                ));
+            }
+        }
+        assert_trace_parity(&untraced, &traced)
+            .map_err(|error| format!("{phase} trace comparison: {error}"))?;
+    }
+    Ok(())
+}
 
+fn assert_trace_parity(untraced: &Run, traced: &Run) -> Result<(), String> {
     if !untraced.status_ok || !traced.status_ok {
         return Err(format!(
             "both runs must produce output\nuntraced: {}\ntraced: {}",
@@ -162,8 +228,8 @@ fn tracing_off_leaves_stdout_and_stderr_byte_identical() -> Result<(), String> {
             traced_norm.len()
         ));
     }
-    // Beyond the receipt, the only lines a traced run may add are the trace
-    // family's own pre-existing phase lines. Everything else on stderr must be
+    // Beyond the resource receipt, a traced run may add the trace family's
+    // pre-existing phase and cache receipt lines. Everything else on stderr must be
     // identical, so the receipt does not smuggle in an unrelated diagnostic.
     let phase_prefix = "ripr_repo_exposure_latency ";
     let traced_other: Vec<&str> = traced
@@ -172,6 +238,7 @@ fn tracing_off_leaves_stdout_and_stderr_byte_identical() -> Result<(), String> {
         .filter(|line| {
             !line.starts_with(RECEIPT_PREFIX)
                 && !line.starts_with(FAMILY_RECEIPT_PREFIX)
+                && !line.starts_with(FILE_FACT_RECEIPT_PREFIX)
                 && !line.starts_with(phase_prefix)
                 && !is_timing_heartbeat(line)
         })
@@ -192,7 +259,8 @@ fn tracing_off_leaves_stdout_and_stderr_byte_identical() -> Result<(), String> {
 
 #[test]
 fn tracing_on_emits_one_attributed_receipt_on_stderr() -> Result<(), String> {
-    let traced = run_ripr(CHECK_ARGS, Some("1"))?;
+    let scratch = CacheScratch::new()?;
+    let traced = run_ripr(CHECK_ARGS, Some("1"), &scratch.0.join("cache"))?;
     let receipts = receipts(&traced.stderr);
     if receipts.len() != 1 {
         return Err(format!(
@@ -406,4 +474,82 @@ fn the_heartbeat_filter_ignores_only_the_exact_timing_heartbeat() {
     ] {
         assert!(!is_timing_heartbeat(line), "must stay compared: {line}");
     }
+}
+
+#[test]
+fn trace_parity_keeps_cache_state_and_unrelated_diagnostics_observable() -> Result<(), String> {
+    let untraced = Run {
+        stdout: b"{}".to_vec(),
+        stderr: format!("{CACHE_MISS}\n"),
+        status_ok: true,
+    };
+    let mut traced = Run {
+        stdout: b"{}".to_vec(),
+        stderr: format!(
+            "{CACHE_MISS}\nripr_repo_exposure_latency phase=cache_load status=miss duration_ms=1\n"
+        ),
+        status_ok: true,
+    };
+    assert_trace_parity(&untraced, &traced)?;
+    traced.stderr.push_str("ripr: unrelated diagnostic\n");
+    if assert_trace_parity(&untraced, &traced).is_ok() {
+        return Err("the trace comparison ignored an unrelated diagnostic".into());
+    }
+    traced.stderr = "ripr_repo_exposure_latency phase=cache_load status=hit duration_ms=1\n".into();
+    if assert_trace_parity(&untraced, &traced).is_ok() {
+        return Err("the trace comparison ignored a cold-versus-warm cache difference".into());
+    }
+    Ok(())
+}
+
+#[test]
+fn trace_parity_accepts_only_the_reserved_file_fact_receipt_prefix() -> Result<(), String> {
+    let untraced = Run {
+        stdout: b"{}".to_vec(),
+        stderr: format!("{CACHE_MISS}\n"),
+        status_ok: true,
+    };
+    let mut traced = Run {
+        stdout: b"{}".to_vec(),
+        // Independent literal from the observed cold-run producer output.
+        stderr: format!(
+            "{CACHE_MISS}\nripr_file_fact_cache_receipt {{\"corrupt_ignored\":0,\"hits\":0,\"invalidated\":0,\"misses\":2,\"schema_version\":\"0.1\",\"store_errors\":0,\"store_failures\":[],\"store_failures_dropped\":0,\"stores\":2}}\n"
+        ),
+        status_ok: true,
+    };
+    assert_trace_parity(&untraced, &traced)?;
+    for diagnostic in [
+        "ripr_file_fact_cache_receipt_extra {}",
+        "ripr_file_fact_cache_receipt{}",
+        "ripr_file_fact_cache_receipt\t{}",
+        "warning: ripr_file_fact_cache_receipt {}",
+        "ripr: file fact cache storage failed",
+    ] {
+        traced.stderr = format!("{CACHE_MISS}\n{diagnostic}\n");
+        if assert_trace_parity(&untraced, &traced).is_ok() {
+            return Err(format!(
+                "trace comparison suppressed an unreserved diagnostic: {diagnostic}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn trace_cache_scratch_owns_only_fresh_private_directories() -> Result<(), String> {
+    let first = CacheScratch::new()?;
+    let second = CacheScratch::new()?;
+    if first.0 == second.0 {
+        return Err("trace experiments reused a scratch directory".into());
+    }
+    let first_path = first.0.clone();
+    std::fs::write(first.0.join("owned"), b"first").map_err(|error| error.to_string())?;
+    std::fs::write(second.0.join("owned"), b"second").map_err(|error| error.to_string())?;
+    drop(first);
+    if first_path.exists()
+        || std::fs::read(second.0.join("owned")).map_err(|error| error.to_string())? != b"second"
+    {
+        return Err("trace cache cleanup did not preserve the sibling experiment".into());
+    }
+    Ok(())
 }

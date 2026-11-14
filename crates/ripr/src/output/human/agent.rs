@@ -872,6 +872,16 @@ fn terminal_line(
                 }
             }
         }
+        // #14423: on the base branch the empty range is the base compared
+        // with itself; name the last-commit rerun the human view prints
+        // instead of leaving REV to be guessed.
+        NextActionCheckCase::ScopeMissing if triage::last_commit_retry_applies(output) => {
+            format!(
+                "stop=nothing was analyzed: HEAD is at the comparison base `{}`, so the diff is empty; to check the last commit run `{}`\n",
+                output.base.as_deref().unwrap_or_default(),
+                triage::last_commit_retry_command(output, Some("agent"))
+            )
+        }
         NextActionCheckCase::ScopeMissing => {
             "stop=nothing was analyzed (no scope); pass --base REV, --diff FILE or --worktree\n"
                 .to_string()
@@ -1138,7 +1148,10 @@ fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missin
         "{}|{}|{}|missing={}|test={}|id={}",
         finding.class.as_str(),
         field(&location),
-        field(&clip(&finding.probe.expression)),
+        field(&clip(&super::sections::with_arm_result(
+            finding,
+            &finding.probe.expression
+        ))),
         field(&clip(missing)),
         test,
         finding.id

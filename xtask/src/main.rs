@@ -29,6 +29,7 @@ mod blind_journey_execute;
 mod branch_inventory;
 mod cache;
 mod cache_payload_tamper_recovery;
+mod cargo_job_cap;
 mod check_fast_cli;
 mod check_fast_selector;
 mod cli_exit_contract;

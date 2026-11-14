@@ -70,3 +70,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — unsafe_assumption_stop_reason (7)
+
+Reason:
+RIPR-SPEC-0122: Hidden rows sharing file, owner, class and reason merge into one row (#14299)
+
+Command:
+`cargo xtask goldens bless unsafe_assumption_stop_reason --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

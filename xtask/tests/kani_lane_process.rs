@@ -31,8 +31,7 @@ case "$KANI_CONTROL_MODE" in
 esac
 "#;
 
-const PASS: &str =
-    "Checking harness a::one...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.1s\n";
+const PASS: &str = "Checking harness a::one...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.1s\n";
 
 struct Fixture(PathBuf);
 
@@ -60,7 +59,7 @@ impl Fixture {
         for (file, name) in harnesses {
             fs::write(
                 fixture.0.join("crates/ripr/src").join(file),
-                format!("#[kani::proof]\nfn {name}() {{}}\n"),
+                format!("#[kani::proof]\nfn {name}() {{ kani::cover!(true); }}\n"),
             )
             .map_err(|error| error.to_string())?;
         }
@@ -160,6 +159,73 @@ fn kani_runner_retains_unique_success_and_explicit_failure() -> Result<(), Strin
 }
 
 #[test]
+fn kani_runner_requires_observed_complete_cover_evidence() -> Result<(), String> {
+    for (evidence, status) in [
+        ("", "NOT-ESTABLISHED"),
+        (" ** 0 of 0 cover properties satisfied\n", "NOT-ESTABLISHED"),
+        (
+            " ** invalid of 1 cover properties satisfied\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            " ** 1 of 1 cover properties satisfied\n ** 1 of 1 cover properties satisfied\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            " ** 1 of 2 cover properties satisfied (1 undetermined)\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            "Check 1: one.cover.1\n\t - Status: UNDETERMINED\n ** 1 of 1 cover properties satisfied\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            "Check 1: one.cover.1\n\t - Status: ERROR\n ** 1 of 1 cover properties satisfied\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            " ** 1 of 1 cover properties satisfied (1 unreachable)\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            "Check 1: one.cover.1\n\t - Status: UNREACHABLE\n ** 1 of 1 cover properties satisfied\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            "Check 1: one.cover.1\n\t - Status: COVERED\n ** 1 of 1 cover properties satisfied\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            "Check 1: one.cover.1\n\t - Status: UNCOVERED\n ** 1 of 1 cover properties satisfied\n",
+            "NOT-ESTABLISHED",
+        ),
+        (
+            "Check 1: one.cover.1\n\t - Status: UNSATISFIABLE\n ** 0 of 1 cover properties satisfied\n",
+            "FAILED",
+        ),
+        (
+            " ** 1 of 2 cover properties satisfied (1 unreachable)\n",
+            "FAILED",
+        ),
+    ] {
+        for allow_empty in [false, true] {
+            let native =
+                format!("Checking harness a::one...\n{evidence}VERIFICATION:- SUCCESSFUL\n");
+            let fixture = Fixture::new(&[("one.rs", "one")], &native)?;
+            let observed = fixture.run("success", allow_empty)?;
+            assert_eq!(observed.output.status.code(), Some(1), "{native}");
+            assert_row(&observed.report, "one", "one.rs", status);
+            assert!(
+                !observed.report.contains("| VERIFIED |"),
+                "incomplete cover evidence must never be promoted: {}",
+                observed.report,
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn kani_runner_refuses_success_text_after_nonzero_or_signal() -> Result<(), String> {
     for mode in ["failure", "signal"] {
         for allow_empty in [false, true] {
@@ -180,9 +246,9 @@ fn kani_runner_refuses_success_text_after_nonzero_or_signal() -> Result<(), Stri
 
 #[test]
 fn kani_runner_refuses_ambiguous_sources_in_either_native_order() -> Result<(), String> {
-    let success = "Checking harness a::same...\nVERIFICATION:- SUCCESSFUL\n";
+    let success = "Checking harness a::same...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n";
     let failure = "Checking harness b::same...\nVERIFICATION:- FAILED\n";
-    let unique = "Checking harness c::unique...\nVERIFICATION:- SUCCESSFUL\n";
+    let unique = "Checking harness c::unique...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n";
     for text in [
         format!("{success}{unique}"),
         format!("{success}{failure}{unique}"),

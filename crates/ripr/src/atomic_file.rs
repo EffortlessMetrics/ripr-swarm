@@ -16,7 +16,16 @@ static TEMP_FILE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 /// only for commands whose output is entirely redirected by that variable;
 /// report-only writers use [`ensure_report_output_contained`].
 pub(crate) fn ensure_default_output_contained(root: &Path) -> Result<(), String> {
-    ensure_default_output_contained_with(root, std::env::var("RIPR_CACHE_DIR").ok().as_deref())
+    let cache_dir_env = std::env::var("RIPR_CACHE_DIR").ok();
+    ensure_default_output_contained_with(root, cache_dir_env.as_deref())?;
+    // An explicit `RIPR_CACHE_DIR` waives the check above, so the default tree
+    // self-ignores only once it is established as contained on its own.
+    if cache_dir_env.is_none_or(|value| value.trim().is_empty())
+        || ensure_default_output_contained_with(root, None).is_ok()
+    {
+        register_self_ignoring_output_root(root);
+    }
+    Ok(())
 }
 
 /// [`ensure_default_output_contained`] for commands that never write to the
@@ -25,7 +34,136 @@ pub(crate) fn ensure_default_output_contained(root: &Path) -> Result<(), String>
 /// `target` / `target/ripr/*` link check for the reports and review artifacts
 /// these commands still write under the workspace.
 pub(crate) fn ensure_report_output_contained(root: &Path) -> Result<(), String> {
-    ensure_default_output_contained_with(root, None)
+    ensure_default_output_contained_with(root, None)?;
+    register_self_ignoring_output_root(root);
+    Ok(())
+}
+
+/// Repository-relative default output tree that ignores itself.
+pub(crate) const DEFAULT_OUTPUT_ROOT: &str = "target/ripr";
+
+/// Contents of `target/ripr/.gitignore`. `*` covers the file itself, so
+/// ripr's whole output tree stays out of `git status` with no step from the
+/// user, the way `.pytest_cache` and `.ruff_cache` ignore themselves.
+pub(crate) const DEFAULT_OUTPUT_ROOT_GITIGNORE: &str =
+    "# Created by ripr: everything under target/ripr is ripr's own disposable output.\n*\n";
+
+/// `{root}/target/ripr` trees a workspace output guard has established as contained
+/// in this process, in lexical absolute form. Writes below one of them mark it
+/// self-ignoring ([`mark_self_ignoring_output_root`]). Presence of the ignore
+/// file is re-checked on each such write (one `lstat`), so a tree deleted and
+/// recreated inside a long-lived LSP or MCP process is marked again.
+static SELF_IGNORING_OUTPUT_ROOTS: std::sync::Mutex<Vec<std::path::PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
+
+fn self_ignoring_output_roots() -> std::sync::MutexGuard<'static, Vec<std::path::PathBuf>> {
+    match SELF_IGNORING_OUTPUT_ROOTS.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+/// Lexical absolute form used to match guarded roots against write paths:
+/// relative paths are joined to the current directory and `.` components
+/// dropped, without touching the filesystem.
+fn lexical_absolute(path: &Path) -> Option<std::path::PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+    Some(
+        absolute
+            .components()
+            .filter(|component| !matches!(component, std::path::Component::CurDir))
+            .collect(),
+    )
+}
+
+/// Record that `{root}/target/ripr` is contained and is ripr's to mark, and
+/// mark it now when it already exists (a tree an older ripr left unignored).
+/// Creating nothing here keeps a command that refuses after its guard from
+/// leaving a `target/` behind; a missing tree is marked by the first write
+/// that creates it.
+fn register_self_ignoring_output_root(root: &Path) {
+    if !root.is_dir() {
+        return;
+    }
+    let Some(tree) = lexical_absolute(&root.join(DEFAULT_OUTPUT_ROOT)) else {
+        return;
+    };
+    write_self_ignore_file(&tree);
+    let mut roots = self_ignoring_output_roots();
+    if !roots.contains(&tree) {
+        roots.push(tree);
+    }
+}
+
+/// Called after an atomic write created `dir`: when `dir` lies in a guarded
+/// `target/ripr` tree, give that tree its self-ignore file. Matching is
+/// lexical; a writer that spells the tree differently from its guard (another
+/// symlinked spelling of the same directory) is simply not matched, and the
+/// next guard call marks the then-existing tree.
+fn mark_self_ignoring_output_root(dir: &Path) {
+    if self_ignoring_output_roots().is_empty() {
+        return;
+    }
+    let Some(dir) = lexical_absolute(dir) else {
+        return;
+    };
+    let tree = self_ignoring_output_roots()
+        .iter()
+        .find(|tree| dir.starts_with(tree))
+        .cloned();
+    if let Some(tree) = tree {
+        write_self_ignore_file(&tree);
+    }
+}
+
+/// Make ripr's default output tree (`{root}/target/ripr`) ignore itself.
+///
+/// Python and TypeScript projects do not ignore Cargo's `target/`
+/// convention, so without this the first `ripr check` left `?? target/` in
+/// `git status`, one `git add -A` away from committing ripr's reports, and
+/// every run asked the user to edit their `.gitignore`. The repository's own
+/// `.gitignore` is never touched.
+///
+/// Best effort and idempotent: only an existing real directory is marked,
+/// the file is created exclusively (`create_new`, which also refuses to
+/// follow a link planted at that name) and never rewritten, so a user's own
+/// file there is kept. Any failure (a read-only checkout, a race with another
+/// ripr process) leaves the tree as it was; the doctor and first-check ignore
+/// probes ask git directly, so they still report an uncovered tree honestly.
+///
+/// Returns whether an ignore file (ripr's or the user's) is now present.
+fn write_self_ignore_file(tree: &Path) -> bool {
+    let is_real_dir =
+        std::fs::symlink_metadata(tree).is_ok_and(|metadata| metadata.file_type().is_dir());
+    if !is_real_dir {
+        return false;
+    }
+    let ignore = tree.join(".gitignore");
+    if std::fs::symlink_metadata(&ignore).is_ok() {
+        return true;
+    }
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&ignore)
+    else {
+        return false;
+    };
+    if file
+        .write_all(DEFAULT_OUTPUT_ROOT_GITIGNORE.as_bytes())
+        .is_err()
+    {
+        // A partial ignore file is worse than none: drop it so the next
+        // write retries cleanly.
+        drop(file);
+        let _ = std::fs::remove_file(&ignore);
+        return false;
+    }
+    true
 }
 
 /// Guard for report writers that take no `--root` (`evidence-health`, `zero`,
@@ -408,6 +546,7 @@ fn map_replace_failure(
     match failure.stage {
         Stage::CreateDirectory => format!("failed to create {label} directory{subject}: {err}"),
         Stage::NoFileName => format!("atomic write path{subject} has no file name"),
+        Stage::SpecialDestination => format!("refusing to replace {label}{subject}: {err}"),
         Stage::CreateTemp => format!("failed to create {label} temp file{subject}: {err}"),
         Stage::Fill => format!("failed to write {label} temp file{subject}: {err}"),
         Stage::Permissions => {
@@ -458,6 +597,7 @@ pub(crate) enum CreateNewError {
 enum Stage {
     CreateDirectory,
     NoFileName,
+    SpecialDestination,
     CreateTemp,
     Fill,
     Permissions,
@@ -505,9 +645,19 @@ fn publish_with(
         .filter(|parent| !parent.as_os_str().is_empty());
     let dir = parent.unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(dir).map_err(|err| fail(Stage::CreateDirectory, dir, err))?;
+    mark_self_ignoring_output_root(dir);
     if path.file_name().is_none() {
         let err = std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name");
         return Err(fail(Stage::NoFileName, path, err));
+    }
+    if publish == Publish::Replace && destination_is_special(path) {
+        let err = std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "the destination is a device, FIFO or socket, not a regular file; ripr publishes a \
+             finished file by renaming it into place, which would replace that node instead of \
+             writing to it. Pass a regular file path",
+        );
+        return Err(fail(Stage::SpecialDestination, path, err));
     }
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -519,6 +669,31 @@ fn publish_with(
         std::process::id()
     ));
     publish_staged(path, &tmp_path, sync_before_publish, publish, fill)
+}
+
+/// Whether the entry at `path` is a device, FIFO or socket, either directly or
+/// through a symlink. Renaming a staged file over such an entry replaces the
+/// node itself: as root, `--out /dev/null` turned the null device into a
+/// regular report file, and `--out /dev/stdout` did the same to that link.
+/// Without the privilege the same request failed on the staging file with a
+/// permission error that never named the cause.
+///
+/// A regular file, a directory (the rename reports it), a missing entry, and a
+/// symlink to any of those keep their established behavior; in particular a
+/// link to a regular file or a dangling link is still replaced, never
+/// followed.
+///
+/// Non-claim: this is check-then-use, like [`ensure_path_within_root`]. A node
+/// created between this check and the rename is not defended against.
+fn destination_is_special(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return std::fs::metadata(path).is_ok_and(|target| !target.is_file() && !target.is_dir());
+    }
+    !file_type.is_file() && !file_type.is_dir()
 }
 
 fn publish_staged(
@@ -1341,5 +1516,144 @@ mod tests {
             return Err("a relative path under an escaping target link was allowed".to_string());
         }
         absolute_ok
+    }
+
+    /// A Unix-domain socket stands in for every non-regular node: std can
+    /// create one without `mkfifo`/`mknod`, and the refusal keys on "neither a
+    /// regular file nor a directory", not on the specific node kind.
+    #[cfg(unix)]
+    fn socket_fixture(label: &str) -> Result<(PathBuf, PathBuf), String> {
+        // A socket path must stay under the ~104 byte address limit, and the
+        // checkout forces `TMPDIR` into its own `target` directory, so the
+        // fixture lives under a short absolute path that does not depend on
+        // checkout depth. `create_dir` is exclusive: it never reuses a stale
+        // directory.
+        let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = PathBuf::from(format!(
+            "/tmp/ripr-sock-{}-{sequence}-{}",
+            std::process::id(),
+            label.len()
+        ));
+        std::fs::create_dir(&root).map_err(|err| format!("root setup: {err}"))?;
+        let node = root.join("node");
+        std::os::unix::net::UnixListener::bind(&node)
+            .map_err(|err| format!("socket setup: {err}"))?;
+        Ok((root, node))
+    }
+
+    #[cfg(unix)]
+    fn entry_names(dir: &Path) -> Result<Vec<String>, String> {
+        let mut names = Vec::new();
+        for entry in std::fs::read_dir(dir).map_err(|err| format!("list: {err}"))? {
+            let entry = entry.map_err(|err| format!("list entry: {err}"))?;
+            names.push(entry.file_name().to_string_lossy().into_owned());
+        }
+        names.sort();
+        Ok(names)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_refuses_to_replace_a_special_node_and_leaves_it_in_place() -> Result<(), String> {
+        use std::os::unix::fs::FileTypeExt;
+        let (root, node) = socket_fixture("special-destination")?;
+        let result = write(&node, b"report", "test report");
+        let still_socket = std::fs::symlink_metadata(&node)
+            .map(|metadata| metadata.file_type().is_socket())
+            .map_err(|err| format!("stat node: {err}"));
+        let names = entry_names(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        let Err(error) = result else {
+            return Err("writing over a socket unexpectedly succeeded".to_string());
+        };
+        assert_eq!(
+            error,
+            format!(
+                "refusing to replace test report {}: the destination is a device, FIFO or \
+                 socket, not a regular file; ripr publishes a finished file by renaming it into \
+                 place, which would replace that node instead of writing to it. Pass a regular \
+                 file path",
+                node.display()
+            )
+        );
+        assert!(still_socket?, "the socket was replaced");
+        assert_eq!(names?, vec!["node".to_string()], "a staging file was left");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_refuses_a_symlink_to_a_special_node_and_keeps_the_link() -> Result<(), String> {
+        let (root, node) = socket_fixture("special-destination-link")?;
+        let link = root.join("out.json");
+        std::os::unix::fs::symlink(&node, &link).map_err(|err| format!("symlink: {err}"))?;
+        let result = write(&link, b"report", "test report");
+        let still_link = std::fs::symlink_metadata(&link)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .map_err(|err| format!("stat link: {err}"));
+        let names = entry_names(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            result.is_err_and(|error| error.starts_with("refusing to replace test report ")),
+            "a link to a socket was replaced"
+        );
+        assert!(still_link?, "the link was replaced");
+        assert_eq!(names?, vec!["node".to_string(), "out.json".to_string()]);
+        Ok(())
+    }
+
+    /// The discriminating alternates: links that do not land on a special node
+    /// are still replaced by the regular file, never followed.
+    #[cfg(unix)]
+    #[test]
+    fn write_still_replaces_a_dangling_link_and_a_link_to_a_regular_file() -> Result<(), String> {
+        let root = isolated_dir("ordinary-links-still-replaced");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|err| format!("root setup: {err}"))?;
+        let target = root.join("target.txt");
+        std::fs::write(&target, b"old").map_err(|err| format!("target setup: {err}"))?;
+        let to_file = root.join("to-file.json");
+        let dangling = root.join("dangling.json");
+        std::os::unix::fs::symlink(&target, &to_file).map_err(|err| format!("symlink: {err}"))?;
+        std::os::unix::fs::symlink(root.join("missing"), &dangling)
+            .map_err(|err| format!("symlink: {err}"))?;
+        let outcome = (|| {
+            for link in [&to_file, &dangling] {
+                write(link, b"new", "test report")?;
+                let metadata =
+                    std::fs::symlink_metadata(link).map_err(|err| format!("stat: {err}"))?;
+                if !metadata.is_file() {
+                    return Err(format!("{} is not a regular file", link.display()));
+                }
+                let written = std::fs::read(link).map_err(|err| format!("read: {err}"))?;
+                if written != b"new" {
+                    return Err(format!("{} holds the wrong bytes", link.display()));
+                }
+            }
+            std::fs::read(&target).map_err(|err| format!("read target: {err}"))
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(outcome?, b"old", "the write went through the link");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_write_refusal_for_a_special_node_omits_host_paths() -> Result<(), String> {
+        let (root, node) = socket_fixture("special-destination-cache")?;
+        let result = write_cache(&node, b"cache", "test cache");
+        let _ = std::fs::remove_dir_all(&root);
+        let Err(error) = result else {
+            return Err("a cache write over a socket unexpectedly succeeded".to_string());
+        };
+        assert!(
+            error.starts_with("refusing to replace test cache: the destination is a device"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            !error.contains(root.to_string_lossy().as_ref()),
+            "cache error leaked root: {error}"
+        );
+        Ok(())
     }
 }

@@ -2546,7 +2546,20 @@ fn own_crate_name_unshadowed_in_test(
     test: &TestSummary,
     crate_name: &str,
 ) -> bool {
-    let normalized_test = normalize_path(&test.file);
+    own_crate_name_unshadowed_in_test_crate_root(index, &test.file, &test.body, crate_name)
+}
+
+/// [`own_crate_name_unshadowed_in_test`] for any function of a test-crate
+/// root: `file` is the function's file and `body` its own source text. A
+/// same-file helper an integration test calls reads the crate name by the
+/// same rules as the test itself (#8387).
+pub(super) fn own_crate_name_unshadowed_in_test_crate_root(
+    index: &RustIndex,
+    file: &Path,
+    body: &str,
+    crate_name: &str,
+) -> bool {
+    let normalized_test = normalize_path(file);
     let test_segments: Vec<&str> = normalized_test.split('/').collect();
     let is_test_crate_root = match test_segments.as_slice() {
         ["tests", file] => file.ends_with(".rs"),
@@ -2556,7 +2569,7 @@ fn own_crate_name_unshadowed_in_test(
     if !is_test_crate_root {
         return false;
     }
-    let Some(facts) = index.files().get(&test.file) else {
+    let Some(facts) = index.files().get(file) else {
         return false;
     };
     if facts.source.contains("include!")
@@ -2580,11 +2593,11 @@ fn own_crate_name_unshadowed_in_test(
             })
     };
     !file_may_bind_name(&stripped_file, crate_name)
-        && !body_binds_owner_name(&test.body, crate_name)
+        && !body_binds_owner_name(body, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
         && !may_rebind_crate_name(&facts.source)
-        && !may_rebind_crate_name(&test.body)
+        && !may_rebind_crate_name(body)
 }
 
 /// The call's source line as code: the line at `line` of the comment/string-
@@ -2930,23 +2943,49 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
 /// Whether the test file declares a `const` or `static` named `name` anywhere
 /// (fail-closed: scope-aware visibility is a documented known limit).
 fn declares_value_named(source: &str, name: &str) -> bool {
-    use ra_ap_syntax::{AstNode, ast, ast::HasName};
     let name = name.strip_prefix("r#").unwrap_or(name);
-    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
-        return true;
-    };
-    parse.tree().syntax().descendants().any(|node| {
-        let named = if let Some(item) = ast::Const::cast(node.clone()) {
-            item.name()
-                .map(|n| n.text().trim_start_matches("r#").to_string())
-        } else if let Some(item) = ast::Static::cast(node.clone()) {
-            item.name()
-                .map(|n| n.text().trim_start_matches("r#").to_string())
-        } else {
-            return false;
-        };
-        named.as_deref() == Some(name)
-    })
+    // One walk of the file's tree answers every name. The helper-entry edge
+    // asks once per (probe, calling test, hop), so a diff that changes many
+    // functions of one file re-walked that file, and often re-parsed it, once
+    // per changed function (#11738).
+    let declared = crate::analysis::syntax::run_memo::memoize(
+        crate::analysis::syntax::run_memo::Product::DeclaredValueNames,
+        0,
+        source,
+        || declared_value_names(source).map(std::rc::Rc::new),
+    );
+    declared.is_none_or(|names| names.contains(name))
+}
+
+/// The names of every `const` and `static` item in `source`, raw prefixes
+/// removed; `None` when the source does not parse cleanly.
+fn declared_value_names(source: &str) -> Option<BTreeSet<String>> {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    #[cfg(test)]
+    DECLARED_VALUE_NAME_WALKS.with(|walks| walks.set(walks.get() + 1));
+    let parse = crate::analysis::syntax::parse_clean_source_file(source)?;
+    Some(
+        parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(|node| {
+                let named = if let Some(item) = ast::Const::cast(node.clone()) {
+                    item.name()
+                } else {
+                    ast::Static::cast(node)?.name()
+                };
+                named.map(|n| n.text().trim_start_matches("r#").to_string())
+            })
+            .collect(),
+    )
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whole-file walks [`declared_value_names`] ran on this thread, so a test
+    /// can prove the walk happens once per source within a run.
+    static DECLARED_VALUE_NAME_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether the test body binds `name` (a `let`, a closure or function
@@ -4956,22 +4995,30 @@ fn inherent_constructor_names(index: &RustIndex, ty: &str) -> Vec<String> {
 /// return type. Workspace-wide names would block a file-local unit struct
 /// `name()` when an unrelated module declares the same free fn (#8917).
 fn free_function_declared(index: &RustIndex, file: &Path, name: &str) -> bool {
-    index.functions().iter().any(|function| {
-        function.file == file
-            && function.name == name
-            && function.item.container == FunctionContainer::Free
-    })
+    let functions = index.functions();
+    let unraw = name.strip_prefix("r#").unwrap_or(name);
+    index
+        .call_identity_memos
+        .function_positions_named(index, unraw)
+        .iter()
+        .filter_map(|&position| functions.get(position))
+        .any(|function| {
+            function.file == file
+                && function.name == name
+                && function.item.container == FunctionContainer::Free
+        })
 }
 
 fn free_fn_returns_type(index: &RustIndex, name: &str, ty: &str) -> bool {
     // `r#fixture` and `fixture` are one identifier, so a raw-named nested fn
     // shadows the file-level helper.
-    let unraw = |text: &str| text.strip_prefix("r#").unwrap_or(text).to_string();
-    let name = unraw(name);
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    let functions = index.functions();
     let mut declarations = index
-        .functions()
+        .call_identity_memos
+        .function_positions_named(index, name)
         .iter()
-        .filter(|function| unraw(&function.name) == name);
+        .filter_map(|&position| functions.get(position));
     let (Some(function), None) = (declarations.next(), declarations.next()) else {
         return false;
     };
@@ -5924,7 +5971,13 @@ fn inherent_receiver_call_resolves_with(
                             // root must name the owner's own type.
                             root_library_names_owner_type(index, owner, ty)
                         } else {
-                            associated_constructor_names_own_type(index, ty, name, None)
+                            // The constructor is found by the type's base
+                            // name alone, so the name must declare one type:
+                            // with a second `Ty` in another library module,
+                            // `krate::Ty` may be that one (`pub use b::Ty;`
+                            // beside the owner's `a::Ty`, #14083 A2).
+                            super::owner_pin::workspace_type_name_count(ty, index) == 1
+                                && associated_constructor_names_own_type(index, ty, name, None)
                         }
                 })
             } else {
@@ -8423,6 +8476,42 @@ pub(in crate::analysis) fn body_contains_owner_call(body: &str, owner_name: &str
 /// `other.owner(..)` or path-qualified `Type::owner(..)` spelling.
 #[cfg(test)]
 mod tests {
+    /// #11738: one walk of a source answers every name inside a run memo
+    /// scope, and the answers are the unscoped ones.
+    #[test]
+    fn declared_value_names_are_walked_once_per_source_in_a_scope() {
+        let source =
+            "const LIMIT: u8 = 1;\nstatic r#TABLE: [u8; 1] = [1];\nfn limit() -> u8 { LIMIT }\n";
+        let unparsable = "const LIMIT: u8 = ;\n";
+        let names = ["LIMIT", "TABLE", "r#TABLE", "limit", "missing"];
+        let walks = || super::DECLARED_VALUE_NAME_WALKS.with(|walks| walks.get());
+        let unscoped: Vec<bool> = names
+            .iter()
+            .map(|name| super::declares_value_named(source, name))
+            .collect();
+        assert_eq!(unscoped, [true, true, true, false, false]);
+        assert!(
+            super::declares_value_named(unparsable, "missing"),
+            "an unparsable source refuses every name"
+        );
+        let scope = crate::analysis::syntax::run_memo::enter();
+        super::DECLARED_VALUE_NAME_WALKS.with(|walks| walks.set(0));
+        for _ in 0..3 {
+            let scoped: Vec<bool> = names
+                .iter()
+                .map(|name| super::declares_value_named(source, name))
+                .collect();
+            assert_eq!(scoped, unscoped);
+        }
+        assert_eq!(walks(), 1, "one walk answers every name and repeat");
+        assert!(super::declares_value_named(unparsable, "missing"));
+        assert!(super::declares_value_named(unparsable, "LIMIT"));
+        assert_eq!(walks(), 2, "another source is walked once");
+        drop(scope);
+        assert!(super::declares_value_named(source, "LIMIT"));
+        assert!(!super::declares_value_named(source, "missing"));
+        assert_eq!(walks(), 4, "outside a scope every ask walks");
+    }
     use super::*;
     use crate::analysis::facts::{
         FileFacts, FunctionContainer, FunctionSourceRole, SourceRoleProvenance,
@@ -15192,6 +15281,27 @@ let r = try_parse_summary(\"x\");",
         let index = crate::analysis::facts::build_index(&root, &files)?;
         assert!(!free_function_declared(&index, &site, "Site"));
         assert!(free_function_declared(&index, &other, "Site"));
+        Ok(())
+    }
+
+    #[test]
+    fn free_function_declared_sees_functions_pushed_after_the_bucket_was_built()
+    -> Result<(), String> {
+        let root = temp_dir("free-fn-bucket-invalidation")?;
+        write_manifest(&root)?;
+        let other = write(&root, "tests/other.rs", "fn Site() {}\n")?;
+        let files = vec![other.clone()];
+        let mut index = crate::analysis::facts::build_index(&root, &files)?;
+        assert!(!free_function_declared(&index, &other, "Later"));
+        let mut later = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "Site")
+            .cloned()
+            .ok_or("fixture declares Site")?;
+        later.name = "Later".to_string();
+        index.push_function(later);
+        assert!(free_function_declared(&index, &other, "Later"));
         Ok(())
     }
 

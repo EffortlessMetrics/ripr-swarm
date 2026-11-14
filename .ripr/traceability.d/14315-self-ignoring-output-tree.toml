@@ -1,0 +1,16 @@
+[[extend]]
+id = "RIPR-SPEC-0007"
+tests = [
+  "crates/ripr/tests/check_first_run_ignore_hint.rs::first_check_leaves_git_status_clean_without_a_gitignore_chore",
+  "crates/ripr/tests/check_first_run_ignore_hint.rs::existing_unignored_tree_is_adopted_before_the_verdict",
+  "crates/ripr/tests/check_first_run_ignore_hint.rs::a_user_owned_ignore_file_is_kept_and_an_uncovered_tree_still_gets_the_hint",
+  "crates/ripr/tests/check_first_run_ignore_hint.rs::a_user_negation_rule_keeps_the_hint",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::dirty_python_check_withholds_start_when_git_inspection_fails",
+  "crates/ripr/src/analysis/committed_source/tests.rs::porcelain_parser_pairs_rename_sources_and_rejects_malformed_records",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::preemptive_artifact_ignore_needs_no_chore_for_the_self_ignoring_default_root",
+]
+code = [
+  "crates/ripr/src/atomic_file.rs",
+  "crates/ripr/src/cli/commands/doctor.rs",
+  "crates/ripr/src/analysis/committed_source.rs",
+]
