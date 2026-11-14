@@ -32,10 +32,10 @@ Static exposure
 Evidence
   - reach yes: Related tests appear to reach charge: selected
   - infection yes: Reachable tests can plausibly activate this changed behavior
-  - propagation yes: Changed behavior appears to influence match arm result: None =>
+  - propagation yes: Changed behavior appears to influence match arm result: lease.timeout
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
-  - local flow reaches match arm result: None => (line 5)
+  - local flow reaches match arm result: lease.timeout (line 5)
   - related test src/lib.rs:10 selected uses strong whole object equality oracle: assert_eq!(charge(&Lease { elapsed: None, timeout: 600 }), 1001); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 1001 at line 12
   - source function argument value lease = 600 at line 12

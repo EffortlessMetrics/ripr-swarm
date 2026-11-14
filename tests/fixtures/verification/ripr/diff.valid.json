@@ -1,0 +1,153 @@
+{
+  "schema_version": "0.1",
+  "kind": "ripr_diff",
+  "tool": "ripr",
+  "run_status": "diff_incomplete_full_repo_limited",
+  "root": ".",
+  "base": "HEAD~1",
+  "head": "HEAD",
+  "mode": "draft",
+  "analysis_outcome": {
+    "analysis_complete": false,
+    "outcome": {
+      "schema_version": "0.1",
+      "kind": "partial_with_limitations",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": null,
+        "base_revision": "HEAD~1",
+        "input_identity": "sha256:505485376d7174ee0b12d35e743bffee4f0f52be4c0e46776b5684d2524cde07",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 2,
+        "changed_line_count": 3,
+        "candidate_line_count": 1,
+        "probe_count": 2,
+        "finding_count": 2
+      },
+      "limitations": [
+        {
+          "kind": "language_adapter_unavailable",
+          "producer_stage": "language_adapter",
+          "path": null,
+          "affected_items": 1,
+          "bounded_detail": "typescript changed 1 file(s), but the preview adapter was not enabled or available",
+          "recovery": {
+            "kind": "enable_language",
+            "detail": "Enable the typescript preview adapter and re-run the analysis."
+          }
+        }
+      ],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    }
+  },
+  "runtime_status": {
+    "state": "diff_incomplete_full_repo_limited",
+    "diff": {
+      "state": "diff_incomplete",
+      "phase": "changed_surface_diff",
+      "changed_files": 2,
+      "changed_seams": 2,
+      "downstream_consumable": false
+    },
+    "full_repo_context": {
+      "state": "full_repo_limited",
+      "phase": "full_repo_context",
+      "limitation_category": "full_repo_context_not_run",
+      "downstream_consumable": false,
+      "repair_route": "ripr check --format repo-exposure-summary-json"
+    }
+  },
+  "receipt": {
+    "state": "not_written",
+    "path": "target/ripr/receipts/diff-first-HEAD-1-HEAD.json",
+    "outcome_hint": "diff_incomplete/full_repo_limited"
+  },
+  "summary": {
+    "changed_files": 2,
+    "changed_seams": 2,
+    "probes": 2,
+    "exposed": 0,
+    "weakly_exposed": 1,
+    "reachable_unrevealed": 0,
+    "no_static_path": 0,
+    "unknown": 1
+  },
+  "changed_files": [
+    {
+      "path": "app.ts",
+      "added_lines": [
+        1
+      ],
+      "removed_lines": [],
+      "added_count": 1,
+      "removed_count": 0
+    },
+    {
+      "path": "src/lib.rs",
+      "added_lines": [
+        2
+      ],
+      "removed_lines": [
+        2
+      ],
+      "added_count": 1,
+      "removed_count": 1
+    }
+  ],
+  "changed_seams": [
+    {
+      "seam_id": "probe:src_lib.rs:predicate:d4103fc7",
+      "canonical_gap_id": "gap:rust:src/lib.rs:over:predicate_boundary:predicate:amount==threshold",
+      "file": "src/lib.rs",
+      "line": 2,
+      "classification": "weakly_exposed",
+      "evidence": [
+        "A related test observes a value or effect near the changed behavior",
+        "Changed behavior appears to influence returned value: amount >= threshold",
+        "Related tests appear to reach over: big",
+        "Related tests contain input values, but the equality-boundary check is missing",
+        "Strong oracle found: exact value or pattern assertion"
+      ],
+      "missing_discriminators": [
+        "Missing check value: amount == threshold"
+      ],
+      "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions."
+    },
+    {
+      "seam_id": "probe:src_lib.rs:return_value:efe91c39",
+      "canonical_gap_id": "gap:rust:src/lib.rs:over:return_value:return_value:amount>=threshold",
+      "file": "src/lib.rs",
+      "line": 2,
+      "classification": "propagation_unknown",
+      "evidence": [
+        "A related test observes a value or effect near the changed behavior",
+        "Propagation is not statically obvious from syntax-first analysis",
+        "Related tests appear to reach over: big",
+        "Related tests contain input values, but the equality-boundary check is missing",
+        "Strong oracle found: exact value or pattern assertion"
+      ],
+      "missing_discriminators": [
+        "Missing check value: amount == threshold",
+        "No clear propagation path from changed behavior to an observable sink"
+      ],
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "typescript",
+      "file_count": 1,
+      "sample_paths": [
+        "app.ts"
+      ],
+      "enabled": false,
+      "analyzed": false,
+      "category": "preview_language_advisory",
+      "why": "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; to enable add to ripr.toml: [languages] enabled = [\"rust\", \"typescript\"]"
+    }
+  ]
+}

@@ -5,6 +5,6 @@ root: fixtures/rust_verification_contract_only_edit/input
 Summary: 0 changed behaviors checked
 
 Analysis outcome: no changed line is behavior ripr checks (analysis complete)
-  Limitation: verifier-only contract or proof text changed; ripr does not evaluate it during change point detection; affected items: 1; recovery: inspect the failure — Verification contract or proof text changed. ripr does not evaluate contracts, proofs or ghost code and a test cannot observe them; re-run the verifier (for example cargo kani, cargo creusot or cargo prusti) on the affected items.
+  Limitation: verifier-only contract or proof text changed; ripr does not evaluate it during change point detection; affected items: 1; 2 changed line(s) in 1 file(s) are verification-only text (contract attribute, logic/ghost item or proof macro) and were not probed: src/lib.rs; recovery: inspect the failure — Verification contract or proof text changed. ripr does not evaluate contracts, proofs or ghost code and a test cannot observe them; re-run the verifier (for example cargo kani, cargo creusot or cargo prusti) on the affected items.
 
 No findings: ripr checked no changed behavior.

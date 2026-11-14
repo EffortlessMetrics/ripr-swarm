@@ -774,6 +774,15 @@ covered_by = ["npm --prefix packaging/npm/launcher pack --dry-run --json --ignor
 # ---------------------------------------------------------------------------
 
 [[allow]]
+glob = "tools/repo-policy/tests/workflow_contracts/fixtures/inventory-map.json"
+kind = "fixture_input"
+owner = "repo-policy"
+surface = "fixtures"
+classification = "fixture"
+reason = "Frozen workflow-contract test identities verify that executable consolidation preserves every original logical case and ignored state (#12914)."
+covered_by = ["cargo test -p repo-policy --test workflow_contracts workflow_contracts::inventory_contract", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "docs/agent-context/review-conversations.fixture.json"
 kind = "fixture_input"
 owner = "agents/review"
@@ -953,6 +962,15 @@ surface = "fixtures"
 classification = "fixture"
 reason = "Pinned upstream Kani contract examples and an authored no-promotion report projection; no native-run capture claim."
 covered_by = ["cargo test -p ripr --test kani_report_cli"]
+
+[[allow]]
+glob = "xtask/tests/fixtures/kani-cover-evidence/provenance.json"
+kind = "kani_native_conformance_fixture"
+owner = "verification/kani-lane"
+surface = "fixtures"
+classification = "fixture"
+reason = "Authored provenance for retained native cover-evidence fixtures replayed by the lane tests; the capture record is not authenticated execution."
+covered_by = ["cargo test -p xtask kani_lane::tests::pinned_native_cover_captures_keep_distinct_lane_dispositions", "cargo xtask check-file-policy"]
 
 [[allow]]
 glob = "crates/ripr/src/app/kani_import/fixtures/native-captures/**"

@@ -1,0 +1,10 @@
+# Near-duplicate Hidden rows group by file, owner, class and reason (#14299).
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/src/output/human.rs::tests::hidden_block_groups_same_owner_class_and_reason_into_one_row",
+  "crates/ripr/src/output/human.rs::tests::hidden_block_window_counts_grouped_rows_and_remainder_findings",
+  "crates/ripr/src/output/human.rs::tests::hidden_block_keeps_stub_route_findings_one_row_each",
+  "crates/ripr/src/output/human.rs::tests::hidden_block_keeps_owner_less_rows_apart_and_orders_mixed_rows",
+  "crates/ripr/src/output/human.rs::tests::hidden_block_window_ranks_a_group_by_its_best_member",
+]

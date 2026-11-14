@@ -49,7 +49,7 @@ fn format_accepts_json(row: &serde_json::Value) -> bool {
 #[test]
 fn json_flag_field_agrees_with_the_parsed_flag_inventory() -> Result<(), String> {
     let document = catalog()?;
-    assert_eq!(document["schema_version"], 4);
+    assert_eq!(document["schema_version"], 5);
     let commands = document["commands"].as_array().ok_or("commands missing")?;
     // `checked` counts own-body rows; `discriminating` counts those whose
     // body documents a JSON flag, the only rows where a wrong declared
@@ -163,6 +163,200 @@ fn rows_without_a_help_body_are_scoped_no_help_body() -> Result<(), String> {
         .filter(|row| row["flags_scope"] == "no_help_body")
         .count();
     assert!(no_body >= 10, "expected body-less rows, got {no_body}");
+    Ok(())
+}
+
+fn leaf_rows(document: &serde_json::Value) -> Result<Vec<&serde_json::Value>, String> {
+    Ok(document["commands"]
+        .as_array()
+        .ok_or("commands missing")?
+        .iter()
+        .filter(|row| row["flags_scope"] == "leaf_section")
+        .collect())
+}
+
+fn run_ripr_text(args: &[&str]) -> Result<(bool, String, String), String> {
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(args)
+        .output()
+        .map_err(|error| format!("failed to run ripr {args:?}: {error}"))?;
+    Ok((
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    ))
+}
+
+/// #14314: a shared-body family leaf lists only its own flags, never a
+/// sibling's, and says so in `flags_scope`.
+#[test]
+fn shared_body_leaf_rows_list_only_the_leaf_flags() -> Result<(), String> {
+    let document = catalog()?;
+    let leaves = leaf_rows(&document)?;
+    assert_eq!(
+        leaves.len(),
+        23,
+        "every option_section leaf of a leaf-scoped family is leaf_section"
+    );
+    // No shared-body row remains for these families. Other families (for
+    // example `gate`, whose body documents both subcommands) may still
+    // share a body.
+    let families: Vec<&str> = leaves
+        .iter()
+        .filter_map(|row| row["path"].as_str()?.split(' ').next())
+        .collect();
+    let shared: Vec<&str> = document["commands"]
+        .as_array()
+        .ok_or("commands missing")?
+        .iter()
+        .filter(|row| row["flags_scope"] == "shared_help_body")
+        .filter_map(|row| row["path"].as_str())
+        .filter(|path| {
+            families
+                .iter()
+                .any(|family| path.split(' ').next() == Some(*family))
+        })
+        .collect();
+    assert!(
+        shared.is_empty(),
+        "unexpected shared_help_body rows: {shared:?}"
+    );
+    let kani = leaves
+        .iter()
+        .find(|row| row["path"] == "reports kani")
+        .ok_or("reports kani row missing")?;
+    let names = flag_names(kani);
+    for wanted in ["--input", "--binding", "--root", "--out", "--out-md"] {
+        assert!(names.iter().any(|name| name == wanted), "{names:?}");
+    }
+    for foreign in ["--step", "--records", "--corpus", "--upload-sarif"] {
+        assert!(!names.iter().any(|name| name == foreign), "{names:?}");
+    }
+    let input = kani["flags"]
+        .as_array()
+        .and_then(|flags| flags.iter().find(|flag| flag["name"] == "--input"))
+        .ok_or("--input flag missing")?;
+    assert_eq!(input["required"], true, "{input}");
+    Ok(())
+}
+
+/// #14314: every flag a leaf row lists is accepted by that leaf's parser, i.e.
+/// the refusal (if any) is never the unknown-argument refusal for that flag.
+#[test]
+fn every_leaf_row_flag_is_accepted_by_the_leaf_parser() -> Result<(), String> {
+    let document = catalog()?;
+    let scratch = std::env::temp_dir().join(format!("ripr-14314-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).map_err(|error| error.to_string())?;
+    let mut checked = 0;
+    for row in leaf_rows(&document)? {
+        let path = row["path"].as_str().ok_or("path missing")?;
+        let flags = row["flags"].as_array().ok_or("flags missing")?;
+        assert!(!flags.is_empty(), "{path}: no flags listed");
+        for flag in flags {
+            let name = flag["name"].as_str().ok_or("flag name missing")?;
+            let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+            command.args(path.split(' ')).arg(name);
+            if flag["takes_value"] == true {
+                command.arg("x");
+            }
+            let output = command
+                .current_dir(&scratch)
+                .stdin(std::process::Stdio::null())
+                .output()
+                .map_err(|error| format!("failed to run ripr {path} {name}: {error}"))?;
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                !stderr.contains(&format!("argument {name:?}")),
+                "{path} rejects its own listed flag {name}: {stderr}"
+            );
+            checked += 1;
+        }
+    }
+    let _ = std::fs::remove_dir_all(&scratch);
+    assert!(checked > 100, "expected many leaf flags, checked {checked}");
+    Ok(())
+}
+
+/// #14314: a leaf row is complete: every flag its scoped usage line names is
+/// in the row, so a generator never misses an accepted flag such as `--root`.
+#[test]
+fn every_leaf_usage_flag_is_in_the_leaf_row() -> Result<(), String> {
+    let document = catalog()?;
+    let mut checked = 0;
+    for row in leaf_rows(&document)? {
+        let path = row["path"].as_str().ok_or("path missing")?;
+        let names = flag_names(row);
+        let mut args: Vec<&str> = path.split(' ').collect();
+        args.push("--help");
+        let (ok, stdout, stderr) = run_ripr_text(&args)?;
+        assert!(ok, "ripr {path} --help failed: {stderr}");
+        // Usage is either `Usage: ripr <path> ...` or a `Usage:` heading
+        // followed by indented `ripr <path> ...` lines; take every one.
+        let prefix = format!("ripr {path}");
+        let usage = stdout
+            .lines()
+            .map(|line| line.trim_start_matches("Usage:").trim())
+            .filter(|line| line.starts_with(&prefix))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(!usage.is_empty(), "{path}: no usage line in {stdout}");
+        for token in usage.split(|c: char| c.is_whitespace() || "[]|()".contains(c)) {
+            let Some(flag) = token.strip_prefix("--").map(|rest| format!("--{rest}")) else {
+                continue;
+            };
+            if flag == "--" {
+                continue;
+            }
+            assert!(
+                names.contains(&flag),
+                "{path}: usage names {flag} but the catalog row lists {names:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 50, "expected many usage flags, checked {checked}");
+    Ok(())
+}
+
+/// #14314: scoped help carries the leaf's own section and no sibling section,
+/// both spellings agree, and bare family help still has every section.
+#[test]
+fn leaf_help_is_scoped_and_family_help_is_unchanged() -> Result<(), String> {
+    let document = catalog()?;
+    let (_, family_stdout, _) = run_ripr_text(&["help", "reports"])?;
+    assert!(family_stdout.contains("Kani result options:"));
+    assert!(family_stdout.contains("Index options:"));
+    for row in leaf_rows(&document)? {
+        let path = row["path"].as_str().ok_or("path missing")?;
+        let words: Vec<&str> = path.split(' ').collect();
+        let mut via_flag = words.clone();
+        via_flag.push("--help");
+        let mut via_help = vec!["help"];
+        via_help.extend(&words);
+        let (ok_flag, scoped, stderr) = run_ripr_text(&via_flag)?;
+        assert!(ok_flag && stderr.is_empty(), "{path}: {stderr}");
+        let (ok_help, scoped_help, _) = run_ripr_text(&via_help)?;
+        assert!(ok_help);
+        assert_eq!(scoped, scoped_help, "{path}: help spellings differ");
+        let headings: Vec<&str> = scoped
+            .lines()
+            .filter(|line| line.ends_with(" options:") && !line.starts_with(' '))
+            .collect();
+        assert_eq!(headings.len(), 1, "{path}: {headings:?}");
+        assert!(scoped.contains(&format!("ripr {path}")), "{path}");
+        assert!(
+            scoped.contains(&format!("ripr help {}", words[0])),
+            "{path}: family pointer missing"
+        );
+        for name in flag_names(row) {
+            assert!(scoped.contains(&name), "{path}: {name} not in help");
+        }
+        let (_, family_help, _) = run_ripr_text(&[words[0], "--help"])?;
+        assert!(
+            scoped.lines().count() < family_help.lines().count(),
+            "{path}: scoped help not shorter than family help"
+        );
+    }
     Ok(())
 }
 

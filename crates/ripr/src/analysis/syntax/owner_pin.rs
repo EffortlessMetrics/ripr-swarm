@@ -3014,14 +3014,26 @@ pub(crate) fn debug_assert_eq_calls(source: &str) -> Vec<(usize, String)> {
 }
 
 pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAssertions {
-    owner_pin_assertions_with_matches(source, trusted, false)
+    owner_pin_assertions_with_matches(source, trusted, false, None)
 }
 
-/// The same execution authority for return/error `assert!(matches!(..))`.
-/// A sole assertion can discriminate through an expected panic's inverted
-/// success condition. This establishes execution only, never a value pin.
-pub(crate) fn owner_pin_matches_assertions(source: &str, trusted: &[&str]) -> OwnerPinAssertions {
-    owner_pin_assertions_with_matches(source, trusted, true)
+/// [`owner_pin_assertions`] for a test file whose package enables
+/// `default_features` in a plain `cargo test` (#8780): a plain `#[cfg(..)]`
+/// on the test or an enclosing module that is provably true under exactly
+/// those features no longer refuses the test's assertions. `None` resolves
+/// no feature gate, as [`owner_pin_assertions`] does.
+///
+/// `matches_context` selects the same execution authority for return/error
+/// `assert!(matches!(..))`. A sole assertion can discriminate through an
+/// expected panic's inverted success condition. This establishes execution
+/// only, never a value pin.
+pub(crate) fn owner_pin_assertions_with_default_features(
+    source: &str,
+    trusted: &[&str],
+    matches_context: bool,
+    default_features: Option<&BTreeSet<String>>,
+) -> OwnerPinAssertions {
+    owner_pin_assertions_with_matches(source, trusted, matches_context, default_features)
 }
 
 fn matches_preserves_assertion_execution(attr: &ast::Attr, function: &ast::Fn) -> bool {
@@ -3068,6 +3080,7 @@ fn owner_pin_assertions_with_matches(
     source: &str,
     trusted: &[&str],
     matches_context: bool,
+    default_features: Option<&BTreeSet<String>>,
 ) -> OwnerPinAssertions {
     let mut result = OwnerPinAssertions::default();
     let Some(parse) = parse_clean_source_file(source) else {
@@ -3154,7 +3167,9 @@ fn owner_pin_assertions_with_matches(
         } else if function.async_token().is_some()
             && !function.attrs().any(|attr| {
                 let test = function.syntax();
-                tokio_test_runs_body(&attr, test) || argument_free_async_test_runs_body(&attr, test)
+                tokio_test_runs_body(&attr, test)
+                    || argument_free_async_test_runs_body(&attr, test)
+                    || test_log_test_runs_body(&attr, test)
             })
         {
             Some(AssertionContextRefusal::AsyncTest)
@@ -3176,6 +3191,7 @@ fn owner_pin_assertions_with_matches(
             }
         } else if let Some(attr) = function.attrs().find(|attr| {
             !(runs_body_unchanged(attr, function.syntax())
+                || default_enabled_gate(attr, default_features)
                 || matches_context && matches_preserves_assertion_execution(attr, &function))
         }) {
             // #14028: name the rebinding import, not the attribute itself.
@@ -3187,7 +3203,7 @@ fn owner_pin_assertions_with_matches(
                 ))
             }
         } else {
-            item_context_refusal(function.syntax())
+            item_context_refusal(function.syntax(), default_features)
         };
         // #10389: a function refused only for a nested comparison macro keeps
         // its per-assertion verdicts, so a caller that trusts those macros
@@ -3203,10 +3219,11 @@ fn owner_pin_assertions_with_matches(
                     false,
                 )
                 .is_none()
-                && function
-                    .attrs()
-                    .all(|attr| runs_body_unchanged(&attr, function.syntax()))
-                && item_context_refusal(function.syntax()).is_none();
+                && function.attrs().all(|attr| {
+                    runs_body_unchanged(&attr, function.syntax())
+                        || default_enabled_gate(&attr, default_features)
+                })
+                && item_context_refusal(function.syntax(), default_features).is_none();
         if let (Some(refusal), false) = (&refusal, comparison_clean) {
             // Only test functions are queried (`#[test]`, `#[tokio::test]`);
             // a refused helper still counts toward duplicate detection. A
@@ -4115,7 +4132,7 @@ fn insert_function(
 /// A libtest item cannot be nested in an executable body. Module/source
 /// attributes include inner attributes on ItemList, not only outer attrs.
 pub(super) fn supported_item_context(item: &SyntaxNode) -> bool {
-    item_context_refusal(item).is_none()
+    item_context_refusal(item, None).is_none()
 }
 
 /// Targeted call syntax also needs container attributes to preserve source
@@ -4132,9 +4149,22 @@ pub(crate) fn supported_targeted_item_context(item: &SyntaxNode) -> bool {
         })
 }
 
+/// A plain outer `#[cfg(..)]` that is provably true in a plain `cargo test`
+/// of the file's package (#8780): the item it gates is compiled there.
+fn default_enabled_gate(attr: &ast::Attr, default_features: Option<&BTreeSet<String>>) -> bool {
+    crate::analysis::facts::test_gate_is_default_enabled(
+        &attr.syntax().text().to_string(),
+        default_features,
+    )
+}
+
 /// Why `item` is not a plain item reachable from the file root under test
-/// builds: nested in an executable body, or under a gating attribute.
-fn item_context_refusal(item: &SyntaxNode) -> Option<AssertionContextRefusal> {
+/// builds: nested in an executable body, or under a gating attribute. A
+/// gate provably true under `default_features` does not refuse.
+fn item_context_refusal(
+    item: &SyntaxNode,
+    default_features: Option<&BTreeSet<String>>,
+) -> Option<AssertionContextRefusal> {
     let mut source_file = false;
     for (depth, node) in item.ancestors().enumerate() {
         if depth > 0
@@ -4146,6 +4176,7 @@ fn item_context_refusal(item: &SyntaxNode) -> Option<AssertionContextRefusal> {
         }
         if let Some(attr) = node.children().filter_map(ast::Attr::cast).find(|attr| {
             attribute_test_build_availability(&attr.syntax().text().to_string()) != Some(true)
+                && !default_enabled_gate(attr, default_features)
         }) {
             return Some(AssertionContextRefusal::GatedItem(
                 attr.syntax().text().to_string(),
@@ -4276,6 +4307,13 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     }
     if argument_free_async_test_crate(&path).is_some() {
         return argument_free_async_test_runs_body(attr, test);
+    }
+    if is_test_log_test_path(&path) {
+        return test_log_test_runs_body(attr, test);
+    }
+    if is_traced_test_attribute(&path, &module) {
+        return matches!(attr.meta(), Some(ast::Meta::PathMeta(_)))
+            && extern_crate_path_holds(&module, "tracing_test");
     }
     if let Some(kind) = rstest_attribute(&path, &module) {
         return rstest_runs_body(attr, kind, test, &module);
@@ -4542,6 +4580,107 @@ fn async_test_has_no_arguments(attr: &ast::Attr) -> bool {
         },
         _ => false,
     }
+}
+
+/// Whether `path` names `tracing_test::traced_test` in `module`: the
+/// crate-qualified path (rooted or not), or the bare name `traced_test`
+/// bound by exactly one explicit, unrenamed `use tracing_test::traced_test`
+/// that is a direct item of the module. The macro keeps the test's other
+/// attributes and signature, and runs the unchanged body after installing a
+/// capturing subscriber and entering a span, so an assertion in the body
+/// still fails the test. It takes no arguments; the caller refuses any, and
+/// still checks that `tracing_test` is the crate.
+fn is_traced_test_attribute(path: &str, module: &SyntaxNode) -> bool {
+    if path.contains("::") {
+        return path.strip_prefix("::").unwrap_or(path) == "tracing_test::traced_test";
+    }
+    if path != "traced_test" {
+        return false;
+    }
+    let mut bound = false;
+    for leaf in module_use_leaves(module) {
+        let UseBinding::Name(binding) = &leaf.binding else {
+            continue;
+        };
+        if unraw(binding) != "traced_test" {
+            continue;
+        }
+        let is_macro =
+            leaf.path.len() == 2 && leaf.path[0] == "tracing_test" && leaf.path[1] == "traced_test";
+        if !is_macro || bound {
+            return false;
+        }
+        bound = true;
+    }
+    bound
+}
+
+fn is_test_log_test_path(path: &str) -> bool {
+    path.strip_prefix("::").unwrap_or(path) == "test_log::test"
+}
+
+/// Whether `attr` is `#[test_log::test]` on `test` and runs the body
+/// unchanged. The macro re-emits the function under an inner test
+/// attribute with a logging initializer placed before the unchanged body:
+/// libtest's `#[test]` when it takes no argument, or the attribute it is
+/// given. Admitted only as the bare attribute (or empty `()`) on a sync
+/// `fn`, and as exactly `#[test_log::test(tokio::test)]` on an `async fn`
+/// with `tokio` the crate in the test's module. Any other inner attribute,
+/// and an inner attribute with arguments, refuses; so does a
+/// `#[test_log(..)]` configuration attribute beside it, which this check
+/// never admits. `test_log` must be the crate in the test's module under
+/// the same rule as `tokio`.
+fn test_log_test_runs_body(attr: &ast::Attr, test: &SyntaxNode) -> bool {
+    if attr.excl_token().is_some() {
+        return false;
+    }
+    let Some(function) = ast::Fn::cast(test.clone()) else {
+        return false;
+    };
+    let Some(path) = attr.path() else {
+        return false;
+    };
+    if !is_test_log_test_path(&path.syntax().text().to_string().replace(' ', "")) {
+        return false;
+    }
+    let Some(module) = test.parent() else {
+        return false;
+    };
+    if !extern_crate_path_holds(&module, "test_log") {
+        return false;
+    }
+    let is_async = function.async_token().is_some();
+    if async_test_has_no_arguments(attr) {
+        return !is_async;
+    }
+    is_async && test_log_inner_is_bare_tokio_test(attr) && extern_crate_path_holds(&module, "tokio")
+}
+
+/// Whether the argument list of a `#[test_log::test(..)]` is exactly the
+/// path `tokio::test` (rooted or not), with no arguments of its own.
+fn test_log_inner_is_bare_tokio_test(attr: &ast::Attr) -> bool {
+    let Some(ast::Meta::TokenTreeMeta(meta)) = attr.meta() else {
+        return false;
+    };
+    let Some(tree) = meta.token_tree() else {
+        return false;
+    };
+    let tokens: Vec<String> = tree
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .map(|token| token.text().to_string())
+        .collect();
+    let texts: Vec<&str> = tokens.iter().map(String::as_str).collect();
+    // The lexer may hand `::` over as one token or as two `:` tokens.
+    let joined = texts.concat();
+    matches!(texts.first(), Some(&"("))
+        && matches!(texts.last(), Some(&")"))
+        && texts
+            .iter()
+            .all(|text| matches!(*text, "(" | ")" | "::" | ":" | "tokio" | "test"))
+        && matches!(joined.as_str(), "(tokio::test)" | "(::tokio::test)")
 }
 
 /// An rstest attribute on a test function.
@@ -4994,6 +5133,8 @@ const TRUSTED_ATTRIBUTE_CRATES: &[&str] = &[
     "async_std",
     "actix_rt",
     "actix_web",
+    "test_log",
+    "tracing_test",
     "rstest",
     "test_case",
 ];
@@ -5015,6 +5156,7 @@ fn crate_attribute_appears(module: &SyntaxNode, krate: &str) -> bool {
                 || (krate == "serial_test"
                     && !path.contains("::")
                     && bare_lock_bound_in_module(&path, module))
+                || (krate == "tracing_test" && is_traced_test_attribute(&path, module))
                 || (krate == "rstest" && rstest_attribute_trusted(&attr, module))
                 || (krate == "test_case" && test_case_attribute_trusted(&attr, module))
         })
@@ -5153,6 +5295,12 @@ fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode, trusted: &[&s
             .is_some_and(|rest| rest.starts_with("::"))
     }) {
         return trusted.contains(krate) && argument_free_async_test_crate(&path) == Some(*krate);
+    }
+    if unrooted.starts_with("test_log::") {
+        return trusted.contains(&"test_log") && is_test_log_test_path(&path);
+    }
+    if unrooted.starts_with("tracing_test::") || path == "traced_test" {
+        return trusted.contains(&"tracing_test") && is_traced_test_attribute(&path, module);
     }
     if rstest_attribute_trusted(attr, module) {
         return trusted.contains(&"rstest");
@@ -7537,6 +7685,85 @@ mod process_names_scan_tests {
         };
         assert_eq!(admitted("a"), Some(0), "{:?}", pins.functions.keys());
         assert_eq!(admitted("b"), Some(1), "{:?}", pins.functions.keys());
+    }
+}
+
+#[cfg(test)]
+mod default_feature_gate_tests {
+    use super::*;
+
+    /// The refusal recorded for test `t` of `source`, read with the package's
+    /// default features `defaults`; `Some(None)` is an admitted test.
+    fn refusal_of(
+        source: &str,
+        defaults: Option<&[&str]>,
+    ) -> Option<Option<AssertionContextRefusal>> {
+        let defaults: Option<BTreeSet<String>> =
+            defaults.map(|names| names.iter().map(|name| name.to_string()).collect());
+        let pins = owner_pin_assertions_with_default_features(
+            source,
+            TRUSTED_MACRO_NAMES,
+            false,
+            defaults.as_ref(),
+        );
+        assert!(pins.parsed, "{source}");
+        pins.functions
+            .iter()
+            .find(|(key, _)| key.2 == "t")
+            .map(|(_, function)| function.refusal.clone())
+    }
+
+    const BODY: &str = "#[test]\nfn t() {\n    assert_eq!(f(1), 1);\n}\n";
+
+    /// #8780: a gate the package's default features switch on is compiled by
+    /// a plain `cargo test`, wherever it sits above the test.
+    #[test]
+    fn a_default_enabled_feature_gate_does_not_refuse_the_test() {
+        for gated in [
+            format!("#![cfg(feature = \"slow\")]\n{BODY}"),
+            format!("#[cfg(feature = \"slow\")]\n{BODY}"),
+            format!("#[cfg(all(test, feature = \"slow\"))]\nmod tests {{\n{BODY}}}\n"),
+            format!(
+                "#[cfg(test)]\nmod tests {{\n#[cfg(any(feature = \"other\", feature = \"slow\"))]\n{BODY}}}\n"
+            ),
+        ] {
+            assert_eq!(refusal_of(&gated, Some(&["slow"])), Some(None), "{gated}");
+            // The same source without that default keeps its refusal, and so
+            // does a read with no manifest authority.
+            for defaults in [Some(&["std"][..]), Some(&[][..]), None] {
+                assert!(
+                    matches!(
+                        refusal_of(&gated, defaults),
+                        Some(Some(
+                            AssertionContextRefusal::GatedItem(_)
+                                | AssertionContextRefusal::TestAttribute(_)
+                        ))
+                    ),
+                    "{defaults:?}: {gated}"
+                );
+            }
+        }
+    }
+
+    /// Only a provably true plain `cfg` is resolved: a negation, a target
+    /// atom, a `cfg_attr`, a second unresolved gate and an `#[ignore]` keep
+    /// refusing although `slow` is a default feature.
+    #[test]
+    fn a_gate_default_features_do_not_settle_still_refuses() {
+        for gated in [
+            format!("#![cfg(not(feature = \"slow\"))]\n{BODY}"),
+            format!("#![cfg(not(feature = \"absent\"))]\n{BODY}"),
+            format!("#![cfg(all(feature = \"slow\", unix))]\n{BODY}"),
+            format!("#![cfg(feature = \"slow\")]\n#[cfg(feature = \"absent\")]\n{BODY}"),
+            format!("#[cfg_attr(feature = \"slow\", ignore)]\n{BODY}"),
+            format!("#![cfg(feature = \"slow\")]\n#[ignore]\n{BODY}"),
+            format!("#![cfg(any())]\n{BODY}"),
+        ] {
+            assert!(
+                matches!(refusal_of(&gated, Some(&["slow"])), Some(Some(_))),
+                "{gated}"
+            );
+        }
     }
 }
 

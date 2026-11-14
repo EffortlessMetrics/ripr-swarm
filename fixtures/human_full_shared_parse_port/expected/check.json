@@ -37,7 +37,7 @@
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach parse_port: parses_valid_port"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
-        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: Ok(p) if p > 0 =>"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: Ok(p)"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
@@ -48,11 +48,11 @@
         {"stage":"observe","state":"yes","confidence":"medium"},
         {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach parse_port: parses_valid_port", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: Ok(p) if p > 0 =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: Ok(p) if p > 0 => (line 3)", "related test src/lib.rs:14 parses_valid_port uses strong exact value oracle: assert_eq!(parse_port(\"8080\").unwrap(), 8080);", "source assertion argument value 8080 at line 15", "source function argument value input = \"8080\" at line 15"],
+      "evidence_path": ["reach yes: Related tests appear to reach parse_port: parses_valid_port", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: Ok(p)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: Ok(p) (line 3)", "related test src/lib.rs:14 parses_valid_port uses strong exact value oracle: assert_eq!(parse_port(\"8080\").unwrap(), 8080);", "source assertion argument value 8080 at line 15", "source function argument value input = \"8080\" at line 15"],
       "flow_sinks": [
-        {"kind":"match_arm","text":"Ok(p) if p > 0 =>","line":3}
+        {"kind":"match_arm","text":"Ok(p)","line":3}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: Ok(p) if p > 0 =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach parse_port: parses_valid_port"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: Ok(p)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach parse_port: parses_valid_port"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
         "15": "assert_eq!(parse_port(\"8080\").unwrap(), 8080);"

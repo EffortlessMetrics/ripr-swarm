@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- The `ripr` test suite now fails when process startup gets more expensive: `--version`, `--help`, `check --help` and `capabilities` are held to CPU-time and peak-memory ceilings and must print the same output from an unparsable working directory. `docs/PERFORMANCE_GUARDS.md` lists the startup, output-size and run-time regression guards and where each runs (#12906).

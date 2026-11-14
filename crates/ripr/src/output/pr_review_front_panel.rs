@@ -51,6 +51,15 @@ const MARKDOWN_LIMITS: &[&str] = &[
     "Gate evaluator remains pass/fail authority.",
 ];
 
+/// A read failure for one panel input, with the not-found case kept separate
+/// from every other cause so the panel can say "missing" only when the path is
+/// really absent (#14553).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PanelInputError {
+    pub(crate) not_found: bool,
+    pub(crate) message: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PrReviewFrontPanelInput {
     pub(crate) root: String,
@@ -70,7 +79,7 @@ pub(crate) struct PrReviewFrontPanelInput {
     pub(crate) receipt_path: Option<String>,
     pub(crate) pr_guidance_json: Option<Result<String, String>>,
     pub(crate) first_action_json: Option<Result<String, String>>,
-    pub(crate) assistant_proof_json: Option<Result<String, String>>,
+    pub(crate) assistant_proof_json: Option<Result<String, PanelInputError>>,
     pub(crate) assistant_health_json: Option<Result<String, String>>,
     pub(crate) ledger_json: Option<Result<String, String>>,
     pub(crate) baseline_delta_json: Option<Result<String, String>>,
@@ -318,6 +327,22 @@ pub(crate) fn build_pr_review_front_panel_report(
         // synthesized warning only means first-action named some other missing
         // artifact, so the proof may be present and valid (#14628).
         let removed_proof_warning = warnings.len() != before_retain;
+        // #14553: an unreadable proof keeps its read cause. Promote that
+        // warning to the required-input kind instead of replacing it with the
+        // generic "missing" sentence, which is only true for a not-found path.
+        // The promotion runs first and the push below stays a plain `if`, so a
+        // promoted warning is never replaced by the generic sentence and the
+        // panel still names the proof as the missing input (#14628).
+        let unreadable = warnings.iter_mut().find(|warning| {
+            warning.kind == "unreadable_input"
+                && warning
+                    .source_artifact
+                    .as_deref()
+                    .is_some_and(|path| path.ends_with("test-oracle-assistant-proof.json"))
+        });
+        if let Some(warning) = unreadable {
+            warning.kind = "missing_required_input".to_string();
+        }
         if !warnings
             .iter()
             .any(|warning| warning.kind == "missing_required_input")
@@ -417,7 +442,9 @@ pub(crate) fn pr_review_front_panel_input_warnings(
         .filter_map(|warning| {
             let path = warning.source_artifact.as_deref()?;
             match warning.kind.as_str() {
-                "missing_optional_input" | "malformed_input" => {
+                "missing_optional_input" | "malformed_input" | "unreadable_input" => {
+                    // The message already carries the path and the read cause,
+                    // so do not append the path again (#14553).
                     Some(warning.message.trim_end_matches('.').to_string())
                 }
                 // An explicit `--assistant-proof` that could not be read is
@@ -770,7 +797,7 @@ fn parse_panel_sources(input: &PrReviewFrontPanelInput) -> ParsedPanelSources {
         &input.first_action_json,
         &mut parsed,
     );
-    parsed.assistant_proof = parse_optional_json(
+    parsed.assistant_proof = parse_optional_json_typed(
         "assistant proof",
         input.assistant_proof_path.as_deref(),
         &input.assistant_proof_json,
@@ -854,6 +881,55 @@ fn parse_optional_json(
             parsed.warnings.push(PanelWarning {
                 kind: "missing_optional_input".to_string(),
                 message: format!("Optional {label} input is unreadable: {error}"),
+                source_artifact: Some(path.to_string()),
+            });
+            return None;
+        }
+    };
+    match serde_json::from_str::<Value>(text) {
+        Ok(value) => Some(value),
+        Err(error) => {
+            parsed.warnings.push(PanelWarning {
+                kind: "malformed_input".to_string(),
+                message: format!("Optional {label} input is malformed: {error}"),
+                source_artifact: Some(path.to_string()),
+            });
+            None
+        }
+    }
+}
+
+/// [`parse_optional_json`] for the assistant proof, whose read failure keeps
+/// the not-found case separate from every other cause (#14553).
+fn parse_optional_json_typed(
+    label: &str,
+    path: Option<&str>,
+    text: &Option<Result<String, PanelInputError>>,
+    parsed: &mut ParsedPanelSources,
+) -> Option<Value> {
+    let path = path?;
+    let Some(text) = text else {
+        parsed.warnings.push(PanelWarning {
+            kind: "missing_optional_input".to_string(),
+            message: format!("{label} path {path} was supplied but no input text was loaded."),
+            source_artifact: Some(path.to_string()),
+        });
+        return None;
+    };
+    let text = match text {
+        Ok(text) => text,
+        Err(error) if error.not_found => {
+            parsed.warnings.push(PanelWarning {
+                kind: "missing_optional_input".to_string(),
+                message: format!("Optional {label} input is unreadable: {}", error.message),
+                source_artifact: Some(path.to_string()),
+            });
+            return None;
+        }
+        Err(error) => {
+            parsed.warnings.push(PanelWarning {
+                kind: "unreadable_input".to_string(),
+                message: format!("Assistant proof artifact is unreadable: {}", error.message),
                 source_artifact: Some(path.to_string()),
             });
             return None;
@@ -1054,7 +1130,8 @@ fn is_missing_required(parsed: &ParsedPanelSources) -> bool {
         || parsed.warnings.iter().any(|warning| {
             warning.source_artifact.as_deref().is_some_and(|path| {
                 path.ends_with("test-oracle-assistant-proof.json")
-                    && warning.kind == "missing_optional_input"
+                    && (warning.kind == "missing_optional_input"
+                        || warning.kind == "unreadable_input")
             })
         })
 }
@@ -2832,6 +2909,83 @@ mod tests {
         Ok(())
     }
 
+    /// #14628 x #14553: an unreadable proof that sits behind an optional
+    /// guidance warning must still be the input the panel names. The promotion
+    /// runs first and the synthesized-warning push stays a plain `if`, so the
+    /// promoted warning is neither replaced nor skipped, and the read-failure
+    /// flag is set for it. Resolving the merge the other way - promotion in an
+    /// `else if` - leaves the flag false and the line names the guidance file.
+    #[test]
+    fn unreadable_proof_behind_an_optional_warning_still_names_the_proof() -> Result<(), String> {
+        let input = PrReviewFrontPanelInput {
+            root: ".".to_string(),
+            generated_at: "2026-05-09T12:00:00Z".to_string(),
+            out_md_path: "target/ripr/reports/pr-review-front-panel.md".to_string(),
+            pr_guidance_path: Some("docs/pr-guidance.json".to_string()),
+            first_action_path: None,
+            assistant_proof_path: Some("test-oracle-assistant-proof.json".to_string()),
+            assistant_health_path: None,
+            ledger_path: None,
+            baseline_delta_path: None,
+            zero_status_path: None,
+            gate_decision_path: None,
+            recommendation_calibration_path: None,
+            mutation_calibration_path: None,
+            coverage_frontier_path: None,
+            receipt_path: None,
+            pr_guidance_json: Some(Err("permission denied".to_string())),
+            first_action_json: None,
+            assistant_proof_json: Some(Err(PanelInputError {
+                not_found: false,
+                message: "permission denied".to_string(),
+            })),
+            assistant_health_json: None,
+            ledger_json: None,
+            baseline_delta_json: None,
+            zero_status_json: None,
+            gate_decision_json: None,
+            recommendation_calibration_json: None,
+            mutation_calibration_json: None,
+            coverage_frontier_json: None,
+            receipt_json: None,
+        };
+        let report = build_pr_review_front_panel_report(input);
+        assert_eq!(report.summary.top_issue_state, "missing_required_input");
+        assert!(
+            report.missing_required_input_from_read_failure,
+            "the promoted proof warning is a read failure"
+        );
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.kind == "missing_required_input"
+                    && warning.source_artifact.as_deref()
+                        == Some("test-oracle-assistant-proof.json")),
+            "the unreadable proof keeps its read cause under the required kind: {:?}",
+            report.warnings
+        );
+        assert!(
+            !report
+                .warnings
+                .iter()
+                .any(|warning| warning.kind == "missing_required_input"
+                    && warning.message == "Assistant proof artifact is missing."),
+            "the generic missing sentence must not replace the read cause: {:?}",
+            report.warnings
+        );
+        let markdown = render_pr_review_front_panel_markdown(&report);
+        assert!(
+            markdown.contains("- Missing input: test-oracle-assistant-proof.json"),
+            "{markdown}"
+        );
+        assert!(
+            !markdown.contains("- Missing input: docs/pr-guidance.json"),
+            "{markdown}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn assistant_health_movement_keeps_one_producer_vocabulary() -> Result<(), String> {
         let repo_root = repo_root()?;
@@ -3450,7 +3604,10 @@ mod tests {
             out_md_path: fixture_path(repo_root, expected_md_path),
             pr_guidance_json: read_optional_fixture(repo_root, pr_guidance.as_deref())?,
             first_action_json: read_optional_fixture(repo_root, first_action.as_deref())?,
-            assistant_proof_json: read_optional_fixture(repo_root, assistant_proof.as_deref())?,
+            assistant_proof_json: read_optional_fixture_typed(
+                repo_root,
+                assistant_proof.as_deref(),
+            )?,
             assistant_health_json: read_optional_fixture(repo_root, assistant_health.as_deref())?,
             ledger_json: read_optional_fixture(repo_root, ledger.as_deref())?,
             baseline_delta_json: read_optional_fixture(repo_root, baseline_delta.as_deref())?,
@@ -3872,6 +4029,29 @@ mod tests {
             "{} does not exist",
             display_path(&absolute)
         ))))
+    }
+
+    /// [`read_optional_fixture`] for the assistant proof: the not-found case is
+    /// derived from the io error kind so the fixture inputs match the typed
+    /// production reader (#14553).
+    fn read_optional_fixture_typed(
+        repo_root: &Path,
+        path: Option<&str>,
+    ) -> Result<Option<Result<String, PanelInputError>>, String> {
+        let Some(path) = path else {
+            return Ok(None);
+        };
+        let absolute = repo_root.join(path);
+        match std::fs::read_to_string(&absolute) {
+            Ok(text) => Ok(Some(Ok(text))),
+            Err(error) => Ok(Some(Err(PanelInputError {
+                not_found: error.kind() == std::io::ErrorKind::NotFound,
+                message: format!(
+                    "read assistant proof {} failed: {error}",
+                    display_path(&absolute)
+                ),
+            }))),
+        }
     }
 
     fn fixture_path(repo_root: &Path, path: &Path) -> String {

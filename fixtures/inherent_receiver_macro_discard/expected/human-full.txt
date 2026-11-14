@@ -33,10 +33,10 @@ Static exposure
 Evidence
   - reach weak: No test is seen calling as_object; tests share only a name token
   - infection yes: Reachable tests can plausibly activate this changed behavior
-  - propagation yes: Changed behavior appears to influence match arm result: Self::Object(value) =>
+  - propagation yes: Changed behavior appears to influence match arm result: Some(*value)
   - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
   - discriminator no: No assertion found on related tests
-  - local flow reaches match arm result: Self::Object(value) => (line 6)
+  - local flow reaches match arm result: Some(*value) (line 6)
   - related test src/lib.rs:14 ignored_operand uses strong exact value oracle: assert_eq!(value.as_object(), Some(7)); misses: no established call path to the changed code; linked by name only
   - source assertion argument value 7 at line 16
 
