@@ -80,8 +80,8 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr agent verify-execute`](#agent-verify-execute) | Execute the packet's authorized verify projection and record the result. | advanced |
 | [`ripr annotations`](#annotations) | Render review comments as GitHub Actions warning annotations. | public |
 | [`ripr assistant-loop`](#assistant-loop) | Show the assistant-loop surface. | public |
-| [`ripr assistant-loop health`](#assistant-loop) | Project assistant-loop health from one or more proof artifacts. | public |
-| [`ripr assistant-loop proof`](#assistant-loop) | Compose the assistant test-oracle proof from review and repair artifacts. | public |
+| [`ripr assistant-loop health`](#assistant-loop-health) | Project assistant-loop health from one or more proof artifacts. | public |
+| [`ripr assistant-loop proof`](#assistant-loop-proof) | Compose the assistant test-oracle proof from review and repair artifacts. | public |
 | [`ripr baseline`](#baseline) | Show the baseline command surface. | public |
 | [`ripr baseline create`](#baseline-create) | Create the gate baseline artifact the next runs compare against. | public |
 | [`ripr baseline diff`](#baseline-diff) | Compare a gate decision against the stored baseline. | public |
@@ -123,18 +123,18 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr pilot`](#pilot) | Find the top test gap across the whole repository. | public |
 | [`ripr plus`](#plus) | Compose the repo-wide RIPR+ receipt from one existing artifact. | public |
 | [`ripr policy`](#policy) | Show the policy command surface. | public |
-| [`ripr policy history`](#policy) | Append a policy-history record and render the history view. | public |
-| [`ripr policy operations`](#policy) | Compose the policy-operations view over readiness inputs. | public |
-| [`ripr policy preview-promote`](#policy) | Render a preview-promotion evidence view for a language class. | public |
-| [`ripr policy promote`](#policy) | Render a promotion view for the next policy mode. | public |
-| [`ripr policy readiness`](#policy) | Project policy readiness from gate and baseline artifacts. | public |
-| [`ripr policy suppression-health`](#policy) | Audit suppression declarations for stale or uncovered entries. | public |
-| [`ripr policy waiver-aging`](#policy) | Project waiver-aging health from the PR evidence ledger. | public |
+| [`ripr policy history`](#policy-history) | Append a policy-history record and render the history view. | public |
+| [`ripr policy operations`](#policy-operations) | Compose the policy-operations view over readiness inputs. | public |
+| [`ripr policy preview-promote`](#policy-preview-promote) | Render a preview-promotion evidence view for a language class. | public |
+| [`ripr policy promote`](#policy-promote) | Render a promotion view for the next policy mode. | public |
+| [`ripr policy readiness`](#policy-readiness) | Project policy readiness from gate and baseline artifacts. | public |
+| [`ripr policy suppression-health`](#policy-suppression-health) | Audit suppression declarations for stale or uncovered entries. | public |
+| [`ripr policy waiver-aging`](#policy-waiver-aging) | Project waiver-aging health from the PR evidence ledger. | public |
 | [`ripr pr-comments`](#pr-comments) | Show the PR comments surface. | public |
-| [`ripr pr-comments existing`](#pr-comments) | Turn a pull request's paginated review comments into existing RIPR comment metadata. | public |
-| [`ripr pr-comments plan`](#pr-comments) | Plan create/update/keep/delete operations for PR comments. | public |
-| [`ripr pr-comments requests`](#pr-comments) | Write the GitHub API requests that publish a safe inline-comment plan. | public |
-| [`ripr pr-comments summary`](#pr-comments) | Write the request that posts or updates the one PR summary comment. | public |
+| [`ripr pr-comments existing`](#pr-comments-existing) | Turn a pull request's paginated review comments into existing RIPR comment metadata. | public |
+| [`ripr pr-comments plan`](#pr-comments-plan) | Plan create/update/keep/delete operations for PR comments. | public |
+| [`ripr pr-comments requests`](#pr-comments-requests) | Write the GitHub API requests that publish a safe inline-comment plan. | public |
+| [`ripr pr-comments summary`](#pr-comments-summary) | Write the request that posts or updates the one PR summary comment. | public |
 | [`ripr pr-evidence`](#pr-evidence) | Write the diff-scoped PR evidence packet for one base and head. | public |
 | [`ripr pr-ledger`](#pr-ledger) | Show the PR evidence ledger surface. | public |
 | [`ripr pr-ledger record`](#pr-ledger) | Record one PR's evidence state into the ledger and history. | public |
@@ -146,13 +146,13 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr receipt write`](#receipt-write) | Author the canonical repair receipt for one completed attempt. | public |
 | [`ripr repair`](#repair) | Pick one Rust gap to close with a focused test edit and start tracking it. | public |
 | [`ripr reports`](#reports) | Show the reports surface. | public |
-| [`ripr reports ci-packet`](#reports) | Run the generated CI workflow's RIPR steps and write its artifact packet. | public |
-| [`ripr reports ci-summary`](#reports) | Print the generated CI workflow's step summary from existing artifacts. | public |
-| [`ripr reports gap-ledger`](#reports) | Aggregate records, repo exposure, or check output into the gap decision ledger. | public |
-| [`ripr reports index`](#reports) | Index the reports and review directories into one manifest. | public |
-| [`ripr reports kani`](#reports) | Inspect a supplied Kani result with its source and configuration binding. | public |
-| [`ripr reports ts-false-actionable`](#reports) | Audit the TypeScript false-actionable corpus. | public |
-| [`ripr reports ts-limitations`](#reports) | Project TypeScript limitation counts from a check output artifact. | public |
+| [`ripr reports ci-packet`](#reports-ci-packet) | Run the generated CI workflow's RIPR steps and write its artifact packet. | public |
+| [`ripr reports ci-summary`](#reports-ci-summary) | Print the generated CI workflow's step summary from existing artifacts. | public |
+| [`ripr reports gap-ledger`](#reports-gap-ledger) | Aggregate records, repo exposure, or check output into the gap decision ledger. | public |
+| [`ripr reports index`](#reports-index) | Index the reports and review directories into one manifest. | public |
+| [`ripr reports kani`](#reports-kani) | Inspect a supplied Kani result with its source and configuration binding. | public |
+| [`ripr reports ts-false-actionable`](#reports-ts-false-actionable) | Audit the TypeScript false-actionable corpus. | public |
+| [`ripr reports ts-limitations`](#reports-ts-limitations) | Project TypeScript limitation counts from a check output artifact. | public |
 | [`ripr rerun`](#rerun) | Re-evaluate static evidence affected by one edited Rust test. | public |
 | [`ripr review-comments`](#review-comments) | Analyze a PR range and draft review comments with evidence links. | public |
 | [`ripr status`](#status) | Show where the current repair stands and what to run next. | public |
@@ -849,7 +849,7 @@ Examples:
 
 ### assistant-loop
 
-Shared help for `ripr assistant-loop`, `ripr assistant-loop health`, `ripr assistant-loop proof`.
+`ripr help assistant-loop`
 
 ```text
 Produce or summarize advisory agent proof and proof-loop health.
@@ -895,6 +895,72 @@ make CI blocking by default.
 Examples:
   ripr assistant-loop health --proof target/ripr/reports/test-oracle-assistant-proof.json
   ripr assistant-loop proof --pr-guidance target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-brief.json --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --receipt target/ripr/reports/agent-receipt.json
+```
+
+### assistant-loop-health
+
+`ripr help assistant-loop health`
+
+```text
+Project assistant-loop health from one or more proof artifacts.
+
+Usage:
+  ripr assistant-loop health --proof PATH [--proof PATH ...] [--out PATH] [--out-md PATH]
+
+Health options:
+  --root PATH                 Workspace root label. Defaults to current directory.
+  --proof PATH                Explicit test-oracle assistant proof JSON. Repeatable.
+  --out PATH                  JSON output path. Defaults to target/ripr/reports/assistant-loop-health.json.
+  --out-md PATH               Markdown output path. Defaults to target/ripr/reports/assistant-loop-health.md.
+
+The assistant-loop health report is read-only advisory evidence over explicit
+test-oracle assistant proof JSON artifacts. It summarizes proof completeness,
+missing inputs, static movement, recurring warnings, and bounded repair queues.
+It does not rerun analysis, inspect source to infer missing data, edit source,
+generate tests, call a provider, run mutation testing, change gate policy, or
+make CI blocking by default.
+
+Examples:
+  ripr assistant-loop health --proof target/ripr/reports/test-oracle-assistant-proof.json
+
+Run `ripr help assistant-loop` for every assistant-loop subcommand.
+```
+
+### assistant-loop-proof
+
+`ripr help assistant-loop proof`
+
+```text
+Compose the assistant test-oracle proof from review and repair artifacts.
+
+Usage:
+  ripr assistant-loop proof [--pr-guidance PATH] [--agent-packet PATH] [--before PATH] [--after PATH] [--receipt PATH] [--ledger PATH] [--coverage-frontier PATH] [--gate-decision PATH] [--out PATH] [--out-md PATH]
+
+Proof options:
+  --root PATH                 Workspace root label. Defaults to current directory.
+  --pr-guidance PATH          Optional PR guidance JSON from `ripr review-comments`.
+  --agent-packet PATH         Optional editor/agent handoff JSON from `ripr agent brief`.
+  --before PATH               Optional before repo-exposure JSON snapshot.
+  --after PATH                Optional after repo-exposure JSON snapshot.
+  --receipt PATH              Optional agent receipt JSON from `ripr agent receipt`.
+  --ledger PATH               Optional PR evidence ledger JSON from `ripr pr-ledger record`.
+  --coverage-frontier PATH    Optional coverage/grip frontier JSON.
+  --gate-decision PATH        Optional gate-decision JSON from `ripr gate evaluate`.
+  --out PATH                  JSON output path. Defaults to target/ripr/reports/test-oracle-assistant-proof.json.
+  --out-md PATH               Markdown output path. Defaults to target/ripr/reports/test-oracle-assistant-proof.md.
+
+The assistant-loop proof report is read-only advisory evidence over explicit
+Campaign 20 artifacts. It requires at least one supplied artifact input, joins
+PR guidance, agent handoff packets, before and after static evidence, receipts,
+and optional CI projection artifacts, and marks missing proof pieces as
+incomplete or unknown. It does not rerun analysis, post comments, edit source,
+generate tests, call a provider, run mutation testing, change gate policy, or
+make CI blocking by default.
+
+Examples:
+  ripr assistant-loop proof --pr-guidance target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-brief.json --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --receipt target/ripr/reports/agent-receipt.json
+
+Run `ripr help assistant-loop` for every assistant-loop subcommand.
 ```
 
 ### baseline
@@ -985,9 +1051,6 @@ Create the gate baseline artifact the next runs compare against.
 
 Usage:
   ripr baseline create (--from PATH | --from-check PATH) [--out PATH] [--dry-run] [--force]
-  ripr baseline diff --baseline PATH --current PATH [--out PATH] [--out-md PATH]
-  ripr baseline update --baseline PATH --current PATH --remove-resolved [--migrate-legacy-identities] [--out PATH]
-  ripr baseline update --baseline PATH --current PATH --migrate-legacy-identities [--out PATH]
 
 Create options:
   --from PATH    Gate-decision JSON from `ripr gate evaluate`.
@@ -1001,48 +1064,12 @@ Create options:
   --dry-run      Print the baseline ledger JSON without writing.
   --force        Overwrite an existing baseline ledger.
 
-Diff options:
-  --baseline PATH    Required. Reviewed baseline ledger, for example .ripr/gate-baseline.json.
-  --current PATH     Current gate-decision JSON from `ripr gate evaluate`.
-  --out PATH         JSON output path. Defaults to target/ripr/reports/baseline-debt-delta.json.
-  --out-md PATH      Markdown output path. Defaults to target/ripr/reports/baseline-debt-delta.md.
-
-Update options:
-  --baseline PATH               Reviewed baseline ledger to refresh.
-  --current PATH                Current gate-decision JSON from `ripr gate evaluate`.
-  --remove-resolved             Shrink-only mode; remove identities absent from current evidence.
-  --migrate-legacy-identities   Replace reviewed legacy fallback identities with the
-                                unambiguously joined current canonical gap id. One of
-                                --remove-resolved or --migrate-legacy-identities is
-                                required; adopting new debt is never supported.
-  --out PATH                    Updated baseline path. Defaults to --baseline.
-
 The baseline create command writes a stable reviewed historical-debt ledger
 from existing gate-decision evidence. It includes advisory, acknowledged, and
 blocking identities; skips suppressed, configured-off, not-applicable, and
 malformed decisions; and refuses to overwrite by default. It does not edit
 source, run analysis, run mutation testing, generate tests, change gate policy,
 or make CI blocking by default.
-
-The baseline diff command compares a reviewed baseline ledger with current
-gate-decision evidence and writes advisory JSON/Markdown debt movement. It
-reports still-present, resolved, new policy-eligible, acknowledged, suppressed,
-stale, invalid, and missing-input identities. It does not update baselines,
-edit source, run analysis, run mutation testing, generate tests, change gate
-policy, or make CI blocking by default.
-
-The baseline update command refreshes a reviewed baseline ledger.
-`--remove-resolved` enables shrink-only removal of reviewed identities that
-are absent from the current gate-decision evidence; without it, unmatched
-entries are preserved with a warning, so a migration-only run never shrinks
-the reviewed baseline. Malformed, ambiguous, canonically diverged, and
-cross-root entries are always preserved for manual review, and new current
-debt is never adopted. `--migrate-legacy-identities` deterministically
-replaces a reviewed legacy `path:line:static_class` identity with the
-unambiguously joined current canonical gap id, records each replacement under
-the `update` section for independent review, and refuses cross-root or
-conflicting migrations. Generated CI should not use
-this command to rewrite checked-in baselines automatically.
 
 Output discipline: report-producing subcommands write their JSON or Markdown
 files and print human `Wrote ...` status lines to stdout. `baseline create
@@ -1051,8 +1078,8 @@ writing a file.
 
 Examples:
   ripr baseline create --from target/ripr/reports/gate-decision.json
-  ripr baseline diff --baseline .ripr/gate-baseline.json --current target/ripr/reports/gate-decision.json
-  ripr baseline update --baseline .ripr/gate-baseline.json --current target/ripr/reports/gate-decision.json --remove-resolved
+
+Run `ripr help baseline` for every baseline subcommand.
 ```
 
 ### baseline-diff
@@ -1063,45 +1090,13 @@ Examples:
 Compare a gate decision against the stored baseline.
 
 Usage:
-  ripr baseline create (--from PATH | --from-check PATH) [--out PATH] [--dry-run] [--force]
   ripr baseline diff --baseline PATH --current PATH [--out PATH] [--out-md PATH]
-  ripr baseline update --baseline PATH --current PATH --remove-resolved [--migrate-legacy-identities] [--out PATH]
-  ripr baseline update --baseline PATH --current PATH --migrate-legacy-identities [--out PATH]
-
-Create options:
-  --from PATH    Gate-decision JSON from `ripr gate evaluate`.
-  --from-check PATH
-                 Whole-repository `ripr check --format json` artifact, from
-                 `ripr check --candidate-tree $(git rev-parse HEAD^{tree})`. Baselines the gap
-                 classes weakly_exposed, reachable_unrevealed and no_static_path
-                 of the entire tree. Refuses a diff-scoped or incomplete artifact.
-                 Give exactly one of --from or --from-check.
-  --out PATH     Baseline ledger path. Defaults to .ripr/gate-baseline.json.
-  --dry-run      Print the baseline ledger JSON without writing.
-  --force        Overwrite an existing baseline ledger.
 
 Diff options:
   --baseline PATH    Required. Reviewed baseline ledger, for example .ripr/gate-baseline.json.
   --current PATH     Current gate-decision JSON from `ripr gate evaluate`.
   --out PATH         JSON output path. Defaults to target/ripr/reports/baseline-debt-delta.json.
   --out-md PATH      Markdown output path. Defaults to target/ripr/reports/baseline-debt-delta.md.
-
-Update options:
-  --baseline PATH               Reviewed baseline ledger to refresh.
-  --current PATH                Current gate-decision JSON from `ripr gate evaluate`.
-  --remove-resolved             Shrink-only mode; remove identities absent from current evidence.
-  --migrate-legacy-identities   Replace reviewed legacy fallback identities with the
-                                unambiguously joined current canonical gap id. One of
-                                --remove-resolved or --migrate-legacy-identities is
-                                required; adopting new debt is never supported.
-  --out PATH                    Updated baseline path. Defaults to --baseline.
-
-The baseline create command writes a stable reviewed historical-debt ledger
-from existing gate-decision evidence. It includes advisory, acknowledged, and
-blocking identities; skips suppressed, configured-off, not-applicable, and
-malformed decisions; and refuses to overwrite by default. It does not edit
-source, run analysis, run mutation testing, generate tests, change gate policy,
-or make CI blocking by default.
 
 The baseline diff command compares a reviewed baseline ledger with current
 gate-decision evidence and writes advisory JSON/Markdown debt movement. It
@@ -1110,28 +1105,15 @@ stale, invalid, and missing-input identities. It does not update baselines,
 edit source, run analysis, run mutation testing, generate tests, change gate
 policy, or make CI blocking by default.
 
-The baseline update command refreshes a reviewed baseline ledger.
-`--remove-resolved` enables shrink-only removal of reviewed identities that
-are absent from the current gate-decision evidence; without it, unmatched
-entries are preserved with a warning, so a migration-only run never shrinks
-the reviewed baseline. Malformed, ambiguous, canonically diverged, and
-cross-root entries are always preserved for manual review, and new current
-debt is never adopted. `--migrate-legacy-identities` deterministically
-replaces a reviewed legacy `path:line:static_class` identity with the
-unambiguously joined current canonical gap id, records each replacement under
-the `update` section for independent review, and refuses cross-root or
-conflicting migrations. Generated CI should not use
-this command to rewrite checked-in baselines automatically.
-
 Output discipline: report-producing subcommands write their JSON or Markdown
 files and print human `Wrote ...` status lines to stdout. `baseline create
 --dry-run` is the exception: it prints the candidate JSON to stdout without
 writing a file.
 
 Examples:
-  ripr baseline create --from target/ripr/reports/gate-decision.json
   ripr baseline diff --baseline .ripr/gate-baseline.json --current target/ripr/reports/gate-decision.json
-  ripr baseline update --baseline .ripr/gate-baseline.json --current target/ripr/reports/gate-decision.json --remove-resolved
+
+Run `ripr help baseline` for every baseline subcommand.
 ```
 
 ### baseline-update
@@ -1142,28 +1124,8 @@ Examples:
 Fold resolved gate debt back into the stored baseline.
 
 Usage:
-  ripr baseline create (--from PATH | --from-check PATH) [--out PATH] [--dry-run] [--force]
-  ripr baseline diff --baseline PATH --current PATH [--out PATH] [--out-md PATH]
   ripr baseline update --baseline PATH --current PATH --remove-resolved [--migrate-legacy-identities] [--out PATH]
   ripr baseline update --baseline PATH --current PATH --migrate-legacy-identities [--out PATH]
-
-Create options:
-  --from PATH    Gate-decision JSON from `ripr gate evaluate`.
-  --from-check PATH
-                 Whole-repository `ripr check --format json` artifact, from
-                 `ripr check --candidate-tree $(git rev-parse HEAD^{tree})`. Baselines the gap
-                 classes weakly_exposed, reachable_unrevealed and no_static_path
-                 of the entire tree. Refuses a diff-scoped or incomplete artifact.
-                 Give exactly one of --from or --from-check.
-  --out PATH     Baseline ledger path. Defaults to .ripr/gate-baseline.json.
-  --dry-run      Print the baseline ledger JSON without writing.
-  --force        Overwrite an existing baseline ledger.
-
-Diff options:
-  --baseline PATH    Required. Reviewed baseline ledger, for example .ripr/gate-baseline.json.
-  --current PATH     Current gate-decision JSON from `ripr gate evaluate`.
-  --out PATH         JSON output path. Defaults to target/ripr/reports/baseline-debt-delta.json.
-  --out-md PATH      Markdown output path. Defaults to target/ripr/reports/baseline-debt-delta.md.
 
 Update options:
   --baseline PATH               Reviewed baseline ledger to refresh.
@@ -1174,20 +1136,6 @@ Update options:
                                 --remove-resolved or --migrate-legacy-identities is
                                 required; adopting new debt is never supported.
   --out PATH                    Updated baseline path. Defaults to --baseline.
-
-The baseline create command writes a stable reviewed historical-debt ledger
-from existing gate-decision evidence. It includes advisory, acknowledged, and
-blocking identities; skips suppressed, configured-off, not-applicable, and
-malformed decisions; and refuses to overwrite by default. It does not edit
-source, run analysis, run mutation testing, generate tests, change gate policy,
-or make CI blocking by default.
-
-The baseline diff command compares a reviewed baseline ledger with current
-gate-decision evidence and writes advisory JSON/Markdown debt movement. It
-reports still-present, resolved, new policy-eligible, acknowledged, suppressed,
-stale, invalid, and missing-input identities. It does not update baselines,
-edit source, run analysis, run mutation testing, generate tests, change gate
-policy, or make CI blocking by default.
 
 The baseline update command refreshes a reviewed baseline ledger.
 `--remove-resolved` enables shrink-only removal of reviewed identities that
@@ -1208,9 +1156,9 @@ files and print human `Wrote ...` status lines to stdout. `baseline create
 writing a file.
 
 Examples:
-  ripr baseline create --from target/ripr/reports/gate-decision.json
-  ripr baseline diff --baseline .ripr/gate-baseline.json --current target/ripr/reports/gate-decision.json
   ripr baseline update --baseline .ripr/gate-baseline.json --current target/ripr/reports/gate-decision.json --remove-resolved
+
+Run `ripr help baseline` for every baseline subcommand.
 ```
 
 ### cache
@@ -3030,7 +2978,7 @@ Examples:
 
 ### policy
 
-Shared help for `ripr policy`, `ripr policy history`, `ripr policy operations`, `ripr policy preview-promote`, `ripr policy promote`, `ripr policy readiness`, `ripr policy suppression-health`, `ripr policy waiver-aging`.
+`ripr help policy`
 
 ```text
 Summarize which RIPR policy posture is safe for the current repo.
@@ -3111,24 +3059,33 @@ Suppression health options:
 The policy readiness report is read-only advisory governance over explicit
 existing artifacts. It recommends advisory-only, visible-only, acknowledgeable,
 baseline-check, or calibrated-gate posture without executing a gate. Preview
-language evidence stays visible and advisory by default. The policy operations
-report composes existing policy artifacts into current ceiling, next safe
-action, safe/not-safe promotion modes, blockers, and input health without
-promoting anything. The policy history report shows whether readiness, waivers,
-suppressions, baseline debt, calibration, and preview boundaries are improving
-or decaying without appending history unless `--out-jsonl` is supplied. The
-policy promotion packet reads policy operations plus optional policy history
-and writes manual-review promotion evidence without changing config. The preview
-promotion packet writes default blocked evidence accounting for TypeScript and
-Python preview classes while
-keeping preview evidence visible, advisory, non-gating, outside RIPR Zero, and
-outside calibrated confidence until a later explicit policy is reviewed. The
-waiver-aging report keeps repeated waivers visible as repair or policy-review
-signals. The suppression-health report flags durable exception metadata gaps
-while keeping suppressed findings visible. These commands do not run analysis,
-mutate baselines or suppressions, post comments, edit source, generate tests,
-run mutation testing, change gate policy, promote preview evidence, or make CI
-blocking.
+language evidence stays visible and advisory by default.
+
+The policy operations report composes existing policy artifacts into current
+ceiling, next safe action, safe/not-safe promotion modes, blockers, and input
+health without promoting anything.
+
+The policy history report shows whether readiness, waivers, suppressions,
+baseline debt, calibration, and preview boundaries are improving or decaying
+without appending history unless `--out-jsonl` is supplied.
+
+The policy promotion packet reads policy operations plus optional policy
+history and writes manual-review promotion evidence without changing config.
+
+The preview promotion packet writes default blocked evidence accounting for
+TypeScript and Python preview classes while keeping preview evidence visible,
+advisory, non-gating, outside RIPR Zero, and outside calibrated confidence
+until a later explicit policy is reviewed.
+
+The waiver-aging report keeps repeated waivers visible as repair or
+policy-review signals.
+
+The suppression-health report flags durable exception metadata gaps while
+keeping suppressed findings visible.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
 
 Examples:
   ripr policy history --current target/ripr/reports/policy-operations.json
@@ -3140,9 +3097,241 @@ Examples:
   ripr policy waiver-aging
 ```
 
+### policy-history
+
+`ripr help policy history`
+
+```text
+Append a policy-history record and render the history view.
+
+Usage:
+  ripr policy history [--root PATH] --current PATH [--history PATH] [--commit REV] [--pr-number NUMBER] [--out PATH] [--out-md PATH] [--out-jsonl PATH]
+
+History options:
+  --root PATH                           Display root for the report. Defaults to current directory.
+  --current PATH                        Policy-operations JSON from `ripr policy operations`.
+  --history PATH                        Optional policy history JSONL.
+  --commit REV                          Optional current snapshot commit identity.
+  --pr-number NUMBER                    Optional current snapshot PR number.
+  --out PATH                            JSON output path. Defaults to target/ripr/reports/policy-history.json.
+  --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/policy-history.md.
+  --out-jsonl PATH                      Optional append-only JSONL producer. Writes one compact snapshot line per run (`example_append_record`). Generated CI does not pass this flag.
+
+The policy history report shows whether readiness, waivers, suppressions,
+baseline debt, calibration, and preview boundaries are improving or decaying
+without appending history unless `--out-jsonl` is supplied.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
+
+Examples:
+  ripr policy history --current target/ripr/reports/policy-operations.json
+
+Run `ripr help policy` for every policy subcommand.
+```
+
+### policy-operations
+
+`ripr help policy operations`
+
+```text
+Compose the policy-operations view over readiness inputs.
+
+Usage:
+  ripr policy operations [--root PATH] --policy-readiness PATH [--waiver-aging PATH] [--suppression-health PATH] [--baseline-delta PATH] [--gate-decision PATH] [--recommendation-calibration PATH] [--mutation-calibration PATH] [--preview-boundary PATH] [--out PATH] [--out-md PATH]
+
+Operations options:
+  --root PATH                           Display root for the report. Defaults to current directory.
+  --policy-readiness PATH               Policy-readiness JSON from `ripr policy readiness`.
+  --waiver-aging PATH                   Optional waiver-aging JSON.
+  --suppression-health PATH             Optional suppression-health JSON.
+  --baseline-delta PATH                 Optional baseline-debt-delta JSON.
+  --gate-decision PATH                  Optional gate-decision JSON.
+  --recommendation-calibration PATH     Optional recommendation calibration JSON.
+  --mutation-calibration PATH           Optional imported mutation calibration JSON.
+  --preview-boundary PATH               Optional preview-boundary JSON.
+  --out PATH                            JSON output path. Defaults to target/ripr/reports/policy-operations.json.
+  --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/policy-operations.md.
+
+The policy operations report composes existing policy artifacts into current
+ceiling, next safe action, safe/not-safe promotion modes, blockers, and input
+health without promoting anything.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
+
+Examples:
+  ripr policy operations --policy-readiness target/ripr/reports/policy-readiness.json
+
+Run `ripr help policy` for every policy subcommand.
+```
+
+### policy-preview-promote
+
+`ripr help policy preview-promote`
+
+```text
+Render a preview-promotion evidence view for a language class.
+
+Usage:
+  ripr policy preview-promote [--root PATH] --language LANGUAGE --class CLASS [--evidence PATH] [--out PATH] [--out-md PATH]
+
+Preview promotion options:
+  --root PATH                           Display root for the report. Defaults to current directory.
+  --language LANGUAGE                   Preview language under review: typescript or python.
+  --class CLASS                         Preview evidence class under review, for example boundary_gap.
+  --evidence PATH                       Optional explicit preview promotion evidence receipts JSON.
+  --out PATH                            JSON output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.json.
+  --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.md.
+
+The preview promotion packet writes default blocked evidence accounting for
+TypeScript and Python preview classes while keeping preview evidence visible,
+advisory, non-gating, outside RIPR Zero, and outside calibrated confidence
+until a later explicit policy is reviewed.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
+
+Examples:
+  ripr policy preview-promote --language typescript --class boundary_gap
+
+Run `ripr help policy` for every policy subcommand.
+```
+
+### policy-promote
+
+`ripr help policy promote`
+
+```text
+Render a promotion view for the next policy mode.
+
+Usage:
+  ripr policy promote [--root PATH] --to MODE --operations PATH [--history PATH] [--out PATH] [--out-md PATH]
+
+Promotion options:
+  --root PATH                           Display root for the report. Defaults to current directory.
+  --to MODE                             Target mode: visible-only, acknowledgeable, baseline-check, or calibrated-gate.
+  --operations PATH                     Policy-operations JSON from `ripr policy operations`.
+  --history PATH                        Optional policy-history JSON from `ripr policy history`.
+  --out PATH                            JSON output path. Defaults to target/ripr/reports/policy-promotion-<mode>.json.
+  --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/policy-promotion-<mode>.md.
+
+The policy promotion packet reads policy operations plus optional policy
+history and writes manual-review promotion evidence without changing config.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
+
+Examples:
+  ripr policy promote --to baseline-check --operations target/ripr/reports/policy-operations.json
+
+Run `ripr help policy` for every policy subcommand.
+```
+
+### policy-readiness
+
+`ripr help policy readiness`
+
+```text
+Project policy readiness from gate and baseline artifacts.
+
+Usage:
+  ripr policy readiness [--root PATH] [--gate-decision PATH] [--baseline-delta PATH] [--recommendation-calibration PATH] [--mutation-calibration PATH] [--waiver-aging PATH] [--suppression-health PATH] [--repo-config PATH] [--previous-readiness PATH] [--out PATH] [--out-md PATH]
+
+Readiness options:
+  --root PATH                           Display root for the report. Defaults to current directory.
+  --gate-decision PATH                  Optional gate-decision JSON from `ripr gate evaluate`.
+  --baseline-delta PATH                 Optional baseline-debt-delta JSON from `ripr baseline diff`.
+  --recommendation-calibration PATH     Optional recommendation calibration JSON.
+  --mutation-calibration PATH           Optional imported mutation calibration JSON.
+  --waiver-aging PATH                   Optional waiver-aging JSON.
+  --suppression-health PATH             Optional suppression-health JSON.
+  --repo-config PATH                    Optional repo config summary JSON.
+  --previous-readiness PATH             Optional prior policy-readiness JSON.
+  --out PATH                            JSON output path. Defaults to target/ripr/reports/policy-readiness.json.
+  --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/policy-readiness.md.
+
+The policy readiness report is read-only advisory governance over explicit
+existing artifacts. It recommends advisory-only, visible-only, acknowledgeable,
+baseline-check, or calibrated-gate posture without executing a gate. Preview
+language evidence stays visible and advisory by default.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
+
+Examples:
+  ripr policy readiness
+
+Run `ripr help policy` for every policy subcommand.
+```
+
+### policy-suppression-health
+
+`ripr help policy suppression-health`
+
+```text
+Audit suppression declarations for stale or uncovered entries.
+
+Usage:
+  ripr policy suppression-health [--root PATH] [--manifest PATH] [--out PATH] [--out-md PATH]
+
+Suppression health options:
+  --root PATH                           Workspace root for reading the manifest. Defaults to current directory.
+  --manifest PATH                       Suppression manifest path. Defaults to .ripr/suppressions.toml.
+  --out PATH                            JSON output path. Defaults to target/ripr/reports/suppression-health.json.
+  --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/suppression-health.md.
+
+The suppression-health report flags durable exception metadata gaps while
+keeping suppressed findings visible.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
+
+Examples:
+  ripr policy suppression-health --root .
+
+Run `ripr help policy` for every policy subcommand.
+```
+
+### policy-waiver-aging
+
+`ripr help policy waiver-aging`
+
+```text
+Project waiver-aging health from the PR evidence ledger.
+
+Usage:
+  ripr policy waiver-aging [--root PATH] [--ledger PATH] [--history PATH] [--out PATH] [--out-md PATH]
+
+Waiver aging options:
+  --root PATH                           Display root for the report. Defaults to current directory.
+  --ledger PATH                         Optional current PR evidence ledger JSON.
+  --history PATH                        Optional PR evidence ledger JSONL history.
+  --out PATH                            JSON output path. Defaults to target/ripr/reports/waiver-aging.json.
+  --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/waiver-aging.md.
+
+The waiver-aging report keeps repeated waivers visible as repair or
+policy-review signals.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
+
+Examples:
+  ripr policy waiver-aging
+
+Run `ripr help policy` for every policy subcommand.
+```
+
 ### pr-comments
 
-Shared help for `ripr pr-comments`, `ripr pr-comments existing`, `ripr pr-comments plan`, `ripr pr-comments requests`, `ripr pr-comments summary`.
+`ripr help pr-comments`
 
 ```text
 Plan or publish bounded inline PR comments (off / plan / inline).
@@ -3176,12 +3365,14 @@ default.
 Usage: ripr pr-comments existing [--root PATH] [--raw PATH] [--out PATH]
 
 Existing options:
+  --root PATH                 Workspace root. Defaults to current directory.
   --raw PATH                  `gh api --paginate --slurp` pages of the pull request's review comments. `-` reads standard input and keeps a copy there. Defaults to target/ripr/review/existing-comments.raw.json.
   --out PATH                  Existing-comment metadata for `--existing-comments`. Defaults to target/ripr/review/existing-comments.json.
 
 Usage: ripr pr-comments summary --pull-request N --head-sha SHA [--root PATH] [--pr-guidance PATH] [--raw PATH] [--run-url URL] [--out-dir PATH]
 
 Summary options:
+  --root PATH                 Workspace root that --out-dir is relative to. Defaults to current directory.
   --pull-request N            Pull request the summary comment belongs to.
   --head-sha SHA              Head commit the digest names.
   --pr-guidance PATH          `ripr review-comments` JSON. Defaults to target/ripr/review/comments.json.
@@ -3198,16 +3389,19 @@ nothing for a clean pull request. It does not call GitHub or read a token.
 Usage: ripr pr-comments requests --pull-request N --head-sha SHA [--root PATH] [--plan PATH] [--out-dir PATH]
 
 Requests options:
+  --root PATH                 Workspace root that --out-dir is relative to. Defaults to current directory.
   --pull-request N            Pull request the review is posted on.
   --head-sha SHA              Head commit the review comments are placed on.
   --plan PATH                 Publish plan. Defaults to target/ripr/review/comment-publish-plan.json.
   --out-dir PATH              Request directory relative to --root, its earlier request files are replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/publish.
 
-`existing` keeps only marked comments that github-actions[bot] posted.
+`existing` keeps only marked comments that github-actions[bot] posted. It
+does not call GitHub or read a token.
+
 `requests` writes one JSON payload per call and requests.tsv, one line per
 call in order: method, endpoint after repos/OWNER/REPO/, payload file, and the
 message to print once the call succeeds. An unsafe plan writes no requests
-and prints why. Neither command calls GitHub or reads a token; the generated
+and prints why. It does not call GitHub or read a token; the generated
 workflow's comment steps hold GH_TOKEN and run `gh api`.
 
 Examples:
@@ -3215,6 +3409,130 @@ Examples:
   ripr pr-comments plan --pr-guidance target/ripr/review/comments.json
   ripr pr-comments requests --root . --pull-request 7 --head-sha 0123abcd
   ripr pr-comments summary --root . --pull-request 7 --head-sha 0123abcd --raw -
+```
+
+### pr-comments-existing
+
+`ripr help pr-comments existing`
+
+```text
+Turn a pull request's paginated review comments into existing RIPR comment metadata.
+
+Usage:
+  ripr pr-comments existing [--root PATH] [--raw PATH] [--out PATH]
+
+Existing options:
+  --root PATH                 Workspace root. Defaults to current directory.
+  --raw PATH                  `gh api --paginate --slurp` pages of the pull request's review comments. `-` reads standard input and keeps a copy there. Defaults to target/ripr/review/existing-comments.raw.json.
+  --out PATH                  Existing-comment metadata for `--existing-comments`. Defaults to target/ripr/review/existing-comments.json.
+
+`existing` keeps only marked comments that github-actions[bot] posted. It
+does not call GitHub or read a token.
+
+Examples:
+  ripr pr-comments existing --root .
+
+Run `ripr help pr-comments` for every pr-comments subcommand.
+```
+
+### pr-comments-plan
+
+`ripr help pr-comments plan`
+
+```text
+Plan create/update/keep/delete operations for PR comments.
+
+Usage:
+  ripr pr-comments plan [--root PATH] [--pr-guidance PATH] [--existing-comments PATH] [--mode off|plan|inline] [--pull-request N] [--event-name NAME] [--head-repo OWNER/REPO] [--base-repo OWNER/REPO] [--token-available | --no-token] [--write-permission | --no-write-permission] [--max-inline-comments N] [--out PATH] [--out-md PATH]
+
+Plan options:
+  --root PATH                 Workspace root label. Defaults to current directory.
+  --pr-guidance PATH          PR guidance JSON from `ripr review-comments`.
+  --existing-comments PATH    Optional existing RIPR comment metadata.
+  --mode MODE                 off, plan, or inline. Defaults to off.
+  --pull-request N            Pull request number for inline safety checks.
+  --event-name NAME           GitHub event name, usually pull_request.
+  --head-repo OWNER/REPO      Pull request head repository.
+  --base-repo OWNER/REPO      Pull request base repository.
+  --token-available           Mark a pull-request write token as available.
+  --no-token                  Mark the token as unavailable. This is the default.
+  --write-permission          Mark pull-request write permission as available. This is the default.
+  --no-write-permission       Mark pull-request write permission as unavailable.
+  --max-inline-comments N     Maximum publishable inline comments. Defaults to 3.
+  --out PATH                  JSON output path. Defaults to target/ripr/review/comment-publish-plan.json.
+  --out-md PATH               Markdown output path. Defaults to target/ripr/review/comment-publish-plan.md.
+
+The PR comments plan is a read-only advisory projection over existing
+`ripr review-comments` output and optional existing-comment metadata. It emits
+create/update/keep/delete/skip/blocked operations for a later explicit
+publisher, but it never posts comments, calls GitHub, edits source, generates
+tests, runs mutation testing, changes gate authority, or makes CI blocking by
+default.
+
+Examples:
+  ripr pr-comments plan --pr-guidance target/ripr/review/comments.json
+
+Run `ripr help pr-comments` for every pr-comments subcommand.
+```
+
+### pr-comments-requests
+
+`ripr help pr-comments requests`
+
+```text
+Write the GitHub API requests that publish a safe inline-comment plan.
+
+Usage:
+  ripr pr-comments requests --pull-request N --head-sha SHA [--root PATH] [--plan PATH] [--out-dir PATH]
+
+Requests options:
+  --root PATH                 Workspace root that --out-dir is relative to. Defaults to current directory.
+  --pull-request N            Pull request the review is posted on.
+  --head-sha SHA              Head commit the review comments are placed on.
+  --plan PATH                 Publish plan. Defaults to target/ripr/review/comment-publish-plan.json.
+  --out-dir PATH              Request directory relative to --root, its earlier request files are replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/publish.
+
+`requests` writes one JSON payload per call and requests.tsv, one line per
+call in order: method, endpoint after repos/OWNER/REPO/, payload file, and the
+message to print once the call succeeds. An unsafe plan writes no requests
+and prints why. It does not call GitHub or read a token; the generated
+workflow's comment steps hold GH_TOKEN and run `gh api`.
+
+Examples:
+  ripr pr-comments requests --root . --pull-request 7 --head-sha 0123abcd
+
+Run `ripr help pr-comments` for every pr-comments subcommand.
+```
+
+### pr-comments-summary
+
+`ripr help pr-comments summary`
+
+```text
+Write the request that posts or updates the one PR summary comment.
+
+Usage:
+  ripr pr-comments summary --pull-request N --head-sha SHA [--root PATH] [--pr-guidance PATH] [--raw PATH] [--run-url URL] [--out-dir PATH]
+
+Summary options:
+  --root PATH                 Workspace root that --out-dir is relative to. Defaults to current directory.
+  --pull-request N            Pull request the summary comment belongs to.
+  --head-sha SHA              Head commit the digest names.
+  --pr-guidance PATH          `ripr review-comments` JSON. Defaults to target/ripr/review/comments.json.
+  --raw PATH                  `gh api --paginate --slurp` pages of the pull request's conversation comments. `-` reads standard input. Without it no earlier comment is found.
+  --run-url URL               https link to the workflow run, shown as the full-report link.
+  --out-dir PATH              Request directory relative to --root; an earlier request is replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/summary.
+
+`summary` renders one short digest of the changed-behavior findings and writes
+summary.tsv (method, endpoint, payload file, message; empty when there is
+nothing to post) plus summary-request.json. It updates the marked comment that
+github-actions[bot] posted earlier, even when the findings are gone, and posts
+nothing for a clean pull request. It does not call GitHub or read a token.
+
+Examples:
+  ripr pr-comments summary --root . --pull-request 7 --head-sha 0123abcd --raw -
+
+Run `ripr help pr-comments` for every pr-comments subcommand.
 ```
 
 ### pr-evidence
@@ -3552,7 +3870,7 @@ Examples:
 
 ### reports
 
-Shared help for `ripr reports`, `ripr reports ci-packet`, `ripr reports ci-summary`, `ripr reports gap-ledger`, `ripr reports index`, `ripr reports kani`, `ripr reports ts-false-actionable`, `ripr reports ts-limitations`.
+`ripr help reports`
 
 ```text
 Write reviewer-first report projections from explicit artifacts.
@@ -3688,6 +4006,232 @@ Examples:
   ripr reports kani --input kani-result.json --binding kani-binding.json --root .
   ripr reports ts-false-actionable --corpus target/ripr/reports/typescript-false-actionable-corpus.json
   ripr reports ts-limitations --check-output target/ripr/reports/check.json
+```
+
+### reports-ci-packet
+
+`ripr help reports ci-packet`
+
+```text
+Run the generated CI workflow's RIPR steps and write its artifact packet.
+
+Usage:
+  ripr reports ci-packet [--root PATH] [--step NAME]...
+
+CI packet options:
+  --root PATH           Checkout to analyze and write target/ripr and target/ci under. Defaults to current directory.
+  --step NAME           Run only the named step (repeatable), still under its condition, to reproduce one step locally.
+
+The CI packet runs the RIPR steps of the `ripr init --ci github` workflow:
+pilot, the agent-loop start, the PR diff capture and guidance, the inline
+comment plan, SARIF and badge renders, the gate when RIPR_GATE_MODE is set,
+the policy and PR ledgers, start-here, the report index, and the PR guidance
+annotations. It reads the workflow settings (RIPR_GATE_MODE,
+RIPR_GATE_BASELINE, RIPR_COMMENT_MODE, RIPR_UPLOAD_SARIF) and the GitHub
+Actions run (GITHUB_EVENT_NAME, GITHUB_BASE_REF, GITHUB_EVENT_PATH,
+GITHUB_REPOSITORY, GITHUB_ACTOR) from its environment. RIPR_PILOT_TIMEOUT_MS
+(positive milliseconds) sets the pilot step's deadline as an explicit
+`ripr pilot --timeout-ms` hard limit; unset keeps pilot's default deadline
+and automatic extension, and an invalid value is refused. Each step prints as
+a log group; an advisory step's failure is logged and the packet continues,
+while a failed diff capture, gate evaluation, or (in a blocking gate mode)
+PR guidance or SARIF render makes the command exit nonzero after the rest of
+the packet is written. It reads no token and posts no PR comments.
+
+Examples:
+  ripr reports ci-packet --root .
+
+Run `ripr help reports` for every reports subcommand.
+```
+
+### reports-ci-summary
+
+`ripr help reports ci-summary`
+
+```text
+Print the generated CI workflow's step summary from existing artifacts.
+
+Usage:
+  ripr reports ci-summary [--root PATH] [--base-ref REF] [--upload-sarif VALUE] [--gate-baseline VALUE] [--comment-mode MODE]
+
+CI summary options:
+  --root PATH           Checkout whose target/ripr and target/ci artifacts to read. Defaults to current directory.
+  --base-ref REF        PR base branch named in the regeneration route. Defaults to GITHUB_BASE_REF, then the event's default branch, then main.
+  --upload-sarif VALUE  `true` reports SARIF generation; anything else reports the upload as disabled. Defaults to RIPR_UPLOAD_SARIF.
+  --gate-baseline VALUE Non-empty when a gate baseline is configured. Defaults to RIPR_GATE_BASELINE.
+  --comment-mode MODE   Inline comment mode to report. Empty means off. Defaults to RIPR_COMMENT_MODE.
+
+The CI summary prints the generated workflow's step summary as Markdown on
+stdout, from the artifacts earlier steps wrote. It reads only; it never runs
+analysis, edits source, or decides pass/fail, and a missing or malformed
+artifact prints its regeneration route instead of failing.
+
+Examples:
+  ripr reports ci-summary --root . --base-ref main >> "$GITHUB_STEP_SUMMARY"
+
+Run `ripr help reports` for every reports subcommand.
+```
+
+### reports-gap-ledger
+
+`ripr help reports gap-ledger`
+
+```text
+Aggregate records, repo exposure, or check output into the gap decision ledger.
+
+Usage:
+  ripr reports gap-ledger --records PATH [--root PATH] [--out PATH] [--out-md PATH]
+  ripr reports gap-ledger --check-output PATH [--root PATH] [--out PATH] [--out-md PATH]
+  ripr reports gap-ledger --repo-exposure PATH [--root PATH] [--out PATH] [--out-md PATH]
+
+Gap ledger options:
+  --records PATH        Explicit GapRecord JSON, gap_records JSON, or fixture corpus JSON.
+  --repo-exposure PATH  Derive repo-scoped Rust GapRecords from seams[].evidence_record.
+  --check-output PATH   Derive PR-local presentation/output and Python repair gaps from check JSON.
+  --root PATH           Workspace root label. Defaults to current directory.
+  --out PATH            JSON output path. Defaults to target/ripr/reports/gap-decision-ledger.json.
+  --out-md PATH         Markdown output path. Defaults to target/ripr/reports/gap-decision-ledger.md.
+
+The gap decision ledger command is a read-only advisory renderer for explicit
+GapRecord input, existing repo-exposure evidence records, or check-output
+repair findings. It normalizes supplied or derived gap records into JSON and Markdown,
+summarizes projection eligibility, preserves gate-decision as the configured
+pass/fail authority, and does not rerun hidden analysis, publish comments,
+edit source, generate tests, call providers, run mutation testing, or change
+default CI blocking.
+
+Examples:
+  ripr reports gap-ledger --check-output target/ripr/reports/check.json
+
+Run `ripr help reports` for every reports subcommand.
+```
+
+### reports-index
+
+`ripr help reports index`
+
+```text
+Index the reports and review directories into one manifest.
+
+Usage:
+  ripr reports index [--root PATH] [--reports-dir PATH] [--review-dir PATH] [--receipts-dir PATH] [--workflow-dir PATH] [--agent-dir PATH] [--pilot-dir PATH] [--ci-dir PATH] [--out PATH] [--out-md PATH]
+
+Index options:
+  --root PATH           Workspace root label. Defaults to current directory.
+  --reports-dir PATH    Directory containing report artifacts. Defaults to target/ripr/reports.
+  --review-dir PATH     Directory containing PR guidance artifacts. Defaults to target/ripr/review.
+  --receipts-dir PATH   Directory containing receipt artifacts. Defaults to target/ripr/receipts.
+  --workflow-dir PATH   Directory containing workflow repair artifacts. Defaults to target/ripr/workflow.
+  --agent-dir PATH      Directory containing agent handoff artifacts. Defaults to target/ripr/agent.
+  --pilot-dir PATH      Directory containing pilot artifacts. Defaults to target/ripr/pilot.
+  --ci-dir PATH         Directory containing CI context artifacts. Defaults to target/ci.
+  --out PATH            JSON output path. Defaults to target/ripr/reports/index.json.
+  --out-md PATH         Markdown output path. Defaults to target/ripr/reports/index.md.
+
+The report-packet index is a read-only advisory map over explicit existing
+RIPR artifacts. It groups reports by reviewer use, names the start-here
+artifact, preserves gate-decision as the configured pass/fail authority,
+lists missing expected surfaces with regeneration commands when known, and
+does not rerun analysis, edit source, generate tests, call providers, run
+mutation testing, publish inline comments, or make CI blocking by default.
+
+Examples:
+  ripr reports index
+
+Run `ripr help reports` for every reports subcommand.
+```
+
+### reports-kani
+
+`ripr help reports kani`
+
+```text
+Inspect a supplied Kani result with its source and configuration binding.
+
+Usage:
+  ripr reports kani --input PATH --binding PATH [--root PATH] [--out PATH] [--out-md PATH]
+
+Kani result options:
+  --input PATH          Existing Kani native result JSON. Required.
+  --binding PATH        Source, configuration and native-artifact binding JSON. Required.
+  --root PATH           Root for the bound source files. Defaults to current directory.
+  --out PATH            JSON report. Defaults to target/ripr/reports/kani.json under --root.
+  --out-md PATH         Markdown report. Defaults to target/ripr/reports/kani.md under --root.
+
+The Kani report imports existing native output and checks its supplied binding
+against the selected source root. Explicit input and output paths are relative
+to the invocation directory; only the default output paths are under --root.
+Each option may appear once. Reports must have distinct paths and cannot
+replace either input artifact or a checked source file. Malformed input or a
+binding mismatch refuses the import before reports are written. Exit 0 means
+the import completed, including when the retained native result reports
+failure. Inspect both the
+native outcome and its scope in the report. The supplied result remains
+external_unattested: matching bytes do not authenticate verifier execution.
+Import does not run Kani, grant static exposure, issue a repair receipt, or
+establish specification adequacy.
+
+Examples:
+  ripr reports kani --input kani-result.json --binding kani-binding.json --root .
+
+Run `ripr help reports` for every reports subcommand.
+```
+
+### reports-ts-false-actionable
+
+`ripr help reports ts-false-actionable`
+
+```text
+Audit the TypeScript false-actionable corpus.
+
+Usage:
+  ripr reports ts-false-actionable --corpus PATH [--root PATH] [--out PATH] [--out-md PATH]
+
+TypeScript false-actionable audit options:
+  --corpus PATH         Existing TypeScript preview false-actionable audit corpus JSON.
+  --root PATH           Workspace root label. Defaults to current directory.
+  --out PATH            JSON output path. Defaults to target/ripr/reports/typescript-false-actionable-audit.json.
+  --out-md PATH         Markdown output path. Defaults to target/ripr/reports/typescript-false-actionable-audit.md.
+
+The TypeScript false-actionable audit report is a read-only advisory renderer
+over explicit TypeScript-family preview audit corpus rows. It reports the
+bounded false-actionable rate for rows that must remain non-actionable and does
+not rerun analysis, execute TypeScript tests, edit source, generate tests, call
+providers, run mutation testing, change gates, or contribute badge authority.
+
+Examples:
+  ripr reports ts-false-actionable --corpus target/ripr/reports/typescript-false-actionable-corpus.json
+
+Run `ripr help reports` for every reports subcommand.
+```
+
+### reports-ts-limitations
+
+`ripr help reports ts-limitations`
+
+```text
+Project TypeScript limitation counts from a check output artifact.
+
+Usage:
+  ripr reports ts-limitations --check-output PATH [--root PATH] [--out PATH] [--out-md PATH]
+
+TypeScript limitation options:
+  --check-output PATH   Existing `ripr check --json` output to aggregate.
+  --root PATH           Workspace root label. Defaults to current directory.
+  --out PATH            JSON output path. Defaults to target/ripr/reports/typescript-limitations.json.
+  --out-md PATH         Markdown output path. Defaults to target/ripr/reports/typescript-limitations.md.
+
+The TypeScript limitation leaderboard is a read-only advisory renderer over
+explicit check JSON. It aggregates TypeScript-family preview limitation evidence
+by kind so operators can see the next analyzer backlog pressure. It does not
+rerun analysis, execute TypeScript tests, edit source, generate tests, call
+providers, run mutation testing, publish comments, change gates, or contribute
+badge authority.
+
+Examples:
+  ripr reports ts-limitations --check-output target/ripr/reports/check.json
+
+Run `ripr help reports` for every reports subcommand.
 ```
 
 ### rerun

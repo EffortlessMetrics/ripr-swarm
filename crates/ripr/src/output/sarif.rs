@@ -710,13 +710,41 @@ pub(crate) fn render_refusal_sarif(
     root: &Path,
     base: Option<&str>,
 ) -> String {
+    render_refusal_sarif_scoped(notice, root, base, "finding")
+}
+
+/// The `repo-sarif` refusal (#14499): the same refusal run as
+/// [`render_refusal_sarif`], with the `repo_seam` scope its results use.
+pub(crate) fn render_repo_refusal_sarif(
+    notice: &crate::core_error::RefusalNotice,
+    root: &Path,
+    base: Option<&str>,
+) -> String {
+    render_refusal_sarif_scoped(notice, root, base, "repo_seam")
+}
+
+/// [`render_repo_refusal_sarif`], minified like `repo-sarif-compact`.
+pub(crate) fn render_repo_refusal_sarif_compact(
+    notice: &crate::core_error::RefusalNotice,
+    root: &Path,
+    base: Option<&str>,
+) -> String {
+    minify_sarif_document(&render_repo_refusal_sarif(notice, root, base))
+}
+
+fn render_refusal_sarif_scoped(
+    notice: &crate::core_error::RefusalNotice,
+    root: &Path,
+    base: Option<&str>,
+    scope: &str,
+) -> String {
     let mut properties = Map::new();
     properties.insert("tool".to_string(), json!("ripr"));
     properties.insert(
         "schema_version".to_string(),
         json!(RIPR_SARIF_SCHEMA_VERSION),
     );
-    properties.insert("scope".to_string(), json!("finding"));
+    properties.insert("scope".to_string(), json!(scope));
     properties.insert("run_status".to_string(), json!("refused"));
     properties.insert("refusal_identity".to_string(), json!(notice.identity));
     properties.insert("repair_route".to_string(), json!(notice.repair_route));

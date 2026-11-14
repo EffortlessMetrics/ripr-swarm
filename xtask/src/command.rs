@@ -607,6 +607,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "fixtures refresh-identity <typescript|python>",
         "goldens prepare [--offline]",
         "goldens check",
+        "goldens check-with-fixtures",
         "goldens bless <name> --reason <reason>",
         "golden-drift",
         "metrics",
@@ -1084,6 +1085,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             true,
             "Checks golden drift without updating expected outputs.",
+        ),
+        command_entry(
+            "goldens check-with-fixtures",
+            "non_mutating_check",
+            "target/ripr/reports/{fixtures,goldens,golden-drift}.md and golden-drift.json",
+            false,
+            false,
+            "Checks both obligations from one fixture evaluation; not wired into hosted CI.",
         ),
         command_entry(
             "goldens bless <name> --reason <reason>",

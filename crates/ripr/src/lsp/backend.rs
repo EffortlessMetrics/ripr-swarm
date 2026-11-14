@@ -3825,6 +3825,14 @@ impl Backend {
             root: &snapshot.root,
             consumed: &snapshot.rust_consumed_sources,
             diagnostic_uris: snapshot.diagnostics_by_uri.keys().collect(),
+            related_test_files: super::watched_source_drift::related_test_files(
+                &snapshot.root,
+                snapshot
+                    .findings
+                    .iter()
+                    .flat_map(|finding| finding.related_tests.iter())
+                    .map(|test| test.file.as_path()),
+            ),
         };
         super::watched_source_drift::events_drift_committed_sources(&committed, changes, &|uri| {
             self.quarantine
@@ -9380,14 +9388,12 @@ fn workspace_status_report_paths() -> serde_json::Value {
     })
 }
 
-/// Bounded harness-registry disclosure for `collect_workspace_status`.
-/// Preserves the three documented states: Null when the repository has no
-/// registrations, `available: false` for a limited run that did not
-/// compute harness facts, and the registration summaries when facts are
-/// complete (#3605).
 /// Reason token for the owner opt-out disclosure on workspace status (#14136):
 /// the shared `owner_mutants_skip` token when findings were withheld, otherwise
-/// `null`, so a status reader never sees a reason without a count.
+/// `null`, so a status reader never sees a reason without a count. The token is
+/// fixed because the LSP check input supplies no suppression policy, so the
+/// withheld set is exactly the owner opt-outs; a policy file in the editor
+/// would need its own reason (#14610).
 fn owner_opt_out_reason(withheld: usize) -> serde_json::Value {
     if withheld == 0 {
         serde_json::Value::Null
@@ -9400,6 +9406,11 @@ fn owner_opt_out_reason(withheld: usize) -> serde_json::Value {
     }
 }
 
+/// Bounded harness-registry disclosure for `collect_workspace_status`.
+/// Preserves the three documented states: Null when the repository has no
+/// registrations, `available: false` for a limited run that did not
+/// compute harness facts, and the registration summaries when facts are
+/// complete (#3605).
 fn workspace_status_harness_summary(snapshot: &AnalysisSnapshot) -> serde_json::Value {
     match &snapshot.harness_facts {
         crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered => serde_json::Value::Null,
@@ -13529,6 +13540,62 @@ mod list_actionable_items_tests {
             .lock()
             .map_err(|error| format!("latest analysis lock poisoned: {error}"))? =
             Some(Arc::new(snapshot));
+        Ok(())
+    }
+
+    /// #14099: the related-test set that routes a watched-file event comes
+    /// from the committed snapshot's findings. Without that wiring a rewrite
+    /// of a test the snapshot never captured schedules nothing, however
+    /// correct the classifier is on its own.
+    #[test]
+    fn watched_event_for_an_uncaptured_related_test_refreshes_from_the_committed_snapshot()
+    -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-related-test-drift-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(root.join("tests")).map_err(|err| err.to_string())?;
+        for name in ["tests/listed.rs", "tests/unlisted.rs"] {
+            std::fs::write(root.join(name), "fn t() {}\n").map_err(|err| err.to_string())?;
+        }
+        let harness = handler_harness()?;
+        let mut finding = crate::lsp::tests::sample_finding();
+        finding.related_tests = vec![crate::domain::RelatedTest {
+            name: "discount_applies".to_string(),
+            file: PathBuf::from("tests/listed.rs"),
+            line: 1,
+            oracle: None,
+            oracle_kind: crate::domain::OracleKind::Unknown,
+            oracle_strength: crate::domain::OracleStrength::Weak,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        }];
+        let mut snapshot = snapshot_with_selection(None);
+        snapshot.root = root.clone();
+        snapshot.findings = vec![finding];
+        install_snapshot(&harness, snapshot)?;
+
+        let changed = |name: &str| -> Result<Vec<FileEvent>, String> {
+            Ok(vec![FileEvent {
+                uri: crate::lsp::uri::file_uri_for_path(&root.join(name))?,
+                typ: tower_lsp_server::ls_types::FileChangeType::CHANGED,
+            }])
+        };
+        let backend = harness.service.inner();
+        let refreshed = |name: &str| -> Result<bool, String> {
+            Ok(backend
+                .watched_file_change_kinds(&changed(name)?)
+                .diagnostics_input_changed)
+        };
+        let listed = refreshed("tests/listed.rs");
+        let unlisted = refreshed("tests/unlisted.rs");
+        let _removed = std::fs::remove_dir_all(&root);
+        assert!(listed?, "a related test the snapshot lists must refresh");
+        assert!(!unlisted?, "a test no committed finding lists must not");
         Ok(())
     }
 
