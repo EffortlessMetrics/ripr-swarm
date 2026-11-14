@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { RiprConfig } from './config';
 import { cachedServerInstallation, downloadServer } from './downloader';
+import { hasUnsafeShellMetacharacter } from './packetJson';
 import {
   combineActiveManagedServerIdentity,
   ManagedServerInstallation,
@@ -95,7 +96,8 @@ export interface ServerResolverRuntime {
     source: ServerSource,
     detail: string,
     useShell?: boolean,
-    installationState?: ResolvedServer['installationState']
+    installationState?: ResolvedServer['installationState'],
+    serverArgs?: readonly string[]
   ) => Promise<ResolvedServer | ResolveFailure>;
 }
 
@@ -109,14 +111,20 @@ export async function resolveServer(
 ): Promise<ResolvedServer | ResolveFailure> {
   const configuredPath = config.serverPath.trim();
   if (configuredPath.length > 0) {
+    // On Windows, explicit paths may point to .cmd/.bat shims (e.g. npm global
+    // or Scoop wrappers), which require cmd.exe shell resolution (#14647).
+    // Direct .exe paths do not need a shell and retain native spawn errors.
+    const probeWithShell = process.platform === 'win32' && !/\.exe$/i.test(configuredPath);
     const configuredResult = await runtime.probeCandidate(
       configuredPath,
       'configured',
       `configured ripr.server.path ${configuredPath}`,
-      false,
-      'unmanaged'
+      probeWithShell,
+      'unmanaged',
+      config.serverArgs
     );
     if (isResolved(configuredResult)) {
+      const resolved = probeWithShell ? { ...configuredResult, needsShell: true } : configuredResult;
       // An explicit path is honored as-is; an old binary only earns a warning.
       let expected: string | undefined;
       try {
@@ -124,7 +132,7 @@ export async function resolveServer(
       } catch {
         expected = undefined;
       }
-      return expected ? withStaleVersionWarning(configuredResult, expected, output) : configuredResult;
+      return expected ? withStaleVersionWarning(resolved, expected, output) : resolved;
     }
     return { ...configuredResult, remedy: CONFIGURED_PATH_REMEDY };
   }
@@ -146,7 +154,8 @@ export async function resolveServer(
       bundled,
       'bundled',
       `bundled server for ${platform.target}`,
-      runtime
+      runtime,
+      config.serverArgs
     );
     if (isResolved(bundledResult)) {
       return bundledResult;
@@ -162,7 +171,8 @@ export async function resolveServer(
         'managed_cache',
         `completed cached server ${version} for ${platform.target}`,
         false,
-        'complete'
+        'complete',
+        config.serverArgs
       );
       if (isResolved(cachedResult)) {
         return withManagedIdentity(cachedResult, cached);
@@ -175,7 +185,7 @@ export async function resolveServer(
     // (#5314). Pinning `ripr.server.version` asks for that exact managed
     // release, so the download keeps its place there.
     if (config.autoDownload && config.serverVersion.trim().length === 0) {
-      earlyPathResult = await probePathServer(runtime);
+      earlyPathResult = await probePathServer(runtime, config.serverArgs);
       if (isResolved(earlyPathResult)) {
         // A PATH binary older than the requested release must not silently
         // win over the download that would replace it (#13638). It stays the
@@ -200,7 +210,8 @@ export async function resolveServer(
           'managed_download',
           `atomically installed server ${version} for ${platform.target}`,
           false,
-          'complete'
+          'complete',
+          config.serverArgs
         );
         if (isResolved(downloadedResult)) {
           return withManagedIdentity(downloadedResult, downloaded);
@@ -216,7 +227,7 @@ export async function resolveServer(
     downloadFailure = `No prebuilt ripr server target is known for ${process.platform}/${process.arch}.`;
   }
 
-  const pathResult = earlyPathResult ?? (await probePathServer(runtime));
+  const pathResult = earlyPathResult ?? (await probePathServer(runtime, config.serverArgs));
   if (isResolved(pathResult)) {
     if (downloadFailure) {
       output.appendLine(`Using PATH fallback after managed server resolution failed: ${downloadFailure}`);
@@ -260,15 +271,27 @@ function withStaleVersionWarning(
 }
 
 async function probePathServer(
-  runtime: ServerResolverRuntime
+  runtime: ServerResolverRuntime,
+  serverArgs?: readonly string[]
 ): Promise<ResolvedServer | ResolveFailure> {
   // On Windows, spawning with shell: false does no PATHEXT resolution, so
   // ripr.bat/ripr.cmd shims (Scoop, Chocolatey, manual PATH) fail to start
   // even though `ripr` works in a terminal (#2079). The command is the
   // constant string 'ripr --version' — no user input reaches the shell.
   const probeWithShell = process.platform === 'win32';
-  const pathResult = await runtime.probeCandidate('ripr', 'path', 'ripr on PATH', probeWithShell, 'unmanaged');
+  const pathResult = await runtime.probeCandidate('ripr', 'path', 'ripr on PATH', probeWithShell, 'unmanaged', serverArgs);
   return isResolved(pathResult) && probeWithShell ? { ...pathResult, needsShell: true } : pathResult;
+}
+
+/**
+ * Quote a server command containing whitespace or cmd.exe metacharacters when
+ * spawning through `shell: true`, so the path cannot split into another command.
+ */
+export function serverLaunchCommand(command: string, needsShell?: boolean): string {
+  const needsQuoting = needsShell
+    && !/^".*"$/.test(command)
+    && (/\s/.test(command) || hasUnsafeShellMetacharacter(command, true) || /[<>]/.test(command));
+  return needsQuoting ? `"${command}"` : command;
 }
 
 /**
@@ -368,12 +391,13 @@ async function probeExistingCandidate(
   command: string,
   source: ServerSource,
   detail: string,
-  runtime: ServerResolverRuntime
+  runtime: ServerResolverRuntime,
+  serverArgs?: readonly string[]
 ): Promise<ResolvedServer | ResolveFailure> {
   if (!fs.existsSync(command)) {
     return { message: `${detail} was not found.`, detail: `${command} does not exist.`, kind: 'missing_binary' };
   }
-  return runtime.probeCandidate(command, source, detail, false, source === 'bundled' ? 'bundled' : 'unmanaged');
+  return runtime.probeCandidate(command, source, detail, false, source === 'bundled' ? 'bundled' : 'unmanaged', serverArgs);
 }
 
 function probeCandidate(
@@ -381,13 +405,14 @@ function probeCandidate(
   source: ServerSource,
   detail: string,
   useShell = false,
-  installationState: ResolvedServer['installationState'] = 'unmanaged'
+  installationState: ResolvedServer['installationState'] = 'unmanaged',
+  serverArgs: readonly string[] = ['lsp', '--stdio']
 ): Promise<ResolvedServer | ResolveFailure> {
   return probeServerVersion(command, detail, useShell).then(async (versionResult) => {
     if ('message' in versionResult) {
       return versionResult;
     }
-    const compatibility = await probeStandardLspCompatibility(command, useShell, START_TIMEOUT_MS);
+    const compatibility = await probeStandardLspCompatibility(command, useShell, START_TIMEOUT_MS, undefined, serverArgs);
     if (compatibility.status === 'incompatible') {
       return compatibilityFailure(detail, compatibility);
     }

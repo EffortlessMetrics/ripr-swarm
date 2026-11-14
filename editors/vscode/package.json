@@ -42,6 +42,8 @@
     "onLanguage:javascriptreact",
     "onLanguage:python",
     "workspaceContains:Cargo.toml",
+    "workspaceContains:ripr.toml",
+    "workspaceContains:pyproject.toml",
     "workspaceContains:tsconfig.json",
     "workspaceContains:jsconfig.json",
     "onCommand:ripr.restartServer",

@@ -1,10 +1,11 @@
 import * as assert from 'assert';
+import * as cp from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { probeStandardLspCompatibility, REQUIRED_SERVER_COMMANDS, textDocumentSyncAdmissionFailureReason } from '../../src/lspCompatibility';
-import { probeServerVersion } from '../../src/serverResolver';
+import { probeStandardLspCompatibility, REQUIRED_SERVER_COMMANDS, textDocumentSyncAdmissionFailureReason, windowsShellArguments } from '../../src/lspCompatibility';
+import { probeServerVersion, serverLaunchCommand } from '../../src/serverResolver';
 
 // A terminated descendant is reparented to PID 1. Where PID 1 does not reap
 // orphans (some containers), it stays a zombie and `kill(pid, 0)` still
@@ -368,6 +369,63 @@ suite('Standard LSP compatibility probe', () => {
       }
     }
     assert.strictEqual(selected, 1);
+  });
+
+  test('passes configured serverArgs instead of hardcoded lsp --stdio', async function () {
+    this.timeout(25_000);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-lsp-args-'));
+    temporaryRoots.push(root);
+    const argsRecord = path.join(root, 'argv.json');
+    const script = path.join(root, 'server.js');
+    fs.writeFileSync(
+      script,
+      `require('fs').writeFileSync(${JSON.stringify(argsRecord)}, JSON.stringify(process.argv.slice(2)));\n` +
+      fakeServerSource('valid', advertisedCapabilities)
+    );
+    const command = process.platform === 'win32' ? path.join(root, 'ripr.cmd') : path.join(root, 'ripr');
+    const useShell = process.platform === 'win32';
+    if (process.platform === 'win32') {
+      fs.writeFileSync(command, `@echo off\r\n"${process.execPath}" "${script}" %*\r\nexit /b %errorlevel%\r\n`);
+    } else {
+      fs.writeFileSync(command, `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`, { mode: 0o755 });
+    }
+    const customArgs = ['custom-subcommand', 'argument with space', '', '--stdio'];
+    const result = await probeStandardLspCompatibility(command, useShell, fakeProbeTimeoutMs, undefined, customArgs);
+    assert.strictEqual(result.status, 'compatible', JSON.stringify(result));
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(argsRecord, 'utf8')), customArgs);
+  });
+
+  test('client shell launch preserves metacharacter and spaced .cmd paths with exact argv', async function () {
+    if (process.platform !== 'win32') {
+      this.skip();
+      return;
+    }
+    this.timeout(25_000);
+    const customArgs = ['argument with space', '', 'plain'];
+    for (const directory of ['A&B', 'ripr tools']) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-lsp-client-launch-'));
+      temporaryRoots.push(root);
+      const commandRoot = path.join(root, directory);
+      fs.mkdirSync(commandRoot, { recursive: true });
+      const command = path.join(commandRoot, 'ripr.cmd');
+      const argsRecord = path.join(root, 'argv.json');
+      const script = path.join(root, 'server.js');
+      fs.writeFileSync(
+        script,
+        `require('fs').writeFileSync(${JSON.stringify(argsRecord)}, JSON.stringify(process.argv.slice(2)));\n`
+      );
+      fs.writeFileSync(command, `@echo off\r\n"${process.execPath}" "${script}" %*\r\nexit /b %errorlevel%\r\n`);
+      const launchArgs = windowsShellArguments(customArgs);
+      const child = cp.spawn(serverLaunchCommand(command, true), launchArgs, { shell: true });
+      assert.deepStrictEqual(child.spawnargs.slice(0, 4), [process.env.ComSpec ?? 'cmd.exe', '/d', '/s', '/c']);
+      assert.strictEqual(child.spawnargs[4], `"${serverLaunchCommand(command, true)} ${launchArgs.join(' ')}"`);
+      const exitCode = await new Promise<number | null>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('close', resolve);
+      });
+      assert.strictEqual(exitCode, 0, `${directory}: shell could not launch ${command}`);
+      assert.deepStrictEqual(JSON.parse(fs.readFileSync(argsRecord, 'utf8')), customArgs);
+    }
   });
 
   function descendantPidPath(prefix: string): string {
