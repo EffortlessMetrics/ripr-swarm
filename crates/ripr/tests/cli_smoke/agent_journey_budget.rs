@@ -11,8 +11,8 @@
 //! reference estimate only — no tokenizer or provider billing is claimed.
 //! Provider input/cached/output/reasoning tokens are host-recorded and
 //! out of scope for this CLI test. This is a deterministic output-budget
-//! instrument over a fixed fixture (five changed predicates yielding four
-//! agent gap records): it must not be cited as an observed agent token
+//! instrument over a fixed fixture (five changed predicates yielding three
+//! printed agent gap rows, one folded): it must not be cited as an observed agent token
 //! saving or as a completed repair workflow.
 use super::{printed_path, run_command, unique_external_workspace};
 use std::collections::BTreeSet;
@@ -197,19 +197,21 @@ fn agent_journey_stays_inside_byte_budget_and_keeps_verify_record() -> TestResul
     // Identity and completion authority survive every step.
     // The budget only means something if the fixture actually yields its
     // workload: fewer findings would shrink every output and pass
-    // vacuously. Five changed predicates yield four agent gap records
-    // here (`age >= 18` surfaces two probes; the clamp/parse changes stay
-    // hidden on this compact surface, as in the sibling budget). Pin the
-    // header count and the distinct record IDs together.
+    // vacuously. Five changed predicates yield four findings here, printed
+    // as three agent gap rows since #14453 folds identical rows
+    // (`age >= 18` surfaces two probes that print identically; the
+    // clamp/parse changes stay hidden on this compact surface, as in the
+    // sibling budget). Pin the header counts and the distinct record IDs
+    // together.
     for (label, check) in [("cold", &cold), ("steady", &steady), ("verify", &verify)] {
         let ids = gap_ids(check);
         assert!(
-            check.contains(" gaps=4 "),
-            "{label} header must count four gaps:\n{check}"
+            check.contains(" gaps=3 folded_gaps=1 "),
+            "{label} header must count three printed gaps with one folded:\n{check}"
         );
         assert!(
-            ids.len() == 4,
-            "journey fixture must yield four distinct gap IDs, {label} yielded {}",
+            ids.len() == 3,
+            "journey fixture must yield three distinct gap IDs, {label} yielded {}",
             ids.len()
         );
     }
@@ -232,14 +234,12 @@ fn agent_journey_stays_inside_byte_budget_and_keeps_verify_record() -> TestResul
     );
 
     // Ceilings sit just above the measured receipts on this fixture
-    // (2026-11-09 normalized, four-gap workload: cold 1336, steady 1336,
-    // explain 543, context 4974, verify 1336; pre-normalization 2026-11-08
-    // receipts were 1169/1169/577/4984/1169, the ~122-byte gap per output
-    // being unnormalized checkout-path text). Cold equals steady here
-    // because the one-time legend is a human-format surface, not an
-    // agent-format one. Post-rebase receipts grew vs the pre-rebase
-    // normalized run (1047/455/4862) with main movement since ab93e28
-    // (includes #13443 staged-evidence rows); ceilings still hold.
+    // (2026-11-14 on current main, three-row folded workload: cold 1186,
+    // steady 1186, explain 543, context 4975, verify 1186; 2026-11-09
+    // normalized four-gap receipts were 1336/1336/543/4974/1336 before
+    // #14453 folded one identical row). Cold equals steady here because
+    // the one-time legend is a human-format surface, not an agent-format
+    // one; ceilings still hold.
     receipt("check cold", &cold, 1_400);
     receipt("check steady", &steady, 1_400);
     receipt("explain --format agent", &explained, 800);
