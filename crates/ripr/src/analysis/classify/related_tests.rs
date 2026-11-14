@@ -1643,12 +1643,19 @@ fn find_related_tests_with_candidates<'a>(
         {
             let substring_named = (!file_name.is_empty()
                 && normalize_path(&test.file).contains(&file_name))
-                || probe_tokens.iter().any(|token| {
-                    // The fallback applies the same generic/common-word gate as
-                    // the word-boundary path (#9172).
-                    test_name_word_token(token, common_words)
-                        .is_some_and(|word| test_name.contains(&word))
-                });
+                || probe_tokens
+                    .iter()
+                    .filter(|token| {
+                        probe.owner.is_some() || probe_literals.code_tokens.contains(token.as_str())
+                    })
+                    .any(|token| {
+                        // The fallback applies the same generic/common-word and
+                        // literal-only gates as the word-boundary path (#9172,
+                        // #13843). Probe ownership, not owner resolution, keeps
+                        // the named-owner fallback unchanged (#13896).
+                        test_name_word_token(token, common_words)
+                            .is_some_and(|word| test_name.contains(&word))
+                    });
             if substring_named {
                 substring_only_fallback.push((test, RelationReason::WeakTokenSubstring));
             }
@@ -3815,10 +3822,13 @@ impl ProbeLiterals {
         let mut code_tokens: BTreeSet<String> =
             extract_identifier_tokens(&masked).into_iter().collect();
         let literals = literal_contents(expression);
-        // A `{name}` or `{name:…}` capture in a format string names a live
-        // binding, so it stays a code token (Rust 2021 inline arguments).
-        for literal in &literals {
-            code_tokens.extend(format_captures(literal));
+        // A `{name}` or `{name:…}` capture in a formatting macro's template
+        // names a live binding (Rust 2021 inline arguments). The same braces
+        // in an ordinary string are data and stay out of `code_tokens`.
+        for (open, close, _) in string_literal_spans(expression) {
+            if opens_format_template(masked.get(..open).unwrap_or_default()) {
+                code_tokens.extend(format_captures(&expression[open + 1..close]));
+            }
         }
         Self {
             code_tokens,
@@ -3843,6 +3853,28 @@ impl ProbeLiterals {
                 && quoted.iter().any(|candidate| candidate == literal)
         })
     }
+}
+
+/// Whether masked code before a literal's quote directly opens the template
+/// argument of a formatting macro. Raw-string prefixes are already outside the
+/// literal and are ignored along with whitespace and any delimiter spelling.
+fn opens_format_template(before: &str) -> bool {
+    let before = before.trim_end_matches('#');
+    let before = before.strip_suffix('r').unwrap_or(before).trim_end();
+    let Some(before) = before.strip_suffix(['(', '[', '{']) else {
+        return false;
+    };
+    let Some(name) = before.trim_end().strip_suffix('!') else {
+        return false;
+    };
+    let name = name.trim_end();
+    let leaf_start = name
+        .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .map_or(0, |at| at + 1);
+    matches!(
+        &name[leaf_start..],
+        "format" | "format_args" | "print" | "println" | "eprint" | "eprintln" | "panic"
+    )
 }
 
 /// The unprocessed contents of every terminated string literal in `text`.
@@ -15669,6 +15701,63 @@ try_parse_summary(raw).map_err(Into::into)"
         let quote_char = ProbeLiterals::new("sep: '\"', label: \"Show status\"");
         assert_eq!(quote_char.literals, vec!["Show status".to_string()]);
         assert!(!raw.admits("status", "assert!(report.status.is_ok());"));
+    }
+
+    /// #13896: a literal-only word cannot return through the loose test-name
+    /// fallback after assertion-target affinity has correctly rejected it.
+    #[test]
+    fn literal_only_probe_word_does_not_seed_substring_fallback() {
+        let assertion_text = "assert_eq!(report.status, Status::Ok);";
+        let unrelated = test_with_assertions(
+            "tests/cli.rs",
+            "status_check",
+            assertion_text,
+            vec![oracle_fact(
+                assertion_text,
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![unrelated],
+            ..Default::default()
+        });
+        let probe = struct_field_probe("src/options.rs", "summary: \"Show status\",");
+        let indexed = find_related_tests_with_candidate_index(
+            &probe,
+            None,
+            &index,
+            true,
+            None,
+            None,
+            &RelatedTestCandidateIndex::new(&index),
+        );
+        let full_scan = find_related_tests_with_candidates(
+            &probe,
+            None,
+            &index,
+            true,
+            None,
+            None,
+            RelatedTestCandidates::FullScan,
+        );
+        assert_eq!(
+            (indexed.len(), full_scan.len()),
+            (0, 0),
+            "indexed related: {indexed:?}; full scan related: {full_scan:?}"
+        );
+    }
+
+    /// #13896: braces in an ordinary help string are data, not an inline
+    /// format capture. The real `format!` and escaped-brace controls above
+    /// retain their separate meanings.
+    #[test]
+    fn plain_string_braces_are_not_format_captures() {
+        let plain = ProbeLiterals::new("summary: \"Use {status} to filter results\"");
+        assert!(
+            !plain.admits("status", "assert_eq!(report.status, Status::Ok);"),
+            "a plain string literal must not mint a live `status` binding"
+        );
     }
 
     /// #9173: a package's root `build.rs` runs under Cargo before the package
