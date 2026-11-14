@@ -6630,6 +6630,7 @@ fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() -> 
     let probe = return_probe(owner(&index, "weight"), "x * 3");
     let located = OwnerPinSyntax::default().equality_assertion_refusal(
         &probe,
+        Some(owner(&index, "weight")),
         test,
         &test.assertions[0],
         &index,
@@ -7141,6 +7142,7 @@ fn a_macro_binding_refusal_points_at_its_site() {
     let probe = return_probe(owner(&index, "weight"), "x * 3");
     let refusal = OwnerPinSyntax::default().equality_assertion_refusal(
         &probe,
+        Some(owner(&index, "weight")),
         test,
         &test.assertions[0],
         &index,
@@ -7178,6 +7180,7 @@ fn a_macro_binding_refusal_points_at_its_site() {
     assert_eq!(
         OwnerPinSyntax::default().equality_assertion_refusal(
             &probe,
+            Some(owner(&index, "weight")),
             test,
             &test.assertions[0],
             &index
@@ -7400,15 +7403,17 @@ fn refusal_site_lookups_pay_at_most_two_full_index_passes() {
         "{} full-index passes for 96 lookups",
         syntax.workspace_scan_passes()
     );
-    // The production refusal path pays the same bound: a predicate probe's
-    // refused disclosures across both test roots add no third pass.
+    // The production refusal path pays the same bound: a return-value probe's
+    // refused disclosures across both test roots add no third pass. A
+    // predicate `assert_eq!` is admitted ungated (#14537), so it exercises no
+    // refusal site; the return family still takes the gate.
     let owner = index
         .functions()
         .iter()
         .find(|function| function.name == "gate" && function.file == Path::new(LIB));
     assert!(owner.is_some(), "the owner must be indexed from {LIB}");
     let owner = owner.unwrap_or(index.functions().at(0));
-    let probe = predicate_probe(owner, "10 <= value");
+    let probe = return_probe(owner, "10 <= value");
     for tests_path in [TESTS, CONVERGENCE_OTHER_TESTS] {
         let test = index
             .tests()
@@ -7416,7 +7421,13 @@ fn refusal_site_lookups_pay_at_most_two_full_index_passes() {
             .find(|test| test.file == Path::new(tests_path));
         assert!(test.is_some(), "{tests_path} must be indexed");
         let Some(test) = test else { continue };
-        let refusal = syntax.equality_assertion_refusal(&probe, test, &test.assertions[0], &index);
+        let refusal = syntax.equality_assertion_refusal(
+            &probe,
+            Some(owner),
+            test,
+            &test.assertions[0],
+            &index,
+        );
         assert!(
             matches!(
                 &refusal,
@@ -9102,6 +9113,7 @@ fn the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site()
         let probe = return_probe(owner(&index, "weight"), "x * 3");
         match OwnerPinSyntax::default().equality_assertion_refusal(
             &probe,
+            Some(owner(&index, "weight")),
             &test,
             &test.assertions[0],
             &index,
@@ -9178,6 +9190,7 @@ fn a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere() {
         let probe = return_probe(owner(&index, "weight"), "x * 3");
         OwnerPinSyntax::default().equality_assertion_refusal(
             &probe,
+            Some(owner(&index, "weight")),
             &test,
             &test.assertions[0],
             &index,
@@ -9261,9 +9274,16 @@ mod second {\n    use super::weight;\n    macro_rules! assert_eq { ($a:expr, $b:
     let mut lines = Vec::new();
     for at in 0..2 {
         let test = index.tests().at(at);
-        let memoized = shared.equality_assertion_refusal(&probe, test, &test.assertions[0], &index);
+        let memoized = shared.equality_assertion_refusal(
+            &probe,
+            Some(owner(&index, "weight")),
+            test,
+            &test.assertions[0],
+            &index,
+        );
         let fresh = OwnerPinSyntax::default().equality_assertion_refusal(
             &probe,
+            Some(owner(&index, "weight")),
             test,
             &test.assertions[0],
             &index,

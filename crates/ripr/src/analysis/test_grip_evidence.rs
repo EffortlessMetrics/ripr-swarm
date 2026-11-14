@@ -4779,7 +4779,7 @@ pub(in crate::analysis) fn contradicted_assertion_reading_is_established(
         );
         !contradicted
             || pin_syntax
-                .equality_assertion_refusal(probe, test, assertion, index)
+                .equality_assertion_refusal(probe, Some(owner_fn), test, assertion, index)
                 .is_none()
     })
 }
