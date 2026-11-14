@@ -15,9 +15,10 @@ permissions:
 
 jobs:
   droid-security-scan:
-    runs-on:
-      group: em-ci-review
-      labels: [self-hosted, Linux, X64, em-ci, trusted-pr, droid-review]
+    # GitHub-hosted only: the repository no longer operates the em-ci-review
+    # self-hosted group, and a job pinned to it queues for 24h and is cancelled
+    # every week (#14641). Matches the hosted posture of security.yml.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
 
     env:

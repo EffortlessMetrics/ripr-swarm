@@ -125,6 +125,9 @@ For Droid workflows:
   08:00 UTC schedule, repo-scoped concurrency, `security_scan_schedule: true`,
   `security_scan_days: 7`, `security_severity_threshold: medium`,
   `security_block_on_critical: true`, and `security_block_on_high: false`.
+- The scheduled security scan must run on a GitHub-hosted runner
+  (`runs-on: ubuntu-latest`). A job pinned to an unavailable self-hosted runner
+  group queues for 24 hours and is cancelled without running a step (#14641).
 - These invariants, including scheduled security-scan shape and explicit `show_full_output: false`, are enforced by `cargo xtask check-droid-review-config`.
 
 ## Automatic review retirement

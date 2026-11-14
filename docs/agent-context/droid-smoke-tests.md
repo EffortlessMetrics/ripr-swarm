@@ -9,10 +9,14 @@ workflows. The former mention smoke procedure is historical only: it checked
 trusted-actor admission, MiniMax BYOK review, severity labels and repair advice.
 It is not a live test instruction or permission to restore the wrapper.
 
-The separate scheduled/manual security scan remains available. For changes to
-that retained workflow or its policy, run `cargo xtask check-droid-review-config`
-locally before an explicitly requested live scan. For cross-repository rollout,
-start with the [Droid rollout checklist](droid-rollout.md) and the human
+The separate scheduled/manual security scan is retained, but it only runs when
+its job can acquire a runner: it is pinned to a GitHub-hosted `ubuntu-latest`
+runner and keeps the weekly Monday 08:00 UTC schedule. A job pinned to an
+unavailable self-hosted runner group queues for 24 hours and is cancelled
+without running a step (#14641). For changes to that retained workflow or its
+policy, run `cargo xtask check-droid-review-config` locally before an explicitly
+requested live scan. For cross-repository rollout, start with the
+[Droid rollout checklist](droid-rollout.md) and the human
 [Roll out Factory Droid review](../how-to/roll-out-droid.md) guide; neither
 re-enables mention review in this repository.
 
