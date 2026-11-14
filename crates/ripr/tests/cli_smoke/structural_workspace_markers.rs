@@ -1,7 +1,7 @@
 //! Structural package workspace markers shared by CLI and TypeScript discovery.
 #[cfg(feature = "lang-rust")]
 use super::printed_path;
-use super::{run_command_with_env, run_git, unique_external_workspace};
+use super::{DeclaredHunkScratch, run_command_with_env, run_git, unique_external_workspace};
 use serde_json::Value;
 use std::fs;
 #[cfg(feature = "lang-rust")]
@@ -30,6 +30,7 @@ fn typescript_workspace_evidence_uses_structural_markers_and_package_fallback() 
         .chain(STRUCTURAL_MARKERS.iter().map(|value| (*value, true)))
     {
         let sandbox = unique_external_workspace("typescript-workspace-marker")?;
+        let _cleanup = DeclaredHunkScratch(sandbox.clone());
         let repo = sandbox.join("repo");
         let member = repo.join("packages/member");
         let cwd = member.join("src");
@@ -139,6 +140,7 @@ fn scalar_marker_preserves_cargo_uv_git_and_unmarked_root_boundaries() -> TestRe
             continue;
         }
         let sandbox = unique_external_workspace(label)?;
+        let _cleanup = DeclaredHunkScratch(sandbox.clone());
         let repo = sandbox.join("repo");
         let member = repo.join("packages/member");
         let cwd = member.join("src");
@@ -231,6 +233,7 @@ fn package_workspace_arrays_and_yarn_objects_keep_their_root() -> TestResult {
 #[cfg(feature = "lang-rust")]
 fn check_package_workspace_selection(workspaces: &str, member_is_workspace: bool) -> TestResult {
     let sandbox = unique_external_workspace("package-workspace-selection")?;
+    let _cleanup = DeclaredHunkScratch(sandbox.clone());
     let repo = sandbox.join("repo");
     let member = repo.join("packages/member");
     let cwd = member.join("src");

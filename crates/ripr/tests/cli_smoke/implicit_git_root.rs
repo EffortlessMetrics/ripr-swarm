@@ -1,5 +1,7 @@
 //! A marker must not replace the standalone project's actual analysis context.
-use super::{run_command, run_command_with_env, run_git, unique_external_workspace};
+use super::{
+    DeclaredHunkScratch, run_command, run_command_with_env, run_git, unique_external_workspace,
+};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,6 +13,7 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 fn broken_git_links_keep_implicit_check_and_cache_inside_the_project() -> TestResult {
     for (label, target) in [("dangling", "missing-gitdir"), ("cycle", ".git")] {
         let outer = unique_external_workspace(label)?;
+        let _cleanup = DeclaredHunkScratch(outer.clone());
         let project = outer.join("project");
         let cwd = project.join("src");
         fs::create_dir_all(&cwd)?;
@@ -94,8 +97,9 @@ fn broken_git_links_keep_implicit_check_and_cache_inside_the_project() -> TestRe
     Ok(())
 }
 
-fn python_fixture(label: &str) -> TestResult<(PathBuf, PathBuf)> {
+fn python_fixture(label: &str) -> TestResult<(PathBuf, PathBuf, DeclaredHunkScratch)> {
     let sandbox = unique_external_workspace(label)?;
+    let cleanup = DeclaredHunkScratch(sandbox.clone());
     let project = sandbox.join("project");
     fs::create_dir_all(project.join("src"))?;
     fs::create_dir_all(project.join("tests"))?;
@@ -129,7 +133,7 @@ fn python_fixture(label: &str) -> TestResult<(PathBuf, PathBuf)> {
         project.join("change.diff"),
         "--- a/src/discount.py\n+++ b/src/discount.py\n@@ -1,4 +1,4 @@\n def discount(amount):\n-    if amount > 100:\n+    if amount >= 100:\n         return 10\n     return 0\n",
     )?;
-    Ok((sandbox, project))
+    Ok((sandbox, project, cleanup))
 }
 
 fn check(project: &Path, explicit: bool, env: &[(&str, &str)]) -> TestResult<Value> {
@@ -191,7 +195,7 @@ fn check(project: &Path, explicit: bool, env: &[(&str, &str)]) -> TestResult<Val
 #[test]
 fn invalid_ancestor_git_markers_preserve_python_and_cache_context() -> TestResult {
     for marker in ["empty-directory", "invalid-file", "missing-gitdir"] {
-        let (sandbox, project) = python_fixture(marker)?;
+        let (sandbox, project, _sandbox_guard) = python_fixture(marker)?;
         match marker {
             "empty-directory" => fs::create_dir(sandbox.join(".git"))?,
             "invalid-file" => fs::write(sandbox.join(".git"), "leftover metadata\n")?,
@@ -241,7 +245,7 @@ fn invalid_ancestor_git_markers_preserve_python_and_cache_context() -> TestResul
 
 #[test]
 fn inherited_git_selectors_cannot_certify_an_inert_ancestor() -> TestResult {
-    let (sandbox, project) = python_fixture("implicit-git-selectors")?;
+    let (sandbox, project, _sandbox_guard) = python_fixture("implicit-git-selectors")?;
     fs::create_dir(sandbox.join(".git"))?;
     let unrelated = sandbox.join("unrelated");
     fs::create_dir(&unrelated)?;
@@ -263,7 +267,7 @@ fn inherited_git_selectors_cannot_certify_an_inert_ancestor() -> TestResult {
 
 #[test]
 fn gitless_saved_diff_does_not_cross_a_nested_repository_boundary() -> TestResult {
-    let (sandbox, project) = python_fixture("implicit-gitless-boundary")?;
+    let (sandbox, project, _sandbox_guard) = python_fixture("implicit-gitless-boundary")?;
     run_git(&project, &["init", "-b", "main"])?;
     fs::write(sandbox.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
     let explicit = check(&project, true, &[("PATH", "")])?;
@@ -276,7 +280,7 @@ fn gitless_saved_diff_does_not_cross_a_nested_repository_boundary() -> TestResul
 #[cfg(unix)]
 #[test]
 fn git_launch_failure_stops_root_discovery_with_consumer_recovery() -> TestResult {
-    let (sandbox, project) = python_fixture("implicit-git-launch-failure")?;
+    let (sandbox, project, _sandbox_guard) = python_fixture("implicit-git-launch-failure")?;
     run_git(&project, &["init", "-b", "main"])?;
     fs::write(sandbox.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
     let programs = sandbox.join("programs");
@@ -336,7 +340,7 @@ fn git_launch_failure_stops_root_discovery_with_consumer_recovery() -> TestResul
 fn fixed_root_probe_timeout_names_only_effective_consumer_recovery() -> TestResult {
     use std::os::unix::fs::PermissionsExt;
 
-    let (sandbox, project) = python_fixture("implicit-git-fixed-timeout")?;
+    let (sandbox, project, _sandbox_guard) = python_fixture("implicit-git-fixed-timeout")?;
     run_git(&project, &["init", "-b", "main"])?;
     let programs = sandbox.join("programs");
     fs::create_dir(&programs)?;
@@ -383,6 +387,7 @@ fn fixed_root_probe_timeout_names_only_effective_consumer_recovery() -> TestResu
 #[test]
 fn task_first_commands_resolve_workspace_root_from_a_member_directory() -> TestResult {
     let outer = unique_external_workspace("member-root")?;
+    let _cleanup = DeclaredHunkScratch(outer.clone());
     let member = outer.join("crates/app");
     fs::create_dir_all(member.join("src"))?;
     fs::write(
