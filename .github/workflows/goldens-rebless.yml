@@ -423,7 +423,7 @@ jobs:
             state="The PR does not carry \`merge-ready\`."
           fi
           gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -f body="<!-- goldens-rebless-rearm:$NEW_SHA -->
-          Hosted formatting-only re-bless landed on the PR head (\`${NEW_SHA:0:8}\`). $state A \`GITHUB_TOKEN\` push and label edit start no workflow runs, so nothing was re-armed: remove and re-apply \`merge-ready\` to request admission and qualification on the new head." > /dev/null
+          Hosted formatting-only re-bless landed on the PR head (\`${NEW_SHA:0:8}\`). $state A \`GITHUB_TOKEN\` push and label edit start no workflow runs, so nothing was re-armed: remove and re-apply \`merge-ready\` to request admission and qualification on the new head. After qualification is green, enqueue the PR through the native queue route; re-applying the label does not enqueue it." > /dev/null
 
   refuse:
     name: Comment the classified drift on a judged refusal

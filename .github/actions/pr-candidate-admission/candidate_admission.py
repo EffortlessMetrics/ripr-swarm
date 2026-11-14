@@ -406,7 +406,7 @@ def check_generated_declarations(text: str) -> list[str]:
             generated_state(attributes) is not False
         ) and not declaration_allowed(pattern):
             problems.append(
-                f"{pattern}: not a declarable generated path; allowed shapes are package-lock.json, Cargo.lock, fixtures/**/expected/**, fixtures/<language>-verdict-corpus/packets/**, metrics/public-proof/** and the rust-inherent-*.json and rust-repo-exposure-*.json captures under fixtures/evidence-promotion-honesty-corpus/reports/ (extend GENERATED_DECLARATION_ALLOWED in reviewed code)"
+                f"{pattern}: not a declarable generated path; allowed shapes are package-lock.json, Cargo.lock, fixtures/**/expected/**, fixtures/<language>-verdict-corpus/packets/**, metrics/public-proof/** and the rust-inherent-*.json and rust-repo-exposure-*.json captures under fixtures/evidence-promotion-honesty-corpus/reports/ (extend GENERATED_DECLARATION_ALLOWED in reviewed code). Remove this declaration, or add the exact data-only family and its producer here, then run candidate_admission.py --check-attributes <path>"
             )
     return problems
 
@@ -634,14 +634,14 @@ def history_sync_check(
         return history_sync_record("rejected", detail, declared)
 
     if event_name != "pull_request":
-        return reject("history-sync is honored only on a merge-ready pull_request request, never a merge-queue or other event")
+        return reject("history-sync is honored only on a merge-ready pull_request request, never a merge-queue or other event; request it by applying history-sync there, not through the merge queue")
     base_repository = (((current.get("base") or {}).get("repo") or {}).get("full_name") or "")
     if (
         not repository
         or head_repository(current).casefold() != repository.casefold()
         or base_repository.casefold() != repository.casefold()
     ):
-        return reject("head and base must both be this repository (no fork)")
+        return reject("head and base must both be this repository (no fork); use head and base branches in this repository")
     declared, why = history_sync_declaration(current.get("body") or "")
     if declared is None:
         return reject(why)
@@ -651,11 +651,11 @@ def history_sync_check(
     head = str((current.get("head") or {}).get("sha") or "")
     number = current.get("number")
     if not SHA_RE.fullmatch(head) or not SHA_RE.fullmatch(base_tip or "") or not isinstance(number, int):
-        return reject("the PR head, number or live base tip is not available")
+        return reject("the PR head, number or live base tip is not available; refresh the exact PR snapshot and retry")
 
     events = api(f"repos/{repository}/issues/{number}/events?per_page=100", paginate=True)
     if not isinstance(events, list):
-        return reject("the PR label events could not be read")
+        return reject("the PR label events could not be read; restore API read access to the events and retry")
     toggles = [
         event
         for event in events
@@ -664,14 +664,14 @@ def history_sync_check(
         and ((event.get("label") or {}).get("name") == HISTORY_SYNC_LABEL)
     ]
     if not toggles or any(not isinstance(event.get("created_at"), str) for event in toggles):
-        return reject("no readable `history-sync` label event")
+        return reject("no readable `history-sync` label event; restore the event record or re-apply the label to create one and retry")
     last = max(toggles, key=lambda event: (event["created_at"], int(event.get("id") or 0)))
     actor = str((last.get("actor") or {}).get("login") or "")
     if last.get("event") != "labeled" or not actor:
-        return reject("the latest `history-sync` label event is not a labeling with a known actor")
+        return reject("the latest `history-sync` label event is not a labeling with a known actor; have an authorized actor re-apply it and retry")
     permission = api(f"repos/{repository}/collaborators/{quote(actor)}/permission")
     if not isinstance(permission, dict) or permission.get("role_name") not in HISTORY_SYNC_ROLES:
-        return reject(f"`history-sync` was last applied by {actor}, who does not hold admin or maintain on {repository}")
+        return reject(f"`history-sync` was last applied by {actor}, who does not hold admin or maintain on {repository}; an admin or maintainer must remove and re-apply it, or proceed without history-sync")
 
     # Identity model: S (declared source), B (declared destination base), H (the
     # exact PR head). The head's own shape is not authority: repair commits may
@@ -698,19 +698,19 @@ def history_sync_check(
     source_repo = api(f"repos/{declared['source']}")
     default_branch = source_repo.get("default_branch") if isinstance(source_repo, dict) else None
     if not isinstance(default_branch, str) or not default_branch:
-        return reject(f"the default branch of {declared['source']} could not be read")
+        return reject(f"the default branch of {declared['source']} could not be read; restore repository read access and retry")
     if not ancestor(declared["source"], declared["source_sha"], default_branch, True):
-        return reject(f"source {declared['source_sha']} is not on the {declared['source']} default branch {default_branch}")
+        return reject(f"source {declared['source_sha']} is not on the {declared['source']} default branch {default_branch}; declare an actual source commit on that branch and retry")
     if not ancestor(repository, declared["source_sha"], head, False):
-        return reject(f"source {declared['source_sha']} is not an ancestor of the PR head {head}")
+        return reject(f"source {declared['source_sha']} is not an ancestor of the PR head {head}; recompose the head to include that source and retry")
     if not ancestor(repository, declared["destination_base"], head, False):
-        return reject(f"destination base {declared['destination_base']} is not an ancestor of the PR head {head}")
+        return reject(f"destination base {declared['destination_base']} is not an ancestor of the PR head {head}; merge that base into the branch or declare a base that is already an ancestor, then retry")
     if not ancestor(repository, declared["destination_base"], base_tip, True):
-        return reject(f"destination base {declared['destination_base']} is not an ancestor of the live base tip {base_tip}")
+        return reject(f"destination base {declared['destination_base']} is not an ancestor of the live base tip {base_tip}; declare a base that is an ancestor of both the PR head and live tip, then retry")
     # S must be new history for B: reachable from H, not from B. An unread
     # comparison rejects, never counts as "not reachable".
     if compare_status(repository, declared["source_sha"], declared["destination_base"]) not in ("behind", "diverged"):
-        return reject(f"source {declared['source_sha']} is already contained in destination base {declared['destination_base']} (or that could not be read); nothing new is synced")
+        return reject(f"source {declared['source_sha']} is already contained in destination base {declared['destination_base']} (or that could not be read); nothing new is synced. Choose an older destination base that lacks the source, or drop history-sync and use ordinary qualification")
     return history_sync_record("validated", "", declared)
 
 
@@ -806,7 +806,7 @@ def decide(
     if not validated_sync and not docs_only and (changed_files > max_files or changed_lines > max_lines):
         return refuse(
             "qualification_scope_oversized",
-            detail=f"candidate changes {changed_files} files / {changed_lines} changed lines outside declared generated paths, exceeding the ordinary limit of {max_files} files / {max_lines} changed lines; split or recompose the candidate before ordinary qualification{unhonored}",
+            detail=f"candidate changes {changed_files} files / {changed_lines} changed lines outside declared generated paths, exceeding the ordinary limit of {max_files} files / {max_lines} changed lines; shrink or recompose the handwritten scope, or add the exact data family's declaration to both .gitattributes and GENERATED_DECLARATION_ALLOWED, run candidate_admission.py --check-attributes, and land that separately. After the trusted base is green, re-apply merge-ready to request qualification, then enqueue through the native queue route{unhonored}",
         )
 
     return {
@@ -998,8 +998,22 @@ def self_test() -> None:
     assert "Acceptance delta (one sentence):" in placeholder_detail
     oversized = fixture(body=fixture_body(), head=head, changed_files=161)
     assert run(oversized, [oversized])["reason"] == "qualification_scope_oversized"
-    assert "161 files" in run(oversized, [oversized])["detail"]
-    assert "160 files" in run(oversized, [oversized])["detail"]
+    oversized_detail = run(oversized, [oversized])["detail"]
+    assert "161 files" in oversized_detail
+    assert "160 files" in oversized_detail
+    for remedy in (
+        ".gitattributes",
+        "GENERATED_DECLARATION_ALLOWED",
+        "--check-attributes",
+        "re-apply merge-ready",
+        "enqueue through the native queue route",
+    ):
+        assert remedy in oversized_detail, (remedy, oversized_detail)
+    invalid_declaration_detail = ";".join(
+        check_generated_declarations("metrics/hand-written.json linguist-generated\n")
+    )
+    assert "Remove this declaration" in invalid_declaration_detail
+    assert "--check-attributes" in invalid_declaration_detail
     assert "#11" in run(current, [current, duplicate])["detail"]
     competing_detail = run(current, [current, duplicate])["detail"]
     assert "one of the competing PR bodies" in competing_detail
@@ -1793,7 +1807,7 @@ def main() -> int:
     if sync["status"] == "validated" and not head_unmoved(
         repository, os.environ.get("ADMISSION_PR_NUMBER", ""), current
     ):
-        sync = history_sync_record("rejected", "the PR head moved while the history-sync facts were read", sync)
+        sync = history_sync_record("rejected", "the PR head moved while the history-sync facts were read; retry with the refreshed immutable head", sync)
     result = decide(
         current,
         load_json(args.open_prs),

@@ -288,14 +288,14 @@ def decide(
             **result,
             "status": "refused",
             "reason": "cut_sha_mismatch",
-            "detail": f"packet observed_main.sha is {packet['observed_main']['sha']} but the read cut commit is {cut_sha}",
+            "detail": f"packet observed_main.sha is {packet['observed_main']['sha']} but the read cut commit is {cut_sha}; align the packet's observed_main.sha with the exact active cut commit and retry",
         }
     if packet["observed_main"]["tree"] != cut_tree:
         return {
             **result,
             "status": "refused",
             "reason": "cut_tree_mismatch",
-            "detail": f"packet observed_main.tree is {packet['observed_main']['tree']} but the read cut commit tree is {cut_tree}",
+            "detail": f"packet observed_main.tree is {packet['observed_main']['tree']} but the read cut commit tree is {cut_tree}; align the packet's observed_main.tree with the exact active cut tree and retry",
         }
     # A packet-only PR is the sole way out of a freeze, so it is admitted even
     # after main moved (a second control commit or an unadmitted push);

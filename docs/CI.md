@@ -2994,6 +2994,78 @@ only after each hand-written file in that group, of any status, is bounded by it
 own line count at the merge base (under its previous name for a rename) plus the
 head; a file or merge base that cannot be read (error, 30 s timeout, over 2 MB, not UTF-8 text) keeps the whole residual counted. The files listing is read after the PR snapshot, so the head is re-read afterward; if it moved or cannot be read, no generated-file discount applies and the full GitHub totals are counted.
 
+### Admission refusal clearing actions
+
+Every refusal must name the action that clears it, not only the measurement that
+caused it. Keep this inventory in sync with `candidate_admission.py`, the
+composite action's `refuse_early` calls, and the hard-cut decision. Reason codes
+and machine-readable fields are stable contracts; new refusals must add their
+clearing action here and in their detail text.
+
+| Reason code | Message | Clearing action |
+| --- | --- | --- |
+| `expected_head_missing` | Expected head is absent or not a full 40-character SHA. | Supply the exact PR head and retry the explicit admission event. |
+| `candidate_head_moved` | Live PR head differs from the requested head. | Refresh the PR evidence, use the current full head, and retry. |
+| `candidate_not_open_ready` | PR is not open and non-draft. | Open the PR and mark Ready before requesting qualification. |
+| `claim_identity_missing` | Governing claim or acceptance delta is missing or a placeholder. | Copy the named PR-template lines into the body with a real claim and acceptance delta. |
+| `competing_candidate` | Trusted candidates share a claim and delta. | Record the accepted winner/losing disposition or a proposed replacement in the winning PR body before qualification. |
+| `generated_scope_oversized` | Declared generated lines exceed 40,000. | Split oversized regeneration from the hand-written change while preserving both caps. |
+| `qualification_scope_oversized` | Counted hand-written files/lines exceed 160/3000. | Shrink or recompose handwritten scope, or add the exact data family declaration to both `.gitattributes` and `GENERATED_DECLARATION_ALLOWED`, validate with `--check-attributes`, and land that policy separately. After green qualification, re-apply `merge-ready` and enqueue through the native queue. |
+| `generated_declaration_invalid` | `.gitattributes` declares an unsupported shape. | Remove the declaration, or add the exact data-only family and producer to `GENERATED_DECLARATION_ALLOWED`; run `--check-attributes` on the corrected file. |
+| `token_missing` | Read-only GitHub token is absent. | Supply the read-only token and retry. |
+| `repository_missing` | Repository identity is absent. | Supply `<owner>/<repository>` and retry. |
+| `base_ref_missing` | PR evidence has no base ref. | Refresh the exact PR evidence with its base ref and retry. |
+| `base_sha_unresolved` | Live base SHA cannot be resolved. | Resolve the tip of the named base and retry with the exact evidence. |
+| `cut_packet_read_failed` | Base hard-cut packet cannot be read except for confirmed absence. | Restore the base packet read and retry; confirmed absence alone uses the inactive template. |
+| `generated_paths_read_failed` | Base `.gitattributes` cannot be read. | Restore that file's read path and retry with exact base evidence. |
+| `base_moved_during_evaluation` | Base moves during admission, except two verified inactive packets. | Re-read the current base and PR head and retry with immutable identities. |
+| `candidate_result_invalid` | Candidate decision is missing or malformed. | Refresh PR/head inputs and retry the explicit event; do not reinterpret the invalid result. |
+| `candidate_status_exit_mismatch` | Candidate status and process exit disagree. | Refresh PR/head inputs and retry the explicit event. |
+| `cut_result_invalid` | Hard-cut decision is missing or malformed. | Refresh the exact base evidence and retry. |
+| `cut_status_exit_mismatch` | Hard-cut status and process exit disagree. | Refresh the exact base evidence and retry. |
+| `cut_packet_transition_invalid` | Proposed packet is malformed or has an invalid cut transition. | Correct the proposed packet to reopen the cut or freeze a new exact-main generation, then retry with a packet-only change. |
+| `cut_candidate_head_moved` | Head differs during a hard-cut evaluation. | Refresh the exact PR/head evidence and retry. |
+| `cut_commit_missing` | Active cut commit cannot be read. | Restore that commit from exact base evidence and retry. |
+| `cut_sha_mismatch` | Packet `observed_main.sha` differs from the read cut commit. | Align `observed_main.sha` with the exact active cut commit and retry. |
+| `cut_tree_mismatch` | Packet `observed_main.tree` differs from the cut tree. | Align `observed_main.tree` with the exact active cut tree and retry. |
+| `cut_main_moved` | Base first parent differs from the active cut. | Reconcile the control history by revert, or reopen and freeze a successor cut (#5114/#2768). |
+| `cut_frozen` | Active freeze blocks ordinary PRs. | Reopen or pin the cut only with a packet-only control update before qualifying. |
+
+`history-sync` uses one `rejected` status rather than separate reason codes. Its
+detail also names the recovery path:
+
+| Rejected condition | Clearing action |
+| --- | --- |
+| Event is not a merge-ready `pull_request` | Apply `history-sync` through that event; the merge queue cannot honor it. |
+| Forked head or base | Put both head and base in this repository. |
+| Missing/malformed body declarations | Supply one exact source and one destination-base line in the required formats. |
+| Wrong source repository | Declare the other repository in the `ripr`/`ripr-swarm` pair. |
+| PR head, number, or live base tip unavailable | Restore the exact PR snapshot and retry; no replacement identity is inferred. |
+| Label events unreadable | Restore API read access to the events and retry. |
+| Latest labeling lacks admin/maintain | An admin or maintainer removes and re-applies the label, or the PR proceeds without history-sync. |
+| Default branch unreadable | Restore that repository read and verify its default branch. |
+| Source is not on its default branch | Point the declaration at the actual source commit on the default branch. |
+| Source is not an ancestor of PR head | Recompose the head to include the declared source. |
+| Destination base is not an ancestor of PR head or live base | Merge the declared base into the branch and verify its ancestry before retrying. |
+| Source is already contained in destination base | Choose an older base lacking the source, or drop history-sync and qualify ordinarily. |
+| Head moves during fact reads | Retry with the refreshed immutable head. |
+
+Workflow notices follow the same rule. `#14567` already owns the dark/conflict
+strings, so this audit does not duplicate those two files.
+
+| Surface | Clearing action |
+| --- | --- |
+| Merge-ready dark/conflict notices | Resolve any conflict, re-apply `merge-ready` for qualification, then enqueue through the native queue (#14567). |
+| Hosted formatting-only re-bless completes | Re-apply `merge-ready` to request admission/qualification on the new head, then enqueue through the native queue. |
+| Judged re-bless refusal | Correct the classified generated outputs with their producer and re-dispatch; nothing is blessed by hand. |
+
+For `qualification_scope_oversized`, the count-only decision cannot identify the
+specific generated-but-undeclared paths. Naming such a file requires the PR file
+inventory with each path and its producer, labeled by the counted family. Until
+that inventory is available, the detail must offer both valid remedies instead
+of prescribing an invented file edit. Read failures likewise require the named
+API evidence to be restored before retrying, not a fabricated replacement.
+
 GitHub-hosted security settings are tracked in
 [Repository settings](REPO_SETTINGS.md). Dependency Graph, Dependabot alerts,
 Dependabot security updates, secret scanning, push protection, and private
