@@ -90,6 +90,15 @@ fn finding_with_links(
     for (path, text) in files {
         write(&format!("tool/{path}"), text)?;
     }
+    // On Windows the body always returns, so clippy sees a loop that never
+    // loops; on Unix it iterates every link. The cfg split is intentional.
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::never_loop,
+            reason = "the cfg(not(unix)) body always returns, so the loop only iterates on Unix"
+        )
+    )]
     for (link, target) in links {
         #[cfg(unix)]
         std::os::unix::fs::symlink(root.join(target), root.join("tool").join(link))

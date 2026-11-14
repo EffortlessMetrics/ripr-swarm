@@ -23,4 +23,6 @@ Then publish:
 cargo publish -p ripr
 ```
 
-Verify `repository` and `homepage` point at the canonical GitHub repository before publishing.
+Verify `repository` points at the canonical GitHub repository before publishing.
+Do not add a `homepage` that repeats it: cargo 1.100 warns with
+`redundant_homepage`.
