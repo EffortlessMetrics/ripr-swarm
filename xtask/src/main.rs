@@ -73,6 +73,7 @@ mod packaged_repair_receipt;
 mod policy;
 #[cfg(test)]
 mod portable_consumer;
+mod pr_admission_preflight;
 mod precommit_formatting;
 mod product_gate_plan;
 mod product_route_parity;
@@ -83,7 +84,6 @@ mod python_judged_panel_feedback;
 mod python_judged_panel_replay;
 mod python_judged_panel_report;
 mod readiness_snapshot;
-mod pr_admission_preflight;
 mod repo_readiness;
 mod repository_orientation;
 mod ripr_agent_disposition;

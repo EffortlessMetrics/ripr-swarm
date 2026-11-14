@@ -4,15 +4,28 @@
 //! remains the authority. This refuses early, with remediation, on the failures that
 //! otherwise burn a `Routed Rust Small` / `merge_group` run.
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::process::Command;
 
 pub(crate) const MAX_CHANGED_FILES: u64 = 160;
 pub(crate) const MAX_CHANGED_LINES: u64 = 3000;
 
-const CLAIM_LABELS: [&str; 2] = ["governing issue or accepted claim", "owner / governing claim"];
+const CLAIM_LABELS: [&str; 2] = [
+    "governing issue or accepted claim",
+    "owner / governing claim",
+];
 const DELTA_LABELS: [&str; 2] = ["acceptance delta (one sentence)", "acceptance delta"];
 const PLACEHOLDERS: [&str; 10] = [
-    "", "n/a", "na", "none", "not applicable", "tbd", "todo", "unknown", "pending", "-",
+    "",
+    "n/a",
+    "na",
+    "none",
+    "not applicable",
+    "tbd",
+    "todo",
+    "unknown",
+    "pending",
+    "-",
 ];
 
 /// Parse `--pr <N>` / `--pr=<N>`. `Ok(None)` when absent; unknown arguments are refused.
@@ -42,7 +55,12 @@ pub(crate) fn parse_pr_arg(args: &[String]) -> Result<Option<u64>, String> {
 }
 
 fn is_placeholder(value: &str) -> bool {
-    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    let stripped = value.trim().trim_matches('`').trim();
+    let normalized = stripped
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
     normalized.starts_with('<') || PLACEHOLDERS.contains(&normalized.as_str()) || normalized == "—"
 }
 
@@ -86,18 +104,21 @@ fn visible_lines(body: &str) -> Vec<String> {
 fn field_value(lines: &[String], labels: &[&str]) -> Option<String> {
     lines.iter().find_map(|line| {
         let trimmed = line.trim();
-        let folded = trimmed.to_lowercase();
         labels.iter().find_map(|label| {
             let prefix = format!("{label}:");
-            folded
-                .starts_with(&prefix)
-                .then(|| trimmed[prefix.len()..].trim().to_string())
+            trimmed
+                .get(..prefix.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(&prefix))
+                .then(|| trimmed.get(prefix.len()..).unwrap_or("").trim().to_string())
         })
     })
 }
 
 fn is_full_sha(value: &str) -> bool {
-    value.len() == 40 && value.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// Exactly one visible `Source review: [SOURCE_]REVIEW_READY <head>` line.
@@ -110,8 +131,10 @@ fn body_attests_head(lines: &[String], head: &str) -> bool {
         .filter_map(|line| {
             let trimmed = line.trim();
             let prefix = "source review:";
-            (trimmed.len() >= prefix.len() && trimmed[..prefix.len()].eq_ignore_ascii_case(prefix))
-                .then(|| trimmed[prefix.len()..].trim().to_string())
+            trimmed
+                .get(..prefix.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+                .then(|| trimmed.get(prefix.len()..).unwrap_or("").trim().to_string())
                 .filter(|value| !value.is_empty())
         })
         .collect();
@@ -121,6 +144,103 @@ fn body_attests_head(lines: &[String], head: &str) -> bool {
     ["SOURCE_REVIEW_READY ", "REVIEW_READY "]
         .iter()
         .any(|marker| value.strip_prefix(marker) == Some(head))
+}
+
+fn is_trusted_association(value: Option<&str>) -> bool {
+    matches!(
+        value.unwrap_or("").to_ascii_uppercase().as_str(),
+        "OWNER" | "MEMBER" | "COLLABORATOR"
+    )
+}
+
+fn comment_review_ready(body: &str) -> bool {
+    let visible = visible_lines(body);
+    let Some(first) = visible
+        .iter()
+        .map(|line| line.trim())
+        .find(|l| !l.is_empty())
+    else {
+        return false;
+    };
+    let normalized = first
+        .trim_matches(|c: char| matches!(c, '*' | '_' | '`' | '-' | ' '))
+        .to_ascii_uppercase();
+    let has_ready_marker = [
+        "SOURCE_REVIEW_READY",
+        "REVIEW_READY",
+        "DISPOSITION: SOURCE_REVIEW_READY",
+        "DISPOSITION: REVIEW_READY",
+    ]
+    .iter()
+    .any(|marker| {
+        normalized == *marker
+            || normalized
+                .strip_prefix(marker)
+                .is_some_and(|rest| rest.starts_with([' ', ':']))
+    });
+    if !has_ready_marker {
+        return false;
+    }
+    !visible.iter().any(|line| {
+        let upper = line.to_ascii_uppercase();
+        upper.contains("REVIEW_INCOMPLETE") || upper.contains("CHANGES_REQUESTED")
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReviewStatus {
+    Blocked,
+    Attested,
+    None,
+}
+
+/// Mirror `reviews_allow_source_attestation` for `gh pr view --json reviews`:
+/// latest decisive review per login cannot be `CHANGES_REQUESTED`, and either a trusted
+/// `APPROVED` review on `head` or a trusted latest `COMMENTED` review on `head` starting
+/// with `SOURCE_REVIEW_READY` / `REVIEW_READY` attests `head`.
+fn review_status(reviews: &Value, head: &str) -> ReviewStatus {
+    let Some(items) = reviews.as_array() else {
+        return ReviewStatus::None;
+    };
+    let mut latest_decisive: BTreeMap<String, &Value> = BTreeMap::new();
+    let mut latest_all: BTreeMap<String, &Value> = BTreeMap::new();
+    for (idx, review) in items.iter().enumerate() {
+        let login = review["author"]["login"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("<anonymous:{idx}>"));
+        let state = review["state"].as_str().unwrap_or("");
+        if matches!(state, "APPROVED" | "CHANGES_REQUESTED") {
+            latest_decisive.insert(login.clone(), review);
+        }
+        latest_all.insert(login, review);
+    }
+    if latest_decisive
+        .values()
+        .any(|r| r["state"].as_str() == Some("CHANGES_REQUESTED"))
+    {
+        return ReviewStatus::Blocked;
+    }
+    if !is_full_sha(head) {
+        return ReviewStatus::None;
+    }
+    if latest_decisive.values().any(|r| {
+        r["state"].as_str() == Some("APPROVED")
+            && r["commit"]["oid"].as_str() == Some(head)
+            && is_trusted_association(r["authorAssociation"].as_str())
+    }) {
+        return ReviewStatus::Attested;
+    }
+    if latest_all.values().any(|r| {
+        r["state"].as_str() == Some("COMMENTED")
+            && r["commit"]["oid"].as_str() == Some(head)
+            && is_trusted_association(r["authorAssociation"].as_str())
+            && comment_review_ready(r["body"].as_str().unwrap_or(""))
+    }) {
+        return ReviewStatus::Attested;
+    }
+    ReviewStatus::None
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,14 +278,19 @@ pub(crate) fn evaluate(pr: &Value, unresolved_threads: Option<u64>) -> Vec<Findi
     }
 
     let head = pr["headRefOid"].as_str().unwrap_or("");
-    if !body_attests_head(&lines, head) {
+    let attested = match review_status(&pr["reviews"], head) {
+        ReviewStatus::Blocked => false,
+        ReviewStatus::Attested => true,
+        ReviewStatus::None => body_attests_head(&lines, head),
+    };
+    if !attested {
         findings.push(Finding {
             gate: "review_disposition",
             problem: format!(
-                "no exact-head attestation for {head}; the head needs `Source review: REVIEW_READY <head>` in the body (exactly one line) or a trusted approving review"
+                "no exact-head attestation for {head}; the head needs `Source review: REVIEW_READY <head>` in the body (exactly one line) or a trusted approving/SOURCE_REVIEW_READY review"
             ),
             remediation: format!(
-                "after review-pr on this exact head, add `Source review: REVIEW_READY {head}` to the PR body (a push invalidates it)"
+                "after review-pr on this exact head, post a native COMMENT review starting with `SOURCE_REVIEW_READY` (last, after any thread replies) or add `Source review: REVIEW_READY {head}` to the PR body"
             ),
         });
     }
@@ -218,6 +343,16 @@ pub(crate) fn render(findings: &[Finding]) -> String {
         .join("\n")
 }
 
+/// Single-line summary so `repo_readiness::first_error_line` preserves all failing gates
+/// and remediations in `target/ripr/reports/pr-ready.{md,json}`.
+pub(crate) fn render_one_line(findings: &[Finding]) -> String {
+    findings
+        .iter()
+        .map(|f| format!("[{}] {} -> {}", f.gate, f.problem, f.remediation))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
 fn gh(args: &[&str]) -> Result<String, String> {
     let output = Command::new("gh")
         .args(args)
@@ -238,7 +373,8 @@ const THREADS_QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){re
 /// `Some(n)` unresolved threads, or `None` when the answer is incomplete (pagination/shape).
 pub(crate) fn unresolved_threads(response: &Value) -> Option<u64> {
     let threads = &response["data"]["repository"]["pullRequest"]["reviewThreads"];
-    if response.get("errors").is_some() || threads["pageInfo"]["hasNextPage"].as_bool() != Some(false)
+    if response.get("errors").is_some()
+        || threads["pageInfo"]["hasNextPage"].as_bool() != Some(false)
     {
         return None;
     }
@@ -259,7 +395,7 @@ pub(crate) fn run(number: u64) -> Result<(), String> {
         "view",
         &number_text,
         "--json",
-        "number,body,headRefOid,changedFiles,additions,deletions",
+        "number,body,headRefOid,changedFiles,additions,deletions,reviews",
     ])?;
     let pr: Value =
         serde_json::from_str(&view).map_err(|err| format!("invalid gh pr view JSON: {err}"))?;
@@ -285,9 +421,13 @@ pub(crate) fn run(number: u64) -> Result<(), String> {
     if findings.is_empty() {
         Ok(())
     } else {
-        Err(format!(
+        eprintln!(
             "pr-candidate-admission preflight refused PR #{number}:\n{}",
             render(&findings)
+        );
+        Err(format!(
+            "PR #{number} refused: {}",
+            render_one_line(&findings)
         ))
     }
 }
@@ -351,7 +491,10 @@ mod pr_ready_tests {
     #[test]
     fn pr_ready_requires_exact_head_attestation() {
         let stale = good_body().replace(HEAD, &"a".repeat(40));
-        assert_eq!(gates(&evaluate(&pr(&stale), Some(0))), ["review_disposition"]);
+        assert_eq!(
+            gates(&evaluate(&pr(&stale), Some(0))),
+            ["review_disposition"]
+        );
         let doubled = format!("{}Source review: REVIEW_READY {HEAD}\n", good_body());
         assert_eq!(
             gates(&evaluate(&pr(&doubled), Some(0))),
@@ -367,7 +510,10 @@ mod pr_ready_tests {
             gates(&evaluate(&pr(&good_body()), Some(2))),
             ["review_threads"]
         );
-        assert_eq!(gates(&evaluate(&pr(&good_body()), None)), ["review_threads"]);
+        assert_eq!(
+            gates(&evaluate(&pr(&good_body()), None)),
+            ["review_threads"]
+        );
     }
 
     #[test]
@@ -394,7 +540,10 @@ mod pr_ready_tests {
                 "pageInfo":{"hasNextPage":next},
                 "nodes": resolved.iter().map(|r| json!({"isResolved": r})).collect::<Vec<_>>()}}}}})
         };
-        assert_eq!(unresolved_threads(&page(false, &[true, false, false])), Some(2));
+        assert_eq!(
+            unresolved_threads(&page(false, &[true, false, false])),
+            Some(2)
+        );
         assert_eq!(unresolved_threads(&page(false, &[])), Some(0));
         assert_eq!(unresolved_threads(&page(true, &[true])), None);
         assert_eq!(unresolved_threads(&json!({"errors":[{}]})), None);
@@ -417,5 +566,87 @@ mod pr_ready_tests {
             };
         }
         Ok(())
+    }
+
+    #[test]
+    fn pr_ready_handles_multibyte_utf8_and_backtick_placeholders() {
+        let utf8_body = format!(
+            "0123456789abc\u{2014}def\nGoverning issue or accepted claim: `TBD`\nAcceptance delta (one sentence): `<describe>`\nİ\nSource review: REVIEW_READY {HEAD}\n"
+        );
+        assert_eq!(
+            gates(&evaluate(&pr(&utf8_body), Some(0))),
+            ["claim", "acceptance_delta"]
+        );
+    }
+
+    #[test]
+    fn pr_ready_accepts_native_reviews_and_rejects_trailing_empty_comment() {
+        let base_body =
+            "Governing issue or accepted claim: #14639\nAcceptance delta (one sentence): ready.\n";
+        let mut with_comment = pr(base_body);
+        with_comment["reviews"] = json!([{
+            "author": {"login": "verifier"},
+            "authorAssociation": "COLLABORATOR",
+            "state": "COMMENTED",
+            "commit": {"oid": HEAD},
+            "body": "SOURCE_REVIEW_READY\n"
+        }]);
+        assert!(evaluate(&with_comment, Some(0)).is_empty());
+
+        let mut with_trailing_reply = pr(base_body);
+        with_trailing_reply["reviews"] = json!([
+            {
+                "author": {"login": "verifier"},
+                "authorAssociation": "COLLABORATOR",
+                "state": "COMMENTED",
+                "commit": {"oid": HEAD},
+                "body": "SOURCE_REVIEW_READY\n"
+            },
+            {
+                "author": {"login": "verifier"},
+                "authorAssociation": "COLLABORATOR",
+                "state": "COMMENTED",
+                "commit": {"oid": HEAD},
+                "body": ""
+            }
+        ]);
+        assert_eq!(
+            gates(&evaluate(&with_trailing_reply, Some(0))),
+            ["review_disposition"]
+        );
+
+        let mut with_approved = pr(base_body);
+        with_approved["reviews"] = json!([{
+            "author": {"login": "maintainer"},
+            "authorAssociation": "OWNER",
+            "state": "APPROVED",
+            "commit": {"oid": HEAD},
+            "body": ""
+        }]);
+        assert!(evaluate(&with_approved, Some(0)).is_empty());
+
+        let mut with_changes_requested = pr(&good_body());
+        with_changes_requested["reviews"] = json!([{
+            "author": {"login": "maintainer"},
+            "authorAssociation": "OWNER",
+            "state": "CHANGES_REQUESTED",
+            "commit": {"oid": HEAD},
+            "body": "fix"
+        }]);
+        assert_eq!(
+            gates(&evaluate(&with_changes_requested, Some(0))),
+            ["review_disposition"]
+        );
+    }
+
+    #[test]
+    fn pr_ready_render_one_line_preserves_all_findings() {
+        let found = evaluate(&pr(""), Some(2));
+        let line = render_one_line(&found);
+        assert!(!line.contains('\n'));
+        assert!(line.contains("[claim]"));
+        assert!(line.contains("[acceptance_delta]"));
+        assert!(line.contains("[review_disposition]"));
+        assert!(line.contains("[review_threads]"));
     }
 }
