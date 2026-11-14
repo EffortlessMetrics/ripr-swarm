@@ -74,10 +74,10 @@ pub(crate) fn head_only_arm_result(finding: &Finding) -> Option<&str> {
 /// paired with it, and any other text is returned unchanged.
 pub(crate) fn with_arm_result<'a>(finding: &Finding, text: &'a str) -> Cow<'a, str> {
     let head = text.trim();
-    let compact = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
-    match head_only_arm_result(finding)
-        .filter(|_| compact(head) == compact(&finding.probe.expression))
-    {
+    match head_only_arm_result(finding).filter(|_| {
+        head.split_whitespace()
+            .eq(finding.probe.expression.split_whitespace())
+    }) {
         Some(result) => Cow::Owned(format!("{head} {result}")),
         None => Cow::Borrowed(text),
     }
