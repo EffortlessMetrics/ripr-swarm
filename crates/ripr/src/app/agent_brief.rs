@@ -439,10 +439,12 @@ fn fold_return_value_twins(candidates: &mut Vec<AgentBriefSelectedSeam<'_>>) -> 
 
 pub(super) fn folded_twin_warning(folded: usize) -> Option<String> {
     (folded > 0).then(|| {
-        let noun = if folded == 1 { "seam was" } else { "seams were" };
-        format!(
-            "{folded} return_value {noun} folded into the error_variant seam on the same line"
-        )
+        let noun = if folded == 1 {
+            "seam was"
+        } else {
+            "seams were"
+        };
+        format!("{folded} return_value {noun} folded into the error_variant seam on the same line")
     })
 }
 
@@ -1501,7 +1503,10 @@ mod tests {
         if !selected.warnings.iter().any(|warning| {
             warning == "1 return_value seam was folded into the error_variant seam on the same line"
         }) {
-            return Err(format!("missing singular fold warning: {:?}", selected.warnings));
+            return Err(format!(
+                "missing singular fold warning: {:?}",
+                selected.warnings
+            ));
         }
         Ok(())
     }
