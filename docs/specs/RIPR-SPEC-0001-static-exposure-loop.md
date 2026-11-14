@@ -473,10 +473,22 @@ credit: an unresolved boundary keeps its own reason, and a predicate with no
 input at its boundary keeps its weak reading. An edit inside one operand of
 an unchanged chain keeps its boundary credit. Because it compares only the
 connectives, swapping one operand for another (`a && 100 <= p` to `100 < p
-&& b`) or regrouping a chain is not yet caught. The rule reads one changed
-line: a chain that rustfmt splits across lines (`if other > 0` over `&&
-100 <= points`) pairs only its first old line as `before`, so it is not yet
-covered (#7945).
+&& b`) or regrouping a chain is not yet caught. A chain that rustfmt split
+across removed lines (`if other > 0` over `&& 100 <= points`) is read whole
+(#7945): when a predicate's replacement block removes two or more consecutive
+old lines and one of them starts or ends with `&&` or `||` outside strings
+and comments, the predicate's old text is the whole block, joined into its
+one-line spelling, instead of the one removed line that pairing names. A
+block holding a comment keeps its line breaks and is compared uncut. A block
+holding more than one statement head (outside strings and comments it holds
+a `;`, a `}` or more than one `{`) is not read whole, because its connectives
+belong to several predicates; it keeps the single-line pairing, and its
+lines keep their own probes. The chain's old lines
+(each line that starts or ends with a connective, and the neighbour it
+continues) are the predicate's old side, so they get no deleted-line probe of
+their own: one operand of the old chain is not a predicate an input at its
+boundary can expose. A new-side chain that spans several added lines still
+reads its probe's own shape text.
 
 A computed argument or operand is not the literal it contains. An owner-call,
 table-row, or builder-method argument that applies a binary arithmetic,
@@ -652,6 +664,36 @@ owner's own source file through the shared named-constant lookup in
   the constant's value; repo-seam grip reports activation unknown with the
   boundary-constant limitation and no actionable repair packet.
 
+Appended string-equality arm example (#14388):
+
+```rust
+pub fn options_from_flag(flag: &str) -> Options {
+    Options { retries: 3, verbose: flag == "-v" || flag == "--verbose" }
+}
+```
+
+When the diff appends one `|| param == "lit"` arm to a chain of string
+equalities on the same parameter (base `flag == "-v"`), a related test that
+calls the owner with exactly the new literal (`options_from_flag("--verbose")`)
+reads infection `yes` (medium confidence): distinct literals make every
+original arm false on that input and the new arm true. The reading is
+fail-closed and every other shape keeps the ordinary reading. It requires:
+
+- every arm to be a plain `==` between the one parameter and an escape-free
+  string literal, joined only by `||`, with distinct literals and the base
+  chain equal to the head chain minus its last arm;
+- the parameter to be declared `&str`, `&'a str`, `String` or `&String`
+  (another type may implement `PartialEq<&str>` differently), never
+  rebound, and the owner to have no other callers;
+- an owner-call argument fact binding the parameter to exactly the new
+  literal, and no assertion macro name rebound anywhere in the indexed
+  workspace, since a rebound macro could discard the call. This is a
+  workspace-wide condition, as in RIPR-SPEC-0353;
+- the chain to be the owner's first decision and to end its expression. No
+  `if`, `match`, loop, `return`, `break`, `continue`, `?`, `=>`, closure,
+  `&&`, macro, call, index, `/` or `%` precedes it, and `,`, `;` or `}`
+  follows it.
+
 ## Test Mapping
 
 Fixture coverage:
@@ -726,6 +768,7 @@ Fixture coverage:
 - `fallible_slice_observations_cannot_credit_later_rows`
 - `fixtures/rust_slice_table_boundary`
 - `fixtures/rust_slice_table_zero_elements`
+- `fixtures/rust_multi_line_dropped_conjunct`
 - `fixtures/rust_slice_table_try_exit`
 - `fixtures/rust_slice_table_call_exit`
 - `infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes`
@@ -821,6 +864,15 @@ no body brace, `;` or `fn ` is the first line of a rustfmt-wrapped `impl` header
 lines). It declares only, so it seeds a single `static_unknown` probe like a
 one-line `impl ... {` header (#8389) and never `field_construction` for a
 const-generic bound or `call_deletion` for a generic attribute (#10244).
+
+A one-line `type` item (a trait's associated type `type Eq: CmpEq;` or
+`type Item;`, an impl binding `type Eq = __m128i;`, or a type alias
+`pub type Map<K> = BTreeMap<K, u8>;`) declares a type and runs nothing. It
+seeds a single `static_unknown` probe, like an item header, and never
+`field_construction` for its `name: Bound` text (#14429). A line that does not
+end the item with `;`, joins a second statement, or whose type holds an
+expression (a block, a macro, or any array length such as `[T; 4]`) keeps its
+ordinary families.
 
 ## Implementation Mapping
 

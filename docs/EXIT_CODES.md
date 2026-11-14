@@ -15,7 +15,7 @@ analysis did not complete, not that it disapproved of your diff. The blocking
 decision belongs to `ripr gate evaluate`, which exits `3` when the gate blocks
 after writing its report. `ripr gate check --base REV` runs `review-comments`
 and then the same evaluation, with the same exit codes. If `review-comments`
-cannot complete, gate check exits `2` (config_error); it never passes. Do not build a CI gate on `check`'s exit code; read
+cannot complete, gate check exits `2` (config_error); it never passes. In `calibrated-gate` mode a changed file the parser could not read also blocks (exit `3`), since no seam was judged for it; the other modes report it as an `advisory` warning (#14485). Do not build a CI gate on `check`'s exit code; read
 its output, or run the gate.
 
 ## Why codes 2 and 3?
@@ -122,7 +122,9 @@ reached the caller.
   `message: "refused: <identity>"`, repair route in the first warning,
   `analysis_outcome: null`; no `run_status` field), and
   `repo-exposure-json` and `agent-seam-packets-json` render their format's
-  refused envelope (zeroed counts, `run_status: "refused"`). Machine formats without an
+  refused envelope (zeroed counts, `run_status: "refused"`), and `agent`
+  renders its refused `stop=` / `next=` / `verify=refused` record (#14452;
+  a timed run's bounded retry rides `next=`). Machine formats without an
   honest refusal shape yet — `repo-sarif`, `badge-shields`, `badge-plus-*`,
   `repo-badge-*`, `repo-seams-*`, `repo-exposure-md`, and
   `repo-exposure-summary-json` — write

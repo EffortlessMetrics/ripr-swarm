@@ -913,6 +913,29 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                         probe.expression.trim()
                     ),
                 )
+            } else if let Some(literal) = unresolved_boundary
+                .is_none()
+                .then_some(())
+                // A rebound assertion macro may discard the owner call whose
+                // argument is read below (#10386), as the truth-table branch
+                // above also declines.
+                .filter(|()| !owner_has_other_callers && !assertion_macros_rebound)
+                .and(owner)
+                .and_then(|owner| added_string_arm_input(probe, activation, owner))
+            {
+                // #14388: the edit appends `|| param == "lit"` to a chain of
+                // string equalities on the same parameter, and a related
+                // test calls the owner with exactly `"lit"`. The original
+                // arms compare other string literals, so they are all false
+                // on that input while the new arm is true: the input reaches
+                // the change.
+                StageEvidence::new(
+                    StageState::Yes,
+                    Confidence::Medium,
+                    format!(
+                        "A related test passes {literal}, which makes the added `||` arm true while every original string-equality arm is false, so the input reaches the change"
+                    ),
+                )
             } else if probe_literals.is_empty() {
                 StageEvidence::new(
                     StageState::Unknown,
@@ -1450,6 +1473,187 @@ fn range_consumer(text: &str, span: std::ops::Range<usize>) -> Option<RangeConsu
         break;
     }
     Some(RangeConsumer::Preserving)
+}
+
+/// #14388: the string literal a related test passes that reaches an appended
+/// `||` arm. The probe must turn `p == "a" || ...` into the same chain plus
+/// one more `p == "b"` arm: only `||`, every arm one `==` between the same
+/// owner parameter `p` and a plain string literal with no escapes, `p` never
+/// rebound in the owner body, and an owner-call argument fact binding `p` to
+/// exactly `"b"`. Distinct literals make every original arm false on that
+/// input and the new arm true, so the old and new predicates differ. Anything
+/// else returns `None` and the ordinary reading stays.
+fn added_string_arm_input(
+    probe: &Probe,
+    activation: &ActivationEvidence,
+    owner: &FunctionSummary,
+) -> Option<String> {
+    let before = probe.before.as_deref()?;
+    let only_or = |text: &str| {
+        let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
+        !masked.contains("&&") && !masked.contains('!') && !masked.contains('(')
+    };
+    if !only_or(&probe.expression) || !only_or(before) {
+        return None;
+    }
+    let arms = |text: &str| -> Option<Vec<(String, String)>> {
+        boolean_conditions(text)
+            .into_iter()
+            .map(string_equality_arm)
+            .collect()
+    };
+    let after_arms = arms(&probe.expression)?;
+    let before_arms = arms(before)?;
+    let (added, kept) = after_arms.split_last()?;
+    if kept != before_arms.as_slice() {
+        return None;
+    }
+    let parameter = &added.0;
+    let mut literals = after_arms
+        .iter()
+        .map(|(_, literal)| literal)
+        .collect::<Vec<_>>();
+    literals.sort();
+    literals.dedup();
+    if after_arms.iter().any(|(name, _)| name != parameter) || literals.len() != after_arms.len() {
+        return None;
+    }
+    // A parameter type with its own `PartialEq<&str>` could make an original
+    // arm true on the new literal, so only plain string types qualify.
+    if !super::activation::call_parameter_names(owner).contains(parameter)
+        || !super::activation::parameter_type(owner, parameter)
+            .is_some_and(|ty| is_plain_string_type(&ty))
+        || parameter_is_rebound(&owner.body, parameter)
+        || !chain_is_first_decision(&owner.body, &probe.expression)
+    {
+        return None;
+    }
+    activation
+        .observed_values
+        .iter()
+        .filter(|fact| fact.context == ValueContext::FunctionArgument)
+        .filter_map(|fact| fact.value.split_once(" = "))
+        .any(|(name, value)| name.trim() == parameter && value.trim() == added.1)
+        .then(|| added.1.clone())
+}
+
+/// Whether nothing in the owner before `chain` can take a call away from it
+/// (#10856 for this reading): the chain occurs once in the owner's text, and
+/// the body before it holds no `if`, `match`, loop, `return`, `break`,
+/// `continue`, `?`, match arm, closure, other short-circuit, macro, call,
+/// index, division or remainder, and the chain ends its expression.
+/// An early return on another parameter (`if strict { return false; }`)
+/// would keep a test that passes the new literal from ever evaluating the
+/// chain. Strings and
+/// comments are masked; a chain ripr cannot find exactly once declines.
+fn chain_is_first_decision(function: &str, chain: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(function);
+    let masked_chain = crate::analysis::extract::mask_comments_and_strings(chain);
+    let masked_chain = masked_chain.trim();
+    if masked.len() != function.len() || masked_chain.is_empty() {
+        return false;
+    }
+    let mut found = masked.match_indices(masked_chain).map(|(at, _)| at);
+    let (Some(at), None) = (found.next(), found.next()) else {
+        return false;
+    };
+    // The signature (up to the body's opening brace) is not control flow.
+    let Some((_, head)) = masked[..at].split_once('{') else {
+        return false;
+    };
+    // `!` (a macro such as `assert!` or `panic!`) and `(` (a call such as
+    // `std::process::exit(1)`) can diverge without a keyword, so they
+    // decline too; wrapping the chain in a call (`Some(...)`) declines with
+    // them.
+    // `[`, `/` and `%` (indexing, division, remainder) can panic first.
+    if head.contains(['?', '|', '!', '(', '[', '/', '%'])
+        || head.contains("&&")
+        || head.contains("=>")
+    {
+        return false;
+    }
+    // The chain must also end its expression: a continuation such as a
+    // following `&& strict` line binds tighter than the appended `||` and
+    // could keep the new arm from deciding the result.
+    let tail = masked[at + masked_chain.len()..].trim_start();
+    if !tail.starts_with([',', ';', '}']) {
+        return false;
+    }
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    !head.split(|ch: char| !is_word(ch)).any(|word| {
+        matches!(
+            word,
+            "if" | "match" | "while" | "for" | "loop" | "return" | "break" | "continue"
+        )
+    })
+}
+
+/// Whether `ty` is `&str`, `&'a str`, `String` or `&String`: types whose
+/// `==` against a string literal compares the text itself.
+fn is_plain_string_type(ty: &str) -> bool {
+    let compact = ty.split_whitespace().collect::<Vec<_>>().join(" ");
+    let Some(borrowed) = compact.strip_prefix('&') else {
+        return compact == "String";
+    };
+    let borrowed = borrowed.trim_start();
+    let inner = match borrowed.strip_prefix('\'') {
+        Some(lifetime) => match lifetime.split_once(' ') {
+            Some((name, rest)) if is_plain_identifier(name) => rest,
+            _ => return false,
+        },
+        None => borrowed,
+    };
+    matches!(inner, "str" | "String")
+}
+
+/// `name == "literal"` or `"literal" == name` as `(name, "literal")`, for a
+/// plain identifier and a string literal with no escapes; anything else is
+/// `None`.
+fn string_equality_arm(arm: &str) -> Option<(String, String)> {
+    let (left, right) = arm.split_once("==")?;
+    let (left, right) = (left.trim(), right.trim());
+    let is_literal = |text: &str| {
+        text.len() >= 2
+            && text.starts_with('"')
+            && text.ends_with('"')
+            && !text[1..text.len() - 1].contains(['"', '\\'])
+    };
+    let (name, literal) = if is_literal(right) {
+        (left, right)
+    } else if is_literal(left) {
+        (right, left)
+    } else {
+        return None;
+    };
+    (is_plain_identifier(name) && !literal[1..literal.len() - 1].contains("=="))
+        .then(|| (name.to_string(), literal.to_string()))
+}
+
+/// Whether `body` might give `name` a value other than the caller's
+/// argument before a comparison reads it. Strict on purpose: every
+/// whole-word use of `name`, strings and comments masked, must be its one
+/// `name:` parameter declaration or an operand of `==`. Any other use (a
+/// `let` or pattern that shadows it, an assignment, a borrow, a call) counts.
+fn parameter_is_rebound(body: &str, name: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    let bytes = masked.as_bytes();
+    let mut declarations = 0usize;
+    for (at, _) in masked.match_indices(name) {
+        let end = at + name.len();
+        let whole_word = (at == 0 || !is_ident_byte(bytes[at - 1]))
+            && (end >= bytes.len() || !is_ident_byte(bytes[end]));
+        if !whole_word {
+            continue;
+        }
+        let prefix = masked[..at].trim_end();
+        let suffix = masked[end..].trim_start();
+        if suffix.starts_with(':') && !suffix.starts_with("::") {
+            declarations += 1;
+        } else if !(suffix.starts_with("==") || prefix.ends_with("==")) {
+            return true;
+        }
+    }
+    declarations != 1
 }
 
 /// Resolve literal boundaries from live, non-computed local initializers.
@@ -2170,6 +2374,218 @@ mod tests {
             true,
             false,
         )
+    }
+
+    fn added_string_arm_evidence(
+        body: &str,
+        before: &str,
+        after: &str,
+        inputs: &[&str],
+        other_callers: bool,
+    ) -> StageEvidence {
+        added_string_arm_evidence_with(body, before, after, inputs, other_callers, false)
+    }
+
+    fn added_string_arm_evidence_with(
+        body: &str,
+        before: &str,
+        after: &str,
+        inputs: &[&str],
+        other_callers: bool,
+        assertion_macros_rebound: bool,
+    ) -> StageEvidence {
+        let mut changed = probe(ProbeFamily::Predicate, after);
+        changed.before = Some(before.to_string());
+        let owner = owner_with_body(body);
+        let literals = inputs
+            .iter()
+            .filter_map(|input| input.split_once(" = ").map(|(_, value)| value))
+            .collect::<Vec<_>>();
+        let test = test_with_literals(&literals);
+        let facts = inputs
+            .iter()
+            .map(|input| (*input, ValueContext::FunctionArgument))
+            .collect::<Vec<_>>();
+        let activation = activation_with(&facts);
+        infection_evidence_for_owner(
+            &changed,
+            &[&test],
+            &activation,
+            None,
+            OwnerInputs {
+                owner: Some(&owner),
+                literal_length_boundary: None,
+                slice_counter_boundary: None,
+            },
+            other_callers,
+            assertion_macros_rebound,
+        )
+    }
+
+    /// #14388 review: only types whose `==` against a literal compares the
+    /// text qualify for the appended string-arm reading.
+    #[test]
+    fn only_plain_string_types_compare_a_literal_by_text() {
+        for accepted in [
+            "&str",
+            "& str",
+            "&'a str",
+            "&'static str",
+            "String",
+            "&String",
+        ] {
+            assert!(is_plain_string_type(accepted), "{accepted}");
+        }
+        for rejected in [
+            "&mut str",
+            "&&str",
+            "Cow<str>",
+            "impl AsRef<str>",
+            "Box<str>",
+            "T",
+            "Option<&str>",
+            "&'a",
+            "&'a mut str",
+            "Flag",
+        ] {
+            assert!(!is_plain_string_type(rejected), "{rejected}");
+        }
+    }
+
+    /// #14388 (agent-eval `struct_field`): `flag == "-v"` gains
+    /// `|| flag == "--verbose"`; a related test calling the owner with
+    /// `"--verbose"` reaches the added arm. Every near miss stays unknown.
+    #[test]
+    fn an_input_equal_to_an_appended_string_arm_reaches_the_change() {
+        let body =
+            "pub fn pick(flag: &str) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n}\n";
+        let before = "flag == \"-v\"";
+        let after = "flag == \"-v\" || flag == \"--verbose\"";
+        let reached =
+            added_string_arm_evidence(body, before, after, &["flag = \"--verbose\""], false);
+        assert_eq!(reached.state, StageState::Yes, "{}", reached.summary);
+        assert!(
+            reached.summary.contains("\"--verbose\""),
+            "{}",
+            reached.summary
+        );
+
+        // The original arm's literal does not reach the added arm.
+        let original = added_string_arm_evidence(body, before, after, &["flag = \"-v\""], false);
+        assert_ne!(original.state, StageState::Yes, "{}", original.summary);
+        // A non-matching input does not either.
+        let other = added_string_arm_evidence(body, before, after, &["flag = \"-q\""], false);
+        assert_ne!(other.state, StageState::Yes, "{}", other.summary);
+        // Another caller may feed the owner other inputs.
+        let wrapped =
+            added_string_arm_evidence(body, before, after, &["flag = \"--verbose\""], true);
+        assert_ne!(wrapped.state, StageState::Yes, "{}", wrapped.summary);
+        // A rebound assertion macro may discard the owner call.
+        let discarded = added_string_arm_evidence_with(
+            body,
+            before,
+            after,
+            &["flag = \"--verbose\""],
+            false,
+            true,
+        );
+        assert_ne!(discarded.state, StageState::Yes, "{}", discarded.summary);
+        // A parameter type with its own `PartialEq<&str>` may make an
+        // original arm true on the new literal; plain string types qualify.
+        let custom =
+            "pub fn pick(flag: Flag) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n}\n";
+        let opaque =
+            added_string_arm_evidence(custom, before, after, &["flag = \"--verbose\""], false);
+        assert_ne!(opaque.state, StageState::Yes, "{}", opaque.summary);
+        for plain in [
+            "pub fn pick(flag: String) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick<'a>(flag: &'a str) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+        ] {
+            let evidence =
+                added_string_arm_evidence(plain, before, after, &["flag = \"--verbose\""], false);
+            assert_eq!(
+                evidence.state,
+                StageState::Yes,
+                "{plain}: {}",
+                evidence.summary
+            );
+        }
+        // The argument binds a different parameter.
+        let two = "pub fn pick(mode: &str, flag: &str) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n}\n";
+        let elsewhere =
+            added_string_arm_evidence(two, before, after, &["mode = \"--verbose\""], false);
+        assert_ne!(elsewhere.state, StageState::Yes, "{}", elsewhere.summary);
+        // A rebinding before the comparison changes what is compared.
+        // The rebinding is paren-free so only the rebinding guard declines it.
+        let shadowed = "pub fn pick(flag: &str, other: &str) -> bool {\n    let flag = other;\n    flag == \"-v\" || flag == \"--verbose\"\n}\n";
+        let rebound =
+            added_string_arm_evidence(shadowed, before, after, &["flag = \"--verbose\""], false);
+        assert_ne!(rebound.state, StageState::Yes, "{}", rebound.summary);
+        // A continuation after the changed line (`&& strict`) binds tighter
+        // than the appended arm, so the chain does not end the expression.
+        let continued = "pub fn pick(flag: &str, strict: bool) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n        && strict\n}\n";
+        let tail =
+            added_string_arm_evidence(continued, before, after, &["flag = \"--verbose\""], false);
+        assert_ne!(tail.state, StageState::Yes, "{}", tail.summary);
+        // An early return on another parameter can keep the input away
+        // from the chain, and so can an earlier `?`, `match` arm, panicking
+        // macro, diverging call, index or division.
+        for diverted in [
+            "pub fn pick(flag: &str, strict: bool) -> bool {\n    if strict { return false; }\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str, gate: Option<()>) -> Option<bool> {\n    gate?;\n    Some(flag == \"-v\" || flag == \"--verbose\")\n}\n",
+            "pub fn pick(flag: &str, mode: u8) -> bool {\n    match mode { 0 => false, _ => flag == \"-v\" || flag == \"--verbose\" }\n}\n",
+            "pub fn pick(flag: &str, strict: bool) -> bool {\n    assert!(!strict);\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str, strict: bool) -> bool {\n    std::process::exit(i32::from(strict));\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str, at: usize) -> bool {\n    let _ = [true][at];\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str, by: u8) -> bool {\n    let _ = 1 / by;\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str, by: u8) -> bool {\n    let _ = 7 % by;\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str) -> bool {\n    let _g = move |x: u8| x;\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str) -> bool {\n    unreachable!{};\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+        ] {
+            let evidence = added_string_arm_evidence(
+                diverted,
+                before,
+                after,
+                &["flag = \"--verbose\""],
+                false,
+            );
+            assert_ne!(
+                evidence.state,
+                StageState::Yes,
+                "{diverted}: {}",
+                evidence.summary
+            );
+        }
+        // A struct-literal field (the agent-eval shape) is not diverted, and
+        // the literal-first spelling reads the same.
+        let field = "pub fn pick(flag: &str) -> Options {\n    Options {\n        retries: 3,\n        verbose: \"-v\" == flag || \"--verbose\" == flag,\n    }\n}\n";
+        let flipped = added_string_arm_evidence(
+            field,
+            "\"-v\" == flag",
+            "\"-v\" == flag || \"--verbose\" == flag",
+            &["flag = \"--verbose\""],
+            false,
+        );
+        assert_eq!(flipped.state, StageState::Yes, "{}", flipped.summary);
+        // An `&&` chain, a duplicated literal and a non-literal arm decline.
+        for (before, after) in [
+            ("flag == \"-v\"", "flag == \"-v\" && flag == \"--verbose\""),
+            (
+                "flag == \"--verbose\"",
+                "flag == \"--verbose\" || flag == \"--verbose\"",
+            ),
+            ("flag == \"-v\"", "flag == \"-v\" || flag == other"),
+            ("flag == \"-v\"", "flag == \"-v\" || flag != \"--verbose\""),
+        ] {
+            let evidence =
+                added_string_arm_evidence(body, before, after, &["flag = \"--verbose\""], false);
+            assert_ne!(
+                evidence.state,
+                StageState::Yes,
+                "{after}: {}",
+                evidence.summary
+            );
+        }
     }
 
     #[test]

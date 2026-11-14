@@ -426,3 +426,37 @@ message-shaped literal yields a grounded remedy or an explicit `none`, and a
 stated command is never dropped), `output::limited_check` envelope tests
 (positive and negative), and `tests/refusal_next_step.rs`
 (`json_refusals_carry_a_grounded_structured_remedy`, the built binary).
+
+## Amendment (#14452): the agent-format refusal record
+
+`ripr check --format agent` joins the machine formats with a refusal document.
+A refused run prints, on stdout, a three- or four-line record from the same
+`RefusalNotice` instead of zero bytes:
+
+```text
+#ripr agent static-advisory refused run_status=<identity> repair_route=<route>
+stop=<the redacted diagnostic on one line>
+next=<command>
+verify=refused|outcome=refused|findings=0|exposed=0|reason=<identity>
+```
+
+`next=` appears only when the remedy is one command that runs as-is, by the
+same rule as the JSON refusal's `next` (`output::refusal::runnable_command`).
+An `analysis_timeout` refusal consumes the stashed timeout projection
+(#10796): its bounded retry is the `next=` command, and stderr keeps the
+requested-input echo and retry the human format prints. A stdin diff has no
+replayable retry, so `next=` is absent. Config file content stays on stderr.
+
+## Test Mapping (Amendment #14452)
+
+- `crates/ripr/src/output/human/agent_tests.rs::refusal_record_names_the_identity_and_only_a_runnable_next_command`
+- `crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::machine_formats_pin_refusal_identity_and_human_formats_stay_prose`
+- `crates/ripr/tests/cli_smoke.rs::check_agent_refusal_emits_the_refused_record`
+- `crates/ripr/tests/cli_smoke.rs::check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery`
+
+## Implementation Mapping (Amendment #14452)
+
+- `crates/ripr/src/output/human/agent.rs::render_refusal`
+- `crates/ripr/src/output/refusal.rs::runnable_command`
+- `crates/ripr/src/cli/commands/check.rs::refuse_agent`
+- `crates/ripr/src/app/timeout_refusal.rs::TimeoutRefusalProjection::replayable_recovery_command`
