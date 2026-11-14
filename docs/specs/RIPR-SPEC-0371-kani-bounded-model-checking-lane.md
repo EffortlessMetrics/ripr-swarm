@@ -175,6 +175,46 @@ when `cargo kani` is not runnable, and when no harness is found unless
 checkouts; the CI lane never passes it. It cannot admit incomplete cover
 evidence for a nonempty harness selection.
 
+### Machine observation journal (#14472)
+
+The runner also writes `target/ripr/reports/kani.json` and immutable run-owned
+JSON/Markdown checkpoints. One typed observation record owns both projections.
+A non-success checkpoint is published before discovery or a child process;
+consumers must bind the expected run ID, not infer freshness from file presence.
+Terminal publication failures fail the command. Concurrent convenience aliases
+are last-published, not a guarantee of which invocation started most recently.
+
+The journal records selected source harnesses, their observed proof-file bytes,
+process arguments/status/deadlines, captured text and commitments, parsed native
+block identities and existing-parser cover counts. Missing selected results,
+unexpected native blocks, changed/unreadable proof files, or exceeded retained-
+text budgets cannot earn lane success. The unique selected harness-file set
+must equal the observed source-file set, with one observation per file. Missing,
+extra, duplicate or same-count substituted observations refuse admission, even
+if every observed file rechecks successfully or `--allow-empty` is present.
+Multiple harnesses in one file share its one observation. This is an internal
+inventory-consistency invariant, not complete native discovery or consumed-source
+closure. Complete historical rows survive a
+partial failure; they do not override the aggregate refusal.
+
+This is `ripr.kani-observation.v1`, not a registered-claim receipt. Claim IDs and
+generations remain null, registered claims remain zero, and claim assurance is
+not established. Proof-file rechecks are not complete or atomic consumed-source
+custody. Captured text is not guaranteed to preserve original pipe bytes.
+Provider/solver authenticity and process-tree cleanup remain unobserved.
+The existing preflight deadline repair remains separately owned by #12581.
+
+See the [observation contract and maintenance runbook](../verification/kani-observation.md)
+for byte budgets, publication/retention rules, schema, consumer requirements and
+qualification commands. The existing workflow retains JSON beside Markdown;
+this amendment does not add workflow subscriptions or required contexts. The
+current-main event-retirement policy must survive stack integration.
+
+The module and process controls are mapped by
+`.ripr/traceability.d/14472-kani-observation.toml`. They require actual native
+execution separately from schema and source checks; authored tests alone do
+not establish the journal's behavior.
+
 ### The lane
 
 `.github/workflows/kani.yml` is advisory and not a required check. It runs
@@ -276,6 +316,11 @@ It does not claim:
   `report_names_every_status_word`.
 - `xtask/tests/kani_lane_process.rs`:
   `kani_runner_requires_observed_complete_cover_evidence`.
+- `xtask/src/kani_lane/machine.rs`:
+  `retention_refusal_distinguishes_stream_and_run_budgets`.
+- `xtask/src/kani_lane/machine/retention_boundary_tests.rs`:
+  `stream_overflow_refuses_otherwise_valid_lane`,
+  `aggregate_overflow_refuses_otherwise_valid_lane`.
 - Constant-only harness witnesses:
   `production_cap_is_256_mib`, `exit_code_constants_match_documented_table`,
   `generation_counter_saturates_at_max`, `default_budget_is_valid`.

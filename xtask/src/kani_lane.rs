@@ -17,13 +17,15 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::run;
+use serde::{Deserialize, Serialize};
+
+mod machine;
 
 const HARNESS_PACKAGES: [(&str, &str); 2] = [
     ("ripr", "crates/ripr/src"),
     ("ripr-contract", "crates/ripr-contract/src"),
 ];
 const REPORT_DIR: &str = "target/ripr/reports";
-const REPORT_FILE: &str = "kani.md";
 /// Whole-run wall-clock deadline; a wedged solver is `NOT-ESTABLISHED`.
 const DEFAULT_TIMEOUT_SECS: u64 = 3600;
 /// Per-harness deadline handed to Kani, so one non-terminating harness is
@@ -32,7 +34,8 @@ const DEFAULT_TIMEOUT_SECS: u64 = 3600;
 /// without letting one wedge consume the whole-run deadline.
 const DEFAULT_HARNESS_TIMEOUT_SECS: u64 = 900;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct KaniArgs {
     pub(crate) allow_empty: bool,
     pub(crate) harness: Option<String>,
@@ -95,7 +98,8 @@ fn parse_positive(value: &str, flag: &str) -> Result<u32, String> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Harness {
     pub(crate) file: String,
     pub(crate) name: String,
@@ -157,10 +161,17 @@ fn function_name(line: &str) -> Option<String> {
     if name.is_empty() { None } else { Some(name) }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    deny_unknown_fields,
+    tag = "status",
+    content = "detail",
+    rename_all = "SCREAMING_SNAKE_CASE"
+)]
 pub(crate) enum HarnessStatus {
     Verified,
     Failed(String),
+    #[serde(rename = "NOT-ESTABLISHED")]
     NotEstablished(String),
 }
 
@@ -210,10 +221,13 @@ pub(crate) fn classify_output(output: &str) -> HarnessStatus {
     )
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CoverSummary {
     satisfied: u64,
     total: u64,
     undetermined: u64,
+    unreachable: u64,
 }
 
 /// Kani 0.68.0 emits one positive-total summary per harness. Its optional
@@ -274,6 +288,7 @@ fn parse_cover_summary(line: &str) -> Option<CoverSummary> {
         satisfied,
         total,
         undetermined,
+        unreachable,
     })
 }
 
@@ -340,6 +355,8 @@ fn classify_cover_evidence(output: &str) -> HarnessStatus {
     HarnessStatus::Verified
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct HarnessResult {
     pub(crate) harness: Harness,
     pub(crate) status: HarnessStatus,
@@ -394,11 +411,11 @@ pub(crate) fn render_report(results: &[HarnessResult], note: &str) -> String {
     for result in results {
         out.push_str(&format!(
             "| `{}` | `{}` | {} | {} | {} |\n",
-            result.harness.name,
-            result.harness.file,
+            machine::escape(&result.harness.name),
+            machine::escape(&result.harness.file),
             result.status.label(),
-            result.status.detail(),
-            result.time
+            machine::escape(result.status.detail()),
+            machine::escape(&result.time)
         ));
     }
     out
@@ -424,10 +441,54 @@ fn collect_sources(root: &Path, files: &mut Vec<(String, String)>) -> Result<(),
     Ok(())
 }
 
-fn tool_available() -> bool {
-    run::capture_output("cargo", &["kani", "--version"], "cargo kani --version")
-        .map(|captured| captured.status.success())
-        .unwrap_or(false)
+fn tool_available(report: &mut machine::Report) -> bool {
+    let started = Instant::now();
+    let argv = vec!["kani".to_string(), "--version".to_string()];
+    // Keep the existing preflight executor. #12581 owns its bounded successor;
+    // timeout_ms=null explicitly discloses this precursor's missing deadline.
+    match run::capture_output("cargo", &["kani", "--version"], "cargo kani --version") {
+        Ok(captured) => {
+            let available = captured.status.success();
+            report.capture(
+                machine::InvocationContext {
+                    package: "@preflight",
+                    argv: &argv,
+                    budget: None,
+                    elapsed: started.elapsed(),
+                    harnesses: &[],
+                },
+                machine::CaptureOutcome {
+                    exit_code: captured.status.code(),
+                    exit_success: Some(available),
+                    timed_out: false,
+                    stdout: Some(&captured.stdout),
+                    stderr: Some(&captured.stderr),
+                    error: None,
+                },
+            );
+            available
+        }
+        Err(error) => {
+            report.capture(
+                machine::InvocationContext {
+                    package: "@preflight",
+                    argv: &argv,
+                    budget: None,
+                    elapsed: started.elapsed(),
+                    harnesses: &[],
+                },
+                machine::CaptureOutcome {
+                    exit_code: None,
+                    exit_success: None,
+                    timed_out: false,
+                    stdout: None,
+                    stderr: None,
+                    error: Some(&error),
+                },
+            );
+            false
+        }
+    }
 }
 
 /// Splits Kani's output into `(qualified harness name, block text)` pairs at
@@ -593,11 +654,35 @@ fn complete_lane_verdict(
     }
 }
 
-fn run_kani(harnesses: &[Harness], args: &KaniArgs, package: &str, timeout: Duration) -> KaniRun {
+fn run_kani(
+    harnesses: &[Harness],
+    args: &KaniArgs,
+    package: &str,
+    timeout: Duration,
+    report: &mut machine::Report,
+) -> KaniRun {
     let command = kani_command(args, package);
+    let started = Instant::now();
     let output =
         match run::capture_output_with_timeout("cargo", &command, &[], timeout, "cargo kani") {
             Err(error) => {
+                report.capture(
+                    machine::InvocationContext {
+                        package,
+                        argv: &command,
+                        budget: Some(timeout),
+                        elapsed: started.elapsed(),
+                        harnesses,
+                    },
+                    machine::CaptureOutcome {
+                        exit_code: None,
+                        exit_success: None,
+                        timed_out: false,
+                        stdout: None,
+                        stderr: None,
+                        error: Some(&error),
+                    },
+                );
                 return KaniRun {
                     results: all_not_established(harnesses, &error),
                     process_problem: Some(error),
@@ -617,12 +702,47 @@ fn run_kani(harnesses: &[Harness], args: &KaniArgs, package: &str, timeout: Dura
         // The budget this invocation actually received, not the whole-run total.
         timeout.as_secs(),
     );
+    report.capture(
+        machine::InvocationContext {
+            package,
+            argv: &command,
+            budget: Some(timeout),
+            elapsed: started.elapsed(),
+            harnesses,
+        },
+        machine::CaptureOutcome {
+            exit_code: output.status.as_ref().and_then(|status| status.code()),
+            exit_success,
+            timed_out: output.timed_out,
+            stdout: Some(&output.stdout),
+            stderr: Some(&output.stderr),
+            error: None,
+        },
+    );
     let combined = format!("{}\n{}", output.stdout, output.stderr);
     reconcile_kani_output(harnesses, &combined, problem)
 }
 
 pub(crate) fn run_lane(args: &[String]) -> Result<(), String> {
+    // Publish a non-success marker before discovery or any child process. A
+    // subsequent interruption cannot leave the previous run as this run's result.
+    let (mut journal, mut report) = machine::Journal::start(Path::new(REPORT_DIR))?;
+    eprintln!("kani: run ID {}", report.run_id());
+    let lane = run_lane_observed(args, &mut report, &mut journal);
+    report.recheck_sources();
+    let verdict = report.finish(lane);
+    let markdown = journal.publish(&report)?;
+    println!("{markdown}");
+    verdict
+}
+
+fn run_lane_observed(
+    args: &[String],
+    report: &mut machine::Report,
+    journal: &mut machine::Journal,
+) -> Result<(), String> {
     let args = parse_args(args)?;
+    report.request(&args);
     let mut packages = Vec::new();
     for (package, root) in HARNESS_PACKAGES {
         let mut files = Vec::new();
@@ -631,10 +751,14 @@ pub(crate) fn run_lane(args: &[String]) -> Result<(), String> {
         if let Some(wanted) = &args.harness {
             harnesses.retain(|harness| harness.name.contains(wanted.as_str()));
         }
+        report.select(package, &files, &harnesses)?;
         packages.push((package, harnesses));
     }
+    journal.publish(report)?;
     let count: usize = packages.iter().map(|(_, harnesses)| harnesses.len()).sum();
-    let available = tool_available();
+    let available = tool_available(report);
+    report.availability(available);
+    journal.publish(report)?;
     let run = if available && count > 0 {
         eprintln!("kani: checking {count} harness(es)");
         let deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
@@ -651,8 +775,10 @@ pub(crate) fn run_lane(args: &[String]) -> Result<(), String> {
                     process_problem: Some("whole-run deadline exhausted".to_string()),
                 }
             } else {
-                run_kani(harnesses, &args, package, remaining)
+                run_kani(harnesses, &args, package, remaining, report)
             };
+            report.rows(package, &run.results);
+            journal.publish(report)?;
             results.extend(run.results);
             if let Some(problem) = run.process_problem {
                 problems.push(format!("{package}: {problem}"));
@@ -667,27 +793,18 @@ pub(crate) fn run_lane(args: &[String]) -> Result<(), String> {
             },
         }
     } else {
+        let mut results = Vec::new();
+        for (package, harnesses) in &packages {
+            let rows =
+                all_not_established(harnesses, "tool unavailable; verification did not start");
+            report.rows(package, &rows);
+            results.extend(rows);
+        }
         KaniRun {
-            results: Vec::new(),
+            results,
             process_problem: None,
         }
     };
-    let note = if !available {
-        "NOT-ESTABLISHED: cargo-kani is not installed; no harness was run.".to_string()
-    } else if let Some(problem) = &run.process_problem {
-        format!("NOT-ESTABLISHED: {problem}")
-    } else if run.results.is_empty() {
-        "NOT-ESTABLISHED: zero harnesses found.".to_string()
-    } else {
-        String::new()
-    };
-    let report = render_report(&run.results, &note);
-    fs::create_dir_all(REPORT_DIR)
-        .map_err(|err| format!("failed to create {REPORT_DIR}: {err}"))?;
-    let report_path = Path::new(REPORT_DIR).join(REPORT_FILE);
-    fs::write(&report_path, &report)
-        .map_err(|err| format!("failed to write {}: {err}", report_path.display()))?;
-    println!("{report}");
     complete_lane_verdict(
         &run.results,
         available,
