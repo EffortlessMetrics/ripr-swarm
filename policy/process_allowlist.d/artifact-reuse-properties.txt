@@ -1,0 +1,1 @@
+crates/ripr/tests/artifact_reuse_properties.rs|Command::new|1|artifact-reuse-properties|Property suite runs the built ripr binary (CARGO_BIN_EXE_ripr) on generated workspaces to compare check-artifact reuse with fresh explain/context output; integration-test only, fixed argv, no shell or network.
