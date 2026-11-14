@@ -942,7 +942,13 @@ impl ClassifiedProbeEvidence {
             fmt_literal_edit && fmt_display_assertion(test, assertion)
         };
         let assertion_admitted = |test: &TestSummary, assertion: &OracleFact| {
-            pin_syntax.admits_equality_assertion(context.probe, test, assertion, context.index)
+            pin_syntax.admits_equality_assertion(
+                context.probe,
+                context.owner_fn,
+                test,
+                assertion,
+                context.index,
+            )
                 && (!field_oracle_needs_admission
                     || pin_syntax.admits(test, assertion, context.index))
         };
@@ -1994,6 +2000,7 @@ impl ClassifiedProbeEvidence {
                     for assertion in &test.assertions {
                         let Some(refusal) = pin_syntax.equality_assertion_refusal(
                             context.probe,
+                            context.owner_fn,
                             test,
                             assertion,
                             context.index,
@@ -2077,6 +2084,7 @@ impl ClassifiedProbeEvidence {
                         pin_syntax
                             .equality_assertion_refusal(
                                 context.probe,
+                                context.owner_fn,
                                 test,
                                 assertion,
                                 context.index,

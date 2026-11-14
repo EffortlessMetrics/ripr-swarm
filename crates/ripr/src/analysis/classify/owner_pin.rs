@@ -87,7 +87,7 @@ use crate::analysis::syntax::{
     claims_macro_names, claims_payload_variant, drop_in_assertion_leaf,
     empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
     is_test_scoped_trusted_macro, local_empty_macro_names, macro_binding_scan,
-    module_declaration_unestablished_gate, module_path_targets, owner_pin_assertions,
+    module_path_targets, owner_pin_assertions,
     owner_pin_matches_assertions, parse_clean_source_file, pattern_pins, qualified_matches_paths,
     returns_leave_the_function, source_binds_value_name, source_declares_value_name,
     source_imported_claims_macros, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
@@ -961,11 +961,12 @@ impl OwnerPinSyntax {
     pub(in crate::analysis) fn admits_equality_assertion(
         &self,
         probe: &Probe,
+        owner: Option<&FunctionSummary>,
         test: &TestSummary,
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> bool {
-        self.admits_assertion_family(probe.family.clone(), test, assertion, index)
+        self.admits_assertion_family(probe.family.clone(), owner, test, assertion, index)
             && self
                 .matches_expected_panic_refusal(probe, test, assertion, index)
                 .is_none()
@@ -980,7 +981,7 @@ impl OwnerPinSyntax {
         index: &RustIndex,
     ) -> bool {
         !test.attrs.iter().any(|attr| attr.contains("should_panic"))
-            && self.admits_assertion_family(ProbeFamily::ReturnValue, test, assertion, index)
+            && self.admits_assertion_family(ProbeFamily::ReturnValue, None, test, assertion, index)
     }
 
     fn matches_expected_panic_refusal(
@@ -1017,7 +1018,7 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> bool {
-        self.admits_assertion_family(ProbeFamily::SideEffect, test, assertion, index)
+        self.admits_assertion_family(ProbeFamily::SideEffect, None, test, assertion, index)
     }
 
     /// The family-aware refusal for one assertion, including the #14537
@@ -1027,6 +1028,7 @@ impl OwnerPinSyntax {
     fn assertion_family_refusal(
         &self,
         family: ProbeFamily,
+        owner: Option<&FunctionSummary>,
         test: &TestSummary,
         assertion: &OracleFact,
         index: &RustIndex,
@@ -1039,50 +1041,57 @@ impl OwnerPinSyntax {
         };
         // #14537: a predicate equality whose test file is composed through a
         // gated `mod` declaration shares the bare `assert!`'s admission for
-        // that build-availability step only. Re-answer the execution context
-        // with only that Module edge skipped: shadowing, an uncalled closure,
-        // a conditional path and a non-standard macro binding still withhold
-        // credit. The RIPR-SPEC-0197 predicate fixtures pin the round-1
-        // deletion (they are inline `#[cfg(test)] mod tests`, so this arm does
-        // not fire for them); the gated-module tests below pin this arm.
-        match refusal {
-            Some(AssertionRefusal::ModuleDeclaration {
-                parent,
-                line,
-                declaration,
-            }) if family == ProbeFamily::Predicate => {
-                // Only an unevaluable cfg atom is admitted. A provably-off
-                // gate, any other attribute, or a declaration not found
-                // exactly once keeps the refusal, so a test that never runs
-                // cannot credit the equality (#14537).
-                let unknown =
-                    index.files().get(&parent).and_then(|facts| {
-                        module_declaration_unestablished_gate(&facts.source, line)
-                    }) == Some(true);
-                if unknown {
-                    let skip = self.module_edge_child_for_test(test, index);
-                    self.context_refusal_without_provenance(
-                        test,
-                        assertion,
-                        index,
-                        matches_context,
-                        skip.as_deref(),
-                    )
-                } else {
-                    Some(AssertionRefusal::ModuleDeclaration {
-                        parent,
-                        line,
-                        declaration,
-                    })
-                }
-            }
-            refusal => refusal,
+        // that build-availability step only, and only under the #14463
+        // shared-gate rule: the owner must be reached solely through that same
+        // declaration, so the gate cannot separate the test from the owner.
+        // An owner reachable without the gate (an ungated `lib.rs` item), a
+        // provably-off gate, an include-only context, a shadowed macro, an
+        // uncalled closure or a conditional path still withholds credit
+        // (RIPR-SPEC-0197: an unknown gate grants no credit on its own).
+        if family != ProbeFamily::Predicate {
+            return refusal;
         }
+        let Some(module_refusal) = refusal
+            .as_ref()
+            .filter(|refusal| matches!(refusal, AssertionRefusal::ModuleDeclaration { .. }))
+        else {
+            return refusal;
+        };
+        let shared_gate = owner.is_some_and(|owner| {
+            super::refusal_miss::owner_compiled_only_under_refused_declaration(
+                index,
+                owner,
+                test,
+                module_refusal,
+            )
+        });
+        // Read the rest of the execution context with only that Module edge
+        // skipped. A refusal that survives the skip is the real reason credit
+        // is withheld (a dead branch, an ignored test, a shadowed macro), so
+        // the disclosure names it rather than the gate. With nothing left to
+        // refuse, the shared gate decides: admitted when the owner is reached
+        // only through the declaration, otherwise the gate itself withholds.
+        let skip = self.module_edge_child_for_test(test, index);
+        let inner = self.context_refusal_without_provenance(
+            test,
+            assertion,
+            index,
+            matches_context,
+            skip.as_deref(),
+        );
+        if inner.is_some() {
+            return inner;
+        }
+        if shared_gate {
+            return None;
+        }
+        refusal
     }
 
     fn admits_assertion_family(
         &self,
         family: ProbeFamily,
+        owner: Option<&FunctionSummary>,
         test: &TestSummary,
         assertion: &OracleFact,
         index: &RustIndex,
@@ -1138,7 +1147,7 @@ impl OwnerPinSyntax {
             return true;
         }
         let refusal =
-            self.assertion_family_refusal(family.clone(), test, assertion, index, matches_context);
+            self.assertion_family_refusal(family.clone(), owner, test, assertion, index, matches_context);
         match refusal {
             None => true,
             // Identical spellings on one line, one of which provably runs
@@ -1203,17 +1212,19 @@ impl OwnerPinSyntax {
     pub(in crate::analysis) fn equality_assertion_refusal(
         &self,
         probe: &Probe,
+        owner: Option<&FunctionSummary>,
         test: &TestSummary,
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> Option<AssertionRefusal> {
-        if self.admits_equality_assertion(probe, test, assertion, index) {
+        if self.admits_equality_assertion(probe, owner, test, assertion, index) {
             return None;
         }
         let matches_context = matches_return_assertion(&probe.family, assertion);
         let refusal = self
             .assertion_family_refusal(
                 probe.family.clone(),
+                owner,
                 test,
                 assertion,
                 index,

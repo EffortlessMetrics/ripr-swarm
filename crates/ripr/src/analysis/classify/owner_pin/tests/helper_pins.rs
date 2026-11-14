@@ -65,7 +65,7 @@ fn helper_assertion_admitted(source: &str) -> Result<(bool, bool), String> {
     let pin = OwnerReturnPin::establish(&probe, owner, &index)
         .ok_or("premise: the free owner establishes a pin")?;
     let syntax = OwnerPinSyntax::default();
-    let shared = syntax.admits_equality_assertion(&probe, test, &assertion, &index);
+    let shared = syntax.admits_equality_assertion(&probe, Some(owner), test, &assertion, &index);
     let pinned = pin.admits(test, &assertion, &index, &|_, _| false, &syntax);
     Ok((shared, pinned))
 }
@@ -287,7 +287,7 @@ fn the_indexed_helper_assertion_is_the_admitted_one() -> Result<(), Box<dyn Erro
     let pin = OwnerReturnPin::establish(&probe, owner, &index)
         .ok_or("premise: the free owner establishes a pin")?;
     let syntax = OwnerPinSyntax::default();
-    assert!(syntax.admits_equality_assertion(&probe, test, assertion, &index));
+    assert!(syntax.admits_equality_assertion(&probe, Some(owner), test, assertion, &index));
     assert!(pin.admits(test, assertion, &index, &|_, _| false, &syntax));
     Ok(())
 }
@@ -326,7 +326,7 @@ fn returned_helpers_lend_the_indexed_panic_assertion_and_exact_loan() -> Result<
         let owner = owner(&index, "with_tip");
         let probe = return_probe(owner, "tip + bill");
         let pin = OwnerReturnPin::establish(&probe, owner, &index).ok_or("premise: owner pin")?;
-        assert!(syntax.admits_equality_assertion(&probe, test, assertion, &index));
+        assert!(syntax.admits_equality_assertion(&probe, Some(owner), test, assertion, &index));
         assert!(pin.admits(test, assertion, &index, &|_, _| false, &syntax));
     }
     Ok(())
@@ -525,8 +525,15 @@ fn helper_assertion_refusal(source: &str) -> Result<Option<AssertionRefusal>, St
         .into_iter()
         .find(|oracle| oracle.text.starts_with("assert_eq!(with_tip("))
         .ok_or("premise: the helper's assert_eq! parses")?;
-    let probe = return_probe(owner(&index, "with_tip"), "tip + bill");
-    Ok(OwnerPinSyntax::default().equality_assertion_refusal(&probe, test, &assertion, &index))
+    let owner = owner(&index, "with_tip");
+    let probe = return_probe(owner, "tip + bill");
+    Ok(OwnerPinSyntax::default().equality_assertion_refusal(
+        &probe,
+        Some(owner),
+        test,
+        &assertion,
+        &index,
+    ))
 }
 
 /// Whether the owner pin admits the first `assert_eq!` in `check_tip` for
@@ -727,20 +734,26 @@ fn a_short_circuit_tail_reads_helper_calls_by_parameter() -> Result<(), String> 
 }
 
 /// #14537: a predicate `assert_eq!` is admitted like the bare `assert!` for
-/// the same family. The bare `assert!` was already ungated for `Predicate`;
-/// the equality took the context gate and was refused, so a discriminating
-/// test credited the bare `assert!` instead of the equality.
+/// the same family, under the #14463 shared-gate rule: the owner is reached
+/// only through the gated `mod` declaration, so the gate cannot separate the
+/// test from the owner. The bare `assert!` was already ungated for
+/// `Predicate`; the equality took the context gate and was refused, so a
+/// discriminating test credited the bare `assert!` instead of the equality.
 #[test]
 fn a_predicate_assert_eq_is_admitted_like_the_bare_assert() -> Result<(), String> {
-    let lib = "#[cfg(feature = \"lang-python\")]\nmod python;\n\npub fn gate(value: u32) -> bool {\n    10 <= value\n}\n";
-    let python = "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn pins() {\n        assert_eq!(gate(10), true);\n    }\n}\n";
+    let lib = "#[cfg(feature = \"lang-python\")]\nmod python;\n";
+    let python = "pub fn gate(value: u32) -> bool {\n    10 <= value\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn pins() {\n        assert_eq!(gate(10), true);\n    }\n}\n";
     let index = index(&[(LIB, lib), ("src/python.rs", python)]);
     let test = index
         .tests()
         .iter()
         .find(|test| test.name == "pins")
         .ok_or("premise: `pins` is indexed")?;
-    let owner = owner(&index, "gate");
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "gate" && function.file == Path::new("src/python.rs"))
+        .ok_or("premise: `gate` is indexed from src/python.rs")?;
     let probe = super::predicate_probe(owner, "10 <= value");
     let assertion = parser_oracles_for_function(&test.body, test.start_line)
         .unwrap_or_default()
@@ -749,20 +762,22 @@ fn a_predicate_assert_eq_is_admitted_like_the_bare_assert() -> Result<(), String
         .ok_or("premise: the test's assert_eq! parses")?;
     let syntax = OwnerPinSyntax::default();
     assert!(
-        syntax.admits_equality_assertion(&probe, test, &assertion, &index),
-        "a predicate assert_eq! is admitted like the bare assert!"
+        syntax.admits_equality_assertion(&probe, Some(owner), test, &assertion, &index),
+        "a predicate assert_eq! is admitted like the bare assert! when the owner is reached only through the gated mod"
     );
     Ok(())
 }
 
-/// #14537 repair: the module-declaration exception is about the test's build
-/// availability only. A predicate equality whose test shadows `assert_eq!`
-/// with a local `macro_rules!` is still refused even though the module that
-/// composes it is `cfg`-gated.
+/// #14537 repair: the shared-gate rule is not a blanket skip of the Module
+/// edge. An owner the crate compiles without the gated declaration (an
+/// ungated `lib.rs` item) is not reached only through it, so the
+/// module-declaration refusal stays and the equality is not credited
+/// (RIPR-SPEC-0197: an unknown gate grants no credit on its own).
 #[test]
-fn a_gated_predicate_assert_eq_is_still_refused_when_it_is_shadowed() -> Result<(), String> {
+fn a_predicate_assert_eq_reaching_an_ungated_owner_through_a_gated_mod_is_refused(
+) -> Result<(), String> {
     let lib = "#[cfg(feature = \"lang-python\")]\nmod python;\n\npub fn gate(value: u32) -> bool {\n    10 <= value\n}\n";
-    let python = "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn pins() {\n        macro_rules! assert_eq { ($($tokens:tt)*) => {{}}; }\n        assert_eq!(gate(10), true);\n    }\n}\n";
+    let python = "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn pins() {\n        assert_eq!(crate::gate(10), true);\n    }\n}\n";
     let index = index(&[(LIB, lib), ("src/python.rs", python)]);
     let test = index
         .tests()
@@ -774,10 +789,48 @@ fn a_gated_predicate_assert_eq_is_still_refused_when_it_is_shadowed() -> Result<
     let assertion = parser_oracles_for_function(&test.body, test.start_line)
         .unwrap_or_default()
         .into_iter()
+        .find(|oracle| oracle.text.starts_with("assert_eq!(crate::gate("))
+        .ok_or("premise: the test's assert_eq! parses")?;
+    let syntax = OwnerPinSyntax::default();
+    let refusal = syntax.equality_assertion_refusal(&probe, Some(owner), test, &assertion, &index);
+    assert!(
+        matches!(refusal, Some(AssertionRefusal::ModuleDeclaration { .. })),
+        "an ungated owner reached through a gated mod keeps the module-declaration refusal (refusal={refusal:?})"
+    );
+    assert!(
+        !syntax.admits_equality_assertion(&probe, Some(owner), test, &assertion, &index),
+        "a predicate assert_eq! that reaches an ungated owner through a gated mod is not admitted"
+    );
+    Ok(())
+}
+
+/// #14537 repair: the module-declaration exception is about the test's build
+/// availability only. A predicate equality whose test shadows `assert_eq!`
+/// with a local `macro_rules!` is still refused even though the owner is
+/// reached only through the `cfg`-gated module that composes the test.
+#[test]
+fn a_gated_predicate_assert_eq_is_still_refused_when_it_is_shadowed() -> Result<(), String> {
+    let lib = "#[cfg(feature = \"lang-python\")]\nmod python;\n";
+    let python = "pub fn gate(value: u32) -> bool {\n    10 <= value\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn pins() {\n        macro_rules! assert_eq { ($($tokens:tt)*) => {{}}; }\n        assert_eq!(gate(10), true);\n    }\n}\n";
+    let index = index(&[(LIB, lib), ("src/python.rs", python)]);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "pins")
+        .ok_or("premise: `pins` is indexed")?;
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "gate" && function.file == Path::new("src/python.rs"))
+        .ok_or("premise: `gate` is indexed from src/python.rs")?;
+    let probe = super::predicate_probe(owner, "10 <= value");
+    let assertion = parser_oracles_for_function(&test.body, test.start_line)
+        .unwrap_or_default()
+        .into_iter()
         .find(|oracle| oracle.text.starts_with("assert_eq!(gate("))
         .ok_or("premise: the test's assert_eq! parses")?;
     let syntax = OwnerPinSyntax::default();
-    let refusal = syntax.equality_assertion_refusal(&probe, test, &assertion, &index);
+    let refusal = syntax.equality_assertion_refusal(&probe, Some(owner), test, &assertion, &index);
     assert!(
         matches!(
             &refusal,
@@ -787,7 +840,7 @@ fn a_gated_predicate_assert_eq_is_still_refused_when_it_is_shadowed() -> Result<
         "a shadowed predicate assert_eq! is still refused as MacroBinding (refusal={refusal:?})"
     );
     assert!(
-        !syntax.admits_equality_assertion(&probe, test, &assertion, &index),
+        !syntax.admits_equality_assertion(&probe, Some(owner), test, &assertion, &index),
         "a shadowed predicate assert_eq! is not admitted"
     );
     Ok(())
@@ -827,7 +880,7 @@ fn a_gated_predicate_assert_eq_in_an_include_fragment_is_still_refused() -> Resu
         "an include-fragment predicate assert_eq! is still refused as IncludedFile (refusal={refusal:?})"
     );
     assert!(
-        !syntax.admits_equality_assertion(&probe, test, &assertion, &index),
+        !syntax.admits_equality_assertion(&probe, Some(owner), test, &assertion, &index),
         "an include-fragment predicate assert_eq! is not admitted"
     );
     Ok(())
@@ -855,13 +908,13 @@ fn a_predicate_assert_eq_in_a_known_disabled_module_is_still_refused() -> Result
         .find(|oracle| oracle.text.starts_with("assert_eq!(gate("))
         .ok_or("premise: the test's assert_eq! parses")?;
     let syntax = OwnerPinSyntax::default();
-    let refusal = syntax.equality_assertion_refusal(&probe, test, &assertion, &index);
+    let refusal = syntax.equality_assertion_refusal(&probe, Some(owner), test, &assertion, &index);
     assert!(
         matches!(refusal, Some(AssertionRefusal::ModuleDeclaration { .. })),
         "a `#[cfg(any())]` module keeps the module-declaration refusal (refusal={refusal:?})"
     );
     assert!(
-        !syntax.admits_equality_assertion(&probe, test, &assertion, &index),
+        !syntax.admits_equality_assertion(&probe, Some(owner), test, &assertion, &index),
         "a predicate assert_eq! in a module no build compiles is not admitted"
     );
     Ok(())
@@ -891,13 +944,13 @@ fn a_predicate_assert_eq_in_a_cfg_attr_disabled_module_is_still_refused() -> Res
         .find(|oracle| oracle.text.starts_with("assert_eq!(gate("))
         .ok_or("premise: the test's assert_eq! parses")?;
     let syntax = OwnerPinSyntax::default();
-    let refusal = syntax.equality_assertion_refusal(&probe, test, &assertion, &index);
+    let refusal = syntax.equality_assertion_refusal(&probe, Some(owner), test, &assertion, &index);
     assert!(
         matches!(refusal, Some(AssertionRefusal::ModuleDeclaration { .. })),
         "a `cfg_attr(all(), cfg(any()))` module keeps the module-declaration refusal (refusal={refusal:?})"
     );
     assert!(
-        !syntax.admits_equality_assertion(&probe, test, &assertion, &index),
+        !syntax.admits_equality_assertion(&probe, Some(owner), test, &assertion, &index),
         "a predicate assert_eq! in a module no build compiles is not admitted"
     );
     Ok(())
@@ -909,10 +962,14 @@ fn a_predicate_assert_eq_in_a_cfg_attr_disabled_module_is_still_refused() -> Res
 #[test]
 fn a_gated_predicate_assert_eq_in_a_dead_branch_or_ignored_test_is_still_refused()
 -> Result<(), String> {
-    let lib = "#[cfg(feature = \"lang-python\")]\nmod python;\n\npub fn gate(value: u32) -> bool {\n    10 <= value\n}\n";
-    let python = "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn pins() {\n        if false {\n            assert_eq!(gate(10), true);\n        }\n    }\n\n    #[test]\n    #[ignore]\n    fn ignored() {\n        assert_eq!(gate(10), true);\n    }\n}\n";
+    let lib = "#[cfg(feature = \"lang-python\")]\nmod python;\n";
+    let python = "pub fn gate(value: u32) -> bool {\n    10 <= value\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn pins() {\n        if false {\n            assert_eq!(gate(10), true);\n        }\n    }\n\n    #[test]\n    #[ignore]\n    fn ignored() {\n        assert_eq!(gate(10), true);\n    }\n}\n";
     let index = index(&[(LIB, lib), ("src/python.rs", python)]);
-    let owner = owner(&index, "gate");
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "gate" && function.file == Path::new("src/python.rs"))
+        .ok_or("premise: `gate` is indexed from src/python.rs")?;
     let probe = super::predicate_probe(owner, "10 <= value");
     let syntax = OwnerPinSyntax::default();
     for (name, expected) in [
@@ -932,7 +989,7 @@ fn a_gated_predicate_assert_eq_in_a_dead_branch_or_ignored_test_is_still_refused
             .into_iter()
             .find(|oracle| oracle.text.starts_with("assert_eq!(gate("))
             .ok_or_else(|| format!("premise: `{name}`'s assert_eq! parses"))?;
-        let refusal = syntax.equality_assertion_refusal(&probe, test, &assertion, &index);
+        let refusal = syntax.equality_assertion_refusal(&probe, Some(owner), test, &assertion, &index);
         // Assert the variant, not just `is_some()`: `ModuleDeclaration` is also
         // `Some`, so `is_some()` would pass whether the arm skipped the module
         // edge, skipped nothing, or skipped the whole provenance step.
@@ -953,7 +1010,7 @@ fn a_gated_predicate_assert_eq_in_a_dead_branch_or_ignored_test_is_still_refused
         };
         assert!(matched, "{name}: {expected} (refusal={refusal:?})");
         assert!(
-            !syntax.admits_equality_assertion(&probe, test, &assertion, &index),
+            !syntax.admits_equality_assertion(&probe, Some(owner), test, &assertion, &index),
             "{name}: a dead or ignored predicate assert_eq! is not admitted"
         );
     }
