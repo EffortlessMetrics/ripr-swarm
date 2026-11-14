@@ -739,9 +739,8 @@ fn publish_staged(
         }
         drop(file);
         match publish {
-            Publish::Replace => {
-                std::fs::rename(tmp_path, path).map_err(|err| fail(Stage::Finalize, path, err))
-            }
+            Publish::Replace => std::fs::rename(tmp_path, path)
+                .map_err(|err| fail(Stage::Finalize, path, plain_finalize_error(path, err))),
             Publish::NoReplace => {
                 std::fs::hard_link(tmp_path, path)
                     .map_err(|err| fail(Stage::Finalize, path, err))?;
@@ -754,6 +753,22 @@ fn publish_staged(
         let _ = std::fs::remove_file(tmp_path);
     }
     result
+}
+
+/// A rename over a directory fails with a host errno that differs by
+/// platform (`Is a directory (os error 21)` on Unix, access denied on
+/// Windows) and does not say what to pass instead, so name the cause and the
+/// fix. Any other rename failure keeps its OS detail.
+fn plain_finalize_error(path: &Path, err: std::io::Error) -> std::io::Error {
+    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir()) {
+        std::io::Error::new(
+            std::io::ErrorKind::IsADirectory,
+            "the destination is a directory, not a file; pass a file path, such as one inside \
+             that directory",
+        )
+    } else {
+        err
+    }
 }
 
 #[cfg(test)]
@@ -867,6 +882,13 @@ mod tests {
         assert!(
             error.starts_with("failed to finalize test artifact "),
             "unexpected error: {error}"
+        );
+        assert!(
+            error.ends_with(
+                ": the destination is a directory, not a file; pass a file path, such as one \
+                 inside that directory"
+            ),
+            "a directory destination must be named without the host errno: {error}"
         );
         assert!(
             error.contains(destination.to_string_lossy().as_ref()),
