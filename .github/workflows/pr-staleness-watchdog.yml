@@ -256,10 +256,10 @@ jobs:
                 else
                   dark=$((dark + 1)); dark_counted=1
                   # Quiet for 10 minutes after any PR activity: a label just applied has not run yet.
-                  # An unreadable head may be a conflict, so it never blames a push.
+                  # An unreadable head may be a conflict, so neither the row nor the warning may blame a push (#14636).
                   [ "$mergeable_state" = "unknown" ] || [ $(($(date +%s) - $(date -d "$updated_at" +%s))) -lt 600 ] || dark_kind="push"
-                  disposition="DARK; re-apply merge-ready for qualification, then enqueue through the native queue route (\`$head_ref\`)$unreadable_note"
-                  echo "::warning title=Dark merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run (pushed after the request, or the label event was dropped); remove and re-apply merge-ready for qualification, then enqueue through the native queue route after qualification is green."
+                  if [ "$mergeable_state" = "unknown" ]; then disposition="deferred to the next sweep; check mergeability before re-applying merge-ready (\`$head_ref\`)$unreadable_note"; else disposition="DARK; re-apply merge-ready for qualification, then enqueue through the native queue route (\`$head_ref\`)$unreadable_note"; fi
+                  if [ "$mergeable_state" = "unknown" ]; then echo "::warning title=Unreadable merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run, and its mergeability is unreadable; the next sweep re-reads it, so check mergeability before re-applying merge-ready."; else echo "::warning title=Dark merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run (pushed after the request, or the label event was dropped); remove and re-apply merge-ready for qualification, then enqueue through the native queue route after qualification is green."; fi
                 fi
               fi
               ours="$(ours_state "$head_sha")"
