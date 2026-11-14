@@ -549,7 +549,10 @@ fn crate_relative_alias_shares_compilation_unit(
         }
     }
     if alias_module.is_empty() {
-        return true;
+        // `crate::owner` names the crate root of the compilation unit that
+        // compiles the test, so an empty alias module credits only when that
+        // root is the owner's crate root (#14508 review).
+        return context::crate_root_file_key(test_file).as_deref() == owner_crate_root;
     }
     let Some(owner_file) = owner_file else {
         return false;

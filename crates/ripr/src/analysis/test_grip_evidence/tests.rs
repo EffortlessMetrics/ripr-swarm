@@ -23708,6 +23708,45 @@ fn given_direct_owner_alias_when_a_bin_target_imports_a_library_module_then_owne
 }
 
 #[test]
+fn given_direct_owner_alias_when_a_nested_bin_module_imports_the_library_root_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: a module inside a `src/bin/<name>` target is not the
+    // target root, but its `crate::owner` still names the binary crate, never
+    // the library root `src/lib.rs`.
+    let library = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n";
+    let binary_root = "mod work;\n\nfn main() {}\n";
+    let nested = "use crate::owner as dt;\n\n#[test]\nfn nested_bin_rival() {\n    assert_eq!(dt(7), 7);\n}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("src/lib.rs", library),
+            ("src/bin/cli.rs", binary_root),
+            ("src/bin/cli/work.rs", nested),
+        ],
+    )?;
+    let files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("src/bin/cli.rs"),
+        PathBuf::from("src/bin/cli/work.rs"),
+    ];
+    let evidence = evidence_for_alias_seam(&root, &files, "src/lib.rs")?;
+    assert!(
+        direct_owner_call_tests(&evidence).is_empty(),
+        "a nested bin module's `crate::owner` must not credit the library root: {:?}",
+        evidence.related_tests
+    );
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .all(|fact| fact.value != "7"),
+        "the nested bin rival's argument must not become an observed value: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+#[test]
 fn given_direct_owner_alias_when_a_bin_only_package_imports_its_own_module_then_owner_keeps_related_test()
 -> Result<(), String> {
     // #14508 review control: with no library target, `mod pricing;` in

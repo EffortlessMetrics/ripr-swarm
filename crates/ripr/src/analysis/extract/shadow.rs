@@ -307,6 +307,30 @@ pub(crate) fn body_shadows_callee_at_line(body: &str, callee: &str, body_line: u
         || test_body_scoped_shadow_at_line(body, callee)
 }
 
+/// The current match arm's pattern: the text after the last top-level `,`,
+/// `;` or `{` in the pre-`=>` text. Depth tracking keeps a tuple or struct
+/// pattern's bindings, which a plain `rsplit` on `,` would drop (#14508
+/// review).
+fn arm_pattern_before_arrow(text: &str) -> &str {
+    let mut depth = 0i32;
+    let mut cut = 0usize;
+    for (index, byte) in text.bytes().enumerate() {
+        match byte {
+            b')' | b']' | b'}' => depth -= 1,
+            b'(' | b'[' => depth += 1,
+            b'{' => {
+                if depth == 0 {
+                    cut = index + 1;
+                }
+                depth += 1;
+            }
+            b',' | b';' if depth == 0 => cut = index + 1,
+            _ => {}
+        }
+    }
+    &text[cut..]
+}
+
 /// Lexical fallback for the scoped binding forms the parser facts cover
 /// (#14508 review): a closure, `for`, match-arm, `if let`/`while let` or
 /// nested-fn parameter that names `callee`. The lexical path is a
@@ -343,7 +367,7 @@ pub(crate) fn test_body_scoped_shadow_at_line(body: &str, callee: &str) -> bool 
         // review).
         let mut rest = arms;
         while let Some((pattern, after)) = rest.split_once("=>") {
-            let pattern = pattern.rsplit(['{', ',', ';']).next().unwrap_or(pattern);
+            let pattern = arm_pattern_before_arrow(pattern);
             if pattern_contains_word(pattern, callee) {
                 return true;
             }
@@ -627,6 +651,16 @@ mod fact_authority_tests {
             (
                 "last arm binding",
                 "match v { Some(x) => helper(x), owner => owner(1) }",
+                true,
+            ),
+            (
+                "tuple pattern binding",
+                "match pair { (owner, _) => owner(100, 100), _ => 0 }",
+                true,
+            ),
+            (
+                "struct pattern binding",
+                "match pair { Foo { owner, .. } => owner(100, 100), _ => 0 }",
                 true,
             ),
         ];
