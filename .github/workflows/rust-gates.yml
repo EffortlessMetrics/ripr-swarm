@@ -147,6 +147,9 @@ jobs:
     env:
       CARGO_BUILD_JOBS: ${{ inputs.cargo-build-jobs }}
       CARGO_TERM_COLOR: always
+      # This job discards its target tree. rust-cache sets this on hosted
+      # runners, but the self-hosted sccache route skips that action.
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -235,6 +238,8 @@ jobs:
             echo "SCCACHE_DIR=$SCCACHE_DIR"
             echo "SCCACHE_CACHE_SIZE=$SCCACHE_CACHE_SIZE"
             echo "CARGO_TARGET_DIR=$CARGO_TARGET_DIR"
+            echo "TEMP=$TMPDIR"
+            echo "TMP=$TMPDIR"
             echo "TMPDIR=$TMPDIR"
           } >> "$GITHUB_ENV"
 

@@ -115,9 +115,12 @@ node editors/vscode/test/developerSetup.cjs --json
 The activation helper also accepts an installed exact release or `stable`; it
 records the exact resolved compiler and carries it into child and fixture
 directories. It does not install a toolchain. Keep conflicting explicit compiler
-selectors visible and resolve them deliberately. The checkout-local `target`
-directory is still needed for the forced linker temporary paths in
-`.cargo/config.toml`, even with a separate `CARGO_TARGET_DIR`.
+selectors visible and resolve them deliberately. For each unset `TEMP`, `TMP`
+or `TMPDIR`, `.cargo/config.toml` falls back to checkout-local `target/`.
+Prepared temp paths supplied by the caller take precedence. A separate
+`CARGO_TARGET_DIR` does not select linker scratch: use the
+[managed build setup](docs/TESTING.md#focused-local-iteration) to
+prepare and select all three temp paths on the intended build volume.
 
 The source Node command needs no npm packages or RIPR/xtask build. Its human
 view omits `--json`; `npm run setup:check -- --json` from `editors/vscode` is
@@ -136,7 +139,7 @@ The report derives requirements from the existing owners:
 | LLVM and Nextest | `.github/workflows/rust-gates.yml` and the selected compiler's sysroot. The current Nextest install input has no version pin; record the actual `cargo nextest --version` result during verification. |
 | Editor host/version and network | The locked `@vscode/test-electron` downloader owns VS Code version selection, cache and update/download redirects. A network permission or proxy/CA setting is not a successful download. |
 | Native editor dependencies/display | A real host smoke below establishes that the selected host starts with the current native libraries and display. Provision these in the environment before verification. |
-| Output locations | `.cargo/config.toml`, `CARGO_TARGET_DIR`, `RIPR_TEST_ARTIFACT_ROOT` and the existing editor runner; the report observes access without creating directories or claiming a full-build resource budget. |
+| Output locations | `.cargo/config.toml`, `CARGO_TARGET_DIR`, `TEMP`/`TMP`/`TMPDIR`, `RIPR_TEST_ARTIFACT_ROOT` and the existing editor runner; the report observes access without creating directories or claiming a full-build resource budget. Full verification also resolves Cargo's effective target and intermediate directories before compiling. |
 
 ### Explicit setup verification
 
@@ -208,9 +211,15 @@ stable. Only the helper's eight activation fields are returned to the coordinato
 and merged into its child environment. The parent shell is unchanged.
 
 Before broad Cargo work, the preset checks source/runtime/dependency facts and
-writable work paths, observes actual tool versions, runs the small selected-compiler
-real-profile control, then invokes `setup:verify-editor`. It next runs `cargo policy
-preflight`, `cargo xtask ci-full`, one `npm run test:e2e`, and `npm run package`.
+writable work paths and observes actual tool versions. Before its first compilation,
+the selected Cargo resolves the final and intermediate build directories through
+offline, locked metadata. The preset checks that metadata belongs to this checkout,
+prepares and probes both directories, and records available bytes for each distinct
+physical directory. Invalid metadata or an unusable directory stops validation.
+These observations do not establish a quota or that the full-build resource budget
+fits. It then runs the small selected-compiler real-profile control and invokes
+`setup:verify-editor`. It next runs `cargo policy preflight`, `cargo xtask ci-full`,
+one `npm run test:e2e`, and `npm run package`.
 Cargo work is serial. The canonical editor owner performs its normal server
 build/archive checks and required TypeScript compile, so a separate `npm run
 compile` is unnecessary; packaging uses those compiled outputs. Its later fresh
@@ -232,9 +241,11 @@ Each explicit attempt first invalidates only
 selected), then writes a new bounded result and a unique `setup-full-*` evidence
 directory. Completed stage logs and the separate early/canonical host receipts
 survive a later failure. Stage transcripts merge stdout and stderr through a
-fixed literal-argv capture wrapper; activation metadata uses a separate
-allowlisted channel and is not retained wholesale. Logs are capped at 64 KiB per
-stage; failures retain a redacted error summary and the terminal output tail so
+fixed literal-argv capture wrapper. Activation and Cargo metadata use stdout
+separate from stderr; successful calls retain only their selected fields.
+Activation transfers its eight allowlisted fields; Cargo metadata contributes
+the validated build paths. Logs are capped at 64 KiB per stage; failures retain a
+redacted error summary and the terminal output tail so
 build progress cannot displace the useful native error. Each native command has
 a 16 MiB output cap, and the result is capped at
 128 KiB. The attempt deadline defaults to two hours; use `--timeout-ms N` for an
@@ -455,10 +466,11 @@ Use an already built `ripr doctor --profile source-build --root . --json` for th
 existing typed setup diagnosis. Activation is compiler selection, not a second
 doctor or a passing build/test result.
 
-Create the checkout's `target/` even when `CARGO_TARGET_DIR` points elsewhere:
-`.cargo/config.toml` redirects temporary files there. Keep a candidate's target
-directory stable and serialize Cargo writers sharing it or a constrained host;
-an earlier warm cache does not prove a later cold link will fit.
+Prepare each effective `TEMP`, `TMP` and `TMPDIR` before Cargo work. A caller's
+supplied path takes precedence; unset variables use the checkout's `target/`
+fallback independently of `CARGO_TARGET_DIR`. Keep a candidate's target directory
+stable and serialize Cargo writers sharing it or a constrained host; an earlier
+warm cache does not prove a later cold link will fit.
 
 After restoration, repeat activation and the required capability probes in the
 new task. Record the actual compiler identity, native command results, and

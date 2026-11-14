@@ -48,26 +48,32 @@ later command returned zero.
 
 ## Workspace linker temp redirect
 
-`.cargo/config.toml` in this repository force-redirects the linker temp
-variables `TEMP`, `TMP`, and `TMPDIR` into the workspace-relative `target/`
-directory (`force = true`; PR #397: keep MSVC linker temp files off a full
-system temp drive). An exported `TEMP`/`TMP` does not override it.
+`.cargo/config.toml` supplies workspace-relative `target/` fallbacks for
+`TEMP`, `TMP`, and `TMPDIR`. Supplied environment values take precedence. Agents
+and CI must create and select their owned temp directory before invoking Cargo;
+use the Bash or PowerShell setup in [focused local iteration](../TESTING.md#focused-local-iteration).
 
-In a fresh `git worktree add` checkout that builds with an isolated
-`CARGO_TARGET_DIR`, the workspace-local `target/` does not exist, and MSVC
-`link.exe` fails with `LNK1104: cannot open file '...\target\lnk{GUID}.tmp'`
-while linking the first build scripts — even though objects and `/OUT`
-correctly land in the isolated target. Create the directory before building;
-it is git-ignored and holds only transient linker temps:
+The former `force = true` policy (PR #397) kept MSVC linker files off a full
+system temp drive, but also overrode CI's leased temp directory and an agent's
+explicit selection. Raw Windows Cargo now honors inherited system temp paths.
+The managed setup retains off-system-drive behavior by explicitly setting all
+three variables to a prepared directory on the selected build volume.
+
+With a variable absent, its fallback still points at the checkout's `target/`.
+If an external `CARGO_TARGET_DIR` is selected without preparing that fallback,
+MSVC `link.exe` can fail with `LNK1104` naming `target/lnk*.tmp`. Prepare the
+owned temp environment, or create the fallback before building:
 
 ```bash
 mkdir <worktree>/target
 ```
 
-`ripr doctor --profile source-build` warns when this redirect is present and
-the workspace-local directory is absent (#5280).
+`ripr doctor --profile source-build` warns when an effective workspace-relative
+redirect selects an absent directory (#5280). An environment value selecting a
+different path suppresses the warning for a non-forced entry. The same missing
+configured path still warns, and a forced entry still wins.
 
-The same missing `target/` directory makes `std::env::temp_dir()` point at a
+An effective missing temp directory makes `std::env::temp_dir()` point at a
 path that does not exist. Tests that create scratch crates under `temp_dir()`
 must `create_dir_all` that root before an exclusive `create_dir` of the child;
 a bare `create_dir` fails with ENOENT and names no path (`agent_stub_compiles`,

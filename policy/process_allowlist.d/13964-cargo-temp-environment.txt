@@ -1,0 +1,1 @@
+tools/repo-policy/tests/cargo_temp_environment.rs|Command::new|1|cargo-temp-environment-proof|#13964: Linux-only dependency-free offline Cargo probes under a 60-second process-group timeout validate checked-in temp configuration in build scripts and executables; fixture-owned final/intermediate output, Cargo home and temp paths; no network or production spawn.

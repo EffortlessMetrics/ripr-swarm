@@ -51,27 +51,76 @@ execute; by itself it does not limit which integration-test targets Cargo
 compiles. `--test cli_smoke` selects that integration target and its required
 product binary. Use `--lib` for library-only tests.
 
-Keep an isolated `CARGO_TARGET_DIR` stable for repeated runs of the same
-candidate. From the repository root in Bash, place it below the checkout's
-`target/` and create it before invoking Cargo:
+Keep one worktree-private `CARGO_TARGET_DIR` stable for repeated runs of the
+same candidate. Reuse an existing owned directory rather than creating a new
+one for each command, test filter, retry or review phase. Keep profiles, feature
+sets and compiler flags stable when the proof does not require a change.
+
+For a new agent build session, prepare the following environment once from
+the repository root. If the candidate already has an owned build directory,
+substitute that exact path for `target/contributor-rust`. In Bash:
 
 ```bash
 export CARGO_TARGET_DIR="$PWD/target/contributor-rust"
-mkdir -p "$CARGO_TARGET_DIR"
+export TMPDIR="$CARGO_TARGET_DIR/tmp"
+export TEMP="$TMPDIR"
+export TMP="$TMPDIR"
+export CARGO_INCREMENTAL=0
+mkdir -p "$CARGO_TARGET_DIR" "$TMPDIR"
 ```
 
-This creates both the build-artifact directory and its parent `target/`.
-The repository's `.cargo/config.toml` forces `TEMP`, `TMP`, and `TMPDIR` to
-the checkout's `target/`, independently of `CARGO_TARGET_DIR`. If you place
-build artifacts outside the checkout, also run `mkdir -p target` from the
-repository root before building. Exporting another temporary directory does
-not override that forced setting. See the
-[workspace linker temp redirect](agent-context/validation.md#workspace-linker-temp-redirect)
-for the MSVC failure and recovery details.
+In PowerShell:
+
+```powershell
+$env:CARGO_TARGET_DIR = Join-Path (Get-Location).Path 'target/contributor-rust'
+$env:TMPDIR = Join-Path $env:CARGO_TARGET_DIR 'tmp'
+$env:TEMP = $env:TMPDIR
+$env:TMP = $env:TMPDIR
+$env:CARGO_INCREMENTAL = '0'
+New-Item -ItemType Directory -Force $env:CARGO_TARGET_DIR, $env:TMPDIR | Out-Null
+```
+
+The environment reaches Cargo, Clippy, Nextest and their child processes. It
+keeps Windows linker scratch on the selected build volume, while CI can select
+its leased scratch directory. `.cargo/config.toml` now preserves supplied temp
+variables; its checkout-local `target/` values are fallbacks only. Raw Windows
+Cargo therefore honors the inherited system `TEMP`/`TMP` unless this setup
+selects another directory. See the
+[workspace linker temp redirect](agent-context/validation.md#workspace-linker-temp-redirect).
+
+Use non-incremental builds for disposable candidates and sccache-backed builds.
+A long-lived candidate may deliberately use `CARGO_INCREMENTAL=1` for repeated
+edits when the measured rebuild benefit justifies its retained disk cost. This
+does not change the ordinary dev/test profiles or create another profile tree.
+Choose `CARGO_BUILD_JOBS` from the host's admitted concurrent build and memory
+budget; each Cargo process otherwise uses the host CPU count. A test-name filter
+or `-j 1` does not reduce the memory needed by one large rustc compilation.
+
+Cargo normally keeps intermediates in the selected target directory. Check for
+an inherited `CARGO_BUILD_BUILD_DIR` or configured `build.build-dir` before
+building: an independent shared directory can escape both isolation and cleanup.
+Use the normal target-following default for this setup. Do not export a separate
+session-wide build directory: nested private fixture builds select their own
+target directories, and some do not yet override inherited intermediates.
+Do not share writable targets or intermediates between concurrent candidates;
+use an installed, size-bounded compiler cache for cross-candidate reuse instead.
 
 Record the package, target, profile, and effective features with each
 result: binary builds, test preparation, and Clippy can populate different build
 units even when they share that directory.
+
+At closeout, preserve required executable witnesses and receipts, confirm the
+candidate's build and test consumers have ended, then clean only that owned
+build directory. With the target-following intermediate default above, an
+explicit `cargo clean --target-dir "$CARGO_TARGET_DIR"` in Bash (or
+`cargo clean --target-dir $env:CARGO_TARGET_DIR` in PowerShell) removes this
+candidate's compiler output and temporary files. Keep `target/ripr` reports,
+receipts and analysis caches outside that directory. Do not run an unqualified
+`cargo clean` at the workspace root, clean between each focused command, sweep
+sibling worktrees, or infer deletion authority from age. The
+[storage closeout procedure](PR_AUTOMATION.md#bounded-local-storage-and-proof-retention)
+owns resource budgets, retained evidence and release decisions. Cargo's registry
+cache cleanup and `cargo xtask cache gc` do not bound compiler output.
 
 For example, these commands prepare and exercise the Rust workspace-marker
 tests from the repository root:
