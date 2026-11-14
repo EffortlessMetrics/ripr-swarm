@@ -164,31 +164,6 @@ impl ValidatedGapArtifact {
         }
     }
 
-    #[cfg(test)]
-    pub(super) fn common_mut(&mut self) -> &mut ValidatedGapArtifactCommon {
-        match self {
-            Self::ActionableGaps(payload) => &mut payload.common,
-            Self::EvidenceRecord(payload) => &mut payload.common,
-            Self::FirstUsefulAction(payload) => &mut payload.common,
-            Self::GapDecisionLedger(payload) => &mut payload.common,
-            Self::AgentReceipt(payload) => &mut payload.common,
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn corpus_currentness(&self) -> Option<GapArtifactCorpusCurrentness> {
-        match self {
-            Self::ActionableGaps(payload) => Some(payload.corpus_currentness),
-            Self::GapDecisionLedger(payload) => Some(payload.corpus_currentness),
-            Self::EvidenceRecord(_) | Self::FirstUsefulAction(_) | Self::AgentReceipt(_) => None,
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn root(&self) -> Option<&str> {
-        self.common().root.as_deref()
-    }
-
     pub(super) fn identities(&self) -> &[GapArtifactIdentity] {
         match self {
             Self::ActionableGaps(payload) => &payload.identities,
@@ -197,11 +172,6 @@ impl ValidatedGapArtifact {
             Self::FirstUsefulAction(payload) => std::slice::from_ref(&payload.identity),
             Self::AgentReceipt(payload) => std::slice::from_ref(&payload.identity),
         }
-    }
-
-    #[cfg(test)]
-    pub(super) fn language(&self) -> Option<LanguageId> {
-        self.common().language
     }
 
     pub(super) fn language_status(&self) -> Option<LanguageStatus> {
@@ -252,28 +222,6 @@ impl ValidatedGapArtifact {
             Self::FirstUsefulAction(payload) => &payload.receipt_command_specs,
             Self::EvidenceRecord(payload) => &payload.receipt_command_specs,
             Self::AgentReceipt(_) => &[],
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn verify_command_specs_mut(&mut self) -> Option<&mut Vec<CommandSpec>> {
-        match self {
-            Self::ActionableGaps(payload) => Some(&mut payload.verify_command_specs),
-            Self::GapDecisionLedger(payload) => Some(&mut payload.verify_command_specs),
-            Self::FirstUsefulAction(payload) => Some(&mut payload.verify_command_specs),
-            Self::EvidenceRecord(payload) => Some(&mut payload.verify_command_specs),
-            Self::AgentReceipt(_) => None,
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn receipt_command_specs_mut(&mut self) -> Option<&mut Vec<CommandSpec>> {
-        match self {
-            Self::ActionableGaps(payload) => Some(&mut payload.receipt_command_specs),
-            Self::GapDecisionLedger(payload) => Some(&mut payload.receipt_command_specs),
-            Self::FirstUsefulAction(payload) => Some(&mut payload.receipt_command_specs),
-            Self::EvidenceRecord(payload) => Some(&mut payload.receipt_command_specs),
-            Self::AgentReceipt(_) => None,
         }
     }
 
@@ -2654,6 +2602,55 @@ fn known_static_limit_kind(kind: &str) -> bool {
     ]
     .iter()
     .any(|known| known.as_str() == kind)
+}
+
+#[cfg(test)]
+impl ValidatedGapArtifact {
+    pub(super) fn common_mut(&mut self) -> &mut ValidatedGapArtifactCommon {
+        match self {
+            Self::ActionableGaps(payload) => &mut payload.common,
+            Self::EvidenceRecord(payload) => &mut payload.common,
+            Self::FirstUsefulAction(payload) => &mut payload.common,
+            Self::GapDecisionLedger(payload) => &mut payload.common,
+            Self::AgentReceipt(payload) => &mut payload.common,
+        }
+    }
+
+    pub(super) fn corpus_currentness(&self) -> Option<GapArtifactCorpusCurrentness> {
+        match self {
+            Self::ActionableGaps(payload) => Some(payload.corpus_currentness),
+            Self::GapDecisionLedger(payload) => Some(payload.corpus_currentness),
+            Self::EvidenceRecord(_) | Self::FirstUsefulAction(_) | Self::AgentReceipt(_) => None,
+        }
+    }
+
+    pub(super) fn root(&self) -> Option<&str> {
+        self.common().root.as_deref()
+    }
+
+    pub(super) fn language(&self) -> Option<LanguageId> {
+        self.common().language
+    }
+
+    pub(super) fn verify_command_specs_mut(&mut self) -> Option<&mut Vec<CommandSpec>> {
+        match self {
+            Self::ActionableGaps(payload) => Some(&mut payload.verify_command_specs),
+            Self::GapDecisionLedger(payload) => Some(&mut payload.verify_command_specs),
+            Self::FirstUsefulAction(payload) => Some(&mut payload.verify_command_specs),
+            Self::EvidenceRecord(payload) => Some(&mut payload.verify_command_specs),
+            Self::AgentReceipt(_) => None,
+        }
+    }
+
+    pub(super) fn receipt_command_specs_mut(&mut self) -> Option<&mut Vec<CommandSpec>> {
+        match self {
+            Self::ActionableGaps(payload) => Some(&mut payload.receipt_command_specs),
+            Self::GapDecisionLedger(payload) => Some(&mut payload.receipt_command_specs),
+            Self::FirstUsefulAction(payload) => Some(&mut payload.receipt_command_specs),
+            Self::EvidenceRecord(payload) => Some(&mut payload.receipt_command_specs),
+            Self::AgentReceipt(_) => None,
+        }
+    }
 }
 
 #[cfg(test)]
