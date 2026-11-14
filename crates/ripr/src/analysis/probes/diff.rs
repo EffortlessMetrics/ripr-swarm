@@ -521,12 +521,19 @@ pub(crate) fn probes_for_file_with_relations(
                                 .is_some_and(|old| old != header && old.starts_with("match "))
                     })
             };
+            // The other shape must hold the whole edit itself (its own old
+            // cut differs), not merely sit unchanged inside the scrutinee.
             let scrutinee_carried = |shape: &super::classify::ParserProbeShape| {
                 let header = canonical_probe_text(text, shape.text);
-                canonical_shapes.iter().any(|other| {
-                    other.family != ProbeFamily::MatchArm
-                        && other.family != ProbeFamily::StaticUnknown
-                        && header.contains(canonical_probe_text(text, other.text).as_str())
+                removed_counterpart.as_deref().is_some_and(|removed| {
+                    canonical_shapes.iter().any(|other| {
+                        let other_text = canonical_probe_text(text, other.text);
+                        other.family != ProbeFamily::MatchArm
+                            && other.family != ProbeFamily::StaticUnknown
+                            && header.contains(other_text.as_str())
+                            && removed_span_of_shape(text, &other_text, removed.trim())
+                                .is_some_and(|old| old != other_text)
+                    })
                 })
             };
             let carried_header = |shape: &super::classify::ParserProbeShape| {
@@ -4847,6 +4854,36 @@ mod tests {
             .map(|probe| probe.family.clone())
             .collect::<Vec<_>>();
         assert_eq!(families, vec![ProbeFamily::Predicate], "{probes:?}");
+    }
+
+    /// #14722: a comparison that sits unchanged inside the scrutinee does
+    /// not carry an edit elsewhere in it, so the header keeps a probe.
+    #[test]
+    fn an_unchanged_comparison_in_the_scrutinee_does_not_carry_the_edit() {
+        let probes = shapes_probes(
+            "match bar(a >= b) {",
+            "match foo(a >= b) {",
+            &[
+                (ProbeShapeKind::MatchArm, "match bar(a >= b)"),
+                (ProbeShapeKind::Predicate, "a >= b"),
+            ],
+            "",
+        );
+
+        let header = probes
+            .iter()
+            .find(|probe| probe.family == ProbeFamily::StaticUnknown);
+        assert_eq!(
+            header.and_then(|probe| probe.before.as_deref()),
+            Some("match foo(a >= b)"),
+            "{probes:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .all(|probe| probe.family != ProbeFamily::MatchArm),
+            "{probes:?}"
+        );
     }
 
     /// #14722: an arm edit on a line that also holds the header keeps its
