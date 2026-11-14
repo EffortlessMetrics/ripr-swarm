@@ -112,7 +112,8 @@ attribute, or `cfg(test)`), the test's in-file `cfg` gates are a subset of
 the owner's, and the test's own reading of each assertion past that refusal is
 admitted or itself an analyzer limit. `#[cfg(feature = "v4")] mod v4;` with the owner
 and its tests in `src/v4.rs`, or in sibling files under `src/v4/`, reads
-`static_unknown`. A gated declaration only the test's chain carries (alone or
+`static_unknown`, also when another `mod` shares the declaration's line (the
+declaration is matched by its name and line). A gated declaration only the test's chain carries (alone or
 below a shared one), an inline gate only the test's module carries, owner and
 test under different gated declarations, and a provably disabled declaration
 gate (`cfg(any())`) keep the gap.
