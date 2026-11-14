@@ -116,6 +116,16 @@ and its tests in `src/v4.rs`, or in sibling files under `src/v4/`, reads
 below a shared one), an inline gate only the test's module carries, owner and
 test under different gated declarations, and a provably disabled declaration
 gate (`cfg(any())`) keep the gap.
+A plain `#[cfg(..)]` that is provably true under the test file's own package's
+default features is no refusal at all (#8780): a plain `cargo test` compiles
+the test, so its assertions are read like an ungated test's, whether the gate
+sits on the test, an enclosing inline module or the file. The feature set and
+the evaluator are the ones [RIPR-SPEC-0279](RIPR-SPEC-0279-rust-doc-examples-as-tests.md)
+uses for doc examples (`MemberCrates::default_test_features`,
+`test_gate_is_default_enabled`), with `test` as the build's own flag: a
+feature outside the default closure, a negation, a target or custom atom, a
+`cfg_attr`, an unreadable manifest and a gate on a `mod name;` declaration in
+another file resolve nothing and keep the readings above.
 `cfg(false)` is read through the same shared evaluator, which does not yet
 evaluate the literal, so a test gated only by it is withheld rather than kept.
 Likewise `#[cfg_attr(test, ignore)]` and `#[cfg_attr(test, should_panic)]`
@@ -1225,9 +1235,16 @@ and repair still does not start.
   and for sibling files, and keep the gap for a test-only declaration,
   different declarations and `cfg(any())`, and for an ignored test, an
   expected-panic test or a conditional assertion under a shared declaration.
-- A paired fixture: a default-feature `cfg` test is withheld
-  (`gap_withheld_feature_gated_test`); an `#[ignore]` test keeps the gap
-  (`gap_kept_ignored_test`).
+- A paired fixture: a `cfg(feature)` test whose feature is off by default is
+  withheld (`gap_withheld_feature_gated_test`); an `#[ignore]` test keeps the
+  gap (`gap_kept_ignored_test`).
+- `default_feature_test_gate.rs` pins the default-feature rule (#8780): a
+  file, function or `all(test, ..)` gate on a feature in the default closure
+  reads `exposed` like the ungated control, while a non-default feature, a
+  negation, a gate with a second unresolved atom and a sibling package's
+  default do not. `default_feature_gate_tests` and
+  `a_test_gate_resolves_with_test_as_the_build_flag` pin the scan and the
+  evaluator.
 - `pinned_shape_limit.rs` pins each shape's withholding and the controls that
   keep the gap: `Option::map`, another exit, a non-exact, non-isolated,
   ignored or `#[should_panic]` pin, the RIPR-SPEC-0265 empty slice, an effect
@@ -1263,7 +1280,8 @@ a credited weak oracle) and semver `op()` (reach with no retained test, #5344).
 ## Non-Goals
 
 - Crediting any assertion, or changing equality admission.
-- Evaluating Cargo features or `cfg` predicates.
+- Evaluating Cargo features or `cfg` predicates, beyond a plain gate that the
+  package's default features prove true (#8780).
 - A population claim. The rates describe the corpus only.
 
 ## Acceptance Examples
