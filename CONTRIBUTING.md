@@ -753,6 +753,25 @@ For behavior changes, update:
 For decisions, add or update an ADR.
 
 For repo knowledge, update [Learnings](docs/LEARNINGS.md).
+
+## Native Linux debug artifacts
+
+The `x86_64-unknown-linux-gnu` Cargo target losslessly compresses linked ELF
+DWARF sections with zlib. The existing platform linker remains selected, and
+`line-tables-only` still provides file/line backtraces. No LLVM installation is
+required. Windows, macOS and other target triples retain their configuration.
+Explicit `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS` override Cargo's configured
+flags, including this compression option. Command-local target rustflags arrays
+append to the configuration, so the `build-lld` alias retains compression.
+
+A focused cold `ripr-contract` default-feature test build on Rust 1.95.0,
+one Cargo job and incremental compilation disabled reduced the linked test
+executable from 13,511,184 to 7,273,592 bytes. Its 340 listed tests were identical
+and all 340 passed in both variants; `addr2line` recovered source lines from the
+compressed executable. This is linked-artifact evidence, not a compiler-memory,
+whole-workspace storage or end-to-end CI speed result. Keep storage admission and
+memory limits unchanged. See #14202 for the matched target-size and timing data.
+
 ## Optional Linux LLD builds
 
 The normal workspace build uses the platform default linker and does not
