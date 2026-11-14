@@ -411,13 +411,62 @@ fn validate_baseline(baseline: &Value) -> Result<(), String> {
     }
 }
 
-/// The `init --agents` loop: FIND, then follow each printed `next=` command
-/// (explain, then the context it points at), as the block tells an agent to.
+/// Whether the `init --agents` DETAIL step applies to a printed `next=`
+/// command: it is skipped when the gap row it selects (its last argument is
+/// the row's `id=`) has code in `missing=`. A row with
+/// `missing=-`, a sentence (see `reads_as_sentence`), or no matching row is followed.
+fn needs_detail(report: &str, args: &[String]) -> bool {
+    let Some(selector) = args.last() else {
+        return true;
+    };
+    let suffix = format!("|id={selector}");
+    // Fields escape a literal `|` as `\|`; keep those inside the field.
+    let missing = report
+        .lines()
+        .find(|line| line.ends_with(&suffix))
+        .map(|row| row.replace("\\|", "\u{1f}"))
+        .and_then(|row| {
+            row.split('|')
+                .find_map(|field| field.strip_prefix("missing="))
+                .map(|field| field.replace('\u{1f}', "|"))
+        });
+    missing.is_none_or(|value| {
+        value == "-"
+            || value.ends_with('…')
+            || value.ends_with(" more)")
+            || reads_as_sentence(&value)
+    })
+}
+
+/// A `missing=` entry written as prose ("No strong discriminator was
+/// detected", "Check unconfirmed: ...", "non-zero discount") rather than code
+/// (`total == 100`, `Size::Medium`, `verbose: flag == "-v"`): two adjacent
+/// words made only of letters and hyphens. Code rarely has two bare words in
+/// a row, and a misread costs only an extra DETAIL step.
+fn reads_as_sentence(value: &str) -> bool {
+    let bare = |word: &str| !word.is_empty() && word.chars().all(|c| c.is_alphabetic() || c == '-');
+    // A guard-domain value is the condition after `if` (`if x > 5`).
+    let value = value.strip_prefix("if ").unwrap_or(value);
+    let tokens: Vec<&str> = value.split_whitespace().collect();
+    // The first word takes no `:` (`verbose: flag` is a field init) and is
+    // longer than one letter (`x as u32` is a cast) unless it is `a` or `I`;
+    // the second may end a clause (`Check unconfirmed:`).
+    tokens.windows(2).any(|pair| {
+        let first = pair[0];
+        let first_ok = first.chars().count() > 1 || first == "a" || first == "A" || first == "I";
+        bare(first) && first_ok && bare(pair[1].trim_end_matches([':', ',']))
+    })
+}
+
+/// The `init --agents` loop: FIND, then DETAIL for each printed `next=`
+/// command whose gap row does not already name the exact check (explain, then
+/// the context it points at), as the block tells an agent to.
 fn route_cli_agent_loop(ripr: &Path, workspace: &Workspace) -> Result<Vec<Step>, String> {
     let find = capture(ripr, &find_args(), &workspace.root, None, &[])?;
     let mut steps = vec![raw_step("find", &find, workspace)];
     let mut queue: Vec<(String, Vec<String>)> = printed_next_commands(&find.stdout)
         .into_iter()
+        .filter(|args| needs_detail(&find.stdout, args))
         .map(|args| ("detail".to_string(), args))
         .collect();
     while let Some((label, args)) = queue.first().cloned() {
@@ -1373,6 +1422,59 @@ mod tests {
                 strings(&["context", "--at", "probe:a"]),
             ]
         );
+    }
+
+    #[test]
+    fn detail_is_skipped_only_when_the_row_names_the_exact_check() {
+        let report = "weakly_exposed|src/lib.rs:2|t >= 100|missing=t == 100|test=t1|id=probe:a\n\
+weakly_exposed|src/lib.rs:6|d * 3|missing=No strong discriminator was detected|test=t2|id=probe:b\n\
+reachable_unrevealed|src/lib.rs:9|x|missing=-|test=-|id=probe:c\n\
+weakly_exposed|src/lib.rs:10|v|missing=No a \\|\\| b|test=t1|id=probe:d\n\
+weakly_exposed|src/lib.rs:11|v|missing=v: a == x \\|\\| b words here|test=t1|id=probe:e\n\
+weakly_exposed|src/lib.rs:12|v|missing=Err(TooLong) (+1 more)|test=t1|id=probe:f\n\
+weakly_exposed|src/lib.rs:13|v|missing=x == 1…|test=t1|id=probe:g\n";
+        let explain = |id: &str| strings(&["explain", "--format", "agent", id]);
+        assert!(!needs_detail(report, &explain("probe:a")));
+        assert!(needs_detail(report, &explain("probe:b")));
+        assert!(needs_detail(report, &explain("probe:c")));
+        assert!(needs_detail(report, &explain("probe:d")));
+        // The escaped `\|` keeps the field whole: "b words here" is prose.
+        assert!(needs_detail(report, &explain("probe:e")));
+        assert!(needs_detail(report, &explain("probe:f")));
+        assert!(needs_detail(report, &explain("probe:g")));
+        assert!(needs_detail(report, &explain("probe:unknown")));
+        assert!(needs_detail(report, &[]));
+        for prose in [
+            "No strong discriminator was detected",
+            "Check unconfirmed: no supported assertion pairs the input",
+            "Discriminator unconfirmed: pin `x` for an input where it differs",
+            "Typed static limitation (wrapper_error_binding_unresolved)",
+            "Syntax-first analysis cannot classify this change",
+            "non-zero discount",
+            "exact discount payload",
+            "call `f` without x",
+            "a discount",
+            "I think",
+        ] {
+            assert!(reads_as_sentence(prose), "{prose}");
+        }
+        for code in [
+            "total == 100",
+            "Size::Medium",
+            "FREE_SHIPPING_CENTS",
+            "Err(TooLong)",
+            "days * 3",
+            "Point { x: 1 }",
+            r#"verbose: flag == "-v" || flag == "--verbose""#,
+            "x as u32",
+            "if x > 5",
+            "if enabled",
+            "a == b",
+            "a + b",
+            "-",
+        ] {
+            assert!(!reads_as_sentence(code), "{code}");
+        }
     }
 
     #[test]

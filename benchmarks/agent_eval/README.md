@@ -41,7 +41,7 @@ no timings, paths or dates; only `ripr_version` changes between builds.
 
 | route | what the agent runs |
 |---|---|
-| `cli-agent-loop` | `check --quiet --format agent`, then every printed `next=` command in turn (explain, then context), as the `init --agents` block instructs |
+| `cli-agent-loop` | `check --quiet --format agent`, then, for each printed `next=` whose gap row's `missing=` is `-` or a sentence rather than code, that command and the ones it prints (explain, then context), as the `init --agents` block instructs |
 | `cli-agent-find` | the same first step only |
 | `cli-human` | `check` with the default human output |
 | `cli-json-terse` | `check --format json-terse` |
@@ -53,7 +53,7 @@ copy of the scenario repository, so first-run state cannot leak between routes.
 
 ## Definitions
 
-- **bytes**: a CLI step's stdout plus stderr; for MCP, the response line.
+- **bytes**: a CLI step's stdout plus stderr, or for MCP the response line, after the scratch root is replaced by `<root>`.
 - **tokens**: an estimate, not a billing count. Each run of ASCII letters,
   digits and `_` costs ceil(len/4), other non-whitespace characters cost 1.
   For MCP only what a host shows the model counts: the tool list, each call's
@@ -98,9 +98,13 @@ controls. Keep each crate dependency-free so the eval stays offline.
 
 Route totals are the `routes` rows at the top of `baseline.json`. What they show:
 
-- The first agent-format step already carries every answer. The DETAIL steps
-  the loop then prescribes (explain, then context) cost 4.9 times as much and
-  add no keyed fact.
+- The first agent-format step already carries every answer. The `init --agents`
+  DETAIL step is skipped when `missing=` is code (`total == 100`), so the loop
+  follows explain and context only for rows whose `missing=` is `-` or a
+  sentence ("No strong discriminator ..."). Before that rule the loop read
+  8,731 estimated tokens over the six scenarios; with it, 2,619 on the same
+  base (2,523 after #14453 folded duplicate rows), for the same answers. A row
+  with `(+N more)` or a clipped `…` value is followed too.
 - `cli-human` shows one finding and hides the rest, so on the two-gap scenario
   the second gap stays hidden.
 - MCP costs about 35 times the agent CLI to reach the same answer. The tool

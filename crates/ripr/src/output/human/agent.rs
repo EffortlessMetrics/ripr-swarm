@@ -1143,6 +1143,24 @@ fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missin
         .or_else(|| finding.missing.first().map(String::as_str))
         .filter(|_| with_missing)
         .unwrap_or("-");
+    // The row shows one fact; `(+N more)` tells a reader that explain has the
+    // rest, so a single code value is never mistaken for the whole check.
+    // Counts distinct discriminator values; `finding.missing` prose lines are
+    // generic labels, not further facts.
+    // A plain loop: a map/collect chain here sends ripr's own PR-evidence
+    // check past its time budget (#13884).
+    let mut values: Vec<&str> = Vec::new();
+    for fact in &finding.activation.missing_discriminators {
+        if !values.contains(&fact.value.as_str()) {
+            values.push(fact.value.as_str());
+        }
+    }
+    let more = values.len().saturating_sub(1);
+    let missing = if with_missing && more > 0 {
+        format!("{} (+{more} more)", clip(missing))
+    } else {
+        clip(missing)
+    };
     let test = test_ref.map_or_else(|| "-".to_string(), |index| format!("t{index}"));
     format!(
         "{}|{}|{}|missing={}|test={}|id={}",
@@ -1152,7 +1170,7 @@ fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missin
             finding,
             &finding.probe.expression
         ))),
-        field(&clip(missing)),
+        field(&missing),
         test,
         finding.id
     )

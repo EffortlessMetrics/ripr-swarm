@@ -354,6 +354,37 @@ fn top_gap_carries_location_missing_value_test_id_and_next_command() {
     assert_eq!(lines.len(), 6, "{text}");
 }
 
+/// A gap with several missing facts shows the first and counts the rest, so
+/// the agent loop's "one code value" DETAIL skip never hides a second fact.
+#[test]
+fn gap_row_counts_missing_facts_beyond_the_first() {
+    let mut gap = weak_gap("probe:a", 2);
+    let second = MissingDiscriminatorFact {
+        value: "pct == 49".to_string(),
+        ..gap.activation.missing_discriminators[0].clone()
+    };
+    gap.activation.missing_discriminators.push(second);
+    let text = rendered(&output(vec![gap]));
+    assert!(
+        text.lines()
+            .any(|line| line
+                == "weakly_exposed|src/lib.rs:2|pct >= 50|missing=pct == 50 (+1 more)|test=t1|id=probe:a"),
+        "{text}"
+    );
+    // A second reason for the same value is not a second fact.
+    let mut repeated = weak_gap("probe:a", 2);
+    let same_value = MissingDiscriminatorFact {
+        reason: "another reason".to_string(),
+        ..repeated.activation.missing_discriminators[0].clone()
+    };
+    repeated.activation.missing_discriminators.push(same_value);
+    let repeated = rendered(&output(vec![repeated]));
+    assert!(repeated.contains("|missing=pct == 50|"), "{repeated}");
+    let single = rendered(&output(vec![weak_gap("probe:a", 2)]));
+    assert!(single.contains("|missing=pct == 50|"), "{single}");
+    assert!(!single.contains("more)"), "{single}");
+}
+
 /// RIPR-SPEC-0429: a record-free terminal run (done=) prints no `stages=`
 /// line; a `stages=` token is only emitted for records the run lists.
 #[test]
