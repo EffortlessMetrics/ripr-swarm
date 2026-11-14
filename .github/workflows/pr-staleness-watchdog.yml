@@ -225,10 +225,10 @@ jobs:
             elif [ "$head_repo" != "$REPOSITORY" ]; then
               disposition="skip: fork/untrusted head (${head_repo:-deleted})"
             else
-              # mergeable_state is computed lazily and reset when the base moves, so the first
-              # read of a quiet PR is often "unknown". Read once and defer to the next sweep
-              # instead of sleeping on it: an in-sweep retry cost 10 s per unreadable head,
-              # which alone exceeded the job cap once 63 heads stayed unknown (#14636).
+              # mergeable_state is unavailable for queued heads and resets when the base moves,
+              # so a head can read "unknown". Read once and defer to the next sweep instead of
+              # sleeping on it: an in-sweep retry cost 10 s per unreadable head, which alone
+              # exceeded the job cap once 63 heads stayed unknown (#14636).
               live="$(gh api "repos/$REPOSITORY/pulls/$number" --jq '[(.mergeable_state // "unknown"), .head.sha, .base.ref, .state, (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring), (.head.repo.full_name // "-")] | join(" ")')"
               read -r mergeable_state live_head live_base live_state live_draft live_requested live_repo <<<"$live"
               [ "$mergeable_state" = "unknown" ] && { unreadable=$((unreadable + 1)); unreadable_note="; mergeability unreadable, conflict status unavailable"; }
