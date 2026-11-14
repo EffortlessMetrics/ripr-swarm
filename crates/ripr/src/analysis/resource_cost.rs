@@ -775,9 +775,8 @@ mod tests {
         let summary = duration_percentiles(&[
             Duration::from_nanos(1_900_000),
             Duration::from_nanos(900_000),
-        ])
-        .expect("non-empty durations summarize");
-        assert_eq!(summary.mean_ms, 1);
+        ]);
+        assert_eq!(summary.map(|s| s.mean_ms), Some(1));
     }
 
     #[test]
