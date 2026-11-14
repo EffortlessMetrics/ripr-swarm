@@ -103,8 +103,11 @@ Route totals are the `routes` rows at the top of `baseline.json`. What they show
   follows explain and context only for rows whose `missing=` is `-` or a
   sentence ("No strong discriminator ..."). Before that rule the loop read
   8,731 estimated tokens over the six scenarios; with it, 2,619 on the same
-  base (2,523 after #14453 folded duplicate rows), for the same answers. A row
-  with `(+N more)` or a clipped `…` value is followed too.
+  base, for the same answers. `baseline.json` records the current figure. A
+  row with `(+N more)` or a clipped `…` value is followed too.
+- `struct_field` reads `reference_test_closes_loop: false` since #14565 stopped
+  crediting the sibling field's assertion; the intended bool-field assertion
+  alone does not yet earn credit (#14701).
 - `cli-human` shows one finding and hides the rest, so on the two-gap scenario
   the second gap stays hidden.
 - MCP costs about 35 times the agent CLI to reach the same answer. The tool
