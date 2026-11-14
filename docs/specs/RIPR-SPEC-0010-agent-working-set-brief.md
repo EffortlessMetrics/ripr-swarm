@@ -140,7 +140,18 @@ omitted before ranking and neither rank nor count toward the cap):
 3. related-test confidence;
 4. file path;
 5. line;
-6. seam ID.
+6. same-line seam kind (`error_variant` before `return_value`);
+7. seam ID.
+
+A `return_value` seam whose expression is `return Err(..)` folds into the
+visible `error_variant` seam for the same `Err(..)` expression in the same
+file, line and owner function. A folded seam is not shown, does not count as
+visible or toward the cap, and the brief adds a warning naming the fold
+count. Seams of other kinds never fold. The streamed selector keeps unmatched
+twins past the cap, at most twice the cap, so it selects the same seams as
+the complete selector unless that bound drops a candidate. When the bound
+drops a candidate and a fold happens, it adds a warning that lower-ranked
+visible seams may be missing.
 
 `--seam-id` is an explicit lookup and should return that seam first when it is
 a selectable repair target under current config. Other seams may be included

@@ -1,7 +1,7 @@
 //! Bounded full-payload retention for the review-comments consumer.
 //! Ranking and omission meaning stay in the parent agent-brief authority.
 use super::*;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 struct OwnedCandidate {
     ordinal: usize,
@@ -31,6 +31,12 @@ pub(crate) struct BoundedAgentBrief<'a> {
     omission_counts: Vec<OmissionCount>,
     // Only fixed-size identities, never discarded evidence payloads.
     seen_ids: BTreeSet<String>,
+    // #14702 twin keys of visible seams. A key names file, line and
+    // expression, so these stay bounded by the visible inventory, not payloads.
+    visible_error_variants: BTreeSet<String>,
+    visible_return_values: BTreeMap<String, usize>,
+    folded_twins: usize,
+    retention_overflow: bool,
 }
 
 impl<'a> BoundedAgentBrief<'a> {
@@ -57,6 +63,10 @@ impl<'a> BoundedAgentBrief<'a> {
             named_omissions: Vec::new(),
             omission_counts: Vec::new(),
             seen_ids: BTreeSet::new(),
+            visible_error_variants: BTreeSet::new(),
+            visible_return_values: BTreeMap::new(),
+            folded_twins: 0,
+            retention_overflow: false,
         })
     }
 
@@ -79,6 +89,10 @@ impl<'a> BoundedAgentBrief<'a> {
                 self.matched_scope = true;
                 self.visible_candidates = 0;
                 self.candidates.clear();
+                self.visible_error_variants.clear();
+                self.visible_return_values.clear();
+                self.folded_twins = 0;
+                self.retention_overflow = false;
             }
             if let Some(omission) = AgentBriefOmission::for_entry(&entry, self.policy) {
                 self.record_omission(ordinal, &entry, omission)?;
@@ -96,6 +110,9 @@ impl<'a> BoundedAgentBrief<'a> {
                     .to_string(),
             }
         };
+        if !self.fold_twin(&entry)? {
+            return Ok(());
+        }
         self.visible_candidates = self
             .visible_candidates
             .checked_add(1)
@@ -116,8 +133,86 @@ impl<'a> BoundedAgentBrief<'a> {
             )
             .then(left.ordinal.cmp(&right.ordinal))
         });
-        self.candidates.truncate(self.limit);
+        self.retain_top();
         Ok(())
+    }
+
+    /// Keeps the candidates that can still reach the final top `limit`. A
+    /// return-value seam with a twin key may fold when its error-variant twin
+    /// arrives, so it does not count toward the cap until then; truncating it
+    /// as a definite survivor would drop the seam the complete selection shows
+    /// in its place.
+    ///
+    /// Payload retention stays bounded at twice the cap. When more unmatched
+    /// twins than that rank ahead of the cap, a seam the complete selection
+    /// could show may be dropped; `retention_overflow` records it so the
+    /// selection says so instead of claiming parity.
+    fn retain_top(&mut self) {
+        let mut definite = 0usize;
+        let mut kept = 0usize;
+        let mut overflow = false;
+        let limit = self.limit;
+        let bound = limit.saturating_mul(2);
+        self.candidates.retain(|candidate| {
+            if definite >= limit {
+                return false;
+            }
+            if kept >= bound {
+                overflow = true;
+                return false;
+            }
+            kept += 1;
+            if !matches!(
+                twin_key(&candidate.entry.seam),
+                Some((TwinRole::ReturnValue, _))
+            ) {
+                definite += 1;
+            }
+            true
+        });
+        self.retention_overflow |= overflow;
+    }
+
+    /// Applies #14702 folding to a visible seam, matching the complete
+    /// selection whichever twin arrives first. Returns false when the seam
+    /// folds into an already visible error-variant twin.
+    fn fold_twin(&mut self, entry: &ClassifiedSeam) -> Result<bool, String> {
+        match twin_key(&entry.seam) {
+            Some((TwinRole::ReturnValue, key)) => {
+                if self.visible_error_variants.contains(&key) {
+                    self.folded_twins = self
+                        .folded_twins
+                        .checked_add(1)
+                        .ok_or("streamed review fold count overflow")?;
+                    return Ok(false);
+                }
+                let count = self.visible_return_values.entry(key).or_insert(0);
+                *count = count
+                    .checked_add(1)
+                    .ok_or("streamed review fold count overflow")?;
+            }
+            Some((TwinRole::ErrorVariant, key)) => {
+                if let Some(twins) = self.visible_return_values.remove(&key) {
+                    self.visible_candidates = self
+                        .visible_candidates
+                        .checked_sub(twins)
+                        .ok_or("streamed review fold accounting incomplete")?;
+                    self.folded_twins = self
+                        .folded_twins
+                        .checked_add(twins)
+                        .ok_or("streamed review fold count overflow")?;
+                    self.candidates.retain(|candidate| {
+                        !matches!(
+                            twin_key(&candidate.entry.seam),
+                            Some((TwinRole::ReturnValue, retained)) if retained == key
+                        )
+                    });
+                }
+                self.visible_error_variants.insert(key);
+            }
+            None => {}
+        }
+        Ok(true)
     }
 
     fn record_omission(
@@ -168,6 +263,9 @@ impl<'a> BoundedAgentBrief<'a> {
     }
 
     pub(crate) fn selection(&self) -> Result<AgentBriefSelection<'_>, String> {
+        // Unfolded return-value twins may be retained past the cap; only the
+        // first `limit` are shown.
+        let shown = &self.candidates[..self.candidates.len().min(self.limit)];
         let mut warnings = grouped_omission_warnings(
             self.named_omissions
                 .iter()
@@ -218,9 +316,20 @@ impl<'a> BoundedAgentBrief<'a> {
                 )
             });
         }
+        if let Some(warning) = folded_twin_warning(self.folded_twins) {
+            warnings.push(warning);
+            if self.retention_overflow {
+                warnings.push(
+                    "streamed selection dropped seams past its retention bound before \
+                     return_value twins folded; lower-ranked visible seams may be missing \
+                     from this brief"
+                        .to_string(),
+                );
+            }
+        }
         let omitted = self
             .visible_candidates
-            .checked_sub(self.candidates.len())
+            .checked_sub(shown.len())
             .ok_or("streamed review candidate accounting incomplete")?;
         if omitted > 0 {
             warnings.push(format!(
@@ -229,11 +338,10 @@ impl<'a> BoundedAgentBrief<'a> {
         }
         Ok(AgentBriefSelection {
             requested: self.requested,
-            returned: self.candidates.len(),
+            returned: shown.len(),
             default: DEFAULT_AGENT_BRIEF_MAX_SEAMS,
             hard_cap: AGENT_BRIEF_HARD_MAX_SEAMS,
-            top_seams: self
-                .candidates
+            top_seams: shown
                 .iter()
                 .map(|item| AgentBriefSelectedSeam {
                     seam: &item.entry,
