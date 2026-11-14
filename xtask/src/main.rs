@@ -1274,6 +1274,7 @@ mod check_fast_selector_tests {
             "rust-toolchain.toml",
             "rust-toolchain",
             "clippy.toml",
+            ".clippy.toml",
             "rustfmt.toml",
             ".cargo/config.toml",
             "policy/clippy.toml",

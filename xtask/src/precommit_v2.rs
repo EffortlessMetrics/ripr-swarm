@@ -1025,7 +1025,9 @@ pub(crate) fn workspace_widening_reason(paths: &[String]) -> Option<String> {
                 | "rust-toolchain"
                 | "rust-toolchain.toml"
                 | "clippy.toml"
+                | ".clippy.toml"
                 | "rustfmt.toml"
+                | ".rustfmt.toml"
         ) {
             Some(format!(
                 "workspace-wide Rust control surface changed: {path}"
@@ -1878,6 +1880,7 @@ mod tests {
             "rust-toolchain.toml",
             "rust-toolchain",
             "clippy.toml",
+            ".clippy.toml",
         ] {
             let plan = build_impact_plan(&single_path_change_set(path, None, true), &roots);
             require(
@@ -1945,7 +1948,12 @@ mod tests {
             }),
             format!("reverse dependent missing from Clippy args: {invocations:?}"),
         )?;
-        for shared in ["Cargo.lock", "rust-toolchain.toml", "clippy.toml"] {
+        for shared in [
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            "clippy.toml",
+            ".clippy.toml",
+        ] {
             let widened = impact_plan_for_files(&[shared.to_string()], &roots);
             let invocations = clippy_invocations(root, &widened);
             require(
