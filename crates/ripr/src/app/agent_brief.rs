@@ -389,24 +389,23 @@ pub(super) enum TwinRole {
 }
 
 /// The fold identity of a seam: its role and a key naming file, line, owner
-/// and expression. Seams of other kinds never fold.
+/// and `Err(..)` text. A `return_value` seam keys only over a
+/// `return Err(..)` statement; an `error_variant` seam keys over its
+/// `Err(..)` constructor, which the producer stores bare, with or without a
+/// leading `return` (both go through [`err_constructor`]). Seams of other
+/// kinds, and seams over any other expression shape, never fold.
 pub(super) fn twin_key(seam: &RepoSeam) -> Option<(TwinRole, String)> {
     let (role, expression) = match seam.kind() {
-        SeamKind::ErrorVariant => (TwinRole::ErrorVariant, seam.expression().trim()),
-        SeamKind::ReturnValue => {
-            let expression = seam.expression().trim();
-            let expression = expression.strip_suffix(';').unwrap_or(expression);
-            let expression = expression.strip_prefix("return ")?.trim();
-            if !expression.starts_with("Err(") {
-                return None;
-            }
-            (TwinRole::ReturnValue, expression)
-        }
+        SeamKind::ErrorVariant => (
+            TwinRole::ErrorVariant,
+            err_constructor(seam.expression())?.1,
+        ),
+        SeamKind::ReturnValue => match err_constructor(seam.expression())? {
+            (true, expression) => (TwinRole::ReturnValue, expression),
+            (false, _) => return None,
+        },
         _ => return None,
     };
-    if expression.is_empty() {
-        return None;
-    }
     Some((
         role,
         format!(
@@ -417,6 +416,22 @@ pub(super) fn twin_key(seam: &RepoSeam) -> Option<(TwinRole, String)> {
             expression
         ),
     ))
+}
+
+/// The `Err(..)` text of an expression with its trailing `;` and an optional
+/// leading `return` keyword removed, and whether that keyword was present;
+/// `None` when what remains is not an `Err(..)` call.
+fn err_constructor(expression: &str) -> Option<(bool, &str)> {
+    let expression = expression.trim();
+    let expression = expression
+        .strip_suffix(';')
+        .unwrap_or(expression)
+        .trim_end();
+    let (returned, expression) = match expression.strip_prefix("return") {
+        Some(rest) if rest.starts_with(char::is_whitespace) => (true, rest.trim_start()),
+        _ => (false, expression),
+    };
+    (expression.starts_with("Err(") && expression.ends_with(')')).then_some((returned, expression))
 }
 
 fn fold_return_value_twins(candidates: &mut Vec<AgentBriefSelectedSeam<'_>>) -> usize {
@@ -1577,6 +1592,117 @@ mod tests {
                     || selected.warnings != expected.warnings
                     || selected.omitted_by_cap != expected.omitted_by_cap
                     || selected.returned != expected.returned
+                {
+                    return Err(format!(
+                        "cap {limit} order {order:?}: streamed {:?} {:?} vs complete {:?} {:?}",
+                        selected_ids(&selected),
+                        selected.warnings,
+                        selected_ids(&expected),
+                        expected.warnings
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Seams the real producer emits for `src/lib.rs`, each wrapped as a
+    /// classified seam of `class`.
+    fn produced_seams(source: &str, class: SeamGripClass) -> Result<Vec<ClassifiedSeam>, String> {
+        use crate::analysis::{RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let mut index = RustIndex::default();
+        index.extend_functions(facts.functions.iter().cloned());
+        index.insert_file_only(path.clone(), facts);
+        Ok(crate::analysis::inventory_seams_from_index(&[path], &index)
+            .into_iter()
+            .map(|seam| {
+                let mut entry = classified(
+                    "src/lib.rs",
+                    seam.display_line(),
+                    seam.owner(),
+                    seam.expression(),
+                    class,
+                );
+                entry.seam = seam;
+                entry
+            })
+            .collect())
+    }
+
+    #[test]
+    fn producer_return_err_twins_fold_in_both_selection_paths() -> Result<(), String> {
+        // #14708 review: build the twins through the producer, not by hand,
+        // and check that the fold fires on the shapes it actually stores.
+        use crate::analysis::ScopedEvidenceConsumer;
+        let source = "pub enum NameError {\n    Empty,\n    TooLong,\n}\n\npub fn parse_name(raw: &str) -> Result<String, NameError> {\n    if raw.is_empty() {\n        return Err(NameError::Empty);\n    }\n    if raw.len() > 10 {\n        return Err(NameError::TooLong);\n    }\n    Ok(raw.to_string())\n}\n";
+        let entries: Vec<ClassifiedSeam> = produced_seams(source, SeamGripClass::WeaklyGripped)?
+            .into_iter()
+            .filter(|entry| {
+                matches!(
+                    entry.seam.kind(),
+                    SeamKind::ReturnValue | SeamKind::ErrorVariant
+                ) && matches!(entry.seam.display_line(), 8 | 11)
+            })
+            .collect();
+        // Fixture check: both kinds on both lines. The producer stores the
+        // return_value seam as the `return Err(..)` statement and the
+        // error_variant seam as its bare `Err(..)` constructor.
+        for line in [8, 11] {
+            for (kind, prefix) in [
+                (SeamKind::ReturnValue, "return Err(NameError::"),
+                (SeamKind::ErrorVariant, "Err(NameError::"),
+            ] {
+                let seam = entries
+                    .iter()
+                    .find(|entry| entry.seam.kind() == kind && entry.seam.display_line() == line)
+                    .ok_or_else(|| format!("producer emitted no {kind:?} seam on line {line}"))?;
+                if !seam.seam.expression().starts_with(prefix) {
+                    return Err(format!(
+                        "unexpected producer expression {:?} for {kind:?}",
+                        seam.seam.expression()
+                    ));
+                }
+            }
+        }
+        let working_set = AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/lib.rs")]);
+        let complete = select(&entries, &working_set, 3);
+        let shown = complete
+            .top_seams
+            .iter()
+            .map(|entry| (entry.seam.seam.kind(), entry.seam.seam.display_line()))
+            .collect::<Vec<_>>();
+        if shown != [(SeamKind::ErrorVariant, 8), (SeamKind::ErrorVariant, 11)]
+            || complete.omitted_by_cap != 0
+        {
+            return Err(format!(
+                "producer twins did not fold: {shown:?} omitted {}",
+                complete.omitted_by_cap
+            ));
+        }
+        if !complete.warnings.iter().any(|warning| {
+            warning
+                == "2 return_value seams were folded into the error_variant seam on the same line"
+        }) {
+            return Err(format!("missing fold warning: {:?}", complete.warnings));
+        }
+        let config = RiprConfig::default();
+        for limit in [1, 2, 3] {
+            let expected = select(&entries, &working_set, limit);
+            for order in permutations(entries.len()) {
+                let mut streamed = BoundedAgentBrief::new(
+                    &working_set,
+                    limit,
+                    AgentBriefPolicy::from_config(&config),
+                )?;
+                for &ordinal in &order {
+                    streamed.observe(ordinal, entries[ordinal].clone())?;
+                }
+                let selected = streamed.selection()?;
+                if selected_ids(&selected) != selected_ids(&expected)
+                    || selected.warnings != expected.warnings
+                    || selected.omitted_by_cap != expected.omitted_by_cap
                 {
                     return Err(format!(
                         "cap {limit} order {order:?}: streamed {:?} {:?} vs complete {:?} {:?}",

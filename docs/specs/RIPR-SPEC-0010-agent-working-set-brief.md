@@ -140,12 +140,14 @@ omitted before ranking and neither rank nor count toward the cap):
 3. related-test confidence;
 4. file path;
 5. line;
-6. same-line seam kind (`error_variant` before `return_value`);
+6. same-line seam kind (`error_variant` before every other kind);
 7. seam ID.
 
-A `return_value` seam whose expression is `return Err(..)` folds into the
-visible `error_variant` seam for the same `Err(..)` expression in the same
-file, line and owner function. A folded seam is not shown, does not count as
+A `return_value` seam over a `return Err(..)` statement folds into the
+visible `error_variant` seam for the same `Err(..)` constructor in the same
+file, line and owner function. The producer stores the `return_value` seam
+as the whole statement and the `error_variant` seam as the bare constructor;
+the comparison drops the `return` keyword and trailing `;` from both. A folded seam is not shown, does not count as
 visible or toward the cap, and the brief adds a warning naming the fold
 count. Seams of other kinds never fold. The streamed selector keeps unmatched
 twins past the cap, at most twice the cap, so it selects the same seams as
