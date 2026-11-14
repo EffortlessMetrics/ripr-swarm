@@ -186,6 +186,24 @@ existed with no way to begin the attempt.
     `seam_id_unknown` status are unchanged, a truly unknown or Rust-shaped
     stale id keeps its prior wording, and the start stays conditional on
     `ripr check` printing it, so no readiness claim is added.
+13. Disabled-Python Disclosure On An Empty Brief (#13571): when the selected
+    scope's changed code is Python only (every changed file the shared
+    language router routes is a Python file) and Python is not enabled —
+    the flat-layout repo with no root marker and no `ripr.toml` — an empty
+    `ripr agent brief` replaces its "under the current config" warning with
+    one line that names Python, says Python is not enabled in
+    `ripr.toml [languages]` and ripr did not analyze the change, gives the
+    enabling step (add `"python"` to `[languages] enabled` in `ripr.toml`),
+    and only then names the `ripr check --format agent` route for the
+    brief's own input. For a `--files` brief that route reads the current
+    diff, so the line qualifies it as the current diff's findings (that
+    diff need not match the `--files` selection) rather than presenting
+    it as analyzing the selected files. It never says no config change
+    adds a seam, because here a config change is exactly the fix.
+    A Python-enabled scope keeps
+    item 12's preview wording, a Rust-only or mixed-language scope keeps
+    the generic wording, and no verdict, exit code, or diff-driven
+    auto-enable behavior changes.
 
 ## Required Evidence
 
@@ -225,6 +243,15 @@ existed with no way to begin the attempt.
   controls for a truly unknown seam id and a Rust-shaped stale finding id;
   unit cases for the preview-only scope predicate (Rust, mixed, other
   language and disabled adapter scopes stay generic).
+- Disabled-Python disclosure on an empty brief (#13571): a CLI case for a
+  flat-layout Python scope (`lib/*.py` plus `t/test_*.py`, no root marker,
+  no `ripr.toml`) naming Python, the not-analyzed disclosure and the
+  enabling `[languages]` step before the `check` route, plus a `--files`
+  case asserting the current-diff qualifier on that route, with negative
+  controls for the same layout with Python enabled (item 12 wording) and
+  for a Rust-only scope (generic wording); unit cases for the
+  disabled-Python scope predicate (enabled Python, Rust, TypeScript, Perl,
+  JavaScript, unrouted-only and empty scopes stay empty).
 
 ## Non-Goals
 
@@ -294,6 +321,11 @@ existed with no way to begin the attempt.
   `crates/ripr/src/app/agent_status.rs` and
   `crates/ripr/src/output/agent_seam_packets.rs` unit tests named in the
   traceability entry.
+- #13571 (item 13): `crates/ripr/src/app/task_first.rs`
+  (`disabled_python_scope_languages_requires_all_routed_python_and_disabled`)
+  and `crates/ripr/tests/cli_smoke/agent_seam_preview_route.rs`
+  (`python_disabled_flat_layout_brief_names_the_enable_step`), listed in
+  `.ripr/traceability.d/13571-agent-brief-disabled-python.toml`.
 - #13790 (item 11): `crates/ripr/tests/task_first_facade.rs`
   (`repair_with_changed_non_rust_code_says_rust_only`,
   `agent_repair_refusal_names_a_multi_comparison_predicate`,

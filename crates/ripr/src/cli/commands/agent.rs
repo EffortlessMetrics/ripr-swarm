@@ -608,7 +608,9 @@ fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, CoreError> 
 /// instead of "under the current config", which implies a config change
 /// would help. The seam inventory is Rust-only, so none would. Only the
 /// empty-scope warning is replaced; a brief that shows seams, or a scope
-/// with Rust or other changed code, keeps its wording.
+/// with Rust or other changed code, keeps its wording. The #13571 sibling
+/// branch below covers the opposite case — Python code whose adapter is
+/// not enabled at all — where a config change is exactly the fix.
 ///
 /// The route's `check` replays the brief's own input: a saved patch through
 /// `--diff` (resolved by the brief's diff path owner), a base through
@@ -639,7 +641,19 @@ fn route_preview_only_empty_brief(
     };
     let languages =
         app::task_first::preview_only_scope_languages(scope_paths, &config.languages.enabled);
-    if languages.is_empty() {
+    // #13571: when the preview predicate stays empty because Python is not
+    // enabled at all (a flat-layout repo with no marker and no `ripr.toml`),
+    // the generic "under the current config" line is misleading in the
+    // other direction: a config change is exactly what would help, and
+    // `ripr check` analyzed none of the change. Name that enable step
+    // before the `check` route, mirroring `agent_status`'s
+    // disabled-language wording; never claim no config change adds a seam.
+    let disabled_python = if languages.is_empty() {
+        app::task_first::disabled_python_scope_languages(scope_paths, &config.languages.enabled)
+    } else {
+        Vec::new()
+    };
+    if languages.is_empty() && disabled_python.is_empty() {
         return;
     }
     let resolved_diff = match working_set.diff.as_deref() {
@@ -671,12 +685,21 @@ fn route_preview_only_empty_brief(
     else {
         return;
     };
-    *warning = format!(
-        "No seams matched the requested scope (source: {}): the changed code is {} preview code; {}.",
-        working_set.source.as_str(),
-        languages.join(" and "),
-        app::task_first::preview_seam_route(root, input, &languages)
-    );
+    if !languages.is_empty() {
+        *warning = format!(
+            "No seams matched the requested scope (source: {}): the changed code is {} preview code; {}.",
+            working_set.source.as_str(),
+            languages.join(" and "),
+            app::task_first::preview_seam_route(root, input, &languages)
+        );
+    } else {
+        *warning = format!(
+            "No seams matched the requested scope (source: {}): the changed code is Python, but Python is not enabled in ripr.toml [languages], so ripr did not analyze it; add \"python\" to `[languages] enabled` in ripr.toml, then run `{}` {}.",
+            working_set.source.as_str(),
+            app::task_first::preview_check_command(root, input),
+            app::task_first::preview_check_findings(input)
+        );
+    }
 }
 
 fn add_agent_brief_provenance_warning(root: &Path, selection: &mut AgentBriefSelection<'_>) {
