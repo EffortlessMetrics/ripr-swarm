@@ -2679,6 +2679,10 @@ mod tests {
         let mut report = build_pr_review_front_panel_report(input);
         report.summary.top_issue_state = "missing_required_input".to_string();
         report.missing_required_input_from_read_failure = true;
+        // The required warning's message deliberately does not name its own
+        // artifact, and a later optional warning's message does name the proof.
+        // A selection keyed on the message text would therefore pick the wrong
+        // warning; only a selection keyed on `kind` names the proof (#14628).
         report.warnings = vec![
             PanelWarning {
                 kind: "missing_optional_input".to_string(),
@@ -2687,8 +2691,13 @@ mod tests {
             },
             PanelWarning {
                 kind: "missing_required_input".to_string(),
-                message: "Assistant proof artifact is unreadable.".to_string(),
+                message: "Required input is unreadable.".to_string(),
                 source_artifact: Some("test-oracle-assistant-proof.json".to_string()),
+            },
+            PanelWarning {
+                kind: "missing_optional_input".to_string(),
+                message: "Assistant proof artifact is unreadable.".to_string(),
+                source_artifact: Some("docs/assistant-proof-notes.json".to_string()),
             },
         ];
         let markdown = render_pr_review_front_panel_markdown(&report);
@@ -2698,6 +2707,10 @@ mod tests {
         );
         assert!(
             !markdown.contains("- Missing input: docs/pr-guidance.json"),
+            "{markdown}"
+        );
+        assert!(
+            !markdown.contains("- Missing input: docs/assistant-proof-notes.json"),
             "{markdown}"
         );
         Ok(())
