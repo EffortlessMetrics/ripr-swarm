@@ -558,7 +558,7 @@ fn validate_rustc_version(output: &str) -> RustcVersionVerdict {
 /// this crate) or a new dependency, and doctor returns bounded regardless —
 /// so the bounded-probe contract is honored while the detached-descendant
 /// case is accepted here rather than hidden.
-const DOCTOR_TOOL_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const DOCTOR_TOOL_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The top-level doctor status.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

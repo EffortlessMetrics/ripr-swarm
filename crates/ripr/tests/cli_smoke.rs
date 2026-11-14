@@ -37341,6 +37341,72 @@ fn agent_repair_after_cage_violation_restores_preexisting_shared_artifacts()
     Ok(())
 }
 
+/// `init` in a repository that has no commits yet (the state right after
+/// `git init`) must not close by sending the user to a bare `ripr check`:
+/// that command has no base there and exits 2. The closing line names the
+/// commit-first step; once a commit exists the ordinary line returns.
+#[test]
+fn init_next_step_names_commit_first_in_a_repository_without_commits() -> Result<(), String> {
+    let repo = unique_temp_workspace("init-unborn-next-step");
+    std::fs::create_dir_all(&repo).map_err(|e| format!("create repo root: {e}"))?;
+    let git = |args: &[&str]| -> Result<std::process::Output, String> {
+        run_command_with_env("git", &repo, args, &[]).map_err(|e| e.to_string())
+    };
+    assert!(git(&["init", "-q", "-b", "main"])?.status.success());
+    // Fixture check: HEAD really is unborn.
+    assert!(
+        !git(&["rev-parse", "--verify", "--quiet", "HEAD"])?
+            .status
+            .success(),
+        "fixture: expected an unborn HEAD"
+    );
+    let repo_arg = repo.display().to_string();
+
+    // The stumble this guards: the check `init` used to recommend fails here.
+    let check = run_ripr(&["check", "--root", &repo_arg]);
+    assert_eq!(check.status.code(), Some(2), "{check:?}");
+
+    let unborn = run_ripr(&["init", "--root", &repo_arg]);
+    assert_success(&unborn);
+    let stdout = String::from_utf8_lossy(&unborn.stdout);
+    let next = stdout
+        .lines()
+        .find(|line| line.starts_with("Next: "))
+        .ok_or_else(|| format!("init must print a Next line: {stdout}"))?;
+    assert!(
+        next.contains("no commits yet") && next.contains("commit once"),
+        "an unborn repository must be told to commit first: {next}"
+    );
+    assert!(
+        !next.contains("to analyze your branch against its default branch"),
+        "must not promise a check that cannot run yet: {next}"
+    );
+
+    std::fs::write(repo.join("README.md"), "demo\n").map_err(|e| e.to_string())?;
+    assert!(git(&["add", "-A"])?.status.success());
+    let committed = git(&[
+        "-c",
+        "user.name=ripr",
+        "-c",
+        "user.email=ripr@example.invalid",
+        "commit",
+        "-q",
+        "-m",
+        "init",
+    ])?;
+    assert!(committed.status.success(), "{committed:?}");
+    let ready = run_ripr(&["init", "--force", "--root", &repo_arg]);
+    assert_success(&ready);
+    let ready_stdout = String::from_utf8_lossy(&ready.stdout);
+    assert!(
+        ready_stdout.contains("to analyze your branch against its default branch")
+            && !ready_stdout.contains("no commits yet"),
+        "a repository with a commit keeps the ordinary next step: {ready_stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
+    Ok(())
+}
+
 /// #5252 item 7: `init` into a directory that is not a Git work tree warns
 /// instead of silently writing branch-based configuration; a real repo stays
 /// quiet. The warning is advisory: files are still written, exit stays 0.
