@@ -463,7 +463,7 @@ fn missing_history_partial_diff_and_manual_dispatch_are_conservative() -> TestRe
     assert!(git_path.status.success());
     let git_path = String::from_utf8(git_path.stdout)?.trim().to_owned();
     // A resolved fixture-independent executable keeps the failure at diff, not setup.
-    fixture.write_shim("git", "if test \"$1\" = diff; then printf 'policy/workflow_allowlist.txt\\0'; printf 'partial-diff-control' >&2; exit 9; fi\nexec \"$REAL_GIT\" \"$@\"\n")?;
+    fixture.write_shim("git", "if test \"$1\" = --literal-pathspecs; then shift; fi\nif test \"$1\" = diff; then printf 'policy/workflow_allowlist.txt\\0'; printf 'partial-diff-control' >&2; exit 9; fi\nexec \"$REAL_GIT\" \"$@\"\n")?;
     let output_path = fixture.0.join(".git/actions-output");
     fs::write(&output_path, "")?;
     let failed_diff = fixture
@@ -1536,5 +1536,201 @@ fn wheel_codegen_recipe_and_native_release_profile_are_preserved() -> TestResult
         "the workflow must use the canonical package recipe"
     );
     assert!(!job(WORKFLOW, "mcp-evidence-pair")?.contains("CARGO_PROFILE_RELEASE_"));
+    Ok(())
+}
+
+#[test]
+fn repo_policy_test_changes_and_only_test_policy_companions_skip() -> TestResult {
+    let fixture = Fixture::new()?;
+    let base = fixture.git(&["rev-parse", "HEAD"])?;
+    fixture.change("tools/repo-policy/tests/routing_control.rs", "// test\n")?;
+    fixture.change("docs/handoffs/routing-control.md", "test selectors\n")?;
+    fixture.change("changelog.d/routing-control.md", "Internal / CI\n")?;
+    let policy_path = "policy/process_allowlist.d/routing-control.txt";
+    let head = fixture.change(policy_path,
+        "# test-only allowance\ntools/repo-policy/tests/routing_control.rs|Command::new|1|test|fixture\n")?;
+    // Direct production API deliberately avoids stale executable-identity failure:
+    // test bytes are themselves part of repo-policy's build stamp.
+    assert!(!repo_policy::python_wheel::qualifies(
+        &fixture.0,
+        "pull_request",
+        &base,
+        &head
+    )?);
+    for path in [
+        "crates/ripr/src/new.rs",
+        "xtask/src/new.rs",
+        "packaging/python/new.py",
+        "tools/repo-policy/src/new.rs",
+        "tools/repo-policy/build.rs",
+        "tools/repo-policy/Cargo.toml",
+        "tools/repo-policy/test_support.rs",
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        ".cargo/config.toml",
+        "policy/distribution.toml",
+        "fixtures/python/new.py",
+        "unknown.txt",
+        WHEEL,
+    ] {
+        fixture.git(&["reset", "--hard", &head])?;
+        let changed = fixture.change(path, "// changed input\n")?;
+        assert!(
+            repo_policy::python_wheel::qualifies(&fixture.0, "pull_request", &base, &changed)?,
+            "{path}"
+        );
+    }
+    fixture.git(&["reset", "--hard", &head])?;
+    for row in [
+        "crates/ripr/src/main.rs|Command::new|1|product|changed\n",
+        "tools/repo-policy/src/main.rs|Command::new|1|selector|changed\n",
+        "tools/repo-policy/tests/new.rs|Command::new|NaN|test|malformed\n",
+    ] {
+        let changed = fixture.change(policy_path, row)?;
+        assert!(repo_policy::python_wheel::qualifies(
+            &fixture.0,
+            "pull_request",
+            &base,
+            &changed
+        )?);
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_policy_test_deletion_rename_and_history_controls() -> TestResult {
+    let fixture = Fixture::new()?;
+    let original = fixture.git(&["rev-parse", "HEAD"])?;
+    let base = fixture.change("tools/repo-policy/tests/old.rs", "// fixture\n")?;
+    fixture.git(&[
+        "mv",
+        "tools/repo-policy/tests/old.rs",
+        "tools/repo-policy/tests/renamed.rs",
+    ])?;
+    let renamed = fixture.commit()?;
+    assert!(!repo_policy::python_wheel::qualifies(
+        &fixture.0,
+        "pull_request",
+        &base,
+        &renamed
+    )?);
+    fixture.git(&["rm", "tools/repo-policy/tests/renamed.rs"])?;
+    let deleted = fixture.commit()?;
+    assert!(!repo_policy::python_wheel::qualifies(
+        &fixture.0,
+        "pull_request",
+        &base,
+        &deleted
+    )?);
+    fixture.git(&["reset", "--hard", &base])?;
+    fixture.git(&["mv", "tools/repo-policy/tests/old.rs", "product.rs"])?;
+    let escaped = fixture.commit()?;
+    assert!(repo_policy::python_wheel::qualifies(
+        &fixture.0,
+        "pull_request",
+        &base,
+        &escaped
+    )?);
+    fixture.git(&["mv", "product.rs", "tools/repo-policy/tests/old.rs"])?;
+    let entered = fixture.commit()?;
+    assert!(repo_policy::python_wheel::qualifies(
+        &fixture.0,
+        "pull_request",
+        &escaped,
+        &entered
+    )?);
+    assert!(repo_policy::python_wheel::qualifies(
+        &fixture.0,
+        "pull_request",
+        &entered,
+        &entered
+    )?);
+    assert!(repo_policy::python_wheel::qualifies(
+        &fixture.0,
+        "workflow_dispatch",
+        &original,
+        &entered
+    )?);
+    let Err(_) =
+        repo_policy::python_wheel::qualifies(&fixture.0, "pull_request", &"f".repeat(40), &entered)
+    else {
+        return Err("missing history must refuse the skip proof".into());
+    };
+    let Err(_) = repo_policy::python_wheel::qualifies(&fixture.0, "pull_request", &base, &escaped)
+    else {
+        return Err("checkout mismatch must refuse the skip proof".into());
+    };
+    Ok(())
+}
+
+#[test]
+fn test_policy_companions_preserve_non_test_rows_and_literal_paths() -> TestResult {
+    let fixture = Fixture::new()?;
+    let fragment = "policy/process_allowlist.d/[literal]*.txt";
+    let non_test = "crates/ripr/build.rs|Command::new|1|build|unchanged\n";
+    let base = fixture.change(fragment, non_test)?;
+    fixture.change("tools/repo-policy/tests/companion.rs", "// test\n")?;
+    let row = "tools/repo-policy/tests/companion.rs|Command::new|1|test|fixture\n";
+    let head = fixture.change(fragment, &format!("{non_test}{row}"))?;
+    assert!(!repo_policy::python_wheel::qualifies(
+        &fixture.0,
+        "pull_request",
+        &base,
+        &head
+    )?);
+    let changed = fixture.change(
+        fragment,
+        &format!("{}{row}", non_test.replace("|1|", "|2|")),
+    )?;
+    assert!(repo_policy::python_wheel::qualifies(
+        &fixture.0,
+        "pull_request",
+        &base,
+        &changed
+    )?);
+    fixture.git(&["reset", "--hard", &head])?;
+    // Losing an existing non-test allowance must retain package qualification.
+    fixture.git(&["rm", "--", fragment])?;
+    let deleted = fixture.commit()?;
+    assert!(repo_policy::python_wheel::qualifies(
+        &fixture.0,
+        "pull_request",
+        &base,
+        &deleted
+    )?);
+    fixture.git(&["reset", "--hard", &base])?;
+    let test_base = fixture.change(fragment, row)?;
+    fixture.change("tools/repo-policy/tests/companion.rs", "// test\n")?;
+    fixture.git(&[
+        "mv",
+        "--",
+        fragment,
+        "policy/process_allowlist.d/renamed.txt",
+    ])?;
+    let renamed = fixture.commit()?;
+    assert!(!repo_policy::python_wheel::qualifies(
+        &fixture.0,
+        "pull_request",
+        &test_base,
+        &renamed
+    )?);
+    fixture.git(&["rm", "policy/process_allowlist.d/renamed.txt"])?;
+    let removed = fixture.commit()?;
+    assert!(!repo_policy::python_wheel::qualifies(
+        &fixture.0,
+        "pull_request",
+        &test_base,
+        &removed
+    )?);
+    // Metadata alone does not establish a test-only contribution.
+    fixture.git(&["reset", "--hard", &test_base])?;
+    let companion_only = fixture.change("docs/handoffs/companion.md", "text\n")?;
+    assert!(repo_policy::python_wheel::qualifies(
+        &fixture.0,
+        "pull_request",
+        &test_base,
+        &companion_only
+    )?);
     Ok(())
 }
