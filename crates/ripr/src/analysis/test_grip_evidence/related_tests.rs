@@ -25,6 +25,31 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
     seam: &RepoSeam,
     context: &'context CompactGripContext<'index>,
 ) -> Vec<(&'context CompactTest<'index>, RelationReason)> {
+    find_related_tests_in(seam, context, None)
+}
+
+/// True when `seam` relates to some test whose context position is in
+/// `pool`, by a reason `counts` accepts (#12940). Same rules as
+/// [`find_related_tests_with_context`]: other candidates are dropped after
+/// matching and before the per-test checks, and every later step only
+/// removes a test on its own facts and keeps its reason, so a pool test is
+/// related here, with that reason, exactly when it is related there.
+pub(super) fn relates_to_pool_test(
+    seam: &RepoSeam,
+    context: &CompactGripContext<'_>,
+    pool: &BTreeSet<usize>,
+    counts: fn(RelationReason) -> bool,
+) -> bool {
+    !find_related_tests_in(seam, context, Some((pool, counts))).is_empty()
+}
+
+type RelationPool<'p> = (&'p BTreeSet<usize>, fn(RelationReason) -> bool);
+
+fn find_related_tests_in<'context, 'index>(
+    seam: &RepoSeam,
+    context: &'context CompactGripContext<'index>,
+    pool: Option<RelationPool<'_>>,
+) -> Vec<(&'context CompactTest<'index>, RelationReason)> {
     let owner = OwnerContext::resolve(seam, context);
     let target_tokens = assertion_target_tokens(seam);
     let prefix = owner.prefix.as_deref();
@@ -65,6 +90,12 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
     match_owner_named_test(&mut candidates, context, prefix, &owner);
     match_import_path_affinity(&mut candidates, context, prefix, &owner);
     match_fixture_owner_affinity(&mut candidates, context, prefix, &owner);
+    if let Some((pool, counts)) = pool {
+        candidates.retain(|test_index, reason| pool.contains(test_index) && counts(*reason));
+        if candidates.is_empty() {
+            return Vec::new();
+        }
+    }
 
     // An inaccessible direct call cannot regain oracle credit through a
     // proximity or import fallback. An independently matched helper can

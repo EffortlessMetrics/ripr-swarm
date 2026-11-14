@@ -155,6 +155,31 @@ should sort after that assertion-near match. A line-level related-test match
 for the test declaration remains the stronger `changed_test_for_related_seam`
 case.
 
+A related-test match (`changed_test_for_related_seam` or
+`changed_assertion_near_related_test`) needs a relation that ties the test to
+the seam: a proximity-only relation (`same_test_file`, `same_module`,
+`weak_token_substring`) never raises one, for any caller (#12940). On a large
+module one edited test is proximity-related to every seam beside it, which is
+noise, not a reason to look at those seams now. Seams in an edited file still
+match `same_file_seam`.
+
+The file-level `changed_test_for_related_seam` match ("working set includes
+related test") credits only a related test the diff edited when the caller
+knows which functions the diff edited and the test's file has changed lines
+(#12940). `review-comments`, and the PR comment and CI packet paths built on
+it, supply that attribution: a test is edited when a changed line falls
+inside its span. An untouched test that merely shares a file with an edit is
+not a reason to surface a seam, and crediting it made review guidance on a
+large workspace evaluate every caller-file seam related to any test in a
+changed test file. A file named without changed lines (a file-only request),
+or a caller without edit attribution, keeps the file-wide match. Because a
+seam can then reach a related-test match only through an edited test or a
+changed line on or just after a test header, the bounded review selector
+evaluates a second-stage seam only when the seam itself can match (a changed
+line or owner, or a working-set file) or it relates, by a relation that is not
+proximity-only, to such a test, checked against that small test pool with the
+same relation rules evidence uses.
+
 ### JSON Shape
 
 The brief should use schema version `0.2`:

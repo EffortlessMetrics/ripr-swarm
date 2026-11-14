@@ -146,9 +146,9 @@ pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
     normalize_rust_expression, sanitize_path,
 };
-pub(crate) use rust_index::{DeclinedRustFile, RustIndex};
+pub(crate) use rust_index::DeclinedRustFile;
 #[cfg(test)]
-pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustSyntaxAdapter};
+pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
 /// Parser-backed related-test retention fixture for consumer tests (#9175);
 /// a narrow cfg(test) entry so output tests need no analysis internals.
 #[cfg(test)]
@@ -179,7 +179,7 @@ pub(crate) use seam_inventory::{
     DiffScopedCacheStatsAttribution, FileSeamIndex, PilotInventoryDefault,
     PreparedDiffScopedClassifiedWorkspace, PreparedDiffScopedEvaluationInput,
     REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer,
-    SeamLimitInfo, SeamLimitSource, SecondStageFilter, TargetedTestInventoryError,
+    SeamLimitInfo, SeamLimitSource, SecondStageScope, TargetedTestInventoryError,
     announce_seam_facts_cache_misses, apply_pilot_seam_budget,
     classify_seams_in_file_with_shared_index, classify_seams_in_files_at_with_config,
     diff_only_rust_files, evaluate_diff_scoped_classified_seams_from_prepared,
@@ -1277,11 +1277,16 @@ pub(crate) fn owner_symbols_for_lines(
 /// every function whose span contains a changed line, so a consumer can tell
 /// whether an outer owner's span overlaps the diff even when attribution named
 /// a nested function. A line outside every function span has no entry in
-/// either list.
+/// either list. `edited_function_headers` holds the `(file, start_line)` of
+/// each of those enclosing functions and of each indexed test (including a
+/// macro-generated one, pinned to its invocation) whose span contains a
+/// changed line, sorted and deduplicated, so a consumer can tell whether a
+/// test, identified by its header line, was edited.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ChangedLineOwnership {
     pub(crate) owners: Vec<ChangedLineOwner>,
     pub(crate) enclosing_owners: Vec<ChangedLineOwner>,
+    pub(crate) edited_function_headers: Vec<(PathBuf, usize)>,
 }
 
 pub(crate) fn changed_line_ownership_for_lines(
@@ -1318,10 +1323,76 @@ pub(crate) fn changed_line_ownership_for_lines(
             })
         })
         .collect::<Vec<_>>();
+    // A test produced by a `macro_rules!` expansion is pinned to its
+    // invocation span and has no function fact, so read test spans too.
+    let edited_function_headers = lines
+        .iter()
+        .flat_map(|(file, line)| {
+            let functions = rust_index::find_enclosing_functions(&index, file, *line)
+                .map(|function| (file.clone(), function.start_line));
+            let tests = index
+                .tests()
+                .iter()
+                .filter(|test| {
+                    test.file == *file && test.start_line <= *line && *line <= test.end_line
+                })
+                .map(|test| (file.clone(), test.start_line))
+                .collect::<Vec<_>>();
+            functions
+                .chain(tests)
+                .chain(attribute_edited_headers(&index, file, *line))
+                .collect::<Vec<_>>()
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     Ok(ChangedLineOwnership {
         owners: sorted_owners(owners),
         enclosing_owners: sorted_owners(enclosing_owners),
+        edited_function_headers,
     })
+}
+
+/// Largest run of attribute lines above a `fn` token still read as that
+/// function's declaration.
+const MAX_ATTRIBUTE_RUN_LINES: usize = 16;
+
+/// Headers of functions and tests whose attribute block holds `line`: an
+/// indexed start line is the `fn` token, so adding `#[test]` above an
+/// existing function edits that test without touching its span (#12940
+/// review). Every line from `line` up to the `fn` line must be an attribute,
+/// a comment, or blank; a multi-line attribute argument is not followed.
+fn attribute_edited_headers(
+    index: &rust_index::RustIndex,
+    file: &Path,
+    line: usize,
+) -> Vec<(PathBuf, usize)> {
+    let Some(facts) = rust_index::find_file_facts(index, file) else {
+        return Vec::new();
+    };
+    let source_lines = facts.source.lines().collect::<Vec<_>>();
+    let attribute_like = |number: usize| {
+        number
+            .checked_sub(1)
+            .and_then(|position| source_lines.get(position))
+            .is_some_and(|text| {
+                let text = text.trim_start();
+                text.is_empty() || text.starts_with("#[") || text.starts_with("//")
+            })
+    };
+    facts
+        .functions
+        .iter()
+        .map(|function| function.start_line)
+        .chain(facts.tests.iter().map(|test| test.start_line))
+        .filter(|start| {
+            *start > line
+                && start - line <= MAX_ATTRIBUTE_RUN_LINES
+                && attribute_like(line)
+                && (line..*start).all(attribute_like)
+        })
+        .map(|start| (file.to_path_buf(), start))
+        .collect()
 }
 
 /// #11400: the returned expressions a changed `const` reaches, as
@@ -2048,6 +2119,63 @@ pub fn unrelated() -> i32 {
         {
             return Err(format!("expected unrelated owner, got {owners:?}"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_name_a_test_whose_attribute_line_was_added() -> Result<(), String> {
+        // #12940 review (Devin): adding `#[test]` above an existing function
+        // edits that test although its indexed span starts at `fn`. An
+        // attribute above a different, untouched test stays unattributed.
+        let root = temp_dir("edited_attribute_headers");
+        fs::create_dir_all(root.join("src"))
+            .map_err(|e| format!("failed to create src dir: {e}"))?;
+        let source = "pub fn one() -> i32 {\n    1\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    // registers the check\n    fn checks_one() {\n        assert_eq!(one(), 1);\n    }\n\n    #[test]\n    fn neighbor() {\n        assert_eq!(one(), 1);\n    }\n}\n";
+        fs::write(root.join("src/lib.rs"), source)
+            .map_err(|e| format!("failed to write src/lib.rs: {e}"))?;
+        // Line 9 is the added `#[test]`; `fn checks_one` is on line 11.
+        let ownership =
+            changed_line_ownership_for_lines(&root, &[(PathBuf::from("src/lib.rs"), 9)]);
+        fs::remove_dir_all(&root).map_err(|e| format!("failed to remove temp dir: {e}"))?;
+        let ownership = ownership?;
+        assert_eq!(
+            ownership.edited_function_headers,
+            vec![(PathBuf::from("src/lib.rs"), 11)],
+            "only the test under the added attribute is edited"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_name_a_macro_generated_test_edited_past_its_header() -> Result<(), String> {
+        // #12940 review: a `macro_rules!` test has no function fact; it is
+        // pinned to its invocation span, so an edit deep inside that span
+        // must still mark it edited (by the invocation's start line).
+        let root = temp_dir("edited_macro_test_headers");
+        fs::create_dir_all(root.join("src"))
+            .map_err(|e| format!("failed to create src dir: {e}"))?;
+        let source = "pub fn one() -> i32 {\n    1\n}\n\nmacro_rules! suite {\n    ($($t:tt)*) => { $($t)* };\n}\n\nsuite! {\n    #[test]\n    fn made() {\n        let v0 = 0;\n        let v1 = 1;\n        let v2 = 2;\n        let v3 = 3;\n        let v4 = 4;\n        let v5 = 5;\n        let v6 = 6;\n        let v7 = 7;\n        let v8 = 8;\n        let v9 = 9;\n        let v10 = 10;\n        let v11 = 11;\n        let v12 = 12;\n        let v13 = 13;\n        assert_eq!(one(), 1);\n    }\n}\n".to_string();
+        fs::write(root.join("src/lib.rs"), &source)
+            .map_err(|e| format!("failed to write src/lib.rs: {e}"))?;
+        // Line 9 is `suite! {`; line 25 is past the 12-line window.
+        let ownership =
+            changed_line_ownership_for_lines(&root, &[(PathBuf::from("src/lib.rs"), 25)]);
+        fs::remove_dir_all(&root).map_err(|e| format!("failed to remove temp dir: {e}"))?;
+        let ownership = ownership?;
+        assert!(
+            ownership
+                .edited_function_headers
+                .contains(&(PathBuf::from("src/lib.rs"), 9)),
+            "macro test edited past its header must be named: {:?}",
+            ownership.edited_function_headers
+        );
+        assert!(
+            !ownership
+                .edited_function_headers
+                .contains(&(PathBuf::from("src/lib.rs"), 1)),
+            "an untouched function is not edited: {:?}",
+            ownership.edited_function_headers
+        );
         Ok(())
     }
 

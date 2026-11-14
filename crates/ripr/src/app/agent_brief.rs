@@ -6,6 +6,7 @@ use crate::analysis::test_grip_evidence::{RelatedTestGrip, RelationConfidence};
 use crate::analysis::{ClassifiedSeam, RepoSeam};
 use crate::config::{ConfigSeverity, RiprConfig};
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -82,6 +83,12 @@ pub(crate) struct AgentBriefResolvedWorkingSet {
     /// innermost owner per line. Empty when owner spans were not resolved;
     /// consumers must then treat owner-span overlap as unknown, not as true.
     pub(crate) enclosing_owners: Vec<AgentBriefChangedOwner>,
+    /// Header line of every function whose span contains a changed line.
+    /// When `Some`, the file-level related-test why-now credits only a
+    /// related test edited by the diff (its header is listed here) in a file
+    /// that has changed lines (#12940). `None` means edit attribution is
+    /// unknown, and every related test in a working-set file still counts.
+    pub(crate) edited_function_headers: Option<Vec<AgentBriefLine>>,
     pub(crate) base: Option<String>,
     pub(crate) diff: Option<PathBuf>,
     pub(crate) seam_id: Option<String>,
@@ -103,6 +110,7 @@ impl AgentBriefResolvedWorkingSet {
             changed_tests: Default::default(),
             changed_owners: Vec::new(),
             enclosing_owners: Vec::new(),
+            edited_function_headers: None,
             base: None,
             diff: Some(diff.into()),
             seam_id: None,
@@ -119,6 +127,7 @@ impl AgentBriefResolvedWorkingSet {
             changed_tests: Default::default(),
             changed_owners: Vec::new(),
             enclosing_owners: Vec::new(),
+            edited_function_headers: None,
             base: Some(base.into()),
             diff: None,
             seam_id: None,
@@ -134,6 +143,7 @@ impl AgentBriefResolvedWorkingSet {
             changed_tests: Default::default(),
             changed_owners: Vec::new(),
             enclosing_owners: Vec::new(),
+            edited_function_headers: None,
             base: None,
             diff: None,
             seam_id: None,
@@ -149,6 +159,7 @@ impl AgentBriefResolvedWorkingSet {
             changed_tests: Default::default(),
             changed_owners: Vec::new(),
             enclosing_owners: Vec::new(),
+            edited_function_headers: None,
             base: None,
             diff: None,
             seam_id: Some(seam_id.into()),
@@ -163,6 +174,14 @@ impl AgentBriefResolvedWorkingSet {
 
     pub(crate) fn with_changed_tests(mut self, changes: crate::analysis::DiffTestChanges) -> Self {
         self.changed_tests = Some(changes);
+        self
+    }
+
+    pub(crate) fn with_edited_function_headers(
+        mut self,
+        headers: Option<Vec<AgentBriefLine>>,
+    ) -> Self {
+        self.edited_function_headers = headers;
         self
     }
 
@@ -536,36 +555,47 @@ impl<'a> AgentBriefChangedScope<'a> {
             || matching_changed_owner(seam, &self.working_set).is_some()
     }
 
-    /// True when some test in `test_files` lives in a file the working set
-    /// names, the only files whose tests can raise a related-test why-now.
-    /// When none does, no seam can match through related-test evidence.
-    pub(crate) fn related_tests_possible<'p>(
-        &self,
-        test_files: impl IntoIterator<Item = &'p Path>,
-    ) -> bool {
-        test_files.into_iter().any(|file| {
-            let file = normalized_path(file);
-            self.working_set.files.contains(&file)
-                || self
-                    .working_set
-                    .changed_lines
-                    .iter()
-                    .any(|(line_file, _)| *line_file == file)
-        })
+    /// True when a test whose header is `start_line` in `file` could raise
+    /// a related-test why-now for a seam it relates to: a changed line on
+    /// its header or in its assertion window, or the file-level route
+    /// (`matching_related_test_file`). A seam can match a related-test
+    /// why-now only through such a test, so a caller may restrict relation
+    /// lookups to them (#12940).
+    pub(crate) fn related_test_can_raise_why_now(&self, file: &Path, start_line: usize) -> bool {
+        let file = normalized_path(file);
+        let on_changed_line = self
+            .working_set
+            .changed_lines
+            .iter()
+            .any(|(line_file, line)| {
+                *line_file == file
+                    && line
+                        .line
+                        .checked_sub(start_line)
+                        .is_some_and(|distance| distance <= RELATED_TEST_ASSERTION_WINDOW_LINES)
+            });
+        on_changed_line || self.working_set.file_route_credits(&file, start_line)
+    }
+
+    /// False when the file-level related-test route is fully closed, so a
+    /// caller needs no relation pool when no changed line reaches a test.
+    /// `None` edit attribution leaves the legacy any-test route open, which
+    /// a pool cannot bound cheaply, so callers keep every seam then.
+    pub(crate) fn knows_edited_tests(&self) -> bool {
+        self.working_set.edited_test_headers.is_some()
     }
 
     /// False only for a seam that cannot match any non-fallback why-now: not
     /// on a changed line or in a changed owner, not in a working-set file, and
-    /// (`related_tests_possible` false) with no related-test route. Such a
-    /// seam is discarded once any scoped match exists, so its evidence is
-    /// never needed. The two related-test priorities read evidence, so they
-    /// stay unfiltered unless `related_tests_possible` proves them out.
+    /// (`may_relate_to_why_now_test` false) related to no test that
+    /// `related_test_can_raise_why_now` admits. Such a seam is discarded once
+    /// any scoped match exists, so its evidence is never needed.
     pub(crate) fn can_match_non_fallback(
         &self,
         seam: &RepoSeam,
-        related_tests_possible: bool,
+        may_relate_to_why_now_test: bool,
     ) -> bool {
-        related_tests_possible
+        may_relate_to_why_now_test
             || self.contains(seam)
             || self
                 .working_set
@@ -607,6 +637,29 @@ struct NormalizedAgentBriefWorkingSet<'a> {
     changed_lines: Vec<(String, &'a AgentBriefLine)>,
     changed_owners: Vec<(String, &'a AgentBriefChangedOwner)>,
     files: Vec<String>,
+    edited_test_headers: Option<BTreeSet<(String, usize)>>,
+}
+
+impl NormalizedAgentBriefWorkingSet<'_> {
+    /// Whether the file-level related-test route credits the test whose
+    /// header is `start_line` in `file` (already normalized). The file must
+    /// be in the working set. When the diff changed lines in that file and
+    /// edit attribution is known, only a test the diff edited counts: an
+    /// untouched test that happens to share a file with an edit is not a
+    /// reason to look at a seam now (#12940).
+    fn file_route_credits(&self, file: &str, start_line: usize) -> bool {
+        if !self.files.iter().any(|candidate| candidate == file) {
+            return false;
+        }
+        let Some(edited) = &self.edited_test_headers else {
+            return true;
+        };
+        let file_has_changed_lines = self
+            .changed_lines
+            .iter()
+            .any(|(line_file, _)| line_file == file);
+        !file_has_changed_lines || edited.contains(&(file.to_string(), start_line))
+    }
 }
 
 impl<'a> NormalizedAgentBriefWorkingSet<'a> {
@@ -626,11 +679,18 @@ impl<'a> NormalizedAgentBriefWorkingSet<'a> {
             .iter()
             .map(|owner| (normalized_path(&owner.file), owner))
             .collect();
+        let edited_test_headers = working_set.edited_function_headers.as_ref().map(|headers| {
+            headers
+                .iter()
+                .map(|header| (normalized_path(&header.file), header.line))
+                .collect()
+        });
 
         Self {
             changed_lines,
             changed_owners,
             files,
+            edited_test_headers,
         }
     }
 }
@@ -767,6 +827,9 @@ fn matching_related_test_line<'a>(
     }
 
     entry.evidence.related_tests.iter().find_map(|test| {
+        if !related_test_counts_for_why_now(test.relation_reason) {
+            return None;
+        }
         let test_file = normalized_path(&test.file);
         working_set
             .changed_lines
@@ -791,10 +854,22 @@ fn matching_related_test_file<'a>(
         .related_tests
         .iter()
         .find(|test| {
-            let test_file = normalized_path(&test.file);
-            working_set.files.iter().any(|file| file == &test_file)
+            related_test_counts_for_why_now(test.relation_reason)
+                && working_set.file_route_credits(&normalized_path(&test.file), test.line)
         })
         .map(Arc::as_ref)
+}
+
+/// Whether a related test's relation can raise a related-test why-now. A
+/// proximity-only relation (same test file, same module directory, token
+/// substring) ties no changed test to the seam's behavior: on a large
+/// module one edited test is "related" to every seam beside it, which
+/// turned review guidance into an evaluation of thousands of seams with no
+/// better selection (#12940). Seams in an edited file keep `SameFileSeam`.
+pub(crate) fn related_test_counts_for_why_now(
+    reason: crate::analysis::test_grip_evidence::RelationReason,
+) -> bool {
+    !reason.is_proximity_only()
 }
 
 fn selected<'a>(seam: &'a ClassifiedSeam, why_now: AgentBriefWhyNow) -> AgentBriefSelectedSeam<'a> {
@@ -1614,6 +1689,100 @@ mod tests {
                 .evidence
                 .contains("working set includes related test")
         );
+    }
+
+    #[test]
+    fn file_level_related_test_route_credits_only_an_edited_test_when_edits_are_known() {
+        // #12940: the related test (header line 20) is untouched; the diff
+        // edits another test in the same file (header 60, changed line 75,
+        // beyond the assertion window of the related test).
+        let mut seam = classified(
+            "src/pricing.rs",
+            88,
+            "pricing::discounted_total",
+            "amount >= discount_threshold",
+            SeamGripClass::WeaklyGripped,
+        );
+        related_test(&mut seam, "tests/pricing.rs", 20, RelationConfidence::High);
+        let seams = vec![seam];
+        let changed = vec![AgentBriefLine::new("tests/pricing.rs", 75)];
+        let unknown = AgentBriefResolvedWorkingSet::base("main", changed.clone());
+        let untouched = AgentBriefResolvedWorkingSet::base("main", changed.clone())
+            .with_edited_function_headers(Some(vec![AgentBriefLine::new("tests/pricing.rs", 60)]));
+        let edited = AgentBriefResolvedWorkingSet::base("main", changed)
+            .with_edited_function_headers(Some(vec![AgentBriefLine::new("tests/pricing.rs", 20)]));
+
+        let legacy = select(&seams, &unknown, 3);
+        assert_eq!(
+            legacy.top_seams[0].why_now.reason,
+            AgentBriefWhyNowReason::ChangedTestForRelatedSeam,
+            "unknown edit attribution keeps the file-level route"
+        );
+        let skipped = select(&seams, &untouched, 3);
+        assert!(
+            skipped.top_seams.iter().all(
+                |item| item.why_now.reason != AgentBriefWhyNowReason::ChangedTestForRelatedSeam
+            ),
+            "an untouched related test must not raise a why-now: {:?}",
+            skipped
+                .top_seams
+                .iter()
+                .map(|item| &item.why_now)
+                .collect::<Vec<_>>()
+        );
+        let credited = select(&seams, &edited, 3);
+        assert_eq!(
+            credited.top_seams[0].why_now.reason,
+            AgentBriefWhyNowReason::ChangedTestForRelatedSeam
+        );
+        assert!(
+            credited.top_seams[0]
+                .why_now
+                .evidence
+                .contains("working set includes related test")
+        );
+    }
+
+    #[test]
+    fn proximity_only_relation_to_a_changed_test_raises_no_related_test_why_now() {
+        // #12940: a test edited on its header line relates to the seam only by
+        // sharing a module directory; that is not a reason to surface it.
+        let changed = vec![AgentBriefLine::new("tests/pricing.rs", 20)];
+        for (reason, expect_related) in [
+            (
+                crate::analysis::test_grip_evidence::RelationReason::SameModule,
+                false,
+            ),
+            (
+                crate::analysis::test_grip_evidence::RelationReason::SameTestFile,
+                false,
+            ),
+            (
+                crate::analysis::test_grip_evidence::RelationReason::WeakTokenSubstring,
+                false,
+            ),
+            (
+                crate::analysis::test_grip_evidence::RelationReason::DirectOwnerCall,
+                true,
+            ),
+        ] {
+            let mut seam = classified(
+                "src/pricing.rs",
+                88,
+                "pricing::discounted_total",
+                "amount >= discount_threshold",
+                SeamGripClass::WeaklyGripped,
+            );
+            related_test(&mut seam, "tests/pricing.rs", 20, RelationConfidence::High);
+            Arc::make_mut(&mut seam.evidence.related_tests[0]).relation_reason = reason;
+            let seams = vec![seam];
+            let working_set = AgentBriefResolvedWorkingSet::base("main", changed.clone());
+            let selection = select(&seams, &working_set, 3);
+            let related = selection.top_seams.iter().any(|item| {
+                item.why_now.reason == AgentBriefWhyNowReason::ChangedTestForRelatedSeam
+            });
+            assert_eq!(related, expect_related, "{reason:?}");
+        }
     }
 
     #[test]

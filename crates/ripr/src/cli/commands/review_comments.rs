@@ -10,12 +10,12 @@
 use crate::analysis;
 use crate::app::CheckInput;
 use crate::app::agent_brief::{
-    AgentBriefChangedOwner, AgentBriefLine, AgentBriefPolicy, AgentBriefResolvedWorkingSet,
-    BoundedAgentBrief,
+    AgentBriefLine, AgentBriefPolicy, AgentBriefResolvedWorkingSet, BoundedAgentBrief,
 };
 use crate::app::review_comments_receipt::ReviewCommentsReceiptRun;
 use crate::cli::commands_agent_support::{
-    agent_brief_lines_from_diff, agent_brief_owner_attribution_for_lines,
+    AgentBriefOwnerAttribution, agent_brief_lines_from_diff,
+    agent_brief_owner_attribution_for_lines,
 };
 use crate::cli::commands_numeric::parse_positive_u64;
 use crate::cli::commands_options::ReviewCommentsOptions;
@@ -493,10 +493,7 @@ fn review_comments_with_admission(
     load_diff: impl Fn(&Path, &str, &str) -> Result<String, crate::core_error::CoreError>,
     now: impl Fn() -> Instant + Send + Sync + 'static,
     load_ceiling: impl FnOnce() -> Result<GuidancePayloadCeiling, String>,
-    attribute_owners: impl FnOnce(
-        &Path,
-        &[AgentBriefLine],
-    ) -> (Vec<AgentBriefChangedOwner>, Vec<AgentBriefChangedOwner>),
+    attribute_owners: impl FnOnce(&Path, &[AgentBriefLine]) -> AgentBriefOwnerAttribution,
 ) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_review_comments_help();
@@ -775,10 +772,13 @@ fn review_comments_with_admission(
     // (#1604); an expiry inside it surfaces at the deadline check below.
     receipt.step("owner_attribution");
     receipt.write_atomic(&receipt_path)?;
-    let (changed_owners, enclosing_owners) =
-        analysis::cancellation::with_token(&cancellation, || {
-            attribute_owners(&input.root, &changed_lines)
-        });
+    let AgentBriefOwnerAttribution {
+        changed_owners,
+        enclosing_owners,
+        edited_function_headers,
+    } = analysis::cancellation::with_token(&cancellation, || {
+        attribute_owners(&input.root, &changed_lines)
+    });
     enforce_review_comments_deadline(
         &mut receipt,
         &receipt_path,
@@ -792,7 +792,8 @@ fn review_comments_with_admission(
     let working_set = AgentBriefResolvedWorkingSet::base(options.base.clone(), changed_lines)
         .with_changed_tests(changed_tests)
         .with_changed_owners(changed_owners)
-        .with_enclosing_owners(enclosing_owners);
+        .with_enclosing_owners(enclosing_owners)
+        .with_edited_function_headers(edited_function_headers);
     let changed_owner_names = working_set
         .changed_owners
         .iter()
@@ -2222,6 +2223,7 @@ mod tests {
             changed_tests: Default::default(),
             changed_owners: Vec::new(),
             enclosing_owners: Vec::new(),
+            edited_function_headers: None,
             base: Some("HEAD~1".to_string()),
             diff: None,
             seam_id: None,
@@ -2846,7 +2848,7 @@ mod tests {
                     analysis::cancellation::current_token().is_some(),
                     Ordering::SeqCst,
                 );
-                (Vec::new(), Vec::new())
+                AgentBriefOwnerAttribution::unknown()
             },
         );
         if !saw_token.load(Ordering::SeqCst) {
@@ -2914,7 +2916,7 @@ mod tests {
             GuidancePayloadCeiling::from_env,
             move |_root, _lines| {
                 attributed.store(true, Ordering::SeqCst);
-                (Vec::new(), Vec::new())
+                AgentBriefOwnerAttribution::unknown()
             },
         );
         let receipt: serde_json::Value = serde_json::from_str(
@@ -3492,7 +3494,7 @@ mod tests {
                     );
                     let owners = agent_brief_owner_attribution_for_lines(root, lines);
                     assert_eq!(
-                        owners.0.len(),
+                        owners.changed_owners.len(),
                         3,
                         "positive control must build a real owner index"
                     );

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `review-comments` (and the PR comment and CI packet paths built on it) no longer runs out of memory on a large workspace when a diff adds a test. A related-test reason in review guidance and agent briefs now needs a relation that ties the test to the code, not just a shared module, test file or name fragment, and in review guidance only tests the diff edited count. On ripr-swarm a 3-file diff went from an OOM kill at 13.9 GB to 57 s at 1.1 GB peak (#12940).

@@ -40,8 +40,9 @@ pub(in crate::analysis) use value_contradiction::{
 pub(crate) use related_tests::CompactGripContext;
 use related_tests::{
     CompactTest, assertion_target_tokens, call_text_contains_named_call, find_related_tests_ranked,
-    find_related_tests_with_context, required_discriminator_text, sort_related_tests_for_seam,
-    strip_comments_and_strings, test_assertion_mentions_any_target_token,
+    find_related_tests_with_context, relates_to_pool_test, required_discriminator_text,
+    sort_related_tests_for_seam, strip_comments_and_strings,
+    test_assertion_mentions_any_target_token,
 };
 
 use super::classify::{
@@ -582,6 +583,63 @@ impl<'index> EvidencePass<'index> {
             .collect();
         out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
         out
+    }
+
+    /// The tests `admit(file, header_line)` accepts, as context positions,
+    /// for [`Self::seams_kept_by_scope`] (#12940). Empty when the context
+    /// could not be built.
+    pub(crate) fn related_test_pool(
+        &self,
+        admit: impl Fn(&Path, usize) -> bool,
+    ) -> BTreeSet<usize> {
+        let Some(context) = self.context.as_ref() else {
+            return BTreeSet::new();
+        };
+        context
+            .tests
+            .iter()
+            .enumerate()
+            .filter(|(_, indexed)| admit(&indexed.test.file, indexed.test.start_line))
+            .map(|(position, _)| position)
+            .collect()
+    }
+
+    /// For each of `ordinals`, whether its seam is kept: `keep` accepts it,
+    /// or it relates to a test in `pool`, by a reason `counts_relation`
+    /// accepts, under the same relation authority evidence uses. Every seam is kept when the context is missing, so a
+    /// failed build never hides a seam here. A cancelled lookup keeps its
+    /// seam; the caller's checkpoint then stops the run.
+    pub(crate) fn seams_kept_by_scope(
+        &self,
+        seams: &[RepoSeam],
+        ordinals: &[usize],
+        keep: impl Fn(&RepoSeam) -> bool + Sync,
+        pool: &BTreeSet<usize>,
+        counts_relation: fn(RelationReason) -> bool,
+    ) -> Vec<bool> {
+        let Some(context) = self.context.as_ref() else {
+            return vec![true; ordinals.len()];
+        };
+        let token = cancellation::current_token();
+        let overlay = crate::analysis::committed_source::current_overlay();
+        ordinals
+            .par_iter()
+            .map(|ordinal| {
+                let seam = &seams[*ordinal];
+                if keep(seam) {
+                    return true;
+                }
+                if pool.is_empty() {
+                    return false;
+                }
+                cancellation::with_optional_token(token.as_ref(), || {
+                    crate::analysis::committed_source::with_overlay(overlay.clone(), || {
+                        cancellation::checkpoint().is_err()
+                            || relates_to_pool_test(seam, context, pool, counts_relation)
+                    })
+                })
+            })
+            .collect()
     }
 
     /// Drop memoized owner/AST detail at a window boundary. Immutable test
