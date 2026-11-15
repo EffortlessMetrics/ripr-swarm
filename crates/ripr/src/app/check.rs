@@ -993,10 +993,10 @@ impl PerlProducerStaging {
 ///
 /// Managed producer mode (Campaign 31 Phase D #1407; hardened in item 4).
 /// Invokes the producer with the SPEC-0064-canonical arg surface, enforcing a
-/// real timeout with process kill, writing atomically, using a cache key that
-/// includes content/diff/schema/producer/config (not root only), and validating
-/// cached-packet freshness before reuse. Returns the final packet path on
-/// success. The canonical producer is `perl-ripr-facts`; `perllsp` and
+/// real timeout with process kill and writing atomically. The packet path is
+/// keyed on root/base/head/schema/producer/timeout; that key omits diff
+/// content, so no cached packet is ever reused and every run regenerates
+/// (item 4b). Returns the final packet path on success. The canonical producer is `perl-ripr-facts`; `perllsp` and
 /// `perl-lsp` are compatibility wrappers.
 ///
 /// Capability handshake: DEFERRED. Requires a defined exporter probe surface
