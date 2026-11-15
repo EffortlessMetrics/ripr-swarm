@@ -15498,8 +15498,6 @@ tests = [
   "crates/ripr/tests/unchanged_closure_tail.rs::a_change_the_closure_decides_or_carries_stays_unrevealed",
   "crates/ripr/tests/constant_tail_propagation.rs::exact_pin_on_a_constant_owner_tail_is_exposed",
   "crates/ripr/tests/constant_tail_propagation.rs::weak_oracle_on_a_constant_owner_tail_keeps_its_gap",
-  "crates/ripr/src/analysis/classify/flow.rs::tests::owner_tail_value_without_text_cues_reaches_return_sink",
-  "crates/ripr/src/analysis/classify/flow.rs::tests::owner_tail_value_refuses_unfoldable_non_tail_and_opaque_shapes",
   "crates/ripr/tests/fallible_owner_return.rs::frozen_fallible_literal_helper_exposes_exact_owner_return",
   "crates/ripr/tests/fallible_owner_return.rs::fallible_literal_helper_refuses_unbound_or_ineffective_oracles",
   "crates/ripr/tests/fallible_owner_return.rs::warm_analysis_revalidates_config_lock_and_source_role",
@@ -15825,7 +15823,6 @@ fixtures = [
 code = [
   "crates/ripr/src/analysis/test_grip_evidence/boolean_boundary_pin.rs",
   "crates/ripr/src/analysis/test_grip_evidence.rs",
-  "crates/ripr/src/analysis/classify/flow.rs",
   "crates/ripr/src/analysis/classify/poll_helper.rs",
   "crates/ripr/src/analysis/classify/mask_pin.rs",
   "crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs",

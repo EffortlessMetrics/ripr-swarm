@@ -35,7 +35,7 @@ Verdicts:
   not help.
 - **false gap**: `no_static_path` although the test calls the changed code.
 
-Measured 2026-11-15 on main `60114de3` plus the Rust tail-value fix in #14797.
+Measured 2026-11-15 on main `60114de3`.
 Python tests import names explicitly (`from fx.core import f`). ripr's probe
 family is in parentheses.
 
@@ -57,11 +57,11 @@ family is in parentheses.
 | Bitwise (`a & b` → `a \| b`) | BinaryOperator | `&` ↔ `\|` | none | unknown² | yes (return_value) | yes (return_value) |
 | Module constant (`LIMIT = 100` → `101`) | none | number +1 | none | unknown | false gap | false gap |
 | Number literal in an expression (`x * 3` → `x * 4`) | none | number +1 | none | yes (return_value) | yes (return_value) | yes (return_value) |
-| Boolean literal returned (`true` → `false`) | FnValue | `True` ↔ `False` | BooleanLiteral | yes (return_value) | yes (return_value) | yes (return_value) |
+| Boolean literal returned (`true` → `false`) | FnValue | `True` ↔ `False` | BooleanLiteral | unknown | yes (return_value) | yes (return_value) |
 | String literal returned (`"hello"` → `""`) | FnValue | string mutation | StringLiteral | yes (return_value) | yes (return_value) | yes (return_value) |
 | Default parameter value (`n=3` → `n=4`) | n/a | number +1 | none | n/a | yes (predicate) | unknown |
 | Body replaced with a default value (`0`, `None`, `undefined`) | FnValue | none | BlockStatement | yes (return_value) | partial (return_value) | yes (return_value) |
-| Collection emptied (`vec![1, 2]` → `vec![]`) | FnValue | none | ArrayDeclaration | partial (return_value) | yes (return_value) | yes (return_value) |
+| Collection emptied (`vec![1, 2]` → `vec![]`) | FnValue | none | ArrayDeclaration | unknown | yes (return_value) | yes (return_value) |
 | Call statement deleted (`v.push(x + 1);` removed) | FnValue on the callee³ | none | BlockStatement³ | yes (call_deletion) | partial (side_effect) | yes (side_effect) |
 | Method swapped (`min` → `max`) | none | none | MethodExpression | yes (return_value) | yes (return_value) | yes (return_value) |
 | Call argument changed (`scale(x, 2)` → `scale(x, 3)`) | none | argument mutation | none | yes (return_value) | yes (return_value) | yes (return_value) |
@@ -102,12 +102,9 @@ mutmut 3's mutation behavior.
 
 | | yes | partial | unknown | false gap | rows |
 | --- | --- | --- | --- | --- | --- |
-| Rust | 14 | 7 | 10 | 0 | 31 |
+| Rust | 13 | 6 | 12 | 0 | 31 |
 | Python | 28 | 4 | 0 | 1 | 33 |
 | TypeScript | 22 | 10 | 1 | 1 | 34 |
-
-Before #14797, Rust was 13 yes, 6 partial and 12 unknown. A returned boolean
-literal moved to yes and an emptied `vec!` to partial.
 
 ## Where ripr falls short, by language
 
@@ -120,7 +117,11 @@ Loop range bounds ([#11972](https://github.com/EffortlessMetrics/ripr-swarm/issu
 `break`/`continue` and forced conditions
 ([#14816](https://github.com/EffortlessMetrics/ripr-swarm/issues/14816)) are also
 unknown, as are module constants, a returned `a && b` flipped to `a || b`, and
-unary or bitwise edits on a returned name (#14815).
+unary or bitwise edits on a returned name (#14815). A returned `true` changed
+to `false`, or a `vec!` emptied, also reads unknown: the tail carries no text
+cue ripr reads as a return, and crediting it safely needs the old function
+body, not just the replaced line
+([#14797](https://github.com/EffortlessMetrics/ripr-swarm/issues/14797)).
 
 **Python.** A changed module constant reads `no_static_path` even though the
 test calls the function that reads it
