@@ -52,13 +52,22 @@ pub(super) fn suppressed_json(
     message: &str,
 ) -> Value {
     let seam = &selected.seam.seam;
-    json!({
+    let mut record = json!({
         "seam_id": seam.id().as_str(),
         "file": display_path(seam.file()),
         "line": seam.display_line(),
         "reason": reason,
         "message": message,
-    })
+    });
+    // #13895: keep the domain-owned canonical gap identity, which survives
+    // source movement, so a suppressed gap still matches its reviewed
+    // baseline entry instead of reading as resolved.
+    if let Some(identity) = crate::analysis::canonical_gap::canonical_gap_identity(selected.seam)
+        && let Some(object) = record.as_object_mut()
+    {
+        object.insert("canonical_gap_id".to_string(), json!(identity.id));
+    }
+    record
 }
 
 pub(super) fn changed_test_paths(working_set: &AgentBriefResolvedWorkingSet) -> Vec<String> {

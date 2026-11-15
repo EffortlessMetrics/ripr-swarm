@@ -848,7 +848,7 @@ fn finding_result(
         "properties".to_string(),
         finding_properties(finding, severity),
     );
-    if let Some(suppression) = active_exposure_suppression(finding, suppressions, today) {
+    if let Some(suppression) = active_exposure_suppression(root, finding, suppressions, today) {
         result.insert(
             "suppressions".to_string(),
             json!([suppression_metadata(suppression)]),
@@ -1362,14 +1362,37 @@ fn missing_discriminators(missing: &[MissingDiscriminatorFact]) -> Value {
 }
 
 fn active_exposure_suppression<'a>(
+    root: &Path,
     finding: &Finding,
     suppressions: &'a [SuppressionEntry],
     today: &str,
 ) -> Option<&'a SuppressionEntry> {
+    // #13895: a `path` + `function` entry matches the same way it does for
+    // `ripr check` (exact root-relative file and exact owner function).
+    let file = &finding.probe.location.file;
+    let relative = crate::output::suppressions::root_relative_finding_path(root, file);
+    let owner_function = crate::output::suppressions::owner_function_of(
+        &relative,
+        file,
+        finding.probe.owner.as_ref().map(|owner| owner.0.as_str()),
+    );
     suppressions.iter().find(|entry| {
-        entry.kind == SuppressionKind::ExposureGap
-            && entry.finding_id.as_deref() == Some(finding.id.as_str())
-            && !is_expired(entry.expires.as_deref(), today)
+        if entry.kind != SuppressionKind::ExposureGap || is_expired(entry.expires.as_deref(), today)
+        {
+            return false;
+        }
+        match (&entry.finding_id, &entry.function) {
+            (Some(id), _) => id == &finding.id,
+            (None, Some(function)) => {
+                entry.path.as_deref() == Some(relative.as_str())
+                    && owner_function.as_deref() == Some(function.as_str())
+                    && entry
+                        .static_class
+                        .as_deref()
+                        .is_none_or(|class| class == finding.class.as_str())
+            }
+            (None, None) => false,
+        }
     })
 }
 

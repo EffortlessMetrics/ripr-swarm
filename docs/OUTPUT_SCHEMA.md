@@ -10923,7 +10923,9 @@ Field contract:
   `summary.unchanged_tests` still records that tests changed. A record with
   `reason: "suppressed_by_policy"` was matched by `--suppression-policy` (or a
   suppression recorded in `--check-output`) and its `message` names the entry;
-  `gate evaluate` reads such records as non-blocking.
+  `gate evaluate` reads such records as non-blocking. Seam records carry the
+  optional `canonical_gap_id` when the seam has one, so a suppressed gap that
+  moved still matches its baseline entry instead of reading as resolved.
 - `warnings[]` - selection warnings from the agent brief selection path.
 - `limits_note` - static-evidence boundary text for downstream summaries.
 

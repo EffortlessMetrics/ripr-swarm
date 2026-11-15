@@ -579,6 +579,12 @@ fn review_comments_suppression_policy_keeps_the_gate_from_blocking_on_suppressed
     );
     for item in doc["suppressed"].as_array().into_iter().flatten() {
         assert_eq!(item["reason"], "suppressed_by_policy", "{item}");
+        assert!(
+            item["canonical_gap_id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty()),
+            "a policy-suppressed seam keeps its canonical gap identity: {item}"
+        );
         let message = item["message"].as_str().unwrap_or_default();
         assert!(
             message.contains("policy.toml") && message.contains("src/retry.rs::retry_allowed"),
@@ -930,8 +936,8 @@ fn finding_id_entry_applied_through_review_comments_policy_suppresses_one_seam()
             .as_array()
             .into_iter()
             .flatten()
-            .filter_map(Value::as_str)
-            .all(|warning| !warning.contains("fails closed")),
+            .map(|warning| warning["message"].as_str().unwrap_or_default())
+            .all(|warning| !warning.contains("not applied")),
         "a unique id must not warn: {doc}"
     );
     // The control function and retry_allowed's other seam are untouched.
@@ -1085,5 +1091,66 @@ fn review_comments_skips_expired_entries_and_applies_path_globs() -> Result<(), 
         suppressed.len() as u64,
         "{gate}"
     );
+    Ok(())
+}
+
+/// SARIF results honor a configured `path` + `function` entry the way check
+/// JSON does: the named owner's results carry a `suppressions` array and the
+/// sibling function's results do not.
+#[test]
+fn sarif_marks_function_selector_results_suppressed_and_spares_the_sibling() -> Result<(), String> {
+    let fixture = build_retry_repo("policy-sarif")?;
+    let root = &fixture.0;
+    mkdir_chain_dirs(root)?;
+    write_policy(
+        root,
+        ".ripr/suppressions.toml",
+        &function_entry("retry_allowed"),
+    )?;
+    for format in ["sarif", "sarif-compact"] {
+        let dest = root.join(format!("target/ripr/pr/check.{format}.json"));
+        let output = run_ripr_to(
+            root,
+            &[
+                "check", "--root", ".", "--base", "HEAD~1", "--format", format,
+            ],
+            &dest,
+        )?;
+        if !output.status.success() {
+            return Err(diagnose(format, &output));
+        }
+        let sarif = read_json(&dest)?;
+        let results = sarif["runs"][0]["results"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let at_line = |line: u64| {
+            results
+                .iter()
+                .filter(|result| {
+                    result["locations"][0]["physicalLocation"]["region"]["startLine"].as_u64()
+                        == Some(line)
+                })
+                .collect::<Vec<_>>()
+        };
+        let retry = at_line(RETRY_LINE);
+        let backoff = at_line(BACKOFF_LINE);
+        assert!(
+            !retry.is_empty() && !backoff.is_empty(),
+            "{format}: both functions need results: {sarif}"
+        );
+        assert!(
+            retry
+                .iter()
+                .all(|result| result["suppressions"][0]["justification"] == "accepted retry debt"),
+            "{format}: retry_allowed results must be suppressed: {sarif}"
+        );
+        assert!(
+            backoff
+                .iter()
+                .all(|result| result.get("suppressions").is_none()),
+            "{format}: the sibling function stays unsuppressed: {sarif}"
+        );
+    }
     Ok(())
 }

@@ -990,7 +990,11 @@ pub(crate) fn owner_function_of(
 ) -> Option<String> {
     let owner = owner?.replace('\\', "/");
     let located = crate::analysis::stable_path_text(file);
-    let function = [relative_path, located.as_str()]
+    // Owner symbols carry the stable (percent-escaped) spelling of the
+    // indexed relative file, so `src/rate%limit.rs` appears as
+    // `src/rate%25limit.rs::` in the owner.
+    let stable_relative = crate::analysis::stable_path_text(Path::new(relative_path));
+    let function = [relative_path, stable_relative.as_str(), located.as_str()]
         .iter()
         .find_map(|path| owner.strip_prefix(&format!("{path}::")))?;
     if function.trim().is_empty() || is_ambiguous_owner_function(function) {
@@ -2370,6 +2374,18 @@ owner = "repo-owner"
         assert_eq!(
             owner_function_of("src/retry.rs", file, Some("src/retry.rs::")),
             None
+        );
+        // A percent-bearing file: the owner carries the stable escape while
+        // the location is root-joined, so only the stable relative spelling
+        // can match.
+        assert_eq!(
+            owner_function_of(
+                "src/rate%limit.rs",
+                Path::new("/repo/src/rate%limit.rs"),
+                Some("src/rate%25limit.rs::allowed")
+            )
+            .as_deref(),
+            Some("allowed")
         );
         assert_eq!(
             owner_function_of(
