@@ -95,9 +95,14 @@ STATE_LINE = re.compile(
 )
 # #14603: VERDICT is a typed decision field, not a growing list of blocker words.
 # Its whole value must be APPROVE with an optional short or full head SHA. BLOCK,
-# ABSTAIN, empty, mixed and unrecognized values are all negative. An APPROVE field
-# constrains a separate ready marker; it never becomes an attestation carrier itself.
+# ABSTAIN, empty and unrecognized values are all negative. An APPROVE-led value that
+# is not exactly that form is neutral: the house marker review ends its verdict line
+# with an explanation, and scoring that as a block disarmed the queue. It never
+# attests either, so prose cannot carry a positive disposition; a value that also
+# names an alternative disposition still refuses. An APPROVE field constrains a
+# separate ready marker; it never becomes an attestation carrier itself.
 VERDICT_TABLE_LABEL = r"^[ \t]*\|[ \t*_`]*verdict[ \t*_`]*\|"
+VERDICT_TABLE_HEADER = re.compile(VERDICT_TABLE_LABEL, re.IGNORECASE)
 # #14592: a GFM table row may omit its trailing pipe, so the value part is the
 # whole remainder of the row and is split into cells by ``verdict_table_value``.
 # Matching only ``[^|]*|`` made "| Verdict | BLOCK" fall through as neutral prose.
@@ -108,6 +113,19 @@ VERDICT_FIELD = re.compile(
 )
 VERDICT_ROW_CELL_MARKUP = " \t*_`"
 POSITIVE_VERDICT_VALUE = re.compile(r"approve(?:[ \t]+[0-9a-f]{7,40})?[ \t]*", re.IGNORECASE)
+APPROVE_LED = re.compile(r"approve(?:[ \t]+[0-9a-f]{7,40})?", re.IGNORECASE)
+# A second disposition word after APPROVE is a contradiction, not an explanation.
+VERDICT_ALTERNATIVE = re.compile(
+    r"(?<![a-z])(?:block(?:ed|s|ing)?|abstain|maybe|reject(?:ed|s)?|nack|hold|"
+    r"not[ \t_-]*ready|incomplete|no[ \t_-]*go|fail(?:ed|s|ure)?|"
+    r"changes?[ \t_-]*requested|repairs?[ \t_-]*required)(?![a-z])",
+    re.IGNORECASE,
+)
+# #14603 review repair: `| Verdict | Notes |` names a column, not a disposition.
+# A GFM header row is the row immediately above a delimiter row.
+GFM_DELIMITER_ROW = re.compile(
+    r"^[ \t]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$"
+)
 # Retraction and blocker phrases for body prose after the marker (and for fenced text,
 # which must not be able to hide one). Best effort: free prose cannot be enumerated, so
 # the closed control is the marker line plus later native reviews superseding this one.
@@ -313,14 +331,49 @@ def verdict_table_value(row: str) -> str:
 
 
 def verdict_disposition(line: str) -> bool | None:
-    """Return an explicit verdict's disposition, or None when the line has no field."""
+    """Return an explicit verdict's disposition, or None when the line has no field.
+
+    #14603 review repair: an APPROVE-led value that is not exactly APPROVE with an
+    optional head SHA is neutral. It cannot attest, and it must not veto another
+    carrier: the house marker review explains itself on the verdict line. A value
+    that also names an alternative disposition is a contradiction and refuses.
+    """
     match = VERDICT_FIELD.match(normalize_body(line))
     if match is None:
         return None
     value = match.group("value")
     if value is None:
         value = verdict_table_value(match.group("table_row"))
-    return POSITIVE_VERDICT_VALUE.fullmatch(value.strip()) is not None
+    stripped = value.strip()
+    if POSITIVE_VERDICT_VALUE.fullmatch(stripped) is not None:
+        return True
+    approve = APPROVE_LED.match(stripped)
+    if approve is None:
+        return False
+    remainder = _strip_negated_verdict_words(stripped[approve.end() :])
+    if VERDICT_ALTERNATIVE.search(remainder) is not None:
+        return False
+    if NEGATION.search(strip_negated_change(remainder)) is not None:
+        return False
+    return None
+
+
+def verdict_table_header(lines: list[str], index: int) -> bool:
+    """Whether ``lines[index]`` is a table header row, not a verdict.
+
+    #14603 review repair: ``| Verdict | Notes |`` above a GFM delimiter row names a
+    column. Reading it as a value refused a well-formed review table.
+    """
+    if VERDICT_TABLE_HEADER.match(normalize_body(lines[index])) is None:
+        return False
+    return index + 1 < len(lines) and GFM_DELIMITER_ROW.match(lines[index + 1]) is not None
+
+
+def without_verdict_table_headers(lines: list[str]) -> list[str]:
+    """Drop ``Verdict`` column header rows, which state no disposition."""
+    return [
+        line for index, line in enumerate(lines) if not verdict_table_header(lines, index)
+    ]
 
 
 def strip_negated_change(line: str) -> str:
@@ -361,6 +414,21 @@ NEGATED_VERDICT_WORD = re.compile(
 SENTENCE_END = re.compile(r"[.!;]")
 
 
+def _strip_negated_verdict_words(text: str) -> str:
+    """Remove resolved negated findings from ``text`` unless they are refuted."""
+
+    def replace(match: re.Match[str]) -> str:
+        before_clause = text[: match.start()].rsplit(",", 1)[-1]
+        after = text[match.end() :]
+        end = SENTENCE_END.search(after)
+        next_sentence = after[end.start() :] if end else ""
+        if REFUTES_NEGATION.search(before_clause) or REFUTATION_AFTER.search(next_sentence):
+            return match.group(0)
+        return " "
+
+    return NEGATED_VERDICT_WORD.sub(replace, text)
+
+
 def strip_negated_verdict_word(line: str) -> str:
     """Remove a resolved negated finding from a verdict line unless it is refuted.
 
@@ -371,17 +439,7 @@ def strip_negated_verdict_word(line: str) -> str:
     """
     if not VERDICT_LINE.match(line):
         return line
-
-    def replace(match: re.Match[str]) -> str:
-        before_clause = line[: match.start()].rsplit(",", 1)[-1]
-        after = line[match.end() :]
-        end = SENTENCE_END.search(after)
-        next_sentence = after[end.start() :] if end else ""
-        if REFUTES_NEGATION.search(before_clause) or REFUTATION_AFTER.search(next_sentence):
-            return match.group(0)
-        return " "
-
-    return NEGATED_VERDICT_WORD.sub(replace, line)
+    return _strip_negated_verdict_words(line)
 
 
 def negation_hit(line: str) -> bool:
@@ -410,12 +468,20 @@ def comment_body_ready(body: str) -> bool:
     if parts is None:
         return False
     visible, fenced = parts
+    visible = without_verdict_table_headers(visible)
+    fenced = without_verdict_table_headers(fenced)
     substantive = [line for line in visible if line.strip()]
     if not substantive or not positive_line(substantive[0]):
         return False
     if any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced):
         return False
-    for line in substantive[1:]:
+    first_seen = False
+    for line in visible:
+        if not line.strip():
+            continue
+        if not first_seen:
+            first_seen = True
+            continue
         verdict = verdict_disposition(line)
         if verdict is not None:
             if not verdict:
@@ -437,14 +503,18 @@ def comment_body_negative(body: str) -> bool:
     if parts is None:
         return True
     visible, fenced = parts
+    visible = without_verdict_table_headers(visible)
+    fenced = without_verdict_table_headers(fenced)
     # A prose line that names a state and retracts or blocks it still speaks: another
     # reviewer's "the earlier REVIEW_READY is withdrawn" must not read as chatter.
-    return any(
-        verdict_disposition(line) is False
-        or STATE_LINE.match(line)
-        or (STATE_MENTION.search(line) and negation_hit(line))
-        for line in visible
-    ) or any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced)
+    for line in visible:
+        if (
+            verdict_disposition(line) is False
+            or STATE_LINE.match(line)
+            or (STATE_MENTION.search(line) and negation_hit(line))
+        ):
+            return True
+    return any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced)
 
 
 def body_attests_head(body: str, head: str) -> bool:
@@ -460,6 +530,8 @@ def body_attests_head(body: str, head: str) -> bool:
     if parts is None:
         return False
     visible, fenced = parts
+    visible = without_verdict_table_headers(visible)
+    fenced = without_verdict_table_headers(fenced)
     if any(BODY_FIELD.match(line.strip()) for line in fenced):
         return False
     if any(BODY_COMPETING_FIELD.match(line) for line in (*visible, *fenced)):
@@ -823,18 +895,18 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\nVERDICT: BLOCKED_PENDING_FIX", False),
         ("SOURCE_REVIEW_READY\nVERDICT: FAILURE", False),
         ("SOURCE_REVIEW_READY\nVERDICT: INCOMPLETE", False),
-        ("REVIEW_READY\nVerdict: approve, nonblocking notes only.", False),
+        ("REVIEW_READY\nVerdict: approve, nonblocking notes only.", True),
         ("SOURCE_REVIEW_READY\nVERDICT: BLOCKING", False),
         ("SOURCE_REVIEW_READY\n1. Verdict: BLOCK", False),
         ("SOURCE_REVIEW_READY\n_Verdict:_ BLOCK", False),
         ("SOURCE_REVIEW_READY\n2) __Verdict__: approve", True),
-        ("SOURCE_REVIEW_READY\nVERDICT: approve, no block remains.", False),
-        ("SOURCE_REVIEW_READY\nVERDICT: approve, non-blocking notes only.", False),
-        ("SOURCE_REVIEW_READY\nVERDICT: approve - no failures.", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: approve, no block remains.", True),
+        ("SOURCE_REVIEW_READY\nVERDICT: approve, non-blocking notes only.", True),
+        ("SOURCE_REVIEW_READY\nVERDICT: approve - no failures.", True),
         ("SOURCE_REVIEW_READY\nVERDICT: no block remains. That is false.", False),
         ("SOURCE_REVIEW_READY\nVERDICT: it is false that no block remains.", False),
-        ("SOURCE_REVIEW_READY\nVERDICT: approve, no  blocking findings.", False),
-        ("SOURCE_REVIEW_READY\nVERDICT: approve, no `block` remains.", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: approve, no  blocking findings.", True),
+        ("SOURCE_REVIEW_READY\nVERDICT: approve, no `block` remains.", True),
         ("SOURCE_REVIEW_READY\nVERDICT: no block remains, but BLOCK on the docs.", False),
         ("SOURCE_REVIEW_READY\nVERDICT: no; BLOCK", False),
         ("SOURCE_REVIEW_READY\nVERDICT: no. BLOCK", False),
@@ -904,7 +976,17 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\nVERDICT: MAYBE", False),
         ("SOURCE_REVIEW_READY\nVERDICT:", False),
         ("SOURCE_REVIEW_READY\nVERDICT: APPROVE / BLOCK", False),
-        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d — no blocking findings on this head.", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d — no blocking findings on this head.", True),
+        # #14603 review repair: the house marker review explains itself on the verdict
+        # line. An APPROVE-led value that is not the exact form is neutral, so it cannot
+        # veto the marker; a contradiction or a blocker phrase still refuses.
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5 — no blocking findings on this head.", True),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE, but the docs need work.", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE — tests fail.", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE — no code change needed.", True),
+        # A table header row names a column, not a disposition.
+        ("SOURCE_REVIEW_READY\n| Verdict | Notes |\n| --- | --- |\n| APPROVE |", True),
+        ("SOURCE_REVIEW_READY\n| Verdict | Notes |\n| --- | --- |", True),
         ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d\nNo blocking findings on this head.", True),
         ("SOURCE_REVIEW_READY\n- **Verdict:** ABSTAIN", False),
         ("SOURCE_REVIEW_READY\n```\nVERDICT: BLOCK\n```", False),
@@ -1072,6 +1154,8 @@ def self_test() -> None:
         (f"{line}\n| Verdict | BLOCK", False),
         (f"{line}\n| Verdict | APPROVE {head}", False),
         (f"{line}\nVERDICT: APPROVE", False),
+        # #14603 review repair: a Verdict column header is not a competing field.
+        (f"{line}\n| Verdict | Notes |\n| --- | --- |\n| APPROVE |", True),
         (f"{line}\n| Check | Result |\n| --- | --- |\n| fmt | pass |", True),
         (f"{line}\nAccepted winner and losing candidate disposition (when decided): none", True),
         ("", False),

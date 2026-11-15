@@ -1359,10 +1359,11 @@ fn table_verdict_rows_use_the_same_closed_grammar() -> Result<(), String> {
 /// after the same marker still admits.
 ///
 /// #14603 supersedes #14592's approving-prose allowance: on a verdict line the
-/// whole value must be APPROVE with an optional head annotation, so
-/// "approve, no block remains" and "no blocking findings" now refuse rather than
-/// carry a positive disposition. The explanation belongs on its own line; the
-/// body-level resolved-finding scan still reads it as neutral there.
+/// whole value must be APPROVE with an optional head annotation to attest, so
+/// "approve, no block remains" and "no blocking findings" no longer carry a
+/// positive disposition. An APPROVE-led value that is not exactly that form is
+/// neutral rather than a refusal, so the house marker review's explanation cannot
+/// veto the marker; a value that also names a blocking word still refuses.
 #[test]
 fn a_blocking_verdict_line_after_a_ready_marker_refuses() -> Result<(), String> {
     let head = "a".repeat(40);
@@ -1417,8 +1418,8 @@ fn a_blocking_verdict_line_after_a_ready_marker_refuses() -> Result<(), String> 
         ),
         (
             "SOURCE_REVIEW_READY\nVERDICT: approve, no block remains.",
-            false,
-            "approving prose is not a whole verdict value",
+            true,
+            "approving prose is neutral, not a refusal",
         ),
         (
             "SOURCE_REVIEW_READY\nVERDICT: no block remains. That is false.",
@@ -1432,8 +1433,23 @@ fn a_blocking_verdict_line_after_a_ready_marker_refuses() -> Result<(), String> 
         ),
         (
             "SOURCE_REVIEW_READY\nVERDICT: approve, no  blocking findings.",
+            true,
+            "approving prose with extra spacing is neutral",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d — no blocking findings on this head.",
+            true,
+            "the house marker review's verdict line is neutral",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: APPROVE — tests fail.",
             false,
-            "approving prose with extra spacing is not a whole verdict value",
+            "an APPROVE-led value that names a blocker still refuses",
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | Notes |\n| --- | --- |\n| APPROVE |",
+            true,
+            "a Verdict header row names a column, not a disposition",
         ),
         (
             "SOURCE_REVIEW_READY\nThe earlier verdict: BLOCK was cleared.",
