@@ -32,6 +32,8 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// Run-scoped per-(test, owner) value facts, attached by the
     /// classifier; `None` (unit-test contexts) computes them per probe.
     pub test_value_facts: Option<&'a TestValueFacts>,
+    /// Run-scoped per-(test, owner) refusal and cfg-gate computations.
+    pub refusal_memo: super::RefusalMemo,
     /// Workspace expansion facts shared across probes against this immutable index.
     pub implicit_expansion: Option<&'a super::ImplicitExpansionMemo>,
     /// Run-scoped private assertion context, shared across all probes.
@@ -86,6 +88,7 @@ impl<'a> ProbeContext<'a> {
             workspace_complete,
             file_use_statements: None,
             test_value_facts: None,
+            refusal_memo: super::RefusalMemo::default(),
             owner_pin_syntax: None,
             implicit_expansion: None,
             unseen_reach_names: None,
