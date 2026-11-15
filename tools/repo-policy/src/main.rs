@@ -25,12 +25,19 @@ fn main() {
         _ => None,
     };
     let result = match (name.as_deref(), command) {
+        (Some("docs-gate"), _) => repo_policy::enter_workspace_root()
+            .and_then(|()| {
+                repo_policy::docs_gate::command(
+                    &std::env::args().skip(2).collect::<Vec<_>>(),
+                )
+            })
+            .map(|()| 0),
         (Some("run-coverage"), _) => repo_policy::enter_workspace_root()
             .and_then(|()| repo_policy::coverage_diagnostics::run_coverage()),
         (_, Some(command)) => repo_policy::enter_workspace_root()
             .and_then(|()| command())
             .map(|()| 0),
-        (_, None) => Err("usage: cargo policy check-workflows | check-agent-skills | check-executable-files | preflight | verify-preflight | python-wheel-applicability <event> <base-sha> <head-sha> | capture-coverage-failure | run-coverage".into()),
+        (_, None) => Err("usage: cargo policy check-workflows | check-agent-skills | check-executable-files | preflight | verify-preflight | docs-gate (--changed <path>... or --base <sha> --head <sha>) | python-wheel-applicability <event> <base-sha> <head-sha> | capture-coverage-failure | run-coverage".into()),
     };
     let code = match result {
         Ok(code) => code,

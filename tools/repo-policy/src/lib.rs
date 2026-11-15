@@ -8,6 +8,7 @@ pub mod admission_incident_route;
 pub mod agent_skills;
 pub mod ci_scratch;
 pub mod coverage_diagnostics;
+pub mod docs_gate;
 pub mod executable_files;
 mod identity;
 pub mod python_wheel;
