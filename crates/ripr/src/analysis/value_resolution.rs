@@ -1844,7 +1844,11 @@ fn test_case_row_inputs(args: &str) -> Option<Vec<String>> {
     let mut previous = '\0';
     let mut cells = Vec::new();
     let mut start = 0usize;
-    let mut end = args.len();
+    // The inputs end at the one top-level `=>` or, without one, at the
+    // `;` that starts the name; the name starts at the first top-level `;`
+    // after either. Both are found outside strings and brackets.
+    let mut arrow: Option<usize> = None;
+    let mut semicolon: Option<usize> = None;
     for (at, character) in args.char_indices() {
         if let Some(open) = quote {
             if character == open && previous != '\\' {
@@ -1857,16 +1861,18 @@ fn test_case_row_inputs(args: &str) -> Option<Vec<String>> {
             '"' | '\'' => quote = Some(character),
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth = depth.checked_sub(1)?,
-            ',' if depth == 0 => {
+            ',' if depth == 0 && arrow.is_none() => {
                 cells.push(args[start..at].trim().to_string());
                 start = at + 1;
             }
             '>' if depth == 0 && previous == '=' => {
-                end = at - 1;
-                break;
+                if arrow.is_some() {
+                    return None;
+                }
+                arrow = Some(at - 1);
             }
             ';' if depth == 0 => {
-                end = at;
+                semicolon = Some(at);
                 break;
             }
             _ => {}
@@ -1876,6 +1882,7 @@ fn test_case_row_inputs(args: &str) -> Option<Vec<String>> {
     if quote.is_some() {
         return None;
     }
+    let end = arrow.or(semicolon).unwrap_or(args.len());
     let suffix = &args[end..];
     if suffix
         .split(|character: char| !(character.is_alphanumeric() || character == '_'))
@@ -1887,11 +1894,8 @@ fn test_case_row_inputs(args: &str) -> Option<Vec<String>> {
     // meaning what they say. `=> panics` passes exactly when the body fails,
     // and `matches`/`with`/`using`/`it` hand the result to other code, so
     // such a row binds nothing.
-    if let Some(expectation) = suffix.strip_prefix("=>") {
-        let expectation = expectation
-            .rsplit_once(';')
-            .map_or(expectation, |(before, _)| before)
-            .trim();
+    if let Some(arrow) = arrow {
+        let expectation = args[arrow + 2..semicolon.unwrap_or(args.len())].trim();
         if !is_plain_row_expectation(expectation) {
             return None;
         }

@@ -1398,6 +1398,17 @@ fn test_case_arrow_rows_bind_only_the_arguments_before_the_arrow() {
         ],
     );
     assert_eq!(test_case_bound_literals(&test, "q"), vec!["10", "3"]);
+    // A `;` inside a quoted name or a string expectation does not end the
+    // expectation (Devin review on #14844).
+    let test = test_case_crate_test(
+        "fn prices(q: u32) -> &'static str { label(q) }",
+        &[
+            "#[test_case(10 => \"a;b\")]",
+            "#[test_case(3 => \"c\" ; \"three; below\")]",
+            "#[test_case(4 => \"d;e\" ; \"four; below\")]",
+        ],
+    );
+    assert_eq!(test_case_bound_literals(&test, "q"), vec!["10", "3", "4"]);
 }
 
 #[test]
