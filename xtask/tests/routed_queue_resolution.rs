@@ -586,7 +586,7 @@ fn queued_two_parent_merge_is_refused_even_for_a_history_sync_pr() -> Result<(),
     };
     assert_refused(
         &run_resolve(&world, &shell, &run)?,
-        "not a single squash commit",
+        "is not a single-parent commit directly on",
     );
     // Control: the same history-sync PR queued as its real squash is accepted,
     // so the refusal above is caused by the two-parent shape alone.
