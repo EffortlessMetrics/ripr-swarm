@@ -1225,6 +1225,42 @@ fn live_runs(scratch: &Scratch) -> Vec<LiveRun> {
     runs
 }
 
+/// The executable cargo reported for the `ripr` bin in `cargo build --message-format=json`.
+///
+/// #14762: the build output directory is cargo's answer, not a guess from the
+/// running image. The check runs from the relocated driver copy under
+/// `<target-root>/ripr/drivers`, so `current_exe().parent()` is not a profile
+/// directory and the old join looked for `ripr.exe` beside the driver.
+fn built_ripr_executable(stdout: &str) -> Option<PathBuf> {
+    for line in stdout.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if value.get("reason").and_then(serde_json::Value::as_str) != Some("compiler-artifact") {
+            continue;
+        }
+        let target = value.get("target");
+        if target
+            .and_then(|target| target.get("name"))
+            .and_then(serde_json::Value::as_str)
+            != Some("ripr")
+        {
+            continue;
+        }
+        let Some(executable) = value.get("executable").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if executable.is_empty() {
+            continue;
+        }
+        let path = PathBuf::from(executable);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    None
+}
+
 fn resolve_ripr_binary(explicit: Option<&str>) -> Result<PathBuf, String> {
     if let Some(path) = explicit {
         let path = PathBuf::from(path);
@@ -1238,27 +1274,44 @@ fn resolve_ripr_binary(explicit: Option<&str>) -> Result<PathBuf, String> {
     let dir = exe
         .parent()
         .ok_or_else(|| "xtask binary has no parent directory".to_string())?;
+    // The profile is still inferred from the running image, not from cargo's
+    // answer: the flag has to be chosen before the build runs. Under the
+    // relocated driver copy this is always false, so the check builds debug.
+    // That is harmless here because the scanned runs are help/usage/check/
+    // pilot/doctor/status/repair/continue/explain/context/agent, whose text
+    // does not depend on the profile.
     let release = dir.file_name().is_some_and(|name| name == "release");
     let mut build = Command::new("cargo");
-    build.args(["build", "-q", "-p", "ripr", "--bin", "ripr"]);
+    build.args([
+        "build",
+        "-q",
+        "-p",
+        "ripr",
+        "--bin",
+        "ripr",
+        // `json-render-diagnostics` keeps the artifact records on stdout and
+        // also renders compiler diagnostics to stderr, so a failed build
+        // reports the diagnostic rather than only the summary line.
+        "--message-format=json-render-diagnostics",
+    ]);
     if release {
         build.arg("--release");
     }
-    let status = build
-        .status()
+    let output = build
+        .output()
         .map_err(|err| format!("build ripr for check-user-text: {err}"))?;
-    if !status.success() {
-        return Err(
-            "cargo build -p ripr --bin ripr failed (instrument failure, not a pass)".into(),
-        );
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "cargo build -p ripr --bin ripr failed (instrument failure, not a pass): {}",
+            stderr.trim()
+        ));
     }
-    let name = if cfg!(windows) { "ripr.exe" } else { "ripr" };
-    let path = dir.join(name);
-    if path.is_file() {
-        Ok(path)
-    } else {
-        Err(format!("built ripr binary not found at {}", path.display()))
-    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    built_ripr_executable(&stdout).ok_or_else(|| {
+        "cargo build -p ripr --bin ripr did not report a ripr executable (instrument failure, not a pass)"
+            .to_string()
+    })
 }
 
 /// Scratch directory outside the checkout. `.cargo/config.toml` forces TMPDIR
@@ -1963,6 +2016,49 @@ mod tests {
         let mut counts = Counts::new();
         scan_text(surface, "seed", text, &mut counts);
         counts
+    }
+
+    #[test]
+    fn cargo_artifact_json_names_the_ripr_executable() -> Result<(), String> {
+        // #14762: the build's own answer, not the running image's directory.
+        let fixture = std::env::temp_dir().join(format!(
+            "ripr-artifact-{}-{:?}.exe",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::write(&fixture, b"").map_err(|err| format!("write fixture: {err}"))?;
+        let other = serde_json::json!({
+            "reason": "compiler-artifact",
+            "target": {"name": "xtask"},
+            "executable": null,
+        });
+        let artifact = serde_json::json!({
+            "reason": "compiler-artifact",
+            "target": {"name": "ripr"},
+            "executable": fixture.display().to_string(),
+        });
+        let found = built_ripr_executable(&format!("{other}\n{artifact}\n"))
+            .ok_or_else(|| "ripr artifact is the executable".to_string())?;
+        assert_eq!(found, fixture);
+        let _ = std::fs::remove_file(&fixture);
+        Ok(())
+    }
+
+    #[test]
+    fn a_missing_or_foreign_artifact_is_not_the_ripr_binary() {
+        assert!(built_ripr_executable("").is_none());
+        assert!(
+            built_ripr_executable(
+                r#"{"reason":"compiler-artifact","target":{"name":"ripr"},"executable":null}"#
+            )
+            .is_none()
+        );
+        assert!(built_ripr_executable(r#"{"reason":"build-finished","success":true}"#).is_none());
+        // A reported path that is not a file is not an executable.
+        assert!(built_ripr_executable(
+            r#"{"reason":"compiler-artifact","target":{"name":"ripr"},"executable":"/nonexistent/ripr"}"#
+        )
+        .is_none());
     }
 
     #[test]
