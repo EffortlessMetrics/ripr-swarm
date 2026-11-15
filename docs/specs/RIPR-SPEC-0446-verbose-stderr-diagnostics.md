@@ -1,4 +1,4 @@
-# RIPR-SPEC-0441: Verbose Stderr Diagnostics
+# RIPR-SPEC-0446: Verbose Stderr Diagnostics
 
 Status: accepted
 

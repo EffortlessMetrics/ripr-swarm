@@ -298,9 +298,23 @@ so use the variable when another tool reads stdout.
 
 ```text
 ripr: verbose mode enabled
+ripr: analyzing 1 language(s): rust
 ripr: mode = draft; scope = worktree
-ripr: timing [worktree] analyzing took
-weakly_exposed [reach=yes infect=weak propagate=yes observe=yes discriminate=yes]; first stage short of yes: infect:
+```
+
+A full log for a one-line boundary change looks like this; the timings and
+paths are your own:
+
+```console
+ripr: verbose mode enabled
+ripr: analyzing 1 language(s): rust
+ripr: mode = draft; scope = worktree
+ripr: timing [worktree] loading_input took 0 ms
+ripr: analysis complete — 1 probe, 1 finding
+ripr: timing [worktree] analyzing took 74 ms
+ripr: verdict ./src/lib.rs:2 weakly_exposed [reach=yes infect=weak propagate=yes observe=yes discriminate=yes]; first stage short of yes: infect: Related tests contain input values, but the equality-boundary check is missing
+ripr: timing [worktree] building_output took 0 ms
+ripr: timing [worktree] completed after 74 ms total
 ```
 
 It names the analyzed languages, the mode and diff scope, how long each phase
