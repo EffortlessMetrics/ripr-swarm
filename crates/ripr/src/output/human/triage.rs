@@ -2333,7 +2333,7 @@ fn triage_rank<'a>(
 }
 
 /// Whether `finding` has a decision-set related test linked by more than a
-/// shared name token or file location. A `Low` relation confidence
+/// shared name token or fixture-helper affinity. A `Low` relation confidence
 /// (`weak_token_substring`, `fixture_owner_affinity`) is advisory only
 /// (`RelationReason::WeakTokenSubstring`), so such a row does not lift a
 /// finding over a higher-confidence one in the Start here order: on semver
@@ -4100,6 +4100,29 @@ mod tests {
         assert_eq!(
             selected(vec![literal.clone(), predicate.clone()]),
             Some("finding:predicate".to_string())
+        );
+
+        // Fixture-helper affinity is the other `Low` relation and is advisory
+        // too.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::FixtureOwnerAffinity,
+            Some(RelationConfidence::Low),
+        )];
+        assert_eq!(
+            selected(vec![literal.clone(), predicate.clone()]),
+            Some("finding:predicate".to_string())
+        );
+
+        // A `Medium` relation (same test file) still counts as a related test.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::SameTestFile,
+            Some(RelationConfidence::Medium),
+        )];
+        assert_eq!(
+            selected(vec![predicate.clone(), literal.clone()]),
+            Some("finding:literal".to_string())
         );
 
         // Discriminating control: a test the analyzer links through a call
