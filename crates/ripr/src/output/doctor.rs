@@ -1849,7 +1849,7 @@ fn collect_nested_cargo_tomls(
             // seen, is a function of the tree, not of how it was written
             // (#14230).
             let mut entries: Vec<std::fs::DirEntry> = entries.flatten().collect();
-            entries.sort_by_key(std::fs::DirEntry::file_name);
+            entries.sort_by_cached_key(std::fs::DirEntry::file_name);
             for entry in entries {
                 let path = entry.path();
                 let Ok(file_type) = entry.file_type() else {
@@ -5131,18 +5131,22 @@ mod tests {
     fn nested_cargo_toml_walk_under_the_cap_is_name_ordered() -> Result<(), String> {
         let root = doctor_scope_root("scope-nested-cap-order", &[])?;
         let siblings = NESTED_CARGO_TOML_MAX_DIRS + 88;
-        for index in (0..siblings).rev() {
+        let built = (0..siblings).rev().try_for_each(|index| {
             let dir = root.join(format!("d{index:03}"));
             std::fs::create_dir(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
             if index == 0 || index == siblings - 1 {
                 std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"p\"\n")
                     .map_err(|err| format!("write manifest: {err}"))?;
             }
-        }
+            Ok::<(), String>(())
+        });
         let mut workspaces = Vec::new();
         let mut packages = Vec::new();
-        collect_nested_cargo_tomls(&root, &mut workspaces, &mut packages);
+        if built.is_ok() {
+            collect_nested_cargo_tomls(&root, &mut workspaces, &mut packages);
+        }
         let _ = std::fs::remove_dir_all(&root);
+        built?;
         let seen: Vec<String> = packages
             .iter()
             .filter_map(|path| path.strip_prefix(&root).ok())

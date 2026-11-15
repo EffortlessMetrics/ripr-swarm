@@ -6,13 +6,15 @@
 //! `ripr check --diff` in several formats, and requires byte-identical stdout
 //! across
 //!
-//! 1. a first run on one worker (`RAYON_NUM_THREADS=1`) on a fresh tree,
-//! 2. a repeat on four workers once the run cache is warm,
-//! 3. the same tree deleted and rewritten at the same path in reverse file
-//!    order (creation-ordered filesystems then list it differently), on
-//!    four workers.
+//! 1. a cold run on one worker (`RAYON_NUM_THREADS=1`), each format on a
+//!    freshly written tree,
+//! 2. a warm repeat on four workers over the same tree and report state,
+//! 3. a cold run on four workers with the tree deleted and rewritten at the
+//!    same path in reverse file order (creation-ordered filesystems then
+//!    list it differently).
 //!
-//! Each run must exit successfully with non-empty output, and the baseline
+//! Each run must exit successfully with non-empty output (`missed-txt`
+//! included: every workspace has weakly tested owners), and the baseline
 //! must name every changed owner, so the relation cannot pass over an empty
 //! or misparsed workspace. Formats whose documented contract stamps a
 //! per-run time (`check-findings-json`, `repo-*`) are left out.
@@ -240,6 +242,23 @@ fn prime_first_run_state(root: &Path) -> Result<(), String> {
     check(root, "human", "1").map(|_| ())
 }
 
+/// Writes the tree from scratch (dropping any report or cache state under
+/// it) and runs one format there. Only `human` is primed first, so every
+/// other format's output comes from a cold run.
+fn fresh_check(
+    root: &Path,
+    files: &[(String, String)],
+    reversed: bool,
+    format: &str,
+    threads: &str,
+) -> Result<Vec<u8>, String> {
+    write_tree(root, files, reversed)?;
+    if format == "human" {
+        prime_first_run_state(root)?;
+    }
+    check(root, format, threads)
+}
+
 fn first_difference(left: &[u8], right: &[u8]) -> String {
     let left = String::from_utf8_lossy(left);
     let right = String::from_utf8_lossy(right);
@@ -264,14 +283,13 @@ fn assert_deterministic(name: &str, workspace: &Workspace) -> Result<(), String>
     ));
     let _scratch = Scratch(root.clone());
 
-    write_tree(&root, &workspace.files, false)?;
-    prime_first_run_state(&root)?;
+    // 1. Cold, one worker: each format on a freshly written tree.
     let mut baselines = Vec::new();
     for format in FORMATS {
-        let bytes = check(&root, format, "1")?;
-        baselines.push(bytes);
+        baselines.push(fresh_check(&root, &workspace.files, false, format, "1")?);
     }
-    // Baseline sanity: the JSON report names every changed owner.
+    // Baseline sanity: the JSON report names every changed owner, and every
+    // format (including the gap-only `missed-txt`) printed something.
     let json_index = FORMATS
         .iter()
         .position(|format| *format == "json")
@@ -285,30 +303,32 @@ fn assert_deterministic(name: &str, workspace: &Workspace) -> Result<(), String>
         }
     }
     for (format, bytes) in FORMATS.iter().zip(&baselines) {
-        if bytes.is_empty() && *format != "missed-txt" {
+        if bytes.is_empty() {
             return Err(format!("{name}: --format {format} printed nothing"));
         }
     }
 
+    // 2. Warm, four workers: the tree and its report state from step 1's
+    // last run, with first-run state primed for `human`.
+    prime_first_run_state(&root)?;
     for format_index in 0..FORMATS.len() {
         let format = FORMATS[format_index];
         let warm = check(&root, format, "4")?;
         if warm != baselines[format_index] {
             return Err(format!(
-                "{name} --format {format}: warm 4-worker run differs from first 1-worker run at {}",
+                "{name} --format {format}: warm 4-worker run differs from cold 1-worker run at {}",
                 first_difference(&baselines[format_index], &warm)
             ));
         }
     }
 
-    write_tree(&root, &workspace.files, true)?;
-    prime_first_run_state(&root)?;
+    // 3. Cold, four workers, tree written in reverse order.
     for format_index in 0..FORMATS.len() {
         let format = FORMATS[format_index];
-        let reversed = check(&root, format, "4")?;
+        let reversed = fresh_check(&root, &workspace.files, true, format, "4")?;
         if reversed != baselines[format_index] {
             return Err(format!(
-                "{name} --format {format}: tree written in reverse order differs at {}",
+                "{name} --format {format}: cold 4-worker run on a reverse-written tree differs at {}",
                 first_difference(&baselines[format_index], &reversed)
             ));
         }
