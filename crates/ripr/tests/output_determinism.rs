@@ -220,6 +220,8 @@ fn check(root: &Path, format: &str, threads: &str) -> Result<Vec<u8>, String> {
         ])
         .env("RAYON_NUM_THREADS", threads)
         .env_remove("RIPR_LOG")
+        // Keep the run cache under the scratch root so a fresh tree is cold.
+        .env_remove("RIPR_CACHE_DIR")
         .output()
         .map_err(|err| format!("spawn ripr: {err}"))?;
     // `check` exits 1 when it reports gaps; only a crash or usage error is
