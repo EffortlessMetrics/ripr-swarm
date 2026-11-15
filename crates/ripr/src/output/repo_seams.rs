@@ -21,6 +21,20 @@ use crate::output::markdown::table_code_span;
 
 pub(crate) const REPO_SEAMS_SCHEMA_VERSION: &str = "0.3";
 
+/// The `repo-seams-json` refusal (#14499): the inventory's own envelope with
+/// `run_status: "refused"`, the typed limitation and an empty `seams`
+/// array. It carries no `artifact` identity: a refused run has no snapshot
+/// a consumer could bind to.
+pub(crate) fn render_refusal_json(notice: &crate::core_error::RefusalNotice) -> String {
+    format!(
+        "{{\n  \"schema_version\": \"{}\",\n  \"scope\": \"repo\",\n  \"run_status\": \"refused\",\n  \"limitations\": [\n    {{\n      \"category\": \"{}\",\n      \"repair_route\": \"{}\",\n      \"message\": \"{}\"\n    }}\n  ],\n  \"seams\": []\n}}\n",
+        REPO_SEAMS_SCHEMA_VERSION,
+        json_escape(notice.identity),
+        json_escape(notice.repair_route),
+        json_escape(&notice.message),
+    )
+}
+
 /// Render a producer-owned repo seam inventory bound to its subject (#6609).
 ///
 /// The `content_sha256` commitment covers the exact emitted bytes with the
@@ -488,5 +502,24 @@ mod tests {
             md.contains("Static-language constraints from RIPR-SPEC-0005"),
             "boilerplate footer drift: {md}"
         );
+    }
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    /// #14499: the hand-written refusal envelope escapes the message.
+    #[test]
+    fn refusal_json_escapes_the_message() -> Result<(), String> {
+        let notice = crate::core_error::RefusalNotice {
+            identity: "base_unresolvable",
+            repair_route: "analysis/base-resolution",
+            message: "quote \" backslash \\ newline \n tab \t".to_string(),
+            remedy: crate::domain::RefusalRemedy::from_prose("no command"),
+        };
+        let value: serde_json::Value = serde_json::from_str(&super::render_refusal_json(&notice))
+            .map_err(|err| err.to_string())?;
+        assert_eq!(value["limitations"][0]["message"], notice.message.as_str());
+        assert_eq!(value["run_status"], "refused");
+        Ok(())
     }
 }

@@ -111,25 +111,46 @@ fn package_only_config_resolves_without_a_root_tsconfig() -> Result<(), String> 
 
 #[test]
 fn unmodelable_package_config_stays_unresolved() -> Result<(), String> {
+    // `references` is never followed, so the package config cannot be
+    // modeled exactly even though it declares its own baseUrl and paths.
     let subject = Subject::create(
         Some(ROOT),
-        "{\"extends\":\"../tsconfig.base.json\",\"compilerOptions\":{\"baseUrl\":\".\",\"paths\":{\"@/*\":[\"src/*\"]}}}",
-    )?;
-    // The base exists, so the refusal is the unsupported layout, not a
-    // missing file.
-    subject.write(
-        "packages/tsconfig.base.json",
-        "{\"compilerOptions\":{\"strict\":true}}",
+        "{\"references\":[{\"path\":\"../b\"}],\"compilerOptions\":{\"baseUrl\":\".\",\"paths\":{\"@/*\":[\"src/*\"]}}}",
     )?;
     let json = subject.json("packages/a/src/pricing.ts")?;
     if json.contains("\"classification\": \"exposed\"") {
-        return Err(format!("cross-directory extends must not credit: {json}"));
+        return Err(format!(
+            "an unmodelable package config must not credit: {json}"
+        ));
     }
     if !json.contains("typescript_path_alias_unresolved") {
         return Err(format!("the miss must stay disclosed: {json}"));
     }
     if !json.contains("nearest package tsconfig.json/jsconfig.json") {
         return Err(format!("the cause must name the package config: {json}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn cross_directory_extends_resolves_at_the_declaring_base() -> Result<(), String> {
+    // #11204: the package config inherits `baseUrl` and `paths` from a base
+    // in another directory; `baseUrl` stays anchored at the base, as `tsc`
+    // resolves it, so `@/pricing` names the package's own owner.
+    let subject = Subject::create(Some(ROOT), "{\"extends\":\"../tsconfig.base.json\"}")?;
+    subject.write(
+        "packages/tsconfig.base.json",
+        "{\"compilerOptions\":{\"baseUrl\":\".\",\"paths\":{\"@/*\":[\"a/src/*\"]}}}",
+    )?;
+    let json = subject.json("packages/a/src/pricing.ts")?;
+    if !json.contains("\"classification\": \"exposed\"")
+        || !json.contains("packages/a/test/pricing.test.ts")
+    {
+        return Err(format!("the inherited base anchor must resolve: {json}"));
+    }
+    let decoy = subject.json("shared/pricing.ts")?;
+    if decoy.contains("\"classification\": \"exposed\"") {
+        return Err(format!("root decoy must not be credited: {decoy}"));
     }
     Ok(())
 }

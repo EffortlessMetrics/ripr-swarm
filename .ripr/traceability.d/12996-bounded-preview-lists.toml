@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/tests/check_boundary_value_elision.rs::boundary_value_listing_discloses_omissions_without_hiding_late_match",
+  "crates/ripr/tests/check_boundary_value_elision.rs::each_operand_list_is_bounded_without_hiding_a_late_matching_pair",
+  "crates/ripr/tests/check_infection_literal_elision.rs::infection_literal_preview_discloses_elision_without_hiding_late_boundary",
+  "crates/ripr/tests/check_infection_literal_elision.rs::infection_literal_preview_elides_oversized_source_literal_whole",
+]
+outputs = ["docs/OUTPUT_SCHEMA.md"]

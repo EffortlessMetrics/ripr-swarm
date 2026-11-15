@@ -33,7 +33,8 @@ fn routed_mcp_args(args: &[String]) -> Option<Vec<String>> {
     if !is_direct && !is_help_route {
         return None;
     }
-    let mut owned = args.to_vec();
+    // #14292: the MCP route accepts `--name=value` like every CLI command.
+    let mut owned = ripr::cli::split_long_flag_values(args.to_vec());
     if ripr::cli::extract_global_verbose(&mut owned) {
         ripr::set_verbose(true);
         eprintln!("ripr: verbose mode enabled");
@@ -71,6 +72,15 @@ mod tests {
             Some(args(&["--help"]))
         );
         assert_eq!(routed_mcp_args(&args(&["ripr", "check"])), None);
+    }
+
+    #[test]
+    fn startup_splits_flag_equals_value_on_the_mcp_route() {
+        // #14292: the MCP route accepts `--name=value` like every command.
+        assert_eq!(
+            routed_mcp_args(&args(&["ripr", "mcp", "--stdio", "--root=."])),
+            Some(args(&["--stdio", "--root", "."]))
+        );
     }
 
     #[test]

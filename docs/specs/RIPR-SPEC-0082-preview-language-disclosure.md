@@ -127,6 +127,20 @@ adapter is not enabled, no skip limitation is emitted: the not-enabled
 advisory already discloses every routed file with its raw count. No new JSON
 field is introduced.
 
+### Nested Python packages at a monorepo root
+
+A root with no Python marker of its own, and no Rust or TypeScript/JavaScript
+marker (`Cargo.toml`, `package.json`, `tsconfig.json`, `jsconfig.json` or their
+sources), whose subdirectories (at most three levels, skipping environment,
+cache, build and hidden directories) hold a `pyproject.toml`, `setup.py`,
+`setup.cfg` or `pytest.ini` is a Python monorepo root (#13618). `doctor` then
+detects Python, so a Rust-only manifest check is out of scope. The not-enabled
+Python advisory carries the package list as the typed `nested_packages` field,
+and the human note suggests `ripr check --root <package>` for the package that
+contains a changed file, as an absolute, shell-quoted path. A Rust or
+TypeScript/JavaScript root with a nested Python package is not a Python
+monorepo. JSON, agent, pilot and LSP output do not yet carry the list (#13761).
+
 ### Limitations of a language the diff does not touch
 
 A preview adapter indexes its whole language across the workspace. Its

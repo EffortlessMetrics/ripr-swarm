@@ -1172,7 +1172,14 @@ fn skipped_and_xfail_rows_gain_no_miss() -> Result<(), String> {
             "import pytest\n\n@{decorator}\ndef test_score():\n    assert score(0) == 8\n"
         ))?;
         // #5389: the class is the classifier's, and no row is credited a miss.
-        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{decorator}");
+        // An unconditional skip never runs, so it is a gap; a bare `xfail`
+        // depends on `strict` and `xfail_strict` and stays unestablished.
+        let expected = if decorator.starts_with("pytest.mark.skip") {
+            ExposureClass::WeaklyExposed
+        } else {
+            ExposureClass::StaticUnknown
+        };
+        assert_eq!(finding.class, expected, "{decorator}");
         assert!(
             finding.related_tests.iter().all(|row| row.miss.is_none()),
             "{decorator}: {:?}",

@@ -32,7 +32,7 @@ Start here:
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach no: No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price
+    - reach no: No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price (unreferenced in workspace)
     - infection no: No test reaches the changed owner, so no test can activate this change
     - 10 more detail line(s) in --format human-full
 

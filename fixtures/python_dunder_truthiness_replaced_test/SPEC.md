@@ -13,8 +13,10 @@ The observing test definition is replaced by an active test that passes both pre
 
 ## Then
 
-The single changed owner stays `static_unknown`; the stale or replaced assertion
-cannot provide exact truthiness credit.
+The single changed owner is `weakly_exposed` (a gap): the replaced definition
+never runs, so its assertion cannot provide exact truthiness credit, and the
+active replacement asserts nothing about `Money`. The finding names the
+replaced test as one that never runs (`related_test_never_runs`).
 
 ## Must Not
 
