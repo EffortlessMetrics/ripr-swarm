@@ -6057,11 +6057,15 @@ fn t() {
 "#;
         let vars = placeholder_bound_variables(body);
         if vars.contains("expected") {
-            return Err(format!("a closure parameter must drop the lowering: {vars:?}"));
+            return Err(format!(
+                "a closure parameter must drop the lowering: {vars:?}"
+            ));
         }
         let fact = only_fact(body)?;
         if fact.strength != OracleStrength::Strong {
-            return Err(format!("a closure parameter keeps today's credit: {fact:?}"));
+            return Err(format!(
+                "a closure parameter keeps today's credit: {fact:?}"
+            ));
         }
         Ok(())
     }
