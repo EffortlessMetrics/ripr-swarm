@@ -34,6 +34,7 @@ pub(crate) fn extract_assertions_in(
     // shape through one authority.
     let guarded = guarded_result_match_scan(body, start_line);
     let mut out = Vec::new();
+    let row_tables = RowTables::new(body);
     let mut lines = body.lines().enumerate().peekable();
     let mut guard_condition_tail: Option<(usize, String)> = None;
     while let Some((offset, line)) = lines.next() {
@@ -73,7 +74,8 @@ pub(crate) fn extract_assertions_in(
         // first depth-0 `;` so the existing statement-start and receiver
         // gates see the whole statement (#7955).
         let mut fact_offset = offset;
-        if starts_statement(body, offset)
+        if row_tables.starts_statement(offset)
+            && row_tables.window_mentions_err_unwrap(offset)
             && let Some((err_facts, extra_lines, leftover)) =
                 uncompared_unwrap_err_facts_opening_on_line(body, offset, start_line)
         {
@@ -2516,23 +2518,14 @@ const UNWRAP_ERR_JOIN_LIMIT: usize = 16;
 /// line `offset`, including rustfmt-wrapped tails and same-row siblings.
 /// Extra lines are continuations of those statements, not later rows.
 /// `leftover` is same-row text that is not itself an uncompared error-side
-/// observer, so the generic assertion path can still read it.
+/// observer, so the generic assertion path can still read it. The caller
+/// gates on [`RowTables::window_mentions_err_unwrap`] so rows that cannot
+/// yield a fact skip the join and delimiter scans.
 fn uncompared_unwrap_err_facts_opening_on_line(
     body: &str,
     offset: usize,
     start_line: usize,
 ) -> Option<(Vec<OracleFact>, usize, Option<String>)> {
-    // Cheap textual gate: only rows whose bounded wrapped window mentions
-    // an error-side unwrap can yield a fact, so skip the join and delimiter
-    // scans for every other statement start.
-    let window_mentions_err_unwrap = body
-        .lines()
-        .skip(offset)
-        .take(UNWRAP_ERR_JOIN_LIMIT)
-        .any(|row| row.contains("unwrap_err") || row.contains("expect_err"));
-    if !window_mentions_err_unwrap {
-        return None;
-    }
     let (first, extra_lines, first_suffix) = take_semicolon_terminated_statement(body, offset)?;
     let suffix_line = offset.saturating_add(extra_lines);
     let mut statements = vec![(first, offset)];
@@ -2751,16 +2744,55 @@ fn is_unwrap_err_statement_continuation(joined_so_far: &str, next: &str) -> bool
     !is_assertion_line(next) && !is_control_or_block_start(next) && !next.starts_with("let ")
 }
 
-/// Whether body line `offset` starts a statement: the previous non-empty
-/// line ends one. After `let e =` the next line is the value, not a
-/// discarded expression.
-fn starts_statement(body: &str, offset: usize) -> bool {
-    body.lines()
-        .take(offset)
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .last()
-        .is_none_or(|previous| previous.ends_with([';', '{', '}']))
+/// Per-row facts about a body, computed once per scan. Asking each row
+/// "does the previous non-empty line end a statement" or "does the bounded
+/// window mention an error-side unwrap" by re-walking the body from its top
+/// made a scan quadratic in body length: a 52,000-line Rust data file took
+/// minutes (#11895).
+struct RowTables {
+    /// Whether the previous non-empty line before each row ends a statement
+    /// (`;`, `{` or `}`); true when there is none. After `let e =` the next
+    /// line is the value, not a discarded expression.
+    starts_statement: Vec<bool>,
+    /// `err_rows_before[i]` counts rows before `i` mentioning `unwrap_err`
+    /// or `expect_err`.
+    err_rows_before: Vec<usize>,
+}
+
+impl RowTables {
+    fn new(body: &str) -> Self {
+        let mut starts_statement = Vec::new();
+        let mut err_rows_before = vec![0];
+        let mut previous_ends_statement = true;
+        for row in body.lines() {
+            starts_statement.push(previous_ends_statement);
+            let trimmed = row.trim();
+            if !trimmed.is_empty() {
+                previous_ends_statement = trimmed.ends_with([';', '{', '}']);
+            }
+            let mentions = row.contains("unwrap_err") || row.contains("expect_err");
+            err_rows_before
+                .push(err_rows_before.last().copied().unwrap_or(0) + usize::from(mentions));
+        }
+        Self {
+            starts_statement,
+            err_rows_before,
+        }
+    }
+
+    /// Whether body line `offset` starts a statement.
+    fn starts_statement(&self, offset: usize) -> bool {
+        self.starts_statement.get(offset).copied().unwrap_or(true)
+    }
+
+    /// Whether the bounded wrapped window opening at `offset` mentions an
+    /// error-side unwrap.
+    fn window_mentions_err_unwrap(&self, offset: usize) -> bool {
+        let rows = self.err_rows_before.len().saturating_sub(1);
+        let start = offset.min(rows);
+        let end = offset.saturating_add(UNWRAP_ERR_JOIN_LIMIT).min(rows);
+        self.err_rows_before[end] > self.err_rows_before[start]
+    }
 }
 
 /// RIPR-SPEC-0227 decision 2: a semicolon-terminated statement whose value
@@ -5511,5 +5543,63 @@ mod call_path_tests {
             super::uncompared_unwrap_err("let _ = f(a).unwrap_err();", ""),
             Some("f(a).unwrap_err()".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod row_tables_tests {
+    use super::RowTables;
+
+    /// #11895: the per-row tables answer exactly what re-walking the body
+    /// from its top answered, without the quadratic walk.
+    #[test]
+    fn row_tables_match_the_previous_non_empty_line_and_window_reading() -> Result<(), String> {
+        let body = "let e =\n    f().unwrap_err();\n\n// note\nlet x = 1;\nfoo()\n{\n}\nbar();\n";
+        let tables = RowTables::new(body);
+        let rows: Vec<&str> = body.lines().collect();
+        for offset in 0..rows.len() {
+            let expected = rows[..offset]
+                .iter()
+                .map(|row| row.trim())
+                .rfind(|row| !row.is_empty())
+                .is_none_or(|previous| previous.ends_with([';', '{', '}']));
+            if tables.starts_statement(offset) != expected {
+                return Err(format!("row {offset} starts_statement != {expected}"));
+            }
+            let window = rows
+                .iter()
+                .skip(offset)
+                .take(super::UNWRAP_ERR_JOIN_LIMIT)
+                .any(|row| row.contains("unwrap_err") || row.contains("expect_err"));
+            if tables.window_mentions_err_unwrap(offset) != window {
+                return Err(format!("row {offset} window mention != {window}"));
+            }
+        }
+        // `after let e =` the next row is the value, not a statement start.
+        if tables.starts_statement(1) {
+            return Err("the row after `let e =` must not start a statement".to_string());
+        }
+        // The window is bounded: a mention beyond the join limit is not seen.
+        let far = format!(
+            "{}x.unwrap_err();\n",
+            "a;\n".repeat(super::UNWRAP_ERR_JOIN_LIMIT)
+        );
+        if RowTables::new(&far).window_mentions_err_unwrap(0) {
+            return Err("a mention past the join limit must not open the window".to_string());
+        }
+        // The last row inside the window is seen, and an offset past the end
+        // sees nothing.
+        let edge = format!(
+            "{}x.unwrap_err();\n",
+            "a;\n".repeat(super::UNWRAP_ERR_JOIN_LIMIT - 1)
+        );
+        let edge_tables = RowTables::new(&edge);
+        if !edge_tables.window_mentions_err_unwrap(0) {
+            return Err("a mention on the last windowed row must open the window".to_string());
+        }
+        if edge_tables.window_mentions_err_unwrap(1_000) {
+            return Err("an offset past the end must not open the window".to_string());
+        }
+        Ok(())
     }
 }

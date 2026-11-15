@@ -91,7 +91,7 @@ fn natural_boolean_repair_receipt_requires_the_boundary_result() -> Result<(), S
         )?;
         require_success("boolean agent repair before", &before_phase)?;
         let printed =
-            printed_next_command(&String::from_utf8_lossy(&before_phase.stderr))?.to_string();
+            printed_next_command(&String::from_utf8_lossy(&before_phase.stdout))?.to_string();
         let tokens = split_printed_ripr_command(&printed)?;
         assert_eq!(tokens.get(1).map(String::as_str), Some("continue"));
 

@@ -90,6 +90,17 @@ in that matcher. Rust lexical whitespace, including non-ASCII line separators
 and direction marks, and raw identifiers cannot erase the qualifier.
 Bare type heads and enum variants retain their existing bounded handling;
 an independent supported local call can still establish the relation.
+One exception is bounded to the owner's own crate (#14036): in an integration
+test that is a test-crate root of the root package, `krate::Type::ctor(..)`
+reads as the owner's type only when `krate` is the root package's library
+identifier, the changed owner is a method of a top-level `impl` of a library file (a
+function-local or inline-module namesake type is not), a constructor of that type is indexed,
+exactly one type of that name is indexed in the workspace (#14083: with `mod a; mod b; pub use b::Rng;`
+the path names `b::Rng`, so a changed `a::Rng` method gets no direct call; two same-named types
+fail closed to a name-only relation even when the path is the owner's), and
+neither the file nor the test body declares, imports, renames or globs `krate`.
+A foreign crate, a shadowing module, a renamed crate and a test module child
+keep the refusal above.
 Bare generic annotations retain function-pointer, associated-type and
 const-expression arguments; punctuation inside those arguments cannot truncate
 the type or hide a qualified trailing path.
@@ -426,6 +437,14 @@ against that module's own items only, so `mod core { pub use core::*; }` does
 not shadow the real root and no longer makes every assertion macro ambiguous
 workspace-wide; a binding of the root name in that module, or an item-position
 macro call that may emit one, keeps the whole-file refusal.
+
+An `extern crate` alias from one standard crate to another standard name
+(`extern crate core as std;`, the common `no_std` shim, or
+`extern crate std as core;`) is not a macro-binding site: every macro it can
+bring is the standard one (#14390). The exemption holds only while the
+manifest proves the aliased crate is the standard one, so a Cargo-renamed
+`core`, an `alloc` alias (which has no such proof) and an alias of any other
+crate (`extern crate other as std;`) still refuse.
 
 ### Constructor-field observation linkage
 

@@ -504,6 +504,48 @@ mod tests {
         );
     }
 
+    /// True when some workflow line passes `--exact` and names `test` as a
+    /// whole argument outside any `#` comment and not as a `--skip` value, so a drifted filter would run
+    /// zero tests.
+    fn workflow_exact_filter_names(workflow: &str, test: &str) -> bool {
+        workflow.lines().any(|line| {
+            let code = line.split('#').next().unwrap_or("");
+            let args: Vec<&str> = code.split_whitespace().collect();
+            args.contains(&"--exact")
+                && args
+                    .iter()
+                    .enumerate()
+                    .any(|(i, arg)| *arg == test && (i == 0 || args[i - 1] != "--skip"))
+        })
+    }
+
+    #[test]
+    fn the_nightly_workflow_exact_filter_names_the_facade_test() {
+        let workflow = include_str!("../../.github/workflows/windows-advisory.yml");
+        assert!(
+            workflow_exact_filter_names(workflow, FACADE_TEST),
+            "the windows facade `--exact` filter must name FACADE_TEST or it runs zero tests"
+        );
+        let drifted = workflow.replace(FACADE_TEST, "tests::drifted_facade_name");
+        assert!(!workflow_exact_filter_names(&drifted, FACADE_TEST));
+
+        let live = format!("run: cargo test -p xtask {FACADE_TEST} -- --exact");
+        assert!(workflow_exact_filter_names(&live, FACADE_TEST));
+        let drifted_filter = "cargo test -p xtask tests::drifted_facade_name -- --exact";
+        let trailing = format!("{drifted_filter} # was {FACADE_TEST} --exact");
+        assert!(!workflow_exact_filter_names(&trailing, FACADE_TEST));
+        let standalone = format!("{drifted_filter}\n# {FACADE_TEST} -- --exact\n");
+        assert!(!workflow_exact_filter_names(&standalone, FACADE_TEST));
+        let skip_after = format!("cargo test -p xtask -- --exact --skip {FACADE_TEST}");
+        assert!(!workflow_exact_filter_names(&skip_after, FACADE_TEST));
+        let skip_before = format!("cargo test -p xtask -- --skip {FACADE_TEST} --exact");
+        assert!(!workflow_exact_filter_names(&skip_before, FACADE_TEST));
+        let no_exact = format!("cargo test -p xtask {FACADE_TEST} -- --nocapture");
+        assert!(!workflow_exact_filter_names(&no_exact, FACADE_TEST));
+        let longer = format!("cargo test -p xtask {FACADE_TEST}_v2 -- --exact");
+        assert!(!workflow_exact_filter_names(&longer, FACADE_TEST));
+    }
+
     #[test]
     fn subject_sidecar_path_matches_report_directory() {
         assert!(

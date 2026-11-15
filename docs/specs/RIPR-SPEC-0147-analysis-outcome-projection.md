@@ -33,6 +33,11 @@ human, GitHub and JSON disclosures keep naming it;
 full JSON is an explicit drilldown. The report must describe the same root,
 base and saved source; changed inputs require a fresh check. The consumer
 requires `verify=complete` before claiming done. An empty findings list alone is not completion evidence.
+When full summary findings exceed full summary exposed findings the refusal
+reason is `unexposed_findings_remain` (#13825). It names what it counts rather
+than "gaps": a limited finding (`static_unknown`, `propagation_unknown`, ...)
+is reported under the header's `limits=`, not `gaps=`, so the record never
+claims gaps remain beside a `gaps=0` header.
 Explain navigation retains its printed format for artifact replay with an
 explicit suppression policy, since that combination refuses Agent format.
 
@@ -129,6 +134,10 @@ their detail and navigation as advisory evidence beneath the incomplete state;
 they do not acquire a contradictory completion or stop claim. Complete outcomes
 retain their existing triage behavior (#13138).
 
+A run that analyzed nothing because the diff held no analyzable source (for
+example docs-only; the empty-diff `no_scope` case is RIPR-SPEC-0083) never emits `done=` in the agent format and never prints the
+clean GitHub notice; it states the not-established state instead (#13658).
+
 The diff-scoped `check` and `diff` CLI commands map the producer's
 `unsupported_input` kind to exit `2` after writing the original report
 (#7440 for check, #7793 for diff). Retained findings, counts,
@@ -201,7 +210,8 @@ projection does not analyze those regions.
   finding; review-comments names the dropped file the same way;
 - ordinary zero-result input has a complete non-limitation kind distinct from
   unsupported or partial input;
-- human and JSON output carry the same limitation kind and recovery route;
+- human and JSON output carry the same limitation kind and recovery route,
+  and the producer's bounded detail when one is recorded (#14398);
 - gate and PR-evidence-summary consumers fail closed or disclose the same
   incomplete typed outcome rather than deriving a clean result from zero
   candidates;
@@ -266,7 +276,8 @@ A diff-scoped badge whose outcome is `no_scope`, `no_changed_lines`, or
 
 - parser and language-adapter limitations reach one typed pipeline outcome;
 - complete zero-result and incomplete zero-result fixtures remain distinct;
-- human and JSON projections disclose the same typed kind and recovery route;
+- human and JSON projections disclose the same typed kind, bounded detail and
+  recovery route;
 - stable outcome identity excludes absolute checkout paths;
 - SARIF run-level and diff-scoped badge projections disclose the typed outcome
   and fail closed for incomplete zero-result input.

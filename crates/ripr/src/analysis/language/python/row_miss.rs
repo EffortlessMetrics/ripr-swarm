@@ -173,7 +173,7 @@ fn row_miss(
 fn no_assertion_miss(test: &PythonTest, owner: &PythonOwner) -> Option<RelatedTestMiss> {
     (test.assertion_admission == PythonAssertionAdmission::NoAssertionLike
         && test.assertions.is_empty()
-        && test.activation_controls.is_empty()
+        && !super::test_activation::has_activation_control(test)
         && test
             .bare_sibling_modules
             .iter()

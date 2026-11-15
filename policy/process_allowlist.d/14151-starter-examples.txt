@@ -1,0 +1,2 @@
+crates/ripr/tests/starter_examples.rs|Command::new|1|starter-examples|Runs the built ripr binary (CARGO_BIN_EXE_ripr) with the documented check command on a scratch copy of each starter example; fixed arguments, no shell or network.
+crates/ripr/tests/starter_examples.rs|use std::process::Command|1|starter-examples|Import for the single ripr binary invocation that mirrors the README command.

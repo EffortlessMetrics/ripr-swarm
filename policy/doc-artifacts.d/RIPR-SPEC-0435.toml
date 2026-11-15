@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0435"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0435-gate-check-one-command-ci-gate.md"
+status = "accepted"
+owner = "cli"
+standalone_reason = "Slice #13772 adds the gate check command, whose composition and fail-closed producer contract had no governing spec."

@@ -114,7 +114,7 @@
               "reach": {
                 "confidence": "medium",
                 "state": "no",
-                "summary": "No static test path found for the changed owner"
+                "summary": "No static test path found for the changed owner (unreferenced in workspace)"
               }
             },
             "severity": "warning",

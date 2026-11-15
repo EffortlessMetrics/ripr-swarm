@@ -150,6 +150,17 @@ fn agree_on_startable_gap(
     {
         return Err(format!("agent header omits repairable=1:\n{agent}"));
     }
+    // #13803: the listed preview gap is counted beside `gaps=0`, so the
+    // header never claims zero gaps alone next to a listed gap record.
+    if !agent
+        .lines()
+        .next()
+        .is_some_and(|header| header.contains(" gaps=0 unconfirmed_gaps=1 "))
+    {
+        return Err(format!(
+            "agent header does not count the listed preview gap:\n{agent}"
+        ));
+    }
     let next = agent
         .lines()
         .find_map(|line| line.strip_prefix("next="))
@@ -191,7 +202,13 @@ fn python_without_a_route_does_not_get_an_agent_repair_start() -> Result<(), Str
     fixture_git_ok(&root, &["commit", "-q", "-m", "drop the tests"])?;
     let agent = check(&root, "HEAD~2", "agent")?;
     // The finding must still be reported, so the control cannot pass vacuously.
-    if !agent.contains("findings=1") || !agent.contains("|id=probe:") {
+    // #13594: a no_static_path finding prints no `missing=-` record, so its id
+    // is carried by the `next=ripr explain` drill-in instead.
+    if !agent.contains("findings=1")
+        || !agent
+            .lines()
+            .any(|line| line.starts_with("next=ripr explain ") && line.contains("probe:"))
+    {
         return Err(format!("control lost its finding:\n{agent}"));
     }
     if agent.contains("repairable=") || agent.contains("ripr agent repair") {

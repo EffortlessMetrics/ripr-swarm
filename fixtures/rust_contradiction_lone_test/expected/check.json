@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach is_adult: adult_boundary", "infection unknown: Activation credit withheld from 1 related test(s): an assertion statically contradicts the changed owner's folded behavior, so that test fails at baseline and cannot credit activation", "propagation yes: Changed behavior appears to influence returned value: age >= 18", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: age >= 18 (line 2)", "related test src/lib.rs:10 adult_boundary uses strong relational check oracle: assert!(is_adult(18));", "related test src/lib.rs:10 adult_boundary uses strong relational check oracle: assert!(!is_adult(18));"],
       "flow_sinks": [
         {"kind":"return_value","text":"age >= 18","line":2}
@@ -122,6 +129,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach is_adult: adult_boundary", "infection unknown: Activation credit withheld from 1 related test(s): an assertion statically contradicts the changed owner's folded behavior, so that test fails at baseline and cannot credit activation", "propagation yes: Complete propagation witness reaches returned value: age >= 18", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: age >= 18 (line 2)", "related test src/lib.rs:10 adult_boundary uses strong relational check oracle: assert!(is_adult(18));", "related test src/lib.rs:10 adult_boundary uses strong relational check oracle: assert!(!is_adult(18));"],
       "flow_sinks": [
         {"kind":"return_value","text":"age >= 18","line":2}
