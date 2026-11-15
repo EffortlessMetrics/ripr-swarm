@@ -1342,7 +1342,7 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
         ),
         (
             "classify every merge-group constituent from its own changed paths",
-            "if classify_constituent_docs \"$c_files\"; then c_docs_only=true; fi",
+            "if classify_constituent_docs \"$c_files\"",
         ),
         (
             "admit the merge-group tip with its own docs-only classification",

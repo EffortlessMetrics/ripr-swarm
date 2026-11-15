@@ -1282,7 +1282,7 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         ),
         (
             "constituent from its own changed paths",
-            "if classify_constituent_docs \"$c_files\"; then c_docs_only=true; fi",
+            "if classify_constituent_docs \"$c_files\"",
         ),
         (
             "tip with its own docs-only classification",
