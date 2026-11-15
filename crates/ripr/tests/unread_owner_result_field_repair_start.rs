@@ -104,6 +104,13 @@ impl Drop for Repo {
     }
 }
 
+/// Either start narration: the handoff card's `Ready to repair.` (which
+/// owns the seam-route start since #13803) or the stderr `repair started`
+/// line other start routes still print.
+fn started(repair: &str) -> bool {
+    repair.contains("Ready to repair.") || repair.contains("repair started")
+}
+
 fn text(output: &Output) -> String {
     format!(
         "{}\n{}",
@@ -120,7 +127,7 @@ fn unread_field_of_a_bound_owner_result_starts_repair() -> Result<(), String> {
         return Err(format!("check must name the changed field:\n{check}"));
     }
     if code != Some(0)
-        || !repair.contains("repair started")
+        || !repair.contains("Ready to repair.")
         || !repair.contains("missing discriminator: retries: 5")
         || !repair.contains("Test to extend: tests/t.rs:4")
     {
@@ -162,7 +169,7 @@ fn strong_read_of_the_changed_field_gets_no_repair() -> Result<(), String> {
         "use fx::default_config;\n\n#[test]\nfn default_config_retries() {\n    let c = default_config();\n    assert_eq!(c.retries, 5);\n}\n",
     )?;
     let (_, code, repair) = repo.answers()?;
-    if code == Some(0) || repair.contains("repair started") {
+    if code == Some(0) || started(&repair) {
         return Err(format!(
             "a strong field read must not start a repair (exit {code:?}):\n{repair}"
         ));
@@ -176,7 +183,7 @@ fn two_binding_tests_get_no_repair() -> Result<(), String> {
         "{UNREAD_TEST}\n#[test]\nfn default_config_is_still_quiet() {{\n    let d = default_config();\n    assert!(!d.verbose);\n}}\n"
     ))?;
     let (_, code, repair) = repo.answers()?;
-    if code == Some(0) || repair.contains("repair started") {
+    if code == Some(0) || started(&repair) {
         return Err(format!(
             "two candidate tests must not start a repair (exit {code:?}):\n{repair}"
         ));
@@ -187,7 +194,7 @@ fn two_binding_tests_get_no_repair() -> Result<(), String> {
 /// Neither `ripr repair` nor the check screen starts a repair.
 fn assert_no_start(case: &str, repo: &Repo) -> Result<(), String> {
     let (check, code, repair) = repo.answers()?;
-    if code == Some(0) || repair.contains("repair started") {
+    if code == Some(0) || started(&repair) {
         return Err(format!(
             "{case}: repair must not start (exit {code:?}):\n{repair}"
         ));
@@ -212,7 +219,7 @@ fn weak_read_through_a_crate_name_import_starts_repair() -> Result<(), String> {
     )?;
     let (_, code, repair) = repo.answers()?;
     if code != Some(0)
-        || !repair.contains("repair started")
+        || !repair.contains("Ready to repair.")
         || !repair.contains("missing discriminator: retries: 5")
         || !repair.contains("Test to extend: tests/t.rs:4")
     {
