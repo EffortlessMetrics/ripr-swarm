@@ -32,6 +32,7 @@ pub(crate) mod new_test_target;
 pub(crate) mod owner_opt_out;
 pub(crate) mod path_glob;
 mod pipeline;
+pub(crate) mod python_env;
 pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
 // Source-role recognition stays with the cfg-predicate authority (#3530/#3534);
 // consumers outside `analysis` ask it instead of matching attribute text.

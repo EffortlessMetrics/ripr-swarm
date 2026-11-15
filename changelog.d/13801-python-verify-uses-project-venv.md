@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python verify command: when the project has a `.venv/bin/python` or `venv/bin/python` (POSIX), the printed `-m pytest` command now names that interpreter, and its confidence is no longer `high` when that venv statically lacks pytest (`low`) or cannot be read (`medium`); JSON, SARIF, GitHub, human, pilot and MCP output carry the same command and confidence, and no venv keeps `python` as before (#13801)

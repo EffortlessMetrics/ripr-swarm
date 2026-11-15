@@ -199,6 +199,28 @@ Test discovery:
   setting; bare `pytest path::node` fails collection there with
   `ModuleNotFoundError`. Both forms spell the interpreter `python`, which names
   the virtual environment's interpreter on every platform
+- the pytest verify route's interpreter and confidence are decided once by the
+  Python producer, before findings leave the adapter (#13801). When the
+  selected root holds a project `.venv/bin/python` or `venv/bin/python`
+  (POSIX only; Windows keeps `python`), every generated pytest command
+  (`suggested_verify_command` and each `test_verify_command`) names that
+  root-relative interpreter, for example
+  `.venv/bin/python -m pytest path::node`. The venv's pytest is read
+  statically from its `site-packages` listing and `pyvenv.cfg`; nothing in
+  the checkout is executed. `suggested_verify_command_confidence` stays at the
+  classifier's value when pytest is present, becomes `low` when the venv
+  statically lacks pytest, and `medium` when its layout cannot be read
+  statically (system site-packages included, ambiguous `lib/python3.X`); the
+  fact rides as `suggested_verify_venv_pytest: present|missing|unknown`.
+  With no project venv the command keeps PATH `python` at its existing
+  confidence: a static producer cannot know whether system Python has pytest,
+  and a runtime probe would make reports and goldens host-dependent, so
+  `ripr doctor` checks PATH `python -m pytest` instead (RIPR-SPEC-0007). The
+  unittest route is unchanged. JSON (`evidence`, `repair_placement`,
+  `python_repair_card`), SARIF, GitHub, human, pilot and MCP gap evidence all
+  carry this one decision; renderers never read the filesystem, and the
+  native pytest route accepts only `python`, `.venv/bin/python` or
+  `venv/bin/python` as its program
 
 The default name prefix is case-sensitive and does not require an underscore:
 `test`, `testCamelCase`, and `test_with_underscore` all qualify. `_test_private`,

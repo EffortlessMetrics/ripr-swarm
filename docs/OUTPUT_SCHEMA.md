@@ -2802,7 +2802,11 @@ The evidence-first fields are additive in schema `0.2`:
   findings with a concrete missing discriminator and a detected pytest or
   unittest related test. It carries `suggested_test_file`,
   `suggested_test_name`, optional `suggested_test_node_id`, `verify_command`,
-  and `verify_command_confidence`.
+  and `verify_command_confidence`. A pytest `verify_command` names a project
+  `.venv/bin/python` or `venv/bin/python` found statically at the root
+  (POSIX), else `python`; its confidence is `low` when that venv statically
+  lacks pytest and `medium` when the venv cannot be read statically
+  (RIPR-SPEC-0028, #13801).
 - `python_repair_card` is an additive optional object for direct weak Python
   findings that already have a canonical gap, concrete missing discriminator,
   related-test evidence, placement, and verify command. It is intentionally
