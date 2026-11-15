@@ -89,7 +89,8 @@ ripr gate evaluate --root . --pr-guidance target/ripr/review/comments.json --mod
 
 Suppressed seams stay visible in the `suppressed` array of the review-comments
 JSON (reason `suppressed_by_policy`) and do not block the gate. Expired entries
-do not apply. `--check-output` alone also honors findings its check run marked
+do not apply. A `function` entry covers every seam in that function, including
+ones added later, so keep `expires` set. `--check-output` alone also honors findings its check run marked
 suppressed.
 
 ## Output map

@@ -10591,10 +10591,14 @@ Field contract:
   `navigation_only_cross_language_target`, `nearby_test_changed`,
   `summary_cap`, `missing_verification_command`. Free-text values are
   forbidden per RIPR-SPEC-0068; adding a new token requires amending the spec.
-- `suppressed[]` - bounded records for recommendations hidden by caps or
-  nearby test changes on non-headline-eligible seams. Nearby test changes do
-  not hide unresolved headline-eligible recommendations or strengthen their
-  evidence; `summary.unchanged_tests` still records that tests changed.
+- `suppressed[]` - bounded records for recommendations hidden by caps,
+  nearby test changes on non-headline-eligible seams, or an explicit
+  suppression policy. Nearby test changes do not hide unresolved
+  headline-eligible recommendations or strengthen their evidence;
+  `summary.unchanged_tests` still records that tests changed. A record with
+  `reason: "suppressed_by_policy"` was matched by `--suppression-policy` (or a
+  suppression recorded in `--check-output`) and its `message` names the entry;
+  `gate evaluate` reads such records as non-blocking.
 - `warnings[]` - selection warnings from the agent brief selection path.
 - `limits_note` - static-evidence boundary text for downstream summaries.
 

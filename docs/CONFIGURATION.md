@@ -974,7 +974,18 @@ expires = "2026-12-31"
 
 `owner` stays the team that owns the exception; `function` is the code
 identity. Matching is exact on file and function; a missing or ambiguous owner
-never matches.
+never matches. A `function` entry covers every seam in that function,
+including seams added later, so set `expires` and review it when the function
+changes.
+
+In `ripr review-comments`, a `finding_id` entry applies only when the id names
+exactly one seam of the whole diff-scoped inventory; an id shared with another
+seam (even one outside the brief cap), or carrying a collision ordinal, is
+reported and not applied. An entry narrowed by `static_class` does not apply
+to review-comments seams (their grip classes use a different vocabulary); it
+is reported as "static_class selector does not apply to review-comments
+seams; entry not applied" instead of being skipped silently. Policy-suppressed
+seams still count against the brief cap, which stays disclosed.
 
 `static_class` is optional narrowing for a path-glob selector and must name a
 known exposure class. See [the complete example](suppressions.example.toml)

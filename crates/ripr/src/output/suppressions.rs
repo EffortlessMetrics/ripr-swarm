@@ -888,7 +888,9 @@ impl CheckSuppressionCandidate {
     /// A seam's `finding_id` is its own seam id. A `finding_id` selector
     /// names a seam through the producer-id joins the repair paths use
     /// (`producer_gap_id_names_seam`, and the bare `probe:` id re-mint); it applies only when it names exactly
-    /// one seam in `seams`, otherwise it is reported and not applied (fail
+    /// one seam in `seams` and no other seam of the whole diff-scoped
+    /// inventory (`shared_ids`, `None` when that inventory is unavailable),
+    /// otherwise it is reported and not applied (fail
     /// closed). `path` and `function` selectors match the seam's file and
     /// owner symbol. `static_class` narrowing never matches a seam: seam grip
     /// classes are a different vocabulary than the exposure class it names.
@@ -896,6 +898,7 @@ impl CheckSuppressionCandidate {
         root: &Path,
         seams: &[&crate::analysis::ClassifiedSeam],
         entries: &[SuppressionEntry],
+        shared_ids: Option<&std::collections::BTreeSet<String>>,
     ) -> (Vec<Self>, Vec<String>) {
         let mut aliases: Vec<Vec<String>> = vec![Vec::new(); seams.len()];
         let mut warnings = Vec::new();
@@ -905,6 +908,12 @@ impl CheckSuppressionCandidate {
             .filter_map(|entry| entry.finding_id.as_deref())
             .collect();
         for id in ids {
+            if crate::analysis::canonical_gap::probe_id_carries_ordinal(id) {
+                warnings.push(format!(
+                    "exposure_gap suppression for `{id}` carries a collision ordinal, which cannot be bound to one review seam, so it was not applied; select the owner with `path` + `function` instead"
+                ));
+                continue;
+            }
             let named: Vec<usize> = seams
                 .iter()
                 .enumerate()
@@ -916,6 +925,14 @@ impl CheckSuppressionCandidate {
                 .collect();
             match named.as_slice() {
                 [] => {}
+                [_] if shared_ids.is_none() => warnings.push(format!(
+                    "exposure_gap suppression for `{id}` was not applied: the full diff-scoped seam inventory is unavailable, so the id cannot be shown to name exactly one seam; select the owner with `path` + `function` instead"
+                )),
+                [_] if shared_ids.is_some_and(|shared| shared.contains(id)) => {
+                    warnings.push(format!(
+                        "exposure_gap suppression for `{id}` was not applied: another seam in the diff-scoped inventory carries the same id (an ambiguous finding id fails closed); select the owner with `path` + `function` instead"
+                    ))
+                }
                 [only] => aliases[*only].push(id.to_string()),
                 many => warnings.push(format!(
                     "exposure_gap suppression for `{id}` names {} review seams, so it was not applied (an ambiguous finding id fails closed); select the owner with `path` + `function` instead",

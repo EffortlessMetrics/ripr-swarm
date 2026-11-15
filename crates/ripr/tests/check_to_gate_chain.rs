@@ -803,6 +803,148 @@ fn check_output_suppression_reaches_review_comments_and_the_gate() -> Result<(),
     Ok(())
 }
 
+/// The id of the predicate finding on `line` of a `ripr check --json` document.
+fn predicate_finding_id(check: &Value, line: u64) -> Result<String, String> {
+    check["findings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|finding| finding.pointer("/probe/line").and_then(Value::as_u64) == Some(line))
+        .filter_map(|finding| finding["id"].as_str())
+        .find(|id| id.contains(":predicate:"))
+        .map(str::to_string)
+        .ok_or_else(|| format!("no predicate finding at line {line}: {check}"))
+}
+
+fn id_entry(id: &str) -> String {
+    format!(
+        "\n[[suppressions]]\nkind = \"exposure_gap\"\nfinding_id = \"{id}\"\nreason = \"accepted\"\nowner = \"team-retry\"\n"
+    )
+}
+
+/// A check run that suppressed ONE finding of a function holding several
+/// seams must suppress only that finding's seam in review-comments: the check
+/// run's `suppressed_by` is an identity, never widened to its owner function.
+#[test]
+fn check_output_suppresses_only_the_named_finding_of_a_multi_seam_function() -> Result<(), String> {
+    let fixture = build_retry_repo("policy-one-of-two")?;
+    let root = &fixture.0;
+    mkdir_chain_dirs(root)?;
+    let check_path = root.join(CHECK_JSON);
+    let control = run_check_json(root, &check_path)?;
+    let id = predicate_finding_id(&control, RETRY_LINE)?;
+    let retry_findings = control["findings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|finding| {
+            finding.pointer("/probe/line").and_then(Value::as_u64) == Some(RETRY_LINE)
+        })
+        .count();
+    assert!(
+        retry_findings >= 2,
+        "premise: retry_allowed holds several findings: {control}"
+    );
+
+    write_policy(root, "policy-one.toml", &id_entry(&id))?;
+    let output = run_ripr_to(
+        root,
+        &[
+            "check",
+            "--root",
+            ".",
+            "--base",
+            "HEAD~1",
+            "--format",
+            "json",
+            "--suppression-policy",
+            "policy-one.toml",
+        ],
+        &check_path,
+    )?;
+    if !output.status.success() {
+        return Err(diagnose("check --suppression-policy", &output));
+    }
+    let check = read_json(&check_path)?;
+    let check_suppressed = check["findings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|finding| finding["suppressed"] == true)
+        .count();
+    assert_eq!(check_suppressed, 1, "{check}");
+
+    run_ok(
+        root,
+        "review-comments --check-output",
+        &review_comments_args(COMMENTS_JSON, &["--check-output", CHECK_JSON]),
+    )?;
+    let doc = read_json(&root.join(COMMENTS_JSON))?;
+    assert_eq!(
+        doc["suppressed"].as_array().map(Vec::len),
+        Some(1),
+        "only the named finding's seam is suppressed: {doc}"
+    );
+    let still_listed = listed_seam_lines(&doc, "comments")
+        .into_iter()
+        .chain(listed_seam_lines(&doc, "summary_only"))
+        .any(|line| line == RETRY_LINE);
+    assert!(
+        still_listed,
+        "the sibling seam in retry_allowed must stay listed: {doc}"
+    );
+    let (gate, exit) = evaluate_gate(root, COMMENTS_JSON)?;
+    assert_eq!(exit, Some(3), "backoff_ms still blocks: {gate}");
+    // Exactly one seam is suppressed at the gate; retry_allowed's sibling seam
+    // stays evaluated (advisory in this fixture, never suppressed).
+    assert_eq!(gate_count(&gate, "suppressed")?, 1, "{gate}");
+    assert_eq!(gate_count(&gate, "blocking")?, 1, "{gate}");
+    assert_eq!(gate_count(&gate, "advisory")?, 1, "{gate}");
+    Ok(())
+}
+
+/// A `finding_id` entry applied with `--suppression-policy` reaches the
+/// review-comments seam it uniquely names, and nothing else.
+#[test]
+fn finding_id_entry_applied_through_review_comments_policy_suppresses_one_seam()
+-> Result<(), String> {
+    let fixture = build_retry_repo("policy-finding-id")?;
+    let root = &fixture.0;
+    mkdir_chain_dirs(root)?;
+    let check = run_check_json(root, &root.join(CHECK_JSON))?;
+    let id = predicate_finding_id(&check, RETRY_LINE)?;
+    write_policy(root, "policy-id.toml", &id_entry(&id))?;
+
+    run_ok(
+        root,
+        "review-comments --suppression-policy (finding id)",
+        &review_comments_args(COMMENTS_JSON, &["--suppression-policy", "policy-id.toml"]),
+    )?;
+    let doc = read_json(&root.join(COMMENTS_JSON))?;
+    let suppressed = doc["suppressed"].as_array().cloned().unwrap_or_default();
+    assert_eq!(suppressed.len(), 1, "{doc}");
+    assert_eq!(suppressed[0]["reason"], "suppressed_by_policy", "{doc}");
+    assert_eq!(suppressed[0]["line"].as_u64(), Some(RETRY_LINE), "{doc}");
+    assert!(
+        doc["warnings"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .all(|warning| !warning.contains("fails closed")),
+        "a unique id must not warn: {doc}"
+    );
+    // The control function and retry_allowed's other seam are untouched.
+    assert!(
+        listed_seam_lines(&doc, "comments")
+            .into_iter()
+            .chain(listed_seam_lines(&doc, "summary_only"))
+            .any(|line| line == BACKOFF_LINE),
+        "{doc}"
+    );
+    Ok(())
+}
+
 /// The default `.ripr/suppressions.toml` stays opt-in: it is disclosed, never
 /// applied; an unreadable explicit policy and `--gap-ledger` are refused.
 #[test]

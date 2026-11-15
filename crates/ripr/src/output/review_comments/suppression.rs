@@ -18,6 +18,7 @@ use crate::output::suppressions::{
 };
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::Path;
 
 /// The `reason` a policy-suppressed seam carries in the `suppressed` array.
@@ -39,6 +40,10 @@ pub(crate) struct ReviewCommentsSuppression {
     policy: Option<LoadedPolicy>,
     check_output: Vec<CheckOutputSuppressedFinding>,
     today: String,
+    /// Check-finding ids more than one seam of the whole diff-scoped
+    /// inventory can be named by. `None` means the inventory was not
+    /// supplied, so no id can be shown unique and id entries fail closed.
+    shared_ids: Option<BTreeSet<String>>,
 }
 
 #[derive(Clone, Debug)]
@@ -84,7 +89,15 @@ impl ReviewCommentsSuppression {
             }),
             check_output,
             today,
+            shared_ids: None,
         }
+    }
+
+    /// Supplies the ids shared by several seams of the full diff-scoped
+    /// inventory (not only the selected or capped subset).
+    pub(crate) fn with_inventory_shared_ids(mut self, shared_ids: BTreeSet<String>) -> Self {
+        self.shared_ids = Some(shared_ids);
+        self
     }
 
     pub(crate) fn resolve(
@@ -94,11 +107,30 @@ impl ReviewCommentsSuppression {
     ) -> ResolvedSeamSuppression {
         let mut resolved = ResolvedSeamSuppression::default();
         if let Some(policy) = &self.policy {
-            let (candidates, ambiguous) =
-                CheckSuppressionCandidate::for_seams(root, seams, &policy.entries);
+            // A `static_class` narrowing names an exposure class; a review
+            // seam carries a grip class from a different vocabulary, so the
+            // entry can never be shown to apply. Say so; never apply it
+            // unnarrowed.
+            let (narrowed, applicable): (Vec<&SuppressionEntry>, Vec<&SuppressionEntry>) = policy
+                .entries
+                .iter()
+                .partition(|entry| entry.static_class.is_some());
+            for entry in narrowed {
+                resolved.warnings.push(format!(
+                    "exposure_gap suppression `{}` uses static_class, which does not apply to review-comments seams; entry not applied",
+                    entry_label(entry)
+                ));
+            }
+            let applicable: Vec<SuppressionEntry> = applicable.into_iter().cloned().collect();
+            let (candidates, ambiguous) = CheckSuppressionCandidate::for_seams(
+                root,
+                seams,
+                &applicable,
+                self.shared_ids.as_ref(),
+            );
             resolved.warnings.extend(ambiguous);
             let (matched, warnings) =
-                apply_check_suppressions(&candidates, &policy.entries, &self.today);
+                apply_check_suppressions(&candidates, &applicable, &self.today);
             resolved
                 .warnings
                 .extend(warnings.into_iter().filter(|w| w.starts_with("expired ")));
@@ -114,8 +146,12 @@ impl ReviewCommentsSuppression {
         }
         if !self.check_output.is_empty() {
             let entries = self.check_output_entries();
-            let (candidates, ambiguous) =
-                CheckSuppressionCandidate::for_seams(root, seams, &entries);
+            let (candidates, ambiguous) = CheckSuppressionCandidate::for_seams(
+                root,
+                seams,
+                &entries,
+                self.shared_ids.as_ref(),
+            );
             resolved.warnings.extend(ambiguous);
             let (matched, _) = apply_check_suppressions(&candidates, &entries, &self.today);
             for (seam_id, selector) in matched {
@@ -132,18 +168,24 @@ impl ReviewCommentsSuppression {
     }
 
     /// Synthetic exposure-gap entries standing for what the check run already
-    /// decided: the suppressed finding's own id, plus its owner function when
-    /// the check run's `suppressed_by` label is a `path::function` selector
-    /// (so every seam of that function is covered, as the policy would).
+    /// decided: one per suppressed finding id, bound to that identity alone.
+    /// The check run's `suppressed_by` selector is deliberately not widened to
+    /// its owner function: that would drop any `static_class` narrowing the
+    /// original entry carried and suppress seams the run left blocking.
     fn check_output_entries(&self) -> Vec<SuppressionEntry> {
-        let mut entries = Vec::new();
-        for item in &self.check_output {
-            entries.push(synthetic_entry(Some(&item.finding_id), None, None));
-            if let Some((path, function)) = function_label_parts(&item.selector) {
-                entries.push(synthetic_entry(None, Some(path), Some(function)));
-            }
-        }
-        entries
+        self.check_output
+            .iter()
+            .map(|item| synthetic_entry(&item.finding_id))
+            .collect()
+    }
+}
+
+fn entry_label(entry: &SuppressionEntry) -> String {
+    match (&entry.finding_id, &entry.path, &entry.function) {
+        (Some(id), _, _) => id.clone(),
+        (None, Some(path), Some(function)) => function_selector_label(path, function),
+        (None, Some(path), None) => path.clone(),
+        (None, None, _) => "unselected".to_string(),
     }
 }
 
@@ -173,28 +215,13 @@ pub(crate) fn check_output_suppressed_findings(
         .collect()
 }
 
-/// `src/retry.rs::retry_allowed` is a `path` + `function` selector label (see
-/// [`function_selector_label`]); a finding id (`probe:...`) or path glob is
-/// not. The path part must be a plain file path.
-fn function_label_parts(selector: &str) -> Option<(&str, &str)> {
-    let (path, function) = selector.split_once("::")?;
-    let plain_path = !path.is_empty()
-        && !path.contains(['*', '?', '[', ':'])
-        && function_selector_label(path, function) == selector;
-    (plain_path && !function.trim().is_empty()).then_some((path, function))
-}
-
-fn synthetic_entry(
-    finding_id: Option<&str>,
-    path: Option<&str>,
-    function: Option<&str>,
-) -> SuppressionEntry {
+fn synthetic_entry(finding_id: &str) -> SuppressionEntry {
     SuppressionEntry {
         kind: SuppressionKind::ExposureGap,
-        finding_id: finding_id.map(str::to_string),
+        finding_id: Some(finding_id.to_string()),
         test: None,
-        path: path.map(str::to_string),
-        function: function.map(str::to_string),
+        path: None,
+        function: None,
         reason: "recorded by the check run".to_string(),
         owner: "check-output".to_string(),
         expires: None,
@@ -214,34 +241,183 @@ fn synthetic_entry(
 mod tests {
     use super::{
         CheckOutputSuppressedFinding, ReviewCommentsSuppression, check_output_suppressed_findings,
-        function_label_parts,
     };
+    use crate::analysis::ClassifiedSeam;
+    use crate::analysis::canonical_gap::seam_nameable_ids;
+    use crate::analysis::seams::{
+        ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
+    };
+    use crate::analysis::test_grip_evidence::TestGripEvidence;
+    use crate::domain::{Confidence, StageEvidence, StageState};
+    use crate::output::suppressions::{CheckSuppressionCandidate, SuppressionEntry};
     use serde_json::json;
+    use std::collections::BTreeSet;
+    use std::path::Path;
+
+    fn seam_at(owner: &str, line: usize) -> ClassifiedSeam {
+        let seam = RepoSeam::new(
+            "src/retry.rs",
+            owner,
+            SeamKind::PredicateBoundary,
+            line * 10,
+            line,
+            "attempt >= limit",
+            RequiredDiscriminator::BoundaryValue {
+                description: "attempt == limit".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let stage = || StageEvidence::new(StageState::Yes, Confidence::Medium, "test stage");
+        ClassifiedSeam {
+            evidence: TestGripEvidence {
+                seam_id: seam.id().clone(),
+                related_tests: Vec::new(),
+                reach: stage(),
+                activate: stage(),
+                propagate: stage(),
+                observe: stage(),
+                discriminate: stage(),
+                observed_values: Vec::new(),
+                missing_discriminators: Vec::new(),
+                new_test_target: None,
+                statically_contradicted_related_tests: 0,
+            },
+            seam,
+            class: SeamGripClass::WeaklyGripped,
+        }
+    }
+
+    fn id_entry(id: &str) -> SuppressionEntry {
+        let mut entry = super::synthetic_entry(id);
+        entry.owner = "team".to_string();
+        entry
+    }
+
+    fn aliases(candidates: &[CheckSuppressionCandidate]) -> Vec<usize> {
+        candidates
+            .iter()
+            .map(|candidate| candidate.finding_aliases.len())
+            .collect()
+    }
+
+    const OWNER: &str = "src/retry.rs::retry_allowed";
 
     #[test]
-    fn function_labels_are_told_apart_from_ids_and_globs() {
-        assert_eq!(
-            function_label_parts("src/retry.rs::retry_allowed"),
-            Some(("src/retry.rs", "retry_allowed"))
+    fn a_unique_bare_id_binds_to_exactly_one_seam() {
+        let only = seam_at(OWNER, 3);
+        let other = seam_at("src/retry.rs::backoff_ms", 9);
+        let id = seam_nameable_ids(&only)[0].clone();
+        let entries = vec![id_entry(&id)];
+        let (candidates, warnings) = CheckSuppressionCandidate::for_seams(
+            Path::new("."),
+            &[&only, &other],
+            &entries,
+            Some(&BTreeSet::new()),
         );
-        assert_eq!(
-            function_label_parts("src/retry.rs::impl Retry::allowed"),
-            Some(("src/retry.rs", "impl Retry::allowed"))
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(aliases(&candidates), vec![1, 0]);
+        assert_eq!(candidates[0].finding_aliases, vec![id]);
+    }
+
+    #[test]
+    fn an_id_naming_two_selected_seams_warns_and_suppresses_nothing() {
+        let first = seam_at(OWNER, 3);
+        let second = seam_at(OWNER, 12);
+        let id = seam_nameable_ids(&first)[0].clone();
+        assert_eq!(id, seam_nameable_ids(&second)[0]);
+        let entries = vec![id_entry(&id)];
+        let (candidates, warnings) = CheckSuppressionCandidate::for_seams(
+            Path::new("."),
+            &[&first, &second],
+            &entries,
+            Some(&BTreeSet::from([id.clone()])),
         );
-        for not_a_function in [
-            "probe:src_retry.rs:predicate:d7b0ead2",
-            "repo-probe:src_retry.rs:predicate:d7b0ead2",
-            "src/**",
-            "src/*.rs::f",
-            "src/retry.rs::",
-            "",
-        ] {
-            assert_eq!(
-                function_label_parts(not_a_function),
-                None,
-                "{not_a_function}"
-            );
-        }
+        assert_eq!(aliases(&candidates), vec![0, 0]);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("names 2 review seams"), "{warnings:?}");
+    }
+
+    #[test]
+    fn an_unselected_sibling_makes_the_id_ambiguous() {
+        // Only the second seam is selected; the first sits outside the cap but
+        // carries the same bare id, so the entry must not reach the second.
+        let first = seam_at(OWNER, 3);
+        let second = seam_at(OWNER, 12);
+        let id = seam_nameable_ids(&first)[0].clone();
+        let entries = vec![id_entry(&id)];
+        let (candidates, warnings) = CheckSuppressionCandidate::for_seams(
+            Path::new("."),
+            &[&second],
+            &entries,
+            Some(&BTreeSet::from([id.clone()])),
+        );
+        assert_eq!(aliases(&candidates), vec![0]);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains("another seam in the diff-scoped inventory"),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn an_id_is_refused_when_the_full_inventory_is_unavailable() {
+        let only = seam_at(OWNER, 3);
+        let id = seam_nameable_ids(&only)[0].clone();
+        let entries = vec![id_entry(&id)];
+        let (candidates, warnings) =
+            CheckSuppressionCandidate::for_seams(Path::new("."), &[&only], &entries, None);
+        assert_eq!(aliases(&candidates), vec![0]);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("inventory is unavailable")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn an_ordinal_id_is_refused_with_a_warning() {
+        let only = seam_at(OWNER, 3);
+        let id = format!("{}.2", seam_nameable_ids(&only)[0]);
+        let entries = vec![id_entry(&id)];
+        let (candidates, warnings) = CheckSuppressionCandidate::for_seams(
+            Path::new("."),
+            &[&only],
+            &entries,
+            Some(&BTreeSet::new()),
+        );
+        assert_eq!(aliases(&candidates), vec![0]);
+        assert!(
+            warnings.iter().any(|w| w.contains("collision ordinal")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn a_static_class_entry_is_reported_not_silently_skipped() {
+        let only = seam_at(OWNER, 3);
+        let mut entry = super::synthetic_entry("unused");
+        entry.finding_id = None;
+        entry.path = Some("src/retry.rs".to_string());
+        entry.function = Some("retry_allowed".to_string());
+        entry.static_class = Some("weakly_exposed".to_string());
+        entry.owner = "team".to_string();
+        let suppression = ReviewCommentsSuppression::with_today(
+            Some("policy.toml".to_string()),
+            vec![entry],
+            Vec::new(),
+            "2026-01-01".to_string(),
+        );
+        let resolved = suppression.resolve(Path::new("."), &[&only]);
+        assert!(resolved.by_seam.is_empty());
+        assert_eq!(resolved.warnings.len(), 1, "{:?}", resolved.warnings);
+        assert!(
+            resolved.warnings[0].contains(
+                "static_class, which does not apply to review-comments seams; entry not applied"
+            ),
+            "{:?}",
+            resolved.warnings
+        );
     }
 
     #[test]
@@ -263,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn a_check_output_function_label_becomes_an_owner_entry() {
+    fn a_check_output_function_label_is_not_widened_to_the_owner() {
         let suppression = ReviewCommentsSuppression::with_today(
             None,
             Vec::new(),
@@ -274,9 +450,47 @@ mod tests {
             "2026-01-01".to_string(),
         );
         let entries = suppression.check_output_entries();
-        assert_eq!(entries.len(), 2);
+        assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].finding_id.as_deref(), Some("probe:a"));
-        assert_eq!(entries[1].path.as_deref(), Some("src/a.rs"));
-        assert_eq!(entries[1].function.as_deref(), Some("f"));
+        assert!(entries[0].path.is_none() && entries[0].function.is_none());
+    }
+
+    #[test]
+    fn check_output_suppresses_only_the_named_finding_in_a_two_seam_function() {
+        let kept = seam_at(OWNER, 3);
+        let mut suppressed = seam_at(OWNER, 12);
+        // Distinct expression so each finding has its own id.
+        suppressed.seam = RepoSeam::new(
+            "src/retry.rs",
+            OWNER,
+            SeamKind::PredicateBoundary,
+            120,
+            12,
+            "attempt > limit",
+            RequiredDiscriminator::BoundaryValue {
+                description: "attempt == limit".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        suppressed.evidence.seam_id = suppressed.seam.id().clone();
+        let id = seam_nameable_ids(&suppressed)[0].clone();
+        assert_ne!(id, seam_nameable_ids(&kept)[0]);
+        let suppression = ReviewCommentsSuppression::with_today(
+            None,
+            Vec::new(),
+            vec![CheckOutputSuppressedFinding {
+                finding_id: id,
+                selector: "src/retry.rs::retry_allowed".to_string(),
+            }],
+            "2026-01-01".to_string(),
+        )
+        .with_inventory_shared_ids(BTreeSet::new());
+        let resolved = suppression.resolve(Path::new("."), &[&kept, &suppressed]);
+        assert_eq!(
+            resolved.by_seam.keys().cloned().collect::<Vec<_>>(),
+            vec![suppressed.seam.id().as_str().to_string()],
+            "{:?}",
+            resolved.warnings
+        );
     }
 }

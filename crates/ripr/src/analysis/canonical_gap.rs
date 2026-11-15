@@ -6,7 +6,7 @@
 //! discriminate, while leaving line numbers as locators.
 
 use super::ClassifiedSeam;
-use super::language::producer_gap_names_seam_shape;
+use super::language::{producer_gap_names_seam_shape, rust_gap_id_for_seam_shape};
 use super::seams::{RequiredDiscriminator, SeamId, SeamKind};
 use std::collections::BTreeMap;
 
@@ -215,6 +215,34 @@ pub(crate) fn bare_probe_id_names_seam(item: &str, entry: &ClassifiedSeam) -> bo
         .rsplit_once(':')
         .is_some_and(|(_, fingerprint)| fingerprint.contains('.'));
     !has_ordinal && reminted_probe_id(entry, prefix, 1).as_deref() == Some(item)
+}
+
+/// Every bare check-finding id that names this seam: the `probe:` and
+/// `repo-probe:` re-mints and the readable producer gap id (#13895). A caller
+/// that counts these over a whole diff-scoped inventory learns which ids are
+/// shared by several seams, which a selected or capped subset cannot show.
+pub(crate) fn seam_nameable_ids(entry: &ClassifiedSeam) -> Vec<String> {
+    let mut ids = Vec::new();
+    for prefix in ["probe", "repo-probe"] {
+        ids.extend(reminted_probe_id(entry, prefix, 1));
+    }
+    let file = crate::analysis::stable_path_text(entry.seam.file());
+    ids.extend(rust_gap_id_for_seam_shape(
+        &file,
+        entry.seam.owner(),
+        entry.seam.kind(),
+        entry.seam.expression(),
+    ));
+    ids
+}
+
+/// True for a `probe:` / `repo-probe:` id carrying a collision ordinal
+/// (`...:fingerprint.2`), which cannot be bound to one seam.
+pub(crate) fn probe_id_carries_ordinal(item: &str) -> bool {
+    (item.starts_with("probe:") || item.starts_with("repo-probe:"))
+        && item
+            .rsplit_once(':')
+            .is_some_and(|(_, fingerprint)| fingerprint.contains('.'))
 }
 
 /// Re-mint the probe ID for one seam at `ordinal`, or `None` when the

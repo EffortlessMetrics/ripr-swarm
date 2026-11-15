@@ -199,16 +199,25 @@ seams leave `comments` and `summary_only` and appear in the existing
 `suppressed` array with reason `suppressed_by_policy` and a message naming the
 policy entry; `gate evaluate` already reads that array as non-blocking.
 `finding_id` selectors join seams through the producer-id join the repair
-paths use and apply only when they name exactly one selected seam; `path`
-globs match the seam file; `static_class` narrowing never matches a seam
-(different vocabulary). Expired and ambiguous selectors are reported as
-warnings. The default `.ripr/suppressions.toml` remains opt-in (#7998): without
+paths use and apply only when the id names exactly one seam of the whole
+diff-scoped inventory, judged over every seam the streamed analysis observed
+and not over the selected or capped subset; an id shared with an unselected
+sibling, an id carrying a collision ordinal (`.N`), or an id whose inventory is
+unavailable is reported and not applied. `path` globs match the seam file. A
+`static_class` entry never applies to a review seam (different vocabulary) and
+is reported as not applied rather than skipped silently. A `function` entry
+covers every seam of that function, including seams added later, so give it an
+`expires` date. Expired and ambiguous selectors are reported as warnings.
+Known fail-closed limitation: suppression runs after the brief cap, so
+policy-suppressed seams still occupy cap slots and can push an unsuppressed
+seam out of the rendered set; the cap omission stays disclosed. The default `.ripr/suppressions.toml` remains opt-in (#7998): without
 the flag it is disclosed on stderr, never applied.
 
 **Check output.** `review-comments --check-output` honors findings that
-document marks `suppressed: true`: each finding id joins its seam, and a
-`suppressed_by` of the form `path::function` also covers every seam of that
-function. With both inputs the union applies. Static evidence only: a
+document marks `suppressed: true`: each finding id joins its seam under the
+same uniqueness rule. The check run's `suppressed_by` selector is not widened
+to its owner function, so a finding the run left unsuppressed stays blocking.
+With both inputs the union applies. Static evidence only: a
 suppression is an accepted exception, not a claim that a test would notice.
 
 ## Required Evidence

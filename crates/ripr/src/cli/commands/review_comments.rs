@@ -1032,6 +1032,9 @@ fn review_comments_with_admission(
         })?,
         None => Vec::new(),
     };
+    // Uniqueness of a finding id is judged over every seam the streamed
+    // inventory observed, never over the capped selection (#13895).
+    let shared_ids = selection_builder.shared_named_ids();
     let suppression = match suppression_policy {
         Some((path, entries)) => Some(output::review_comments::ReviewCommentsSuppression::new(
             Some(path),
@@ -1046,7 +1049,8 @@ fn review_comments_with_admission(
             ))
         }
         None => None,
-    };
+    }
+    .map(|suppression| suppression.with_inventory_shared_ids(shared_ids));
     let render_context = output::review_comments::ReviewCommentsRenderContext {
         root: &input.root,
         base: &options.base,
