@@ -517,7 +517,16 @@ fn help_request(args: &[String]) -> Option<bool> {
 }
 
 fn parse_git_timeout(value: &str) -> Result<Option<std::time::Duration>, String> {
-    parse_git_timeout_from("--git-timeout", value)
+    parse_seconds_flag("--git-timeout", value)
+}
+
+/// An argv seconds flag (`--git-timeout`, `--timeout`). Only the argv path
+/// notes the typed refusal (#11979): the environment-variable spellings go
+/// through the check refusal envelope instead.
+fn parse_seconds_flag(flag: &str, value: &str) -> Result<Option<std::time::Duration>, String> {
+    parse_git_timeout_from(flag, value).inspect_err(|message| {
+        crate::cli::usage_refusal::note_invalid_value(value, message);
+    })
 }
 
 /// Parse a git timeout in seconds from `source` (the flag or the env var),
@@ -1054,7 +1063,7 @@ fn check_inner(
             "--timeout" => {
                 i += 1;
                 let value = expect_value(args, i, "--timeout")?;
-                check_timeout = parse_check_timeout_from("--timeout", value)?;
+                check_timeout = parse_seconds_flag("--timeout", value)?;
                 check_timeout_explicitly_provided = true;
             }
             "--quiet" => {
