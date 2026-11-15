@@ -207,13 +207,16 @@ file-order prefix, and its `limited_findings_bound` message names the dropped
 counts per class and file (#10093).
 
 The hidden identity list chooses its 20 rows by that same priority order when
-the omitted findings need more than 20 rows, so a gap in a late-sorting file is named
-ahead of an already-noticed finding in an early one. The chosen rows still
-print in report (file, line) order, the hidden test-stub rows use the same
-window, and the remainder line counts the findings outside the window by
-class, for example `… and 7 more omitted finding(s): 7 exposed; every identity
-is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.` At 20 or fewer rows
-every row is listed (#14233).
+the omitted findings need more than 20 rows, so a gap in a late-sorting file is
+named ahead of an already-noticed finding in an early one. The chosen rows
+still print in report (file, line) order, and the remainder line counts the
+findings outside the window by class, for example `… and 7 more omitted
+finding(s): 7 exposed; every identity is in --format json with
+RIPR_CHECK_FINDINGS_BYTES=0.` At 20 or fewer rows every row is listed
+(#14233). The hidden test-stub rows use a separate report-order cutoff: they
+take the first 20 omitted findings in report order and keep the ones that offer
+a stub route, so a routed stub row can fall outside the displayed `Hidden:`
+window and a row inside that window can have no stub route (#14687).
 
 Omitted findings that share file, owner, class, currentness label and reason
 (findings with no resolved owner never group)
@@ -230,6 +233,11 @@ keeps its own row. The 20-row window then bounds rows, not findings: beyond
 20 rows it keeps the rows whose best member ranks highest in the priority
 order above, printed in the order of each row's first finding, and the
 remainder line counts the findings in the rows it left out (#14299).
+
+The canonical next action's two `considered finding` alternates are chosen by
+the same priority order from the findings `Start here` did not select, so a
+gap is offered before an already-noticed finding that sorts earlier in the
+report; findings of equal priority keep report order (#14266).
 
 When a selected finding exists, the digest includes file and line, static
 exposure class, changed behavior, first missing discriminator when known,
@@ -1189,6 +1197,7 @@ report with zero records still carries its route.
 - `crates/ripr/src/output/human.rs::tests::hidden_block_keeps_stub_route_findings_one_row_each`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_keeps_owner_less_rows_apart_and_orders_mixed_rows`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_window_ranks_a_group_by_its_best_member`
+- `crates/ripr/src/output/human/triage.rs::tests::check_adapter_alternates_follow_the_shared_priority_not_report_order`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail`
 - `crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary`

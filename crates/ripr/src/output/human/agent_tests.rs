@@ -2282,11 +2282,11 @@ fn head_only_arm_row_names_the_arm_result() {
     // The sink was read for the probe's own head, so a different head (an
     // old `before` arm) is never paired with the new arm's result.
     assert_eq!(
-        super::sections::with_arm_result(&gap, " Size::Medium =>"),
+        crate::output::flow_sink_line::with_arm_result(&gap, " Size::Medium =>"),
         "Size::Medium => 450"
     );
     assert_eq!(
-        super::sections::with_arm_result(&gap, "Size::Large =>"),
+        crate::output::flow_sink_line::with_arm_result(&gap, "Size::Large =>"),
         "Size::Large =>"
     );
 

@@ -4232,12 +4232,7 @@ pub(crate) fn inventory_seams_from_index_checked(
     if let Some(disclosure) = rust_index::lexical_fallback_disclosure(index) {
         eprintln!("{disclosure}");
     }
-    if let Some(disclosure) = rust_index::include_resolution_disclosure(index) {
-        eprintln!("{disclosure}");
-    }
-    if let Some(disclosure) = rust_index::module_composition_disclosure(index) {
-        eprintln!("{disclosure}");
-    }
+    rust_index::eprint_index_limit_disclosures(index);
     seams_from_index_files(production_files, index)
 }
 
@@ -4621,12 +4616,7 @@ pub(crate) fn inventory_seams_from_index_bounded(
     if let Some(disclosure) = rust_index::lexical_fallback_disclosure(index) {
         eprintln!("{disclosure}");
     }
-    if let Some(disclosure) = rust_index::include_resolution_disclosure(index) {
-        eprintln!("{disclosure}");
-    }
-    if let Some(disclosure) = rust_index::module_composition_disclosure(index) {
-        eprintln!("{disclosure}");
-    }
+    rust_index::eprint_index_limit_disclosures(index);
     let mut collector = BoundedSeamCollector::new(limit);
     let admission = FieldSeamAdmission::new(index);
     for file in production_files {

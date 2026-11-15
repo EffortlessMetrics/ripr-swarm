@@ -27,7 +27,7 @@ use crate::analysis::facts::cfg_predicates::{
     attribute_introduces_only_test, attribute_test_build_availability,
 };
 use ra_ap_syntax::{
-    AstNode, SyntaxNode, TextSize,
+    AstNode, SyntaxKind, SyntaxNode, TextSize,
     ast::{
         self, HasArgList, HasAttrs, HasGenericArgs, HasGenericParams, HasLoopBody, HasName,
         HasVisibility,
@@ -780,15 +780,124 @@ fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &st
             if binds_root {
                 return false;
             }
-        } else if ast::MacroCall::can_cast(child.kind()) {
-            // An item-position macro may emit any binding of that name.
-            return false;
+        } else if let Some(call) = ast::MacroCall::cast(child.clone()) {
+            // An item-position macro may emit any binding of that name, except
+            // std's `thread_local!` and `compile_error!`, which emit no module
+            // (#14116): only while the call never spells the root and nothing
+            // in the file rebinds the macro's name.
+            if !std_item_macro_leaves_root_unbound(&call, parent.clone(), root) {
+                return false;
+            }
         } else if ast::AnyHasName::cast(child.clone()).is_some_and(|item| named_root(item.name())) {
             return false;
         }
     }
     // Two declarations (`cfg`-exclusive alternatives) are not one module.
     declared == 1
+}
+
+/// Whether an item-position `call` beside a sibling-module glob is std's
+/// `thread_local!` or `compile_error!` (bare, or `std::`), the macros
+/// the module-tree scan already reads as emitting no module. Refused when the
+/// call's tokens spell `root`, or when a top-level item of `file` may bind the
+/// macro's name (or, for a `std::` call, the crate name `std`) to something
+/// else: a same-named `macro_rules!`/`macro` (at any depth), `mod` or `extern crate` alias, an
+/// import of that name, a `#[macro_use]` item or another glob import. As in the
+/// module-tree scan, a shadowing macro from outside the file is not modeled.
+fn std_item_macro_leaves_root_unbound(call: &ast::MacroCall, file: SyntaxNode, root: &str) -> bool {
+    let Some(path) = call.path() else {
+        return false;
+    };
+    let spelled: String = path
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    // `core::thread_local!` does not exist and `core::compile_error!` is
+    // refused conservatively, as is a leading `::`; a `std::` call also needs
+    // `std` itself unbound.
+    let qualified = spelled.strip_prefix("std::");
+    let callee = qualified.unwrap_or(&spelled);
+    if !super::module_tree::ITEM_MACROS_WITHOUT_MODULES.contains(&callee) {
+        return false;
+    }
+    let spells_root = call.token_tree().is_some_and(|tree| {
+        tree.syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .any(|token| {
+                token.kind() == SyntaxKind::IDENT && token.text().trim_start_matches("r#") == root
+            })
+    });
+    if spells_root {
+        return false;
+    }
+    // Either the macro's own name or, for a `std::` call, the crate name `std`.
+    let rebindable = |text: &str| {
+        let text = text.trim_start_matches("r#");
+        text == callee || (qualified.is_some() && text == "std")
+    };
+    let names_callee = |name: Option<ast::Name>| name.is_some_and(|name| rebindable(name.text()));
+    // A same-named macro definition anywhere in the file is refused: a nested
+    // `#[macro_export]` one lands in the crate root's path scope.
+    let defines_callee = file.descendants().any(|node| {
+        ast::MacroRules::cast(node.clone())
+            .map(|rules| rules.name())
+            .or_else(|| ast::MacroDef::cast(node).map(|definition| definition.name()))
+            .is_some_and(names_callee)
+    });
+    if defines_callee {
+        return false;
+    }
+    // Otherwise only top-level items bind names in the root's scope; a nested
+    // module's imports stay inside it unless `#[macro_use]` exports them.
+    let mut globs = 0usize;
+    for node in file.children() {
+        if let Some(import) = ast::Use::cast(node.clone()) {
+            let bindings = super::name_scope::use_item_bindings(&import);
+            let opaque = bindings
+                .imports
+                .iter()
+                .any(|import| matches!(import.binding, super::name_scope::UseBinding::Opaque));
+            let binds_callee = bindings
+                .imports
+                .iter()
+                .any(|import| rebindable(&import.bound))
+                || (opaque
+                    && import.syntax().descendants_with_tokens().any(|element| {
+                        element.into_token().is_some_and(|token| {
+                            token.kind() == SyntaxKind::IDENT && rebindable(token.text())
+                        })
+                    }));
+            if binds_callee {
+                return false;
+            }
+            globs += import
+                .syntax()
+                .descendants()
+                .filter_map(ast::UseTree::cast)
+                .filter(|tree| tree.star_token().is_some())
+                .count();
+        } else if let Some(module) = ast::Module::cast(node.clone())
+            && names_callee(module.name())
+        {
+            return false;
+        } else if let Some(krate) = ast::ExternCrate::cast(node.clone())
+            && names_callee(krate.rename().and_then(|rename| rename.name()))
+        {
+            return false;
+        } else if let Some(item) = ast::Item::cast(node)
+            && item
+                .attrs()
+                .any(|attr| attr.syntax().text().to_string().contains("macro_use"))
+        {
+            return false;
+        }
+    }
+    // The sibling glob itself is the one allowed glob.
+    globs <= 1
 }
 
 /// An `extern crate other as std;` (or `core`, `alloc`) alias.
@@ -3014,14 +3123,26 @@ pub(crate) fn debug_assert_eq_calls(source: &str) -> Vec<(usize, String)> {
 }
 
 pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAssertions {
-    owner_pin_assertions_with_matches(source, trusted, false)
+    owner_pin_assertions_with_matches(source, trusted, false, None)
 }
 
-/// The same execution authority for return/error `assert!(matches!(..))`.
-/// A sole assertion can discriminate through an expected panic's inverted
-/// success condition. This establishes execution only, never a value pin.
-pub(crate) fn owner_pin_matches_assertions(source: &str, trusted: &[&str]) -> OwnerPinAssertions {
-    owner_pin_assertions_with_matches(source, trusted, true)
+/// [`owner_pin_assertions`] for a test file whose package enables
+/// `default_features` in a plain `cargo test` (#8780): a plain `#[cfg(..)]`
+/// on the test or an enclosing module that is provably true under exactly
+/// those features no longer refuses the test's assertions. `None` resolves
+/// no feature gate, as [`owner_pin_assertions`] does.
+///
+/// `matches_context` selects the same execution authority for return/error
+/// `assert!(matches!(..))`. A sole assertion can discriminate through an
+/// expected panic's inverted success condition. This establishes execution
+/// only, never a value pin.
+pub(crate) fn owner_pin_assertions_with_default_features(
+    source: &str,
+    trusted: &[&str],
+    matches_context: bool,
+    default_features: Option<&BTreeSet<String>>,
+) -> OwnerPinAssertions {
+    owner_pin_assertions_with_matches(source, trusted, matches_context, default_features)
 }
 
 fn matches_preserves_assertion_execution(attr: &ast::Attr, function: &ast::Fn) -> bool {
@@ -3068,6 +3189,7 @@ fn owner_pin_assertions_with_matches(
     source: &str,
     trusted: &[&str],
     matches_context: bool,
+    default_features: Option<&BTreeSet<String>>,
 ) -> OwnerPinAssertions {
     let mut result = OwnerPinAssertions::default();
     let Some(parse) = parse_clean_source_file(source) else {
@@ -3178,6 +3300,7 @@ fn owner_pin_assertions_with_matches(
             }
         } else if let Some(attr) = function.attrs().find(|attr| {
             !(runs_body_unchanged(attr, function.syntax())
+                || default_enabled_gate(attr, default_features)
                 || matches_context && matches_preserves_assertion_execution(attr, &function))
         }) {
             // #14028: name the rebinding import, not the attribute itself.
@@ -3189,7 +3312,7 @@ fn owner_pin_assertions_with_matches(
                 ))
             }
         } else {
-            item_context_refusal(function.syntax())
+            item_context_refusal(function.syntax(), default_features)
         };
         // #10389: a function refused only for a nested comparison macro keeps
         // its per-assertion verdicts, so a caller that trusts those macros
@@ -3205,10 +3328,11 @@ fn owner_pin_assertions_with_matches(
                     false,
                 )
                 .is_none()
-                && function
-                    .attrs()
-                    .all(|attr| runs_body_unchanged(&attr, function.syntax()))
-                && item_context_refusal(function.syntax()).is_none();
+                && function.attrs().all(|attr| {
+                    runs_body_unchanged(&attr, function.syntax())
+                        || default_enabled_gate(&attr, default_features)
+                })
+                && item_context_refusal(function.syntax(), default_features).is_none();
         if let (Some(refusal), false) = (&refusal, comparison_clean) {
             // Only test functions are queried (`#[test]`, `#[tokio::test]`);
             // a refused helper still counts toward duplicate detection. A
@@ -4117,7 +4241,7 @@ fn insert_function(
 /// A libtest item cannot be nested in an executable body. Module/source
 /// attributes include inner attributes on ItemList, not only outer attrs.
 pub(super) fn supported_item_context(item: &SyntaxNode) -> bool {
-    item_context_refusal(item).is_none()
+    item_context_refusal(item, None).is_none()
 }
 
 /// Targeted call syntax also needs container attributes to preserve source
@@ -4134,9 +4258,22 @@ pub(crate) fn supported_targeted_item_context(item: &SyntaxNode) -> bool {
         })
 }
 
+/// A plain outer `#[cfg(..)]` that is provably true in a plain `cargo test`
+/// of the file's package (#8780): the item it gates is compiled there.
+fn default_enabled_gate(attr: &ast::Attr, default_features: Option<&BTreeSet<String>>) -> bool {
+    crate::analysis::facts::test_gate_is_default_enabled(
+        &attr.syntax().text().to_string(),
+        default_features,
+    )
+}
+
 /// Why `item` is not a plain item reachable from the file root under test
-/// builds: nested in an executable body, or under a gating attribute.
-fn item_context_refusal(item: &SyntaxNode) -> Option<AssertionContextRefusal> {
+/// builds: nested in an executable body, or under a gating attribute. A
+/// gate provably true under `default_features` does not refuse.
+fn item_context_refusal(
+    item: &SyntaxNode,
+    default_features: Option<&BTreeSet<String>>,
+) -> Option<AssertionContextRefusal> {
     let mut source_file = false;
     for (depth, node) in item.ancestors().enumerate() {
         if depth > 0
@@ -4148,6 +4285,7 @@ fn item_context_refusal(item: &SyntaxNode) -> Option<AssertionContextRefusal> {
         }
         if let Some(attr) = node.children().filter_map(ast::Attr::cast).find(|attr| {
             attribute_test_build_availability(&attr.syntax().text().to_string()) != Some(true)
+                && !default_enabled_gate(attr, default_features)
         }) {
             return Some(AssertionContextRefusal::GatedItem(
                 attr.syntax().text().to_string(),
@@ -4210,7 +4348,17 @@ pub(crate) fn unestablished_cfg_gates_of_fn(
 /// (none, or `cfg(test)`), `Some(true)` when at least one is a `cfg` ripr
 /// cannot evaluate and the rest are available, and `None` for a provably-off
 /// gate, any other attribute, or a declaration not found exactly once.
-pub(crate) fn module_declaration_unestablished_gate(source: &str, line: usize) -> Option<bool> {
+/// `declaration` is the edge's `mod name;` text: the module is matched by its
+/// name as well as its line, so a sibling `mod` on the same line does not
+/// make the gated one ambiguous.
+pub(crate) fn module_declaration_unestablished_gate(
+    source: &str,
+    line: usize,
+    declaration: &str,
+) -> Option<bool> {
+    let name = declaration
+        .strip_prefix("mod ")
+        .and_then(|rest| rest.strip_suffix(';'))?;
     let parse = parse_clean_source_file(source)?;
     let lines = LineIndex::new(source);
     let mut found = parse
@@ -4220,6 +4368,9 @@ pub(crate) fn module_declaration_unestablished_gate(source: &str, line: usize) -
         .filter_map(ast::Module::cast)
         .filter(|module| {
             module.item_list().is_none()
+                && module
+                    .name()
+                    .is_some_and(|module_name| module_name.text() == name)
                 && module
                     .mod_token()
                     .is_some_and(|token| lines.line(token.text_range().start()) == line)
@@ -7656,6 +7807,85 @@ mod process_names_scan_tests {
         };
         assert_eq!(admitted("a"), Some(0), "{:?}", pins.functions.keys());
         assert_eq!(admitted("b"), Some(1), "{:?}", pins.functions.keys());
+    }
+}
+
+#[cfg(test)]
+mod default_feature_gate_tests {
+    use super::*;
+
+    /// The refusal recorded for test `t` of `source`, read with the package's
+    /// default features `defaults`; `Some(None)` is an admitted test.
+    fn refusal_of(
+        source: &str,
+        defaults: Option<&[&str]>,
+    ) -> Option<Option<AssertionContextRefusal>> {
+        let defaults: Option<BTreeSet<String>> =
+            defaults.map(|names| names.iter().map(|name| name.to_string()).collect());
+        let pins = owner_pin_assertions_with_default_features(
+            source,
+            TRUSTED_MACRO_NAMES,
+            false,
+            defaults.as_ref(),
+        );
+        assert!(pins.parsed, "{source}");
+        pins.functions
+            .iter()
+            .find(|(key, _)| key.2 == "t")
+            .map(|(_, function)| function.refusal.clone())
+    }
+
+    const BODY: &str = "#[test]\nfn t() {\n    assert_eq!(f(1), 1);\n}\n";
+
+    /// #8780: a gate the package's default features switch on is compiled by
+    /// a plain `cargo test`, wherever it sits above the test.
+    #[test]
+    fn a_default_enabled_feature_gate_does_not_refuse_the_test() {
+        for gated in [
+            format!("#![cfg(feature = \"slow\")]\n{BODY}"),
+            format!("#[cfg(feature = \"slow\")]\n{BODY}"),
+            format!("#[cfg(all(test, feature = \"slow\"))]\nmod tests {{\n{BODY}}}\n"),
+            format!(
+                "#[cfg(test)]\nmod tests {{\n#[cfg(any(feature = \"other\", feature = \"slow\"))]\n{BODY}}}\n"
+            ),
+        ] {
+            assert_eq!(refusal_of(&gated, Some(&["slow"])), Some(None), "{gated}");
+            // The same source without that default keeps its refusal, and so
+            // does a read with no manifest authority.
+            for defaults in [Some(&["std"][..]), Some(&[][..]), None] {
+                assert!(
+                    matches!(
+                        refusal_of(&gated, defaults),
+                        Some(Some(
+                            AssertionContextRefusal::GatedItem(_)
+                                | AssertionContextRefusal::TestAttribute(_)
+                        ))
+                    ),
+                    "{defaults:?}: {gated}"
+                );
+            }
+        }
+    }
+
+    /// Only a provably true plain `cfg` is resolved: a negation, a target
+    /// atom, a `cfg_attr`, a second unresolved gate and an `#[ignore]` keep
+    /// refusing although `slow` is a default feature.
+    #[test]
+    fn a_gate_default_features_do_not_settle_still_refuses() {
+        for gated in [
+            format!("#![cfg(not(feature = \"slow\"))]\n{BODY}"),
+            format!("#![cfg(not(feature = \"absent\"))]\n{BODY}"),
+            format!("#![cfg(all(feature = \"slow\", unix))]\n{BODY}"),
+            format!("#![cfg(feature = \"slow\")]\n#[cfg(feature = \"absent\")]\n{BODY}"),
+            format!("#[cfg_attr(feature = \"slow\", ignore)]\n{BODY}"),
+            format!("#![cfg(feature = \"slow\")]\n#[ignore]\n{BODY}"),
+            format!("#![cfg(any())]\n{BODY}"),
+        ] {
+            assert!(
+                matches!(refusal_of(&gated, Some(&["slow"])), Some(Some(_))),
+                "{gated}"
+            );
+        }
     }
 }
 
