@@ -122,7 +122,7 @@ jobs:
       - name: Test SARIF identity producer-to-policy controls
         run: cargo test -p xtask --features perl-identity reports::sarif::identity_tests
       - name: Test SCIP admission
-        run: cargo test -p ripr --features scip-admission --lib analysis::scip::
+        run: "cargo test -p ripr --features scip-admission --lib analysis::scip::"
 
       - name: Package list (release surface)
         if: contains(toJSON(inputs), '"subject_sha"') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
