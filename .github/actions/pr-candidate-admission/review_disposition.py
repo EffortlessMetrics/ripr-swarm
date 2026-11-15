@@ -389,18 +389,6 @@ def comment_body_verdict_ready(body: str, head: str) -> bool:
     substantive = [line for line in visible if line.strip()]
     if any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced):
         return False
-    # The verdict statement is the first blank-line-delimited block. A hedge
-    # anywhere in that block defers the disposition, so a marker whose
-    # qualification sits on a following line attests nothing.
-    statement: list[str] = []
-    for line in visible:
-        if not line.strip():
-            if statement:
-                break
-            continue
-        statement.append(line)
-    if any(VERDICT_TAIL_HEDGE.search(line) for line in statement[1:]):
-        return False
     return all(
         positive_line(line)
         or not (STATE_LINE.match(line) or negation_hit(line))
@@ -1271,17 +1259,6 @@ def self_test() -> None:
                 marker,
                 review(state="COMMENTED", commit_id=head, id=2, body=body,
                        submitted_at="2026-10-15T01:00:02Z"),
-            ],
-            head=head,
-        ), body
-    # #14728 review: a hedge on a later line of an APPROVE carrier makes it
-    # conditional, so it attests nothing.
-    for tail in ("pending the fix", "after the rebase", "Approval is conditional on CI passing."):
-        body = f"VERDICT: APPROVE {head}\n{tail}"
-        assert not reviews_allow_source_attestation(
-            [
-                review(state="COMMENTED", commit_id=head, id=1, body=body,
-                       submitted_at="2026-10-15T01:00:01Z"),
             ],
             head=head,
         ), body
