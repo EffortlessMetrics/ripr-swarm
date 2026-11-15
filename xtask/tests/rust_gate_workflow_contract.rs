@@ -364,6 +364,20 @@ fn user_text_summary_scratch_preserves_replacement_directory()
 }
 
 #[test]
+fn verdict_corpus_gate_cannot_be_replaced_by_check_affected() {
+    let changed = WORKFLOW.replace(
+        "cargo xtask verdict-corpus check-all",
+        "cargo xtask verdict-corpus check-affected",
+    );
+    assert_ne!(changed, WORKFLOW);
+    let findings = contract_violations(&changed);
+    assert!(
+        findings.contains(&"verdict_corpus: exact command missing".to_owned()),
+        "{findings:?}"
+    );
+}
+
+#[test]
 fn rust_gate_workflow_rejects_missing_required_command() {
     let changed = WORKFLOW.replace(
         "        run: cargo xtask check-network-policy",
