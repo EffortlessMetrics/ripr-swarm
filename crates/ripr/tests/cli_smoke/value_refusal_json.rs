@@ -154,7 +154,17 @@ fn a_malformed_timeout_env_var_keeps_the_one_check_refusal_document() -> Result<
 /// with the flag as token, and the wording stays the command's own.
 #[test]
 fn empty_values_under_json_name_the_flag_on_command_parsers() -> Result<(), String> {
-    let cases: [(&[&str], &str, &str); 6] = [
+    let cases: [(&[&str], &str, &str); 8] = [
+        (
+            &["receipt", "write", "--json", "--gap", ""],
+            "--gap",
+            "ripr receipt write --help",
+        ),
+        (
+            &["receipt", "write", "--json", "--verify-command", ""],
+            "--verify-command",
+            "ripr receipt write --help",
+        ),
         (
             &["agent", "status", "--json", "--attempt", ""],
             "--attempt",
@@ -195,10 +205,7 @@ fn empty_values_under_json_name_the_flag_on_command_parsers() -> Result<(), Stri
         assert_eq!(document["error"]["token"], token, "{args:?}");
         assert_eq!(document["error"]["next"]["command"], help, "{args:?}");
         let message = document["error"]["message"].as_str().unwrap_or_default();
-        assert!(
-            message.contains("requires a non-empty"),
-            "{args:?}: {message}"
-        );
+        assert!(message.contains("requires"), "{args:?}: {message}");
         assert_eq!(
             String::from_utf8_lossy(&output.stderr),
             format!("ripr: {message}\n"),
@@ -232,5 +239,22 @@ fn verbose_between_command_words_keeps_the_help_route() -> Result<(), String> {
             "{verbose}"
         );
     }
+    Ok(())
+}
+
+/// #14859: an empty entry in `agent brief --files` is a malformed list, so it
+/// is `invalid_value` with the whole value as the token.
+#[test]
+fn an_empty_files_entry_under_json_is_an_invalid_value() -> Result<(), String> {
+    let output = run_ripr(&["agent", "brief", "--json", "--files", "a.rs,,b.rs"]);
+    assert_eq!(output.status.code(), Some(2));
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("stdout must be one JSON document: {err}"))?;
+    assert_eq!(document["error"]["code"], "invalid_value", "{document}");
+    assert_eq!(document["error"]["token"], "a.rs,,b.rs", "{document}");
+    assert_eq!(
+        document["error"]["next"]["command"], "ripr agent brief --help",
+        "{document}"
+    );
     Ok(())
 }

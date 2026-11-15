@@ -150,9 +150,10 @@ pub(in crate::cli) fn parse_receipt_write_options(
                 i += 1;
                 let value = expect_value(args, i, "--gap")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>` (`ripr receipt --help` shows the full command)".to_string(),
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--gap",
+                        "receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>` (`ripr receipt --help` shows the full command)",
+                    ));
                 }
                 canonical_gap_id = Some(value.to_string());
             }
@@ -171,7 +172,10 @@ pub(in crate::cli) fn parse_receipt_write_options(
                 i += 1;
                 let value = expect_value(args, i, "--verify-command")?;
                 if value.trim().is_empty() {
-                    return Err("receipt write requires --verify-command; add `--verify-command` to the command".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--verify-command",
+                        "receipt write requires --verify-command; add `--verify-command` to the command",
+                    ));
                 }
                 verify_command = Some(value.to_string());
             }

@@ -20455,6 +20455,7 @@ tests = [
   "crates/ripr/src/cli/usage_refusal.rs::tests::an_empty_invalid_value_carries_no_token",
   "crates/ripr/tests/cli_smoke/value_refusal_json.rs::empty_values_under_json_name_the_flag_on_command_parsers",
   "crates/ripr/tests/cli_smoke/value_refusal_json.rs::verbose_between_command_words_keeps_the_help_route",
+  "crates/ripr/tests/cli_smoke/value_refusal_json.rs::an_empty_files_entry_under_json_is_an_invalid_value",
   "crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::python_stdin_artifact_refusal_preserves_named_recovery",
   "crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::javascript_stdin_artifact_refusal_preserves_named_recovery",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::git_launch_failure_stops_root_discovery_with_consumer_recovery",
