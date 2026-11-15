@@ -49,6 +49,10 @@ const NAME_OBSERVERS: [&str; 5] = [
     "function_name",
 ];
 
+/// Keywords that may precede a `!` negation (`if !ready`), which is not a
+/// macro invocation.
+const NEGATING_KEYWORDS: [&str; 7] = ["if", "while", "return", "match", "in", "else", "break"];
+
 /// Items whose bodies hold fields or variants: a name spelled there is a
 /// field or variant, not the renamed item.
 const TYPE_BODY_ITEMS: [&str; 3] = ["struct", "enum", "union"];
@@ -166,17 +170,24 @@ impl<'a> SourceView<'a> {
             });
             previous = Some((at + found.len(), found));
             let after = masked[at + found.len()..].trim_start();
-            if after.starts_with('!') && !after.starts_with("!=") {
+            // `if !ready {` negates; only a non-keyword name before `!` is a
+            // macro invocation.
+            if after.starts_with('!')
+                && !after.starts_with("!=")
+                && !NEGATING_KEYWORDS.contains(&found)
+            {
                 opaque_ends.push(invocation_end(masked, at + found.len()));
             }
             if TYPE_BODY_ITEMS.contains(&found) {
                 opaque_ends.push(type_body_end(masked, at + found.len()));
             }
-            if found != name || declared {
+            if found != name {
                 continue;
             }
+            // A declaration inside a macro (`bitflags! { .. const OLD = 1; }`)
+            // is still opaque; only its own `name: T` is not a field.
             let opaque = opaque_ends.iter().any(|end| end.is_none_or(|end| at < end));
-            let field_type = after.starts_with(':') && !after.starts_with("::");
+            let field_type = !declared && after.starts_with(':') && !after.starts_with("::");
             let before = masked[..at].trim_end();
             let member = before.ends_with('.') && !before.ends_with("..");
             let qualified = before.ends_with("::") || after.starts_with("::");

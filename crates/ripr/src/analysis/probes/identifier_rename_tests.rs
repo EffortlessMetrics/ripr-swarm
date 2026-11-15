@@ -197,7 +197,7 @@ fn renaming_an_entry_point_is_never_proven() -> Result<(), String> {
 /// value still changes: the use site keeps its probe (Devin review on #14779).
 #[test]
 fn a_rename_that_may_not_mean_the_same_item_stays_probed() -> Result<(), String> {
-    let cases: [(&str, &str, &str, &str); 5] = [
+    let cases: [(&str, &str, &str, &str); 6] = [
         (
             "a receiver method shares the renamed spelling",
             "fn len() -> usize {\n    0\n}\n\npub fn measure(v: &Vec<u8>) -> usize {\n    v.len() + len()\n}\n",
@@ -223,6 +223,12 @@ fn a_rename_that_may_not_mean_the_same_item_stays_probed() -> Result<(), String>
             "unsafe { my_strlen(s) }",
         ),
         (
+            "the declaration sits inside a macro",
+            "named_const! {\n    const OLD: u32 = 1;\n}\n\npub fn bits() -> u32 {\n    OLD + 1\n}\n",
+            "named_const! {\n    const NEW: u32 = 1;\n}\n\npub fn bits() -> u32 {\n    NEW + 1\n}\n",
+            "NEW + 1",
+        ),
+        (
             "an enum variant shares the renamed spelling",
             "#[derive(Debug)]\npub enum Mode {\n    Old,\n}\n\nconst Old: u8 = 1;\n\npub fn mode() -> u8 {\n    Old + 1\n}\n",
             "#[derive(Debug)]\npub enum Mode {\n    New,\n}\n\nconst New: u8 = 1;\n\npub fn mode() -> u8 {\n    New + 1\n}\n",
@@ -242,5 +248,19 @@ fn a_rename_that_may_not_mean_the_same_item_stays_probed() -> Result<(), String>
         }
     }
     assert_eq!(unprobed, Vec::new());
+    Ok(())
+}
+
+/// Control for the guards above: a struct, a macro call, an `extern "C" fn`
+/// definition and a negation elsewhere in the file do not stop a real rename
+/// from being established.
+#[test]
+fn unrelated_structs_macros_and_extern_fns_keep_the_rename_established() -> Result<(), String> {
+    let tail = "\npub struct Row {\n    pub width: u8,\n}\n\npub extern \"C\" fn exported() -> u8 {\n    if !is_header_name_token(1) { 0 } else { 1 }\n}\n\npub fn check() {\n    assert_eq!(1, 1);\n}\n";
+    let probes = git_probes(&format!("{BEFORE}{tail}"), &format!("{AFTER}{tail}"))?;
+    let lines = probe_lines(&probes);
+    assert!(!probed(&probes, DECLARATION_LINE), "{lines:?}");
+    assert!(!probed(&probes, USE_LINE), "{lines:?}");
+    assert!(probed(&probes, METHOD_LINE), "{lines:?}");
     Ok(())
 }
