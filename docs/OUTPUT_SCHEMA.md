@@ -1913,20 +1913,21 @@ classes are:
 - an unknown flag or stray positional argument;
 - an unrecognized enum-style value rejected by the CLI's shared unknown-value
   builder (for example `check --format yaml`), and `explain --format json`;
-- a value flag with no value or an empty one, caught by the CLI's shared
-  value reader (for example `check --json --base` with nothing after it), as
-  `missing_value` with the flag as `token` (#11979);
+- a value flag with no value or an empty one (for example `check --json
+  --base` with nothing after it, or `agent status --json --attempt ""`), as
+  `missing_value` with the flag as `token` (#11979, #14859);
 - a malformed number caught by the CLI's shared numeric parsers (for example
   `context --max-related-tests zz` or `check --timeout zz`), as
-  `invalid_value` with the typed value as `token` (#11979);
+  `invalid_value` with the typed value as `token` (#11979); an empty entry in
+  a comma-separated list (`agent brief --files a,,b`) is `invalid_value` with
+  the whole value as `token` (#14859);
 - a `context --at`/`--finding` selector that matched no finding, matched
   more than one, or could not be decided.
 
 Every other argv usage error keeps empty stdout even under a JSON request,
 with the cause on stderr only: a missing required flag (`requires --X`),
 a missing or malformed value rejected by a command's own parser rather than
-the shared readers (for example `impacted-evidence`, or most `agent`
-subcommands given an empty value), conflicting or disagreeing flags, an unrecognized value
+the shared readers (for example `impacted-evidence`), conflicting or disagreeing flags, an unrecognized value
 rejected outside the CLI's shared builder (for example a gate mode), and any
 other argv error. These are a named gap, not a clean result.
 
