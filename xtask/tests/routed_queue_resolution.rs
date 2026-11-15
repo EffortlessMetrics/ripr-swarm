@@ -275,7 +275,7 @@ if [ "$2" = "--paginate" ]; then shift; fi
 case "$2" in
   graphql) printf '%s\n' "$MOCK_GRAPHQL" ;;
   repos/*/pulls/*/files*) printf '%s\n' "$MOCK_FILES" ;;
-  repos/*/pulls/42) printf '%s\n' "$MOCK_PR" ;;
+  repos/*/pulls/*) printf '%s\n' "$MOCK_PR" ;;
   repos/*/commits/*) printf '%s\n' "$MOCK_COMMIT" ;;
   *) exit 97 ;;
 esac
