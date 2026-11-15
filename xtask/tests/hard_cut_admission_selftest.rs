@@ -6,34 +6,34 @@ use std::process::Command;
 
 /// The `max-changed-lines` value the workflow actually wires, so the wrapper
 /// tests certify the same cap the gate uses instead of a third copy (#14513).
-fn wired_max_changed_lines() -> String {
+fn wired_max_changed_lines() -> Result<String, String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let workflow = std::fs::read_to_string(root.join(".github/workflows/routed-rust.yml"))
-        .expect("routed-rust.yml must be readable");
-    let values: Vec<String> = workflow
-        .split("max-changed-lines:")
-        .skip(1)
-        .map(|rest| {
-            let rest = rest.trim_start();
-            let rest = rest
-                .strip_prefix('\'')
-                .expect("max-changed-lines value must be quoted");
-            rest[..rest.find('\'').expect("max-changed-lines value must close")].to_string()
-        })
-        .collect();
+        .map_err(|e| e.to_string())?;
+    let mut values = Vec::new();
+    for rest in workflow.split("max-changed-lines:").skip(1) {
+        let rest = rest.trim_start();
+        let rest = rest
+            .strip_prefix('\'')
+            .ok_or_else(|| "max-changed-lines value must be quoted".to_string())?;
+        let end = rest
+            .find('\'')
+            .ok_or_else(|| "max-changed-lines value must close".to_string())?;
+        values.push(rest[..end].to_string());
+    }
     assert_eq!(values.len(), 2, "expected two max-changed-lines inputs");
     assert_eq!(values[0], values[1], "max-changed-lines inputs disagree");
-    values[0].clone()
+    Ok(values[0].clone())
 }
 
 /// The size fixture's total changed lines: the wired cap plus the 1700-line
 /// exempt lockfile plus 3, so the residual is always just over the cap.
-fn size_fixture_total() -> u64 {
-    wired_max_changed_lines()
+fn size_fixture_total() -> Result<u64, String> {
+    Ok(wired_max_changed_lines()?
         .parse::<u64>()
-        .expect("max-changed-lines must be numeric")
+        .map_err(|e| e.to_string())?
         + 1700
-        + 3
+        + 3)
 }
 
 fn run_python_control(script: &str, argument: &str, expected: &str) -> Result<(), String> {
@@ -320,7 +320,7 @@ esac
         .env("ADMISSION_EXPECTED_HEAD", "a".repeat(40))
         .env("ADMISSION_DOCS_ONLY", "false")
         .env("ADMISSION_MAX_CHANGED_FILES", "160")
-        .env("ADMISSION_MAX_CHANGED_LINES", wired_max_changed_lines())
+        .env("ADMISSION_MAX_CHANGED_LINES", wired_max_changed_lines()?)
         .env("ADMISSION_MODE", "admit")
         .status()
         .map_err(|e| e.to_string())?;
@@ -773,7 +773,7 @@ case "$url" in
   *) echo '{}' ;;
 esac
 "#;
-    let gh = gh.replace("__TOTAL__", &size_fixture_total().to_string());
+    let gh = gh.replace("__TOTAL__", &size_fixture_total()?.to_string());
     std::fs::write(tmp.join("gh"), gh).map_err(|e| e.to_string())?;
     let _ = Command::new("chmod").arg("+x").arg(tmp.join("gh")).status();
     // Python's subprocess cannot launch an extensionless script on Windows; a
@@ -800,7 +800,7 @@ esac
         .env("ADMISSION_EXPECTED_HEAD", "a".repeat(40))
         .env("ADMISSION_DOCS_ONLY", "false")
         .env("ADMISSION_MAX_CHANGED_FILES", "160")
-        .env("ADMISSION_MAX_CHANGED_LINES", wired_max_changed_lines())
+        .env("ADMISSION_MAX_CHANGED_LINES", wired_max_changed_lines()?)
         .env("ADMISSION_MODE", "admit")
         .status()
         .map_err(|e| e.to_string())?;
@@ -867,7 +867,7 @@ fn wrapper_counts_everything_when_the_head_moves_after_the_file_listing() -> Res
         })?;
         if code != 1
             || reason != "qualification_scope_oversized"
-            || lines != size_fixture_total().to_string()
+            || lines != size_fixture_total()?.to_string()
         {
             return Err(format!(
                 "head_after={head_after} discounts nothing, got {code} {reason} {lines}"
@@ -897,7 +897,7 @@ fn wrapper_keeps_the_residual_counted_when_a_bound_cannot_be_read() -> Result<()
         // Only the listed 1700-line lockfile stays exempt: total - 1700.
         if code != 1
             || reason != "qualification_scope_oversized"
-            || lines != (size_fixture_total() - 1700).to_string()
+            || lines != (size_fixture_total()? - 1700).to_string()
         {
             return Err(format!(
                 "blobs={blobs} compare={compare} must keep the residual counted, got {code} {reason} {lines}"
