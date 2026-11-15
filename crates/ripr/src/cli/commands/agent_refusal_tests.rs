@@ -32,6 +32,7 @@ fn sample_policy(inline_test_module_target: bool) -> Result<EditCagePolicy, Stri
         ignored_build_output: None,
         untracked_build_lockfile: None,
         inline_test_module_target,
+        external_test_file_target: false,
         new_test_proposal: None,
     })
 }
@@ -47,36 +48,57 @@ fn require_contains(haystack: &str, fragments: &[&str]) -> Result<(), String> {
 
 #[test]
 fn verify_typed_refusal_classifier_matches_only_whole_or_leading_clauses() {
-    assert!(agent_verify_error_is_typed_refusal(
-        AGENT_VERIFY_INPUT_DRIFT_ERROR
+    assert!(matches!(
+        classify_incomparable_pair_error("analysis input identities differ".to_string()),
+        AgentVerifyError::Refusal {
+            kind: AgentVerifyRefusalKind::InputDrift,
+            ..
+        }
     ));
-    assert!(agent_verify_error_is_typed_refusal(&format!(
-        "{AGENT_VERIFY_NO_MOVEMENT_PREFIX}: nothing changed"
-    )));
-    assert!(agent_verify_error_is_typed_refusal(&format!(
-        "{}: gap `g` is still open",
-        crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX
-    )));
-    // A path-bearing operational error that merely echoes refusal text must
-    // stay a failure, as must a drift message with trailing text.
-    assert!(!agent_verify_error_is_typed_refusal(&format!(
-        "failed to read agent verify --before snapshot dir/{AGENT_VERIFY_INPUT_DRIFT_ERROR}"
-    )));
-    for prefix in [
-        AGENT_VERIFY_NO_MOVEMENT_PREFIX,
-        crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX,
-    ] {
-        assert!(!agent_verify_error_is_typed_refusal(&format!(
-            "failed to read agent verify --before snapshot dir/{prefix}"
-        )));
-    }
-    assert!(!agent_verify_error_is_typed_refusal(&format!(
-        "{AGENT_VERIFY_INPUT_DRIFT_ERROR} (extra)"
-    )));
-    assert!(!agent_verify_error_is_typed_refusal(
-        "agent verify artifacts are incomparable: repository heads differ"
+    assert!(matches!(
+        classify_verify_movement_error(
+            crate::agent::artifact::AgentVerifyMovementError::NoMovement {
+                head: "abc1234".to_string(),
+            },
+        ),
+        AgentVerifyError::Refusal {
+            kind: AgentVerifyRefusalKind::NoMovement,
+            ..
+        }
     ));
-    assert!(!agent_verify_error_is_typed_refusal(""));
+    assert!(matches!(
+        classify_gap_binding_error(format!(
+            "{}: gap `g` is still open",
+            crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX
+        )),
+        AgentVerifyError::Refusal {
+            kind: AgentVerifyRefusalKind::GapBinding,
+            ..
+        }
+    ));
+    assert!(matches!(
+        classify_incomparable_pair_error("repository heads differ".to_string()),
+        AgentVerifyError::Operational(_)
+    ));
+    // #14021: the movement classifier is producer-typed — the producer
+    // carries exactly the NoMovement variant, so no movement error classifies
+    // as operational through this path anymore.
+    let operational_shape = AgentVerifyError::Operational(
+        "agent verify could not read after artifact at /tmp/x".to_string(),
+    );
+    assert_eq!(operational_shape.into_command_error().exit_code(), 2);
+}
+
+#[test]
+fn verify_exit_class_follows_refusal_kind_not_reworded_message() {
+    let operational = AgentVerifyError::Operational("failed to read snapshot".to_string());
+    assert_eq!(operational.into_command_error().exit_code(), 2);
+
+    let reworded = AgentVerifyError::Refusal {
+        kind: AgentVerifyRefusalKind::NoMovement,
+        message: "custom prose that omits the historical prefix entirely".to_string(),
+    };
+    assert_eq!(reworded.into_command_error().exit_code(), 3);
 }
 
 #[test]
@@ -247,6 +269,7 @@ fn before_phase_dirty_premise_refusal_names_paths_and_commit_first_recovery() {
         "seam:sample",
         Path::new("some-checkout"),
         None,
+        false,
         &violations,
     );
     for fragment in [
@@ -261,6 +284,45 @@ fn before_phase_dirty_premise_refusal_names_paths_and_commit_first_recovery() {
             "missing `{fragment}`: {message}"
         );
     }
+}
+
+/// #14394: a start through `ripr repair <item>` is told to rerun that same
+/// command; a store-located start keeps the advanced spelling, which is the
+/// only one that carries `--store`.
+#[test]
+fn before_phase_dirty_premise_refusal_names_the_facade_rerun_for_a_facade_start() {
+    let violations = vec!["src/lib.rs".to_string()];
+    let message = before_phase_dirty_premise_refusal(
+        "6c0f2a8a6134d929",
+        Path::new("some-checkout"),
+        None,
+        true,
+        &violations,
+    );
+    // The root is bound to an absolute path, so only its tail is stable.
+    assert!(
+        message.contains("then rerun `ripr repair 6c0f2a8a6134d929 --root ")
+            && message.contains("some-checkout`. A test file"),
+        "{message}"
+    );
+    assert!(!message.contains("ripr agent repair"), "{message}");
+    assert!(!message.contains("--phase before"), "{message}");
+
+    let stored = before_phase_dirty_premise_refusal(
+        "6c0f2a8a6134d929",
+        Path::new("some-checkout"),
+        Some(Path::new("attempts")),
+        true,
+        &violations,
+    );
+    assert!(
+        stored.contains("then rerun `ripr agent repair --root "),
+        "{stored}"
+    );
+    assert!(
+        stored.contains("--seam-id 6c0f2a8a6134d929 --phase before`"),
+        "{stored}"
+    );
 }
 
 /// A committed git fixture with one dirty tracked production file:
@@ -323,6 +385,7 @@ fn before_phase_refuses_dirty_production_premise_before_the_seam_inventory() -> 
             store: None,
             json: false,
             quiet: false,
+            facade_start: false,
         };
         let mut refusal = AfterPhaseRefusalContext::default();
         match run_agent_repair_phase(options, &mut refusal, Some(&identity)) {
@@ -715,4 +778,46 @@ fn parent_dir_follows_symlink_flags_only_a_symlink_before_dotdot() -> Result<(),
         "an unprovable leading `..` is flagged"
     );
     Ok(())
+}
+
+#[test]
+fn no_movement_class_travels_with_the_variant_not_the_message() {
+    // #14021: a reworded no-movement message must not be able to flip the
+    // class. The producer-typed classifier mints the refusal from
+    // `AgentVerifyMovementError`, and the same rendered text without the
+    // type does not.
+    let typed = classify_verify_movement_error(
+        crate::agent::artifact::AgentVerifyMovementError::NoMovement {
+            head: "aaaaaaa".to_string(),
+        },
+    );
+    let rendered = typed.to_string();
+    assert!(
+        rendered.starts_with("agent verify no repository movement"),
+        "user-visible message keeps its shape: {rendered}"
+    );
+    assert!(
+        matches!(
+            typed,
+            AgentVerifyError::Refusal {
+                kind: AgentVerifyRefusalKind::NoMovement,
+                ..
+            }
+        ),
+        "the class rides on the producer's variant, not the prose"
+    );
+    // A refusal with deliberately reworded prose keeps the class: the exit
+    // mapping reads `kind`, so a future reword of the rendered message cannot
+    // flip the exit code.
+    let reworded_but_typed = AgentVerifyError::Refusal {
+        kind: AgentVerifyRefusalKind::NoMovement,
+        message: "custom prose that omits the historical prefix entirely".to_string(),
+    };
+    assert_eq!(reworded_but_typed.into_command_error().exit_code(), 3);
+    // The identical rendered text without the typed class is operational:
+    // message text alone must not mint the refusal class.
+    let same_text_untyped = AgentVerifyError::Operational(rendered.clone());
+    // Both render identically for the user; only the class differs.
+    assert_eq!(same_text_untyped.to_string(), rendered);
+    assert_eq!(same_text_untyped.into_command_error().exit_code(), 2);
 }

@@ -91,6 +91,7 @@ fn session_over(snapshot: super::workspace::Snapshot) -> WorkspaceSession {
     WorkspaceSession {
         last_good: Some(Arc::new(snapshot)),
         desired_source: RefreshSource::Worktree,
+        desired_source_defaulted: false,
         ..Default::default()
     }
 }

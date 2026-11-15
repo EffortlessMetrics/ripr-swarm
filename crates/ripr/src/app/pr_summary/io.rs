@@ -1,12 +1,11 @@
 use super::model::{InputState, JsonInput};
 use super::util::first_line;
 use serde_json::Value;
-use std::fs;
 use std::path::Path;
 
 pub(super) fn load_json(repo: &Path, relative: &str) -> JsonInput {
     let path = repo.join(relative);
-    let Ok(text) = fs::read_to_string(&path) else {
+    let Ok(text) = crate::bounded_input::read_to_string(&path) else {
         return JsonInput {
             state: InputState::Missing,
             value: None,

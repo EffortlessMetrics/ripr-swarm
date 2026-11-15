@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach owner: pins_owner", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: 3 * x", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: 3 * x (line 2)", "related test tests/public_call.rs:2 pins_owner uses strong exact value oracle: assert_eq!(undeclared_target_glob::owner(2), 6);", "source assertion argument value 6 at line 3", "source function argument value x = 2 at line 3"],
       "flow_sinks": [
         {"kind":"return_value","text":"3 * x","line":2}
@@ -135,6 +142,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"unknown"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach owner: pins_owner", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 2)", "related test tests/public_call.rs:2 pins_owner uses exact value oracle, not graded against this probe: assert_eq!(undeclared_target_glob::owner(2), 6);", "source assertion argument value 6 at line 3", "source function argument value x = 2 at line 3"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":2}
