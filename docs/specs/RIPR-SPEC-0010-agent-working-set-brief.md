@@ -170,8 +170,10 @@ knows which functions the diff edited and the test's file has changed lines
 it, supply that attribution: a test is edited when a changed line falls
 inside its span or inside the attribute and comment prefix above its `fn`
 token (including an argument line of a multi-line attribute such as
-`#[cfg(all(...))]`). When that prefix cannot be placed (unbalanced brackets,
-or a prefix longer than 256 lines), every test in that file counts as edited,
+`#[cfg(all(...))]`, and line or block comments). When that prefix cannot
+be placed (unbalanced brackets, a raw string, or a prefix longer than 256
+lines), or the edit is an inner attribute or an attribute of a `mod` item
+(which can gate every test in it), every test in that file counts as edited,
 so an unattributable edit never prunes a related seam. An untouched test that merely shares a file with an edit is
 not a reason to surface a seam, and crediting it made review guidance on a
 large workspace evaluate every caller-file seam related to any test in a

@@ -1365,8 +1365,9 @@ const MAX_ATTRIBUTE_PREFIX_LINES: usize = 256;
 /// review). The prefix is walked upward from the next item's `fn` line,
 /// tracking `[`/`]` depth, across blank lines, comments, and attributes.
 ///
-/// When the walk cannot decide (unbalanced brackets, or a prefix longer
-/// than [`MAX_ATTRIBUTE_PREFIX_LINES`]), every test header in the file is
+/// When the walk cannot decide (unbalanced brackets, a raw string, or a prefix longer
+/// than [`MAX_ATTRIBUTE_PREFIX_LINES`]), or the edit is an inner attribute
+/// or an attribute of a `mod` item, every test header in the file is
 /// returned, so an unattributable edit reads as "possibly edited" rather
 /// than "not edited" and second-stage pruning stays conservative.
 fn attribute_edited_headers(index: &RustIndex, file: &Path, line: usize) -> Vec<(PathBuf, usize)> {
@@ -1390,6 +1391,9 @@ fn attribute_edited_headers(index: &RustIndex, file: &Path, line: usize) -> Vec<
             .map(|test| (file.to_path_buf(), test.start_line))
             .collect::<Vec<_>>()
     };
+    if gates_a_module(&source_lines, line) {
+        return every_test_header();
+    }
     if next_start - line > MAX_ATTRIBUTE_PREFIX_LINES {
         // Walk only the bounded prefix; still inside it at the cap means the
         // edit cannot be placed, so stay conservative.
@@ -1399,7 +1403,10 @@ fn attribute_edited_headers(index: &RustIndex, file: &Path, line: usize) -> Vec<
             if depth == 0 && !attribute_prefix_line(trimmed) {
                 return Vec::new();
             }
-            depth += bracket_balance(trimmed);
+            let Some(balance) = bracket_balance(trimmed) else {
+                return every_test_header();
+            };
+            depth += balance;
         }
         return every_test_header();
     }
@@ -1416,7 +1423,10 @@ fn attribute_edited_headers(index: &RustIndex, file: &Path, line: usize) -> Vec<
             // `line` sits above the item's attribute prefix.
             return Vec::new();
         }
-        depth += bracket_balance(trimmed);
+        let Some(balance) = bracket_balance(trimmed) else {
+            return every_test_header();
+        };
+        depth += balance;
         if depth < 0 {
             return every_test_header();
         }
@@ -1429,7 +1439,10 @@ fn attribute_edited_headers(index: &RustIndex, file: &Path, line: usize) -> Vec<
                 break;
             };
             let trimmed = text.trim();
-            probe_depth += bracket_balance(trimmed);
+            let Some(balance) = bracket_balance(trimmed) else {
+                break;
+            };
+            probe_depth += balance;
             if probe_depth == 0 && trimmed.starts_with("#[") {
                 return vec![(file.to_path_buf(), next_start)];
             }
@@ -1443,25 +1456,78 @@ fn attribute_edited_headers(index: &RustIndex, file: &Path, line: usize) -> Vec<
 }
 
 /// A line that can sit, at bracket depth zero, in an item's attribute
-/// prefix: blank, a comment, an attribute opener, or a line closing a
-/// bracket (an attribute closer, possibly with a trailing comment). Reading a
-/// non-attribute line with `]` as prefix only over-credits a test as edited,
-/// which keeps pruning conservative.
+/// prefix: blank, a line or block comment, an attribute opener, or a line
+/// closing a bracket (an attribute closer, possibly with a trailing comment).
+/// Reading a non-attribute line with `]` as prefix only over-credits a test
+/// as edited, which keeps pruning conservative.
 fn attribute_prefix_line(trimmed: &str) -> bool {
     trimmed.is_empty()
         || trimmed.starts_with("//")
+        || trimmed.starts_with("/*")
+        || trimmed.starts_with('*')
+        || trimmed.ends_with("*/")
         || trimmed.starts_with("#[")
         || trimmed.contains(']')
 }
 
-/// `]` minus `[` on one line (comments count as zero), read upward.
-fn bracket_balance(trimmed: &str) -> i64 {
-    if trimmed.starts_with("//") {
-        return 0;
+/// `]` minus `[` on one line, read upward. Brackets inside a string literal
+/// or after a `//` comment marker do not count, so `doc = "see [docs"` or a
+/// trailing `// see [1` cannot close an attribute early. `None` when the line
+/// opens a raw string (`r"`, `r#"`), whose end this line scan cannot find.
+fn bracket_balance(trimmed: &str) -> Option<i64> {
+    let mut balance: i64 = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut previous = ' ';
+    for character in trimmed.chars() {
+        if in_string {
+            match (escaped, character) {
+                (true, _) => escaped = false,
+                (false, '\\') => escaped = true,
+                (false, '"') => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match character {
+            '/' if previous == '/' => break,
+            '"' if previous == 'r' || previous == '#' => return None,
+            '"' => in_string = true,
+            ']' => balance += 1,
+            '[' => balance -= 1,
+            _ => {}
+        }
+        previous = character;
     }
-    let closes = trimmed.matches(']').count();
-    let opens = trimmed.matches('[').count();
-    i64::try_from(closes).unwrap_or(i64::MAX) - i64::try_from(opens).unwrap_or(i64::MAX)
+    Some(balance)
+}
+
+/// True when `line` is an inner attribute (`#![...]`) or an attribute of a
+/// `mod` item: such an edit can gate every test in the file (for example
+/// `#[cfg(test)]` above `mod tests {`), so it is not placed on one test.
+fn gates_a_module(source_lines: &[&str], line: usize) -> bool {
+    let text_at = |number: usize| {
+        number
+            .checked_sub(1)
+            .and_then(|position| source_lines.get(position))
+            .map_or("", |text| text.trim())
+    };
+    let changed = text_at(line);
+    if changed.starts_with("#![") {
+        return true;
+    }
+    if !changed.starts_with("#[") {
+        return false;
+    }
+    (line + 1..=line + MAX_ATTRIBUTE_PREFIX_LINES)
+        .map(text_at)
+        .find(|text| !text.is_empty() && !text.starts_with("#[") && !text.starts_with("//"))
+        .is_some_and(|text| {
+            text.trim_start_matches("pub(crate) ")
+                .trim_start_matches("pub(super) ")
+                .trim_start_matches("pub ")
+                .starts_with("mod ")
+        })
 }
 
 /// #11400: the returned expressions a changed `const` reaches, as
@@ -2281,6 +2347,56 @@ pub fn unrelated() -> i32 {
             vec![
                 (PathBuf::from("src/lib.rs"), 6),
                 (PathBuf::from("src/lib.rs"), 12)
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_ignore_brackets_in_strings_and_cross_block_comments() -> Result<(), String> {
+        // #12940 review: an unbalanced `[` inside a string or a trailing
+        // comment must not close a multi-line attribute early, and a block
+        // comment sits in the prefix like a line comment.
+        let source = "pub fn one() -> i32 {\n    1\n}\n\n#[cfg_attr(\n    feature = \"x\", // see [1\n    doc = \"see [docs\"\n)]\n#[test]\n/* reason */\nfn t() {\n    assert_eq!(one(), 1);\n}\n";
+        // `fn t` is on line 11.
+        for line in [5, 6, 7, 8, 9, 10] {
+            let headers = edited_headers_for("edited_string_bracket_attribute", source, line)?;
+            assert_eq!(
+                headers,
+                vec![(PathBuf::from("src/lib.rs"), 11)],
+                "line {line} of the prefix edits `t`"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_credit_every_test_across_a_raw_string_attribute() -> Result<(), String> {
+        // A raw string can hold `"` and `[`, which a line scan cannot place,
+        // so an edit in its prefix stays "possibly any test in this file".
+        let source = "#[test]\nfn first() {\n    assert!(true);\n}\n\n#[doc = r#\"a \" [ b\"#]\n#[test]\nfn second() {\n    assert!(true);\n}\n";
+        let headers = edited_headers_for("edited_raw_string_attribute", source, 6)?;
+        assert_eq!(
+            headers,
+            vec![
+                (PathBuf::from("src/lib.rs"), 2),
+                (PathBuf::from("src/lib.rs"), 8)
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_credit_every_test_for_a_module_gate_edit() -> Result<(), String> {
+        // Editing `#[cfg(test)]` above `mod tests {` can gate every test in
+        // it, so the edit is not placed on one test.
+        let source = "pub fn one() -> i32 {\n    1\n}\n\n#[cfg(all(test, feature = \"slow\"))]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn a() {\n        assert_eq!(one(), 1);\n    }\n\n    #[test]\n    fn b() {\n        assert_eq!(one(), 1);\n    }\n}\n";
+        let headers = edited_headers_for("edited_module_gate", source, 5)?;
+        assert_eq!(
+            headers,
+            vec![
+                (PathBuf::from("src/lib.rs"), 10),
+                (PathBuf::from("src/lib.rs"), 15)
             ]
         );
         Ok(())
