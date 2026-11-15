@@ -379,7 +379,9 @@ fn exception_ancestry(
     // return an instance of another class (#13622 review).
     let ([Expr::Name(base)], true, true) = (
         class.bases.as_slice(),
-        class.keywords.is_empty() && class.type_params.is_empty(),
+        class.keywords.is_empty()
+            && class.type_params.is_empty()
+            && class.decorator_list.is_empty(),
         !overrides_construction(&class.body),
     ) else {
         return None;
