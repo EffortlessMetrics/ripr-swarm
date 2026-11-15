@@ -437,7 +437,8 @@ pub(crate) fn for_table_row_assertions(
         oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => {
             (&arrow.params, arrow.span, arrow.body.span)
         }
-        oxc_ast::ast::Argument::FunctionExpression(function) => (
+        // A generator callback only builds an iterator: its body never runs.
+        oxc_ast::ast::Argument::FunctionExpression(function) if !function.generator => (
             &function.params,
             function.span,
             function.body.as_ref()?.span,
@@ -445,6 +446,17 @@ pub(crate) fn for_table_row_assertions(
         _ => return None,
     };
     if params.rest.is_some() || params.items.len() > 2 {
+        return None;
+    }
+    // `delete row[0]` (or of any other binding) changes what a later read
+    // sees, which the per-row substitution cannot represent: fail closed.
+    let callback_text = text.get(callback_span.start as usize..callback_span.end as usize)?;
+    if !super::mock_payload_guard::identifier_offsets(
+        &super::tests_extract::mask_comments_and_strings_text(callback_text),
+        "delete",
+    )
+    .is_empty()
+    {
         return None;
     }
     let callback_span = callback_span.start as usize..callback_span.end as usize;

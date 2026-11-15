@@ -394,3 +394,32 @@ fn shadowed_or_renamed_roots_are_not_read() {
         "renamed .for roots are not read yet"
     );
 }
+
+/// A generator callback never runs its body, and a `delete` of a row cell
+/// changes what later reads see; neither is read as concrete rows.
+#[test]
+fn dormant_or_deleting_callbacks_stay_disclosed() {
+    let generator = "import { expect, test } from \"vitest\";\nimport { loyaltyTier } from \"../src/tier\";\n\ntest.for([\n  [999, \"silver\"],\n])(\"%i\", function* ([points, tier]) {\n  expect(loyaltyTier(points)).toBe(tier);\n});\n";
+    assert_disclosed_not_read("generator", generator);
+    let async_generator = generator.replace("function*", "async function*");
+    assert_disclosed_not_read("async generator", &async_generator);
+    let zero_parameter = "import { expect, test } from \"vitest\";\nimport { loyaltyTier } from \"../src/tier\";\n\ntest.for([[]])(\"once\", function* () {\n  expect(loyaltyTier(1000)).toBe(\"gold\");\n});\n";
+    assert_disclosed_not_read("zero-parameter generator", zero_parameter);
+    for body in [
+        "(delete row[0]);\n  expect(loyaltyTier(row[0])).toBe(row[1]);",
+        "delete row[0];\n  expect(loyaltyTier(row[0])).toBe(row[1]);",
+    ] {
+        assert_disclosed_not_read("deleted cell", &vitest_for("expect, test", "row", body));
+    }
+    // A plain function expression still reads its rows.
+    let plain = generator.replace("function* ", "function ");
+    assert_eq!(
+        observed_and_expected(&plain),
+        vec![(
+            Some("loyaltyTier(999)".to_string()),
+            Some("\"silver\"".to_string()),
+            false,
+            7
+        )]
+    );
+}
