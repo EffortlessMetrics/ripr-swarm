@@ -607,3 +607,73 @@ fn user_class_subclass_records_no_stale_pin() -> Check {
     }
     Ok(())
 }
+
+// #13622 review: shapes whose raised class may not be the constructor's, or
+// whose expected name the test module rebinds, record no stale pin.
+#[test]
+fn unreadable_raise_or_class_shapes_record_no_stale_pin() -> Check {
+    let raises = RAISES_BODY.replace("{T}", "ValueError");
+    // An f-string over a plain name still names its class.
+    let named = |old_args: &str, new_args: &str| {
+        let source = format!(
+            "def parse(s):\n    if len(s) > 10:\n        raise TypeError({new_args})\n    return len(s)\n"
+        );
+        let tests =
+            format!("import pytest\nfrom fx.core import parse\n\ndef test_variant():\n{raises}");
+        classify_with_context(
+            &source,
+            &tests,
+            Some(&format!("        raise ValueError({old_args})")),
+            &format!("        raise TypeError({new_args})"),
+            true,
+        )
+    };
+    let fstring = named("f\"m {s}\"", "f\"m {s}\"")?;
+    if stale_pins(&fstring).len() != 1 {
+        return Err(format!("an f-string over a name must pin: {fstring:?}"));
+    }
+    // An argument that can itself raise first (`1 / 0`, a call) fails open.
+    for args in ["f\"m {1 / 0}\"", "str(s)"] {
+        let finding = named(args, args)?;
+        if !stale_pins(&finding).is_empty() {
+            return Err(format!("`{args}` must fail open: {finding:?}"));
+        }
+    }
+    // A test module that rebinds the builtin name fails open.
+    let rebound = classify_with_context(
+        "def parse(s):\n    if len(s) > 10:\n        raise TypeError(\"m\")\n    return len(s)\n",
+        &format!(
+            "import pytest\nfrom builtins import TypeError as ValueError\nfrom fx.core import parse\n\ndef test_variant():\n{raises}"
+        ),
+        Some("        raise ValueError(\"m\")"),
+        "        raise TypeError(\"m\")",
+        true,
+    )?;
+    if !stale_pins(&rebound).is_empty() {
+        return Err(format!(
+            "a rebound expected name must fail open: {rebound:?}"
+        ));
+    }
+    // A class overriding `__new__`, or with several bases, fails open.
+    let tests = format!(
+        "{IMPORTS}\ndef test_variant():\n    with pytest.raises(EmptyError, match=\"too long\"):\n        parse('abcdefghijklmnop')\n"
+    );
+    for class in [
+        "class TooLongError(Exception):\n    def __new__(cls, message):\n        return EmptyError(message)\n",
+        "class Mixin(Exception): pass\nclass TooLongError(Mixin, Exception): pass\n",
+    ] {
+        let source = format!(
+            "class EmptyError(Exception): pass\n{class}\ndef parse(s):\n    if len(s) > 10:\n        raise TooLongError(\"too long\")\n    return len(s)\n"
+        );
+        let finding = classify(
+            &source,
+            &tests,
+            "        raise EmptyError(\"too long\")",
+            "        raise TooLongError(\"too long\")",
+        )?;
+        if !stale_pins(&finding).is_empty() {
+            return Err(format!("{class:?} must fail open: {finding:?}"));
+        }
+    }
+    Ok(())
+}

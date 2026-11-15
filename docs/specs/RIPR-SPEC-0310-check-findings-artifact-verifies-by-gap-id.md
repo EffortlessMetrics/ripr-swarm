@@ -93,9 +93,12 @@ could not be verified without trusting hand-authored JSON.
    `awaiting_edit`), names the assertion, `Old` and `New`, and names the next
    step: assert `New`, or run the test. The exposure class is unchanged: a
    pre-existing old-type assertion does notice the edit (RIPR-SPEC-0238
-   example 14). The raise arguments do not matter (an f-string message still names its
-   type). Any shape the analyzer cannot read exactly (a raise that is not one
-   `raise Name(...)` line, an attribute, tuple or keyword expected class, an aliased or
+   example 14). Raise arguments that cannot themselves raise first (constants, plain
+   names, and f-strings over those) are read, so an f-string message still
+   names its type. Any shape the analyzer cannot read exactly (a raise that is
+   not one `raise Name(...)` line, an argument with a call, operator or
+   subscript, a class with several bases or its own `__new__`, a test module
+   that rebinds the expected name, an attribute, tuple or keyword expected class, an aliased or
    imported class, an unresolvable base) records no fact and keeps today's
    closure.
 

@@ -299,6 +299,19 @@ fn stale_pins(
             if expected_class(&assertion.text)? != old_type {
                 return None;
             }
+            // The test module may rebind the expected name
+            // (`from builtins import TypeError as ValueError`), so a renamed
+            // import, or any import of a builtin class name, is not read.
+            let builtin =
+                old_type == "BaseException" || builtin_exception_parent(&old_type).is_some();
+            if candidate
+                .test
+                .imports
+                .iter()
+                .any(|import| import.alias == old_type && (builtin || import.imported != old_type))
+            {
+                return None;
+            }
             pins.push(StaleRaisedTypePin {
                 assertion: assertion
                     .text
@@ -334,7 +347,8 @@ fn known_not_subclass(source: &str, new: &str, old: &str) -> Option<bool> {
 }
 
 /// `name` and every class it derives from, resolved through single top-level
-/// plain class definitions in the module and the builtin exception table.
+/// single-base class definitions that do not override `__new__`, and the
+/// builtin exception table.
 fn exception_ancestry(
     body: &[Stmt],
     facts: &ModuleBindingFacts,
@@ -360,22 +374,40 @@ fn exception_ancestry(
         Stmt::ClassDef(class) if class.name.as_str() == name => Some(class),
         _ => None,
     })?;
-    if !class.keywords.is_empty() || !class.type_params.is_empty() || class.bases.is_empty() {
+    // One plain base only: several bases could repeat shared ancestors at
+    // every level, and a class that overrides construction (`__new__`) can
+    // return an instance of another class (#13622 review).
+    let ([Expr::Name(base)], true, true) = (
+        class.bases.as_slice(),
+        class.keywords.is_empty() && class.type_params.is_empty(),
+        !overrides_construction(&class.body),
+    ) else {
         return None;
-    }
+    };
     let mut chain = vec![name.to_string()];
-    for base in &class.bases {
-        let Expr::Name(base) = base else {
-            return None;
-        };
-        chain.extend(exception_ancestry(
-            body,
-            facts,
-            base.id.as_str(),
-            depth + 1,
-        )?);
-    }
+    chain.extend(exception_ancestry(
+        body,
+        facts,
+        base.id.as_str(),
+        depth + 1,
+    )?);
     Some(chain)
+}
+
+/// Whether a class body binds `__new__` (a method, an assignment or an import).
+fn overrides_construction(class_body: &[Stmt]) -> bool {
+    class_body.iter().any(|statement| match statement {
+        Stmt::FunctionDef(function) => function.name.as_str() == "__new__",
+        Stmt::AsyncFunctionDef(function) => function.name.as_str() == "__new__",
+        Stmt::Assign(assign) => assign
+            .targets
+            .iter()
+            .any(|target| matches!(target, Expr::Name(name) if name.id.as_str() == "__new__")),
+        Stmt::AnnAssign(assign) => {
+            matches!(assign.target.as_ref(), Expr::Name(name) if name.id.as_str() == "__new__")
+        }
+        _ => false,
+    })
 }
 
 /// The single base of a builtin exception class (CPython 3 hierarchy). Names
@@ -462,7 +494,31 @@ fn raised_type_name(line: &str) -> Option<String> {
     let Expr::Name(name) = call.func.as_ref() else {
         return None;
     };
-    Some(name.id.to_string())
+    let inert = call.args.iter().all(inert_raise_argument)
+        && call
+            .keywords
+            .iter()
+            .all(|keyword| inert_raise_argument(&keyword.value));
+    inert.then(|| name.id.to_string())
+}
+
+/// An argument whose evaluation cannot itself raise before the exception is
+/// built: a constant, a plain name, or an f-string formatting only those.
+/// A call, operator or subscript (`f"{1 / 0}"`) could raise some other class
+/// first, so the raised class would not be the constructor's (#13622 review).
+fn inert_raise_argument(argument: &Expr) -> bool {
+    match argument {
+        Expr::Constant(_) | Expr::Name(_) => true,
+        Expr::JoinedStr(joined) => joined.values.iter().all(|part| match part {
+            Expr::Constant(_) => true,
+            Expr::FormattedValue(formatted) => {
+                formatted.format_spec.is_none()
+                    && matches!(formatted.value.as_ref(), Expr::Constant(_) | Expr::Name(_))
+            }
+            _ => false,
+        }),
+        _ => false,
+    }
 }
 
 /// Only the constructor's name changes; evaluating its arguments runs no code.
