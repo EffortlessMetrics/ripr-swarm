@@ -677,15 +677,23 @@ def reviews_allow_source_attestation(
         and str(r.get("state") or "") == "APPROVED"
         and _trusted(r)
     ]
-    # #14728: a later same-login body supersedes the earlier statement by
-    # default; only recognised chatter preserves it. The effective statement per
-    # login is its latest non-chatter trusted COMMENTED review at this head.
+    # #14728 review: `effective` holds only bodies that state something — ready,
+    # negative, a verdict, or a blocker. A neutral body (including a
+    # mis-formatted marker, `LGTM` or ordinary prose) neither attests nor
+    # supersedes; recognised chatter and an empty body are excluded too.
     effective = [
         r for r in reviews
         if str(r.get("commit_id") or "") == head
         and _trusted(r)
         and str(r.get("state") or "") == "COMMENTED"
         and not comment_body_chatter(str(r.get("body") or ""))
+        and (
+            comment_body_ready(str(r.get("body") or ""))
+            or comment_body_negative(str(r.get("body") or ""))
+            or comment_body_verdict_ready(str(r.get("body") or ""), head)
+            or comment_body_verdict_negative(str(r.get("body") or ""))
+            or comment_body_blocks(str(r.get("body") or ""))
+        )
     ]
     # #14728 review: a later native withdrawal (CHANGES_REQUESTED or DISMISSED)
     # from the same login supersedes its earlier statement; a dismissed approval
@@ -1202,15 +1210,24 @@ def self_test() -> None:
             ],
             head=head,
         ), body
-    # The supersession default is inverted: unknown prose revokes the marker, and
-    # only the small chatter allowlist preserves it.
+    # A neutral body is not a statement: it neither attests nor supersedes, so
+    # the earlier marker survives it. This includes a mis-formatted marker and
+    # ordinary prose.
     for body in (
         "I don't think this is right.",
         "This is wrong.",
         "I have concerns about the selection change.",
         "This will regress the queue.",
+        "LGTM",
+        "Looks good.",
+        "Nice work.",
+        "Thanks for the explanation.",
+        f"REVIEW_READY {sha}",
+        f"REVIEW_READY - {sha}",
+        f"REVIEW_READY head {sha}",
+        "No code change needed.",
     ):
-        assert not reviews_allow_source_attestation(
+        assert reviews_allow_source_attestation(
             [
                 marker,
                 review(state="COMMENTED", commit_id=head, id=2, body=body,
@@ -1218,15 +1235,6 @@ def self_test() -> None:
             ],
             head=head,
         ), body
-    assert reviews_allow_source_attestation(
-        [
-            marker,
-            review(state="COMMENTED", commit_id=head, id=2,
-                   body="No code change needed.",
-                   submitted_at="2026-10-15T01:00:02Z"),
-        ],
-        head=head,
-    )
     # A login whose latest statement is a blocker vetoes, whatever another login
     # posts later.
     assert not reviews_allow_source_attestation(
@@ -1250,11 +1258,11 @@ def self_test() -> None:
         ],
         head=head,
     )
-    # A hedged approve defers the disposition, so the earlier marker does not
-    # survive it either.
+    # A hedged approve is not a stated verdict, so it neither attests nor
+    # supersedes; the hedge design is #14770.
     for tail in ("pending the fix", "after the rebase", "once CI passes", "if the shards pass"):
         body = f"VERDICT: APPROVE {head} \u2014 {tail}"
-        assert not reviews_allow_source_attestation(
+        assert reviews_allow_source_attestation(
             [
                 marker,
                 review(state="COMMENTED", commit_id=head, id=2, body=body,

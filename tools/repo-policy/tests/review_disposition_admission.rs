@@ -1632,7 +1632,7 @@ fn issue_14728_stated_marker_selection_and_neutral_tail() -> Result<(), String> 
                     "I don't think this is right."
                 ),
             ]),
-            false,
+            true,
         ),
         (
             "marker then recognised chatter, same login",
@@ -1677,7 +1677,7 @@ fn issue_14728_stated_marker_selection_and_neutral_tail() -> Result<(), String> 
                     &format!("VERDICT: APPROVE {head} \u{2014} pending the fix")
                 ),
             ]),
-            false,
+            true,
         ),
         (
             "marker then deferred approve, same login",
@@ -1691,7 +1691,7 @@ fn issue_14728_stated_marker_selection_and_neutral_tail() -> Result<(), String> 
                     &format!("VERDICT: APPROVE {head} \u{2014} after the rebase")
                 ),
             ]),
-            false,
+            true,
         ),
         (
             "an emoji tail is negative and vetoes another login",
