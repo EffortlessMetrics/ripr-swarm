@@ -901,6 +901,14 @@ fn mark_default_object_members(body: &[Statement<'_>], owners: &mut [TypeScriptO
         .flat_map(|declarator| declarator.id.get_binding_identifiers())
         .map(|identifier| identifier.name.as_str())
         .collect();
+    // A member called as `local.sibling()` can replace another member before
+    // the test calls it (`this.merge = stub`, or through `require`, `exports`
+    // or a self-import), which no test-file fact can see. Each marked owner
+    // carries the siblings that might do so; a test that calls any of them
+    // gets no rule-5 credit for the owner (#13694 review).
+    let Some(unsafe_names) = unsafe_top_level_names(body, &members) else {
+        return;
+    };
     for owner in owners.iter_mut() {
         let callable = match owner.owner_kind {
             OwnerKind::Function => true,
@@ -909,8 +917,250 @@ fn mark_default_object_members(body: &[Statement<'_>], owners: &mut [TypeScriptO
         };
         if owner.class_name.is_none() && callable && members.contains(owner.name.as_str()) {
             owner.default_object_member = true;
+            let mut siblings: Vec<String> = Vec::new();
+            for name in &members {
+                if *name != owner.name.as_str() && unsafe_names.contains(*name) {
+                    siblings.push((*name).to_string());
+                }
+            }
+            siblings.sort();
+            owner.default_object_unsafe_siblings = siblings;
         }
     }
+}
+
+/// Top-level names (functions, classes, variables) whose declaration could
+/// reach and replace a member of the module's anonymous default object.
+/// A declaration is unsafe when it contains `this`, `import(...)`,
+/// `import.meta`, a reference to `require`, `module`, `exports`,
+/// `globalThis`, `global`, `window`, `self`, `eval`, `Function`,
+/// `arguments`, `define`, `process`, `__filename` or `__dirname`, a reference to
+/// a binding imported from a
+/// module (possibly the module itself; any source), or a reference to another
+/// unsafe top-level name (fixpoint). References are matched by name, so a
+/// shadowing local only over-approximates. A member that is not a top-level
+/// declaration of this module (an import, whose body this pass cannot see)
+/// and a name that is assigned anywhere in the module (`extend = function ()
+/// { this.merge = stub }`) are unsafe too. `None` when a top-level name is
+/// declared more than once, since the object could then hold either.
+fn unsafe_top_level_names(
+    body: &[Statement<'_>],
+    members: &std::collections::HashSet<&str>,
+) -> Option<std::collections::HashSet<String>> {
+    use oxc_ast::ast::{
+        Declaration, IdentifierReference, ImportDeclarationSpecifier, ImportExpression,
+        MetaProperty, ThisExpression,
+    };
+    use oxc_ast_visit::Visit;
+    use std::collections::{HashMap, HashSet};
+    const ESCAPES: &[&str] = &[
+        "require",
+        "module",
+        "exports",
+        "globalThis",
+        "global",
+        "window",
+        "self",
+        "eval",
+        "Function",
+        "arguments",
+        "define",
+        "process",
+        "__filename",
+        "__dirname",
+    ];
+    #[derive(Default)]
+    struct Scan {
+        escapes: bool,
+        references: HashSet<String>,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_this_expression(&mut self, _expression: &ThisExpression) {
+            self.escapes = true;
+        }
+        fn visit_import_expression(&mut self, _expression: &ImportExpression<'a>) {
+            self.escapes = true;
+        }
+        fn visit_meta_property(&mut self, _property: &MetaProperty<'a>) {
+            self.escapes = true;
+        }
+        fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+            if ESCAPES.contains(&identifier.name.as_str()) {
+                self.escapes = true;
+            }
+            self.references.insert(identifier.name.as_str().to_string());
+        }
+    }
+    #[derive(Default)]
+    struct HoistedVar {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for HoistedVar {
+        fn visit_variable_declaration(
+            &mut self,
+            declaration: &oxc_ast::ast::VariableDeclaration<'a>,
+        ) {
+            if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var {
+                self.found = true;
+            }
+            oxc_ast_visit::walk::walk_variable_declaration(self, declaration);
+        }
+    }
+    #[derive(Default)]
+    struct Assigned {
+        names: HashSet<String>,
+    }
+    impl<'a> Visit<'a> for Assigned {
+        fn visit_simple_assignment_target(
+            &mut self,
+            target: &oxc_ast::ast::SimpleAssignmentTarget<'a>,
+        ) {
+            if let oxc_ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) =
+                target
+            {
+                self.names.insert(identifier.name.as_str().to_string());
+            }
+            oxc_ast_visit::walk::walk_simple_assignment_target(self, target);
+        }
+        // `({ extend } = ...)` reaches the identifier without passing
+        // through a simple assignment target (#13694 review).
+        fn visit_assignment_target_property_identifier(
+            &mut self,
+            property: &oxc_ast::ast::AssignmentTargetPropertyIdentifier<'a>,
+        ) {
+            self.names.insert(property.binding.name.to_string());
+            oxc_ast_visit::walk::walk_assignment_target_property_identifier(self, property);
+        }
+    }
+    let mut assigned = Assigned::default();
+    for stmt in body {
+        assigned.visit_statement(stmt);
+    }
+    let mut imported: HashSet<String> = HashSet::new();
+    let mut declared: HashMap<String, Scan> = HashMap::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for stmt in body {
+        let declaration = match stmt {
+            Statement::ImportDeclaration(import) => {
+                // Any import is opaque here, package or relative: a member
+                // bound to one (`const extend = extendImpl`) could write
+                // through `this` (#13694 review).
+                {
+                    for specifier in import.specifiers.iter().flatten() {
+                        let local = match specifier {
+                            ImportDeclarationSpecifier::ImportSpecifier(s) => &s.local,
+                            ImportDeclarationSpecifier::ImportDefaultSpecifier(s) => &s.local,
+                            ImportDeclarationSpecifier::ImportNamespaceSpecifier(s) => &s.local,
+                        };
+                        imported.insert(local.name.as_str().to_string());
+                    }
+                }
+                continue;
+            }
+            // `import x = require(...)` and namespaces bind names this scan
+            // does not model, so fail closed (#13694 review).
+            Statement::TSImportEqualsDeclaration(_) | Statement::TSModuleDeclaration(_) => {
+                return None;
+            }
+            Statement::FunctionDeclaration(_)
+            | Statement::ClassDeclaration(_)
+            | Statement::VariableDeclaration(_) => stmt.as_declaration(),
+            Statement::ExportNamedDeclaration(export) => export.declaration.as_ref(),
+            _ => {
+                // Any other top-level statement runs at load time: one that
+                // escapes, or hoists a `var` out of a block, could hand a
+                // sibling a route to the object the scan cannot follow.
+                let mut scan = Scan::default();
+                scan.visit_statement(stmt);
+                let mut hoisted = HoistedVar::default();
+                hoisted.visit_statement(stmt);
+                if scan.escapes || hoisted.found {
+                    return None;
+                }
+                continue;
+            }
+        };
+        let Some(declaration) = declaration else {
+            continue;
+        };
+        match declaration {
+            Declaration::TSImportEqualsDeclaration(_) | Declaration::TSModuleDeclaration(_) => {
+                return None;
+            }
+            // A bodiless overload or ambient signature is not a binding of
+            // its own; the implementation declaration carries the name.
+            Declaration::FunctionDeclaration(func) if func.body.is_none() => continue,
+            _ => {}
+        }
+        let names: Vec<String> = match declaration {
+            Declaration::FunctionDeclaration(func) => func
+                .id
+                .iter()
+                .map(|id| id.name.as_str().to_string())
+                .collect(),
+            Declaration::ClassDeclaration(class) => class
+                .id
+                .iter()
+                .map(|id| id.name.as_str().to_string())
+                .collect(),
+            Declaration::VariableDeclaration(decl) => decl
+                .declarations
+                .iter()
+                .flat_map(|declarator| declarator.id.get_binding_identifiers())
+                .map(|id| id.name.as_str().to_string())
+                .collect(),
+            _ => Vec::new(),
+        };
+        let mut scan = Scan::default();
+        scan.visit_declaration(declaration);
+        for name in names {
+            if !seen.insert(name.clone()) {
+                return None;
+            }
+            declared.insert(
+                name,
+                Scan {
+                    escapes: scan.escapes,
+                    references: scan.references.clone(),
+                },
+            );
+        }
+    }
+    let mut unsafe_names: HashSet<String> = declared
+        .iter()
+        .filter(|(_, scan)| {
+            scan.escapes
+                || scan
+                    .references
+                    .iter()
+                    .any(|reference| imported.contains(reference))
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    unsafe_names.extend(assigned.names);
+    unsafe_names.extend(
+        members
+            .iter()
+            .filter(|member| !declared.contains_key(**member))
+            .map(|member| (*member).to_string()),
+    );
+    loop {
+        let before = unsafe_names.len();
+        for (name, scan) in &declared {
+            if !unsafe_names.contains(name)
+                && scan
+                    .references
+                    .iter()
+                    .any(|reference| reference != name && unsafe_names.contains(reference))
+            {
+                unsafe_names.insert(name.clone());
+            }
+        }
+        if unsafe_names.len() == before {
+            break;
+        }
+    }
+    Some(unsafe_names)
 }
 
 /// `module.exports` as a static member expression on the bare `module`
@@ -1117,6 +1367,7 @@ pub(crate) fn owner_from_variable_declarator(
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
             default_object_member: false,
+            default_object_unsafe_siblings: Vec::new(),
             commonjs_default_export: false,
             commonjs_whole_function: false,
             constructor_callback: initializer_is_call_with_function_argument(init),
@@ -1233,6 +1484,7 @@ pub(crate) fn owner_from_function(
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
         constructor_callback: false,
@@ -1266,6 +1518,7 @@ pub(crate) fn owner_from_arrow(
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
         constructor_callback: false,
@@ -1337,6 +1590,7 @@ pub(crate) fn owner_from_method(
         },
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
         constructor_callback: false,
@@ -1509,6 +1763,9 @@ fn extract_imports_from_statements_inner(
     // Names the file assigns to anywhere (computed on the first mutable
     // `require()` binding).
     let mut written_names: Option<std::collections::HashSet<String>> = None;
+    // Names a non-`require()` file-level declaration re-declares (computed on
+    // the first mutable `require()` binding).
+    let mut redeclared_names: Option<std::collections::HashSet<String>> = None;
     // `const lib = require('./y')` namespace bindings, so a member picked off
     // `lib` later reads as that module's member (#10447).
     let mut namespaces: std::collections::HashMap<String, String> =
@@ -1627,11 +1884,24 @@ fn extract_imports_from_statements_inner(
                 // hold the module's export, so it is not an import (#10401). A
                 // `const` cannot be reassigned.
                 let mutable = var_decl.kind != oxc_ast::ast::VariableDeclarationKind::Const;
+                // A `var` binding that a file-level declaration other than a
+                // `require()` re-declares (`var { Cart } = require('./cart');
+                // var Cart = class {}`, or a hoisted `function Cart() {}`)
+                // holds whichever value was written last, which this scan does
+                // not order, so it is not an import (#14088). Two `require()`
+                // bindings of one name stay recorded, both of them: the
+                // admission scan reads the package one, and a relation that
+                // needs one module tells them apart by the record.
                 let mut written = |name: &str| {
                     mutable
-                        && written_names
-                            .get_or_insert_with(|| identifier_writes(statements))
+                        && (redeclared_names
+                            .get_or_insert_with(|| {
+                                names_redeclared_beside_require(statements, &top_level_names)
+                            })
                             .contains(name)
+                            || written_names
+                                .get_or_insert_with(|| identifier_writes(statements))
+                                .contains(name))
                 };
                 // One member of a literal require: `const f = require('./y').f`
                 // picks the named export `f` out of the module (#9188). It is
@@ -1728,6 +1998,76 @@ fn extract_imports_from_statements_inner(
         }
     }
     out
+}
+
+/// The names declared at file level more often than program-level
+/// `require("<literal>")` declarators bind them: some other declaration (a
+/// second `var`, a function, a function a sloppy block hoists, a `require()`
+/// pattern the extractor does not read) binds the name too. `top_level_names`
+/// lists every file-level declaration, once each.
+fn names_redeclared_beside_require(
+    statements: &[Statement<'_>],
+    top_level_names: &[String],
+) -> std::collections::HashSet<String> {
+    let mut declared: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for name in top_level_names {
+        *declared.entry(name.as_str()).or_insert(0) += 1;
+    }
+    if declared.values().all(|count| *count < 2) {
+        return std::collections::HashSet::new();
+    }
+    let mut required: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let no_namespaces = std::collections::HashMap::new();
+    for stmt in statements {
+        let Statement::VariableDeclaration(declaration) = stmt else {
+            continue;
+        };
+        for declarator in &declaration.declarations {
+            let Some(init) = &declarator.init else {
+                continue;
+            };
+            // Count exactly the locals the extractor records for this
+            // declarator. A local it does not record (a nested pattern, a
+            // rest element, an array pattern) is another declaration of the
+            // name, so it must not balance one out (#14154 review).
+            let mut count = |name: &str| *required.entry(name.to_string()).or_insert(0) += 1;
+            if require_member_source(init, &no_namespaces).is_some() {
+                if let Some(name) = binding_identifier_name(&declarator.id) {
+                    count(name);
+                }
+                continue;
+            }
+            if require_string_literal_source(init).is_none() {
+                continue;
+            }
+            if let Some(name) = binding_identifier_name(&declarator.id) {
+                count(name);
+                continue;
+            }
+            let BindingPattern::ObjectPattern(object) = &declarator.id else {
+                continue;
+            };
+            for property in &object.properties {
+                if object_binding_key_name(property).is_none() {
+                    continue;
+                }
+                match &property.value {
+                    BindingPattern::BindingIdentifier(id) => count(id.name.as_str()),
+                    BindingPattern::AssignmentPattern(with_default) => {
+                        if let Some(name) = binding_identifier_name(&with_default.left) {
+                            count(name);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    declared
+        .into_iter()
+        .filter(|(name, count)| *count > 1 && *count > required.get(*name).copied().unwrap_or(0))
+        .map(|(name, _)| name.to_string())
+        .collect()
 }
 
 /// Extract the string literal source from a `require('...')` call expression.

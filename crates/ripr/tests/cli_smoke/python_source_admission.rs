@@ -20,7 +20,7 @@ fn fixture(label: &str) -> TestResult<PathBuf> {
     fs::write(root.join("src/discount.py"), SOURCE)?;
     fs::write(
         root.join("tests/test_discount.py"),
-        "from src.discount import discount\n\ndef test_discount_boundary():\n    assert discount(100) is True\n",
+        "from src.discount import discount\n\ndef test_discount_boundary():\n    assert discount(100) is not None\n",
     )?;
     fs::write(root.join("change.patch"), PATCH)?;
     run_git(&root, &["init", "-b", "main"])?;

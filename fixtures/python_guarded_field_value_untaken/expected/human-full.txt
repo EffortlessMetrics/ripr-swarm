@@ -1,0 +1,89 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_guarded_field_value_untaken/input
+config: <cwd>/fixtures/python_guarded_field_value_untaken/input/ripr.toml
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+WARNING orders/views.py:3
+  id: probe:orders_views.py:python_preview:11327452
+
+Changed
+  after:          return {"status": 422}
+
+Change type
+  a constructed field changed
+  family: field_construction
+  delta:  value (changes a computed value)
+  owner:  python:orders/views.py::order_view
+  gap id (for scripts): gap:python:orders/views.py:order_view:field_value:field_construction:return_status_422
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `order_view`
+  - infection weak: Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed input
+  - propagation weak: Changed Python field construction can propagate through returned or retained object state; exact runtime object flow is not resolved
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
+  - local flow reaches constructed field: return {"status": 422} (line 3)
+  - related test tests/test_views.py:4 test_view_ok uses strong exact value oracle: assert order_view(None, 100)["status"] == 200
+  - source function argument value request = None at line 5
+  - source function argument value total = 100 at line 5
+
+Weakness
+  - A strong Python oracle reaches `order_view`, but static evidence does not place a related test input inside the guarding arm `total < 0`; every observed input leaves the changed line unexecuted. Add a test input that satisfies the guarding condition
+  - missing discriminator total < 0: no strong related test input satisfies `total < 0`; observed total values: 100; the changed line never executes under an observed input
+
+Next step
+  Python preview: strengthen the existing related test with a field/object assertion for the missing check `total < 0`
+
+Python repair card (preview/advisory)
+  card version: python_repair_card.v1
+  canonical gap: gap:python:orders/views.py:order_view:field_value:field_construction:return_status_422
+  authority: preview_advisory_only (python/preview)
+  repair action: strengthen_existing_test
+  changed owner: order_view
+  changed behavior: field_value changed at orders/views.py:3: `return {"status": 422}`
+  current test evidence: tests/test_views.py:4 test_view_ok currently has oracle_strength=strong, oracle_kind=exact_value: assert order_view(None, 100)["status"] == 200
+  missing discriminator: total < 0
+  recommended test shape: Strengthen the existing pytest field/object assertion for `total < 0`.
+  suggested assertion: Assert the returned object or field satisfies `total < 0`.
+  suggested file: tests/test_views.py
+  suggested test: test_view_ok
+  pytest node: tests/test_views.py::test_view_ok
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_guarded_field_value_untaken/input && python -m pytest tests/test_views.py::test_view_ok) (high)
+  receipt: unavailable_until_python_gap_ledger
+  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
+  stop conditions:
+    - Stop if imports, fixtures, or test setup cannot call the changed owner.
+    - Stop if the expected value for the missing discriminator is ambiguous.
+    - Stop if adding the test appears to require a production-code edit.
+  limits:
+    - Syntax-first Python preview evidence only.
+    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
+    - Verify success alone is not a gap-closure receipt.
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/python_guarded_field_value_untaken/input --diff <cwd>/fixtures/python_guarded_field_value_untaken/diff.patch --mode fast probe:orders_views.py:python_preview:11327452
+  ripr context --root <cwd>/fixtures/python_guarded_field_value_untaken/input --diff <cwd>/fixtures/python_guarded_field_value_untaken/diff.patch --mode fast --at probe:orders_views.py:python_preview:11327452
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

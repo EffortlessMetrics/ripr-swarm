@@ -165,7 +165,9 @@ public vocabulary, asset verification) that the v0.5.0 release surfaced.
   `0.3.0`; `0.3.0` predates `ripr pilot` and `ripr outcome`.
 - The root workspace uses Rust edition `2024`.
 - The root workspace `rust-version` is `1.95`.
-- `repository` and `homepage` point at `https://github.com/EffortlessMetrics/ripr/`.
+- `repository` points at `https://github.com/EffortlessMetrics/ripr/`, and no
+  `homepage` repeats it: cargo 1.100's `redundant_homepage` lint warns when the
+  two are identical.
 - The README says `ripr` is alpha software and does not claim mutation execution.
 
 ## Local Gates
@@ -240,7 +242,8 @@ movement cannot promote the release claim by itself.
 
 `crates/ripr/Cargo.toml` intentionally includes `tests/**` and the tracked
 example paths (`examples/*/example.diff`, `examples/*/src/**`,
-`examples/*/tests/**`) in the published source distribution. The package list
+`examples/*/tests/**`, and the examples' shared `examples/support/*.rs`) in the
+published source distribution. The package list
 therefore carries the checked integration corpus and sample workspace used by
 release and dogfood evidence. This does not change the installed binary or
 library API, but removing either surface is a release-contract change that must

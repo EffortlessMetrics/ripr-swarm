@@ -1157,6 +1157,160 @@ mod tests {
         Ok(())
     }
 
+    fn cache_args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    /// `--root` needs a real path: a missing value, an empty value, and a
+    /// following flag are refused instead of being read as the root.
+    #[test]
+    fn cache_root_flag_refuses_a_missing_empty_or_flag_shaped_value() {
+        for args in [
+            cache_args(&["--root"]),
+            cache_args(&["--root", ""]),
+            cache_args(&["--root", "--json"]),
+            cache_args(&["--json", "--root"]),
+        ] {
+            assert_eq!(
+                parse_status_args(&args),
+                Err(
+                    "cache status --root requires a path; pass the path right after --root"
+                        .to_string()
+                ),
+                "status {args:?}"
+            );
+        }
+        for args in [
+            cache_args(&["--root"]),
+            cache_args(&["--root", ""]),
+            cache_args(&["--root", "--force"]),
+            cache_args(&["--force", "--root"]),
+        ] {
+            assert_eq!(
+                parse_clear_args(&args),
+                Err(
+                    "cache clear --root requires a path; pass the path right after --root"
+                        .to_string()
+                ),
+                "clear {args:?}"
+            );
+        }
+    }
+
+    /// The root and the flags parse the same in any order, and no flag is
+    /// implied: `cache clear --root PATH` alone never carries `--force`.
+    #[test]
+    fn cache_root_flag_is_order_independent_and_implies_no_other_flag() {
+        assert_eq!(parse_status_args(&[]), Ok((None, false)));
+        assert_eq!(
+            parse_status_args(&cache_args(&["--root", "ws"])),
+            Ok((Some(PathBuf::from("ws")), false))
+        );
+        for args in [
+            cache_args(&["--root", "ws", "--json"]),
+            cache_args(&["--json", "--root", "ws"]),
+        ] {
+            assert_eq!(
+                parse_status_args(&args),
+                Ok((Some(PathBuf::from("ws")), true)),
+                "status {args:?}"
+            );
+        }
+
+        assert_eq!(parse_clear_args(&[]), Ok((None, ClearOptions::default())));
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--root", "ws"])),
+            Ok((
+                Some(PathBuf::from("ws")),
+                ClearOptions {
+                    dry_run: false,
+                    force: false,
+                }
+            ))
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--root", "ws", "--dry-run"])),
+            Ok((
+                Some(PathBuf::from("ws")),
+                ClearOptions {
+                    dry_run: true,
+                    force: false,
+                }
+            ))
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--force", "--root", "ws"])),
+            Ok((
+                Some(PathBuf::from("ws")),
+                ClearOptions {
+                    dry_run: false,
+                    force: true,
+                }
+            ))
+        );
+    }
+
+    /// A repeated `--root` is absorbed only when it names the same path; two
+    /// different roots refuse and name both, so neither cache is acted on.
+    #[test]
+    fn cache_root_flag_absorbs_an_identical_repeat_and_refuses_a_conflict() {
+        assert_eq!(
+            parse_status_args(&cache_args(&["--root", "a", "--json", "--root", "a"])),
+            Ok((Some(PathBuf::from("a")), true))
+        );
+        assert_eq!(
+            parse_status_args(&cache_args(&["--root", "a", "--root", "b"])),
+            Err("cache status takes --root once (got 'a' and 'b')".to_string())
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--root", "a", "--force", "--root", "a"])),
+            Ok((
+                Some(PathBuf::from("a")),
+                ClearOptions {
+                    dry_run: false,
+                    force: true,
+                }
+            ))
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--root", "a", "--force", "--root", "b"])),
+            Err("cache clear takes --root once (got 'a' and 'b')".to_string())
+        );
+    }
+
+    /// Each subcommand accepts only its own flags, and a stray positional is
+    /// refused rather than read as a root.
+    #[test]
+    fn cache_status_and_clear_refuse_each_others_flags_and_positionals() -> Result<(), String> {
+        assert_eq!(
+            parse_status_args(&cache_args(&["ws"])),
+            Err(
+                "unknown cache status argument \"ws\". Run `ripr cache status --help`.".to_string()
+            )
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--force", "ws"])),
+            Err("unknown cache clear argument \"ws\". Run `ripr cache clear --help`.".to_string())
+        );
+        for flag in ["--force", "--dry-run"] {
+            let Err(message) = parse_status_args(&cache_args(&[flag])) else {
+                return Err(format!("cache status accepted the clear flag {flag}"));
+            };
+            assert!(
+                message.starts_with(&format!("unknown cache status argument {flag:?}.")),
+                "{message}"
+            );
+        }
+        let Err(message) = parse_clear_args(&cache_args(&["--force", "--json"])) else {
+            return Err("cache clear accepted the status flag --json".to_string());
+        };
+        assert!(
+            message.starts_with("unknown cache clear argument \"--json\"."),
+            "{message}"
+        );
+        Ok(())
+    }
+
     /// #7326: `cache status` / `cache clear` printed `Path::display()` of a
     /// canonical Windows path, leaking the verbatim prefix that `ripr doctor`
     /// already strips through `output::path::human_path`. JSON keeps the raw
