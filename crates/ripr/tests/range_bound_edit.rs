@@ -774,6 +774,40 @@ fn an_assertion_under_a_runtime_condition_does_not_separate() -> Result<(), Stri
 }
 
 #[test]
+fn a_moved_upper_bound_in_a_matches_pattern_is_gated() -> Result<(), String> {
+    // #14538: 3 sits inside both `0..=5` and `0..=6`.
+    let findings = findings_on_changed_line(
+        "/// Whether the input is small.\npub fn small(n: u32) -> bool {\n    matches!(n, 0..=6)\n}\n",
+        "    matches!(n, 0..=6)",
+        "    matches!(n, 0..=5)",
+        &test_calling("assert!(small(3));"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_moved_char_bound_in_a_matches_pattern_is_gated() -> Result<(), String> {
+    // #14538: 'm' sits inside both `'a'..='z'` and `'b'..='y'`.
+    let findings = findings_on_changed_line(
+        "/// Whether the input is a lowercase letter.\npub fn lower(c: char) -> bool {\n    matches!(c, 'b'..='y')\n}\n",
+        "    matches!(c, 'b'..='y')",
+        "    matches!(c, 'a'..='z')",
+        &test_calling("assert!(lower('m'));"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn two_moved_bounds_in_matches_patterns_are_gated() -> Result<(), String> {
     // #14538: 3 sits inside every old and new pattern.
     let lib = "/// Whether both inputs are small.\npub fn small(a: u32, b: u32) -> bool {\n    matches!(a, 0..=5) && matches!(b, 0..=5)\n}\n";

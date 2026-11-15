@@ -1221,7 +1221,7 @@ fn range_bound_change(before: &str, after: &str) -> Option<RangeConsumer> {
     let after = mask_rust_comments_and_strings(&raw_after);
     if before == after {
         // A char endpoint (`'a'..='z'`) is masked like a string literal.
-        return char_endpoint_change(&raw_before, &raw_after).then(|| {
+        return char_endpoint_change(&raw_before, &raw_after, &before).then(|| {
             if raw_after.contains("=>") {
                 RangeConsumer::Pattern
             } else {
@@ -1266,67 +1266,29 @@ fn range_bound_change(before: &str, after: &str) -> Option<RangeConsumer> {
                 && long
                     .get(..prefix)
                     .is_some_and(|head| head.ends_with("..") && !head.ends_with("..."));
-            // #14538: an endpoint moved inside a macro's input
-            // (`matches!(n, 1..=5)` to `0..=5`), several ranges edited inside
-            // macro inputs, or a line that does not parse: no range node is
-            // read, so any edit touching a range operator is gated.
-            (one_equals
-                || range_touched(&before, span(&before))
-                || range_touched(&after, span(&after)))
-            .then_some(RangeConsumer::Absorbing)
+            // #14538: an edit inside a macro's input (`matches!(n, 1..=5)`
+            // to `0..=6`) or on a line that does not parse: no range node is
+            // read, so a line holding any range operator is gated.
+            (one_equals || before.contains("..") || after.contains(".."))
+                .then_some(RangeConsumer::Absorbing)
         }
     }
 }
 
-/// Whether a range operator (`..`, `..=`) sits inside the masked `text`'s
-/// changed `span` or within two bytes of either edge: an endpoint written
-/// against the operator (`1..=5` to `0..=5`, `-1..` to `0..`), or an edit
-/// spanning several ranges (`matches!(a, 1..=5) || matches!(b, 1..=5)`).
-fn range_touched(text: &str, span: std::ops::Range<usize>) -> bool {
-    let bytes = text.as_bytes();
-    let start = span.start.saturating_sub(2);
-    let end = (span.end + 2).min(bytes.len());
-    bytes
-        .get(start..end)
-        .is_some_and(|window| window.windows(2).any(|pair| pair == b".."))
-}
-
-/// #14538: whether `before` and `after` differ only in one char literal
-/// written against a range operator (`'a'..='z'` to `'b'..='z'`), which
-/// the masked comparison cannot see.
-fn char_endpoint_change(before: &str, after: &str) -> bool {
-    let prefix = before
-        .bytes()
-        .zip(after.bytes())
-        .take_while(|(left, right)| left == right)
-        .count();
-    let limit = before.len().min(after.len()) - prefix;
-    let suffix = before
-        .bytes()
-        .rev()
-        .zip(after.bytes().rev())
-        .take(limit)
-        .take_while(|(left, right)| left == right)
-        .count();
-    let literal_at = |text: &str| -> bool {
-        let (Some(head), Some(tail)) = (text.get(..prefix), text.get(text.len() - suffix..)) else {
-            return false;
-        };
-        let Some(open) = head.rfind('\'') else {
-            return false;
-        };
-        let Some(close) = tail.find('\'') else {
-            return false;
-        };
-        let literal_len = head.len() - open + (text.len() - suffix - prefix) + close + 1;
-        let outside_head = head[..open].trim_end();
-        let outside_tail = tail[close + 1..].trim_start();
-        literal_len <= 12
-            && (outside_head.ends_with("..")
-                || outside_head.ends_with("..=")
-                || outside_tail.starts_with(".."))
+/// #14538: whether `before` and `after` differ only inside strings, chars
+/// or comments on a line holding a char literal written against a range
+/// operator (`'a'..='z'` to `'b'..='y'`), which the masked comparison cannot
+/// see. Checked by whole-line content, not by byte position, so multibyte
+/// chars and both endpoints changing are covered.
+fn char_endpoint_change(raw_before: &str, raw_after: &str, masked: &str) -> bool {
+    let char_against_range = |raw: &str| {
+        let compact: String = raw.chars().filter(|ch| !ch.is_whitespace()).collect();
+        compact.contains("'..") || compact.contains("..'") || compact.contains("..='")
     };
-    before != after && literal_at(before) && literal_at(after)
+    raw_before != raw_after
+        && masked.contains("..")
+        && char_against_range(raw_before)
+        && char_against_range(raw_after)
 }
 
 /// #14538: a line where several range expressions changed at once
@@ -2120,41 +2082,53 @@ fn is_wildcard_discard(expression: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        RangeConsumer, char_endpoint_change, range_bound_change, range_touched,
-        several_range_change,
-    };
-
-    fn span_of(text: &str, needle: &str) -> std::ops::Range<usize> {
-        let start = text.find(needle).unwrap_or(text.len());
-        start..start + needle.len()
-    }
+    use super::{RangeConsumer, char_endpoint_change, range_bound_change, several_range_change};
 
     #[test]
-    fn an_edit_touching_a_range_operator_in_a_macro_input_is_gated() {
-        // #14538: `matches!` input is not parsed, so the operator decides.
-        let text = "matches!(n, 0..=5)";
-        assert!(range_touched(text, span_of(text, "0")));
-        assert!(range_touched(text, span_of(text, "5")));
+    fn an_edit_on_a_range_line_inside_a_macro_input_is_gated() {
+        // #14538: `matches!` input is not parsed, so any edit on a line
+        // holding a range operator is gated.
         let absorbing = |before: &str, after: &str| {
             range_bound_change(before, after).is_some_and(|kind| kind == RangeConsumer::Absorbing)
         };
         assert!(absorbing("matches!(n, 1..=5)", "matches!(n, 0..=5)"));
+        assert!(absorbing("matches!(n, 0..=5)", "matches!(n, 0..=6)"));
+        assert!(absorbing("matches!(n, 0 ..= 5)", "matches!(n, 0 ..= 6)"));
+        assert!(absorbing(
+            "matches!(n, 0..=MAX - 1)",
+            "matches!(n, 0..=MAX - 2)"
+        ));
         assert!(absorbing("matches!(n, -1..=5)", "matches!(n, 0..=5)"));
         assert!(absorbing("matches!(n, 0..=5)", "matches!(n, 1..5)"));
         assert!(absorbing(
             "matches!(a, 1..=5) || matches!(b, 1..=5)",
             "matches!(a, 0..=5) || matches!(b, 0..=5)"
         ));
+        // Char endpoints are masked like strings.
         assert!(absorbing(
             "matches!(c, 'a'..='z')",
             "matches!(c, 'b'..='z')"
         ));
-        // An edit away from any range operator is not gated.
-        assert!(!range_touched("helper(n, 5)", span_of("helper(n, 5)", "5")));
+        assert!(absorbing(
+            "matches!(c, 'a'..='z')",
+            "matches!(c, 'b'..='y')"
+        ));
+        assert!(absorbing(
+            "matches!(c, '\u{e9}'..='z')",
+            "matches!(c, '\u{e8}'..='z')"
+        ));
+        assert!(absorbing(
+            "matches!(c, 'é'..='z')",
+            "matches!(c, 'è'..='z')"
+        ));
+        // A line with no range operator is not gated.
         assert!(range_bound_change("matches!(n, Some(5))", "matches!(n, Some(6))").is_none());
-        assert!(!char_endpoint_change("f('a')", "f('b')"));
-        assert!(!char_endpoint_change("s == \"a..b\"", "s == \"a..c\""));
+        assert!(!char_endpoint_change("f('a')", "f('b')", "f(   )"));
+        assert!(!char_endpoint_change(
+            "s == \"a..b\"",
+            "s == \"a..c\"",
+            "s ==       "
+        ));
     }
 
     #[test]
