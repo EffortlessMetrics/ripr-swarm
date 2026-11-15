@@ -41,7 +41,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: mutation-spot-check-python-${{ github.ref }}-${{ inputs.packages }}
+  group: mutation-spot-check-python-${{ github.ref }}-${{ inputs.packages }}-${{ inputs.tool }}
   cancel-in-progress: true
 
 jobs:
