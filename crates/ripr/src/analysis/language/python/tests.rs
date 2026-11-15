@@ -4315,6 +4315,7 @@ fn a_changed_message_string_on_a_continuation_line_gets_a_probe() -> Result<(), 
     let context = |in_brackets: bool| PythonNoBehaviorContext {
         new_line_in_brackets: in_brackets,
         old_line_in_brackets: in_brackets,
+        bracket_statement_span: in_brackets.then_some((2, 5)),
         ..PythonNoBehaviorContext::default()
     };
     let new = "        \"XXCould not load the payloadXX\"";

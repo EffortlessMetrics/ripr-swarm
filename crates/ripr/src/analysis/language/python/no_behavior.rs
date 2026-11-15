@@ -86,6 +86,42 @@ pub(super) fn bracket_continuation_line_ranges(
     Some(spans)
 }
 
+/// The one-based `(opening, closing)` lines of the outermost bracketed
+/// statement that `line` continues, from [`bracket_continuation_line_ranges`].
+/// `None` when the line does not start inside a bracket.
+pub(super) fn enclosing_bracket_statement(
+    ranges: &[std::ops::RangeInclusive<usize>],
+    line: usize,
+) -> Option<(usize, usize)> {
+    ranges
+        .iter()
+        .find(|range| range.contains(&line))
+        .map(|range| (range.start().saturating_sub(1), *range.end()))
+}
+
+/// The whole statement a bare-string continuation line belongs to, joined
+/// onto one line, so its probe shape is the statement's (#13875): a message
+/// string inside `raise E(` is an error path, inside `return f(` a returned
+/// value. `None` when the line is not a bare string, or the span or source
+/// is unknown.
+pub(super) fn bare_string_statement_text(
+    line_text: &str,
+    span: Option<(usize, usize)>,
+    source: Option<&str>,
+) -> Option<String> {
+    let (open, close) = span?;
+    if !is_python_no_behavior_line_at(line_text, false) || line_text.trim().is_empty() {
+        return None;
+    }
+    let lines: Vec<&str> = source?
+        .lines()
+        .skip(open.checked_sub(1)?)
+        .take(close.checked_sub(open)? + 1)
+        .map(str::trim)
+        .collect();
+    (!lines.is_empty()).then(|| lines.join(" "))
+}
+
 /// Whether `new` differs from `old` only in a trailing `#` comment or in
 /// whitespace between tokens, so the statement runs identically (#10706).
 /// Both lines are lexed and compared token by token with comments and line

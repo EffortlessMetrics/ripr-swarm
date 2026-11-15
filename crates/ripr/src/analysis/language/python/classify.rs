@@ -19,10 +19,10 @@ use super::imported_call_operator::{IMPORTED_CALL_LIMIT_EVIDENCE, imported_call_
 use super::message_pin;
 use super::module_value::{ModuleConstantEvidence, ModuleEdit, module_constant_evidence};
 use super::no_behavior::{
-    changed_default_overridden_params, format_param_name_list, is_annotation_only_def_change,
-    is_annotation_only_var_change, is_comment_or_whitespace_only_change,
-    is_new_def_header_without_defaults, is_python_no_behavior_line_at,
-    is_structural_def_header_text,
+    bare_string_statement_text, changed_default_overridden_params, format_param_name_list,
+    is_annotation_only_def_change, is_annotation_only_var_change,
+    is_comment_or_whitespace_only_change, is_new_def_header_without_defaults,
+    is_python_no_behavior_line_at, is_structural_def_header_text,
 };
 use super::probe_shape::{
     canonical_python_gap_for, classify_probe_shape_with_old, python_flow_sink_for,
@@ -144,6 +144,10 @@ pub(super) struct PythonNoBehaviorContext {
     pub(super) new_line_in_brackets: bool,
     /// The same for the paired old line, against the reconstructed old source.
     pub(super) old_line_in_brackets: bool,
+    /// The one-based `(opening, closing)` lines of the bracketed statement the
+    /// changed line continues, when the file lexed. A bare string there takes
+    /// the statement's probe shape, not a bare string's (#13875).
+    pub(super) bracket_statement_span: Option<(usize, usize)>,
     /// The changed line is the first line of its enclosing owner, and that
     /// owner's span carries at least one other added behavior line.
     pub(super) opens_owner_with_added_body: bool,
@@ -291,6 +295,18 @@ fn classify_change_full<'a>(
             || is_python_no_behavior_line_at(old, no_behavior.old_line_in_brackets)
     });
     if new_is_noop && old_is_noop {
+        return None;
+    }
+    // A bare string inside brackets is behavior, but only its statement says
+    // what kind (#13875). With no statement span (an unlexable file) there is
+    // nothing to shape it by, so it keeps the earlier no-op reading rather than
+    // a bare string's default shape and an oracle it does not have.
+    if is_python_no_behavior_line_at(line_text, false)
+        && !line_text.trim().is_empty()
+        && !line_text.trim_start().starts_with('#')
+        && no_behavior.bracket_statement_span.is_none()
+        && old_is_noop
+    {
         return None;
     }
     // Trailing-comment / inter-token-whitespace guard (#10706): the same
@@ -491,7 +507,12 @@ fn classify_change_for_owner_inner<'a>(
     {
         return None;
     }
-    let (family, delta) = classify_probe_shape_with_old(line_text, old_line_text);
+    let statement_text =
+        bare_string_statement_text(line_text, no_behavior.bracket_statement_span, owner_source);
+    let (family, delta) = classify_probe_shape_with_old(
+        statement_text.as_deref().unwrap_or(line_text),
+        old_line_text,
+    );
     // Analysis keeps `family`; only the finding's own presentation reads a
     // plain local value edit as a value (#13587).
     // The changed line's probe family (and, for a field change, its changed

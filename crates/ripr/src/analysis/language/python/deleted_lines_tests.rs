@@ -1605,3 +1605,56 @@ fn changed_string_argument_inside_brackets_gets_a_finding() -> Result<(), String
     );
     Ok(())
 }
+
+/// #13875 review: a message string continuing `raise E(` is an error-path
+/// change. A test that pins the function's return value with `==` and only
+/// checks the exception type with `pytest.raises` does not observe the
+/// message, so the finding must not claim `exposed` (isodate 17cb25eb,
+/// `parse_datetime`). Control: the same string continuing `return (` is a
+/// returned value that the exact assertion does observe.
+#[test]
+fn changed_raise_message_inside_brackets_is_not_exposed_by_a_return_assertion() -> Result<(), String>
+{
+    let test = "import pytest\nfrom src.cart import capped_total\n\n\ndef test_capped_total():\n    assert capped_total(1) == \"one\"\n    with pytest.raises(ValueError):\n        capped_total(0)\n";
+    let raising = "def capped_total(items):\n    if not items:\n        raise ValueError(\n            \"XXno itemsXX\"\n        )\n    return \"one\"\n";
+    let findings = analyze_with_test(
+        "raise-message",
+        raising,
+        test,
+        &[4],
+        vec![line(4, 4, "            \"no items\"")],
+    )?;
+    let finding = findings
+        .iter()
+        .find(|finding| finding.probe.location.line == 4)
+        .ok_or_else(|| format!("no finding on the message line: {findings:?}"))?;
+    assert_eq!(
+        finding.probe.family,
+        crate::domain::ProbeFamily::ErrorPath,
+        "{finding:?}"
+    );
+    assert_ne!(
+        finding.class,
+        crate::domain::ExposureClass::Exposed,
+        "a type-only raises check does not observe the message: {finding:?}"
+    );
+
+    let returning = "def capped_total(items):\n    return (\n        \"XXoneXX\"\n    )\n";
+    let findings = analyze_with_test(
+        "return-string",
+        returning,
+        test,
+        &[3],
+        vec![line(3, 3, "        \"one\"")],
+    )?;
+    let finding = findings
+        .iter()
+        .find(|finding| finding.probe.location.line == 3)
+        .ok_or_else(|| format!("no finding on the returned string: {findings:?}"))?;
+    assert_eq!(
+        finding.probe.family,
+        crate::domain::ProbeFamily::ReturnValue,
+        "{finding:?}"
+    );
+    Ok(())
+}

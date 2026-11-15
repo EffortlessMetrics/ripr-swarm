@@ -2315,6 +2315,9 @@ impl PythonAdapter {
                         line_is_in_ranges(removed.line, &old_type_checking_ranges)
                     }),
                     new_line_in_brackets: in_brackets(added.line),
+                    bracket_statement_span: bracket_ranges.as_deref().and_then(|ranges| {
+                        no_behavior::enclosing_bracket_statement(ranges, added.line)
+                    }),
                     old_line_in_brackets: old_line.is_some_and(|removed| {
                         old_bracket_ranges
                             .as_deref()
