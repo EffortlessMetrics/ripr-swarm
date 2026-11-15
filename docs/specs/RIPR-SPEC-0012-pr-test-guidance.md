@@ -272,6 +272,16 @@ advisory at the seam's own location, gives the reason that the seam is outside
 the pull request's changed lines, and names its owner and behavior without the
 "Changed" label. Seams placed by rules 1-3 stay block-eligible as before.
 
+A card placed by rule 2 or 3 sits on a changed line other than its gap, so its
+reviewer-facing text names the gap's own line and expression (#14303). Check
+annotations from `ripr reports ci-summary` and `ripr annotations` begin with
+"Gap at line N (expression) of this function: ". The inline comment body adds
+"Gap at line N of this function: expression. This comment sits on the nearest
+changed line." after its heading and keeps it in the visible lead of the
+compact body. The note is absent for rule 1 and whenever the gap line equals
+the placed line or is unknown (line 0).
+`review_comments/placement.rs::displaced_seam_location` owns that decision.
+
 ## JSON Shape
 
 The renderer writes:
@@ -462,7 +472,9 @@ annotations`, `ripr reports ci-packet`, the check renderer, and `cargo xtask
 ripr-annotations`) omits `file=` and `line=` for such a path and leads the
 message with `Location (file name has control characters, so not placed):
 <escaped path>:<line>.` The escaped form prints each character as `\u{XX}`
-(#6309).
+(#6309). A path with non-UTF-8 bytes (stable `%XX` text, which GitHub does
+not decode) is treated the same way and leads with `Location (file name is not
+valid UTF-8, so not placed): <stable path>:<line>.` (#13961).
 
 The `ripr annotations` comments loader determines file presence with one
 direct read (#1958): a `NotFound` outcome is the intended optional-comments
@@ -601,6 +613,12 @@ false credit from an unchanged crate-root test at the same line number.
 `dirty_worktree_missing_path_still_credits_head_wrapper` and
 `dirty_worktree_valid_path_does_not_credit_when_head_path_missing` pin
 head-blob wrapper identity against a dirty worktree manifest.
+
+`a_card_placed_on_another_changed_line_names_the_gap_line` (CI summary
+annotations), `a_displaced_card_annotation_names_the_gap_line`
+(`ripr annotations`), `inline_comment_body_names_the_gap_line_when_placed_elsewhere`
+and `a_displaced_card_names_its_gap_line_in_the_visible_lead` pin the
+displaced-gap note.
 
 Initial implementation should add tests for:
 

@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact error variant assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact error variant assertion", "local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 45)", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "source function argument value raw = \"@bad;\" at line 10", "source enum variant value ParseSummaryError::MalformedSource at line 11"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(ParseSummaryError::MalformedSource)","line":45}
@@ -134,6 +141,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact error variant assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact error variant assertion", "local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 45)", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "source function argument value raw = \"@bad;\" at line 10", "source enum variant value ParseSummaryError::MalformedSource at line 11"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(ParseSummaryError::MalformedSource)","line":45}
@@ -227,6 +241,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact error variant assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact error variant assertion", "local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 48)", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "source function argument value raw = \"@bad;\" at line 10", "source enum variant value ParseSummaryError::MalformedSource at line 11"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(ParseSummaryError::MalformedSource)","line":48}
@@ -320,6 +341,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact error variant assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact error variant assertion", "local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 48)", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "source function argument value raw = \"@bad;\" at line 10", "source enum variant value ParseSummaryError::MalformedSource at line 11"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(ParseSummaryError::MalformedSource)","line":48}
@@ -401,6 +429,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach parse_summary: parse_summary_boxed_variant_propagates_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: try_parse_summary(raw).map_err(Into::into) (line 56)", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "source enum variant value ParseSummaryError::MalformedSource at line 11", "source function argument value raw = \"@bad;\" at line 20", "source enum variant value ParseSummaryError::MalformedSource at line 23"],
       "flow_sinks": [
         {"kind":"error_variant","text":"try_parse_summary(raw).map_err(Into::into)","line":56}
@@ -515,6 +550,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach parse_summary: parse_summary_boxed_variant_propagates_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: try_parse_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: try_parse_summary(raw).map_err(Into::into) (line 56)", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "source enum variant value ParseSummaryError::MalformedSource at line 11", "source function argument value raw = \"@bad;\" at line 20", "source enum variant value ParseSummaryError::MalformedSource at line 23"],
       "flow_sinks": [
         {"kind":"return_value","text":"try_parse_summary(raw).map_err(Into::into)","line":56}
@@ -629,6 +671,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach checksum_summary: checksum_summary_pins_wrong_sibling_variant", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: try_checksum_summary(payload).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: try_checksum_summary(payload).map_err(Into::into) (line 67)", "related test tests/errors.rs:33 checksum_summary_pins_wrong_sibling_variant uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ChecksumError>(),\nSome(ChecksumError::MalformedPayload)\n) {\nreturn Err(\"checksum witness pinned the malformed-payload sibling\".into());\n}", "source function argument value payload = \"payload?\" at line 34", "source enum variant value ChecksumError::MalformedPayload at line 37"],
       "flow_sinks": [
         {"kind":"error_variant","text":"try_checksum_summary(payload).map_err(Into::into)","line":67}
@@ -720,6 +769,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach checksum_summary: checksum_summary_pins_wrong_sibling_variant", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: try_checksum_summary(payload).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: try_checksum_summary(payload).map_err(Into::into) (line 67)", "related test tests/errors.rs:33 checksum_summary_pins_wrong_sibling_variant uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ChecksumError>(),\nSome(ChecksumError::MalformedPayload)\n) {\nreturn Err(\"checksum witness pinned the malformed-payload sibling\".into());\n}", "source function argument value payload = \"payload?\" at line 34", "source enum variant value ChecksumError::MalformedPayload at line 37"],
       "flow_sinks": [
         {"kind":"return_value","text":"try_checksum_summary(payload).map_err(Into::into)","line":67}
@@ -811,6 +867,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach render_summary: render_summary_observes_other_enum_variant", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: try_render_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: try_render_summary(raw).map_err(Into::into) (line 81)", "related test tests/errors.rs:47 render_summary_observes_other_enum_variant uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"render witness pinned the parse-summary variant instead\".into());\n}", "source function argument value raw = \"zhex\" at line 48", "source enum variant value ParseSummaryError::MalformedSource at line 51"],
       "flow_sinks": [
         {"kind":"error_variant","text":"try_render_summary(raw).map_err(Into::into)","line":81}
@@ -902,6 +965,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach render_summary: render_summary_observes_other_enum_variant", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: try_render_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: try_render_summary(raw).map_err(Into::into) (line 81)", "related test tests/errors.rs:47 render_summary_observes_other_enum_variant uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"render witness pinned the parse-summary variant instead\".into());\n}", "source function argument value raw = \"zhex\" at line 48", "source enum variant value ParseSummaryError::MalformedSource at line 51"],
       "flow_sinks": [
         {"kind":"return_value","text":"try_render_summary(raw).map_err(Into::into)","line":81}
@@ -993,6 +1063,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach length_summary: length_summary_only_checks_is_err", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: try_length_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: try_length_summary(raw).map_err(Into::into) (line 95)", "related test tests/errors.rs:61 length_summary_only_checks_is_err uses weak broad error oracle: assert!(result.is_err());", "source function argument value raw = \"way-too-long-input-that-exceeds-the-forty-char-limit!!\" at line 62"],
       "flow_sinks": [
         {"kind":"error_variant","text":"try_length_summary(raw).map_err(Into::into)","line":95}
@@ -1073,6 +1150,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach length_summary: length_summary_only_checks_is_err", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: try_length_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: try_length_summary(raw).map_err(Into::into) (line 95)", "related test tests/errors.rs:61 length_summary_only_checks_is_err uses weak broad error oracle: assert!(result.is_err());", "source function argument value raw = \"way-too-long-input-that-exceeds-the-forty-char-limit!!\" at line 62"],
       "flow_sinks": [
         {"kind":"return_value","text":"try_length_summary(raw).map_err(Into::into)","line":95}
@@ -1153,6 +1237,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach glyph_summary: glyph_summary_downcast_witness_on_stringified_wrapper", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for error variant: try_glyph_summary(raw).map_err(|error| error.to_string().into())", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: try_glyph_summary(raw).map_err(|error| error.to_string().into()) (line 109)", "related test tests/errors.rs:67 glyph_summary_downcast_witness_on_stringified_wrapper uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<GlyphError>(),\nSome(GlyphError::MalformedGlyph)\n) {\nreturn Err(\"glyph variant witness requires the typed conversion\".into());\n}", "source function argument value raw = \"#glyph\" at line 69", "source enum variant value GlyphError::MalformedGlyph at line 72"],
       "flow_sinks": [
         {"kind":"error_variant","text":"try_glyph_summary(raw).map_err(|error| error.to_string().into())","line":109}
@@ -1244,6 +1335,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach glyph_summary: glyph_summary_downcast_witness_on_stringified_wrapper", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: try_glyph_summary(raw).map_err(|error| error.to_string().into())", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: try_glyph_summary(raw).map_err(|error| error.to_string().into()) (line 109)", "related test tests/errors.rs:67 glyph_summary_downcast_witness_on_stringified_wrapper uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<GlyphError>(),\nSome(GlyphError::MalformedGlyph)\n) {\nreturn Err(\"glyph variant witness requires the typed conversion\".into());\n}", "source function argument value raw = \"#glyph\" at line 69", "source enum variant value GlyphError::MalformedGlyph at line 72"],
       "flow_sinks": [
         {"kind":"return_value","text":"try_glyph_summary(raw).map_err(|error| error.to_string().into())","line":109}
@@ -1347,6 +1445,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach theme_summary: theme_summary_ignores_matches_result", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: try_theme_summary(raw).map_err(Into::into)", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches error variant: try_theme_summary(raw).map_err(Into::into) (line 123)", "related test tests/errors.rs:82 theme_summary_ignores_matches_result uses no oracle", "source function argument value raw = \"&theme\" at line 83"],
       "flow_sinks": [
         {"kind":"error_variant","text":"try_theme_summary(raw).map_err(Into::into)","line":123}
@@ -1431,6 +1536,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach theme_summary: theme_summary_ignores_matches_result", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: try_theme_summary(raw).map_err(Into::into)", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches returned value: try_theme_summary(raw).map_err(Into::into) (line 123)", "related test tests/errors.rs:82 theme_summary_ignores_matches_result uses no oracle", "source function argument value raw = \"&theme\" at line 83"],
       "flow_sinks": [
         {"kind":"return_value","text":"try_theme_summary(raw).map_err(Into::into)","line":123}

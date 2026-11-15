@@ -88,7 +88,7 @@ const MAIN_STATUS_BAR_VISIBILITY: Record<RiprStatusKind, boolean> = {
   workspaceUntrusted: true,
   workspaceAmbiguous: true,
   resolvingServer: true,
-  serverUnavailable: false,
+  serverUnavailable: true,
   serverFailed: true,
   circuitOpen: true,
   starting: true,
@@ -123,9 +123,18 @@ suite('Main status-bar visibility (#5319)', () => {
       .sort();
     assert.deepStrictEqual(
       hidden,
-      ['disabled', 'serverUnavailable'],
-      'only disabled and serverUnavailable hide the main item; noWorkspace stays visible'
+      ['disabled'],
+      'only disabled hides the main item; noWorkspace and serverUnavailable stay visible'
     );
+  });
+
+  test('a missing server keeps a persistent status item after the toast is gone (#13638)', () => {
+    assert.strictEqual(
+      shouldShowMainStatusBar('serverUnavailable'),
+      true,
+      'serverUnavailable must stay visible; the missing-server popup is transient'
+    );
+    assert.strictEqual(statusText('serverUnavailable'), '$(warning) ripr: server missing');
   });
 });
 

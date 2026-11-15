@@ -35,6 +35,11 @@ says those files are not analyzed and points at `ripr doctor` instead of
 promising a loop. `--force` also refreshes the Cursor front matter, but only
 when it is exactly the one ripr wrote; your own front matter is kept.
 
+Every language variant uses the same compact post-edit `check --format agent`
+report for VERIFY and DONE. The final `verify=` record applies the full-count,
+scope and source-currentness checks; preview results remain advisory. No
+variant requires a full JSON report for ordinary completion.
+
 ## What `--agents` does to your files
 
 - It writes a short block (about 700 tokens) between `<!-- ripr:agents:begin ... -->`
@@ -105,12 +110,14 @@ not edit source or tests, run verification, or create a durable CLI attempt.
 See the [progressive MCP flow](interop/mcp.md#progressive-flow) for repair
 cards, attempt and receipt inspection, and snapshot-pinned reads.
 
-Refresh explicitly after edits. For saved tracked changes, pass
-`source: "worktree"` to `ripr_refresh` and repeat any explicit `base` on each
+Refresh explicitly after edits. Like `ripr check`, `ripr_refresh` reads saved
+tracked edits when any exist; pass `source: "committed"` or
+`source: "worktree"` to force one, and repeat any explicit `base` on each
 refresh. The server does not watch the worktree.
 
-The CLI loop above is cheaper. The default MCP tool list alone costs roughly
-11k tokens. Register it only if your agent prefers tools. `ripr` must be on
+The CLI loop above is cheaper. The default MCP tool list alone is about 12 KB
+(11,884 bytes on the wire) at every session start. Register it only if your
+agent prefers tools. `ripr` must be on
 `PATH`.
 
 | Agent | Register |
@@ -133,7 +140,7 @@ Cursor and Claude Code share one entry shape:
 }
 ```
 
-The `env` line asks for the slim `tools/list` (about 29 KB smaller at every session start; results are unchanged). Delete it if your host validates results against `outputSchema`.
+The slim `tools/list` is the default, and the `env` line keeps older ripr builds slim too (results are unchanged). If your host validates results against `outputSchema`, set the value to `full`.
 
 `ripr init --mcp` and the Cursor file were exercised against the real
 `ripr` binary. The `claude`, `codex` and Cursor clients' own registration and
@@ -160,9 +167,10 @@ For one finding, pick by what the consumer is:
 `ripr check --quiet --format agent` for the same root, base and saved source
 used by the loop. Use that single report for both verification and the done
 decision; if inputs change, run the check again. Read its last line, not just
-`done=`, an empty gap list or the human message `State: no gap selected for
-repair`. That `verify=` record is projected from the producer's outcome and
-full summary counts, never from the displayed subset:
+`done=`, an empty gap list or the human messages `State: no test gap found`
+and `State: no gap selected for repair`. That `verify=` record is projected
+from the producer's outcome and full summary counts, never from the displayed
+subset:
 
 - `verify=complete|outcome=O|findings=N|exposed=N` means the outcome is
   `complete_no_findings` or `complete_with_findings`, the full
@@ -173,7 +181,7 @@ full summary counts, never from the displayed subset:
   Gitignored source is named in the notes but does not refuse.
 - `verify=refused|...|reason=R,...` names every unmet condition
   (`outcome_missing`, `no_behavior_in_scope`, `analysis_incomplete`,
-  `gaps_remain`, `unanalyzed_working_tree`, `untracked_source_excluded`,
+  `unexposed_findings_remain`, `unanalyzed_working_tree`, `untracked_source_excluded`,
   `partial_scope`, `no_scope`).
   `no_scope`, `no_changed_lines` and `no_behavioral_candidates` are complete
   analyses of an empty scope; they do not establish completion of the
