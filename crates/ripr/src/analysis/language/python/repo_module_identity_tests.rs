@@ -101,6 +101,10 @@ fn given_src_short_name_shadowed_by_plain_module_when_repo_mode_then_not_exposed
         "svc/a/src/core.py",
         2,
     )?;
-    assert_ne!(other_project.related_tests.len(), 0, "{other_project:?}");
+    assert_eq!(
+        other_project.class,
+        ExposureClass::Exposed,
+        "{other_project:?}"
+    );
     Ok(())
 }

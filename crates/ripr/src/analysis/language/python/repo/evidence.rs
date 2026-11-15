@@ -673,9 +673,9 @@ pub(in crate::analysis::language::python) fn partial_disclosure(
 /// The free-function definitions of every production file a test imports a
 /// name from (`from M import name`), for [`RivalDefinitionIndex::apply`].
 /// Only such an import can bind a name to a rival module, so other files are
-/// not needed. A file whose text has no `def name` for any imported name
-/// defines none of them and is not parsed; an unreadable or unparsable file
-/// contributes nothing, as an unread file does in diff mode.
+/// not needed. A file whose text never spells an imported name defines none
+/// of them and is not parsed. An unreadable or unparsable file contributes no
+/// rival, which can only withhold less credit, never add any.
 fn rival_definition_index(
     root: &Path,
     production_files: &[PathBuf],
@@ -709,13 +709,13 @@ fn rival_definition_index(
         let Ok(source) = std::fs::read_to_string(root.join(relative)) else {
             continue;
         };
-        if !names
-            .iter()
-            .any(|name| source.contains(&format!("def {name}")))
-        {
+        // A file that never spells an imported name cannot define it; any
+        // spacing between `def` and the name is legal, so match the name alone.
+        if !names.iter().any(|name| source.contains(name)) {
             continue;
         }
-        if let Ok(facts) = load_facts(root, relative) {
+        let facts = extract_source_facts(relative, &source);
+        if source_facts_parse_error(&facts).is_none() {
             index.extend(facts.owners.iter());
         }
     }
