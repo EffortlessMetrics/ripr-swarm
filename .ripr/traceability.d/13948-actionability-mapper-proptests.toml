@@ -22,3 +22,18 @@ tests = [
   "crates/ripr/src/analysis/language/perl/actionability_proptest_tests.rs::perl_strict_actionability_refuses_whenever_a_refusal_condition_holds",
   "crates/ripr/src/analysis/language/perl/actionability_proptest_tests.rs::perl_strict_actionability_refuses_each_condition_alone",
 ]
+
+# Current-behavior pins RIPR-SPEC-0087 (proposed) must revise when it flips a
+# complete-contract TypeScript finding to actionable.
+[[extend]]
+id = "RIPR-SPEC-0087"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/actionability_proptest_tests.rs::typescript_actionability_never_actionable_and_refusals_hold",
+  "crates/ripr/src/analysis/language/typescript/actionability_proptest_tests.rs::typescript_actionability_refusals_survive_evidence_removal",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0085"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/actionability_proptest_tests.rs::typescript_actionability_never_actionable_and_refusals_hold",
+]

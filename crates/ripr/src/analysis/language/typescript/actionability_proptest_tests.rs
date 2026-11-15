@@ -1,7 +1,12 @@
 //! Property tests for the TypeScript preview actionability mapper (#13948).
 //!
-//! `typescript_actionability_for` never promotes a finding: every branch
-//! returns a non-actionable `EvidenceState`. The example tests and the
+//! These properties characterize current behavior, not a permanent contract.
+//! Today `typescript_actionability_for` never promotes a finding: every branch
+//! returns a non-actionable `EvidenceState`. RIPR-SPEC-0087 (proposed, PR 7 of
+//! the RIPR-SPEC-0085 campaign) plans to flip a complete-contract TypeScript
+//! finding to actionable through this mapper. When 0087 lands, the "never
+//! actionable" assertion and `expected_refusal` must be revised to admit that
+//! branch, keeping every refusal below fail-closed. The example tests and the
 //! exhaustive two-value sweep in `actionability.rs` pin one static-limit kind
 //! and one discriminator; these properties range over every `ExposureClass`,
 //! every `StaticLimitKind`, arbitrary repair-route text, any discriminator
@@ -17,7 +22,11 @@
 //! 6. no missing discriminator -> `unknown` / `missing_target_shape`;
 //! 7. otherwise -> `unknown` / `incomplete_repair_packet`.
 //!
-//! Monotonicity: since no input yields an actionable state, "removing evidence
+//! `expected_refusal` mirrors the mapper's branch order. It is a
+//! characterization pin that catches a changed branch, state or category, not
+//! an independent oracle of what the order should be.
+//!
+//! Monotonicity: since no input yields an actionable state today, "removing evidence
 //! never turns non-actionable into actionable" holds trivially. The stronger,
 //! true invariant asserted here is that an established refusal (conditions 1
 //! and 2) is stable under evidence removal: dropping owner-call evidence or
@@ -50,7 +59,8 @@ fn config() -> Config {
 /// Every `StaticLimitKind`. `ripr_contract`'s own `ALL` list is
 /// `#[cfg(test)]` in that crate and not visible here, so this copy is kept in
 /// step by the exhaustive match in `static_limit_kind_ordinal`: a new variant
-/// fails to compile there until it is added to both.
+/// fails to compile there, and a variant added to the match but not to this
+/// array fails `static_limit_kind_list_is_complete_and_ordered`.
 const STATIC_LIMIT_KINDS: [StaticLimitKind; 35] = [
     StaticLimitKind::DynamicDispatch,
     StaticLimitKind::Metaprogramming,
@@ -129,11 +139,23 @@ fn static_limit_kind_ordinal(kind: StaticLimitKind) -> usize {
     }
 }
 
+/// The largest ordinal `static_limit_kind_ordinal` assigns. Keep it equal to
+/// the last arm; the test below checks the array reaches it.
+const MAX_STATIC_LIMIT_KIND_ORDINAL: usize = 34;
+
 #[test]
 fn static_limit_kind_list_is_complete_and_ordered() {
     for (index, kind) in STATIC_LIMIT_KINDS.iter().enumerate() {
         assert_eq!(static_limit_kind_ordinal(*kind), index, "{kind:?}");
     }
+    // Every ordinal is distinct and in 0..len by the loop above; the length
+    // must also cover the largest ordinal, so a kind given a new ordinal in
+    // the match but missing from the array fails here.
+    assert_eq!(STATIC_LIMIT_KINDS.len(), MAX_STATIC_LIMIT_KIND_ORDINAL + 1);
+    assert_eq!(
+        static_limit_kind_ordinal(StaticLimitKind::RustFutureNeverPolled),
+        MAX_STATIC_LIMIT_KIND_ORDINAL
+    );
 }
 
 #[derive(Clone, Debug)]
@@ -223,8 +245,10 @@ fn input() -> impl Strategy<Value = Input> {
         )
 }
 
-/// The refusal category the mapper's precedence order assigns, derived from
-/// the conditions in `typescript_actionability_for` rather than its output.
+/// The refusal category the mapper's precedence order assigns. This mirrors
+/// the branch order of `typescript_actionability_for` (a characterization pin,
+/// not an independent oracle) and must be revised when RIPR-SPEC-0087 adds an
+/// actionable branch.
 fn expected_refusal(input: &Input) -> (EvidenceState, &'static str) {
     if input.private_member_unknown {
         return (EvidenceState::Unknown, "private_member_reach_unknown");
@@ -246,8 +270,9 @@ fn expected_refusal(input: &Input) -> (EvidenceState, &'static str) {
 proptest! {
     #![proptest_config(config())]
 
-    /// No input yields an actionable state, and every refusal condition maps
-    /// to its own non-actionable state and category in precedence order.
+    /// Current behavior: no input yields an actionable state, and every
+    /// refusal condition maps to its own non-actionable state and category in
+    /// precedence order. Revise when RIPR-SPEC-0087 lands.
     #[test]
     fn typescript_actionability_never_actionable_and_refusals_hold(input in input()) {
         let actionability = input.map();

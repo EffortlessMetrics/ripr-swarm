@@ -6,8 +6,9 @@
 //! packet row the mapper selects and of the caller's context at once, starting
 //! from the committed actionable fixture.
 //!
-//! Refusal conditions enumerated from the mapper (and the classifier it reads
-//! the selected evidence class from):
+//! The refusal conditions reachable from these perturbations (31, one per
+//! `note` in `refusals`), taken from the mapper, the related-evidence filter
+//! and the classifier it reads the selected evidence class from:
 //!
 //! - packet status other than `complete`;
 //! - the requested change is absent;
@@ -16,17 +17,51 @@
 //! - a behavior hint without a repair kind (`call_effect`, `unknown`);
 //! - relation kind other than `direct_owner_call`/`helper_call`;
 //! - reachability other than `reachable`;
-//! - the relation has no oracle, the oracle is not bound to the owner, or its
-//!   strength is not `strong_exact` (the evidence is not `weakly_exposed`);
+//! - the relation has no oracle, the oracle is not bound to the owner, the
+//!   oracle belongs to another test, its strength is not `strong_exact`, or an
+//!   `isnt` comparison downgrades it (the evidence is not `weakly_exposed`);
+//! - `oracle_matcher_grading` declared and the oracle is an exception
+//!   observer (rule 16), or the change's observable is declared absent or
+//!   blank (rule 18);
+//! - the relation names another owner (it is not related evidence at all);
 //! - an `unknown` test framework;
 //! - the oracle shape is not the behavior hint's default assertion shape;
-//! - a blocking limitation or dynamic boundary applies (static limit);
+//! - a blocking limitation (every blocking kind, against the relation, change,
+//!   test or with no refs) or any dynamic boundary kind on the owner, source
+//!   file or test file;
+//! - an owner of kind `unknown` (no canonical gap identity);
 //! - a missing, empty, unsafe or non-test verify command;
 //! - a missing, empty or invalid receipt command;
 //! - a test file without the `test` role;
+//! - an unsafe source or test path inside the packet;
+//! - empty `provenance_refs` on any fact the raw evidence refs cite;
 //! - an unsafe allowed or forbidden edit path, an allowed path set other than
 //!   exactly the related test file, or a forbidden set without the source;
 //! - empty `stop_if`, or `must_not_change` without both required rules.
+//!
+//! Not covered, and why:
+//!
+//! - `test_file.path != evidence.test_path`: unreachable, both are read from
+//!   the same file row;
+//! - an empty raw-evidence-ref list after success: unreachable, eight refs are
+//!   pushed or an earlier check refuses;
+//! - a missing concrete discriminator is not a refusal: the canonical gap id
+//!   falls back to the behavior hint's default label;
+//! - an owner id without the `perl:` prefix: every row keyed by that id would
+//!   have to be renamed together, so it is not perturbed;
+//! - the related-evidence filter that drops another test's oracle is
+//!   backstopped by the classifier's own `oracle.test_id == relation.test_id`
+//!   binding check, so removing either one alone still refuses; the condition
+//!   is pinned, the individual filter is not;
+//! - several related tests and the selection among them: only the fixture's
+//!   single related test is perturbed (`tests.rs` pins a limitation on a
+//!   non-selected relation).
+//!
+//! The oracle is not fully independent: `refusals` calls the production
+//! helpers `repair_kind`, `default_assertion_shape`, `assertion_shape` and
+//! `is_strict_actionable`, so a wrong answer from one of those is mirrored
+//! rather than caught here. The blocking limitation-kind table is a separate
+//! copy, not the production predicate.
 //!
 //! Monotonicity holds for *supporting* evidence only, and that is what is
 //! asserted: removing a supporting row, field or context entry never turns a
@@ -149,6 +184,220 @@ const STRENGTHS: [OracleStrength; 5] = [
     OracleStrength::Unknown,
 ];
 
+/// Limitation kinds with whether they block strict actionability (the union
+/// of the operational blocking list and the static-limit taxonomy), plus kinds
+/// that do not block.
+const LIMITATION_KINDS: [(&str, bool); 24] = [
+    ("dynamic_dispatch", true),
+    ("module_resolution_unknown", true),
+    ("generated_symbol", true),
+    ("role_composition", true),
+    ("monkeypatch_or_symbol_patch", true),
+    ("eval_or_string_code", true),
+    ("symbol_table_mutation", true),
+    ("framework_indirection", true),
+    ("unknown_helper", true),
+    ("unsupported_syntax", true),
+    ("missing_test_runner", true),
+    ("missing_diff_owner", true),
+    ("narrowed_representation", true),
+    ("packet_incomplete", true),
+    ("partial_emitter", true),
+    ("unknown", true),
+    ("missing_import_graph", true),
+    ("metaprogramming", true),
+    ("decorator_indirection", true),
+    ("mocked_module", true),
+    ("opaque_custom_assertion_helper", true),
+    ("parse_failure", true),
+    ("advisory_note", false),
+    ("", false),
+];
+const BOUNDARY_KINDS: [BoundaryKind; 15] = [
+    BoundaryKind::DynamicDispatch,
+    BoundaryKind::ModuleResolutionUnknown,
+    BoundaryKind::GeneratedSymbol,
+    BoundaryKind::RoleComposition,
+    BoundaryKind::MonkeypatchOrSymbolPatch,
+    BoundaryKind::EvalOrStringCode,
+    BoundaryKind::SymbolTableMutation,
+    BoundaryKind::FrameworkIndirection,
+    BoundaryKind::UnknownHelper,
+    BoundaryKind::UnsupportedSyntax,
+    BoundaryKind::MissingTestRunner,
+    BoundaryKind::MissingDiffOwner,
+    BoundaryKind::PacketIncomplete,
+    BoundaryKind::PartialEmitter,
+    BoundaryKind::Unknown,
+];
+const OTHER_OWNER_ID: &str = "perl:lib/My/App.pm::My::App::eligible";
+const OTHER_TEST_ID: &str = "test:t/app_test2.t:discount_profile";
+
+/// What a pushed limitation's `evidence_refs` name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LimitTarget {
+    Relation,
+    Change,
+    Test,
+    NoRefs,
+    Unrelated,
+}
+
+/// Where a pushed dynamic boundary sits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BoundaryScope {
+    Owner,
+    SourceFile,
+    TestFile,
+    OtherOwner,
+}
+
+/// The change's `changed_observable` field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ObservableVariant {
+    NotCarried,
+    Present,
+    DeclaredNull,
+    Blank,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PacketPath {
+    Safe,
+    UnsafeSource,
+    UnsafeTest,
+}
+
+/// A fact whose `provenance_refs` the raw evidence refs require.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProvenanceFact {
+    Change,
+    SourceFile,
+    Owner,
+    Relation,
+    Test,
+    TestFile,
+    Oracle,
+    Verify,
+}
+
+/// Perturbations beyond the row fields, each defaulting to the fixture.
+#[derive(Clone, Copy, Debug)]
+struct Extra {
+    limitation_kind: usize,
+    limitation_target: LimitTarget,
+    boundary_kind: usize,
+    boundary_scope: BoundaryScope,
+    matcher_grading: bool,
+    observable: ObservableVariant,
+    oracle_from_other_test: bool,
+    negated_comparison: bool,
+    owner_kind_unknown: bool,
+    packet_path: PacketPath,
+    empty_provenance: Option<ProvenanceFact>,
+    relation_for_other_owner: bool,
+}
+
+impl Default for Extra {
+    fn default() -> Self {
+        Self {
+            limitation_kind: 7,
+            limitation_target: LimitTarget::Relation,
+            boundary_kind: 0,
+            boundary_scope: BoundaryScope::Owner,
+            matcher_grading: false,
+            observable: ObservableVariant::NotCarried,
+            oracle_from_other_test: false,
+            negated_comparison: false,
+            owner_kind_unknown: false,
+            packet_path: PacketPath::Safe,
+            empty_provenance: None,
+            relation_for_other_owner: false,
+        }
+    }
+}
+
+const LIMIT_TARGETS: [LimitTarget; 5] = [
+    LimitTarget::Relation,
+    LimitTarget::Change,
+    LimitTarget::Test,
+    LimitTarget::NoRefs,
+    LimitTarget::Unrelated,
+];
+const BOUNDARY_SCOPES: [BoundaryScope; 4] = [
+    BoundaryScope::Owner,
+    BoundaryScope::SourceFile,
+    BoundaryScope::TestFile,
+    BoundaryScope::OtherOwner,
+];
+const OBSERVABLES: [ObservableVariant; 4] = [
+    ObservableVariant::NotCarried,
+    ObservableVariant::Present,
+    ObservableVariant::DeclaredNull,
+    ObservableVariant::Blank,
+];
+const PACKET_PATHS: [PacketPath; 3] = [
+    PacketPath::Safe,
+    PacketPath::UnsafeSource,
+    PacketPath::UnsafeTest,
+];
+const PROVENANCE_FACTS: [ProvenanceFact; 8] = [
+    ProvenanceFact::Change,
+    ProvenanceFact::SourceFile,
+    ProvenanceFact::Owner,
+    ProvenanceFact::Relation,
+    ProvenanceFact::Test,
+    ProvenanceFact::TestFile,
+    ProvenanceFact::Oracle,
+    ProvenanceFact::Verify,
+];
+
+fn extra_strategy() -> impl Strategy<Value = Extra> {
+    (
+        0..LIMITATION_KINDS.len(),
+        select(&LIMIT_TARGETS),
+        0..BOUNDARY_KINDS.len(),
+        select(&BOUNDARY_SCOPES),
+        any::<bool>(),
+        select(&OBSERVABLES),
+        any::<bool>(),
+        any::<bool>(),
+        any::<bool>(),
+        select(&PACKET_PATHS),
+        prop::option::of(select(&PROVENANCE_FACTS)),
+        any::<bool>(),
+    )
+        .prop_map(
+            |(
+                limitation_kind,
+                limitation_target,
+                boundary_kind,
+                boundary_scope,
+                matcher_grading,
+                observable,
+                oracle_from_other_test,
+                negated_comparison,
+                owner_kind_unknown,
+                packet_path,
+                empty_provenance,
+                relation_for_other_owner,
+            )| Extra {
+                limitation_kind,
+                limitation_target,
+                boundary_kind,
+                boundary_scope,
+                matcher_grading,
+                observable,
+                oracle_from_other_test,
+                negated_comparison,
+                owner_kind_unknown,
+                packet_path,
+                empty_provenance,
+                relation_for_other_owner,
+            },
+        )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VerifyVariant {
     Valid,
@@ -200,6 +449,7 @@ struct Draw {
     stop_if_count: usize,
     production_rule: bool,
     suppression_rule: bool,
+    extra: Extra,
 }
 
 fn select<T: Clone + std::fmt::Debug + 'static>(values: &[T]) -> prop::sample::Select<T> {
@@ -259,7 +509,7 @@ fn uniform_draw() -> impl Strategy<Value = Draw> {
         any::<bool>(),
         any::<bool>(),
     );
-    (packet, relation, context).prop_map(
+    (packet, relation, context, extra_strategy()).prop_map(
         |(
             (
                 packet_status,
@@ -285,6 +535,7 @@ fn uniform_draw() -> impl Strategy<Value = Draw> {
                 verify,
             ),
             (receipt, allowed, forbidden, stop_if_count, production_rule, suppression_rule),
+            extra,
         )| Draw {
             packet_status,
             ask_absent_change,
@@ -316,6 +567,7 @@ fn uniform_draw() -> impl Strategy<Value = Draw> {
             stop_if_count,
             production_rule,
             suppression_rule,
+            extra,
         },
     )
 }
@@ -331,6 +583,7 @@ fn supporting_draw() -> impl Strategy<Value = Draw> {
         select(&FRAMEWORKS[..6]),
         any::<bool>(),
         1usize..3,
+        supporting_extra(),
     )
         .prop_map(
             |(
@@ -341,6 +594,7 @@ fn supporting_draw() -> impl Strategy<Value = Draw> {
                 framework,
                 badge,
                 stop_if_count,
+                extra,
             )| Draw {
                 packet_status: PacketStatus::Complete,
                 ask_absent_change: false,
@@ -372,12 +626,37 @@ fn supporting_draw() -> impl Strategy<Value = Draw> {
                 stop_if_count,
                 production_rule: true,
                 suppression_rule: true,
+                extra,
+            },
+        )
+}
+
+/// Non-refusing extras: an observable that is not carried or present, and
+/// limitation and boundary choices that only matter once one is pushed.
+fn supporting_extra() -> impl Strategy<Value = Extra> {
+    (
+        select(&OBSERVABLES[..2]),
+        0..LIMITATION_KINDS.len(),
+        select(&LIMIT_TARGETS),
+        0..BOUNDARY_KINDS.len(),
+        select(&BOUNDARY_SCOPES),
+    )
+        .prop_map(
+            |(observable, limitation_kind, limitation_target, boundary_kind, boundary_scope)| {
+                Extra {
+                    observable,
+                    limitation_kind,
+                    limitation_target,
+                    boundary_kind,
+                    boundary_scope,
+                    ..Extra::default()
+                }
             },
         )
 }
 
 /// Number of independently drawn fields in `Draw`; `copy_field` names each.
-const DRAW_FIELDS: usize = 30;
+const DRAW_FIELDS: usize = 42;
 
 /// Overwrite one field of `draw` with the value drawn in `from`.
 fn copy_field(draw: &mut Draw, from: &Draw, field: usize) {
@@ -412,6 +691,18 @@ fn copy_field(draw: &mut Draw, from: &Draw, field: usize) {
         27 => draw.stop_if_count = from.stop_if_count,
         28 => draw.production_rule = from.production_rule,
         29 => draw.suppression_rule = from.suppression_rule,
+        30 => draw.extra.limitation_kind = from.extra.limitation_kind,
+        31 => draw.extra.limitation_target = from.extra.limitation_target,
+        32 => draw.extra.boundary_kind = from.extra.boundary_kind,
+        33 => draw.extra.boundary_scope = from.extra.boundary_scope,
+        34 => draw.extra.matcher_grading = from.extra.matcher_grading,
+        35 => draw.extra.observable = from.extra.observable,
+        36 => draw.extra.oracle_from_other_test = from.extra.oracle_from_other_test,
+        37 => draw.extra.negated_comparison = from.extra.negated_comparison,
+        38 => draw.extra.owner_kind_unknown = from.extra.owner_kind_unknown,
+        39 => draw.extra.packet_path = from.extra.packet_path,
+        40 => draw.extra.empty_provenance = from.extra.empty_provenance,
+        41 => draw.extra.relation_for_other_owner = from.extra.relation_for_other_owner,
         _ => {}
     }
 }
@@ -497,8 +788,40 @@ fn refusals(draw: &Draw) -> Vec<&'static str> {
         draw.oracle_kind.assertion_shape() != draw.behavior_hint.default_assertion_shape(),
         "oracle_shape_mismatch",
     );
-    note(draw.limitation_on_relation, "blocking_limitation");
-    note(draw.boundary_on_owner, "dynamic_boundary");
+    let extra = &draw.extra;
+    let limitation_blocks = LIMITATION_KINDS
+        .get(extra.limitation_kind)
+        .is_some_and(|(_, blocks)| *blocks);
+    note(
+        draw.limitation_on_relation
+            && limitation_blocks
+            && extra.limitation_target != LimitTarget::Unrelated,
+        "blocking_limitation",
+    );
+    note(
+        draw.boundary_on_owner && extra.boundary_scope != BoundaryScope::OtherOwner,
+        "dynamic_boundary",
+    );
+    note(
+        extra.matcher_grading && draw.oracle_kind == OracleKind::ExceptionObserver,
+        "matcher_graded_exception_oracle",
+    );
+    note(
+        matches!(
+            extra.observable,
+            ObservableVariant::DeclaredNull | ObservableVariant::Blank
+        ),
+        "changed_observable_declared_absent",
+    );
+    note(extra.oracle_from_other_test, "oracle_from_another_test");
+    note(extra.negated_comparison, "negated_comparison_oracle");
+    note(extra.owner_kind_unknown, "missing_canonical_owner_identity");
+    note(extra.packet_path != PacketPath::Safe, "unsafe_packet_path");
+    note(
+        extra.empty_provenance.is_some(),
+        "missing_fact_provenance_refs",
+    );
+    note(extra.relation_for_other_owner, "relation_for_another_owner");
     note(!draw.test_file_has_test_role, "test_file_not_test_role");
     note(
         draw.verify != VerifyVariant::Valid,
@@ -547,6 +870,9 @@ fn build(
         .find(|owner| owner.owner_id == OWNER_ID)
         .ok_or_else(|| missing("owner"))?;
     owner.confidence = draw.owner_confidence;
+    if draw.extra.owner_kind_unknown {
+        owner.kind = OwnerKind::Unknown;
+    }
 
     let change = packet
         .changes
@@ -554,6 +880,12 @@ fn build(
         .find(|change| change.change_id == CHANGE_ID)
         .ok_or_else(|| missing("change"))?;
     change.behavior_hint = draw.behavior_hint;
+    change.changed_observable = ObservableField(match draw.extra.observable {
+        ObservableVariant::NotCarried => None,
+        ObservableVariant::Present => Some(Some("$amount / 2".to_string())),
+        ObservableVariant::DeclaredNull => Some(None),
+        ObservableVariant::Blank => Some(Some("  ".to_string())),
+    });
     let change_range = change.range;
 
     let relation = packet
@@ -566,6 +898,9 @@ fn build(
     relation.reachability_hint = draw.reachability;
     if !draw.relation_has_oracle {
         relation.oracle_id = None;
+    }
+    if draw.extra.relation_for_other_owner {
+        relation.owner_id = OTHER_OWNER_ID.to_string();
     }
 
     let test = packet
@@ -587,6 +922,13 @@ fn build(
     if !draw.oracle_bound {
         oracle.target_owner_id = None;
     }
+    if draw.extra.oracle_from_other_test {
+        oracle.test_id = OTHER_TEST_ID.to_string();
+    }
+    if draw.extra.negated_comparison {
+        oracle.expression =
+            Some("isnt(My::App::discount(100), 11, 'discount threshold')".to_string());
+    }
 
     let test_file = packet
         .files
@@ -595,6 +937,26 @@ fn build(
         .ok_or_else(|| missing("test file"))?;
     if !draw.test_file_has_test_role {
         test_file.role.retain(|role| *role != FileRole::Test);
+    }
+    if draw.extra.packet_path == PacketPath::UnsafeTest {
+        test_file.path = "t/../t/app.t".to_string();
+    }
+    if draw.extra.packet_path == PacketPath::UnsafeSource {
+        let source_file = packet
+            .files
+            .iter_mut()
+            .find(|file| file.file_id == SOURCE_FILE_ID)
+            .ok_or_else(|| missing("source file"))?;
+        source_file.path = "lib/My/../My/App.pm".to_string();
+    }
+    if draw.extra.matcher_grading {
+        packet
+            .producer
+            .capabilities
+            .push(PERL_ORACLE_MATCHER_GRADING.to_string());
+    }
+    if let Some(fact) = draw.extra.empty_provenance {
+        clear_provenance_refs(&mut packet, fact);
     }
 
     let verify_position = packet
@@ -622,19 +984,38 @@ fn build(
     }
 
     if draw.limitation_on_relation {
+        let kind = LIMITATION_KINDS
+            .get(draw.extra.limitation_kind)
+            .map_or("framework_indirection", |(kind, _)| *kind);
+        let evidence_refs = match draw.extra.limitation_target {
+            LimitTarget::Relation => vec![RELATION_ID.to_string()],
+            LimitTarget::Change => vec![CHANGE_ID.to_string()],
+            LimitTarget::Test => vec![TEST_ID.to_string()],
+            LimitTarget::NoRefs => Vec::new(),
+            LimitTarget::Unrelated => vec!["oracle:t/app_helper.t:10:unknown-helper".to_string()],
+        };
         packet.limitations.push(LimitationFact {
             limitation_id: "limitation:proptest:relation".to_string(),
-            kind: "framework_indirection".to_string(),
+            kind: kind.to_string(),
             message: "an opaque assertion boundary on the related test".to_string(),
-            evidence_refs: vec![RELATION_ID.to_string()],
+            evidence_refs,
         });
     }
     if draw.boundary_on_owner {
+        let (file_id, owner_id) = match draw.extra.boundary_scope {
+            BoundaryScope::Owner => (SOURCE_FILE_ID, Some(OWNER_ID)),
+            BoundaryScope::SourceFile => (SOURCE_FILE_ID, None),
+            BoundaryScope::TestFile => (TEST_FILE_ID, None),
+            BoundaryScope::OtherOwner => (SOURCE_FILE_ID, Some(OTHER_OWNER_ID)),
+        };
         packet.dynamic_boundaries.push(DynamicBoundaryFact {
             boundary_id: "boundary:proptest:owner".to_string(),
-            kind: BoundaryKind::DynamicDispatch,
-            file_id: SOURCE_FILE_ID.to_string(),
-            owner_id: Some(OWNER_ID.to_string()),
+            kind: BOUNDARY_KINDS
+                .get(draw.extra.boundary_kind)
+                .copied()
+                .unwrap_or(BoundaryKind::DynamicDispatch),
+            file_id: file_id.to_string(),
+            owner_id: owner_id.map(str::to_string),
             range: change_range,
             confidence: Confidence::High,
             provenance_refs: Vec::new(),
@@ -713,6 +1094,66 @@ fn build(
     ))
 }
 
+/// Empty the `provenance_refs` of one fact the raw evidence refs cite.
+fn clear_provenance_refs(packet: &mut PerlFactPacket, fact: ProvenanceFact) {
+    match fact {
+        ProvenanceFact::Change => {
+            for change in &mut packet.changes {
+                if change.change_id == CHANGE_ID {
+                    change.provenance_refs.clear();
+                }
+            }
+        }
+        ProvenanceFact::SourceFile | ProvenanceFact::TestFile => {
+            let file_id = if fact == ProvenanceFact::SourceFile {
+                SOURCE_FILE_ID
+            } else {
+                TEST_FILE_ID
+            };
+            for file in &mut packet.files {
+                if file.file_id == file_id {
+                    file.provenance_refs.clear();
+                }
+            }
+        }
+        ProvenanceFact::Owner => {
+            for owner in &mut packet.owners {
+                if owner.owner_id == OWNER_ID {
+                    owner.provenance_refs.clear();
+                }
+            }
+        }
+        ProvenanceFact::Relation => {
+            for relation in &mut packet.relations {
+                if relation.relation_id == RELATION_ID {
+                    relation.provenance_refs.clear();
+                }
+            }
+        }
+        ProvenanceFact::Test => {
+            for test in &mut packet.tests {
+                if test.test_id == TEST_ID {
+                    test.provenance_refs.clear();
+                }
+            }
+        }
+        ProvenanceFact::Oracle => {
+            for oracle in &mut packet.oracles {
+                if oracle.oracle_id == ORACLE_ID {
+                    oracle.provenance_refs.clear();
+                }
+            }
+        }
+        ProvenanceFact::Verify => {
+            for command in &mut packet.verify_commands {
+                if command.command_id == VERIFY_ID {
+                    command.provenance_refs.clear();
+                }
+            }
+        }
+    }
+}
+
 fn change_id(draw: &Draw) -> &'static str {
     if draw.ask_absent_change {
         "change:lib/My/App.pm:99:absent"
@@ -722,9 +1163,10 @@ fn change_id(draw: &Draw) -> &'static str {
 }
 
 /// Supporting evidence a removal can take away. Every entry is something the
-/// mapper requires, except the last three, which only drop surplus context or
-/// provenance and are present to exercise monotonicity on non-refusing
-/// removals.
+/// mapper requires, except `ForbiddenBadgePath` and `OneStopIf`, which only
+/// drop surplus context and exercise monotonicity on non-refusing removals.
+/// `ProvenanceRows` is required: the raw evidence refs resolve every cited
+/// provenance id, so clearing the rows refuses with `MissingProvenanceRefs`.
 #[derive(Clone, Copy, Debug)]
 enum Removal {
     RelationOracleId,
@@ -744,10 +1186,10 @@ enum Removal {
     AllStopIf,
     ProductionRule,
     SuppressionRule,
+    ProvenanceRows,
     // Not required by the mapper:
     ForbiddenBadgePath,
     OneStopIf,
-    ProvenanceRows,
 }
 
 const REMOVALS: [Removal; 20] = [
@@ -775,10 +1217,7 @@ const REMOVALS: [Removal; 20] = [
 
 impl Removal {
     fn required(self) -> bool {
-        !matches!(
-            self,
-            Removal::ForbiddenBadgePath | Removal::OneStopIf | Removal::ProvenanceRows
-        )
+        !matches!(self, Removal::ForbiddenBadgePath | Removal::OneStopIf)
     }
 
     fn apply(self, packet: &mut PerlFactPacket, context: &mut PerlActionabilityContext) {
@@ -925,6 +1364,7 @@ fn fixture_draw() -> Draw {
         stop_if_count: 2,
         production_rule: true,
         suppression_rule: true,
+        extra: Extra::default(),
     }
 }
 
@@ -1012,6 +1452,44 @@ fn single_field_draws() -> Vec<Draw> {
     push(&|draw| draw.forbidden_unsafe = true);
     push(&|draw| draw.production_rule = false);
     push(&|draw| draw.suppression_rule = false);
+    for limitation_kind in 0..LIMITATION_KINDS.len() {
+        for target in LIMIT_TARGETS {
+            push(&|draw| {
+                draw.limitation_on_relation = true;
+                draw.extra.limitation_kind = limitation_kind;
+                draw.extra.limitation_target = target;
+            });
+        }
+    }
+    for boundary_kind in 0..BOUNDARY_KINDS.len() {
+        for scope in BOUNDARY_SCOPES {
+            push(&|draw| {
+                draw.boundary_on_owner = true;
+                draw.extra.boundary_kind = boundary_kind;
+                draw.extra.boundary_scope = scope;
+            });
+        }
+    }
+    for (hint, kind) in MATCHED_HINTS {
+        push(&|draw| {
+            draw.extra.matcher_grading = true;
+            draw.behavior_hint = hint;
+            draw.oracle_kind = kind;
+        });
+    }
+    for observable in OBSERVABLES {
+        push(&|draw| draw.extra.observable = observable);
+    }
+    for packet_path in PACKET_PATHS {
+        push(&|draw| draw.extra.packet_path = packet_path);
+    }
+    for fact in PROVENANCE_FACTS {
+        push(&|draw| draw.extra.empty_provenance = Some(fact));
+    }
+    push(&|draw| draw.extra.oracle_from_other_test = true);
+    push(&|draw| draw.extra.negated_comparison = true);
+    push(&|draw| draw.extra.owner_kind_unknown = true);
+    push(&|draw| draw.extra.relation_for_other_owner = true);
     draws
 }
 
@@ -1022,15 +1500,20 @@ fn perl_strict_actionability_refuses_each_condition_alone() -> Result<(), String
     let base = consume(FIXTURE)?;
     let draws = single_field_draws();
     let mut refused = 0usize;
+    let mut disagreements = Vec::new();
     for draw in &draws {
         let refusals = refusals(draw);
         let actionable = actionable_after(&base, draw, &[]).map_err(|err| err.to_string())?;
         if refusals.is_empty() != actionable {
-            return Err(format!(
-                "refusals {refusals:?} disagree with actionable={actionable} for {draw:?}"
-            ));
+            disagreements.push(format!("refusals {refusals:?} vs actionable={actionable}"));
         }
         refused += usize::from(!actionable);
+    }
+    if !disagreements.is_empty() {
+        return Err(format!(
+            "{} sweep draws disagree: {disagreements:#?}",
+            disagreements.len()
+        ));
     }
     if refused == 0 || refused == draws.len() {
         return Err(format!(
@@ -1044,9 +1527,10 @@ fn perl_strict_actionability_refuses_each_condition_alone() -> Result<(), String
 proptest! {
     #![proptest_config(config())]
 
-    /// Over the whole enumerated input space: any refusal condition yields a
-    /// refusal, and a draw with none of them is actionable (so the refusal
-    /// list above is the mapper's complete list for these inputs).
+    /// Over the perturbed input space: any refusal condition yields a refusal,
+    /// and a draw with none of them is actionable. This makes `refusals` the
+    /// complete list of the conditions reachable from these perturbations, not
+    /// of every production refusal path (see the module doc for omissions).
     #[test]
     fn perl_strict_actionability_refuses_whenever_a_refusal_condition_holds(draw in any_draw()) {
         let base = base_packet()?;
