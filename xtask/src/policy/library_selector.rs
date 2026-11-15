@@ -118,9 +118,10 @@ fn library_root(root: &Path, package: &str) -> Option<PathBuf> {
 
 /// Feature state of the target package for a test build: the features its
 /// manifest declares, and the subset actually enabled once the manifest's
-/// `default` feature and every transitive plain alias are expanded on top of
-/// the features the selector itself names. The selector grammar has no
-/// `--no-default-features`, so Cargo would enable `default` for this build.
+/// `default` feature (when declared) and every transitive plain alias are
+/// expanded on top of the features the selector itself names. The selector
+/// grammar has no `--no-default-features`, so Cargo would enable `default`
+/// for this build when the manifest declares it.
 #[derive(Debug, PartialEq, Eq)]
 struct FeatureState {
     declared: BTreeSet<String>,
@@ -136,8 +137,8 @@ fn feature_state(manifest: &toml::Table, requested: &[String]) -> Option<Feature
     let declared: BTreeSet<String> = table.keys().cloned().collect();
     // A feature argument the manifest does not declare cannot be evaluated:
     // refuse rather than guess (notably under `not(..)`, where a guessed
-    // `false` would invent tests Cargo never builds). `default` always
-    // exists in Cargo, possibly empty.
+    // `false` would invent tests Cargo never builds). `default` is allowed
+    // as a requested name; it is only queued implicitly below when declared.
     if requested
         .iter()
         .any(|name| name != "default" && !declared.contains(name))
@@ -146,7 +147,10 @@ fn feature_state(manifest: &toml::Table, requested: &[String]) -> Option<Feature
     }
     let mut enabled = BTreeSet::new();
     let mut pending: Vec<String> = requested.to_vec();
-    pending.push("default".to_string());
+    // Cargo activates `default` only when the manifest declares it.
+    if declared.contains("default") {
+        pending.push("default".to_string());
+    }
     while let Some(name) = pending.pop() {
         if !enabled.insert(name.clone()) {
             continue;
@@ -160,9 +164,18 @@ fn feature_state(manifest: &toml::Table, requested: &[String]) -> Option<Feature
         };
         for entry in entries {
             let entry = entry.as_str()?;
-            // `dep:`, `dep?/feat` and `pkg/feat` entries enable dependencies
-            // or their features, never a feature of this package.
-            if entry.starts_with("dep:") || entry.contains('/') {
+            // `dep:` entries enable a dependency, never a feature of this
+            // package.
+            if entry.starts_with("dep:") {
+                continue;
+            }
+            if let Some((dependency, _dependency_feature)) = entry.split_once('/') {
+                // A strong `a/b` edge also activates a local feature named
+                // `a` when one is declared. A weak `a?/b` edge must not, and
+                // `a/b` with no local feature `a` enables nothing locally.
+                if !dependency.ends_with('?') && declared.contains(dependency) {
+                    pending.push(dependency.to_string());
+                }
                 continue;
             }
             pending.push(entry.to_string());
@@ -665,6 +678,28 @@ mod tests {
         )
     }
 
+    /// Cargo activates `default` only when the manifest declares it: with
+    /// no `default` feature, `feature = "default"` is disabled and its
+    /// negation is enabled.
+    #[test]
+    fn undeclared_default_feature_is_not_enabled() -> Result<(), String> {
+        let inner = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[cfg(feature = \"default\")]\n    #[test]\n    fn default_only() {}\n    #[cfg(not(feature = \"default\"))]\n    #[test]\n    fn no_default() {}\n}\n";
+        let workspace = layout("undeclared-default", inner)?;
+        workspace.write(
+            "crates/a/Cargo.toml",
+            "[package]\nname = \"a\"\n[features]\nx = []\n",
+        )?;
+        let tests = resolve_in_source(workspace.root(), SELECTOR);
+        require(
+            tests
+                == Some(vec![
+                    "outer::inner::tests::always".to_string(),
+                    "outer::inner::tests::no_default".to_string(),
+                ]),
+            format!("wrong resolution without a declared default: {tests:?}"),
+        )
+    }
+
     /// A feature alias (`bundle = ["mid"]`, `mid = ["x"]`) enables its
     /// transitive plain targets, as Cargo does.
     #[test]
@@ -687,6 +722,61 @@ mod tests {
                 ]),
             format!("wrong resolution for feature alias: {tests:?}"),
         )
+    }
+
+    /// A strong `a/b` dependency-feature edge activates a local feature
+    /// named `a` and its downstream entries, as Cargo does; a weak `a?/b`
+    /// edge does not, and `a/b` with no local feature `a` enables nothing.
+    #[test]
+    fn strong_dependency_feature_edges_enable_a_same_named_local_feature() -> Result<(), String> {
+        let inner = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[cfg(feature = \"x\")]\n    #[test]\n    fn alias_only() {}\n    #[cfg(not(feature = \"x\"))]\n    #[test]\n    fn no_alias() {}\n}\n";
+        for (label, bundle, expected) in [
+            (
+                "strong-dep-feature",
+                "bundle = [\"serde/derive\"]\nserde = [\"dep:serde\", \"x\"]\nx = []\n",
+                vec![
+                    "outer::inner::tests::always",
+                    "outer::inner::tests::alias_only",
+                ],
+            ),
+            (
+                "weak-dep-feature",
+                "bundle = [\"serde?/derive\"]\nserde = [\"dep:serde\", \"x\"]\nx = []\n",
+                vec![
+                    "outer::inner::tests::always",
+                    "outer::inner::tests::no_alias",
+                ],
+            ),
+            (
+                "unknown-dep-feature",
+                "bundle = [\"prost/derive\"]\nserde = [\"dep:serde\", \"x\"]\nx = []\n",
+                vec![
+                    "outer::inner::tests::always",
+                    "outer::inner::tests::no_alias",
+                ],
+            ),
+        ] {
+            let workspace = layout(label, inner)?;
+            workspace.write(
+                "crates/a/Cargo.toml",
+                &format!("[package]\nname = \"a\"\n[features]\n{bundle}"),
+            )?;
+            let tests = resolve_in_source(
+                workspace.root(),
+                "cargo test -p a --features bundle --lib outer::inner::tests",
+            );
+            require(
+                tests.as_deref()
+                    == Some(
+                        &expected
+                            .iter()
+                            .map(|name| name.to_string())
+                            .collect::<Vec<_>>()[..],
+                    ),
+                format!("{label}: expected {expected:?}, got {tests:?}"),
+            )?;
+        }
+        Ok(())
     }
 
     /// A `--features` argument the manifest does not declare, and a `cfg`
