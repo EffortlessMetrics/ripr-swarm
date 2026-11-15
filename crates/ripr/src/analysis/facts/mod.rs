@@ -371,8 +371,17 @@ fn reuse_cached_index(
         || extras
             .iter()
             .any(|(path, _)| cached.index.files().get(path).is_some());
+    // Only a retained target can be re-parented in place: an added target
+    // reaches the merged resolution unrebased, as in a fresh build.
+    let added: std::collections::BTreeSet<&Path> =
+        extras.iter().map(|(path, _)| path.as_path()).collect();
+    let retained: std::collections::BTreeSet<&Path> = kept.difference(&added).copied().collect();
     let rebases_includes = extras.iter().any(|(path, bytes)| {
-        includes::added_file_may_rebase_includes(path, &build::rust_source_text(bytes).text, &kept)
+        includes::added_file_may_rebase_includes(
+            path,
+            &build::rust_source_text(bytes).text,
+            &retained,
+        )
     });
     if retracts || rebases_includes {
         trace_reuse_fallback(if retracts {
@@ -390,9 +399,9 @@ fn reuse_cached_index(
     // #12947: composition withholds the tests of a file outside every module
     // tree by clearing them, and a later pass that no longer withholds them
     // rebuilds them from the function facts, which is not the parser's own
-    // test fact a fresh build keeps. So every file the core withheld must
-    // still be withheld after the merge (checked below); an added file that
-    // withdraws the claim (an include limitation, a new link) falls back.
+    // test fact a fresh build keeps. So a file the core withheld that the
+    // merge links again (an include limitation, a new module edge) falls
+    // back when it then has tests (checked below).
     let withheld: Vec<PathBuf> = cached
         .index
         .files()
@@ -443,12 +452,11 @@ fn reuse_cached_index(
     }
     cached.files_content_hash = hash.finish();
     let processed = post_process_cached_index(cached, root, registrations)?;
+    // A revived file without tests differs in nothing a fresh build keeps.
     let revived = withheld.iter().any(|path| {
-        !processed
-            .index
-            .files()
-            .get(path)
-            .is_some_and(|facts| facts.role_provenance.outside_module_tree)
+        processed.index.files().get(path).is_some_and(|facts| {
+            !facts.role_provenance.outside_module_tree && !facts.tests.is_empty()
+        })
     });
     if revived {
         trace_reuse_fallback("withheld_tests_revived");

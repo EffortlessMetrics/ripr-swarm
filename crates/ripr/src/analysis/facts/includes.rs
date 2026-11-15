@@ -290,7 +290,8 @@ impl RetainedIncludeView {
 /// workspace can re-parent function identities through an `include!`
 /// directive. Only an invocation that can become an edge counts: a
 /// parser-backed file-level `include!` with a literal path to a repository
-/// file the merged index holds (`kept`). A mention in a comment or a string
+/// file the index already held before the merge (`kept`; an added target
+/// reaches the merged resolution unrebased). A mention in a comment or a string
 /// never enters the producer the resolution pass reads, and a nested,
 /// dynamic, out-of-repository or unindexed-target invocation only records a
 /// limitation, so none of them re-parents anything (the same-run reuse used

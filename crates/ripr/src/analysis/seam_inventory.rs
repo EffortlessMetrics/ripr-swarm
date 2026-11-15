@@ -8164,10 +8164,10 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                 return Err(err);
             }
         };
-        let orphan_outside = |index: &RustIndex| {
+        let outside = |index: &RustIndex, file: &str| {
             index
                 .files()
-                .get(Path::new(orphan.0))
+                .get(Path::new(file))
                 .is_some_and(|facts| facts.role_provenance.outside_module_tree)
         };
         type Row<'a> = (
@@ -8207,6 +8207,15 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                 vec![lib, frag, orphan],
                 vec![limit],
                 false,
+            ),
+            // A new limitation that links a withheld file with no tests
+            // changes nothing a fresh build keeps: extend.
+            (
+                "unindexed target links a withheld file without tests",
+                root.as_path(),
+                vec![lib, frag, plain],
+                vec![limit],
+                true,
             ),
             // The first unresolved include in an index without withheld
             // files moves no retained include state: extend.
@@ -8269,8 +8278,13 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         ];
         let result = (|| -> Result<(), String> {
             for (label, root, core_src, extra_src, extends) in rows {
-                let withheld_row =
-                    label == "unindexed target" || label == "extra links a withheld file";
+                // The withheld file a row revives: outside in the core, linked
+                // after the merge.
+                let withheld = match label {
+                    "unindexed target" | "extra links a withheld file" => Some(orphan.0),
+                    "unindexed target links a withheld file without tests" => Some(plain.0),
+                    _ => None,
+                };
                 let core = bytes_of(&core_src);
                 let target_src = core_src
                     .iter()
@@ -8283,9 +8297,9 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                 if core_index.index.include_parents.is_empty() {
                     return Err(format!("{label}: the core must resolve an include parent"));
                 }
-                if withheld_row && !orphan_outside(&core_index.index) {
+                if withheld.is_some_and(|file| !outside(&core_index.index, file)) {
                     return Err(format!(
-                        "{label}: the core must start with the orphan outside"
+                        "{label}: the core must start with the withheld file outside"
                     ));
                 }
                 let lib_source = |index: &RustIndex| {
@@ -8319,7 +8333,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                 if reused.files_content_hash != fresh.files_content_hash {
                     return Err(format!("{label}: content hash must match a fresh build"));
                 }
-                if withheld_row && orphan_outside(&reused.index) {
+                if withheld.is_some_and(|file| outside(&reused.index, file)) {
                     return Err(format!(
                         "{label}: the added file must withdraw the outside claim"
                     ));
