@@ -161,6 +161,9 @@ pre-push:
       run: ripr check --committed --quiet
 ```
 
+For Python and TypeScript/JavaScript changes too, widen each `glob` to
+`"*.{rs,py,js,jsx,ts,tsx}"`.
+
 [husky](https://typicode.github.io/husky/) 9, `.husky/pre-commit` and
 `.husky/pre-push`, one line each:
 
@@ -193,6 +196,33 @@ each hook. lefthook's commit run hid the unstaged part of a partly staged file, 
 run compared against `origin/main`. With a second, wholly unstaged file,
 lefthook's commit report included that file too. husky's commit run included
 an unstaged edit, as did the plain hook. All exited 0.
+
+## How long a hook takes
+
+On a small or medium workspace a commit-time check finishes in well under a
+second. On a very large one the default mode can take tens of seconds, because
+it indexes every package the diff touches. Measured on Linux (4 cores) with a
+release build, after a one-line edit to a comparison, running
+`ripr check --worktree --base HEAD --quiet --format agent`:
+
+| Workspace | Default mode (`draft`) | `--mode instant` |
+| --- | --- | --- |
+| One-file scratch crate | 0.07 s | 0.06 s |
+| ripr's own repository (about 3,700 `.rs` files) | 110 s first run, 36 s once `target/ripr/cache` is warm | 0.9 s |
+
+If commits feel slow, add `--mode instant` to the commit hook:
+
+```yaml
+      - id: ripr
+        args: [--mode, instant]
+```
+
+In lefthook, husky or a plain hook, append `--mode instant` to the commit
+command. `instant` indexes only the changed files, so a test that lives in
+another file is not seen. In a crate whose boundary test sits in `tests/`,
+the default mode reported that edit as `exposed` and `instant` reported
+`no_static_path`. Keep the push hook (`ripr check --committed`) on the default
+mode so the branch gets the fuller check before it leaves your machine.
 
 ## GitLab CI and other hosted CI
 
