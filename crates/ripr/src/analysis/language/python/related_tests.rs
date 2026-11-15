@@ -2267,13 +2267,54 @@ pub(super) fn oracle_operand_calls(text: &str, callee: &str) -> bool {
 /// ...`) runs after the `with`, when the error was already raised, so an
 /// owner call there is not the call that raises and is not read.
 pub(super) fn exception_body_calls(gate_text: &str, item_text: &str, callee: &str) -> bool {
-    let Some(body) = gate_text
+    let Some(body) = exception_body(gate_text, item_text) else {
+        return false;
+    };
+    if exception_body_defers(body) {
+        return false;
+    }
+    let needle = format!("{callee}(");
+    body.match_indices(&needle).any(|(idx, _)| {
+        python_callee_start_has_boundary(body, idx) && !python_text_hides_code(body, idx)
+    })
+}
+
+/// Whether `token` appears as a visible whole identifier in the exception
+/// body of an assertion (see [`exception_body_calls`]). The item itself
+/// (its `match=` pattern), anything before the `with`, and the rule 14
+/// comparison appended after the body are not read, nor is a token spelled
+/// only inside a string or comment or deferred by a `lambda`/`def`/`class`.
+pub(super) fn exception_body_observes_token(gate_text: &str, item_text: &str, token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    let Some(body) = exception_body(gate_text, item_text) else {
+        return false;
+    };
+    if exception_body_defers(body) {
+        return false;
+    }
+    body.match_indices(token).any(|(idx, _)| {
+        let before = body[..idx].chars().next_back();
+        let after = body[idx + token.len()..].chars().next();
+        !before.is_some_and(is_python_identifier_char)
+            && !after.is_some_and(is_python_identifier_char)
+            && !python_text_hides_code(body, idx)
+    })
+}
+
+/// The exception body of an assertion's gate text: the text after its item,
+/// ending at the appended rule 14 comparison (see [`exception_body_text`]).
+fn exception_body<'a>(gate_text: &'a str, item_text: &str) -> Option<&'a str> {
+    gate_text
         .strip_prefix(item_text)
         .and_then(|rest| rest.strip_prefix('\n'))
         .map(exception_body_text)
-    else {
-        return false;
-    };
+}
+
+/// Whether a `lambda` or nested `def`/`class` in the body defers its calls,
+/// so nothing in it runs as the body runs.
+fn exception_body_defers(body: &str) -> bool {
     let visible = |idx: usize| !python_text_hides_code(body, idx);
     let defers_by_keyword = body.lines().any(|line| {
         let line = line.trim_start();
@@ -2288,12 +2329,7 @@ pub(super) fn exception_body_calls(gate_text: &str, item_text: &str, callee: &st
             && !after.is_some_and(is_python_identifier_char)
             && visible(idx)
     });
-    if defers_by_keyword || defers_by_lambda {
-        return false;
-    }
-    let needle = format!("{callee}(");
-    body.match_indices(&needle)
-        .any(|(idx, _)| python_callee_start_has_boundary(body, idx) && visible(idx))
+    defers_by_keyword || defers_by_lambda
 }
 
 /// The `with` body (or callable call) of an exception assertion's gate text

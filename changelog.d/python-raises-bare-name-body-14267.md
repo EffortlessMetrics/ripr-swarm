@@ -1,0 +1,8 @@
+<!-- section: Fixed -->
+- Python: a `pytest.raises` test whose `with` body never calls the changed
+  function no longer reads `exposed` for that function's changed `raise`
+  when the function is named only before the `with`, in the comparison
+  after it, in its `match=` pattern, or inside a string in the body. The
+  bare-name, alias and changed-token credit for a free-function owner now
+  reads only the exception body, like the module-qualified call already
+  did (#14267).

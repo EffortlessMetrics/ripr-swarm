@@ -174,6 +174,60 @@ fn a_raises_body_that_does_not_run_the_owner_stays_uncredited() -> Check {
 }
 
 #[test]
+fn bare_import_owner_outside_a_raises_body_stays_uncredited() -> Check {
+    expect_no_credit(
+        "owner only in the rule 14 comparison",
+        "import pytest\nfrom src.levels import parse\n\n\ndef test_blank():\n    with pytest.raises(ValueError) as excinfo:\n        other(\"\")\n    assert str(excinfo.value) == parse(\"blank level\").lower()\n",
+    )?;
+    expect_no_credit(
+        "owner only before the with, literal comparison",
+        "import pytest\nfrom src.levels import parse\n\n\ndef test_blank():\n    parse(\"ok\")\n    with pytest.raises(ValueError) as excinfo:\n        other(\"\")\n    assert str(excinfo.value) == \"blank level\"\n",
+    )?;
+    expect_no_credit(
+        "owner only before the with, match pattern",
+        "import pytest\nfrom src.levels import parse\n\n\ndef test_blank():\n    parse(\"ok\")\n    with pytest.raises(ValueError, match=\"blank level\"):\n        other(\"\")\n",
+    )?;
+    expect_no_credit(
+        "owner only inside a triple-quoted body string",
+        "import pytest\nfrom src.levels import parse\n\n\ndef test_blank():\n    parse(\"ok\")\n    with pytest.raises(ValueError, match=\"blank level\"):\n        note = \"\"\"\n        parse(\"\")\n        \"\"\"\n        other(\"\")\n",
+    )?;
+    expect_no_credit(
+        "aliased owner only in the rule 14 comparison",
+        "import pytest\nfrom src.levels import parse as load\n\n\ndef test_blank():\n    with pytest.raises(ValueError) as excinfo:\n        other(\"\")\n    assert str(excinfo.value) == load(\"blank level\").lower()\n",
+    )
+}
+
+#[test]
+fn bare_import_owner_in_a_raises_body_keeps_credit() -> Check {
+    let exposed = |label: &str, test_source: &str| -> Check {
+        let finding = classify(test_source)?;
+        if finding.class != ExposureClass::Exposed {
+            return Err(format!(
+                "{label}: expected exposed, got {:?} / {:?}",
+                finding.class, finding.alignment_reason
+            ));
+        }
+        Ok(())
+    };
+    exposed(
+        "owner on a later body line",
+        "import pytest\nfrom src.levels import parse\n\n\ndef test_blank():\n    with pytest.raises(ValueError, match=\"blank level\"):\n        note = 1\n        parse(\"\")\n",
+    )?;
+    exposed(
+        "rule 14 comparison after a body calling the owner",
+        "import pytest\nfrom src.levels import parse\n\n\ndef test_blank():\n    with pytest.raises(ValueError) as excinfo:\n        parse(\"\")\n    assert str(excinfo.value) == \"blank level\"\n",
+    )?;
+    exposed(
+        "unittest callable form",
+        "import unittest\nfrom src.levels import parse\n\n\nclass LevelCase(unittest.TestCase):\n    def test_blank(self):\n        self.assertRaisesRegex(ValueError, \"blank level\", parse, \"\")\n",
+    )?;
+    exposed(
+        "aliased import called in the body",
+        "import pytest\nfrom src.levels import parse as load\n\n\ndef test_blank():\n    with pytest.raises(ValueError, match=\"blank level\"):\n        load(\"\")\n",
+    )
+}
+
+#[test]
 fn a_pattern_matching_both_messages_still_pins_only_the_class() -> Check {
     // The #9185 message-pin gate reads the same assertion: `level` matches
     // the old and the new message alike.

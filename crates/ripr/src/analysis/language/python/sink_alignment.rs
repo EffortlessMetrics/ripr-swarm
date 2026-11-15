@@ -7,9 +7,9 @@ use super::owners_tests::collect_imports_from_statements;
 use super::probe_shape::classify_probe_shape;
 use super::related_tests::TestLookup;
 use super::related_tests::{
-    exception_body_calls, oracle_operand_calls, oracle_operand_names,
-    oracle_operand_protocol_entry, owner_method_bound_locals, owner_module_callees,
-    owner_result_locals, setup_bound_receivers,
+    exception_body_calls, exception_body_observes_token, oracle_operand_calls,
+    oracle_operand_names, oracle_operand_protocol_entry, owner_method_bound_locals,
+    owner_module_callees, owner_result_locals, setup_bound_receivers,
 };
 use super::source_facts::parse_module_result;
 use super::wrapped_call::owner_call_only_inside_opaque_wrapper;
@@ -1290,6 +1290,44 @@ fn sink_alignment_and_rows(
                     .is_some_and(|test| function_scope_stand_in(test, token, owner))
         })
     };
+    // For a free-function owner, an exception assertion's bare-name and
+    // changed-token credit reads only the code its `with` body (or rule 13
+    // callable) runs: the error it pins is raised there, so a name spelled
+    // only in the item's `match=`, before the `with`, in the rule 14
+    // comparison after it, or inside a body string does not observe the
+    // changed raise (#14267). Method owners, non-exception assertions, and
+    // units whose gate text carries no separable body keep the whole-text
+    // probe; the module-call branch already reads the body on its own.
+    let exception_body_scoped = |unit: &AlignmentUnit<'_>| -> bool {
+        !is_method_owner
+            && matches!(unit.kind, OracleKind::ExactErrorVariant)
+            && unit
+                .text
+                .strip_prefix(&unit.reported)
+                .is_some_and(|rest| rest.starts_with('\n'))
+    };
+    let observes_body_scoped = |unit: &AlignmentUnit<'_>, group: &[String]| -> bool {
+        if exception_body_scoped(unit) {
+            group
+                .iter()
+                .any(|token| exception_body_observes_token(&unit.text, &unit.reported, token))
+        } else {
+            observes(unit, group)
+        }
+    };
+    let observes_imported_owner_body_scoped =
+        |unit: &AlignmentUnit<'_>, group: &[String]| -> bool {
+            if exception_body_scoped(unit) {
+                group.iter().any(|token| {
+                    exception_body_observes_token(&unit.text, &unit.reported, token)
+                        && !unit
+                            .test
+                            .is_some_and(|test| function_scope_stand_in(test, token, owner))
+                })
+            } else {
+                observes_imported_owner(unit, group)
+            }
+        };
     // Receiver identity for a method owner: the test holding the assertion must
     // call the owner's method on a receiver statically bound to the owner class
     // (inline construct, local binding, or a classmethod/direct call on the
@@ -1567,7 +1605,7 @@ fn sink_alignment_and_rows(
     };
     let branches: [CreditBranch<'_, '_>; 7] = [
         ("direct", "strong_oracle_observes_owner_name", &|unit| {
-            observes_imported_owner(unit, &identity_tokens)
+            observes_imported_owner_body_scoped(unit, &identity_tokens)
                 && (method_owner_identity(unit) || free_fn_module_identity(unit))
                 && result_gates_ok(unit)
         }),
@@ -1588,8 +1626,10 @@ fn sink_alignment_and_rows(
             // `from m import owner as quote` does not make this test's `quote`
             // the owner (#8247). Without source facts the pooled set stands.
             let own_aliases = unit.test.map(owner_aliases_in);
-            observes_imported_owner(unit, own_aliases.as_deref().unwrap_or(&alias_tokens))
-                && result_gates_ok(unit)
+            observes_imported_owner_body_scoped(
+                unit,
+                own_aliases.as_deref().unwrap_or(&alias_tokens),
+            ) && result_gates_ok(unit)
         }),
         (
             "direct",
@@ -1613,7 +1653,7 @@ fn sink_alignment_and_rows(
             "changed_sink_token",
             "strong_oracle_observes_changed_sink_token",
             &|unit| {
-                observes(unit, &delta_tokens)
+                observes_body_scoped(unit, &delta_tokens)
                     && change_only_credit_ok(unit)
                     && gates_ok(unit)
                     && (method_owner_identity(unit) || free_fn_module_identity(unit))
