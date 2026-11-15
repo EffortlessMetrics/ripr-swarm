@@ -23939,10 +23939,14 @@ fn field_write_facts_with_tail(
 /// multibyte char. `क्` ends in U+094D, a virama (an identifier char that is not alphanumeric,
 /// three bytes), so no original is read from it.
 #[test]
-fn renamed_from_skips_an_original_ending_in_a_multibyte_mark() {
+fn renamed_from_keeps_an_original_with_a_multibyte_mark_whole() {
     assert_eq!(
         renamed_from("use a::क् as Name;", "Name"),
-        Vec::<String>::new()
+        vec!["क्".to_string()]
+    );
+    assert_eq!(
+        renamed_from("use a::क्Original as Name;", "Name"),
+        vec!["क्Original".to_string()]
     );
     assert_eq!(
         renamed_from("use a::Original as Name;", "Name"),

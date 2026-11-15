@@ -820,7 +820,7 @@ fn code_reads(masked: &str, name: &str) -> bool {
             let segment_start = path
                 .char_indices()
                 .rev()
-                .find(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
+                .find(|&(_, c)| !(c == '_' || unicode_ident::is_xid_continue(c)))
                 .map_or(0, |(i, c)| i + c.len_utf8());
             if !matches!(&path[segment_start..], "Self" | "self") {
                 continue;
@@ -1305,6 +1305,8 @@ mod tests {
         // `क्` ends in U+094D, a virama: it continues an identifier but is not
         // alphanumeric, and is three bytes wide.
         assert!(!super::code_reads("let x = क्::LIMIT;", "LIMIT"));
+        // A mark inside the qualifier keeps it whole: `क्Self` is not `Self`.
+        assert!(!super::code_reads("let x = क्Self::LIMIT;", "LIMIT"));
         assert!(super::code_reads("let x = Self::LIMIT;", "LIMIT"));
     }
 }

@@ -2112,7 +2112,9 @@ fn plain_let_binding_name(prefix: &str) -> Option<&str> {
 /// whole arguments of a top-level `assert!`/`assert_eq!`/`assert_ne!` with
 /// no block, closure or nested macro other than `vec!`/`format!`.
 fn plain_assertion_or_unrelated(statement: &str, binding: &str) -> bool {
-    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    // #14089: Unicode `XID_Continue`, so a mark such as the virama U+094D
+    // does not split `क्order` into `order`.
+    let ident = |ch: char| ch == '_' || unicode_ident::is_xid_continue(ch);
     let mentions: Vec<usize> = statement
         .match_indices(binding)
         .map(|(at, _)| at)
@@ -2173,7 +2175,9 @@ pub(in crate::analysis) fn owner_called_on_other_receiver(
     method: &str,
 ) -> bool {
     let masked = mask_comments_and_strings(body);
-    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    // #14089: Unicode `XID_Continue`, so a mark such as the virama U+094D
+    // does not split `क्order` into `order`.
+    let ident = |ch: char| ch == '_' || unicode_ident::is_xid_continue(ch);
     masked.match_indices(method).any(|(at, name)| {
         let before = &masked[..at];
         if before.chars().next_back().is_some_and(ident)
@@ -14693,6 +14697,12 @@ return Err(\"typed pin\".into());
         // A call on another receiver counts, whatever its spelling.
         assert!(owner_called_on_other_receiver(
             "fn t() { क्.add(1); }",
+            "order",
+            "add"
+        ));
+        // A mark inside the receiver keeps it whole: `क्order` is not `order`.
+        assert!(owner_called_on_other_receiver(
+            "fn t() { क्order.add(1); }",
             "order",
             "add"
         ));

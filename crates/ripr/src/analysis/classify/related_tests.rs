@@ -4176,12 +4176,13 @@ fn opens_format_template(before: &str) -> bool {
         return false;
     };
     let name = name.trim_end();
-    // #14089: step past the found char by its own width; `+ 1` sliced
-    // inside a multibyte char that is not alphanumeric (e.g. a virama).
+    // #14089: Unicode `XID_Continue` keeps a name with a mark such as the
+    // virama U+094D whole, and the found char's width keeps the slice on a
+    // char boundary.
     let leaf_start = name
         .char_indices()
         .rev()
-        .find(|(_, ch)| !(ch.is_alphanumeric() || *ch == '_'))
+        .find(|(_, ch)| !(*ch == '_' || unicode_ident::is_xid_continue(*ch)))
         .map_or(0, |(at, ch)| at + ch.len_utf8());
     matches!(
         &name[leaf_start..],
@@ -8619,6 +8620,8 @@ mod tests {
         assert!(super::opens_format_template("x\u{301}::println!("));
         assert!(super::opens_format_template("std::format!("));
         assert!(!super::opens_format_template("formats!("));
+        // A mark inside the name keeps it whole: `xक्format` is not `format`.
+        assert!(!super::opens_format_template("xक्format!("));
     }
 
     /// #11738: one walk of a source answers every name inside a run memo

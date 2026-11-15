@@ -1682,7 +1682,7 @@ fn renamed_from(masked: &str, target: &str) -> Vec<String> {
         let start = before
             .char_indices()
             .rev()
-            .find(|&(_, ch)| !(ch.is_alphanumeric() || ch == '_'))
+            .find(|&(_, ch)| !(ch == '_' || unicode_ident::is_xid_continue(ch)))
             .map_or(0, |(found, ch)| found + ch.len_utf8());
         let mut original = &before[start..];
         if original == "self" {
@@ -1706,7 +1706,7 @@ fn renamed_from(masked: &str, target: &str) -> Vec<String> {
             let begin = head
                 .char_indices()
                 .rev()
-                .find(|&(_, ch)| !(ch.is_alphanumeric() || ch == '_'))
+                .find(|&(_, ch)| !(ch == '_' || unicode_ident::is_xid_continue(ch)))
                 .map_or(0, |(found, ch)| found + ch.len_utf8());
             original = &head[begin..];
         }

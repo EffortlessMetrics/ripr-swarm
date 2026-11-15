@@ -410,8 +410,12 @@ fn is_path(text: &str) -> bool {
     !text.is_empty() && text.split("::").all(is_ident)
 }
 
+/// #14089: Unicode `XID_Continue`, the set Rust identifiers use. A mark such
+/// as the virama U+094D continues an identifier without being alphanumeric,
+/// so an alphanumeric test read `क्Owner` as `Owner`; a format char such as
+/// U+200E is not an identifier char.
 fn is_ident_char(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_'
+    ch == '_' || unicode_ident::is_xid_continue(ch)
 }
 
 /// Offsets at which `name` appears as a whole identifier in `code`.
@@ -1177,8 +1181,15 @@ mod tests {
             "क्::",
             &["Owner".to_string()]
         ));
+        // A non-ASCII identifier char continues the qualifier, so `क्Owner`
+        // is not read as `Owner`.
+        assert!(!super::qualifier_may_name_owner(
+            "क्Owner::",
+            &["Owner".to_string()]
+        ));
+        // `क्::` is a path prefix like `helpers::`.
         let code = "let f: fn(u32) -> u32 = क्::";
-        assert!(!super::typed_fn_pointer_initializer(code, code.len()));
+        assert!(super::typed_fn_pointer_initializer(code, code.len()));
         // The ASCII spelling still reads as before.
         let code = "let f: fn(u32) -> u32 = helpers::";
         assert!(super::typed_fn_pointer_initializer(code, code.len()));
