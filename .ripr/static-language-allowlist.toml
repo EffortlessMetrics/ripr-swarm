@@ -247,5 +247,3 @@ reason = "The repo-policy docs-gate checker implementation contains the literal 
 path = "tools/repo-policy/tests/docs_gate.rs"
 owner = "maintainers"
 reason = "The docs-gate regression tests embed prohibited terms inside fixture documents that the checker must reject."
-
-
