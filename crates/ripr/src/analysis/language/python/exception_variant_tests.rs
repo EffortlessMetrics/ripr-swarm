@@ -650,6 +650,17 @@ fn unreadable_raise_or_class_shapes_record_no_stale_pin() -> Check {
     if !stale_pins(&caused).is_empty() {
         return Err(format!("a raise with a cause must fail open: {caused:?}"));
     }
+    // `OSError(errno, ...)` constructs the errno's subclass and fails open.
+    let errno = classify_with_context(
+        "def parse(s):\n    if len(s) > 10:\n        raise OSError(2, \"m\")\n    return len(s)\n",
+        "import pytest\nfrom fx.core import parse\n\ndef test_variant():\n    with pytest.raises(FileNotFoundError, match=\"m\"):\n        parse('abcdefghijklmnop')\n",
+        Some("        raise FileNotFoundError(2, \"m\")"),
+        "        raise OSError(2, \"m\")",
+        true,
+    )?;
+    if !stale_pins(&errno).is_empty() {
+        return Err(format!("an OSError raise must fail open: {errno:?}"));
+    }
     // A test module that assigns the expected name fails open.
     let assigned = classify_with_context(
         "def parse(s):\n    if len(s) > 10:\n        raise TypeError(\"m\")\n    return len(s)\n",

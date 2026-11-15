@@ -273,7 +273,15 @@ fn stale_pins(
 ) -> Option<Vec<StaleRaisedTypePin>> {
     let old_type = raised_type_name(old_line_text?)?;
     let new_type = raised_type_name(line_text)?;
-    if old_type == new_type {
+    // `OSError(errno, ...)` constructs the errno's subclass
+    // (`OSError(2, "m")` is a `FileNotFoundError`), so the raised type is not
+    // read from the name alone.
+    if old_type == new_type
+        || matches!(
+            new_type.as_str(),
+            "OSError" | "IOError" | "EnvironmentError"
+        )
+    {
         return None;
     }
     let oracle_tests = related_candidates
