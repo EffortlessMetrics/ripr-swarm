@@ -40,3 +40,12 @@ The expected class is pinned per finding (`expected/check.json`, checked by
 ```expected-classes
 probe:src_config.ts:typescript_preview:0bfbca8c -> weakly_exposed
 ```
+
+This fixture ships no `expected/human.txt`. The default human output prints the state token
+`propagation_unknown` on its missing-check line, and the user-text gate refuses a banned term
+on a new golden path (`check-user-text`, per-file delta against the merge base). The verdict
+is pinned by `expected/check.json` and by the honesty corpus case
+`ts_field_construction_sibling_field_read_does_not_pin_changed_field`; the full human surface
+stays in `expected/human-full.txt`, where the glossary allowlists state tokens. Do not
+re-bless this fixture: `cargo xtask goldens bless` always rewrites `human.txt` and would
+re-add it.
