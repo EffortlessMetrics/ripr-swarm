@@ -170,9 +170,10 @@ pub(super) fn compose_index_source_roles(index: &mut RustIndex, workspace_root: 
 /// registrations go; the files, their functions and their provenance stay, so
 /// an owner in such a file still reads as outside the module tree. Every
 /// composition pass starts from freshly normalized tests. Same-run index
-/// extension refuses a merge that links a file the core withheld here and
-/// falls back to a fresh build (#12947): the revived tests would be rebuilt
-/// from function facts rather than the parser's test facts.
+/// extension refuses a merge that links a file the core withheld here when
+/// that revived file has tests, and falls back to a fresh build (#12947): the
+/// revived tests would be rebuilt from function facts rather than the parser's
+/// test facts. A revived file without tests extends.
 fn withhold_tests_outside_module_tree(index: &mut RustIndex, outside: &BTreeSet<PathBuf>) {
     if outside.is_empty() {
         return;
