@@ -201,7 +201,7 @@ pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
 #[cfg(test)]
 pub(crate) use seam_inventory::{SEAM_FILE_LOCATIONS, WORKSPACE_CLASSIFIED_INVENTORIES};
 pub(crate) use seam_inventory::{file_fact_cache_receipt, file_fact_store_failure_summary};
-pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
+pub(crate) use seams::{RepoSeam, RequiredDiscriminator, match_arm_seam_result};
 pub(crate) use syntax::fn_signature::{
     owner_call_shape_at_line, owner_fn_line_span, rust_source_parses_cleanly,
 };
