@@ -14671,6 +14671,17 @@ fn rename_memo_keys_that_collide_still_answer_per_file() {
     }
 }
 
+/// #14089: the word before `[` was measured with an ASCII-only predicate, so
+/// a non-ASCII identifier char was the char found and the slice started one
+/// byte later, inside it. The identifier now stays whole.
+#[test]
+fn index_operand_reads_a_non_ascii_indexed_place() {
+    assert!(index_operand("größe["));
+    assert!(index_operand("values["));
+    assert!(!index_operand("return ["));
+    assert!(!index_operand("grö ["));
+}
+
 /// #13703: a file read proves the roots of only the rooted spellings the
 /// file itself calls, and answers every other spelling on demand, once. Each
 /// answer equals the eager reading, which proved all 24 spellings.
