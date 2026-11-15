@@ -130,6 +130,20 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
         }
     }
 
+    let archive_size_bytes = fs::metadata(&asset_path)
+        .map_err(|err| format!("failed to stat {}: {err}", asset_path.display()))?
+        .len();
+    payload::check_archive_size_budget(archive_size_bytes)?;
+    let size_summary = staged.identity.size_summary();
+    eprintln!(
+        "server archive size: {archive_size_bytes} bytes (budget {} bytes)",
+        payload::MAX_ARCHIVE_SIZE_BYTES
+    );
+    eprintln!(
+        "payload total size: {} bytes; executable size: {} bytes",
+        size_summary.total_bytes, size_summary.executable_bytes
+    );
+
     let sha = sha256_file(&asset_path)?;
     fs::write(
         dist_dir.join(format!("{asset_name}.sha256")),
