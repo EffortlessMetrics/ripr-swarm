@@ -26,8 +26,13 @@
 //! unconditional top-level `import` or `from ... import`. Any other binding
 //! of the name, a star import, a `match` or `type` statement at any depth
 //! the module executes, a module `__getattr__`, `global`, a walrus, a
-//! dynamic namespace write or the name spelled as an attribute anywhere
-//! (`tests.tomllib = other` replaces the package attribute) refuses, as
+//! dynamic namespace or frame write, a non-ASCII character, the name
+//! spelled as an attribute anywhere (`tests.tomllib = other` replaces the
+//! package attribute), or any statement besides a docstring, `pass`, a
+//! literal `__all__` or an import of a non-workspace module refuses. Any
+//! other read workspace module whose code spells that attribute, or names
+//! the name next to a reference writer (`setattr`, `vars`, `sys.modules`,
+//! ...), refuses too, as
 //! does a submodule or subpackage of the same name, which another import
 //! could load over the binding. Chains through further package
 //! initializers stop after [`MAX_ALIAS_HOPS`].
@@ -37,6 +42,8 @@ use super::reexports::{import_binding, is_star_import, stmt_binds, writes_namesp
 use super::source_facts::parse_module_result;
 use super::{PythonImport, PythonTest};
 use rustpython_parser::ast::{self, Mod, Stmt};
+use rustpython_parser::lexer::lex;
+use rustpython_parser::{Mode, StringKind, Tok};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -52,15 +59,7 @@ const MAX_ALIAS_HOPS: usize = 3;
 fn rebinds_dynamically(text: &str) -> bool {
     writes_namespace_dynamically(text)
         || text.contains(":=")
-        || identifier_tokens(text).any(|token| {
-            matches!(
-                token,
-                "global" | "eval" | "__getattr__" | "modules" | "__import__"
-            ) || writes_through_namespace(token)
-                || ["frame", "import_module", "importlib", "runpy"]
-                    .iter()
-                    .any(|part| token.contains(part))
-        })
+        || identifier_tokens(text).any(|token| token == "global" || writer_token(token))
 }
 
 fn identifier_tokens(text: &str) -> impl Iterator<Item = &str> {
@@ -77,11 +76,9 @@ fn writes_through_namespace(token: &str) -> bool {
         .any(|part| token.contains(part))
 }
 
-/// Whether a read module of the test tree (the directory of the package's
-/// first name) or any conftest, other than the initializer itself, can
-/// replace the package attribute `name`: it spells `.name` (or a non-ASCII
-/// attribute, which Python may fold to `name`), or names `name` next to a
-/// namespace writer such as `setattr`.
+/// Whether another read workspace module (a test module, a conftest, a
+/// helper on the root or under `src`) can replace the package attribute
+/// `name` when it runs. Modules the bounded read skipped are not scanned.
 fn replaced_elsewhere(
     package: &str,
     name: &str,
@@ -92,21 +89,81 @@ fn replaced_elsewhere(
         return true;
     };
     sources.iter().any(|(path, text)| {
-        let in_scope =
-            path.starts_with(first) || path.file_name().is_some_and(|f| f == "conftest.py");
-        in_scope
-            && path != init
+        path != init
             && path.extension().is_some_and(|ext| ext == "py")
-            && (names_attribute(text, name)
-                || (identifier_tokens(text).any(writes_through_namespace)
-                    && identifier_tokens(text).any(|token| token == name)))
+            && module_may_replace(text, name, first)
     })
 }
 
-/// Whether any import statement other than `binder`, at any depth the
-/// module executes, is relative or names a module present in the workspace
-/// (at the root or under `src`).
-fn imports_workspace_module(
+/// Reads one module's code tokens, so a mention in a comment or a plain
+/// string (tomli's `'tomli._re' not in sys.modules` inside a subprocess
+/// script) is not code. It refuses when the code spells `.name` (or a
+/// non-ASCII attribute, which Python may NFKC-fold to `name`), when an
+/// f-string, whose fields run, holds anything the initializer text rule
+/// refuses, or when the code has a writer `replaces_by_reference` names and
+/// the module names `name` or the package's first name anywhere, strings
+/// included. A module that does not lex refuses.
+fn module_may_replace(text: &str, name: &str, first: &str) -> bool {
+    let Ok(tokens) = lex(text, Mode::Module).collect::<Result<Vec<_>, _>>() else {
+        return true;
+    };
+    let mut writer = false;
+    let mut mentions = false;
+    let mut after_dot = false;
+    for (token, _) in tokens {
+        let dot = matches!(token, Tok::Dot);
+        match token {
+            Tok::Name { name: ident } => {
+                if after_dot && (ident == name || !ident.is_ascii()) {
+                    return true;
+                }
+                writer |= replaces_by_reference(&ident);
+                mentions |= ident == name || ident == first;
+            }
+            Tok::String { value, kind, .. } => {
+                if matches!(kind, StringKind::FString | StringKind::RawFString)
+                    && (rebinds_dynamically(&value) || names_attribute(&value, name))
+                {
+                    return true;
+                }
+                mentions |= value.contains(name) || value.contains(first);
+            }
+            _ => {}
+        }
+        after_dot = dot;
+    }
+    writer && mentions
+}
+
+/// A token through which another module can write the package's namespace
+/// by a computed name or swap the package itself: `setattr`, `delattr`,
+/// `__dict__`, `vars`, `globals`/`locals`, a frame, `exec`/`eval` of a
+/// code string, or the `sys.modules` table. An import (`importlib`) only
+/// runs another module, which is scanned on its own.
+fn replaces_by_reference(token: &str) -> bool {
+    matches!(token, "vars" | "exec" | "eval" | "modules")
+        || writes_through_namespace(token)
+        || token.contains("frame")
+}
+
+/// The identifier tokens `rebinds_dynamically` refuses in an initializer.
+fn writer_token(token: &str) -> bool {
+    matches!(
+        token,
+        "vars" | "exec" | "eval" | "__getattr__" | "modules" | "__import__"
+    ) || writes_through_namespace(token)
+        || ["frame", "import_module", "importlib", "runpy"]
+            .iter()
+            .any(|part| token.contains(part))
+}
+
+/// Whether every top-level statement other than `binder` is inert: a
+/// docstring, `pass`, an `__all__` of string literals, or a plain import of
+/// a module that is not in the workspace (at the root or under `src`). Any
+/// other statement (a call, a `def` or `class` whose body may run, a
+/// relative import, an import of a workspace module) runs code that can
+/// write the package attribute, so the initializer is not read.
+fn only_inert_besides(
     body: &[Stmt],
     binder: &Stmt,
     init: &Path,
@@ -119,55 +176,36 @@ fn imports_workspace_module(
             is_present(&module.with_extension("py")) || is_present(&module.join("__init__.py"))
         })
     };
-    let mut pending: Vec<&Stmt> = body.iter().collect();
-    while let Some(stmt) = pending.pop() {
+    let string = |expr: &ast::Expr| matches!(expr, ast::Expr::Constant(value) if matches!(value.value, ast::Constant::Str(_)));
+    body.iter().all(|stmt| {
         if std::ptr::eq(stmt, binder) {
-            continue;
+            return true;
         }
         match stmt {
-            Stmt::Import(import) => {
-                if import
-                    .names
-                    .iter()
-                    .any(|alias| in_workspace(alias.name.as_str()))
-                {
-                    return true;
-                }
+            Stmt::Pass(_) => true,
+            Stmt::Expr(expr) => string(&expr.value),
+            Stmt::Assign(assign) => {
+                let all = matches!(assign.targets.as_slice(),
+                    [ast::Expr::Name(target)] if target.id.as_str() == "__all__");
+                let literal = match assign.value.as_ref() {
+                    ast::Expr::Tuple(tuple) => tuple.elts.iter().all(string),
+                    ast::Expr::List(list) => list.elts.iter().all(string),
+                    _ => false,
+                };
+                all && literal
             }
+            Stmt::Import(import) => import
+                .names
+                .iter()
+                .all(|alias| !in_workspace(alias.name.as_str())),
             Stmt::ImportFrom(import) => {
                 let level = import.level.as_ref().map_or(0, |level| level.to_usize());
-                if level > 0 {
-                    return true;
-                }
                 let source = import_source_module(init, import);
-                if source.is_empty() || in_workspace(&source) {
-                    return true;
-                }
+                level == 0 && !source.is_empty() && !in_workspace(&source) && !is_star_import(stmt)
             }
-            Stmt::If(s) => pending.extend(s.body.iter().chain(&s.orelse)),
-            Stmt::For(s) => pending.extend(s.body.iter().chain(&s.orelse)),
-            Stmt::AsyncFor(s) => pending.extend(s.body.iter().chain(&s.orelse)),
-            Stmt::While(s) => pending.extend(s.body.iter().chain(&s.orelse)),
-            Stmt::With(s) => pending.extend(&s.body),
-            Stmt::AsyncWith(s) => pending.extend(&s.body),
-            Stmt::Try(s) => {
-                pending.extend(s.body.iter().chain(&s.orelse).chain(&s.finalbody));
-                for handler in &s.handlers {
-                    let ast::ExceptHandler::ExceptHandler(handler) = handler;
-                    pending.extend(&handler.body);
-                }
-            }
-            Stmt::TryStar(s) => {
-                pending.extend(s.body.iter().chain(&s.orelse).chain(&s.finalbody));
-                for handler in &s.handlers {
-                    let ast::ExceptHandler::ExceptHandler(handler) = handler;
-                    pending.extend(&handler.body);
-                }
-            }
-            _ => {}
+            _ => false,
         }
-    }
-    false
+    })
 }
 
 /// Whether `name` appears as an attribute (`.name`, whitespace or line
@@ -298,9 +336,9 @@ fn initializer_binding(
     if !text.is_ascii() || rebinds_dynamically(text) || names_attribute(text, name) {
         return None;
     }
-    // Another module of the test tree, or a conftest, that spells the name as
-    // an attribute or reaches it through a namespace writer can replace the
-    // package attribute after the initializer ran.
+    // Another workspace module that spells the name as an attribute or
+    // reaches it through a namespace writer can replace the package
+    // attribute after the initializer ran.
     if replaced_elsewhere(package, name, &init, sources) {
         return None;
     }
@@ -323,7 +361,7 @@ fn initializer_binding(
     // Any other import of a workspace module (the package itself, one of its
     // submodules, or a module on the root or `src`) runs code that can write
     // the package attribute; only the binding import itself is admitted.
-    if imports_workspace_module(&module.body, binder, &init, is_present) {
+    if !only_inert_besides(&module.body, binder, &init, is_present) {
         return None;
     }
     match binder {

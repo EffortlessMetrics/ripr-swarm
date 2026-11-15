@@ -228,7 +228,41 @@ fn a_package_name_replaceable_by_attribute_write_or_other_code_stays_unlinked() 
     // Code outside the initializer that runs before the test can replace the
     // attribute too: a submodule the initializer imports, a conftest, or
     // another test module.
-    let elsewhere: [(&str, &str, &[(&str, &str)]); 4] = [
+    let elsewhere: [(&str, &str, &[(&str, &str)]); 9] = [
+        (
+            "initializer-calls-function",
+            "import tomli as tomllib\n\n\ndef _load():\n    import json\n\n\n_load()\n",
+            &[],
+        ),
+        (
+            "initializer-class-body",
+            "import tomli as tomllib\n\n\nclass _Load:\n    import json\n",
+            &[],
+        ),
+        (
+            "conftest-vars-update",
+            "import tomli as tomllib\n",
+            &[(
+                "tests/conftest.py",
+                "import json\nimport tests\nvars(tests).update(tomllib=json)\n",
+            )],
+        ),
+        (
+            "conftest-replaces-package",
+            "import tomli as tomllib\n",
+            &[(
+                "conftest.py",
+                "import sys\nimport types\nsys.modules[\"tests\"] = types.ModuleType(\"other\")\n",
+            )],
+        ),
+        (
+            "root-helper-writes-attribute",
+            "import tomli as tomllib\n",
+            &[(
+                "support.py",
+                "import json\nimport tests\ntests.tomllib = json\n",
+            )],
+        ),
         (
             "initializer-runs-helper",
             "import tomli as tomllib\nfrom . import helper\n",
@@ -260,14 +294,26 @@ fn a_package_name_replaceable_by_attribute_write_or_other_code_stays_unlinked() 
         let finding = tomli_case(label, Some(init), "from . import tomllib", extra)?;
         expect_unlinked(label, &finding)?;
     }
-    // An attribute read through the bound name is not a write of it.
-    let read = tomli_case(
-        "attribute-read",
-        Some("import tomli as tomllib\nPARSE = tomllib.loads\n"),
+    // tomli's own initializer shape (a literal `__all__`, comments and the
+    // binding) stays linked, with test modules reading `tomllib.loads`.
+    let inert = tomli_case(
+        "inert-initializer",
+        Some(
+            "\"\"\"Tests.\"\"\"\n\n__all__ = (\"tomllib\",)\n\n# The module under test.\nimport tomli as tomllib\n",
+        ),
         "from . import tomllib",
-        &[],
+        &[(
+            "tests/test_other.py",
+            "from . import tomllib\n\n\ndef test_other():\n    assert tomllib.loads(\"a\") == {}\n",
+        )],
     )?;
-    expect_linked("attribute read through the bound name", &read)
+    if inert.related_tests.is_empty() {
+        return Err(format!(
+            "inert initializer: expected a related test, got {:?}",
+            inert.class
+        ));
+    }
+    Ok(())
 }
 
 #[test]

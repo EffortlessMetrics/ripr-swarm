@@ -1572,12 +1572,19 @@ mutant calibrates the rule; ripr reports only the static shape.
     `import_module`, `importlib` or `runpy`; `__import__`), a walrus `:=`,
     a non-ASCII character (Python NFKC-folds identifiers), `X` as an
     attribute anywhere (`.X`, as in `tests.X = other`, which replaces the
-    package attribute through any receiver), or any import other than the
-    binding one that is relative or names a workspace module (at the root
-    or under `src`), whose code could write the attribute; another read
-    module under the package's top directory, or any read conftest, spells
-    `.X` or a non-ASCII attribute, or names `X` beside such a namespace
-    writer token (modules the bounded read skipped are not scanned); or `P`
+    package attribute through any receiver), or any top-level statement
+    besides the binding import that is not a docstring, `pass`, an
+    `__all__` of string literals, or an absolute import of a module that
+    is not in the workspace (at the root or under `src`): a call, a `def`
+    or `class`, or an import of workspace code can run code that writes
+    the attribute; any other read workspace module (test module, conftest,
+    helper), read by its code tokens so comments and plain strings do not
+    count, spells `.X` or a non-ASCII attribute, has an f-string the
+    initializer rule would refuse, or has a reference writer (`setattr`,
+    `delattr`, `__dict__`, `vars`, `globals`, `locals`, a frame, `exec`,
+    `eval`, `modules`) while naming `X` or the package's first name
+    anywhere, strings included (modules the bounded read skipped are not
+    scanned); or `P`
     has a submodule or subpackage named `X`, which an import elsewhere could
     load over the binding. A followed `from M import Y as X` is a rename
     the package re-export reading does not follow; it is followed here
