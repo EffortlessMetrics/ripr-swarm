@@ -11,8 +11,9 @@
 //!    call compiles and runs there;
 //! 2. a no-argument constructor named `new`, `empty` or `default`, in that
 //!    order;
-//! 3. `T::default()` when `T`, spelled without type arguments, derives or
-//!    implements `Default`.
+//! 3. `<T as ::core::default::Default>::default()` when `T`, spelled without
+//!    type arguments, has `#[derive(Default)]` and the file declares no
+//!    namesake `Default` item.
 //!
 //! A constructor is an associated function of an inherent impl of `T`
 //! (sibling of the owner's impl, same module) that takes no `self`, has no
@@ -24,7 +25,7 @@
 //! developer changes it when the case needs another state.
 
 use super::StubScope;
-use crate::analysis::syntax::fn_signature::local_type_traits;
+use crate::analysis::syntax::fn_signature::local_type_derives;
 use crate::analysis::syntax::{has_test_attribute, parse_clean_source_file};
 use ra_ap_syntax::ast::{self, HasArgList, HasAttrs, HasGenericParams, HasName};
 use ra_ap_syntax::{AstNode, TextSize};
@@ -65,7 +66,7 @@ impl ReceiverConstruction {
         match &self.origin {
             ReceiverOrigin::ExistingTest(name) => format!("as in the existing test `{name}`"),
             ReceiverOrigin::NoArgumentConstructor => "its no-argument constructor".to_string(),
-            ReceiverOrigin::Default => "its `Default` implementation".to_string(),
+            ReceiverOrigin::Default => "its derived `Default`".to_string(),
         }
     }
 }
@@ -147,11 +148,16 @@ pub(super) fn receiver_construction(
     }
     // A generic type's derived `Default` carries bounds on its arguments the
     // stub cannot check, so only a type spelled without arguments qualifies.
+    // Only a `#[derive(Default)]` counts, in a file that declares or imports
+    // no item of its own named `Default` (a namesake trait has no
+    // `default()`). The call names the standard trait in full, so an
+    // inherent `default(..)` taking arguments cannot capture it (#14825).
     let has_default = self_ty == base_name
-        && local_type_traits(source, &base_name)
+        && !declares_default_namesake(&parse)
+        && local_type_derives(source, &base_name)
             .is_some_and(|traits| traits.iter().any(|name| name == "Default"));
     has_default.then(|| ReceiverConstruction {
-        expression: format!("{type_path}::default()"),
+        expression: format!("<{type_path} as ::core::default::Default>::default()"),
         origin: ReceiverOrigin::Default,
     })
 }
@@ -254,6 +260,17 @@ fn reused_call(
             constructors
                 .iter()
                 .find(|candidate| candidate.name == name && candidate.params == arguments.len())?;
+            // A call inside a closure may be one a `catch_unwind` or a lazy
+            // combinator never runs to completion; only a call in the test's
+            // own body is known to have returned.
+            if call
+                .syntax()
+                .ancestors()
+                .take_while(|node| !ast::Fn::can_cast(node.kind()))
+                .any(|node| ast::ClosureExpr::can_cast(node.kind()))
+            {
+                return None;
+            }
             let function = call.syntax().ancestors().find_map(ast::Fn::cast)?;
             if !has_test_attribute(&function)
                 || function
@@ -280,6 +297,16 @@ fn is_ripr_stub(function: &ast::Fn) -> bool {
 
 /// A literal argument (`5`, `"w"`, `true`, `-3`, `1.5`) as written.
 fn literal_argument(arg: &ast::Expr) -> Option<String> {
+    // The copied text is printed to the terminal on the `Receiver:` line.
+    if arg
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .any(char::is_control)
+    {
+        return None;
+    }
     match arg {
         ast::Expr::Literal(_) => Some(arg.syntax().text().to_string()),
         ast::Expr::PrefixExpr(prefix)
@@ -324,6 +351,52 @@ fn lifetime_generics_only(item: &ast::Impl) -> bool {
 
 fn has_cfg(mut attrs: ast::AstChildren<ast::Attr>) -> bool {
     attrs.any(|attr| attr_named(&attr, &["cfg", "cfg_attr"]))
+}
+
+/// Whether the file declares, or imports under that name, any item called
+/// `Default`, which would make a derived `Default` ambiguous.
+fn declares_default_namesake(parse: &ra_ap_syntax::Parse<ast::SourceFile>) -> bool {
+    parse.tree().syntax().descendants().any(|node| {
+        if let Some(rename) = ast::Rename::cast(node.clone()) {
+            return rename.name().is_some_and(|name| name.text() == "Default");
+        }
+        if let Some(tree) = ast::UseTree::cast(node.clone()) {
+            // `use other::Default;` (a last segment with no rename or glob).
+            return tree.rename().is_none()
+                && tree.use_tree_list().is_none()
+                && tree.star_token().is_none()
+                && tree
+                    .path()
+                    .and_then(|path| path.segment())
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|name| name.text() == "Default")
+                && !tree.path().is_some_and(|path| {
+                    let text: String = path
+                        .syntax()
+                        .text()
+                        .to_string()
+                        .split_whitespace()
+                        .collect();
+                    matches!(
+                        text.trim_start_matches("::"),
+                        "std::default::Default" | "core::default::Default"
+                    )
+                });
+        }
+        ast::Item::cast(node).is_some_and(|item| {
+            let name = match &item {
+                ast::Item::Trait(it) => it.name(),
+                ast::Item::Struct(it) => it.name(),
+                ast::Item::Enum(it) => it.name(),
+                ast::Item::Union(it) => it.name(),
+                ast::Item::TypeAlias(it) => it.name(),
+                ast::Item::MacroRules(it) => it.name(),
+                ast::Item::Fn(it) => it.name(),
+                _ => None,
+            };
+            name.is_some_and(|name| name.text() == "Default")
+        })
+    })
 }
 
 /// Whether the attribute's single-segment path is one of `names`.

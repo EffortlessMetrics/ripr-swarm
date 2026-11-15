@@ -313,7 +313,9 @@ only lifetime generics binds its receiver as `Type<'_>`. A method's receiver
 is built from a constructor of its type when one is established: the first
 call with all-literal arguments that an existing test in the target module
 makes (copied as written), else a no-argument `new`, `empty` or `default` constructor, else
-`Type::default()`; otherwise it stays a labelled `todo!()`. Human output
+`<Type as ::core::default::Default>::default()` for a `#[derive(Default)]`
+type with no generic arguments; a call inside a closure is not copied;
+otherwise it stays a labelled `todo!()`. Human output
 names the source on a `Receiver:` line (#8361). When the owner file
 has several inline test modules enabled under plain `cfg(test)`, the stub goes
 into the one that already names the owner, else the nearest one after it, else

@@ -516,6 +516,29 @@ as `T`, and `impl AsRef<str>` / `impl AsRef<[u8]>` as `&str` / `&[u8]` (#8361).
 Any other `impl Trait` parameter, including `impl AsRef<Path>` whose `Path`
 could be shadowed, still refuses as `parameter_unsupported`.
 
+A method stub placed in an inline test module builds its receiver from a
+constructor instead of a labelled `todo!()` when one is established
+(#8361, #14825). A constructor is an associated function of an inherent impl
+of the same self type, beside the owner's impl in the same module, that takes
+no `self`, has no type or const generics, is not `async`, `unsafe` or
+cfg-gated, and returns `Self` or the type. In order:
+
+1. the first call in the target test module to such a constructor whose
+   arguments are all literals with no control characters, written directly in
+   a `#[test]` function body (not inside a closure) that is not `should_panic`
+   and is not a ripr stub; the call is copied with its arguments, and the
+   module must not declare or import its own item of the type's name;
+2. a no-argument constructor named `new`, `empty` or `default`, in that order;
+3. `<Type as ::core::default::Default>::default()` for a `#[derive(Default)]`
+   type spelled without generic arguments, in a file that declares or imports
+   no other item named `Default`.
+
+Otherwise the receiver stays a `todo!()`. The receiver line carries a comment
+naming its source, and human output prints it on a `Receiver:` line; the JSON
+document is unchanged apart from `text` and one fewer `fill_ins` entry. The
+expected value stays a `todo!()`. A second run over a written stub recomputes
+the same text and reports it already written.
+
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie
 (`selector_ambiguous`). Both remain decisions (exit 3), with the schema

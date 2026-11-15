@@ -297,6 +297,12 @@ pub struct Counter {
 }
 
 impl Counter {
+    // An inherent `default` taking an argument must not capture the
+    // derived `Default` call (#14825 review).
+    pub fn default(hits: u8) -> Self {
+        Counter { hits }
+    }
+
     pub fn over(&self, n: u8) -> u8 {
         if n > 21 { self.hits } else { 0 }
     }
@@ -311,6 +317,13 @@ mod tests {
     fn panics_first() {
         let _b = Bucket::new(7);
         panic!("before");
+    }
+
+    #[test]
+    fn caught() {
+        // A call inside a closure is not copied (#14825 review).
+        let built = std::panic::catch_unwind(|| Bucket::new(0));
+        assert!(built.is_ok());
     }
 
     #[test]
@@ -435,10 +448,12 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
             "sum > cap",
             Expect::BuildsReceiver("let subject: Ledger = Ledger::empty();"),
         ),
-        // `#[derive(Default)]` with no constructor.
+        // `#[derive(Default)]` beside an inherent `default(hits)`.
         (
             "n > 21",
-            Expect::BuildsReceiver("let subject: Counter = Counter::default();"),
+            Expect::BuildsReceiver(
+                "let subject: Counter = <Counter as ::core::default::Default>::default();",
+            ),
         ),
     ]
     .map(|(needle, expect)| (FIXTURE_RECEIVER, needle, expect, Some("tests")));

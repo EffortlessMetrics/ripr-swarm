@@ -2061,13 +2061,14 @@ impl Pool {
     let stub =
         rust_test_stub(&seam, None, with_default, None).map_err(|r| r.reason().to_string())?;
     assert!(
-        stub.text.contains("let subject: Pool = Pool::default();"),
+        stub.text
+            .contains("let subject: Pool = <Pool as ::core::default::Default>::default();"),
         "{}",
         stub.text
     );
     assert_eq!(
         stub.receiver_setup.as_deref(),
-        Some("subject = Pool::default(), its `Default` implementation")
+        Some("subject = <Pool as ::core::default::Default>::default(), its derived `Default`")
     );
     Ok(())
 }
@@ -2242,6 +2243,57 @@ impl Link {
         boundary("n == 2"),
     )?;
     let stub = rust_test_stub(&seam, None, connect, None).map_err(|r| r.reason().to_string())?;
+    assert_eq!(stub.receiver_setup, None, "{}", stub.text);
+    Ok(())
+}
+
+/// #14825 Devin review: a namesake `Default` trait has no `default()`, and a
+/// constructor call inside a closure is not known to have returned.
+#[test]
+fn receiver_skips_namesake_default_and_closure_calls() -> Result<(), String> {
+    let namesake = "trait Default {}
+#[derive(Default)]
+pub struct Pool { n: u8 }
+impl Pool {
+    pub fn size(&self, k: u8) -> u8 {
+        if k > 2 { self.n } else { k }
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        namesake,
+        "k > 2",
+        SeamKind::PredicateBoundary,
+        boundary("k == 2"),
+    )?;
+    let stub = rust_test_stub(&seam, None, namesake, None).map_err(|r| r.reason().to_string())?;
+    assert_eq!(stub.receiver_setup, None, "{}", stub.text);
+
+    let closure = "pub struct Bucket { tokens: u32 }
+impl Bucket {
+    pub fn new(capacity: u32) -> Self { Bucket { tokens: capacity } }
+    pub fn allow(&self, n: u32) -> bool { self.tokens > n }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn caught() {
+        let built = std::panic::catch_unwind(|| Bucket::new(0));
+        assert!(built.is_err());
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        closure,
+        "self.tokens > n",
+        SeamKind::PredicateBoundary,
+        boundary("self.tokens == n"),
+    )?;
+    let stub = rust_test_stub(&seam, None, closure, None).map_err(|r| r.reason().to_string())?;
     assert_eq!(stub.receiver_setup, None, "{}", stub.text);
     Ok(())
 }
