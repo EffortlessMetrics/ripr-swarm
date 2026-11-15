@@ -413,6 +413,22 @@ pub(crate) fn ts_candidate_changed_sink_observation(
                     workspace_root,
                 )
             };
+            // #14814: a read of a SIBLING field of the returned literal
+            // observes a different field, so it cannot witness this change.
+            // `expect(f().verbose)` while the edit moves `retries` must not
+            // inherit the blanket owner-call confirmation below.
+            if let Some(field) = changed_field
+                && ts_value_observed_reads_sibling_field(
+                    observed,
+                    field,
+                    &owner_names,
+                    owner_is_method,
+                    &namespace_receivers,
+                )
+            {
+                merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
+                continue;
+            }
             if ts_masked_observes_owner(
                 &observed_code,
                 &owner_names,
@@ -722,6 +738,48 @@ fn ts_effect_observed_is_affirmatively_foreign(
         return true;
     }
     ts_effect_call_callee_is_foreign(observed, owner_names, changed_tokens, test)
+}
+
+/// #14814: whether `observed` reads a SIBLING field of the owner's returned
+/// literal: the outermost plain field read of an expression whose base is the
+/// owner call (or an admitted owner alias) names a field other than the
+/// changed one.
+///
+/// `expect(f().verbose)` while the edit moves `retries` observes a different
+/// field, so it cannot witness the changed one. Only a plain trailing field
+/// read counts: a method call (`f().format()`), a nested read whose outermost
+/// field IS the changed one (`f().config.retries`) and the whole result (`f()`)
+/// keep the existing credit.
+fn ts_value_observed_reads_sibling_field(
+    observed: &str,
+    changed: &TypeScriptChangedField,
+    owner_names: &[&str],
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+) -> bool {
+    fn is_ident_char(ch: char) -> bool {
+        ch.is_alphanumeric() || ch == '_' || ch == '$'
+    }
+    let masked = ts_mask_literals_and_comments(observed.trim());
+    let Some((base, read)) = masked.rsplit_once('.') else {
+        return false;
+    };
+    let read = read.trim();
+    if read.is_empty()
+        || read == changed.key
+        || !read
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_alphabetic() || ch == '_' || ch == '$')
+        || !read.chars().all(is_ident_char)
+    {
+        return false;
+    }
+    let base = base.trim();
+    if base.is_empty() {
+        return false;
+    }
+    ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers)
 }
 
 /// `true` when `text` is a bare identifier reference (no member access, call,

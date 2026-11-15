@@ -12245,6 +12245,119 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
     Ok(())
 }
 
+/// #14814: a FieldConstruction change read through a SIBLING field of the
+/// returned literal is not observed. `f()` builds `{ retries, verbose }` and
+/// the edit moves `retries`; a test asserting `f().verbose` reads a different
+/// field, so it cannot witness the changed one. The owner-call blanket credit
+/// promoted it to `exposed` only because the expression names `f`. It must
+/// downgrade to `weakly_exposed` / `propagation_unknown`, matching the Rust
+/// `one_hop_field_projection_sibling` precedent.
+#[test]
+fn ts_fieldconstruction_sibling_field_read_downgrades() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"verbose flag\", () => { expect(f().verbose).toBe(false); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    assert_eq!(owners.len(), 1, "expected one owner from live extractor");
+    assert_eq!(tests.len(), 1, "expected one test from live extractor");
+
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "sibling-field read must not read as exposed, got {:?}",
+        finding.class
+    );
+    assert!(
+        !matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "discriminate must not be Yes for a sibling-field read, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    let all_text: String = finding.missing.join("\n");
+    assert!(
+        all_text.contains("propagation_unknown"),
+        "expected propagation_unknown in missing, got: {all_text:?}"
+    );
+    Ok(())
+}
+
+/// #14814 control: the changed field itself, read off the owner's result,
+/// still confirms. `expect(f().retries)` observes `retries`, so the finding
+/// stays `exposed`. A fix that suppressed this too would over-apply.
+#[test]
+fn ts_fieldconstruction_changed_field_read_stays_exposed() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"retries\", () => { expect(f().retries).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "the changed field read by name must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 control: a whole-object assertion pins every field, the changed one
+/// included, and keeps its verdict. Recorded on base as `exposed`; this test
+/// pins that it does not move.
+#[test]
+fn ts_fieldconstruction_whole_object_assertion_is_unchanged() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"whole config\", () => { expect(f()).toEqual({ retries: 5, verbose: false }); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a whole-object assertion pins the changed field, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
 /// LIVE-pipeline guard test (RIPR-SPEC-0098 §fixture-5, #1235): exercises the
 /// REAL oracle extractor end-to-end. Source and test text are parsed by
 /// `extract_owners` / `extract_tests`, so the assertions carry whatever

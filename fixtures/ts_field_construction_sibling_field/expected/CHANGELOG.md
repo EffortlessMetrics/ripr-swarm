@@ -1,0 +1,13 @@
+# Golden Output Changes
+
+## Pending — ts_field_construction_sibling_field (1)
+
+Reason:
+RIPR-SPEC-0243: new fixture pinning the #14814 sibling-field FieldConstruction downgrade
+
+Command:
+`cargo xtask goldens bless ts_field_construction_sibling_field --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
