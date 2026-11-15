@@ -11,6 +11,7 @@
 //! Every shape this module does not understand returns `None`, and the caller
 //! falls back to building and listing. A `None` is never a failure.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use ra_ap_syntax::ast::{self, HasAttrs, HasModuleItem, HasName};
@@ -77,10 +78,9 @@ fn parse_library_selector(command: &str) -> Option<LibrarySelector> {
     })
 }
 
-/// The library root source file of workspace member `package`, read from the
-/// manifests. Globbed members, a missing member or an unreadable manifest
-/// give `None`.
-fn library_root(root: &Path, package: &str) -> Option<PathBuf> {
+/// The manifest of workspace member `package`. Globbed members, a missing
+/// member or an unreadable manifest give `None`.
+fn package_manifest(root: &Path, package: &str) -> Option<(PathBuf, toml::Table)> {
     let workspace: toml::Table = std::fs::read_to_string(root.join("Cargo.toml"))
         .ok()?
         .parse()
@@ -99,14 +99,76 @@ fn library_root(root: &Path, package: &str) -> Option<PathBuf> {
         if manifest.get("package")?.get("name")?.as_str()? != package {
             continue;
         }
-        let relative = match manifest.get("lib").and_then(|lib| lib.get("path")) {
-            Some(path) => path.as_str()?,
-            None => "src/lib.rs",
-        };
-        let path = directory.join(relative);
-        return path.is_file().then_some(path);
+        return Some((directory, manifest));
     }
     None
+}
+
+/// The library root source file of workspace member `package`, read from the
+/// manifests.
+fn library_root(root: &Path, package: &str) -> Option<PathBuf> {
+    let (directory, manifest) = package_manifest(root, package)?;
+    let relative = match manifest.get("lib").and_then(|lib| lib.get("path")) {
+        Some(path) => path.as_str()?,
+        None => "src/lib.rs",
+    };
+    let path = directory.join(relative);
+    path.is_file().then_some(path)
+}
+
+/// Feature state of the target package for a test build: the features its
+/// manifest declares, and the subset actually enabled once the manifest's
+/// `default` feature and every transitive plain alias are expanded on top of
+/// the features the selector itself names. The selector grammar has no
+/// `--no-default-features`, so Cargo would enable `default` for this build.
+#[derive(Debug, PartialEq, Eq)]
+struct FeatureState {
+    declared: BTreeSet<String>,
+    enabled: BTreeSet<String>,
+}
+
+fn feature_state(manifest: &toml::Table, requested: &[String]) -> Option<FeatureState> {
+    let table = match manifest.get("features") {
+        Some(toml::Value::Table(table)) => table.clone(),
+        None => toml::map::Map::new(),
+        Some(_) => return None,
+    };
+    let declared: BTreeSet<String> = table.keys().cloned().collect();
+    // A feature argument the manifest does not declare cannot be evaluated:
+    // refuse rather than guess (notably under `not(..)`, where a guessed
+    // `false` would invent tests Cargo never builds). `default` always
+    // exists in Cargo, possibly empty.
+    if requested
+        .iter()
+        .any(|name| name != "default" && !declared.contains(name))
+    {
+        return None;
+    }
+    let mut enabled = BTreeSet::new();
+    let mut pending: Vec<String> = requested.to_vec();
+    pending.push("default".to_string());
+    while let Some(name) = pending.pop() {
+        if !enabled.insert(name.clone()) {
+            continue;
+        }
+        let entries = match table.get(&name) {
+            Some(toml::Value::Array(entries)) => entries,
+            // Not a declared feature key: an implicit optional-dependency
+            // feature named by another feature's value. It enables no alias.
+            None => continue,
+            Some(_) => return None,
+        };
+        for entry in entries {
+            let entry = entry.as_str()?;
+            // `dep:`, `dep?/feat` and `pkg/feat` entries enable dependencies
+            // or their features, never a feature of this package.
+            if entry.starts_with("dep:") || entry.contains('/') {
+                continue;
+            }
+            pending.push(entry.to_string());
+        }
+    }
+    Some(FeatureState { declared, enabled })
 }
 
 fn attribute_text(attr: &ast::Attr) -> String {
@@ -123,10 +185,12 @@ fn attribute_text(attr: &ast::Attr) -> String {
 
 /// The value of one whitespace-free `cfg` predicate in a test build on this
 /// host, or `None` when it is not understood here. Only `test`, the host
-/// family and operating system, and `feature = ".."` against the features the
-/// selector itself enables are understood, alone or under `not(..)`:
-/// selectors are resolved for the host that runs the local build.
-fn host_cfg_value(predicate: &str, features: &[String]) -> Option<bool> {
+/// family and operating system, and `feature = ".."` against the target
+/// package's manifest-backed [`FeatureState`] are understood, alone or under
+/// `not(..)`: selectors are resolved for the host that runs the local build.
+/// A feature the manifest does not declare is not understood, so a negated
+/// predicate over it can never invent a test.
+fn host_cfg_value(predicate: &str, features: &FeatureState) -> Option<bool> {
     if let Some(inner) = predicate
         .strip_prefix("not(")
         .and_then(|rest| rest.strip_suffix(')'))
@@ -137,7 +201,10 @@ fn host_cfg_value(predicate: &str, features: &[String]) -> Option<bool> {
         .strip_prefix("feature=\"")
         .and_then(|rest| rest.strip_suffix('"'))
     {
-        return Some(features.iter().any(|feature| feature == name));
+        if name != "default" && !features.declared.contains(name) {
+            return None;
+        }
+        return Some(features.enabled.contains(name));
     }
     match predicate {
         "test" => Some(true),
@@ -192,7 +259,7 @@ fn is_inert_attribute(text: &str) -> bool {
 /// [`host_cfg_value`]) and every other attribute is inert (see
 /// [`is_inert_attribute`]); `None` otherwise, including for a `cfg_attr`, a
 /// `#[path]` or an attribute macro, which can change what is built.
-fn presence_in_test_build<T: HasAttrs>(item: &T, features: &[String]) -> Option<bool> {
+fn presence_in_test_build<T: HasAttrs>(item: &T, features: &FeatureState) -> Option<bool> {
     let mut present = true;
     for text in item.attrs().map(|attr| attribute_text(&attr)) {
         if text.starts_with("#[cfg_attr") || text.starts_with("#[path") {
@@ -216,7 +283,7 @@ fn is_test_function(function: &ast::Fn) -> bool {
         .any(|attr| attribute_text(&attr) == "#[test]")
 }
 
-fn parse_items(path: &Path, features: &[String]) -> Option<Vec<ast::Item>> {
+fn parse_items(path: &Path, features: &FeatureState) -> Option<Vec<ast::Item>> {
     let text = std::fs::read_to_string(path).ok()?;
     let parse = SourceFile::parse(&text, Edition::Edition2024);
     if !parse.errors().is_empty() {
@@ -245,7 +312,7 @@ fn collect_tests(
     items: &[ast::Item],
     prefix: &str,
     tests: &mut Vec<String>,
-    features: &[String],
+    features: &FeatureState,
 ) -> Option<()> {
     for item in items {
         // Every item, not only tests and modules: an attribute macro on any
@@ -286,9 +353,13 @@ fn collect_tests(
 pub(crate) fn resolve_in_source(root: &Path, command: &str) -> Option<Vec<String>> {
     let selector = parse_library_selector(command)?;
     let library = library_root(root, &selector.package)?;
+    let (_, manifest) = package_manifest(root, &selector.package)?;
+    // An undeclared `--features` argument refuses here, so the caller falls
+    // back to Cargo enumeration instead of a guessed resolution.
+    let features = feature_state(&manifest, &selector.features)?;
     // Children of `lib.rs` live beside it.
     let mut child_directory = library.parent()?.to_path_buf();
-    let mut items = parse_items(&library, &selector.features)?;
+    let mut items = parse_items(&library, &features)?;
     for segment in &selector.module_path {
         let mut declared = items.iter().filter_map(|item| match item {
             ast::Item::Module(module)
@@ -302,14 +373,12 @@ pub(crate) fn resolve_in_source(root: &Path, command: &str) -> Option<Vec<String
         });
         let module = declared.next()?;
         // Two declarations of one name are cfg alternatives; not understood.
-        if declared.next().is_some()
-            || presence_in_test_build(&module, &selector.features) != Some(true)
-        {
+        if declared.next().is_some() || presence_in_test_build(&module, &features) != Some(true) {
             return None;
         }
         child_directory.push(segment);
         items = match module.item_list() {
-            Some(list) if presence_in_test_build(&list, &selector.features) == Some(true) => {
+            Some(list) if presence_in_test_build(&list, &features) == Some(true) => {
                 list.items().collect()
             }
             Some(_) => return None,
@@ -317,8 +386,8 @@ pub(crate) fn resolve_in_source(root: &Path, command: &str) -> Option<Vec<String
                 let file = child_directory.with_extension("rs");
                 let directory_module = child_directory.join("mod.rs");
                 match (file.is_file(), directory_module.is_file()) {
-                    (true, false) => parse_items(&file, &selector.features)?,
-                    (false, true) => parse_items(&directory_module, &selector.features)?,
+                    (true, false) => parse_items(&file, &features)?,
+                    (false, true) => parse_items(&directory_module, &features)?,
                     _ => return None,
                 }
             }
@@ -329,7 +398,7 @@ pub(crate) fn resolve_in_source(root: &Path, command: &str) -> Option<Vec<String
         &items,
         &selector.module_path.join("::"),
         &mut tests,
-        &selector.features,
+        &features,
     )?;
     (!tests.is_empty()).then_some(tests)
 }
@@ -548,6 +617,10 @@ mod tests {
     fn feature_conditions_follow_the_selector_features() -> Result<(), String> {
         let inner = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[cfg(feature = \"x\")]\n    #[test]\n    fn feature_only() {}\n    #[cfg(not(feature = \"x\"))]\n    #[test]\n    fn no_feature() {}\n}\n";
         let workspace = layout("feature-conditions", inner)?;
+        workspace.write(
+            "crates/a/Cargo.toml",
+            "[package]\nname = \"a\"\n[features]\nx = []\n",
+        )?;
         let without = resolve_in_source(workspace.root(), SELECTOR);
         require(
             without
@@ -567,6 +640,77 @@ mod tests {
                 "outer::inner::tests::feature_only".to_string(),
             ]),
             format!("wrong resolution with features: {with:?}"),
+        )
+    }
+
+    /// Cargo enables the manifest's `default` feature for this selector
+    /// shape, so a test gated on a default feature is listed without any
+    /// `--features`, and its negated twin is not invented.
+    #[test]
+    fn default_features_are_expanded_from_the_manifest() -> Result<(), String> {
+        let inner = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[cfg(feature = \"x\")]\n    #[test]\n    fn default_only() {}\n    #[cfg(not(feature = \"x\"))]\n    #[test]\n    fn no_default() {}\n}\n";
+        let workspace = layout("default-features", inner)?;
+        workspace.write(
+            "crates/a/Cargo.toml",
+            "[package]\nname = \"a\"\n[features]\ndefault = [\"x\"]\nx = []\n",
+        )?;
+        let tests = resolve_in_source(workspace.root(), SELECTOR);
+        require(
+            tests
+                == Some(vec![
+                    "outer::inner::tests::always".to_string(),
+                    "outer::inner::tests::default_only".to_string(),
+                ]),
+            format!("wrong resolution for default features: {tests:?}"),
+        )
+    }
+
+    /// A feature alias (`bundle = ["mid"]`, `mid = ["x"]`) enables its
+    /// transitive plain targets, as Cargo does.
+    #[test]
+    fn feature_aliases_are_expanded_transitively() -> Result<(), String> {
+        let inner = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[cfg(feature = \"x\")]\n    #[test]\n    fn alias_only() {}\n    #[cfg(not(feature = \"x\"))]\n    #[test]\n    fn no_alias() {}\n}\n";
+        let workspace = layout("feature-alias", inner)?;
+        workspace.write(
+            "crates/a/Cargo.toml",
+            "[package]\nname = \"a\"\n[features]\nbundle = [\"mid\"]\nmid = [\"x\", \"dep:prost\"]\nx = []\n",
+        )?;
+        let tests = resolve_in_source(
+            workspace.root(),
+            "cargo test -p a --features bundle --lib outer::inner::tests",
+        );
+        require(
+            tests
+                == Some(vec![
+                    "outer::inner::tests::always".to_string(),
+                    "outer::inner::tests::alias_only".to_string(),
+                ]),
+            format!("wrong resolution for feature alias: {tests:?}"),
+        )
+    }
+
+    /// A `--features` argument the manifest does not declare, and a `cfg`
+    /// over an undeclared feature, both refuse: the caller falls back to
+    /// Cargo enumeration instead of inventing tests under `not(..)`.
+    #[test]
+    fn undeclared_features_do_not_resolve() -> Result<(), String> {
+        let inner = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[cfg(not(feature = \"ghost\"))]\n    #[test]\n    fn invented() {}\n}\n";
+        let workspace = layout("undeclared-feature", inner)?;
+        workspace.write(
+            "crates/a/Cargo.toml",
+            "[package]\nname = \"a\"\n[features]\nx = []\n",
+        )?;
+        require(
+            resolve_in_source(workspace.root(), SELECTOR).is_none(),
+            "a cfg over an undeclared feature resolved",
+        )?;
+        require(
+            resolve_in_source(
+                workspace.root(),
+                "cargo test -p a --features ghost --lib outer::inner::tests",
+            )
+            .is_none(),
+            "an undeclared --features argument resolved",
         )
     }
 

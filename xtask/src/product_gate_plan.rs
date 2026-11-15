@@ -17,9 +17,11 @@ use serde::{Deserialize, Serialize};
 /// The selected #3825 runner contract. Nextest owns compiled lib, bin,
 /// integration, and example test binaries; Cargo and rustdoc own doctests,
 /// which nextest cannot execute. Both rows are required, both run with default
-/// features, and neither stands in for the other. Non-default features are
-/// owned outside the required lane (Test Analytics all-features telemetry, the
-/// `lang-perl` job, and the Windows advisory feature matrix).
+/// features, and neither stands in for the other. Other non-default features
+/// are owned outside the required lane (Test Analytics all-features telemetry,
+/// the `lang-perl` job, and the Windows advisory feature matrix); the
+/// non-default `scip-admission` tests are the one declared exception, as
+/// their own required row below (#8115).
 pub(crate) const TEST_RUNNER_CONTRACT: &str = "canonical_nextest_plus_cargo_doc";
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -29,6 +31,7 @@ pub(crate) enum ProductGateId {
     Clippy,
     WorkspaceTests,
     WorkspaceDocTests,
+    ScipAdmissionTests,
     Precommit,
     EvidencePromotionHonesty,
     AgentSkills,
@@ -47,6 +50,7 @@ impl ProductGateId {
             Self::Clippy => "product.rust.clippy",
             Self::WorkspaceTests => "product.rust.workspace_tests",
             Self::WorkspaceDocTests => "product.rust.workspace_doc_tests",
+            Self::ScipAdmissionTests => "product.rust.scip_admission_tests",
             Self::Precommit => "product.repository.precommit",
             Self::EvidencePromotionHonesty => "product.evidence.promotion_honesty",
             Self::AgentSkills => "product.repository.agent_skills",
@@ -248,6 +252,14 @@ pub(crate) fn product_gate_definitions() -> Vec<ProductGateDefinition> {
             "cargo test --workspace --doc",
             "the default-feature workspace Rust doctests compile and pass under Cargo and rustdoc",
             "does not replace nextest coverage of compiled test binaries",
+        ),
+        gate(
+            ProductGateId::ScipAdmissionTests,
+            ProductGateRole::Required,
+            rust.clone(),
+            "cargo test -p ripr --features scip-admission --lib analysis::scip::",
+            "the non-default `scip-admission` feature's admission tests and vendored-proto drift test pass",
+            "does not prove SCIP producer behavior beyond the admitted-index fixtures",
         ),
         gate(
             ProductGateId::Precommit,
@@ -615,6 +627,7 @@ mod tests {
         let runner_rows: BTreeSet<_> = [
             ProductGateId::WorkspaceTests,
             ProductGateId::WorkspaceDocTests,
+            ProductGateId::ScipAdmissionTests,
         ]
         .into_iter()
         .filter_map(|id| {
