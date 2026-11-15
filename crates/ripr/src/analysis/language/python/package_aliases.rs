@@ -102,8 +102,11 @@ fn replaced_elsewhere(
 ///   non-ASCII attribute (which Python may NFKC-fold to `name`);
 /// - any reference writer (`replaces_by_reference`), whatever it names,
 ///   since its target can be computed (`sys.modules[__package__]`);
-/// - `__import__`, `builtins`, `meta_path`, `path_hooks`, `reload` or
-///   `patch`, which replace what an import returns;
+/// - `__import__`, `builtins`, `meta_path`, `path_hooks`, `reload`,
+///   `patch` or `monkeypatch`, which replace what an import returns, and
+///   the object-graph and frame routes to a module's dict (`gc`,
+///   `get_referents`, `get_referrers`, `get_objects`, `ctypes`,
+///   `__globals__`, `f_back`, `tb_frame`);
 /// - the package referenced by name (any part of its dotted spelling as an
 ///   identifier, as in `import tests`), outside a `from ... import` path;
 /// - a string that is `name`, the package or a dotted path under it (a
@@ -127,7 +130,7 @@ fn module_may_replace(text: &str, name: &str, package: &str) -> bool {
         match token {
             Tok::From => from_path = true,
             // `raise E from e` has no `import`; a logical line ends either.
-            Tok::Import | Tok::Newline => from_path = false,
+            Tok::Import | Tok::Newline | Tok::Semi => from_path = false,
             _ => {}
         }
         let replaces = match token {
@@ -143,6 +146,15 @@ fn module_may_replace(text: &str, name: &str, package: &str) -> bool {
                             | "path_hooks"
                             | "reload"
                             | "patch"
+                            | "monkeypatch"
+                            | "gc"
+                            | "get_referents"
+                            | "get_referrers"
+                            | "get_objects"
+                            | "ctypes"
+                            | "__globals__"
+                            | "f_back"
+                            | "tb_frame"
                     )
                     || (!from_path && parts.contains(&ident.as_str()))
             }

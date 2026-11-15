@@ -228,7 +228,15 @@ fn a_package_name_replaceable_by_attribute_write_or_other_code_stays_unlinked() 
     // Code outside the initializer that runs before the test can replace the
     // attribute too: a submodule the initializer imports, a conftest, or
     // another test module.
-    let elsewhere: [(&str, &str, &[(&str, &str)]); 14] = [
+    let elsewhere: [(&str, &str, &[(&str, &str)]); 15] = [
+        (
+            "helper-object-graph-write",
+            "import tomli as tomllib\n",
+            &[(
+                "tests/helper.py",
+                "import gc\nimport importlib\nimport json\ngc.get_referents(importlib.import_module(__package__))[0].update(tomllib=json)\n",
+            )],
+        ),
         (
             "helper-overrides-import",
             "import tomli as tomllib\n",

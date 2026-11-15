@@ -1585,7 +1585,9 @@ mutant calibrates the rule; ripr reports only the static shape.
     `eval`, `modules`) at all, since its target can be computed
     (`sys.modules[__package__]`), or names the package as an identifier,
     spells `.__class__`, uses `__import__`, `builtins`, `meta_path`,
-    `path_hooks`, `reload` or `patch`, or has a string equal to `X`, the
+    `path_hooks`, `reload`, `patch`, `monkeypatch`, `gc`,
+    `get_referents`, `get_referrers`, `get_objects`, `ctypes`,
+    `__globals__`, `f_back` or `tb_frame`, or has a string equal to `X`, the
     package or a dotted path under it, or containing `setattr`, `delattr`,
     `__dict__`, `__class__` or `__import__`. Not modelled, as for every
     directly imported module: modules the bounded read skipped, code inside
