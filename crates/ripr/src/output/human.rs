@@ -130,9 +130,10 @@ pub(crate) fn selected_triage_finding<'a>(
     triage::select_human_triage(output, config).selected
 }
 
-/// The selected subject and only the eligible rows inside the displayed
-/// Hidden window. The app resolves these before rendering, without inventing
-/// a second selection/currentness policy.
+/// The selected subject and the eligible rows from the first 20 omitted
+/// findings in report order, which is the stub-route cutoff rather than the
+/// displayed Hidden window. The app resolves these before rendering, without
+/// inventing a second selection/currentness policy.
 pub(crate) fn stub_route_subjects<'a>(
     output: &'a CheckOutput,
     config: &RiprConfig,
