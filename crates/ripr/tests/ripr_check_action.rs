@@ -66,6 +66,7 @@ fn tool_dir(root: &Path) -> TestResult<PathBuf> {
     fs::create_dir_all(&bin)?;
     for tool in [
         "mkdir",
+        "mktemp",
         "awk",
         "tar",
         "git",
@@ -1214,5 +1215,31 @@ fn replayed_report_text_cannot_issue_workflow_commands() -> TestResult {
     assert!(annotation < stop && stop < quoted_stderr, "{out}");
     // The report ended without a newline; the stop marker still starts a line.
     assert!(out.contains("\n::stop-commands::ripr-"), "{out}");
+    Ok(())
+}
+
+#[test]
+fn each_invocation_keeps_its_own_report() -> TestResult {
+    // Two checks in one job share RUNNER_TEMP; the first `report` output must
+    // still hold the first report after the second check runs.
+    let root = scratch("two-reports")?;
+    let bin = tool_dir(&root)?;
+    let work = single_branch_clone(&root)?;
+    let report_of = |text: &str| -> TestResult<String> {
+        stand_in(&bin, "ripr", &format!("echo '{text}'"))?;
+        let (run, _, output) = check_with_files(&work, &bin)?;
+        assert!(run.ok(), "{}", run.text());
+        fs::remove_file(work.join("step-output.txt"))?;
+        Ok(output
+            .lines()
+            .find_map(|line| line.strip_prefix("report="))
+            .ok_or("no report output")?
+            .to_string())
+    };
+    let first = report_of("first check")?;
+    let second = report_of("second check")?;
+    assert_ne!(first, second);
+    assert_eq!(fs::read_to_string(&first)?, "first check\n");
+    assert_eq!(fs::read_to_string(&second)?, "second check\n");
     Ok(())
 }

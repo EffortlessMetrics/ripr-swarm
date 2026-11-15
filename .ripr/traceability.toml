@@ -5349,11 +5349,21 @@ tests = [
   "xtask/src/policy/distribution/tests.rs::generated_install_step_archive_and_executable_follow_the_contract",
   "xtask/src/policy/distribution/tests.rs::windows_x64_identity_is_contract_owned_and_mapped",
   "xtask/src/main.rs::tests::dogfood_generated_ci_cockpit_receipts_are_checked",
+  "crates/ripr/tests/ripr_check_action.rs::a_pull_request_base_is_derived_and_fetched_when_the_checkout_lacks_it",
+  "crates/ripr/tests/ripr_check_action.rs::a_default_shallow_checkout_is_deepened_until_it_meets_the_base",
+  "crates/ripr/tests/ripr_check_action.rs::a_shallow_checkout_that_already_has_the_base_is_still_deepened",
+  "crates/ripr/tests/ripr_check_action.rs::a_full_checkout_is_not_deepened",
+  "crates/ripr/tests/ripr_check_action.rs::a_failed_deepen_warns_once_and_leaves_the_message_to_ripr",
+  "crates/ripr/tests/ripr_check_action.rs::a_completed_check_lands_in_the_job_summary_and_outputs",
+  "crates/ripr/tests/ripr_check_action.rs::a_check_that_could_not_complete_fails_with_its_reason",
+  "crates/ripr/tests/ripr_check_action.rs::replayed_report_text_cannot_issue_workflow_commands",
+  "crates/ripr/tests/ripr_check_action.rs::each_invocation_keeps_its_own_report",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
 ]
 code = [
+  ".github/actions/ripr-check/action.yml",
   "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/cli/commands/init_workflow.rs",
   "crates/ripr/src/output/ci_summary.rs",

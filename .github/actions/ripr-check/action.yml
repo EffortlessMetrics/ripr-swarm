@@ -171,7 +171,7 @@ runs:
           done
         fi
         case "$RIPR_INPUT_FORMAT" in json | json-compact) ext=json ;; sarif | sarif-compact) ext=sarif ;; *) ext=txt ;; esac
-        report="$RUNNER_TEMP/ripr-check-report.$ext"; errors="$RUNNER_TEMP/ripr-check-stderr.txt"
+        out="$(mktemp -d "$RUNNER_TEMP/ripr-check.XXXXXX")"; report="$out/report.$ext"; errors="$out/stderr.txt"
         set -- --root . --mode "$RIPR_INPUT_MODE" --format "$RIPR_INPUT_FORMAT"
         [ -z "$base" ] || set -- "$@" --base "$base"
         status=0; ripr check "$@" >"$report" 2>"$errors" || status=$?
