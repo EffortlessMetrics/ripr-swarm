@@ -91,6 +91,7 @@ pub(super) fn canonical_next_action_for_pilot(
         restart_route: "ripr pilot".to_string(),
         check_case: None,
         check_repair_route: None,
+        check_scope_route: None,
         doctor_recovery: None,
         pilot_delegation: delegation,
         alternatives: Vec::new(),

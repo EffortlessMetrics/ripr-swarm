@@ -240,3 +240,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_pin_written_alias_not_a_pin (20)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless owner_pin_written_alias_not_a_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_pin_written_alias_not_a_pin (21)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless owner_pin_written_alias_not_a_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

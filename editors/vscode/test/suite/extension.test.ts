@@ -6369,7 +6369,7 @@ interface ControllerTestOptions {
   files?: Record<string, string | null>;
   workspaceRoot?: string | null;
   workspaceRootState?: RiprWorkspaceRootState;
-  resolveFailure?: { message: string; detail: string; kind: 'missing_binary' | 'download' | 'http' | 'checksum' | 'manifest' | 'other' };
+  resolveFailure?: { message: string; detail: string; kind: 'missing_binary' | 'download' | 'network' | 'http' | 'checksum' | 'manifest' | 'other' };
   serverVersion?: string;
   workspaceTrusted?: boolean;
   beforeReadFile?: () => Promise<void>;

@@ -41,6 +41,7 @@ Evidence
   - source assertion argument value 12 at tests/support/dormant.rs:3
   - source function argument value input = 4 at tests/support/dormant.rs:3
   - source function argument value input = 4 at tests/weight_tests.rs:3
+  - assertion not credited: `assert_eq!` in dormant at tests/support/dormant.rs:3: an enclosing module carries `#![cfg(any())]`, which ripr cannot evaluate for test builds
 
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)

@@ -4,7 +4,7 @@
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::process::ExitStatusExt;
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
@@ -83,11 +83,27 @@ impl Fixture {
     }
 
     fn command_with_deadline(&self, executable: &str, deadline: &str) -> TestResult<Command> {
+        self.command_with_timeout_options(executable, deadline, &[])
+    }
+
+    fn command_with_timeout_options(
+        &self,
+        executable: &str,
+        deadline: &str,
+        options: &[&str],
+    ) -> TestResult<Command> {
         // GNU timeout owns the whole subprocess group, including Bash's Git
         // children. Killing only the direct shell can leave a fixture in use.
-        let mut command = Command::new(gnu_timeout()?);
+        let mut command = self.owned_command(gnu_timeout()?)?;
         command
-            .args(["--kill-after=1s", deadline, executable])
+            .args(options)
+            .args(["--kill-after=1s", deadline, executable]);
+        Ok(command)
+    }
+
+    fn owned_command(&self, executable: impl AsRef<std::ffi::OsStr>) -> TestResult<Command> {
+        let mut command = Command::new(executable);
+        command
             .current_dir(&self.root)
             .env_clear()
             .env("PATH", std::env::var_os("PATH").ok_or("PATH is available")?)
@@ -1007,43 +1023,6 @@ fn witness_is_live(stat: Result<&str, &std::io::Error>, pid: u32, start: u64) ->
     }
 }
 
-/// Launch-to-decision budget: the witness sleeps 8s from launch, so a dead
-/// witness read later than this could have expired naturally instead of being
-/// terminated.
-const DECISION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(6);
-
-/// `live_at_decision` is the decisive liveness read; `age` is measured after it,
-/// from launch, so it bounds the read's age. A dead witness is only evidence of
-/// termination when read before natural expiry was possible.
-fn termination_verdict(live_at_decision: bool, age: std::time::Duration) -> TestResult<bool> {
-    if live_at_decision {
-        return Ok(true);
-    }
-    if age > DECISION_DEADLINE {
-        return Err(format!(
-            "inconclusive: dead witness observed {age:?} after launch, past the {DECISION_DEADLINE:?} \
-             decision deadline, so natural expiry cannot be ruled out"
-        )
-        .into());
-    }
-    Ok(false)
-}
-
-#[test]
-fn delayed_observation_cannot_turn_self_expiry_into_termination() -> TestResult {
-    let secs = std::time::Duration::from_secs;
-    assert!(termination_verdict(true, secs(9))?);
-    assert!(termination_verdict(true, secs(1))?);
-    assert!(!termination_verdict(false, secs(2))?);
-    assert!(!termination_verdict(false, DECISION_DEADLINE)?);
-    for delayed in [secs(7), secs(8), secs(30)] {
-        if let Ok(verdict) = termination_verdict(false, delayed) {
-            return Err(format!("dead witness at {delayed:?} accepted as {verdict}").into());
-        }
-    }
-    Ok(())
-}
-
 #[test]
 fn witness_observer_distinguishes_identity_state_and_incomplete_evidence() -> TestResult {
     let stat = |pid, state, start| {
@@ -1143,88 +1122,205 @@ fn runner_diagnostics() -> String {
     )
 }
 
+// Only the reexecuted single-test process becomes a subreaper. It owns no
+// unrelated children; orphaned fixture descendants are adopted and reaped here.
+struct TimeoutTree {
+    primary: std::process::Child,
+    signaled: bool,
+    cleaned: bool,
+}
+
+impl TimeoutTree {
+    fn cleanup(&mut self) -> TestResult {
+        use rustix::process::{Pid, Signal, WaitOptions, kill_process_group, waitpid};
+        if self.cleaned {
+            return Ok(());
+        }
+        if !self.signaled {
+            // The unreaped primary reserves the private group's numeric ID.
+            // Never signal this group again after releasing that custody.
+            let group = Pid::from_raw(i32::try_from(self.primary.id())?).ok_or("group PID")?;
+            match kill_process_group(group, Signal::KILL) {
+                Ok(()) | Err(rustix::io::Errno::SRCH) => {}
+                Err(error) => return Err(error.into()),
+            }
+            self.signaled = true;
+        }
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            // Reap the primary through Child first, then every adopted descendant.
+            if self.primary.try_wait()?.is_some() {
+                match waitpid(None, WaitOptions::NOHANG) {
+                    Err(rustix::io::Errno::CHILD) => {
+                        self.cleaned = true;
+                        return Ok(());
+                    }
+                    Ok(_) => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            if std::time::Instant::now() >= end {
+                return Err("owned timeout tree did not reap within cleanup cap".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+}
+
+impl Drop for TimeoutTree {
+    fn drop(&mut self) {
+        if !self.cleaned {
+            let _ = self.cleanup();
+        }
+    }
+}
+
+fn observe_timeout_descendant(stubborn: bool, primary_only: bool) -> TestResult {
+    use rustix::process::{Pid, WaitId, WaitIdOptions, getpid, set_child_subreaper, waitid};
+    set_child_subreaper(Some(getpid()))?;
+    let mut fixture = Fixture::new()?;
+    rustix::fs::mkfifoat(
+        rustix::fs::CWD,
+        fixture.root.join(".git/witness-lifetime"),
+        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+    )?;
+    let trap = if stubborn { "trap \"\" TERM; " } else { "" };
+    // Opening both FIFO ends prevents EOF. This shell has no natural expiry and
+    // spawns no further children: only a signal can terminate the live witness.
+    let script = format!(
+        "{trap}bash -c '{trap}exec 3<> .git/witness-lifetime; IFS= read -r stat < /proc/$BASHPID/stat; printf \"%s\\n\" \"$stat\" > .git/child-stat; while :; do IFS= read -r line <&3 || exit 93; done' </dev/null >/dev/null 2>&1 & child=$!; {}wait \"$child\"",
+        if stubborn {
+            ""
+        } else {
+            "trap 'wait \"$child\"; exit 0' TERM; "
+        }
+    );
+    let mut command = fixture.command_with_deadline("bash", "0.2s")?;
+    if primary_only {
+        // A real wrong implementation: timeout signals only the primary shell,
+        // leaving its descendant untouched, including on KILL escalation.
+        command = fixture.command_with_timeout_options("bash", "0.2s", &["--foreground"])?;
+    }
+    command.args(["-c", &script]).process_group(0);
+    command
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut tree = TimeoutTree {
+        primary: command.spawn()?,
+        signaled: false,
+        cleaned: false,
+    };
+    let observation = (|| -> TestResult<bool> {
+        let primary = Pid::from_raw(i32::try_from(tree.primary.id())?).ok_or("primary PID")?;
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            // Observe without reaping: cleanup must retain group-ID custody.
+            if waitid(
+                WaitId::Pid(primary),
+                WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+            )?
+            .is_some()
+            {
+                break;
+            }
+            if std::time::Instant::now() >= end {
+                return Err("timeout primary exceeded containment cap".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let original = fs::read_to_string(fixture.root.join(".git/child-stat"))?;
+        let (pid, start, _) = witness_identity(&original)?;
+        let process = Path::new("/proc").join(pid.to_string()).join("stat");
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let stat = fs::read_to_string(&process);
+            if !witness_is_live(stat.as_deref(), pid, start)? {
+                return Ok(false);
+            }
+            if std::time::Instant::now() >= end {
+                return Ok(true);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    })();
+    // Cleanup precedes all assertions and propagating observation errors. The
+    // verdict was captured before this independent containment kill.
+    if let Err(error) = tree.cleanup() {
+        fixture.retained = true;
+        return Err(format!("{error}; fixture retained at {}", fixture.root.display()).into());
+    }
+    eprintln!("owned timeout tree reaped");
+    let failed_termination = observation?;
+    let status = tree.primary.wait()?;
+    assert!(
+        !failed_termination,
+        "timeout left a live owned descendant (stubborn={stubborn}); {}",
+        runner_diagnostics()
+    );
+    if stubborn {
+        assert_eq!(
+            status.signal(),
+            Some(9),
+            "timeout escalated to group SIGKILL: {status:?}"
+        );
+    } else {
+        assert_eq!(status.code(), Some(124), "actual timeout: {status:?}");
+    }
+    Ok(())
+}
+
 #[test]
 fn timeout_terminates_shell_descendants() -> TestResult {
-    let mut fixture = Fixture::new()?;
-    for stubborn in [false, true] {
-        // Record the shell's birth identity before exec, which preserves it.
-        // Null streams prevent a leaked child from holding Command::output open
-        // until its natural exit and falsely passing the termination observation.
-        let trap = if stubborn { "trap \"\" TERM; " } else { "" };
-        let script = format!(
-            "{trap}bash -c '{trap}IFS= read -r stat < /proc/$BASHPID/stat; printf \"%s\\n\" \"$stat\" > .git/child-stat; exec sleep 8' </dev/null >/dev/null 2>&1 & child=$!; {}wait \"$child\"",
-            if stubborn {
-                ""
-            } else {
-                "trap 'wait \"$child\"; exit 0' TERM; "
-            }
+    const MODE: &str = "RIPR_TIMEOUT_WITNESS_CASE";
+    if let Ok(mode) = std::env::var(MODE) {
+        return observe_timeout_descendant(
+            mode.contains("stubborn"),
+            mode.contains("primary-only"),
         );
-        let started = std::time::Instant::now();
+    }
+    let fixture = Fixture::new()?;
+    let executable = std::env::current_exe()?;
+    for mode in [
+        "ordinary",
+        "stubborn",
+        "ordinary-primary-only",
+        "stubborn-primary-only",
+    ] {
+        // The helper's observation/cleanup loops and its setup commands have
+        // finite caps. An outer timeout could kill the subreaper before it
+        // cleans the nested timeout's separate group, so do not wrap it again.
         let output = fixture.output(
             fixture
-                .command_with_deadline("bash", "0.2s")?
-                .args(["-c", &script]),
-        );
-        let elapsed = started.elapsed();
-        let observation = (|| -> TestResult<bool> {
-            let original = fs::read_to_string(fixture.root.join(".git/child-stat"))?;
-            let (pid, start, _) = witness_identity(&original)?;
-            let process = Path::new("/proc").join(pid.to_string()).join("stat");
-            let live = || -> TestResult<bool> {
-                let stat = fs::read_to_string(&process);
-                witness_is_live(stat.as_deref(), pid, start)
-            };
-            let observed = std::time::Instant::now();
-            // Wider than the SIGKILL teardown a loaded hosted runner can take, but
-            // bounded from launch (`started`), not from this observation, so the
-            // decision stays inside the witness's own 8s sleep.
-            while live()? && started.elapsed() < std::time::Duration::from_secs(5) {
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            let failed_termination = termination_verdict(live()?, started.elapsed())?;
-            // No numeric-PID signal: even checking start time before kill races
-            // PID reuse. Let this finite witness expire, preserving the failure.
-            while live()? && observed.elapsed() < std::time::Duration::from_secs(10) {
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            if live()? {
-                return Err("witness still live after finite-expiration bound".into());
-            }
-            Ok(failed_termination)
-        })();
-        let failed_termination = match observation {
-            Ok(failed) => failed,
-            Err(error) => {
-                let retained = fixture.root.clone();
-                // Uncertain ownership/liveness is not permission to delete an
-                // in-use fixture. Preserve it for diagnosis instead of signaling.
-                fixture.retained = true;
-                return Err(format!("{error}; fixture retained at {}", retained.display()).into());
-            }
-        };
-        // Assert only after the witness is no longer live. An orphan zombie may
-        // await PID 1; this test promises termination, not that we reaped it.
-        let output = output?;
-        assert!(
-            !failed_termination,
-            "timeout left a live owned descendant (stubborn={stubborn}); {}",
-            runner_diagnostics()
+                .owned_command(&executable)?
+                .args([
+                    "--exact",
+                    "timeout_terminates_shell_descendants",
+                    "--nocapture",
+                ])
+                .env(MODE, mode),
+        )?;
+        let diagnostics = format!(
+            "stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
         );
         assert!(
-            elapsed < std::time::Duration::from_secs(3),
-            "timeout observation waited for natural witness expiry: {elapsed:?}"
+            diagnostics.contains("owned timeout tree reaped"),
+            "cleanup receipt ({mode}): {diagnostics}"
         );
-        if stubborn {
-            assert_eq!(
-                output.status.signal(),
-                Some(9),
-                "timeout escalated to group SIGKILL: {output:?}"
+        if mode.contains("primary-only") {
+            assert!(
+                !output.status.success(),
+                "primary-only mutant passed: {diagnostics}"
+            );
+            assert!(
+                diagnostics.contains("timeout left a live owned descendant"),
+                "mutant must fail the liveness assertion: {diagnostics}"
             );
         } else {
-            assert_eq!(
-                output.status.code(),
-                Some(124),
-                "actual timeout: {output:?}"
+            assert!(
+                output.status.success(),
+                "healthy timeout ({mode}): {diagnostics}"
             );
         }
     }

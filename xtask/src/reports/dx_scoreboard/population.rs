@@ -191,11 +191,9 @@ impl Records {
             ));
         }
         let report = verdict_corpus::expected_report(dir)?;
-        // The abstention-expected flag is derived from the case and the specs'
-        // `Reject` examples; re-derive it so a committed row cannot carry a
-        // flag its definition does not support (RIPR-SPEC-0219).
-        let reject_examples =
-            verdict_corpus::coverage::abstaining_reject_example_ids_for_corpus(dir)?;
+        // `expected_report` re-derives each row's abstention-expected flag from
+        // its case and the specs (RIPR-SPEC-0219), so the avoidable population
+        // below reads a checked flag.
         let report_json = serde_json::to_value(&report).map_err(|err| err.to_string())?;
         let mut subjects = BTreeMap::new();
         for subject in &corpus.subjects {
@@ -208,13 +206,10 @@ impl Records {
             files.sort_by_key(|file| file["path"].as_str().unwrap_or_default().to_string());
             subjects.insert(
                 subject.subject_id.as_str(),
-                (
-                    subject,
-                    json!({
-                        "origin": subject.origin.as_str(), "upstream": subject.upstream,
-                        "commit": subject.commit, "files": files,
-                    }),
-                ),
+                json!({
+                    "origin": subject.origin.as_str(), "upstream": subject.upstream,
+                    "commit": subject.commit, "files": files,
+                }),
             );
         }
         let cases: BTreeMap<_, _> = corpus
@@ -227,24 +222,11 @@ impl Records {
             let case = cases
                 .get(row.case_id.as_str())
                 .ok_or_else(|| format!("row {} has no case", row.case_id))?;
-            let (subject, identity) = subjects
+            let identity = subjects
                 .get(case.subject_id.as_str())
                 .ok_or_else(|| format!("case {} has no subject", case.case_id))?;
-            if row.subject_id != case.subject_id
-                || row.truth != case.truth.state
-                || row.origin != subject.origin
-                || row.anchor != format!("{}:{}", case.anchor.file, case.anchor.line)
-                || row.ideal_verdict != case.expected.ideal_verdict
-                || row.packet_provenance != case.perl_facts.as_ref().map(|facts| facts.provenance)
-                || row.outcome != verdict_corpus::score(case.truth.state, row.observed_verdict)
-                || row.abstention_expected
-                    != verdict_corpus::abstention_expected(case, &reject_examples)
-            {
-                return Err(format!(
-                    "row {} disagrees with its scoring definition",
-                    row.case_id
-                ));
-            }
+            // expected_report has already checked verdict metadata against
+            // these definitions for every consumer, including public proof.
             let diff_path = dir.join(&case.diff);
             let diff = fs::read(&diff_path)
                 .map_err(|err| format!("read {}: {err}", diff_path.display()))?;

@@ -787,6 +787,49 @@ fn b6_dirty_production_premise_refuses_the_before_phase_and_a_dirty_test_still_r
         "unrelated_smoke_still_passes",
         "assert_eq!(discounted_total(10, 100), 10);",
     )?;
+    // An external Rust test file is confined to pure insertion from a
+    // committed baseline (#8710), so the uncommitted edit refuses the before
+    // phase with the external-specific recovery; committing it starts the loop.
+    let dirty_external_before = run_ripr(
+        &root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            &seam_id,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit_code(
+        &dirty_external_before,
+        2,
+        "dirty external test before-phase",
+    )?;
+    let refusal_text = combined_output(&dirty_external_before);
+    if !refusal_text.contains("external Rust test file with uncommitted changes") {
+        return Err(format!(
+            "the dirty external test refusal must name the uncommitted external file:\n{refusal_text}"
+        ));
+    }
+    fixture_git_ok(&root, &["add", "-A"])
+        .map_err(|error| format!("git add focused test: {error}"))?;
+    fixture_git_ok(
+        &root,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-qm",
+            "committed focused test premise",
+        ],
+    )
+    .map_err(|error| format!("git commit focused test: {error}"))?;
     let dirty_test_before = run_ripr(
         &root,
         &[
@@ -803,7 +846,7 @@ fn b6_dirty_production_premise_refuses_the_before_phase_and_a_dirty_test_still_r
     )?;
     if !dirty_test_before.status.success() {
         return Err(format!(
-            "a dirty focused test file must not refuse the before phase:\n{}",
+            "a committed focused test file must not refuse the before phase:\n{}",
             combined_output(&dirty_test_before)
         ));
     }
