@@ -204,6 +204,12 @@ fn top_seam_json(
     {
         insert_canonical_delta_fields(object, delta);
     }
+    // #14683: a head-only match-arm seam (`Size::Medium =>`) also names the
+    // arm's result (`450`), the value a test must pin. Present only when
+    // read, so every other seam keeps its bytes; `expression` stays the head.
+    if let (Some(result), Some(object)) = (&selected.arm_result, value.as_object_mut()) {
+        object.insert("arm_result".to_string(), Value::from(result.as_str()));
+    }
     value
 }
 
@@ -561,5 +567,44 @@ mod tests {
             .map(|o| o.keys().collect())
             .unwrap_or_default();
         assert_eq!(keys, vec!["suggested_test_command"], "{value}");
+    }
+
+    /// #14683: a selected seam's arm result renders as `arm_result` beside
+    /// the unchanged head `expression`, and a seam without one has no key.
+    #[test]
+    fn agent_brief_renders_arm_result_only_when_read() -> Result<(), String> {
+        let seams = vec![classified()];
+        let working_set = AgentBriefResolvedWorkingSet::diff(
+            "change.diff",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let config = RiprConfig::default();
+        let mut selection = select_agent_brief_seams(
+            &seams,
+            &working_set,
+            3,
+            AgentBriefPolicy::from_config(&config),
+        );
+        let render = |selection: &crate::app::agent_brief::AgentBriefSelection<'_>| {
+            render_agent_brief_json(
+                Path::new("repo"),
+                &Mode::Draft,
+                &config,
+                &working_set,
+                selection,
+            )
+            .and_then(|rendered| {
+                serde_json::from_str::<Value>(&rendered).map_err(|err| err.to_string())
+            })
+        };
+        let plain = render(&selection)?;
+        assert!(plain["top_seams"][0].get("arm_result").is_none(), "{plain}");
+        let expression = plain["top_seams"][0]["expression"].clone();
+
+        selection.top_seams[0].arm_result = Some("450".to_string());
+        let named = render(&selection)?;
+        assert_eq!(named["top_seams"][0]["arm_result"], "450", "{named}");
+        assert_eq!(named["top_seams"][0]["expression"], expression, "{named}");
+        Ok(())
     }
 }

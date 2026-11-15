@@ -606,6 +606,7 @@ pub(crate) const BUILT_IN_TEST_ATTRIBUTE_PATHS: &[&str] = &[
     "async_std::test",
     "actix_rt::test",
     "actix_web::test",
+    "test_log::test",
     "rstest",
     "rstest::rstest",
     "quickcheck",

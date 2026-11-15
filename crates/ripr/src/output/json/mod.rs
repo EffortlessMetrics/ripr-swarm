@@ -77,7 +77,8 @@ mod tests {
             )?,
         )
         .with_path("src/lib.rs")?
-        .with_affected_items(1)?;
+        .with_affected_items(1)?
+        .with_detail("the merge diff has three-way hunks.")?;
         let outcome = AnalysisOutcome::new(
             AnalysisOutcomeKind::UnsupportedInput,
             AnalysisIdentity {
@@ -128,6 +129,16 @@ mod tests {
         assert!(output.findings.is_empty() || human.contains("finding(s) below cover only"));
         assert!(!human.contains("combined_hunk_unsupported"));
         assert!(human.contains("two-way diff"));
+        // #14398: the producer's bounded cause reaches the human line, as it
+        // does the JSON limitation, ahead of the recovery.
+        assert_eq!(
+            value["analysis_outcome"]["outcome"]["limitations"][0]["bounded_detail"],
+            "the merge diff has three-way hunks."
+        );
+        assert!(
+            human.contains("affected items: 1; the merge diff has three-way hunks; recovery: "),
+            "{human}"
+        );
         Ok(())
     }
 

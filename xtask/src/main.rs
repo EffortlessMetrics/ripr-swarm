@@ -73,6 +73,7 @@ mod packaged_repair_receipt;
 mod policy;
 #[cfg(test)]
 mod portable_consumer;
+mod pr_admission_preflight;
 mod precommit_formatting;
 mod product_gate_plan;
 mod product_route_parity;
@@ -2684,8 +2685,9 @@ fn commands_report() -> Result<(), String> {
     write_report("commands.json", &commands_report_json(&entries))
 }
 
-fn pr_ready() -> Result<(), String> {
-    let steps = vec![
+fn pr_ready(args: &[String]) -> Result<(), String> {
+    let pr_number = pr_admission_preflight::parse_pr_arg(args)?;
+    let mut steps = vec![
         run_readiness_step(
             "worktree_doctor",
             "cargo xtask worktree doctor",
@@ -2744,6 +2746,15 @@ fn pr_ready() -> Result<(), String> {
             || check_badge_diff_policy().map(|()| ReadinessOutcome::Completed),
         ),
     ];
+    if let Some(number) = pr_number {
+        steps.push(run_readiness_step(
+            "pr_candidate_admission",
+            "cargo xtask pr-ready --pr <number>",
+            "target/ripr/reports/pr-ready.md",
+            true,
+            || pr_admission_preflight::run(number).map(|()| ReadinessOutcome::Completed),
+        ));
+    }
     let status = pr_ready_status(&steps);
     write_report("pr-ready.md", &pr_ready_markdown(&steps))?;
     write_report("pr-ready.json", &pr_ready_json(&steps))?;
@@ -23607,28 +23618,29 @@ fn suspicious_runtime_file_names() -> Vec<String> {
 
 fn windows_absolute_path_tokens(line: &str) -> Vec<String> {
     let mut tokens = Vec::new();
-    // Every match needs a drive-letter colon; the std search is far cheaper
-    // than the byte loop below on the many lines that have none.
-    if !line.contains(':') {
-        return tokens;
-    }
     let bytes = line.as_bytes();
-    let mut index = 0;
-    while index + 2 < bytes.len() {
-        let token_boundary = index == 0 || is_local_context_token_delimiter(bytes[index - 1]);
+    let mut search_start = 0;
+    // A drive separator is necessary for every match. Search those separators
+    // directly instead of interpreting every byte of ordinary source lines.
+    while let Some(offset) = line[search_start..].find(':') {
+        let colon = search_start + offset;
+        search_start = colon + 1;
+        if colon == 0 || colon + 1 >= bytes.len() {
+            continue;
+        }
+        let start = colon - 1;
+        let token_boundary = start == 0 || is_local_context_token_delimiter(bytes[start - 1]);
         if token_boundary
-            && bytes[index].is_ascii_alphabetic()
-            && bytes[index + 1] == b':'
-            && (bytes[index + 2] == b'\\' || bytes[index + 2] == b'/')
+            && bytes[start].is_ascii_alphabetic()
+            && (bytes[colon + 1] == b'\\' || bytes[colon + 1] == b'/')
         {
-            let start = index;
-            index += 3;
-            while index < bytes.len() && !is_local_context_token_delimiter(bytes[index]) {
-                index += 1;
+            let mut end = colon + 2;
+            while end < bytes.len() && !is_local_context_token_delimiter(bytes[end]) {
+                end += 1;
             }
-            tokens.push(line[start..index].to_string());
-        } else {
-            index += 1;
+            tokens.push(line[start..end].to_string());
+            // Colons inside an already consumed path are part of that token.
+            search_start = end;
         }
     }
     tokens

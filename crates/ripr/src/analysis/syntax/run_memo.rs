@@ -37,6 +37,8 @@ pub(crate) enum Product {
     ClosureArgumentPositions,
     InvokedCallbackParams,
     ReceiverLetBindings,
+    MacroSites,
+    DeclaredValueNames,
 }
 
 impl Product {
@@ -53,6 +55,8 @@ impl Product {
             Self::ClosureArgumentPositions => "closure_argument_positions",
             Self::InvokedCallbackParams => "invoked_callback_params",
             Self::ReceiverLetBindings => "receiver_let_bindings",
+            Self::MacroSites => "macro_sites",
+            Self::DeclaredValueNames => "declared_value_names",
         }
     }
 }

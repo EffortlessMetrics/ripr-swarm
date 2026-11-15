@@ -238,6 +238,7 @@ impl<'a> BoundedAgentBrief<'a> {
                 .map(|item| AgentBriefSelectedSeam {
                     seam: &item.entry,
                     why_now: item.why_now.clone(),
+                    arm_result: None,
                 })
                 .collect(),
             warnings,

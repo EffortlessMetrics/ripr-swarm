@@ -32,3 +32,15 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — match_arm_proximity_bound_other_function_not_credited (4)
+
+Reason:
+RIPR-SPEC-0001: head-only match-arm rows and their propagation sink name the arm's same-line result (#14420)
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_bound_other_function_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

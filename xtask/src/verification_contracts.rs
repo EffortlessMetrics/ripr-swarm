@@ -56,6 +56,48 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // The `ripr_diff` report of `ripr diff --json`.
+        "diff",
+        &[producer(
+            "crates/ripr/src/output/diff_report.rs",
+            "pub(crate) const DIFF_REPORT_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // The refusal envelope `ripr diff --json` writes when it cannot
+        // produce a report. It is keyed with the report's version through
+        // its own mirrored constant, so that constant is the producer pinned
+        // here.
+        "diff-refusal",
+        &[producer(
+            "crates/ripr/src/cli/commands.rs",
+            "const DIFF_REFUSAL_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // `ripr cache status --json`. This versions the status report, not
+        // the on-disk cache layers.
+        "cache-status",
+        &[producer(
+            "crates/ripr/src/cli/commands/cache.rs",
+            "const CACHE_STATUS_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // `ripr capabilities --json` (#5531, #14067). The version constant
+        // lives beside the capability table it versions, in the contract
+        // crate; `output::language_capabilities` only projects it.
+        "capabilities",
+        &[producer(
+            "crates/ripr-contract/src/domain/language_capability.rs",
+            "pub const LANGUAGE_CAPABILITIES_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         "check",
         &[producer(
             "crates/ripr/src/app.rs",
@@ -444,6 +486,78 @@ const CONTRACTS: &[VerificationContract] = &[
     // `limited_check.rs::timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3`
     // and the forced-deadline e2e in `cli_smoke.rs`; this row pins the
     // document shape against the published 0.3 schema.
+    // The `ripr_diff` report. The fixture is a capture of `ripr diff --json
+    // --root . --base HEAD~1` over a two-file change (one Rust predicate, one
+    // TypeScript file with the preview adapter not enabled), so it carries a
+    // finding, an incomplete `analysis_outcome` and a `preview_languages`
+    // entry. It is an edge fixture; `diff_json_schema.rs` is the
+    // producer-byte authority.
+    VerificationContract {
+        schema_path: "schemas/ripr/diff.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/diff.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &[
+            "ripr_diff",
+            "run_status",
+            "runtime_status",
+            "full_repo_context",
+            "changed_files[]",
+            "changed_seams[]",
+            "preview_languages[]",
+            "outcome_hint",
+        ],
+    },
+    // The diff refusal envelope: a capture of `ripr diff --json --root .
+    // --base <unresolvable>` (exit 2), kept as an edge fixture.
+    VerificationContract {
+        schema_path: "schemas/ripr/diff-refusal.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/diff-refusal.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["analysis_scope.scope", "run_limitations"],
+    },
+    // `ripr cache status --json`. The fixture is hand-written with a portable
+    // path: the real document carries the host's absolute cache directory.
+    // The producer-byte authority is `cache_clear_safety.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/cache-status.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/cache-status.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &[
+            "real_cache_dir",
+            "via_symlink",
+            "foreign_entry_count",
+            "foreign_total_size_bytes",
+            "not_found",
+            "unavailable",
+        ],
+    },
+    // `ripr capabilities --json` (#14067). The fixture is a capture of
+    // `ripr capabilities --json --language perl`, kept as an edge fixture:
+    // the producer-byte authority is `capabilities_command.rs`, which
+    // validates every projection the real binary writes.
+    VerificationContract {
+        schema_path: "schemas/ripr/capabilities.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/capabilities.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &[
+            "ripr_language_capabilities",
+            "semantic_digest",
+            "digest_scope",
+            "filtered_by",
+            "support_state_vocabulary",
+            "absent_cell_meaning",
+            "tier_ceiling",
+            "proof_refs",
+        ],
+    },
     // The `cli_refusal` document for argv usage errors and selector misses
     // under an explicit JSON request (#11584, #6834 decision).
     VerificationContract {

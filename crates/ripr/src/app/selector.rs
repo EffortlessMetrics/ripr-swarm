@@ -263,15 +263,37 @@ pub(in crate::app) fn locator_paths_match(stored_file: &str, selector_file: &str
         || wanted.ends_with(&format!("/{stored}"))
 }
 
+/// What is known about whether the run behind a finding set analyzed its
+/// whole scope, for the location-miss hint's empty-scope and other-file
+/// wording.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::app) enum ScopeCompleteness {
+    /// A fresh run with no incomplete outcome, language run or preview gap.
+    Complete,
+    /// A fresh run that reported an incomplete outcome or unanalyzed files.
+    Incomplete,
+    /// [`Self::Incomplete`] whose incompleteness the same message already
+    /// states (the #14077 miss cause), so the hint does not repeat it.
+    IncompleteDisclosed,
+    /// A replayed artifact, which records findings but not run completeness.
+    Unrecorded,
+}
+
 /// Where the findings of this scope are, for a `file:line` selector that
 /// matched none (#14384): the lines that do hold findings in the named file,
 /// or, when the file holds none, the files that do. `None` for a selector
 /// that is not location-shaped. The listing comes from the analyzed findings
 /// only; the typed selector is never echoed into a command.
+/// `completeness` says what is known about the run behind `findings`: a
+/// fresh run knows whether it was complete (#14406); a replayed `--from`
+/// artifact records only its findings, so its completeness is unrecorded
+/// (#14440). Unless the run is known complete, an empty scope or a file with
+/// no finding is not evidence that none exist there.
 pub(in crate::app) fn location_miss_hint(
     findings: &[Finding],
     root: &std::path::Path,
     selector: &str,
+    completeness: ScopeCompleteness,
 ) -> Option<String> {
     const MAX_LISTED: usize = 5;
     if ["probe:", "repo-probe:", "gap:", "seam:"]
@@ -300,7 +322,22 @@ pub(in crate::app) fn location_miss_hint(
     } else {
         ""
     };
+    let analysis_incomplete = completeness != ScopeCompleteness::Complete;
+    let incomplete_note = match completeness {
+        ScopeCompleteness::Complete | ScopeCompleteness::IncompleteDisclosed => "",
+        ScopeCompleteness::Incomplete => {
+            " Analysis of this scope was incomplete, so a finding there may be missing."
+        }
+        ScopeCompleteness::Unrecorded => {
+            " The artifact does not record whether its run was complete, so a finding there may be missing."
+        }
+    };
     if findings.is_empty() {
+        if analysis_incomplete {
+            return Some(format!(
+                " No findings were reported in this scope.{incomplete_note}{column_note}"
+            ));
+        }
         return Some(format!(
             " This scope has no findings, so no location can match.{column_note}"
         ));
@@ -309,11 +346,18 @@ pub(in crate::app) fn location_miss_hint(
     // files never mixes their lines under one name.
     let mut same_file =
         std::collections::BTreeMap::<String, std::collections::BTreeSet<usize>>::new();
+    // #14416: paths that match only when ASCII case is ignored. Resolution
+    // stays case-sensitive; the hint names the correctly cased file instead.
+    let mut case_folded =
+        std::collections::BTreeMap::<String, std::collections::BTreeSet<usize>>::new();
+    let wanted_folded = wanted.to_ascii_lowercase();
     let mut other_files = std::collections::BTreeSet::<String>::new();
     for finding in findings {
         let file = crate::analysis::stable_path_text(&finding.probe.location.file);
         // The same "same file" rule selection uses (#14077's shared helper).
         let matches = locator_paths_match(file.as_ref(), &wanted);
+        // #14416: the same rule ignoring ASCII case, for the hint only.
+        let matches_folded = locator_paths_match(&file.to_ascii_lowercase(), &wanted_folded);
         // Shown root-relative through the shared location projector: a
         // fresh run stores absolute paths (verbatim `\\?\` ones on Windows),
         // and the suffix match accepts the relative form the user types.
@@ -327,9 +371,21 @@ pub(in crate::app) fn location_miss_hint(
                 .or_default()
                 .insert(finding.probe.location.line);
         } else {
+            if matches_folded {
+                case_folded
+                    .entry(stored.clone())
+                    .or_default()
+                    .insert(finding.probe.location.line);
+            }
             other_files.insert(stored);
         }
     }
+    let case_note = if same_file.is_empty() && !case_folded.is_empty() {
+        same_file = case_folded;
+        " Paths match case-sensitively."
+    } else {
+        ""
+    };
     // An exact path match leads; otherwise the first matching file.
     if let Some((file, lines)) = same_file
         .get_key_value(&wanted)
@@ -365,13 +421,18 @@ pub(in crate::app) fn location_miss_hint(
             String::new()
         };
         let noun = if lines.len() == 1 { "line" } else { "lines" };
+        let matching = if case_note.is_empty() {
+            "matching that path"
+        } else {
+            "matching that path ignoring case"
+        };
         let others = match same_file.len().saturating_sub(1) {
             0 => String::new(),
-            1 => " 1 other file matching that path also has findings.".to_string(),
-            n => format!(" {n} other files matching that path also have findings."),
+            1 => format!(" 1 other file {matching} also has findings."),
+            n => format!(" {n} other files {matching} also have findings."),
         };
         return Some(format!(
-            " Findings in {file} are on {noun} {listed}{more}; {suggestion}.{others}{column_note}"
+            "{case_note} Findings in {file} are on {noun} {listed}{more}; {suggestion}.{others}{column_note}"
         ));
     }
     let files = other_files
@@ -386,6 +447,11 @@ pub(in crate::app) fn location_miss_hint(
     } else {
         String::new()
     };
+    if analysis_incomplete {
+        return Some(format!(
+            " No finding was reported in {wanted:?}; findings are in {files}{more}.{incomplete_note}{column_note}"
+        ));
+    }
     Some(format!(
         " No finding in this scope is in {wanted:?}; findings are in {files}{more}.{column_note}"
     ))
@@ -404,8 +470,9 @@ pub(in crate::app) fn normalize_locator_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        FindingSelection, location_miss_hint, location_selector_needs_syntax_hint,
-        normalize_locator_path, select_finding, selector_matches_file_line,
+        FindingSelection, ScopeCompleteness, location_miss_hint,
+        location_selector_needs_syntax_hint, normalize_locator_path, select_finding,
+        selector_matches_file_line,
     };
     use crate::domain::{
         ActivationEvidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap, Probe,
@@ -673,21 +740,45 @@ mod tests {
             finding("probe:c", 9, None),
         ];
         assert_eq!(
-            location_miss_hint(&findings, std::path::Path::new(""), "src/lib.rs:9999").as_deref(),
+            location_miss_hint(
+                &findings,
+                std::path::Path::new(""),
+                "src/lib.rs:9999",
+                ScopeCompleteness::Complete
+            )
+            .as_deref(),
             Some(" Findings in src/lib.rs are on lines 3, 9; select one as src/lib.rs:9.")
         );
         assert_eq!(
-            location_miss_hint(&findings, std::path::Path::new(""), "./src\\lib.rs:1:2").as_deref(),
+            location_miss_hint(
+                &findings,
+                std::path::Path::new(""),
+                "./src\\lib.rs:1:2",
+                ScopeCompleteness::Complete
+            )
+            .as_deref(),
             Some(
                 " Findings in src/lib.rs are on lines 3, 9; select one as src/lib.rs:9. Selectors are file:line; drop the column."
             )
         );
         assert_eq!(
-            location_miss_hint(&findings, std::path::Path::new(""), "nofile.rs:1").as_deref(),
+            location_miss_hint(
+                &findings,
+                std::path::Path::new(""),
+                "nofile.rs:1",
+                ScopeCompleteness::Complete
+            )
+            .as_deref(),
             Some(" No finding in this scope is in \"nofile.rs\"; findings are in src/lib.rs.")
         );
         assert_eq!(
-            location_miss_hint(&[], std::path::Path::new(""), "src/lib.rs:1").as_deref(),
+            location_miss_hint(
+                &[],
+                std::path::Path::new(""),
+                "src/lib.rs:1",
+                ScopeCompleteness::Complete
+            )
+            .as_deref(),
             Some(" This scope has no findings, so no location can match.")
         );
         // A suffix that matches several files never mixes their lines: the
@@ -698,13 +789,25 @@ mod tests {
         third.probe.location = SourceLocation::new("crates/a/src/lib.rs", 7, 1);
         let spread = vec![finding("probe:a", 3, None), other, third];
         assert_eq!(
-            location_miss_hint(&spread, std::path::Path::new(""), "lib.rs:99").as_deref(),
+            location_miss_hint(
+                &spread,
+                std::path::Path::new(""),
+                "lib.rs:99",
+                ScopeCompleteness::Complete
+            )
+            .as_deref(),
             Some(
                 " Findings in crates/a/src/lib.rs are on line 7; select one as crates/a/src/lib.rs:7. 2 other files matching that path also have findings."
             )
         );
         assert_eq!(
-            location_miss_hint(&spread, std::path::Path::new(""), "src/lib.rs:99").as_deref(),
+            location_miss_hint(
+                &spread,
+                std::path::Path::new(""),
+                "src/lib.rs:99",
+                ScopeCompleteness::Complete
+            )
+            .as_deref(),
             Some(
                 " Findings in src/lib.rs are on line 3; select one as src/lib.rs:3. 2 other files matching that path also have findings."
             )
@@ -717,10 +820,141 @@ mod tests {
             location_miss_hint(
                 &[absolute],
                 std::path::Path::new("/work/repo"),
-                "src/lib.rs:1"
+                "src/lib.rs:1",
+                ScopeCompleteness::Complete
             )
             .as_deref(),
             Some(" Findings in src/lib.rs are on line 4; select one as src/lib.rs:4.")
+        );
+        // #14406: an incomplete fresh run never reads as an all-clear for
+        // an empty scope or a file with no reported finding.
+        assert_eq!(
+            location_miss_hint(
+                &[],
+                std::path::Path::new(""),
+                "src/lib.rs:1",
+                ScopeCompleteness::Incomplete
+            )
+            .as_deref(),
+            Some(
+                " No findings were reported in this scope. Analysis of this scope was incomplete, so a finding there may be missing."
+            )
+        );
+        assert_eq!(
+            location_miss_hint(
+                &findings,
+                std::path::Path::new(""),
+                "nofile.rs:1:4",
+                ScopeCompleteness::Incomplete
+            )
+            .as_deref(),
+            Some(
+                " No finding was reported in \"nofile.rs\"; findings are in src/lib.rs. Analysis of this scope was incomplete, so a finding there may be missing. Selectors are file:line; drop the column."
+            )
+        );
+        // An incompleteness the message already stated keeps the
+        // "reported" wording but is not repeated.
+        assert_eq!(
+            location_miss_hint(
+                &findings,
+                std::path::Path::new(""),
+                "nofile.rs:1",
+                ScopeCompleteness::IncompleteDisclosed
+            )
+            .as_deref(),
+            Some(" No finding was reported in \"nofile.rs\"; findings are in src/lib.rs.")
+        );
+        // #14440: a replayed artifact's completeness is unrecorded, so its
+        // empty-scope and other-file wording never reads as an all-clear.
+        assert_eq!(
+            location_miss_hint(
+                &findings,
+                std::path::Path::new(""),
+                "nofile.rs:1",
+                ScopeCompleteness::Unrecorded
+            )
+            .as_deref(),
+            Some(
+                " No finding was reported in \"nofile.rs\"; findings are in src/lib.rs. The artifact does not record whether its run was complete, so a finding there may be missing."
+            )
+        );
+        assert_eq!(
+            location_miss_hint(
+                &[],
+                std::path::Path::new(""),
+                "src/lib.rs:1",
+                ScopeCompleteness::Unrecorded
+            )
+            .as_deref(),
+            Some(
+                " No findings were reported in this scope. The artifact does not record whether its run was complete, so a finding there may be missing."
+            )
+        );
+        // A file with findings lists them the same way either way.
+        assert_eq!(
+            location_miss_hint(
+                &findings,
+                std::path::Path::new(""),
+                "src/lib.rs:9999",
+                ScopeCompleteness::Incomplete
+            ),
+            location_miss_hint(
+                &findings,
+                std::path::Path::new(""),
+                "src/lib.rs:9999",
+                ScopeCompleteness::Complete
+            )
+        );
+        // #14416: a selector differing only in letter case is told so and
+        // pointed at the correctly cased file; resolution stays exact.
+        assert_eq!(
+            location_miss_hint(
+                &findings,
+                std::path::Path::new(""),
+                "SRC/Lib.rs:9999",
+                ScopeCompleteness::Complete
+            )
+            .as_deref(),
+            Some(
+                " Paths match case-sensitively. Findings in src/lib.rs are on lines 3, 9; select one as src/lib.rs:9."
+            )
+        );
+        assert!(matches!(
+            select_finding(&findings, "SRC/Lib.rs:9"),
+            FindingSelection::NoMatch
+        ));
+        assert!(matches!(
+            select_finding(&findings, "src/lib.rs:9"),
+            FindingSelection::Unique(_)
+        ));
+        // An exact-case file wins over a case-folded one, with no case note.
+        let mut upper = finding("probe:u", 5, None);
+        upper.probe.location = SourceLocation::new("SRC/Lib.rs", 5, 1);
+        let mixed = vec![finding("probe:a", 3, None), upper];
+        assert_eq!(
+            location_miss_hint(
+                &mixed,
+                std::path::Path::new(""),
+                "SRC/Lib.rs:9999",
+                ScopeCompleteness::Complete
+            )
+            .as_deref(),
+            Some(" Findings in SRC/Lib.rs are on line 5; select one as SRC/Lib.rs:5.")
+        );
+        // Several case-folded files: one is listed and the rest counted;
+        // the column note applies, and the incomplete flag adds nothing in
+        // the file-match branch, as for exact-case matches.
+        assert_eq!(
+            location_miss_hint(
+                &mixed,
+                std::path::Path::new(""),
+                "src/LIB.rs:9:1",
+                ScopeCompleteness::Incomplete
+            )
+            .as_deref(),
+            Some(
+                " Paths match case-sensitively. Findings in SRC/Lib.rs are on line 5; select one as SRC/Lib.rs:5. 1 other file matching that path ignoring case also has findings. Selectors are file:line; drop the column."
+            )
         );
         // A Windows verbatim finding path under a plain-drive root is shown
         // root-relative, like every other rendered location.
@@ -732,7 +966,13 @@ mod tests {
             verbatim.probe.location =
                 SourceLocation::new(format!(r"\\?\{drive}\repo\src\lib.rs"), 8, 1);
             assert_eq!(
-                location_miss_hint(&[verbatim], &root, "src/lib.rs:99").as_deref(),
+                location_miss_hint(
+                    &[verbatim],
+                    &root,
+                    "src/lib.rs:99",
+                    ScopeCompleteness::Complete
+                )
+                .as_deref(),
                 Some(" Findings in src/lib.rs are on line 8; select one as src/lib.rs:8.")
             );
         }
@@ -749,7 +989,13 @@ mod tests {
         // When every line is shared, no location selector is suggested.
         let shared = vec![finding("probe:a", 3, None), finding("probe:b", 3, None)];
         assert_eq!(
-            location_miss_hint(&shared, std::path::Path::new(""), "src/lib.rs:9999").as_deref(),
+            location_miss_hint(
+                &shared,
+                std::path::Path::new(""),
+                "src/lib.rs:9999",
+                ScopeCompleteness::Complete
+            )
+            .as_deref(),
             Some(
                 " Findings in src/lib.rs are on line 3; every listed line holds several findings, so select one by its probe id."
             )
@@ -767,7 +1013,12 @@ mod tests {
             "./:12",
         ] {
             assert_eq!(
-                location_miss_hint(&findings, std::path::Path::new(""), selector),
+                location_miss_hint(
+                    &findings,
+                    std::path::Path::new(""),
+                    selector,
+                    ScopeCompleteness::Complete
+                ),
                 None,
                 "{selector}"
             );

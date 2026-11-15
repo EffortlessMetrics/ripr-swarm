@@ -1281,6 +1281,18 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "[ \"$fetched\" = \"$c_head\" ]",
         ),
         (
+            "constituent from its own changed paths",
+            "if classify_constituent_docs \"$c_files\"; then c_docs_only=true; fi",
+        ),
+        (
+            "tip with its own docs-only classification",
+            "docs-only: ${{ steps.entry.outputs.tip_docs_only || needs.detect-docs-only.outputs.docs_only || 'false' }}",
+        ),
+        (
+            "constituents with their own docs-only classifications",
+            "while IFS=$'\\t' read -r c_pr c_head c_docs_only; do",
+        ),
+        (
             "tree to the live head merged onto the group base",
             "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${c_sha}^{tree}\")\" ]",
         ),

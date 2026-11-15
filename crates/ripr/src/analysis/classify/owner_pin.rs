@@ -87,8 +87,8 @@ use crate::analysis::syntax::{
     claims_macro_names, claims_payload_variant, drop_in_assertion_leaf,
     empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
     is_test_scoped_trusted_macro, local_empty_macro_names, macro_binding_scan, module_path_targets,
-    owner_pin_assertions, owner_pin_matches_assertions, parse_clean_source_file, pattern_pins,
-    qualified_matches_paths, returns_leave_the_function, source_binds_value_name,
+    owner_pin_assertions, owner_pin_assertions_with_default_features, parse_clean_source_file,
+    pattern_pins, qualified_matches_paths, returns_leave_the_function, source_binds_value_name,
     source_declares_value_name, source_imported_claims_macros, trusted_macro_binding_site_sets,
     trusted_macro_binding_sites,
 };
@@ -2230,9 +2230,14 @@ impl OwnerPinSyntax {
         };
         self.by_file
             .get_or_build(&test.file, || {
-                owner_pin_assertions(
+                owner_pin_assertions_with_default_features(
                     &expanded_assertion_view(&facts.source, facts.tests.iter()),
                     &assertion_context_macros(),
+                    false,
+                    index
+                        .member_crates
+                        .default_test_features(&test.file)
+                        .as_ref(),
                 )
             })
             .refusal_trusting_comparison_macros(
@@ -2413,17 +2418,18 @@ impl OwnerPinSyntax {
         };
         let file_refusal = admissions
             .get_or_build(&test.file, || {
-                if matches_context {
-                    owner_pin_matches_assertions(
-                        &expanded_assertion_view(&facts.source, facts.tests.iter()),
-                        &assertion_context_macros(),
-                    )
-                } else {
-                    owner_pin_assertions(
-                        &expanded_assertion_view(&facts.source, facts.tests.iter()),
-                        &assertion_context_macros(),
-                    )
-                }
+                // A gate the package's default features switch on is
+                // compiled by a plain `cargo test`, so it does not refuse
+                // (#8780).
+                owner_pin_assertions_with_default_features(
+                    &expanded_assertion_view(&facts.source, facts.tests.iter()),
+                    &assertion_context_macros(),
+                    matches_context,
+                    index
+                        .member_crates
+                        .default_test_features(&test.file)
+                        .as_ref(),
+                )
             })
             .refusal(
                 (test.start_line, test.end_line, &test.name),
@@ -6659,6 +6665,37 @@ impl OwnerReturnPin {
             ) {
                 (Some(call), None) => (call, right.as_str(), Some(left.as_str())),
                 (None, Some(call)) => (call, left.as_str(), Some(right.as_str())),
+                // `let v = owner(..); assert!(v == 4);` fails exactly when
+                // `assert_eq!(v, 4)` does, so the #6974 binding rules decide
+                // whether `v` is the call. A guard twin reads only its own
+                // condition, and a borrowed helper assertion names the
+                // helper's parameters, not the test's bindings (#6482).
+                (None, None)
+                    if !is_guard
+                        && (test.start_line..=test.end_line).contains(&assertion.line)
+                        && owner_named_outside(test, &assertion.text, &self.name) =>
+                {
+                    let bound = |operand: &str| {
+                        let_bound_owner_call(
+                            test,
+                            assertion,
+                            operand,
+                            "",
+                            &self.name,
+                            self.returns_scalar,
+                            false,
+                        )
+                        .and_then(|text| {
+                            self.awaited_call_shape(poll_context, text, &self.name)
+                                .map(|call| (call, text))
+                        })
+                    };
+                    match (bound(left), bound(right)) {
+                        (Some((call, text)), None) => (call, right.as_str(), Some(text)),
+                        (None, Some((call, text))) => (call, left.as_str(), Some(text)),
+                        _ => return false,
+                    }
+                }
                 _ => return false,
             }
         } else if let Some(operands) = matches_pin_condition(&assertion.text)
@@ -13957,7 +13994,8 @@ fn receiver_let_binding_ranges(body: &str, receiver: &str) -> Option<Vec<(usize,
 /// #6974: the initializer of `operand` when it is a plain identifier the
 /// test binds exactly once, by an immutable `let operand [: T] = <init>;`,
 /// and uses nowhere else but as a whole operand of its own `assert_eq!`
-/// assertions after that `let`. Any other use (a `mut` binding, a borrow,
+/// assertions, or one whole side of a plain lone-equality `assert!(v == e)`
+/// (#14085), after that `let`. Any other use (a `mut` binding, a borrow,
 /// a method call, an argument, a second binding, a use before the `let`)
 /// could change or replace the value, so it fails closed.
 ///
@@ -14020,7 +14058,8 @@ fn let_bound_owner_call<'a>(
                     .count()
                     == 1
                     && in_text == 1
-            });
+            })
+            || lone_equality_names_operand_once(&other.text, operand, projection, in_text);
         // The reviewed assertion itself is always a whole operand, and
         // only once: `assert_eq!(b, b)` compares the result with itself.
         let reviewed = other.line == assertion.line && other.text == assertion.text;
@@ -14067,7 +14106,14 @@ fn let_bound_owner_call<'a>(
     let next = &rest[..end];
     let after = &rest[end + 1..];
     let tail_of_line = &after[..after.find('\n').unwrap_or(after.len())];
-    if !next.starts_with("assert_eq!")
+    // A lone-equality `assert!(v == e)` opens the statement in place of the
+    // `assert_eq!`; a bool owner's bare `assert!(v)` keeps the scalar route.
+    let opener = if !bare_condition && is_plain_macro(&assertion.text, "assert") {
+        "assert!"
+    } else {
+        "assert_eq!"
+    };
+    if !next.starts_with(opener)
         || !contains_as_whole_word(next, operand)
         || !tail_of_line.trim().is_empty()
         || assertion.line != next_line
@@ -14075,6 +14121,27 @@ fn let_bound_owner_call<'a>(
         return None;
     }
     let_initializer(binding)
+}
+
+/// Whether `text` is one plain `assert!(lhs == rhs)` (RIPR-SPEC-0197
+/// lone-equality pins) with `operand` as exactly one whole side and named
+/// nowhere else in it, message arguments included. It reads `operand` as
+/// the `assert_eq!` with the same two sides does.
+fn lone_equality_names_operand_once(
+    text: &str,
+    operand: &str,
+    projection: &str,
+    mentions: usize,
+) -> bool {
+    mentions == 1
+        && is_plain_macro(text, "assert")
+        && equality_condition_operands(text).is_some_and(|sides| {
+            sides
+                .iter()
+                .filter(|side| side.trim().strip_suffix(projection).map(str::trim) == Some(operand))
+                .count()
+                == 1
+        })
 }
 
 /// cell-0094 review: whether the line `assertion_line` starts with a

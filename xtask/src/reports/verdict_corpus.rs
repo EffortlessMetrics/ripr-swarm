@@ -2659,7 +2659,7 @@ pub(crate) fn run_case_expecting(
         args.push(packet.to_string_lossy().into_owned());
     }
     let cache_value = cache.to_string_lossy().into_owned();
-    let stdout = run_output_owned_with_envs(&binary, &args, &[(CACHE_ENV, &cache_value)])?;
+    let stdout = run_case_output(&binary, &args, &cache_value)?;
     let mut subject = case_subject(
         case,
         &fs::read(&diff).map_err(|err| format!("read {}: {err}", normalize_path(&diff)))?,
@@ -2675,6 +2675,16 @@ pub(crate) fn run_case_expecting(
         relativize_probe_files(&mut check, &canonical);
     }
     Ok((check, anchor_line))
+}
+
+/// Parent workers already parallelize cases. Pin each child Rayon pool to one
+/// worker without changing the parent pool or another case's cache.
+fn run_case_output(binary: &str, args: &[String], cache: &str) -> Result<String, String> {
+    run_output_owned_with_envs(
+        binary,
+        args,
+        &[(CACHE_ENV, cache), ("RAYON_NUM_THREADS", "1")],
+    )
 }
 
 /// What the harness fixed about a live case before ripr ran: the language the

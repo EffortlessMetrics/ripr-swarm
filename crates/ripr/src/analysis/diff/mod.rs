@@ -10,6 +10,7 @@ mod source;
 pub(crate) use source::reconstruct_old_source;
 pub mod records;
 
+pub(crate) use load::bare_repository_message;
 #[cfg(test)]
 pub(crate) use load::not_a_work_tree_message;
 pub(crate) use load::{

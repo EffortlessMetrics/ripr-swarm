@@ -1341,6 +1341,18 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             "ADMISSION_REPOSITORY=\"$REPOSITORY\" ADMISSION_PR_NUMBER=\"$c_pr\" python3",
         ),
         (
+            "classify every merge-group constituent from its own changed paths",
+            "if classify_constituent_docs \"$c_files\"; then c_docs_only=true; fi",
+        ),
+        (
+            "admit the merge-group tip with its own docs-only classification",
+            "docs-only: ${{ steps.entry.outputs.tip_docs_only || needs.detect-docs-only.outputs.docs_only || 'false' }}",
+        ),
+        (
+            "admit additional merge-group constituents with their own docs-only classifications",
+            "while IFS=$'\\t' read -r c_pr c_head c_docs_only; do",
+        ),
+        (
             "use the local hard-cut template only on a verified 404",
             "elif grep -q 'HTTP 404' \"$packet_err\"; then",
         ),

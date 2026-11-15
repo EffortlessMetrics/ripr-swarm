@@ -327,7 +327,20 @@ jobs:
           GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
-          pr="$PR_NUMBER" head="$PR_HEAD_SHA" labels="$PR_LABELS" queue_entry="" constituents="[]"
+          pr="$PR_NUMBER" head="$PR_HEAD_SHA" labels="$PR_LABELS" queue_entry="" constituents="[]" tip_docs_only=""
+          classify_constituent_docs() {
+            local files_json="$1" path count
+            count="$(jq -r 'length' <<<"$files_json")"
+            [ "$count" -gt 0 ] || { echo "::error::constituent PR #${c_pr} has no changed paths for docs-only classification"; exit 1; }
+            while IFS= read -r path; do
+              [ -n "$path" ] || continue
+              case "$path" in
+                CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md) return 1 ;;
+                docs/specs/*|docs/handoffs/*|docs/spec-index.d/*|policy/doc-artifacts.d/*|.ripr/traceability.d/*|changelog.d/*|fixtures/*-verdict-corpus/spec-scopes/*|*.md) ;;
+                *) return 1 ;;
+              esac
+            done < <(jq -r '.[] | .filename, (.previous_filename // empty)' <<<"$files_json")
+          }
           if [ "$EVENT_NAME" = "merge_group" ]; then
             # The queue branch is named .../pr-<number>-<sha>. In a single-PR or
             # batched merge group (#8082), GitHub constructs a linear chain of
@@ -357,6 +370,9 @@ jobs:
               [[ "$seen_prs" != *",$c_pr,"* ]] || { echo "::error::duplicate constituent PR #${c_pr} in merge group"; exit 1; }
               seen_prs="${seen_prs}${c_pr},"
               current="$(gh api "repos/${REPOSITORY}/pulls/${c_pr}")"
+              c_files="$(gh api --paginate "repos/${REPOSITORY}/pulls/${c_pr}/files?per_page=100" | jq -s 'add')"
+              c_docs_only=false
+              if classify_constituent_docs "$c_files"; then c_docs_only=true; fi
               c_head="$(jq -r '.head.sha' <<<"$current")"
               [[ "$c_head" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::PR #${c_pr} head sha is invalid: $c_head"; exit 1; }
               fetched="$(git fetch --no-tags origin "refs/pull/${c_pr}/head" && git rev-parse FETCH_HEAD)" && [ "$fetched" = "$c_head" ] || { echo "::error::refs/pull/${c_pr}/head (${fetched:-unfetched}) is not the live head $c_head of PR #${c_pr}"; exit 1; }
@@ -365,18 +381,19 @@ jobs:
               c_queue_entry=$(jq -er --arg head "$c_head" 'select(.errors == null) | .data.repository.pullRequest | select(.headRefOid == $head) | .mergeQueueEntry.id | select(type == "string" and length > 0)' <<<"$queue")
               c_labels="$(jq -r '[.labels[].name] | join(",")' <<<"$current")"
               [ -z "$c_labels" ] || all_labels="${all_labels:+${all_labels},}${c_labels}"
-              constituents="$(jq -c --argjson pr "$c_pr" --arg head "$c_head" --arg qe "$c_queue_entry" '. + [{pr: $pr, head: $head, queue_entry: $qe}]' <<<"$constituents")"
+              constituents="$(jq -c --argjson pr "$c_pr" --arg head "$c_head" --arg qe "$c_queue_entry" --arg docs_only "$c_docs_only" '. + [{pr: $pr, head: $head, queue_entry: $qe, docs_only: $docs_only}]' <<<"$constituents")"
               expected_parent="$c_sha"
               pr="$c_pr"
               head="$c_head"
               queue_entry="$c_queue_entry"
+              tip_docs_only="$c_docs_only"
             done <<<"$commits"
             [ "$expected_parent" = "$GROUP_HEAD_SHA" ] || { echo "::error::merge group chain ended at $expected_parent instead of $GROUP_HEAD_SHA"; exit 1; }
             [ "$pr" = "$ref_pr" ] || { echo "::error::merge group tip PR #$pr does not match queue ref PR #$ref_pr"; exit 1; }
             { [ "$ref_sha" = "$head" ] || [ "$ref_sha" = "$GROUP_BASE_SHA" ]; } || { echo "::error::queue ref sha $ref_sha is neither the live head $head of PR #${pr} (pushed after enqueue) nor the group base $GROUP_BASE_SHA"; exit 1; }
             labels="$(printf '%s' "$all_labels" | tr ',' '\n' | sed '/^$/d' | awk '!seen[$0]++' | paste -sd, -)"
           fi
-          { echo "pr=$pr"; echo "head=$head"; echo "labels=$labels"; echo "queue_entry=$queue_entry"; echo "constituents=$constituents"; echo "request=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"; } >> "$GITHUB_OUTPUT"
+          { echo "pr=$pr"; echo "head=$head"; echo "labels=$labels"; echo "queue_entry=$queue_entry"; echo "constituents=$constituents"; echo "tip_docs_only=$tip_docs_only"; echo "request=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"; } >> "$GITHUB_OUTPUT"
       - name: Admit exact candidate
         id: candidate
         uses: ./.admission-trusted/.github/actions/pr-candidate-admission
@@ -385,7 +402,7 @@ jobs:
           repository: ${{ github.repository }}
           pr-number: ${{ steps.entry.outputs.pr }}
           expected-head: ${{ steps.entry.outputs.head }}
-          docs-only: ${{ needs.detect-docs-only.outputs.docs_only || 'false' }}
+          docs-only: ${{ steps.entry.outputs.tip_docs_only || needs.detect-docs-only.outputs.docs_only || 'false' }}
           max-changed-files: '160'
           max-changed-lines: '3000'
       - name: Admit additional merge-group constituents
@@ -396,7 +413,6 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           TIP_PR: ${{ steps.entry.outputs.pr }}
           CONSTITUENTS: ${{ steps.entry.outputs.constituents }}
-          DOCS_ONLY: ${{ needs.detect-docs-only.outputs.docs_only || 'false' }}
         run: |
           set -euo pipefail
           count="$(jq -r 'length' <<<"$CONSTITUENTS")"
@@ -407,10 +423,10 @@ jobs:
           trap 'rm -rf "$tmp"' EXIT
           open_prs="$tmp/open-prs.json"
           gh api --paginate "repos/${REPOSITORY}/pulls?state=open&per_page=100" | jq -s 'add' > "$open_prs"
-          docs_flag=()
-          [ "$DOCS_ONLY" = "true" ] && docs_flag=(--docs-only)
-          while IFS=$'\t' read -r c_pr c_head; do
+          while IFS=$'\t' read -r c_pr c_head c_docs_only; do
             [ "$c_pr" != "$TIP_PR" ] || continue
+            docs_flag=()
+            [ "$c_docs_only" = "true" ] && docs_flag=(--docs-only)
             current="$tmp/current-${c_pr}.json"
             pr_files="$tmp/files-${c_pr}.json"
             pr_comments="$tmp/comments-${c_pr}.json"
@@ -484,7 +500,7 @@ jobs:
             [ "$(jq -r '.status' "$result")" = "admitted" ] || { echo "::error::constituent PR #${c_pr} candidate admission refused: $(jq -r '.reason + ": " + .detail' "$result")"; exit 1; }
             [ "$rc_cut" -eq 0 ] || { echo "::error::constituent PR #${c_pr} hard-cut admission refused: $(jq -r '.reason + ": " + .detail' "$cut_result")"; exit 1; }
             [ "$(jq -r '.status' "$cut_result")" = "admitted" ] || { echo "::error::constituent PR #${c_pr} hard-cut admission refused: $(jq -r '.reason + ": " + .detail' "$cut_result")"; exit 1; }
-          done < <(jq -r '.[] | "\(.pr)\t\(.head)"' <<<"$CONSTITUENTS")
+          done < <(jq -r '.[] | "\(.pr)\t\(.head)\t\(.docs_only)"' <<<"$CONSTITUENTS")
       - name: Select admitted qualification scope
         id: scope
         shell: bash

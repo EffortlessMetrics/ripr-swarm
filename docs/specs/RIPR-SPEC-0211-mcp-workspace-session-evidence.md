@@ -129,9 +129,22 @@ official SDK transport:
   Later refreshes remain usable. Installation is serialized and idempotent.
   Only MCP attempt tokens opt into Unix process groups; captured analysis
   workers retain that choice and other callers preserve their prepared groups.
-  Cleanup observes leader exit without reaping, signals the owned group, then
-  reaps and disarms further group signals. This also settles pipe holders when
-  a primary exits early. Targets lacking the safe non-reaping observation
+  Cleanup observes leader exit without reaping and signals the owned group
+  at most once while that leader still pins its identity. On Linux, successful
+  `try_wait`, `wait` and explicit `terminate_tree` additionally require every
+  observed member to be single-threaded and terminal (Z/X), with the retained
+  leader still present in the expected group, before reaping. This applies to
+  natural primary exit as well as explicit termination (#14503). The first
+  successful group signal starts one five-second settlement window; pending
+  polls and later explicit cleanup do not renew it. Missing or malformed
+  membership, observation failure or deadline exhaustion remains a cleanup
+  error on subsequent wait/termination observations, not a successful exit.
+  Explicit failure
+  fallback may kill/reap the direct child within its separate bounded budget
+  but reports incomplete tree cleanup and never signals the group after reap.
+  The pre-signal running-child lifetime remains caller-bounded, OS reads are
+  not a hard real-time guarantee, and `Drop` remains best-effort cleanup.
+  This also settles pipe holders when a primary exits early. Targets lacking the safe non-reaping observation
   refuse contained spawn before creating a child. On non-Unix targets the
   install is a no-op: containment there is the job-object ownership in
   `process_owner`, whose std API cannot express kill-on-job-close, so an
@@ -421,6 +434,19 @@ official SDK transport:
   no match, and an unknown `file`, produce an empty disclosed page.
   `selected` remains the stored-selection count; `filtered` is the narrowed
   count. `filters` echoes all four dimensions, with null for omitted values.
+  With no `class` filter the list leaves out `exposed` items the shared seam
+  gate refused as `seam_already_gripped` (#14327): existing tests already
+  check the seam, so listing them invites per-item evidence reads that change
+  nothing. Only that positive cause omits. An `exposed` item that is
+  repair-ready, or unready for any other cause (a truncated seam inventory,
+  withheld worktree evidence, an ambiguous or unfound seam, a finding-level
+  gate), stays listed, because missing or limited evidence never becomes a
+  no-action conclusion. `filtered` counts after that exclusion (it is the set
+  the page walks), the additive `exposed_omitted` count and `exposed_route`
+  string disclose what was left out (both absent when zero or when `class`
+  was named), and `total`, `eligible`, `selected` and `outcome` still describe
+  the whole snapshot. Any explicit `class`, including `exposed`, behaves as
+  a plain exact-class filter, and `filters.class` still echoes null by default.
   Summaries carry `repair_packet_ready` and `repair_ineligibility` (null when
   ready; otherwise the typed first failing gate), matching `ripr_get_gap`.
   `continuation.next_page.arguments` pins the snapshot, filters, and explicit
@@ -701,6 +727,10 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   `config_identity`, `built_in_defaults` when none resolves,
   `detected_not_loaded` when the file cannot be read or parsed), and an
   unparseable config fails the attempt closed with `config_invalid`.
+  The git invocations of a refresh's check are bounded by
+  `RIPR_GIT_TIMEOUT` from the server environment when set, else the
+  `ripr check` default, through the CLI's parser (#14386); an invalid value
+  fails the attempt closed with `config_invalid` naming the variable.
 - No support-tier promotion.
 - No durable snapshot persistence; the session is in-memory and a server
   restart drops it (a fresh `ripr_refresh` rebuilds it).
@@ -794,6 +824,10 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
 - `crates/ripr/src/mcp/workspace.rs::tests::gap_list_summaries_project_readiness_matching_get_gap`
   + `gap_list_filters_narrow_each_dimension_then_combine_before_paging`
   — direct stored-fact narrowing/readiness and continuation controls.
+- `crates/ripr/src/mcp/workspace.rs::tests::default_gap_list_omits_exposed_and_discloses_the_count`
+  — default list leaves out already-gripped `exposed` items and counts them
+  in `exposed_omitted`; a truncation-refused `exposed` item and a
+  repair-ready one stay listed; `class: "exposed"` lists them all.
 - `crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_filters_at_the_dispatch_edge`
   — argument admission before refresh; this is not successful narrowing proof.
 - `crates/ripr/tests/mcp_stdio.rs::list_gaps_rejects_unknown_class_tokens_with_the_vocabulary`
@@ -835,6 +869,10 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   refresh/list/get_gap with the `loaded` posture, a config-less rust
   workspace keeps the defaults posture, and an unparseable `ripr.toml`
   fails the refresh closed with `config_invalid`.
+- `crates/ripr/tests/mcp_workspace_config.rs::refresh_honors_ripr_git_timeout_from_the_server_environment`
+  — #14386: an invalid server `RIPR_GIT_TIMEOUT` fails the refresh with
+  `config_invalid` naming the variable and a restart recovery; `0` keeps
+  the analysis.
 - `crates/ripr/src/mcp/gaps.rs::tests` — canonical item projection and the
   readiness block this slice pinned (the readiness evaluation itself is
   owned with RIPR-SPEC-0214).
@@ -862,6 +900,28 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
 - `crates/ripr/src/process_owner.rs::tests` — non-reaping cleanup ordering,
   successful output/status, refusal after custody loss, repeated cleanup and
   preservation of caller process groups.
+- `crates/ripr/src/process_owner.rs::tests::linux_group_observer_requires_terminal_single_thread_members`
+  + `linux_group_observer_accepts_non_utf8_comm_and_refuses_missing_leader`
+  — terminal-state/thread-count and byte-safe membership refusal.
+- `crates/ripr/src/process_owner.rs::tests::linux_stat_unavailable_group_is_pending_even_for_terminal_state`
+  + `linux_stat_unknown_group_does_not_accept_other_malformed_groups`
+  — the kernel's teardown `pgid=-1` sentinel is unknown membership, not a
+  quiescent or unrelated process. Observation stays pending under the original
+  settlement deadline; malformed group tokens still refuse. The owned leader
+  must still have a positively observed matching group. This fixture does not
+  claim the missing raw stat bytes from a particular hosted failure.
+- `crates/ripr/src/process_owner.rs::tests::linux_settlement_deadline_survives_polls_and_explicit_cleanup`
+  + `linux_try_wait_refuses_expired_nonterminal_settlement`
+  + `linux_wait_refuses_expired_settlement_before_reaping`
+  + `linux_pending_settlement_can_complete_within_original_deadline`
+  — a real unreaped leader with a modeled nonterminal observation exercises
+  the public owner paths: one signal-bound deadline, no renewal through
+  pending polls or explicit cleanup, persistent error before reap, bounded
+  fallback and successful settlement before expiry. These controls do not
+  reproduce a kernel D-state or establish a hard wall-clock bound.
+- `crates/ripr/tests/installed_python_typescript_journeys.rs::python_runtime_deadline_reaps_primary_and_stops_descendant`
+  — unchanged installed-runtime immediate-return oracle for primary reap and
+  descendant stopped state; stopped is not equivalent to descendant reap.
 - `crates/ripr/tests/mcp_stdio.rs::catalog_list_cursors_fail_closed_over_stdio`
   — a `cursor` on `tools/list`, `prompts/list`, `resources/list`, or
   `resources/templates/list` is a `-32602` whose message explains the list
