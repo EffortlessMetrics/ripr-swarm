@@ -1344,32 +1344,31 @@ fn operand_end(tail: &str) -> usize {
     tail.len()
 }
 
-/// Whether `before` and `after` hold the same number of ranges and at least
-/// one range's endpoints or operator differ: a moved bound (`0..=5` to
-/// `0..=6`, `'a'..='z'` to `'b'..='y'`), not an edit beside the ranges
-/// (`[1, len, ..] => len + 2` to `2 + len`) or a range added or removed.
-/// The contents of each char literal in `text`, in order. A run of bytes
-/// that `mask_rust_char_literals` blanks is one literal's content.
-fn char_literal_contents(text: &str) -> Vec<Vec<u8>> {
-    use crate::analysis::language::mask_rust_char_literals;
-    let masked = mask_rust_char_literals(text);
-    let mut contents: Vec<Vec<u8>> = Vec::new();
-    let mut open = false;
-    for (raw, blank) in text.bytes().zip(masked.bytes()) {
-        if raw == blank {
-            open = false;
-        } else if open {
-            if let Some(last) = contents.last_mut() {
-                last.push(raw);
-            }
+/// The contents of each char literal in `text`, in order, read with the
+/// same literal test the comment-and-string masker uses, so a space char
+/// (`' '`) counts like any other.
+fn char_literal_contents(text: &str) -> Vec<&[u8]> {
+    use crate::analysis::extract::mask::char_literal_close;
+    let bytes = text.as_bytes();
+    let mut contents = Vec::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'\''
+            && let Some(close) = char_literal_close(bytes, index)
+        {
+            contents.push(bytes.get(index + 1..close).unwrap_or_default());
+            index = close + 1;
         } else {
-            contents.push(vec![raw]);
-            open = true;
+            index += 1;
         }
     }
     contents
 }
 
+/// Whether `before` and `after` hold the same number of ranges and at least
+/// one range's endpoints or operator differ: a moved bound (`0..=5` to
+/// `0..=6`, `'a'..='z'` to `'b'..='y'`), not an edit beside the ranges
+/// (`[1, len, ..] => len + 2` to `2 + len`) or a range added or removed.
 fn range_endpoints_moved(before: &str, after: &str) -> bool {
     let (old, new) = (range_signatures(before), range_signatures(after));
     !old.is_empty() && old.len() == new.len() && old != new
@@ -2244,6 +2243,7 @@ mod tests {
             "matches!(c, 'a'..='z') && s == \"x\"",
             "matches!(c, 'b'..='z') && s == \"x\""
         ));
+        assert!(range_bound_change("' '..='a' => 1,", "'a'..=' ' => 1,").is_some());
         assert!(absorbing(
             "matches!(c, 'a'..='z') // 0..5",
             "matches!(c, 'b'..='z') // 0..5"
