@@ -75,20 +75,15 @@ mod policy_root;
 #[cfg(test)]
 pub(crate) use policy::parse_workspace_lints_section;
 pub(crate) use policy_root::{
-    CiLedgerDocument, CiLedgerTable, PROOF_PACK_LANE_WHITELIST_PATH, PROOF_PACK_MANIFEST_PATH,
-    check_allow_attributes_impl, check_ci_lane_whitelist_impl, check_lint_policy,
-    check_local_context_impl, check_network_policy_impl, check_process_policy_impl,
-    check_proof_packs_impl, check_static_language_impl, check_workspace_shape,
-    ci_required_non_empty_table_string, ci_required_table_array, ci_required_table_id, ci_tables,
-    parse_ci_ledger_document, parse_git_path_records, parse_git_status_records,
-    read_ci_ledger_document, tracked_files, unquote_toml_basic_string,
+    CiLedgerDocument, CiLedgerTable, check_lint_policy, ci_expect_top_string,
+    ci_lane_whitelist_violations, ci_required_non_empty_table_string, ci_required_table_array,
+    ci_required_table_id, ci_string_value, ci_tables, parse_ci_ledger_document,
+    read_ci_ledger_document, unquote_toml_basic_string,
 };
 #[cfg(test)]
 pub(crate) use policy_root::{
-    allow_attribute_budget_violations, ci_lane_whitelist_violations,
     collect_clippy_debt_violations, collect_lint_policy_violations, parse_msrv_triple,
-    planned_blocker_text_is_msrv_only, proof_pack_command_is_known,
-    proof_pack_output_contracts_lane_violations, proof_pack_violations,
+    planned_blocker_text_is_msrv_only,
 };
 #[cfg(test)]
 mod portable_consumer;
@@ -332,7 +327,7 @@ pub(crate) use fixture_contracts::{
     validate_swarm_plan_packet_fixture_corpus,
     validate_typescript_bun_ub_calibration_fixture_corpus_at,
 };
-use no_panic::{parse_string_value, parse_toml_key_value};
+use no_panic::{contains_word, parse_string_value, parse_toml_key_value};
 use policy::{
     check_allow_attributes, check_changelog_fragments, check_ci_lane_whitelist,
     check_cli_exit_contract, check_covered_by, check_doc_roles, check_droid_review_config,
@@ -1167,7 +1162,21 @@ fn git_changed_files(root: &Path, rev: &str) -> Result<Vec<String>, String> {
 /// authority (#4006). Strict: non-UTF-8 or empty records fail loudly
 /// instead of collapsing through lossy conversion.
 fn decode_changed_files(output: &[u8]) -> Result<Vec<String>, String> {
-    crate::parse_git_path_records(output).map_err(|err| format!("changed-file inventory: {err}"))
+    ripr::analysis::parse_git_path_records(output)
+        .map_err(|err| format!("changed-file inventory: {err}"))
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| {
+                    path.to_str().map(str::to_string).ok_or_else(|| {
+                        format!(
+                            "changed-file inventory: decoded path {} is not valid UTF-8",
+                            path.display()
+                        )
+                    })
+                })
+                .collect()
+        })
 }
 
 fn check_fast_selector_failure(error: &str) -> String {
@@ -5957,6 +5966,234 @@ mod policy_report_disclosure_tests {
         assert!(body.starts_with("# check-example\n\nStatus: pass\n\n"));
         assert!(body.ends_with("cargo xtask check-example\n```\n"));
     }
+}
+
+fn check_static_language_impl() -> Result<(), String> {
+    let report_spec = PolicyReportSpec {
+        report_file: "static-language.md",
+        check: "check-static-language",
+        why_it_matters: "Static output must preserve the boundary between draft exposure evidence and real mutation results.",
+        fix_kind: FixKind::ReviewerDecisionRequired,
+        recommended_fixes: &[
+            "Rewrite static product output to use the approved exposure vocabulary.",
+            "For an innocent word in a comment, append `ripr-allow: static-language: <reason>` to that single line.",
+            "If a whole file is explanatory documentation, add a reasoned `[[allow]]` entry to the static-language allowlist.",
+        ],
+        rerun_command: "cargo xtask check-static-language",
+        exception_template: Some(
+            ".ripr/static-language-allowlist.toml entry:\n[[allow]]\npath = \"path/to/file.md\"\nowner = \"team\"\nreason = \"why this file may quote prohibited vocabulary\"",
+        ),
+    };
+
+    let allowed = match load_static_language_allowlist() {
+        Ok(entries) => entries,
+        Err(violations) => return finish_policy_report(report_spec, &violations),
+    };
+    let forbidden = forbidden_static_terms();
+    let mut violations = Vec::new();
+
+    for path in collect_files(Path::new("."))? {
+        let normalized = normalize_path(&path);
+        if !should_scan_static_language_path(&allowed, &normalized) {
+            continue;
+        }
+        let text = read_text_lossy(&path)?;
+        for (line_number, line) in text.lines().enumerate() {
+            let lower = line.to_ascii_lowercase();
+            // A reasoned inline allow suppresses this line's forbidden terms.
+            // It is finer-grained than a whole-file allowlist entry (smaller
+            // bypass surface, reviewable in the diff) and must carry a reason.
+            if line_has_static_language_inline_allow(&lower) {
+                continue;
+            }
+            for term in &forbidden {
+                if contains_word(&lower, term) {
+                    violations.push(static_language_violation_message(
+                        &normalized,
+                        line_number + 1,
+                        term,
+                        line,
+                    ));
+                }
+            }
+        }
+    }
+
+    finish_policy_report(report_spec, &violations)
+}
+
+fn check_allow_attributes_impl() -> Result<(), String> {
+    let allowlist = read_count_allowlist(".ripr/allow-attributes.txt")?;
+    let guarded = guarded_allow_attribute_lints();
+    let mut counts = BTreeMap::<(String, String), Vec<usize>>::new();
+
+    for path in tracked_files()? {
+        if !path.ends_with(".rs") {
+            continue;
+        }
+        let file_path = Path::new(&path);
+        if !file_path.exists() {
+            continue;
+        }
+        let text = read_text_lossy(file_path)?;
+        for (line, attribute) in guarded_allow_attributes_in_text(&text, &guarded) {
+            counts
+                .entry((path.clone(), attribute))
+                .or_default()
+                .push(line);
+        }
+    }
+
+    let violations = allow_attribute_budget_violations(&allowlist, &counts, &guarded);
+
+    finish_policy_report(
+        PolicyReportSpec {
+            report_file: "allow-attributes.md",
+            check: "check-allow-attributes",
+            why_it_matters: "Lint suppressions should not be used to hide repo guardrails. If a suppression is unavoidable, it needs a narrow reviewed exception with a reason. A count row higher than the current source count is the same unread budget.",
+            fix_kind: FixKind::PolicyExceptionRequired,
+            recommended_fixes: &[
+                "Remove the lint suppression and fix the underlying warning.",
+                "If the suppression is temporary and intentional, add a narrow allowlist entry with a reason.",
+                "Tighten or remove a `.ripr/allow-attributes.txt` row whose max_count is higher than the current source count.",
+                "Do not allowlist panic-family, unsafe, or broad warning suppressions unless the PR explicitly owns that exception.",
+            ],
+            rerun_command: "cargo xtask check-allow-attributes",
+            exception_template: Some(
+                ".ripr/allow-attributes.txt entry:\npath/to/file.rs|allow(clippy::unwrap_used)|1|reason",
+            ),
+        },
+        &violations,
+    )
+}
+
+fn allow_attribute_budget_violations(
+    allowlist: &BTreeMap<(String, String), usize>,
+    counts: &BTreeMap<(String, String), Vec<usize>>,
+    guarded: &BTreeSet<&'static str>,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    for ((path, attribute), lines) in counts {
+        let allowed = allowlist
+            .get(&(path.clone(), attribute.clone()))
+            .copied()
+            .unwrap_or(0);
+        if lines.len() > allowed {
+            violations.push(format!(
+                "{path}:{} contains `{attribute}` {} time(s), allowed {allowed}\n  preferred: fix the lint or add a narrow allowlist entry with a reason",
+                allow_attribute_line_summary(lines),
+                lines.len()
+            ));
+        }
+    }
+
+    for ((path, attribute), allowed) in allowlist {
+        if !guarded.contains(attribute_lint_name(attribute).unwrap_or(attribute)) {
+            violations.push(format!(
+                ".ripr/allow-attributes.txt contains unsupported guarded attribute `{attribute}` for {path}; remove stale or out-of-scope exceptions"
+            ));
+            continue;
+        }
+        let actual = counts
+            .get(&(path.clone(), attribute.clone()))
+            .map(Vec::len)
+            .unwrap_or(0);
+        if actual > *allowed {
+            violations.push(format!(
+                "{path} contains `{attribute}` {actual} time(s), allowed {allowed}"
+            ));
+        } else if actual < *allowed {
+            // #3923: a row that outlives the suppressions it budgets is unread
+            // debt. Exact equality is the steady state, matching check-local-context.
+            violations.push(format!(
+                "{path} `{attribute}` allowlist count is stale: found {actual}, allowed {allowed}; tighten max_count to {actual} or remove the entry"
+            ));
+        }
+    }
+    violations
+}
+
+fn check_local_context_impl() -> Result<(), String> {
+    let allowlist = read_local_context_allowlist("policy/local_context_allowlist.txt")?;
+    let mut violations = validate_local_context_allowlist(&allowlist);
+    let mut grouped = BTreeMap::<(String, String), (BTreeSet<String>, Vec<Option<usize>>)>::new();
+
+    for path in tracked_files()? {
+        let file_path = Path::new(&path);
+        if !file_path.exists() || path == "policy/local_context_allowlist.txt" {
+            continue;
+        }
+
+        for finding in local_context_findings_for_path(&path)? {
+            let entry = grouped
+                .entry((finding.path.clone(), finding.pattern.clone()))
+                .or_insert_with(|| (BTreeSet::new(), Vec::new()));
+            entry.0.insert(finding.problem);
+            entry.1.push(finding.line);
+        }
+    }
+
+    let allowed = allowlist
+        .iter()
+        .map(|entry| ((entry.path.clone(), entry.pattern.clone()), entry.max_count))
+        .collect::<BTreeMap<_, _>>();
+
+    for ((path, pattern), (problems, lines)) in &grouped {
+        let actual = lines.len();
+        let allowed_count = allowed
+            .get(&(path.clone(), pattern.clone()))
+            .copied()
+            .unwrap_or(0);
+        if actual <= allowed_count && actual == 0 {
+            continue;
+        }
+        if actual > allowed_count {
+            let line_summary = local_context_line_summary(lines);
+            violations.push(format!(
+                "Path: {path}\nProblem: {}\nPattern: {pattern}\nCount: {actual}, allowed: {allowed_count}\nLines: {line_summary}\nWhy this matters: Repository docs should contain durable project state, not local runtime/session state from one machine or Codex run.\nRecommended fixes:\n1. Delete runtime/session artifacts instead of committing them.\n2. Move durable learnings to docs/LEARNINGS.md.\n3. Move generated state to target/ripr/reports, target/ripr/receipts, or target/ripr/learning.",
+                problems.iter().cloned().collect::<Vec<_>>().join("; ")
+            ));
+        } else if actual < allowed_count && actual > 0 {
+            // Stale bound: the allowlist grants more budget than the code uses
+            // (#2413). Flag so the bound is tightened.
+            violations.push(format!(
+                "Path: {path}\nPattern: {pattern}\nStale allowlist bound: max_count={allowed_count} but actual={actual}; tighten to {actual}"
+            ));
+        }
+    }
+
+    // Flag orphaned allowlist entries whose path/pattern no longer appears in
+    // any tracked file (count dropped to zero or the file was removed).
+    for entry in &allowlist {
+        let key = (entry.path.clone(), entry.pattern.clone());
+        if !grouped.contains_key(&key) && entry.max_count > 0 {
+            violations.push(format!(
+                "Path: {}\nPattern: {}\nOrphaned allowlist entry: max_count={} but pattern not found in any tracked file; remove the entry",
+                entry.path, entry.pattern, entry.max_count
+            ));
+        }
+    }
+
+    write_local_context_json(&violations)?;
+    finish_policy_report(
+        PolicyReportSpec {
+            report_file: "local-context.md",
+            check: "check-local-context",
+            why_it_matters: "Repository state must be durable and portable. Machine paths, Codex memory paths, sandbox references, local transcripts, and session-state documents belong in generated artifacts or local notes, not committed repo knowledge.",
+            fix_kind: FixKind::AuthorDecisionRequired,
+            recommended_fixes: &[
+                "Delete committed runtime/session artifacts.",
+                "Move durable repo knowledge to docs/LEARNINGS.md or campaign/capability metadata.",
+                "Move generated state to target/ripr/reports, target/ripr/receipts, or target/ripr/learning.",
+                "Use policy/local_context_allowlist.txt only for narrow generic examples with a reason.",
+            ],
+            rerun_command: "cargo xtask check-local-context",
+            exception_template: Some(
+                "policy/local_context_allowlist.txt entry:\npath|pattern|max_count|reason",
+            ),
+        },
+        &violations,
+    )
 }
 
 pub(crate) fn rust_conversion_candidates() -> Result<(), String> {
@@ -14197,6 +14434,69 @@ fn is_snake_case_id(value: &str) -> bool {
         && !value.contains("__")
 }
 
+fn check_workspace_shape() -> Result<(), String> {
+    let records = read_pipe_records("policy/workspace_shape.txt", 3)?;
+    let mut allowed_members = BTreeSet::new();
+    let mut allowed_manifests = Vec::new();
+    let mut violations = Vec::new();
+
+    for record in records {
+        match record[0].as_str() {
+            "workspace_member" => {
+                allowed_members.insert(record[1].clone());
+            }
+            "cargo_manifest" => allowed_manifests.push(GlobAllow {
+                glob: record[1].clone(),
+            }),
+            other => violations.push(format!(
+                "policy/workspace_shape.txt uses unsupported kind `{other}`"
+            )),
+        }
+    }
+
+    for member in workspace_members()? {
+        if !allowed_members.contains(&member) {
+            violations.push(format!(
+                "workspace member is not allowlisted: {member}\n  preferred: keep one published `crates/ripr` package and `xtask` automation unless an ADR approves a new package"
+            ));
+        }
+    }
+    for member in &allowed_members {
+        if !Path::new(member).exists() {
+            violations.push(format!(
+                "allowlisted workspace member does not exist: {member}"
+            ));
+        }
+    }
+    for file in tracked_files()? {
+        if !file.ends_with("Cargo.toml") {
+            continue;
+        }
+        if !matches_any_glob(&allowed_manifests, &file) {
+            violations.push(format!(
+                "Cargo manifest is not allowlisted by workspace shape policy: {file}"
+            ));
+        }
+    }
+
+    finish_policy_report(
+        PolicyReportSpec {
+            report_file: "workspace-shape.md",
+            check: "check-workspace-shape",
+            why_it_matters: "ripr intentionally stays one published package with internal module seams; new packages need explicit review.",
+            fix_kind: FixKind::PolicyExceptionRequired,
+            recommended_fixes: &[
+                "Keep product code inside crates/ripr unless an ADR approves a new package.",
+                "Keep repo automation inside xtask.",
+                "If a new Cargo manifest is truly needed, add a workspace-shape policy entry with owner and reason.",
+            ],
+            rerun_command: "cargo xtask check-workspace-shape",
+            exception_template: Some("kind|path|reason"),
+        },
+        &violations,
+    )
+}
+
 fn check_architecture() -> Result<(), String> {
     let records = read_pipe_records("policy/architecture.txt", 3)?;
     let files = tracked_files()?;
@@ -18136,6 +18436,334 @@ fn parse_clippy_debt_ledger(text: &str) -> (Vec<ClippyDebtEntry>, Vec<String>) {
     (entries, violations)
 }
 
+fn check_ci_lane_whitelist_impl() -> Result<(), String> {
+    let mut violations = Vec::new();
+
+    let budget = read_ci_ledger_document("policy/ci-budget.toml", &mut violations);
+    let lanes = read_ci_ledger_document("policy/ci-lane-whitelist.toml", &mut violations);
+    let risk_packs = read_ci_ledger_document("policy/ci-risk-packs.toml", &mut violations);
+    let exceptions =
+        read_ci_ledger_document("policy/ci-whitelist-exceptions.toml", &mut violations);
+
+    if let (Some(budget), Some(lanes), Some(risk_packs), Some(exceptions)) =
+        (&budget, &lanes, &risk_packs, &exceptions)
+    {
+        violations.extend(ci_lane_whitelist_violations(
+            budget, lanes, risk_packs, exceptions,
+        ));
+    }
+
+    finish_policy_report(
+        PolicyReportSpec {
+            report_file: "ci-lane-whitelist.md",
+            check: "check-ci-lane-whitelist",
+            why_it_matters: "The CI lane ledgers are the reviewable contract for future PR planning, advisory evidence, artifact families, and budget actuals. They should stay structurally coherent before any workflow starts consuming them.",
+            fix_kind: FixKind::AuthorDecisionRequired,
+            recommended_fixes: &[
+                "Keep `policy/ci-budget.toml`, `policy/ci-lane-whitelist.toml`, `policy/ci-risk-packs.toml`, and `policy/ci-whitelist-exceptions.toml` on schema version 0.1 with advisory, non-enforcing metadata.",
+                "Add lane IDs and artifact families to `policy/ci-lane-whitelist.toml` before risk packs or exceptions reference them.",
+                "Keep referenced lane IDs, artifact families, budget bands, owners, and reasons explicit before workflow or planner code consumes the ledgers.",
+            ],
+            rerun_command: "cargo xtask check-ci-lane-whitelist",
+            exception_template: None,
+        },
+        &violations,
+    )
+}
+
+const PROOF_PACK_MANIFEST_PATH: &str = "policy/proof-packs.toml";
+const PROOF_PACK_LANE_WHITELIST_PATH: &str = "policy/ci-lane-whitelist.toml";
+const PROOF_PACK_RELEASE_PACK_ID: &str = "release-package";
+const PROOF_PACK_OUTPUT_CONTRACTS_ID: &str = "output-contracts";
+
+/// Release surfaces the `release-package` pack MUST cover so that any change to
+/// a version file, the changelog, or a release workflow trips
+/// `release_proof_required`. Asserted by `check-proof-packs` (the release-proof
+/// protection slice of docs/PROOF_ROUTING.md) so a future routing slice cannot
+/// weaken release detection by dropping a surface from the pack.
+const PROOF_PACK_RELEASE_REQUIRED_PATHS: &[&str] = &[
+    "Cargo.toml",
+    "Cargo.lock",
+    "crates/ripr/Cargo.toml",
+    "CHANGELOG.md",
+    "editors/vscode/package.json",
+    "editors/vscode/package-lock.json",
+    ".github/workflows/publish-extension.yml",
+    ".github/workflows/release-server-binaries.yml",
+    ".github/workflows/package-family-qualification.yml",
+];
+
+/// The full release proof the `release-package` pack MUST require: workspace
+/// tests, clippy, check-pr, package contents, publish dry-run, and the
+/// release-readiness gate (release-notes and known-limits docs validation).
+/// Asserted by `check-proof-packs` so a future routing slice cannot weaken
+/// release validation by dropping a gate from the pack.
+const PROOF_PACK_RELEASE_REQUIRED_COMMANDS: &[&str] = &[
+    "cargo test --workspace",
+    "cargo clippy --workspace --all-targets -- -D warnings",
+    "cargo xtask check-pr",
+    "cargo package -p ripr --list",
+    "cargo xtask publish-dry-run",
+    "cargo xtask release-readiness",
+];
+
+/// Non-xtask repo commands a proof pack may reference. `cargo xtask <command>`
+/// entries are validated against the known xtask command roots instead.
+const PROOF_PACK_KNOWN_REPO_COMMANDS: &[&str] = &[
+    "cargo fmt --check",
+    "cargo check --workspace --all-targets",
+    "cargo test --workspace",
+    "cargo test -p ripr",
+    "cargo test -p ripr-contract",
+    "cargo test -p xtask",
+    "cargo clippy --workspace --all-targets -- -D warnings",
+    "cargo doc --workspace --no-deps",
+    "cargo package -p ripr --list",
+    "cargo xtask publish-dry-run",
+];
+
+fn check_proof_packs_impl() -> Result<(), String> {
+    let mut violations = Vec::new();
+
+    let manifest = read_ci_ledger_document(PROOF_PACK_MANIFEST_PATH, &mut violations);
+    let lanes = read_ci_ledger_document(PROOF_PACK_LANE_WHITELIST_PATH, &mut violations);
+
+    if let (Some(manifest), Some(lanes)) = (&manifest, &lanes) {
+        let lane_ids = proof_pack_lane_ids(lanes);
+        let lane_commands = proof_pack_lane_commands(lanes);
+        violations.extend(proof_pack_violations(manifest, &lane_ids));
+        violations.extend(proof_pack_output_contracts_lane_violations(
+            manifest,
+            &lane_commands,
+        ));
+    }
+
+    finish_policy_report(
+        PolicyReportSpec {
+            report_file: "proof-packs.md",
+            check: "check-proof-packs",
+            why_it_matters: "policy/proof-packs.toml is the routing unit for proof-aware validation (docs/PROOF_ROUTING.md). While state is manifest-only, nothing routes on it yet, but the manifest must stay parseable, name only real repo commands and CI lanes, and keep the release-package pack pinned to full proof before any routing behavior consumes it.",
+            fix_kind: FixKind::AuthorDecisionRequired,
+            recommended_fixes: &[
+                "Keep `policy/proof-packs.toml` on version 0.1 with `state = \"manifest-only\"` and `unknown_surface_policy = \"full-proof\"`.",
+                "Give every pack a unique kebab-case id, at least one path, and at least one required command.",
+                "Reference only known `cargo xtask` commands or known repo commands, and a `ci_lane` declared in `policy/ci-lane-whitelist.toml`.",
+                "Keep `never_routed = true` on the release-package pack; release proof is never routed away.",
+                "Keep the release-package pack covering every release surface (version files, changelog, release workflows) and requiring the full release proof (workspace tests, clippy, check-pr, package, publish dry-run, release-readiness).",
+            ],
+            rerun_command: "cargo xtask check-proof-packs",
+            exception_template: None,
+        },
+        &violations,
+    )
+}
+
+fn proof_pack_lane_commands(lanes: &CiLedgerDocument) -> BTreeMap<String, BTreeSet<String>> {
+    let path = PROOF_PACK_LANE_WHITELIST_PATH;
+    let mut lane_commands = BTreeMap::new();
+    let mut ignored = Vec::new();
+    for table in ci_tables(lanes, "lane") {
+        let Some(id_value) = table.values.get("id") else {
+            continue;
+        };
+        let Some(id) = ci_string_value(path, "table `[[lane]]`", "id", id_value, &mut ignored)
+        else {
+            continue;
+        };
+        let mut parse_violations = Vec::new();
+        let Some(commands) =
+            ci_required_table_array(path, table, "commands", &mut parse_violations)
+        else {
+            continue;
+        };
+        lane_commands.insert(id, commands.into_iter().collect());
+    }
+    lane_commands
+}
+
+pub(crate) fn proof_pack_output_contracts_lane_violations(
+    manifest: &CiLedgerDocument,
+    lane_commands: &BTreeMap<String, BTreeSet<String>>,
+) -> Vec<String> {
+    let path = PROOF_PACK_MANIFEST_PATH;
+    let mut violations = Vec::new();
+    let mut ignored = Vec::new();
+    let packs = policy::proof_packs::parse_proof_packs(manifest, &mut ignored);
+    let Some(pack) = packs
+        .iter()
+        .find(|pack| pack.id == PROOF_PACK_OUTPUT_CONTRACTS_ID)
+    else {
+        violations.push(format!(
+            "{path} must define an `{PROOF_PACK_OUTPUT_CONTRACTS_ID}` pack (P18 output-contracts routing slice)"
+        ));
+        return violations;
+    };
+    let Some(ci_lane) = &pack.ci_lane else {
+        violations.push(format!(
+            "{path}:{} proof pack `{PROOF_PACK_OUTPUT_CONTRACTS_ID}` must declare `ci_lane`",
+            pack.line
+        ));
+        return violations;
+    };
+    let Some(lane_commands) = lane_commands.get(ci_lane) else {
+        violations.push(format!(
+            "{path}:{} proof pack `{PROOF_PACK_OUTPUT_CONTRACTS_ID}` references unknown ci_lane `{ci_lane}`",
+            pack.line
+        ));
+        return violations;
+    };
+    for required in &pack.required_commands {
+        if !lane_commands.contains(required) {
+            violations.push(format!(
+                "{path}:{} proof pack `{PROOF_PACK_OUTPUT_CONTRACTS_ID}` requires `{required}` but ci_lane `{ci_lane}` at {PROOF_PACK_LANE_WHITELIST_PATH} does not list it\n  rule: P18 Correction #3 — the lane must run every required command the pack names (docs/PROOF_ROUTING.md slice 8)",
+                pack.line
+            ));
+        }
+    }
+    violations
+}
+
+fn proof_pack_lane_ids(lanes: &CiLedgerDocument) -> BTreeSet<String> {
+    let mut ignored = Vec::new();
+    ci_tables(lanes, "lane")
+        .into_iter()
+        .filter_map(|table| {
+            let value = table.values.get("id")?;
+            ci_string_value(
+                PROOF_PACK_LANE_WHITELIST_PATH,
+                "table `[[lane]]`",
+                "id",
+                value,
+                &mut ignored,
+            )
+        })
+        .collect()
+}
+
+fn proof_pack_violations(manifest: &CiLedgerDocument, lane_ids: &BTreeSet<String>) -> Vec<String> {
+    let path = PROOF_PACK_MANIFEST_PATH;
+    let mut violations = Vec::new();
+
+    ci_expect_top_string(path, manifest, "version", "0.1", &mut violations);
+    ci_expect_top_string(path, manifest, "state", "manifest-only", &mut violations);
+    ci_expect_top_string(
+        path,
+        manifest,
+        "unknown_surface_policy",
+        "full-proof",
+        &mut violations,
+    );
+
+    if ci_tables(manifest, "pack").is_empty() {
+        violations.push(format!("{path} has no [[pack]] entries"));
+    }
+
+    let packs = policy::proof_packs::parse_proof_packs(manifest, &mut violations);
+
+    let mut seen_ids = BTreeSet::new();
+    let mut release_pack_seen = false;
+    for pack in &packs {
+        if !seen_ids.insert(pack.id.clone()) {
+            violations.push(format!(
+                "{path}:{} duplicate proof pack id `{}`",
+                pack.line, pack.id
+            ));
+        }
+
+        for command in &pack.required_commands {
+            proof_pack_command_violation(
+                path,
+                pack.line,
+                &pack.id,
+                "required_commands",
+                command,
+                &mut violations,
+            );
+        }
+        for command in &pack.advisory_commands {
+            proof_pack_command_violation(
+                path,
+                pack.line,
+                &pack.id,
+                "advisory_commands",
+                command,
+                &mut violations,
+            );
+        }
+
+        if let Some(ci_lane) = &pack.ci_lane
+            && !lane_ids.contains(ci_lane)
+        {
+            violations.push(format!(
+                "{path}:{} proof pack `{}` references unknown ci_lane `{ci_lane}`\n  rule: ci_lane must be a lane id declared in {PROOF_PACK_LANE_WHITELIST_PATH}",
+                pack.line, pack.id
+            ));
+        }
+
+        if pack.id == PROOF_PACK_RELEASE_PACK_ID {
+            release_pack_seen = true;
+            if !pack.never_routed {
+                violations.push(format!(
+                    "{path}:{} proof pack `{PROOF_PACK_RELEASE_PACK_ID}` must set `never_routed = true`\n  rule: release proof is never routed away (docs/PROOF_ROUTING.md)",
+                    pack.line
+                ));
+            }
+            for surface in PROOF_PACK_RELEASE_REQUIRED_PATHS {
+                if !pack.paths.iter().any(|covered| covered == surface) {
+                    violations.push(format!(
+                        "{path}:{} proof pack `{PROOF_PACK_RELEASE_PACK_ID}` must cover release surface `{surface}`\n  rule: every release surface (version files, changelog, release workflows) must trip release_proof_required (docs/PROOF_ROUTING.md, release-proof protection slice)",
+                        pack.line
+                    ));
+                }
+            }
+            for required in PROOF_PACK_RELEASE_REQUIRED_COMMANDS {
+                if !pack.required_commands.iter().any(|cmd| cmd == required) {
+                    violations.push(format!(
+                        "{path}:{} proof pack `{PROOF_PACK_RELEASE_PACK_ID}` must require `{required}`\n  rule: the release-package pack must name the full release proof (docs/PROOF_ROUTING.md, release-proof protection slice)",
+                        pack.line
+                    ));
+                }
+            }
+        }
+    }
+
+    if !release_pack_seen {
+        violations.push(format!(
+            "{path} must define a `{PROOF_PACK_RELEASE_PACK_ID}` pack with `never_routed = true`"
+        ));
+    }
+
+    violations
+}
+
+fn proof_pack_command_violation(
+    path: &str,
+    line: usize,
+    pack_id: &str,
+    field: &str,
+    command: &str,
+    violations: &mut Vec<String>,
+) {
+    if proof_pack_command_is_known(command) {
+        return;
+    }
+    violations.push(format!(
+        "{path}:{line} proof pack `{pack_id}` field `{field}` names unknown repo command `{command}`\n  rule: use a `cargo xtask <command>` from `cargo xtask help` or a known repo proof command"
+    ));
+}
+
+fn proof_pack_command_is_known(command: &str) -> bool {
+    let trimmed = command.trim();
+    if let Some(rest) = trimmed.strip_prefix("cargo xtask ") {
+        let root = known_command_root(rest.trim());
+        return !root.is_empty()
+            && known_commands()
+                .into_iter()
+                .any(|known| known_command_root(known) == root);
+    }
+    PROOF_PACK_KNOWN_REPO_COMMANDS.contains(&trimmed)
+}
+
 fn check_dependencies() -> Result<(), String> {
     policy::check_dependency_suppression_expiry(Path::new("deny.toml"))?;
     policy::check_post_0_11_dependency_defer_tracking(Path::new(
@@ -18232,6 +18860,105 @@ fn redact_current_dir(text: &str) -> String {
     let current_dir = current_dir.display().to_string();
     let slash_dir = current_dir.replace('\\', "/");
     text.replace(&current_dir, ".").replace(&slash_dir, ".")
+}
+
+fn check_process_policy_impl() -> Result<(), String> {
+    check_count_policy(
+        "process policy",
+        "policy/process_allowlist.txt",
+        &process_policy_patterns(),
+        is_process_policy_candidate,
+    )
+}
+
+fn check_network_policy_impl() -> Result<(), String> {
+    check_count_policy(
+        "network policy",
+        "policy/network_allowlist.txt",
+        &network_policy_patterns(),
+        is_network_policy_candidate,
+    )
+}
+
+fn check_count_policy(
+    label: &str,
+    allowlist_path: &str,
+    patterns: &[String],
+    is_candidate: fn(&str) -> bool,
+) -> Result<(), String> {
+    let allowlist = read_count_policy_allowlist(allowlist_path)?;
+    let fragment_dir = normalize_path(&Path::new(allowlist_path).with_extension("d"));
+    let mut counts = BTreeMap::<(String, String), usize>::new();
+
+    for normalized in tracked_files()? {
+        if !is_candidate(&normalized) {
+            continue;
+        }
+        let text = read_text_lossy(Path::new(&normalized))?;
+        for pattern in patterns {
+            let count = text.matches(pattern).count();
+            if count > 0 {
+                counts.insert((normalized.clone(), pattern.clone()), count);
+            }
+        }
+    }
+
+    let mut violations = Vec::new();
+    for ((path, pattern), count) in &counts {
+        let allowed = allowlist
+            .get(&(path.clone(), pattern.clone()))
+            .copied()
+            .unwrap_or(0);
+        if *count > allowed {
+            violations.push(format!(
+                "{path} contains `{pattern}` {count} time(s), allowed {allowed}\n  to allowlist, add a file under {fragment_dir}/ (named for this PR, e.g. <issue>-<slug>.txt) holding:\n  {path}|{pattern}|{count}|owner|reason"
+            ));
+        } else if *count < allowed {
+            // Stale bound: the allowlist grants more budget than the code
+            // uses. This is the reverse-direction check that prevents the
+            // bound from silently rotting (#2413). A stale bound lets new
+            // occurrences slip through without an allowlist update, so flag
+            // it so the bound is tightened to the actual count.
+            violations.push(format!(
+                "{path} allowlist entry for `{pattern}` is stale: max_count={allowed} but actual={count}; tighten to {count}"
+            ));
+        }
+    }
+
+    // Also flag allowlist entries for paths that no longer contain the pattern
+    // at all (count dropped to zero, or the file was removed). These are fully
+    // orphaned entries whose bound provides invisible slack.
+    for ((path, pattern), allowed) in &allowlist {
+        if !counts.contains_key(&(path.clone(), pattern.clone())) && *allowed > 0 {
+            violations.push(format!(
+                "{path} allowlist entry for `{pattern}` is orphaned: max_count={allowed} but pattern not found in any tracked file; remove the entry"
+            ));
+        }
+    }
+
+    let report_file = format!("{}.md", label.replace(' ', "-"));
+    let why = format!(
+        "{label} entries are explicit because hidden side effects make automation and analyzer behavior harder to review."
+    );
+    let template = format!("{allowlist_path} entry:\npath|pattern|max_count|owner|reason");
+    let check = format!("check-{}", label.replace(' ', "-"));
+    let rerun_command = format!("cargo xtask {check}");
+    finish_policy_report(
+        PolicyReportSpec {
+            report_file: &report_file,
+            check: &check,
+            why_it_matters: &why,
+            fix_kind: FixKind::PolicyExceptionRequired,
+            recommended_fixes: &[
+                "Move the behavior to the approved adapter or automation surface.",
+                "Reduce the process or network usage when it is not required.",
+                "Add an allowlist entry only when the behavior is intentional and owned.",
+            ],
+            rerun_command: &rerun_command,
+            exception_template: Some(&template),
+        },
+        &violations,
+    )
 }
 
 fn sort_allowlist_files() -> Result<Vec<String>, String> {
@@ -19052,10 +19779,16 @@ fn add_name_status_bytes(
     changes: &mut BTreeMap<String, BTreeSet<String>>,
     output: &[u8],
 ) -> Result<(), String> {
-    let records = crate::parse_git_status_records(output)
+    let records = ripr::analysis::parse_git_status_records(output)
         .map_err(|err| format!("pr-change name-status inventory: {err}"))?;
-    for (status, path, _renamed_from) in &records {
-        add_changed_path(changes, path, status);
+    for record in &records {
+        let path = record.path.to_str().ok_or_else(|| {
+            format!(
+                "pr-change name-status inventory: decoded path {} is not valid UTF-8",
+                record.path.display()
+            )
+        })?;
+        add_changed_path(changes, path, &record.status);
     }
     Ok(())
 }
@@ -21283,6 +22016,15 @@ fn required_spec_headings() -> Vec<&'static str> {
 
 fn has_markdown_heading(text: &str, heading: &str) -> bool {
     text.lines().any(|line| line.trim_end() == heading)
+}
+
+fn tracked_files() -> Result<Vec<String>, String> {
+    let output = run_output("git", &["ls-files"])?;
+    Ok(output
+        .lines()
+        .map(normalize_slashes)
+        .filter(|path| !path.is_empty())
+        .collect())
 }
 
 fn is_static_language_candidate(path: &str) -> bool {
