@@ -228,7 +228,15 @@ fn a_package_name_replaceable_by_attribute_write_or_other_code_stays_unlinked() 
     // Code outside the initializer that runs before the test can replace the
     // attribute too: a submodule the initializer imports, a conftest, or
     // another test module.
-    let elsewhere: [(&str, &str, &[(&str, &str)]); 9] = [
+    let elsewhere: [(&str, &str, &[(&str, &str)]); 10] = [
+        (
+            "helper-computed-name-writer",
+            "import tomli as tomllib\n",
+            &[(
+                "tests/helper.py",
+                "import sys\nimport json\nsetattr(sys.modules[__package__], \"to\" + \"mllib\", json)\n",
+            )],
+        ),
         (
             "initializer-calls-function",
             "import tomli as tomllib\n\n\ndef _load():\n    import json\n\n\n_load()\n",

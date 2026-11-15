@@ -1582,8 +1582,8 @@ mutant calibrates the rule; ripr reports only the static shape.
     count, spells `.X` or a non-ASCII attribute, has an f-string the
     initializer rule would refuse, or has a reference writer (`setattr`,
     `delattr`, `__dict__`, `vars`, `globals`, `locals`, a frame, `exec`,
-    `eval`, `modules`) while naming `X` or the package's first name
-    anywhere, strings included (modules the bounded read skipped are not
+    `eval`, `modules`) at all, since its target can be computed
+    (`sys.modules[__package__]`) (modules the bounded read skipped are not
     scanned); or `P`
     has a submodule or subpackage named `X`, which an import elsewhere could
     load over the binding. A followed `from M import Y as X` is a rename

@@ -30,9 +30,8 @@
 //! spelled as an attribute anywhere (`tests.tomllib = other` replaces the
 //! package attribute), or any statement besides a docstring, `pass`, a
 //! literal `__all__` or an import of a non-workspace module refuses. Any
-//! other read workspace module whose code spells that attribute, or names
-//! the name next to a reference writer (`setattr`, `vars`, `sys.modules`,
-//! ...), refuses too, as
+//! other read workspace module whose code spells that attribute or has a
+//! reference writer (`setattr`, `vars`, `sys.modules`, ...) refuses too, as
 //! does a submodule or subpackage of the same name, which another import
 //! could load over the binding. Chains through further package
 //! initializers stop after [`MAX_ALIAS_HOPS`].
@@ -79,19 +78,11 @@ fn writes_through_namespace(token: &str) -> bool {
 /// Whether another read workspace module (a test module, a conftest, a
 /// helper on the root or under `src`) can replace the package attribute
 /// `name` when it runs. Modules the bounded read skipped are not scanned.
-fn replaced_elsewhere(
-    package: &str,
-    name: &str,
-    init: &Path,
-    sources: &HashMap<PathBuf, String>,
-) -> bool {
-    let Some(first) = package.split('.').next() else {
-        return true;
-    };
+fn replaced_elsewhere(name: &str, init: &Path, sources: &HashMap<PathBuf, String>) -> bool {
     sources.iter().any(|(path, text)| {
         path != init
             && path.extension().is_some_and(|ext| ext == "py")
-            && module_may_replace(text, name, first)
+            && module_may_replace(text, name)
     })
 }
 
@@ -100,15 +91,14 @@ fn replaced_elsewhere(
 /// script) is not code. It refuses when the code spells `.name` (or a
 /// non-ASCII attribute, which Python may NFKC-fold to `name`), when an
 /// f-string, whose fields run, holds anything the initializer text rule
-/// refuses, or when the code has a writer `replaces_by_reference` names and
-/// the module names `name` or the package's first name anywhere, strings
-/// included. A module that does not lex refuses.
-fn module_may_replace(text: &str, name: &str, first: &str) -> bool {
+/// refuses, or when the code has any writer `replaces_by_reference` names:
+/// the target can be computed (`sys.modules[__package__]`, `"to" + "mllib"`),
+/// so what the module mentions cannot rule it out. A module that does not
+/// lex refuses.
+fn module_may_replace(text: &str, name: &str) -> bool {
     let Ok(tokens) = lex(text, Mode::Module).collect::<Result<Vec<_>, _>>() else {
         return true;
     };
-    let mut writer = false;
-    let mut mentions = false;
     let mut after_dot = false;
     for (token, _) in tokens {
         let dot = matches!(token, Tok::Dot);
@@ -117,8 +107,9 @@ fn module_may_replace(text: &str, name: &str, first: &str) -> bool {
                 if after_dot && (ident == name || !ident.is_ascii()) {
                     return true;
                 }
-                writer |= replaces_by_reference(&ident);
-                mentions |= ident == name || ident == first;
+                if replaces_by_reference(&ident) {
+                    return true;
+                }
             }
             Tok::String { value, kind, .. } => {
                 if matches!(kind, StringKind::FString | StringKind::RawFString)
@@ -126,13 +117,12 @@ fn module_may_replace(text: &str, name: &str, first: &str) -> bool {
                 {
                     return true;
                 }
-                mentions |= value.contains(name) || value.contains(first);
             }
             _ => {}
         }
         after_dot = dot;
     }
-    writer && mentions
+    false
 }
 
 /// A token through which another module can write the package's namespace
@@ -339,7 +329,7 @@ fn initializer_binding(
     // Another workspace module that spells the name as an attribute or
     // reaches it through a namespace writer can replace the package
     // attribute after the initializer ran.
-    if replaced_elsewhere(package, name, &init, sources) {
+    if replaced_elsewhere(name, &init, sources) {
         return None;
     }
     let Ok(Mod::Module(module)) = parse_module_result(&init, text) else {
