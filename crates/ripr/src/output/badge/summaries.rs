@@ -28,10 +28,25 @@ use super::model::{
 /// that refused before analysis. The typed identity selects the message;
 /// the repair route and human diagnostic ride in the first warning.
 pub(crate) fn refusal_badge_summary(notice: &crate::core_error::RefusalNotice) -> BadgeSummary {
+    refusal_badge_summary_for(notice, BadgeKind::Ripr, BadgeScope::Diff)
+}
+
+/// The degraded refusal badge for one badge family (#14499): the `ripr+`
+/// and repo-scoped badges refuse with the same message, color and zeroed
+/// counts as the diff `ripr` badge, under their own kind and scope.
+pub(crate) fn refusal_badge_summary_for(
+    notice: &crate::core_error::RefusalNotice,
+    kind: BadgeKind,
+    scope: BadgeScope,
+) -> BadgeSummary {
+    let basis = match scope {
+        BadgeScope::Diff => BadgeBasis::FindingExposure,
+        BadgeScope::Repo => BadgeBasis::CanonicalActionableGap,
+    };
     BadgeSummary {
-        kind: BadgeKind::Ripr,
-        scope: BadgeScope::Diff,
-        basis: BadgeBasis::FindingExposure,
+        kind,
+        scope,
+        basis,
         message: format!("refused: {}", notice.identity),
         status: BadgeStatus::Warn,
         color: "lightgrey",

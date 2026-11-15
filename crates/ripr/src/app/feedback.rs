@@ -305,7 +305,7 @@ fn load_receipt_file(path: &Path) -> Result<Option<FeedbackReceipt>, String> {
     if !path.exists() {
         return Ok(None);
     }
-    let text = fs::read_to_string(path).map_err(|error| {
+    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
         format!(
             "read {} failed: {error}; check the file is readable",
             path.display()
@@ -346,7 +346,7 @@ fn load_optional_json(path: &Path) -> Result<Option<serde_json::Value>, String> 
     if !path.exists() {
         return Ok(None);
     }
-    let text = fs::read_to_string(path).map_err(|error| {
+    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
         format!(
             "read {} failed: {error}; check the file is readable",
             path.display()
