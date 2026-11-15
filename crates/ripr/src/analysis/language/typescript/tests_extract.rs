@@ -1059,6 +1059,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
         if let Some(call) = statement_call(stmt)
             && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
+                || call_callee_is_active_for_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
                 || conditional_describe_factory(call).is_some())
@@ -1089,6 +1090,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             && let Some(call) = statement_call(stmt)
             && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
+                || call_callee_is_active_for_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
                 || conditional_describe_factory(call).is_some())
@@ -3342,7 +3344,9 @@ fn referenced_callback_function<'s, 'a>(
     functions: &[DeclaredFunction<'s, 'a>],
     source: &SourceText<'_>,
 ) -> Option<&'s oxc_ast::ast::Function<'a>> {
-    if call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test) {
+    if call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
+        || call_callee_is_active_for_declaration(call, TestDeclarationRoot::Test)
+    {
         return None;
     }
     let oxc_ast::ast::Argument::Identifier(identifier) =
@@ -3819,9 +3823,20 @@ fn test_name_and_assertions_from_registration(
     bindings: &TypeScriptAssertionBindings,
     registration: Option<&RegistrationScope>,
 ) -> Option<(String, Vec<TypeScriptAssertion>)> {
+    let vitest_for = call_callee_is_active_for_declaration(call, TestDeclarationRoot::Test);
     if !call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
         && !call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
+        && !vitest_for
         && !renamed_registration_is_known(call, registration, TestDeclarationRoot::Test)
+    {
+        return None;
+    }
+    // #10760: `.for` is read only through a resolved Vitest `test` / `it`
+    // import; any other `.for` chain stays a disclosed partial extraction.
+    if vitest_for
+        && !callee_root_name(&call.callee).is_some_and(|root| {
+            registration.is_some_and(|registration| registration.context.root_is_vitest_test(root))
+        })
     {
         return None;
     }
@@ -3882,6 +3897,10 @@ fn test_name_and_assertions_from_registration(
                 || body_declarations.iter().any(|declared| declared == name)
                 || super::related_tests::local_identifier_declared_in_test_body(call_text, name)
         });
+    if vitest_for {
+        return vitest_for_assertions(call, callback, call_text, source, &bindings)
+            .map(|assertions| (name, assertions));
+    }
     // RIPR-SPEC-0243 rule 3: Vitest's `test("x", ({ expect }) => ...)`
     // destructures the runner `expect` from the test context, unless the body
     // re-declares it. The callback's own parameter list is blanked before the
@@ -3938,6 +3957,53 @@ fn test_name_and_assertions_from_registration(
         })
         .unwrap_or_default();
     Some((name, assertions))
+}
+
+/// The assertions of a resolved Vitest `test.for(rows)(title, fn)` (#10760),
+/// or `None` to leave the registration unindexed and disclosed.
+///
+/// Vitest passes the row whole as the callback's first argument and the
+/// running `TestContext` as its second ([`for_test_context`]). A named
+/// context is accepted only while the body never mentions it: a
+/// `ctx.skip()` ends the test as skipped, so the test is withdrawn like a
+/// `.skip` registration, and other context uses are not read; a context destructured as
+/// exactly `{ expect }` supplies the runner `expect` unless the body
+/// re-declares it. The first-parameter context rules of `test("x", (t) =>
+/// ...)` never apply here: the first parameter is the row.
+fn vitest_for_assertions(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    callback: &Argument<'_>,
+    call_text: &str,
+    source: &SourceText<'_>,
+    bindings: &TypeScriptAssertionBindings,
+) -> Option<Vec<TypeScriptAssertion>> {
+    let bindings = match super::table_rows::for_test_context(callback)? {
+        super::table_rows::ForTestContext::Absent => bindings.clone(),
+        super::table_rows::ForTestContext::Named(context) => {
+            // Any use of the named context (`ctx.skip()`, an alias of
+            // `ctx.skip`, `ctx.expect`, passing `ctx` on) is not read, so
+            // the registration stays disclosed rather than credited.
+            let masked = mask_comments_and_strings_text(&call_text_without_callback_params(
+                call_text, call, callback,
+            ));
+            if body_calls_context_skip(call_text, &context)
+                || !super::mock_payload_guard::identifier_offsets(&masked, &context).is_empty()
+            {
+                return None;
+            }
+            bindings.clone()
+        }
+        super::table_rows::ForTestContext::DestructuredExpect => {
+            if super::related_tests::local_identifier_declared_in_test_body(
+                &call_text_without_callback_params(call_text, call, callback),
+                "expect",
+            ) {
+                return None;
+            }
+            bindings.clone().with_context_expect()
+        }
+    };
+    super::table_rows::for_table_row_assertions(call, callback, source, &bindings)
 }
 
 /// The identifier a registration callee starts from: `test` for `test`,
@@ -4236,6 +4302,16 @@ fn call_callee_is_active_each_declaration(
     each_declaration_callee(call, root).is_some_and(|each_call| {
         !each_table_is_empty(each_call) && declaration_options_are_active(call)
     })
+}
+
+/// A Vitest `test.for(rows)(title, fn)` whose table is not known empty and
+/// whose options leave it running (#10760).
+fn call_callee_is_active_for_declaration(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    root: TestDeclarationRoot,
+) -> bool {
+    for_declaration_callee(call, root)
+        .is_some_and(|for_call| !for_table_is_empty(for_call) && declaration_options_are_active(call))
 }
 
 fn each_declaration_callee<'a, 'b>(
