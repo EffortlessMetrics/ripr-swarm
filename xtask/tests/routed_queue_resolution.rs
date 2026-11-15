@@ -256,7 +256,7 @@ fn run_resolve(world: &World, shell: &str, run: &Run) -> Result<Outcome, String>
         .iter()
         .map(|name| json!({"name": name}))
         .collect::<Vec<_>>();
-    let pr = json!({"head": {"sha": run.api_head}, "labels": labels});
+    let pr = json!({"head": {"sha": run.api_head}, "labels": labels, "changed_files": 1});
     let graphql = json!({"data": {"repository": {"pullRequest": {
         "headRefOid": run.api_head,
         "mergeQueueEntry": {"id": "entry-42"},
