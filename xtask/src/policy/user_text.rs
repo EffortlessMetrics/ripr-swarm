@@ -2030,7 +2030,7 @@ mod tests {
         let found = built_ripr_executable(&format!("{other}\n{artifact}\n"))
             .ok_or_else(|| "ripr artifact is the executable".to_string())?;
         assert_eq!(found, fixture);
-        std::fs::remove_file(&fixture).ok();
+        let _ = std::fs::remove_file(&fixture);
         Ok(())
     }
 
