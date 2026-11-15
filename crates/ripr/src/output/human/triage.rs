@@ -4058,6 +4058,8 @@ mod tests {
             finding_id: "finding:withheld".to_string(),
             owner: "shipping_cents".to_string(),
             reason: crate::analysis::owner_opt_out::OwnerOptOutReason::MutantsSkip,
+            scope: crate::analysis::owner_opt_out::OwnerOptOutScope::Fn,
+            scope_label: String::new(),
         }];
         assert_eq!(
             start_here_lines(&output),

@@ -960,7 +960,7 @@ fn explain_states_owner_opt_out_withholding() -> Result<(), String> {
 
     let withheld = repo.explain(&withheld_id)?;
     assert!(
-        withheld.contains(
+        withheld.starts_with(
             "Withheld: owner `limit` is inside impl `Cart` marked #[mutants::skip] (owner_mutants_skip)"
         ),
         "explain must state the withholding:\n{withheld}"
@@ -979,4 +979,83 @@ fn explain_states_owner_opt_out_withholding() -> Result<(), String> {
         "explain must state the fn-level withholding:\n{text}"
     );
     Ok(())
+}
+
+/// A trait default method changes on line 4 and an ordinary free fn on line
+/// 7; the attribute slot sits on the trait.
+fn trait_lib(trait_attr: &str) -> String {
+    format!(
+        "{trait_attr}
+pub trait Limit {{
+    fn limit(&self, x: u32) -> u32 {{
+        if x > 100 {{ 100 }} else {{ x }}
+    }}
+}}
+pub fn cap(x: u32) -> u32 {{ if x > 100 {{ 100 }} else {{ x }} }}
+"
+    )
+}
+
+fn trait_diff() -> String {
+    "diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,1 +4,1 @@
+-        if x >= 100 { 100 } else { x }
++        if x > 100 { 100 } else { x }
+@@ -7,1 +7,1 @@
+-pub fn cap(x: u32) -> u32 { if x >= 100 { 100 } else { x } }
++pub fn cap(x: u32) -> u32 { if x > 100 { 100 } else { x } }
+"
+    .to_string()
+}
+
+/// cargo-mutants skips every method body of a `#[mutants::skip]` trait,
+/// including default methods; a free fn outside it keeps reporting.
+#[test]
+fn trait_level_mutants_skip_withholds_default_method_only() -> Result<(), String> {
+    let plain = Repo::new(&trait_lib("//"), &trait_diff())?;
+    let plain_report = plain.report()?;
+    assert_reported(&plain_report, 4)?;
+    let limit_baseline = line_classes(&plain_report, 4)?;
+    let cap_baseline = line_findings(&plain_report, 7)?;
+
+    let repo = Repo::new(&trait_lib("#[mutants::skip]"), &trait_diff())?;
+    let report = repo.report()?;
+    assert_line_withheld_in_scope(&report, 4, &limit_baseline, "trait")?;
+    assert_line_reported(&report, 7, &cap_baseline)
+}
+
+/// A fn declared inside a skipped fn's body is skipped with it (cargo-mutants
+/// does not descend into a skipped fn); `inner` changes on line 4.
+fn nested_fn_lib(outer_attr: &str) -> String {
+    format!(
+        "{outer_attr}
+pub fn outer(x: u32) -> u32 {{
+    fn inner(x: u32) -> u32 {{
+        if x > 100 {{ 100 }} else {{ x }}
+    }}
+    inner(x)
+}}
+"
+    )
+}
+
+fn nested_fn_diff() -> String {
+    one_line_diff(
+        4,
+        "        if x >= 100 { 100 } else { x }",
+        "        if x > 100 { 100 } else { x }",
+    )
+}
+
+#[test]
+fn fn_nested_in_a_skipped_fn_is_withheld() -> Result<(), String> {
+    let plain = Repo::new(&nested_fn_lib("//"), &nested_fn_diff())?;
+    let plain_report = plain.report()?;
+    assert_reported(&plain_report, 4)?;
+    let baseline = line_classes(&plain_report, 4)?;
+
+    let repo = Repo::new(&nested_fn_lib("#[mutants::skip]"), &nested_fn_diff())?;
+    assert_line_withheld_in_scope(&repo.report()?, 4, &baseline, "fn")
 }
