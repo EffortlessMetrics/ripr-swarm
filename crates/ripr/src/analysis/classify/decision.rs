@@ -572,7 +572,7 @@ fn uncertainty_next_step(
             added.push(action);
         }
     }
-    step.push_str(" Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.");
+    step.push_str(" Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.");
     step
 }
 

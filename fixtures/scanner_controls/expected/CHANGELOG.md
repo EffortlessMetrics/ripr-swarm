@@ -515,3 +515,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — scanner_controls (43)
+
+Reason:
+RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+
+Command:
+`cargo xtask goldens bless scanner_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
