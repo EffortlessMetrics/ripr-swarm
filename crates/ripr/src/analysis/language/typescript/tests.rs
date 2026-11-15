@@ -12358,6 +12358,71 @@ fn ts_fieldconstruction_whole_object_assertion_is_unchanged() -> Result<(), Stri
     Ok(())
 }
 
+/// #14814 F3 control: the read path passes THROUGH the changed field.
+/// `f().retries.n` has `retries` on the path from the owner call to the
+/// outermost segment, so it projects the changed field and keeps `exposed`.
+/// A guard that keys only on the outermost segment hides a genuine exposure.
+#[test]
+fn ts_fieldconstruction_read_through_changed_field_stays_exposed() -> Result<(), String> {
+    let owner_src = "export interface C { retries: { n: number }; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"retries\", () => { expect(f().retries.n).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: { n: 5 }, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a read through the changed field must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 F1: `f()["verbose"]` is a field read too. A bracket string-literal
+/// read of a sibling field cannot witness the change, so it downgrades exactly
+/// like the dotted form.
+#[test]
+fn ts_fieldconstruction_bracket_sibling_field_read_downgrades() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"verbose flag\", () => { expect(f()[\"verbose\"]).toBe(false); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "a bracket sibling-field read must not read as exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
 /// LIVE-pipeline guard test (RIPR-SPEC-0098 §fixture-5, #1235): exercises the
 /// REAL oracle extractor end-to-end. Source and test text are parsed by
 /// `extract_owners` / `extract_tests`, so the assertions carry whatever

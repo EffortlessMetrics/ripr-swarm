@@ -760,7 +760,8 @@ fn ts_value_observed_reads_sibling_field(
     fn is_ident_char(ch: char) -> bool {
         ch.is_alphanumeric() || ch == '_' || ch == '$'
     }
-    let masked = ts_mask_literals_and_comments(observed.trim());
+    let normalized = ts_normalize_bracket_field_reads(observed.trim());
+    let masked = ts_mask_literals_and_comments(&normalized);
     let Some((base, read)) = masked.rsplit_once('.') else {
         return false;
     };
@@ -779,7 +780,67 @@ fn ts_value_observed_reads_sibling_field(
     if base.is_empty() {
         return false;
     }
+    // The read path must not name the changed field anywhere: `f().retries.n`
+    // reads THROUGH `retries`, so the outermost `n` is a projection of the
+    // changed field, not a sibling. Only a path that never names it is a
+    // sibling read (#14814 F3).
+    if masked
+        .split('.')
+        .any(|segment| segment.trim() == changed.key.as_str())
+    {
+        return false;
+    }
     ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers)
+}
+
+/// Rewrite bracket string-literal field reads (`f()["verbose"]`) as dotted
+/// ones (`f().verbose`) so the sibling-field guard sees a field read in either
+/// syntax (#14814 F1). Only a bracket whose contents are a bare identifier is
+/// rewritten; index expressions, computed keys and keys with spaces are left
+/// alone.
+fn ts_normalize_bracket_field_reads(text: &str) -> String {
+    fn is_ident_char(ch: char) -> bool {
+        ch.is_alphanumeric() || ch == '_' || ch == '$'
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let (head, tail) = rest.split_at(open);
+        out.push_str(head);
+        let after_bracket = &tail[1..];
+        let quote = match after_bracket.chars().next() {
+            Some(quote @ ('"' | '\'')) => quote,
+            _ => {
+                out.push('[');
+                rest = after_bracket;
+                continue;
+            }
+        };
+        let inner = &after_bracket[quote.len_utf8()..];
+        let Some(close) = inner.find(quote) else {
+            out.push('[');
+            rest = after_bracket;
+            continue;
+        };
+        let name = &inner[..close];
+        let after_name = &inner[close + quote.len_utf8()..];
+        let bare_identifier = !name.is_empty()
+            && name
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_alphabetic() || ch == '_' || ch == '$')
+            && name.chars().all(is_ident_char);
+        if bare_identifier && after_name.starts_with(']') {
+            out.push('.');
+            out.push_str(name);
+            rest = &after_name[1..];
+        } else {
+            out.push('[');
+            rest = after_bracket;
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// `true` when `text` is a bare identifier reference (no member access, call,
