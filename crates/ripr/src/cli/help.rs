@@ -162,7 +162,12 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "impacted-evidence" => IMPACTED_EVIDENCE_HELP,
         "init" => INIT_HELP,
         "lsp" => LSP_HELP,
+        #[cfg(feature = "mcp")]
         "mcp" => crate::mcp::MCP_HELP,
+        #[cfg(not(feature = "mcp"))]
+        "mcp" => {
+            "ripr mcp is not built into this binary; rebuild with the mcp feature (or default features) to use the MCP server."
+        }
         "outcome" => OUTCOME_HELP,
         "pilot" => PILOT_HELP,
         "plus" => PLUS_HELP,
@@ -2272,7 +2277,7 @@ fn parse_demo<'a>(xs: &'a str) {
         // (command, flag, reason) pairs allowed on one side only. Every
         // entry must carry the reason it cannot drift into a user-facing
         // gap.
-        let exceptions: &[(&str, &str, &str)] = &[
+        let mut exceptions: Vec<(&str, &str, &str)> = vec![
             // Hidden read-only aliases of `--mutants-json` and
             // `--repo-exposure-json`, kept undocumented on purpose: the help
             // body shows the canonical names, and listing both spellings
@@ -2302,6 +2307,15 @@ fn parse_demo<'a>(xs: &'a str) {
                 "rejected with --help; extended help is `ripr help --all`",
             ),
         ];
+        // Without the `mcp` feature the command is not built into the
+        // binary: its help body is the not-built notice, so the parser
+        // flags the static source scan still finds own no Options entry.
+        #[cfg(not(feature = "mcp"))]
+        exceptions.extend([
+            ("mcp", "--stdio", "mcp not built into this binary"),
+            ("mcp", "--root", "mcp not built into this binary"),
+            ("mcp", "--version", "mcp not built into this binary"),
+        ]);
 
         for (body, commands) in &groups {
             let documented = extract_flags(body);

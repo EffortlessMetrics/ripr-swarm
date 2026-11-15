@@ -88,6 +88,52 @@ fn linux_cli_and_xtask_share_product_dependency_features() -> Result<(), String>
 }
 
 #[test]
+fn slim_feature_set_is_declared_and_in_default() -> Result<(), String> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("xtask manifest has no workspace parent")?;
+    let manifest = std::fs::read_to_string(root.join("crates/ripr/Cargo.toml"))
+        .map_err(|error| format!("read crates/ripr/Cargo.toml: {error}"))?;
+    // The slim binary is `--no-default-features --features lang-rust`: the
+    // heavy optional surfaces must stay opt-in features, and `default` must
+    // keep all of them so the default binary surface is unchanged.
+    for needle in [
+        "lsp = [\"dep:tower-lsp-server\", \"dep:tower\", \"dep:tokio\", \"dep:tokio-util\"]",
+        "mcp = [\"dep:rmcp\", \"dep:tokio\", \"dep:tokio-util\"]",
+        "scip = [\"dep:prost\"]",
+        "default = [\"lang-rust\", \"lang-typescript\", \"lang-python\", \"lsp\", \"mcp\", \"scip\"]",
+        "optional = true",
+    ] {
+        if !manifest.contains(needle) {
+            return Err(format!(
+                "crates/ripr/Cargo.toml is missing the slim-feature contract: {needle}"
+            ));
+        }
+    }
+    for dep in [
+        "rmcp",
+        "tokio",
+        "tokio-util",
+        "tower-lsp-server",
+        "tower",
+        "prost",
+    ] {
+        let optional = manifest
+            .lines()
+            .find(|line| {
+                line.starts_with(&format!("{dep} =")) || line.starts_with(&format!("{dep}="))
+            })
+            .is_some_and(|line| line.contains("optional = true"));
+        if !optional {
+            return Err(format!(
+                "dependency {dep} must be optional for the slim build"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn inventory_preserves_versions_and_multiple_feature_variants() -> Result<(), String> {
     let variants = feature_variants(
         "flags v1|\nflags v1|std\nflags v1|std (*)\nflags v2|serde,std\nripr v1 (path|with-pipe)|default\n",

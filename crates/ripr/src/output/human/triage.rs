@@ -2563,6 +2563,7 @@ fn push_hidden_row(out: &mut String, row: &str, count: usize) {
 #[cfg(test)]
 mod tests {
 
+    #[cfg(feature = "mcp")]
     #[test]
     fn hidden_finding_reason_words_a_match_arm_limit_like_hover_and_mcp() -> Result<(), String> {
         // #11821: `describe()` and `describe_for_family()` differ only for this

@@ -134,10 +134,12 @@ mod kani_smoke;
 #[doc(hidden)]
 pub mod domain;
 // Kept public for compatibility with experimental editor integrations.
+#[cfg(feature = "lsp")]
 #[doc(hidden)]
 pub mod lsp;
 // Protocol process entry point selected by the packaged binary before the
 // human-oriented CLI dispatcher. The product status producer remains private.
+#[cfg(feature = "mcp")]
 #[doc(hidden)]
 pub mod mcp;
 // Kept public for compatibility with existing render integrations.

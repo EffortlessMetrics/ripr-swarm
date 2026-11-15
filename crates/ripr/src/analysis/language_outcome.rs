@@ -572,11 +572,11 @@ fn count_findings(findings: &[Finding]) -> BTreeMap<String, usize> {
     counts
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "mcp"))]
 mod diff_tests;
-#[cfg(test)]
+#[cfg(all(test, feature = "mcp"))]
 mod reconcile_tests;
-#[cfg(test)]
+#[cfg(all(test, feature = "mcp"))]
 mod repo_tests;
-#[cfg(test)]
+#[cfg(all(test, feature = "mcp"))]
 mod tests;

@@ -7,8 +7,14 @@ pub(crate) fn run() -> Result<(), CommandError> {
 }
 
 fn dispatch(args: Vec<String>) -> Result<(), CommandError> {
-    if let Some(mcp_args) = routed_mcp_args(&args) {
-        return ripr::mcp::run(&mcp_args).map_err(CommandError::from);
+    if let Some(_mcp_args) = routed_mcp_args(&args) {
+        #[cfg(feature = "mcp")]
+        return ripr::mcp::run(&_mcp_args).map_err(CommandError::from);
+        #[cfg(not(feature = "mcp"))]
+        return Err(CommandError::from(
+            "ripr mcp is not built into this binary; rebuild with `--features mcp` (or default features) to use the MCP server"
+                .to_string(),
+        ));
     }
     ripr::cli::run_with_interrupt_handling(args)
 }
