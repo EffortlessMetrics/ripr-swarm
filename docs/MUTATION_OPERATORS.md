@@ -43,17 +43,17 @@ family is in parentheses.
 
 | Operator (example edit) | cargo-mutants | mutmut | Stryker | Rust | Python | TypeScript |
 | --- | --- | --- | --- | --- | --- | --- |
-| Relational boundary (`x > 10` → `x >= 10`) | none¹ | comparison swap | EqualityOperator | yes (predicate) | yes (predicate) | yes (predicate) |
-| Relational flip (`x < 10` → `x > 10`) | BinaryOperator | comparison swap | EqualityOperator | yes (return_value) | yes (predicate) | partial (predicate) |
+| Relational boundary (`x > 10` → `x >= 10`) | none¹ | `>` ↔ `>=` | EqualityOperator | yes (predicate) | yes (predicate) | yes (predicate) |
+| Relational flip (`x < 10` → `x > 10`) | BinaryOperator | none⁶ | EqualityOperator (`<` → `>=`) | yes (return_value) | yes (predicate) | partial (predicate) |
 | Equality (`==` → `!=`) | BinaryOperator | `==` ↔ `!=` | EqualityOperator | yes (predicate) | yes (return_value) | yes (return_value) |
 | Logical (`&&` → `\|\|`) | BinaryOperator | `and` ↔ `or` | LogicalOperator | unknown | yes (return_value) | yes (return_value) |
 | Negation removed (`!a` → `a`) | UnaryOperator | remove `not` | BooleanLiteral | unknown² | yes (return_value) | yes (return_value) |
 | Membership (`in` → `not in`) | n/a | `in` ↔ `not in` | n/a | n/a | yes (return_value) | n/a |
 | Arithmetic in the returned expression (`a + b` → `a - b`) | BinaryOperator | `+` ↔ `-` | ArithmeticOperator | yes (return_value) | yes (return_value) | yes (return_value) |
 | Arithmetic in a local binding (`let y = a + b`) | BinaryOperator | `+` ↔ `-` | ArithmeticOperator | unknown | yes (return_value) | partial (return_value) |
-| Compound assignment (`t += b` → `t -= b`) | BinaryOperator | augmented assignment | AssignmentOperator | unknown | yes (predicate) | yes (return_value) |
+| Compound assignment (`t += b` → `t -= b`) | BinaryOperator | `+=` ↔ `-=`, `+=` → `=` | AssignmentOperator | unknown | yes (predicate) | yes (return_value) |
 | Update (`t++` → `t--`) | n/a | n/a | UpdateOperator | n/a | n/a | partial (predicate) |
-| Unary minus removed (`-a` → `a`) | UnaryOperator | remove unary | UnaryOperator | unknown² | yes (return_value) | yes (return_value) |
+| Unary minus removed (`-a` → `a`) | UnaryOperator | `-a` → `+a` | UnaryOperator (`-a` → `+a`) | unknown² | yes (return_value) | yes (return_value) |
 | Bitwise (`a & b` → `a \| b`) | BinaryOperator | `&` ↔ `\|` | none | unknown² | yes (return_value) | yes (return_value) |
 | Module constant (`LIMIT = 100` → `101`) | none | number +1 | none | unknown | false gap | false gap |
 | Number literal in an expression (`x * 3` → `x * 4`) | none | number +1 | none | yes (return_value) | yes (return_value) | yes (return_value) |
@@ -68,9 +68,9 @@ family is in parentheses.
 | Condition forced true (`if x > 0` → `if true`) | none | none | ConditionalExpression | unknown | yes (predicate) | partial (predicate) |
 | Ternary or `if` branch value (`else 2` → `else 3`) | none | number +1 | none | partial (predicate) | partial (predicate) | partial (predicate) |
 | Guard clause deleted (`if x < 0 { return 0 }` removed) | none | none | ConditionalExpression | partial (return_value) | yes (return_value) | yes (return_value) |
-| `break` → `continue` | none | `break` ↔ `continue` | none | unknown | yes (predicate) | partial (predicate) |
+| `break` → `continue` | none | `continue` → `break`, `break` → `return` | none | unknown | yes (predicate) | partial (predicate) |
 | Loop bound (`0..n` → `0..=n`, `i < n` → `i <= n`) | none | none | EqualityOperator | unknown | yes (predicate) | partial (predicate) |
-| Match arm deleted | MatchArm | none | none | partial (match_arm) | yes (predicate) | yes (return_value) |
+| Match arm deleted | MatchArm⁷ | `case` dropped | none | partial (match_arm) | yes (predicate) | yes (return_value) |
 | Match arm value (`1 => 5` → `1 => 7`) | none | number +1 | none | yes (match_arm) | yes (return_value) | yes (return_value) |
 | Match guard forced (`if n > 5` → `if true`) | MatchArmGuard | none | n/a | partial (match_arm) | yes (predicate) | n/a |
 | Struct/object field value (`retries: 3` → `5`) | StructField⁴ | number +1 | ObjectLiteral | yes (field_construction) | yes (field_construction) | partial⁵ (field_construction) |
@@ -92,11 +92,14 @@ Stryker empties the whole block.
 ⁴ cargo-mutants only deletes fields of literals with a `..base`.
 ⁵ A test asserting only a sibling field also reads `exposed`
 ([#14814](https://github.com/EffortlessMetrics/ripr-swarm/issues/14814)).
+⁶ mutmut only shifts comparison boundaries (`<` ↔ `<=`, `>` ↔ `>=`).
+⁷ Only in a `match` that has a wildcard arm.
 
 Operator names: cargo-mutants genres from its
 [mutation patterns](https://mutants.rs/mutants.html); Stryker mutator names
-from StrykerJS. mutmut publishes no operator table, so its column describes
-mutmut 3's mutation behavior.
+from StrykerJS's
+[supported mutators](https://stryker-mutator.io/docs/mutation-testing-elements/supported-mutators/). mutmut publishes no operator table, so its column is read from
+the mutmut 3.3.1 source (`mutmut/node_mutation.py`).
 
 ## Totals
 
@@ -121,7 +124,7 @@ unary or bitwise edits on a returned name (#14815). A returned `true` changed
 to `false`, or a `vec!` emptied, also reads unknown: the tail carries no text
 cue ripr reads as a return, and crediting it safely needs the old function
 body, not just the replaced line
-([#14797](https://github.com/EffortlessMetrics/ripr-swarm/issues/14797)).
+([#14852](https://github.com/EffortlessMetrics/ripr-swarm/issues/14852)).
 
 **Python.** A changed module constant reads `no_static_path` even though the
 test calls the function that reads it
@@ -132,8 +135,9 @@ even under a test that pins them.
 **TypeScript.** Module constants read `no_static_path`
 ([#12950](https://github.com/EffortlessMetrics/ripr-swarm/issues/12950),
 [#8568](https://github.com/EffortlessMetrics/ripr-swarm/issues/8568)). Relational
-flips, ternaries, loop bounds, `break`/`continue`, `++`/`--` and forced
-conditions stay `weakly_exposed` under a pinning test
+flips, ternaries, loop bounds, `break`/`continue`, `++`/`--`, forced
+conditions, arithmetic in a local binding and optional chaining stay
+`weakly_exposed` under a pinning test
 ([#11034](https://github.com/EffortlessMetrics/ripr-swarm/issues/11034),
 [#9874](https://github.com/EffortlessMetrics/ripr-swarm/issues/9874)). A
 default-parameter change reads `infection_unknown`
