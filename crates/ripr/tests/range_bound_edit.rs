@@ -722,6 +722,25 @@ fn an_assertion_in_an_uncalled_nested_fn_does_not_separate() -> Result<(), Strin
 }
 
 #[test]
+fn a_cfg_gated_assertion_does_not_separate() -> Result<(), String> {
+    // #14538: `#[cfg(any())]` compiles the assertion out, so only `sum_to(0)` runs.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling(
+            "assert_eq!(sum_to(0), 0);\n    #[cfg(any())]\n    assert_eq!(sum_to(4), 10);",
+        ),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn an_assertion_in_an_empty_loop_does_not_separate() -> Result<(), String> {
     // #14538: `0..0` never runs the body, so only `sum_to(0)` runs.
     let findings = findings_on_changed_line(
@@ -798,6 +817,23 @@ fn a_moved_char_bound_in_a_matches_pattern_is_gated() -> Result<(), String> {
         "    matches!(c, 'b'..='y')",
         "    matches!(c, 'a'..='z')",
         &test_calling("assert!(lower('m'));"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_moved_char_bound_beside_a_string_is_gated() -> Result<(), String> {
+    // #14538: a string on the line does not hide the moved bound.
+    let findings = findings_on_changed_line(
+        "/// Whether the input is a lowercase letter.\npub fn lower(c: char, s: &str) -> bool {\n    matches!(c, 'b'..='y') && s != \"q\"\n}\n",
+        "    matches!(c, 'b'..='y') && s != \"q\"",
+        "    matches!(c, 'a'..='z') && s != \"q\"",
+        &test_calling("assert!(lower('m', \"a\"));"),
     )?;
     assert!(!findings.is_empty());
     assert!(

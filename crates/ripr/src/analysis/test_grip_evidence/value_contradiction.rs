@@ -1217,8 +1217,9 @@ fn deferred_lines(test: &TestSummary) -> Option<std::collections::BTreeSet<usize
             || ast::MacroRules::can_cast(node.kind())
             || (node != *root.syntax()
                 && node.children().any(|child| {
-                    ast::Attr::cast(child)
-                        .is_some_and(|attr| attr.syntax().text().to_string().contains("cfg"))
+                    ast::Attr::cast(child).is_some_and(|attr| {
+                        matches!(attr.simple_name().as_deref(), Some("cfg" | "cfg_attr"))
+                    })
                 }));
         if deferred {
             let range = node.text_range();

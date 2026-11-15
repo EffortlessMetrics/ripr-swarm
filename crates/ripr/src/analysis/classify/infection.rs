@@ -1220,10 +1220,11 @@ fn range_bound_change(before: &str, after: &str) -> Option<RangeConsumer> {
     let before = mask_rust_comments_and_strings(&raw_before);
     let after = mask_rust_comments_and_strings(&raw_after);
     if before == after {
-        // A char endpoint (`'a'..='z'`) is masked like a string literal. A
-        // line with a string or comment is left alone: its `..` may be text.
-        let has_text = |raw: &str| raw.contains('"') || raw.contains("//") || raw.contains("/*");
-        if has_text(&raw_before) || has_text(&raw_after) {
+        // A char endpoint (`'a'..='z'`) is masked like a string literal. An
+        // edit confined to strings or comments is left alone, since their
+        // `..` may be text; a changed char literal is read as an endpoint
+        // whatever else the line holds.
+        if char_literal_contents(&raw_before) == char_literal_contents(&raw_after) {
             return None;
         }
         return range_endpoints_moved(&raw_before, &raw_after).then(|| {
@@ -1347,6 +1348,28 @@ fn operand_end(tail: &str) -> usize {
 /// one range's endpoints or operator differ: a moved bound (`0..=5` to
 /// `0..=6`, `'a'..='z'` to `'b'..='y'`), not an edit beside the ranges
 /// (`[1, len, ..] => len + 2` to `2 + len`) or a range added or removed.
+/// The contents of each char literal in `text`, in order. A run of bytes
+/// that `mask_rust_char_literals` blanks is one literal's content.
+fn char_literal_contents(text: &str) -> Vec<Vec<u8>> {
+    use crate::analysis::language::mask_rust_char_literals;
+    let masked = mask_rust_char_literals(text);
+    let mut contents: Vec<Vec<u8>> = Vec::new();
+    let mut open = false;
+    for (raw, blank) in text.bytes().zip(masked.bytes()) {
+        if raw == blank {
+            open = false;
+        } else if open {
+            if let Some(last) = contents.last_mut() {
+                last.push(raw);
+            }
+        } else {
+            contents.push(vec![raw]);
+            open = true;
+        }
+    }
+    contents
+}
+
 fn range_endpoints_moved(before: &str, after: &str) -> bool {
     let (old, new) = (range_signatures(before), range_signatures(after));
     !old.is_empty() && old.len() == new.len() && old != new
@@ -2211,6 +2234,20 @@ mod tests {
         // A string or comment holding `..` is not a char endpoint.
         assert!(range_bound_change("say(\"Done..\")", "say(\"Finished..\")").is_none());
         assert!(range_bound_change("x // 0..5", "x // 0..6").is_none());
+        // A string or comment elsewhere on the line does not hide a moved
+        // char endpoint.
+        assert!(
+            range_bound_change("'a'..='z' => 1, // letters", "'b'..='z' => 1, // letters")
+                .is_some_and(|kind| kind == RangeConsumer::Pattern)
+        );
+        assert!(absorbing(
+            "matches!(c, 'a'..='z') && s == \"x\"",
+            "matches!(c, 'b'..='z') && s == \"x\""
+        ));
+        assert!(absorbing(
+            "matches!(c, 'a'..='z') // 0..5",
+            "matches!(c, 'b'..='z') // 0..5"
+        ));
     }
 
     #[test]
