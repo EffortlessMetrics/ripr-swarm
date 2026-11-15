@@ -2637,10 +2637,10 @@ impl SrcModuleIndex {
             let own = src_layout_module_names(&owner.file);
             let mut ambiguous = Vec::new();
             for (module, owner_root) in &own {
-                let rival_roots = rival_roots_for(&roots_by_module, module, |file, _| {
+                let rival_roots = rival_roots_for(roots_by_module, module, |file, _| {
                     normalized_path(file) == owner_file
                 });
-                let shadowed = plain_module_shadows(&files_by_full_path, module, owner_root);
+                let shadowed = plain_module_shadows(files_by_full_path, module, owner_root);
                 if !rival_roots.is_empty() || shadowed {
                     ambiguous.push(AmbiguousSrcModule {
                         module: module.clone(),
@@ -2658,7 +2658,7 @@ impl SrcModuleIndex {
             if let Some(full) = owner_module_paths(&owner.file).into_iter().next()
                 && !ambiguous.iter().any(|record| record.module == full)
             {
-                let rival_roots = rival_roots_for(&roots_by_module, &full, |file, _| {
+                let rival_roots = rival_roots_for(roots_by_module, &full, |file, _| {
                     normalized_path(file) == owner_file
                 });
                 // A src rival at the repository root imports under the same name
@@ -2693,11 +2693,11 @@ impl SrcModuleIndex {
                     continue;
                 };
                 let rival_roots =
-                    rival_roots_for(&roots_by_module, module, |_, root| *root == owner_root);
+                    rival_roots_for(roots_by_module, module, |_, root| *root == owner_root);
                 // A plain module of the same project spelled like the re-exporting
                 // package loads instead of it on some `sys.path` orders, exactly as
                 // for the owner's own short name (#13786).
-                let shadowed = plain_module_shadows(&files_by_full_path, module, &owner_root);
+                let shadowed = plain_module_shadows(files_by_full_path, module, &owner_root);
                 if !rival_roots.is_empty() || shadowed {
                     ambiguous.push(AmbiguousSrcModule {
                         module: module.clone(),
