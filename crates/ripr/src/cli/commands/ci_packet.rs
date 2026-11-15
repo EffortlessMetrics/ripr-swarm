@@ -2688,6 +2688,9 @@ mod tests {
 
     /// Runs the real gate stage against a child that exits `code`, optionally
     /// after another required step failed, and returns the packet outcome.
+    /// A freshly written script can hit `ETXTBSY` ("Text file busy", os error
+    /// 26) when another test thread forks while the write handle is still
+    /// inherited; that spawn error is retried a few times, never an exit code.
     #[cfg(unix)]
     fn gate_stage_outcome(
         code: i32,
@@ -2704,39 +2707,46 @@ mod tests {
         fs::write(&exe, format!("#!/bin/sh\nexit {code}\n")).map_err(|err| err.to_string())?;
         fs::set_permissions(&exe, fs::Permissions::from_mode(0o755))
             .map_err(|err| err.to_string())?;
-        let mut run = PacketRun {
-            root: root.clone(),
-            exe,
-            settings: CiSettings {
-                gate_mode: "baseline-check".to_string(),
-                ..CiSettings::default()
-            },
-            only: Vec::new(),
-            seen: Vec::new(),
-            top_seam: None,
-            failed: Vec::new(),
-            gate_blocked: false,
-            recorded: None,
+        let mut attempt = 0;
+        let result = loop {
+            attempt += 1;
+            let mut run = PacketRun {
+                root: root.clone(),
+                exe: exe.clone(),
+                settings: CiSettings {
+                    gate_mode: "baseline-check".to_string(),
+                    ..CiSettings::default()
+                },
+                only: Vec::new(),
+                seen: Vec::new(),
+                top_seam: None,
+                failed: Vec::new(),
+                gate_blocked: false,
+                recorded: None,
+            };
+            if earlier_required_failure {
+                run.stage(
+                    "Capture pull request diff",
+                    When::Always,
+                    Role::Required,
+                    true,
+                    |_| Err("diff capture failed".to_string()),
+                );
+            }
+            let mut text_file_busy = false;
+            run.stage(GATE_STAGE, When::Always, Role::Required, true, |run| {
+                let result = run.evaluate_gate();
+                text_file_busy = matches!(&result, Err(err) if err.contains("(os error 26)"));
+                result
+            });
+            if text_file_busy && attempt < 5 {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                continue;
+            }
+            break Ok((run.failed.clone(), run.outcome()));
         };
-        if earlier_required_failure {
-            run.stage(
-                "Capture pull request diff",
-                When::Always,
-                Role::Required,
-                true,
-                |_| Err("diff capture failed".to_string()),
-            );
-        }
-        run.stage(
-            GATE_STAGE,
-            When::Always,
-            Role::Required,
-            true,
-            PacketRun::evaluate_gate,
-        );
-        let outcome = run.outcome();
         let _ = fs::remove_dir_all(&root);
-        Ok((run.failed, outcome))
+        result
     }
 
     /// A blocked gate (child exit 3) is the packet's decision exit 3, not the
