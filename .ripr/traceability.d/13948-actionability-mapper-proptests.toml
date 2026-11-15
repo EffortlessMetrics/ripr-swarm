@@ -1,0 +1,24 @@
+# Registers the per-language actionability mapper property tests (#13948).
+[[extend]]
+id = "RIPR-SPEC-0240"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/actionability_proptest_tests.rs::typescript_actionability_never_actionable_and_refusals_hold",
+  "crates/ripr/src/analysis/language/typescript/actionability_proptest_tests.rs::typescript_actionability_refusals_survive_evidence_removal",
+  "crates/ripr/src/analysis/language/typescript/actionability_proptest_tests.rs::static_limit_kind_list_is_complete_and_ordered",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0061"
+tests = [
+  "crates/ripr/src/analysis/language/perl/actionability_proptest_tests.rs::perl_actionability_proptest_fixture_is_actionable",
+  "crates/ripr/src/analysis/language/perl/actionability_proptest_tests.rs::perl_strict_actionability_refuses_whenever_a_refusal_condition_holds",
+  "crates/ripr/src/analysis/language/perl/actionability_proptest_tests.rs::perl_strict_actionability_refuses_each_condition_alone",
+  "crates/ripr/src/analysis/language/perl/actionability_proptest_tests.rs::perl_strict_actionability_is_monotone_in_supporting_evidence",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0064"
+tests = [
+  "crates/ripr/src/analysis/language/perl/actionability_proptest_tests.rs::perl_strict_actionability_refuses_whenever_a_refusal_condition_holds",
+  "crates/ripr/src/analysis/language/perl/actionability_proptest_tests.rs::perl_strict_actionability_refuses_each_condition_alone",
+]
