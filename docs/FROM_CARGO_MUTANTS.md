@@ -48,7 +48,7 @@ ripr does not read `.cargo/mutants.toml`. Carry its settings over by hand:
 | `exclude_globs` / `examine_globs` | `--exclude` / `--path` flags ([Configuration](CONFIGURATION.md)) |
 | `exclude_re` / `examine_re` | none |
 | `additional_cargo_test_args`, `test_tool` | not applicable |
-| `#[mutants::skip]` | honored as-is on a changed function or method, including `#[cfg_attr(<predicate>, mutants::skip)]`: `ripr check` withholds that owner's findings and discloses them (count and `owner_mutants_skip`; see [Output schema](OUTPUT_SCHEMA.md#owner_opt_outs-and-withheld-findings-top-level-additive-13819)). A skip on an `impl` block or module is not read; use `.ripr/suppressions.toml` ([example](suppressions.example.toml)) with `--suppression-policy` for those |
+| `#[mutants::skip]` | honored as-is on a changed function or method, including `#[cfg_attr(<predicate>, mutants::skip)]`: `ripr check` withholds that owner's findings and discloses them (count and `owner_mutants_skip`; see [Output schema](OUTPUT_SCHEMA.md#owner_opt_outs-and-withheld-findings-top-level-additive-13819)). A skip on an enclosing `impl` or `trait` block, inline module, or a file-level `#![mutants::skip]` is honored the same way and names that scope (RIPR-SPEC-0450). `#[mutants::skip] mod name;` is not followed into the module's file; use `.ripr/suppressions.toml` ([example](suppressions.example.toml)) with `--suppression-policy` for that |
 
 `ripr init` writes a `ripr.toml` with the built-in defaults. It is optional.
 

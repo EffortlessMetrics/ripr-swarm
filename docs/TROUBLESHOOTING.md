@@ -115,10 +115,11 @@ about them, so the analysis is reported as incomplete.
 ### Findings exist but are withheld
 
 ```text
-Withheld by owner opt-out (owner_mutants_skip): 1 finding(s); the changed owner carries `#[mutants::skip]`, so ripr does not list it as a gap. Remove the attribute to see these findings.
+Withheld by owner opt-out (owner_mutants_skip): 1 finding(s); the changed owner or a scope enclosing it carries `#[mutants::skip]`, so ripr does not list it as a gap. Remove the attribute to see these findings.
 ```
 
-`ripr` honors `#[mutants::skip]` on a changed function. The summary line also
+`ripr` honors `#[mutants::skip]` on a changed function and on an enclosing
+`impl`, `trait`, inline module or file. The summary line also
 counts findings hidden by a suppression file as `suppressed by your settings`.
 Remove the attribute or the suppression entry to see them again. See
 [Coming from cargo-mutants](FROM_CARGO_MUTANTS.md).
