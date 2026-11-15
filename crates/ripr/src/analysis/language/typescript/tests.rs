@@ -12525,6 +12525,72 @@ fn ts_fieldconstruction_optional_chain_read_through_changed_field_stays_exposed(
     Ok(())
 }
 
+/// #14814 round 3: a local that merely spells the changed field's name is not
+/// a field read. `retries && f().verbose` reads only the sibling off the owner,
+/// so it must downgrade; a whole-expression token scan finds the local and
+/// wrongly keeps the credit, which is a false green on the strongest signal.
+#[test]
+fn ts_fieldconstruction_local_named_like_changed_field_does_not_keep_credit() -> Result<(), String>
+{
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"sibling\", () => { const retries = 1; expect(retries && f().verbose).toBe(false); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "a local named like the changed field is not a field read, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 round 3: the member check is owner-rooted, so a member read of the
+/// same name on a DIFFERENT object is not a witness of the changed field.
+#[test]
+fn ts_fieldconstruction_foreign_member_named_like_changed_field_does_not_keep_credit()
+-> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"sibling\", () => { const other = { retries: 1 }; expect(other.retries && f().verbose).toBe(false); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "a member read on another object is not the changed field, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
 /// LIVE-pipeline guard test (RIPR-SPEC-0098 §fixture-5, #1235): exercises the
 /// REAL oracle extractor end-to-end. Source and test text are parsed by
 /// `extract_owners` / `extract_tests`, so the assertions carry whatever

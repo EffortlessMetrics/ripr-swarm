@@ -785,18 +785,63 @@ fn ts_value_observed_reads_sibling_field(
     // changed field, not a sibling. Only a path that never names it is a
     // sibling read (#14814 F3).
     //
-    // Compare identifier tokens, not dot-segments: an operator or optional
-    // chain glues onto the segment (`f().retries || f().verbose` splits to
-    // `retries || f()`, `f().retries?.n` to `retries?`), so a segment
-    // comparison misses a changed field the expression really reads and
-    // downgrades a genuine exposure (#14814 round 2).
-    if masked
-        .split(|ch: char| !is_ident_char(ch))
-        .any(|token| token == changed.key.as_str())
-    {
+    // The occurrence must be a MEMBER segment of an owner-rooted chain, not
+    // any identifier that happens to spell the key. `f().retries || f().verbose`
+    // reads the changed field off the owner and keeps the credit; a local
+    // named `retries` in `retries && f().verbose` is not a field read and must
+    // not, or the guard is skipped and the sibling is credited (#14814 round 3).
+    if ts_masked_reads_changed_field_as_member(
+        &masked,
+        changed.key.as_str(),
+        owner_names,
+        owner_is_method,
+        namespace_receivers,
+    ) {
         return false;
     }
     ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers)
+}
+
+/// #14814 round 3: whether `masked` reads `key` as a member segment of a chain
+/// rooted at the owner. A bare identifier that merely spells the key — a local,
+/// a parameter, a name inside a masked literal — is not a field read, so it
+/// must not keep the credit the sibling guard is about to withdraw.
+///
+/// `f().retries || f().verbose` and `f().retries?.n` qualify (the segment hangs
+/// off the owner call); `retries && f().verbose` with a local `retries` does
+/// not, and `other.retries` does not either, because its chain is not the
+/// owner's.
+fn ts_masked_reads_changed_field_as_member(
+    masked: &str,
+    key: &str,
+    owner_names: &[&str],
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+) -> bool {
+    fn is_ident_char(ch: char) -> bool {
+        ch.is_alphanumeric() || ch == '_' || ch == '$'
+    }
+    if key.is_empty() {
+        return false;
+    }
+    masked.match_indices(key).any(|(at, _)| {
+        let before = masked.get(..at).unwrap_or("");
+        let after = masked.get(at + key.len()..).unwrap_or("");
+        let whole_identifier = before
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_ident_char(ch))
+            && after.chars().next().is_none_or(|ch| !is_ident_char(ch));
+        if !whole_identifier {
+            return false;
+        }
+        // A member segment: `.key` or `?.key`, with optional whitespace.
+        let Some(prefix) = before.trim_end().strip_suffix('.') else {
+            return false;
+        };
+        let prefix = prefix.trim_end().strip_suffix('?').unwrap_or(prefix);
+        ts_masked_observes_owner(prefix, owner_names, owner_is_method, namespace_receivers)
+    })
 }
 
 /// Rewrite bracket string-literal field reads (`f()["verbose"]`) as dotted
