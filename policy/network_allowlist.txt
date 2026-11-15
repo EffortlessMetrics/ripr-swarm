@@ -1,4 +1,5 @@
 # Allowlisted network surfaces.
+# #14580: tools/ci/shard-verifier-artifact.py uses fixed-host gh api GETs for the current repository/run artifact inventory, exact artifact metadata and ZIP. It receives only the unprivileged actions-read job token, sanitizes download errors, validates digest/checkout identity, and strips token variables before launch. The gh invocations are outside this lexical scanner's recognized call patterns; no unused scanner exception is added.
 #
 # SPEC-0148 native acceptance adapter inventory: xtask/src/reports/release/candidate_harness/live_head/handoff/native.rs invokes bounded gh api --hostname github.com --method GET for exact ripr-swarm issue comments only. It reuses existing operator credentials, never writes or logs in, and admits no caller-selected host or cached-response fallback. The lexical network scanner does not match gh invocations; this records the actual network surface without adding an unused scanner exception.
 #
@@ -11,7 +12,6 @@
 crates/ripr/tests/data/uncertain-delivery/github_delivery.rs|TcpStream|3|analysis/test-helpers|#7818: byte-exact UB #1440 source fixture consumed only via include_str; retains the original fake-transport type text, never compiled or executed by this parser test. No network behavior added.
 crates/ripr/tests/data/uncertain-delivery/github_delivery.rs|curl|2|analysis/test-helpers|#7818: byte-exact inert source fixture retains one run_curl_json_send name and one fake-response-loss comment; no curl execution or network behavior added.
 .github/workflows/droid-security-scan.yml|curl|1|ci/droid|Droid action bootstrap downloads a pinned GitHub CLI archive when the self-hosted runner does not provide gh.
-.github/workflows/droid.yml|curl|1|ci/droid|Droid action bootstrap downloads a pinned GitHub CLI archive when the self-hosted runner does not provide gh.
 .github/workflows/publish-extension.yml|curl|2|release/ci|Release workflow fetches the published server manifest and archives from GitHub Releases to verify their digests before packaging or publishing the extension.
 .github/workflows/server-archive-qualification.yml|curl|2|ci/release-qualification|Read-only qualification uses bounded unauthenticated public GitHub API reads for active tag-ruleset proof and terminal workflow-job denominator capture; both retain response evidence, use no token, and cannot publish or mutate repository state.
 .github/workflows/workflow-lint.yml|curl|1|ci/workflow-lint|Download the fixed official jactionlint 2.5.0 archive and verify its pinned SHA-256 before execution; subsequent correctness lint is offline and receives no API token.

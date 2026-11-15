@@ -446,7 +446,14 @@ fn check_with_progress_and_origins_run(
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        eprintln!("ripr: mode = {:?}", scope);
+        // The report header calls the effort profile "mode" (`mode: draft`),
+        // so this line uses the same word for the same value and names the
+        // diff scope separately, with the token the progress lines print.
+        eprintln!(
+            "ripr: mode = {}; scope = {}",
+            input.mode.as_str(),
+            scope.as_str()
+        );
     }
 
     progress.emit(AnalysisProgressStage::Analyzing);
@@ -531,6 +538,14 @@ fn check_with_progress_and_origins_run(
                 eprintln!("ripr: {line}");
             }
         }
+        if let Some(stats) = analysis.rust_consumed_sources.file_fact_cache.as_ref() {
+            if let Some(line) = crate::output::check_file_fact_cache::render_verbose_line(stats) {
+                eprintln!("ripr: {line}");
+            }
+            for line in crate::analysis::file_fact_store_failure_summary(stats) {
+                eprintln!("{}", terminal_safe(line));
+            }
+        }
     }
 
     progress.emit(AnalysisProgressStage::BuildingOutput);
@@ -540,6 +555,7 @@ fn check_with_progress_and_origins_run(
     let language_view = analysis.language_view.take();
     let human_output = matches!(input.format, OutputFormat::Human | OutputFormat::HumanFull);
     let mut output = output_builder::check_output_from_analysis(input, analysis);
+    output.file_fact_cache = consumed_sources.file_fact_cache.clone();
     // #6340: only a human-rendered run pays for the Python test walk; JSON, LSP
     // refreshes and other machine consumers never read the note.
     if human_output && python_test_note_possible(&output.findings) {

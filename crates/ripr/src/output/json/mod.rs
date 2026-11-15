@@ -1,6 +1,6 @@
 mod context_packet;
 mod finding_alignment;
-mod findings_priority;
+pub(crate) mod findings_priority;
 mod formatter;
 mod report;
 mod terse;
@@ -77,7 +77,8 @@ mod tests {
             )?,
         )
         .with_path("src/lib.rs")?
-        .with_affected_items(1)?;
+        .with_affected_items(1)?
+        .with_detail("the merge diff has three-way hunks.")?;
         let outcome = AnalysisOutcome::new(
             AnalysisOutcomeKind::UnsupportedInput,
             AnalysisIdentity {
@@ -128,6 +129,16 @@ mod tests {
         assert!(output.findings.is_empty() || human.contains("finding(s) below cover only"));
         assert!(!human.contains("combined_hunk_unsupported"));
         assert!(human.contains("two-way diff"));
+        // #14398: the producer's bounded cause reaches the human line, as it
+        // does the JSON limitation, ahead of the recovery.
+        assert_eq!(
+            value["analysis_outcome"]["outcome"]["limitations"][0]["bounded_detail"],
+            "the merge diff has three-way hunks."
+        );
+        assert!(
+            human.contains("affected items: 1; the merge diff has three-way hunks; recovery: "),
+            "{human}"
+        );
         Ok(())
     }
 
@@ -419,6 +430,8 @@ mod tests {
             stop_reason: crate::analysis::PartialDiffStopReason::LineBudget,
             next_file_changed_lines: Some(50),
             whole_diff_budgets: None,
+            over_limit_files: Vec::new(),
+            line_budget_limits: Vec::new(),
             partition_identity: "b".repeat(64),
         }
     }
@@ -1211,6 +1224,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -1345,6 +1360,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -1525,6 +1542,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2472,6 +2491,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -2613,6 +2634,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2731,6 +2754,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -2762,6 +2787,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2829,6 +2856,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2872,6 +2901,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 

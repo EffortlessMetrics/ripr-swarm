@@ -17,6 +17,25 @@ pub(crate) mod index_build_probe {
         BUILDS.with(|builds| builds.set(builds.get() + 1));
     }
 
+    thread_local! {
+        static INCLUDE_REBASES: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// Reuse fell back to a fresh build because an added file may re-parent
+    /// function identities, moved the retained include view, or revived a
+    /// withheld file's tests (a retraction counts too).
+    pub(super) fn record_include_rebase() {
+        INCLUDE_REBASES.with(|count| count.set(count.get() + 1));
+    }
+
+    /// Run `work` and return its result plus how many reuses fell back to a
+    /// fresh build for the reasons above.
+    pub(crate) fn observe_rebase_fallbacks<T>(work: impl FnOnce() -> T) -> (T, usize) {
+        INCLUDE_REBASES.with(|count| count.set(0));
+        let result = work();
+        (result, INCLUDE_REBASES.with(Cell::get))
+    }
+
     /// Run `work` with a zeroed counter and return its result plus the
     /// number of index-build phases it started.
     pub(crate) fn observe<T>(work: impl FnOnce() -> T) -> (T, usize) {
@@ -34,6 +53,7 @@ pub(crate) use build::SecondaryPassGuard;
 pub(crate) use build::streamed_source_bytes;
 pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
 pub(crate) use doctests::SYNTHETIC_NAME as DOCTEST_FUNCTION_NAME;
+pub(crate) use doctests::test_gate_is_default_enabled;
 pub(crate) use execution_context::ExecutionContext;
 pub(crate) mod cfg_predicates;
 pub(crate) mod drop_in;
@@ -304,12 +324,7 @@ fn reuse_cached_index(
                     })
             }))
     {
-        return build_cached_index_with_test_harnesses(
-            root,
-            files,
-            registrations,
-            MissAttribution::Skipped,
-        );
+        return fresh_build_keeping_run_stats(cached, root, files, registrations, same_run);
     }
     let kept: std::collections::BTreeSet<&Path> =
         files.iter().map(|(path, _)| path.as_path()).collect();
@@ -356,15 +371,18 @@ fn reuse_cached_index(
         || extras
             .iter()
             .any(|(path, _)| cached.index.files().get(path).is_some());
-    if retracts {
-        trace_reuse_fallback("retracts");
-        drop(cached);
-        return build_cached_index_with_test_harnesses(
-            root,
-            files,
-            registrations,
-            MissAttribution::Skipped,
-        );
+    let rebases_includes = extras.iter().any(|(path, bytes)| {
+        includes::added_file_may_rebase_includes(path, &build::rust_source_text(bytes).text, &kept)
+    });
+    if retracts || rebases_includes {
+        trace_reuse_fallback(if retracts {
+            "retracts"
+        } else {
+            "include_targets_kept_file"
+        });
+        #[cfg(test)]
+        index_build_probe::record_include_rebase();
+        return fresh_build_keeping_run_stats(cached, root, files, registrations, same_run);
     }
     for path in &dropped {
         cached.index.remove_file(path);
@@ -386,6 +404,7 @@ fn reuse_cached_index(
         let (stats, includes_exact) = index_phase("index_cached_parse", || {
             build::extend_index_from_loaded_files_with_cache(&mut cached.index, root, &extras)
         })?;
+        cached.file_fact_cache.merge_from(&stats);
         // #12947: an added file's `include!` directive re-resolves every
         // include edge over the merged index. Rebased identities and
         // composed roles of retained files cannot be re-parented in place,
@@ -395,28 +414,10 @@ fn reuse_cached_index(
         // changes none). Otherwise fail closed to a fresh build.
         if !includes_exact {
             trace_reuse_fallback("retained_include_view_changed");
-            drop(cached);
-            return build_cached_index_with_test_harnesses(
-                root,
-                files,
-                registrations,
-                MissAttribution::Skipped,
-            );
+            #[cfg(test)]
+            index_build_probe::record_include_rebase();
+            return fresh_build_keeping_run_stats(cached, root, files, registrations, same_run);
         }
-        cached.file_fact_cache.hits += stats.hits;
-        cached.file_fact_cache.misses += stats.misses;
-        cached.file_fact_cache.corrupt_ignored += stats.corrupt_ignored;
-        cached.file_fact_cache.stores += stats.stores;
-        cached.file_fact_cache.store_errors += stats.store_errors;
-        cached
-            .file_fact_cache
-            .invalidated_files
-            .extend(stats.invalidated_files);
-        cached
-            .file_fact_cache
-            .store_failures
-            .extend(stats.store_failures);
-        cached.file_fact_cache.store_failures_dropped += stats.store_failures_dropped;
         // An added file that makes module composition unknowable (lexical
         // fallback emits no `mod` declarations; an unknown `#[path]` target
         // may compile any file) flips workspace-wide `outside_module_tree`
@@ -433,13 +434,7 @@ fn reuse_cached_index(
         });
         if unknowable {
             trace_reuse_fallback("unknowable_module_composition");
-            drop(cached);
-            return build_cached_index_with_test_harnesses(
-                root,
-                files,
-                registrations,
-                MissAttribution::Skipped,
-            );
+            return fresh_build_keeping_run_stats(cached, root, files, registrations, same_run);
         }
     }
     let mut hash = crate::analysis::seam_cache::FilesContentHashBuilder::new();
@@ -457,15 +452,38 @@ fn reuse_cached_index(
     });
     if revived {
         trace_reuse_fallback("withheld_tests_revived");
-        drop(processed);
-        return build_cached_index_with_test_harnesses(
-            root,
-            files,
-            registrations,
-            MissAttribution::Skipped,
-        );
+        #[cfg(test)]
+        index_build_probe::record_include_rebase();
+        return fresh_build_keeping_run_stats(processed, root, files, registrations, same_run);
     }
     Ok(processed)
+}
+
+/// Fresh build over exactly `files` after a reuse that cannot be extended in
+/// place. The discarded same-run core keeps its analysis facts out of the
+/// result, but the file-fact cache work it already did (lookups, stores and
+/// store failures) is real and stays in the receipt (#4975).
+fn fresh_build_keeping_run_stats(
+    cached: build::CachedRustIndex,
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    registrations: &[TestHarnessRegistration],
+    same_run: bool,
+) -> Result<build::CachedRustIndex, String> {
+    let prior = same_run.then(|| cached.file_fact_cache.clone());
+    drop(cached);
+    let mut fresh = build_cached_index_with_test_harnesses(
+        root,
+        files,
+        registrations,
+        MissAttribution::Skipped,
+    )?;
+    if let Some(mut merged) = prior {
+        // Earlier work first, so the capped store-failure rows keep run order.
+        merged.merge_from(&fresh.file_fact_cache);
+        fresh.file_fact_cache = merged;
+    }
+    Ok(fresh)
 }
 
 fn build_cached_index_with_test_harnesses(
@@ -588,6 +606,7 @@ pub(crate) use test_styles::attributes_define_test;
 
 // Keep compilation-unit rebasing available at the facts facade for index consumers.
 pub(crate) use includes::compilation_unit_path_from_parents;
+pub(crate) use includes::literal_include_fragments;
 pub use index::{FactSlice, FileData, FileFactsView};
 pub(crate) use local_test_alias::imported_test_alias_crate;
 #[cfg(test)]
