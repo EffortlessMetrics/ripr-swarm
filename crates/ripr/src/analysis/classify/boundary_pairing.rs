@@ -1451,6 +1451,17 @@ fn pairing_argument_values(
     if argument_is_direct_pairing_shape(trimmed) {
         return owner_argument_values(test, trimmed);
     }
+    // A parenthesized whole literal is that literal: a `#[test_case(10 =>
+    // 90)]` row's synthesized comparison writes its argument as `(10)` so a
+    // negated literal keeps its sign (RIPR-SPEC-0231).
+    if let Some(inner) = trimmed
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+        .map(str::trim)
+        .filter(|inner| argument_is_whole_scalar_literal(inner))
+    {
+        return owner_argument_values(test, inner);
+    }
     // RIPR-SPEC-0158 #21: arithmetic over the test's own literal bindings is
     // the whole argument's value, exactly as the literal it computes would be.
     super::argument_fold::folded_argument(&test.body, trimmed, scope)

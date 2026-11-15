@@ -1339,3 +1339,119 @@ fn same_file_tests_share_interned_field_assignment_keys() {
         "repeated field-assignment keys in one file must share interned object and field names"
     );
 }
+
+fn test_case_crate_test(body: &str, attrs: &[&str]) -> TestSummary {
+    TestSummary {
+        name: "prices".to_string(),
+        file: std::path::PathBuf::from("tests/t.rs"),
+        start_line: 1,
+        end_line: 1,
+        body: body.into(),
+        calls: crate::analysis::facts::SharedFactSlice::empty(),
+        assertions: Vec::new(),
+        literals: crate::analysis::facts::SharedFactSlice::empty(),
+        attrs: attrs
+            .iter()
+            .map(|attr| (*attr).to_string())
+            .collect::<Vec<_>>()
+            .into(),
+        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+        generated: None,
+    }
+}
+
+#[test]
+fn test_case_rows_bind_every_parameter_positionally() {
+    // #6641: `test_case` fills every parameter from the row, so the row's
+    // input reaches the owner call as an rstest `#[case]` value does.
+    let body = "fn prices(q: u32, expected: u32) { assert_eq!(price(q), expected); }";
+    for attrs in [
+        &["#[test_case(10, 90)]", "#[test_case(3, 30)]"][..],
+        &["#[test_case::test_case(10, 90)]", "#[test_case(3, 30)]"][..],
+        &[
+            "#[::test_case::test_case(10, 90 ; \"ten\")]",
+            "#[test_case(3, 30)]",
+        ][..],
+    ] {
+        let test = test_case_crate_test(body, attrs);
+        assert_eq!(
+            test_case_bound_literals(&test, "q"),
+            vec!["10", "3"],
+            "{attrs:?}"
+        );
+        assert_eq!(
+            test_case_bound_literals(&test, "expected"),
+            vec!["90", "30"],
+            "{attrs:?}"
+        );
+    }
+}
+
+#[test]
+fn test_case_arrow_rows_bind_only_the_arguments_before_the_arrow() {
+    let test = test_case_crate_test(
+        "fn prices(q: u32) -> u32 { price(q) }",
+        &[
+            "#[test_case(10 => 90)]",
+            "#[test_case(3 => 30 ; \"three\")]",
+        ],
+    );
+    assert_eq!(test_case_bound_literals(&test, "q"), vec!["10", "3"]);
+}
+
+#[test]
+fn test_case_rows_that_cannot_run_or_align_bind_nothing() {
+    let body = "fn prices(q: u32, expected: u32) { assert_eq!(price(q), expected); }";
+    // An ignored row never runs its inputs; a row whose cell count differs
+    // from the parameters cannot be aligned. Each unreadable row is dropped
+    // on its own: the readable row still binds.
+    for attr in [
+        "#[test_case(10, 90 => ignore)]",
+        "#[test_case(10, 90 ; \"ignore ten\")]",
+        "#[test_case(10, 90 ; \"inconclusive\")]",
+        "#[test_case(10)]",
+        "#[test_case(10, 90, 1)]",
+        // Only a plain literal expectation keeps the body's checks meaning
+        // what they say: `panics` passes when they fail, and the others hand
+        // the result to other code.
+        "#[test_case(10, 0 => panics)]",
+        "#[test_case(10, 0 => panics \"overflow\")]",
+        "#[test_case(10, 90 => matches Some(_))]",
+        "#[test_case(10, 90 => with |v: ()| v)]",
+        "#[test_case(10, 90 => using check)]",
+        "#[test_case(10, 90 => it eq(90))]",
+    ] {
+        let test = test_case_crate_test(body, &[attr, "#[test_case(3, 30)]"]);
+        assert_eq!(test_case_bound_literals(&test, "q"), vec!["3"], "{attr}");
+    }
+    // A string cell holding a comma, `=>` or `;` is one cell.
+    let test = test_case_crate_test(
+        "fn prices(label: &str, q: u32) { assert_eq!(price(q), 90); }",
+        &["#[test_case(\"a,b => c; d\", 10)]", "#[test_case(',', 3)]"],
+    );
+    assert_eq!(test_case_bound_literals(&test, "q"), vec!["10", "3"]);
+}
+
+#[test]
+fn test_case_rows_beside_rstest_rows_or_a_rebinding_bind_nothing() {
+    let body = "fn prices(q: u32, expected: u32) { assert_eq!(price(q), expected); }";
+    let test = test_case_crate_test(body, &["#[rstest]", "#[test_case(10, 90)]"]);
+    assert!(test_case_bound_literals(&test, "q").is_empty());
+    let test = test_case_crate_test(body, &["#[case(10, 90)]", "#[test_case(10, 90)]"]);
+    assert!(test_case_bound_literals(&test, "q").is_empty());
+    let test = test_case_crate_test(
+        "fn prices(q: u32, expected: u32) { let q = 3; assert_eq!(price(q), expected); }",
+        &["#[test_case(10, 90)]"],
+    );
+    assert!(test_case_bound_literals(&test, "q").is_empty());
+    // A `#[should_panic]` function passes when its checks fail; an
+    // `#[ignore]` one does not run.
+    for attr in ["#[should_panic]", "#[ignore]"] {
+        let test = test_case_crate_test(body, &["#[test_case(10, 90)]", attr]);
+        assert!(test_case_bound_literals(&test, "q").is_empty(), "{attr}");
+    }
+    // Another macro named like the crate's attribute is not read.
+    let test = test_case_crate_test(body, &["#[my_test_case(10, 90)]"]);
+    assert!(test_case_bound_literals(&test, "q").is_empty());
+}

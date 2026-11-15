@@ -1682,9 +1682,18 @@ fn extract_rstest_cases(test: &TestSummary) -> (Vec<Vec<String>>, Vec<String>) {
 fn extract_rstest_case_params(test: &TestSummary) -> (Vec<Vec<String>>, Vec<FnParam>) {
     let mut cases: Vec<Vec<String>> = Vec::new();
     let mut is_rstest = false;
+    let mut test_case_rows: Vec<Vec<String>> = Vec::new();
+    let mut is_test_case = false;
     for attr in &test.attrs {
         if attr_matches_name_or_call(attr, "rstest") {
             is_rstest = true;
+            continue;
+        }
+        if let Some(args) = test_case_attr_args(attr) {
+            is_test_case = true;
+            if let Some(row) = test_case_row_inputs(args) {
+                test_case_rows.push(row);
+            }
             continue;
         }
         if let Some(args) = attr_call_args(attr, "case") {
@@ -1695,6 +1704,34 @@ fn extract_rstest_case_params(test: &TestSummary) -> (Vec<Vec<String>>, Vec<FnPa
             // Split on top-level commas.
             cases.push(split_top_level(args));
         }
+    }
+    if is_test_case {
+        // A function that mixes `test_case` rows with rstest rows has no
+        // single binding rule, so it binds nothing.
+        if is_rstest || !cases.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+        // A `#[should_panic]` function passes when its checks fail, and an
+        // `#[ignore]` one does not run: no row input reaches a check.
+        if test.attrs.iter().any(|attr| {
+            let attr = attr.trim_start();
+            attr.starts_with("#[should_panic") || attr.starts_with("#[ignore")
+        }) {
+            return (Vec::new(), Vec::new());
+        }
+        // `test_case` fills every parameter from the row, positionally; a
+        // row whose cell count differs from the parameter count cannot be
+        // aligned and binds nothing (the readable rows still do, since each
+        // row is its own generated test).
+        let params = extract_fn_params(&test.body);
+        let rows = test_case_rows
+            .into_iter()
+            .filter(|row| row.len() == params.len())
+            .collect::<Vec<_>>();
+        if rows.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+        return (rows, params);
     }
     if !is_rstest && cases.is_empty() {
         return (Vec::new(), Vec::new());
@@ -1776,6 +1813,109 @@ pub(crate) fn test_case_bound_literals(test: &TestSummary, ident: &str) -> Vec<S
         .iter()
         .filter_map(|case| case.get(position).map(|value| value.trim().to_string()))
         .collect()
+}
+
+/// The argument text of a `#[test_case(..)]` row from the `test_case` crate,
+/// spelled `test_case`, `test_case::test_case` or `::test_case::test_case`.
+fn test_case_attr_args(attr: &str) -> Option<&str> {
+    let inner = attr_inner(attr)?;
+    let open = inner.find('(')?;
+    let path = inner[..open]
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    let path = path.strip_prefix("::").unwrap_or(&path);
+    if path != "test_case" && path != "test_case::test_case" {
+        return None;
+    }
+    inner[open + 1..].strip_suffix(')').map(str::trim)
+}
+
+/// The input cells of one `test_case` row: the comma-separated arguments
+/// before its top-level `=> expectation` or `; "name"` suffix. `None` when the
+/// row is unbalanced, has no arguments, its expectation or name marks the
+/// generated test ignored (`=> ignore ..`, `inconclusive`), since an ignored
+/// row's inputs never run, or its expectation is anything but one plain
+/// literal (`=> panics`, `matches`, `with`, `using`, `it`). Commas, `=>` and `;` inside strings, chars or
+/// brackets do not split.
+fn test_case_row_inputs(args: &str) -> Option<Vec<String>> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut previous = '\0';
+    let mut cells = Vec::new();
+    let mut start = 0usize;
+    let mut end = args.len();
+    for (at, character) in args.char_indices() {
+        if let Some(open) = quote {
+            if character == open && previous != '\\' {
+                quote = None;
+            }
+            previous = if previous == '\\' { '\0' } else { character };
+            continue;
+        }
+        match character {
+            '"' | '\'' => quote = Some(character),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                cells.push(args[start..at].trim().to_string());
+                start = at + 1;
+            }
+            '>' if depth == 0 && previous == '=' => {
+                end = at - 1;
+                break;
+            }
+            ';' if depth == 0 => {
+                end = at;
+                break;
+            }
+            _ => {}
+        }
+        previous = character;
+    }
+    if quote.is_some() {
+        return None;
+    }
+    let suffix = &args[end..];
+    if suffix
+        .split(|character: char| !(character.is_alphanumeric() || character == '_'))
+        .any(|word| word == "ignore" || word == "inconclusive")
+    {
+        return None;
+    }
+    // Only a plain `=> literal` expectation keeps the body's own checks
+    // meaning what they say. `=> panics` passes exactly when the body fails,
+    // and `matches`/`with`/`using`/`it` hand the result to other code, so
+    // such a row binds nothing.
+    if let Some(expectation) = suffix.strip_prefix("=>") {
+        let expectation = expectation
+            .rsplit_once(';')
+            .map_or(expectation, |(before, _)| before)
+            .trim();
+        if !is_plain_row_expectation(expectation) {
+            return None;
+        }
+    }
+    cells.push(args[start..end].trim().to_string());
+    if cells.iter().any(String::is_empty) {
+        return None;
+    }
+    Some(cells)
+}
+
+/// A `test_case` expectation that is one plain literal: a boolean, a number
+/// (optionally negated, with a suffix) or a string with no quote or escape.
+fn is_plain_row_expectation(text: &str) -> bool {
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    let number = digits.chars().next().is_some_and(|c| c.is_ascii_digit())
+        && digits
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.');
+    let quoted = text.len() >= 2
+        && text.starts_with('"')
+        && text.ends_with('"')
+        && !text[1..text.len() - 1].contains(['"', '\\']);
+    number || quoted || text == "true" || text == "false"
 }
 
 fn attr_matches_name_or_call(attr: &str, name: &str) -> bool {

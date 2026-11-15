@@ -4939,8 +4939,10 @@ fn test_case_leaf_bound(module: &SyntaxNode) -> bool {
 /// immutable binding, and every row holds exactly one scalar literal per
 /// parameter. The `=> literal` form (RIPR-SPEC-0231 rule 9, a generated
 /// comparison the fact producer reads as `assert_eq!`) is admitted when the
-/// body is one returned expression; `matches`/`with` forms, other `=>`
-/// shapes, string or computed values (which could call the owner) all refuse.
+/// body is one returned expression. A trailing `; "name"` only names the
+/// generated test and is admitted unless the name could mark it ignored;
+/// `matches`/`with` forms, other `=>` shapes, string or computed values
+/// (which could call the owner) all refuse.
 fn test_case_runs_body(attr: &ast::Attr, test: &SyntaxNode, module: &SyntaxNode) -> bool {
     if attr.excl_token().is_some() {
         return false;
@@ -5148,6 +5150,25 @@ fn case_row_literals(attr: &ast::Attr, arrow: bool) -> Option<usize> {
     let inner = match arrow_at {
         Some(at) if arrow => &inner[..at],
         Some(_) => return None,
+        None => inner,
+    };
+    // A `; "name"` suffix only names the generated test. A name holding
+    // `ignore` or `inconclusive` could mark it ignored, so it refuses, as
+    // does any other suffix shape.
+    let inner = match inner.iter().position(|token| token.text() == ";") {
+        Some(at) => {
+            let [name] = &inner[at + 1..] else {
+                return None;
+            };
+            let text = name.text();
+            if name.kind() != ra_ap_syntax::SyntaxKind::STRING
+                || text.contains("ignore")
+                || text.contains("inconclusive")
+            {
+                return None;
+            }
+            &inner[..at]
+        }
         None => inner,
     };
     let mut count = 0;
