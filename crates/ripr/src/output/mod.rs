@@ -1,4 +1,5 @@
 pub(crate) mod agent_brief;
+pub(crate) mod agent_card;
 pub(crate) mod agent_receipt;
 #[path = "agent_seam_packets_live.rs"]
 pub(crate) mod agent_seam_packets;
@@ -11,6 +12,7 @@ pub(crate) mod badge;
 pub(crate) mod baseline;
 pub(crate) mod baseline_delta;
 pub(crate) mod baseline_update;
+pub(crate) mod check_file_fact_cache;
 pub(crate) mod ci_summary;
 pub(crate) mod compact_json;
 pub(crate) mod count_noun;
@@ -77,6 +79,7 @@ pub(crate) mod pr_inline_comment_publish_plan;
 pub(crate) mod pr_review_front_panel;
 pub(crate) mod pr_summary_comment;
 pub(crate) mod preview_actionability;
+pub(crate) mod python_env;
 pub(crate) mod python_repair_card;
 pub mod receipt_lifecycle;
 pub(crate) mod receipt_write;

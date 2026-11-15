@@ -89,6 +89,7 @@ pub(crate) fn parse_stryker_report(report: &Value) -> Result<(Vec<MutationSource
                 end_col,
                 status: status.to_string(),
                 outcome: outcome_of_status(status),
+                recorded_diff: None,
             });
         }
         parsed.sort_by(|a, b| {

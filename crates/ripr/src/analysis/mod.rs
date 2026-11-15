@@ -9,6 +9,8 @@ mod diff;
 mod diff_scope_filter;
 mod extract;
 mod facts;
+#[cfg(all(test, feature = "lang-rust"))]
+pub(crate) use facts::index_build_probe;
 mod generated_rust_corpus;
 pub(crate) use generated_rust_corpus::{
     absent_changed_rust_file_limitations, generated_rust_recovery,
@@ -38,8 +40,10 @@ pub(crate) use facts::cfg_predicates::attribute_is_plain_test_gate;
 // refreshes; one-shot commands leave this off.
 pub(crate) use facts::enable_process_fact_memo;
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
+pub(crate) use pipeline::is_rust_excluded_by_config_detail;
 pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+    diff_changed_python_line_limit, diff_changed_typescript_line_limit,
 };
 /// Honest seam-count reports for repo-scope inventory progress (#8643).
 /// Installed by the app progress owner for the duration of one walk; the
@@ -87,6 +91,7 @@ pub use diff_scope_filter::DiffScopeFilter;
 /// analysis tree and name the type through inference.
 #[cfg(test)]
 pub(crate) use diff::LoadedDiff;
+pub(crate) use diff::bare_repository_message;
 /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
 /// owner for packet diff presentation, consumed by the product route and the
 /// xtask route alike. Neither route may rebuild its argv inline.
@@ -100,12 +105,12 @@ pub use diff::records::{
 };
 pub(crate) use diff::{
     AnalyzedRevisions, ChangedFile, HeadRefState, another_base_candidate,
-    artifact_root_gitignore_entry, artifact_root_pathspec, is_shallow_repository, load_diff,
-    load_diff_core, load_diff_range_with_deadline_and_git_stdout_limit_core,
-    load_diff_with_effective_base_core, load_worktree_diff,
-    load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
-    probe_head_ref_state, probe_working_tree_tracked_changes_within, resolve_base_commit,
-    resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
+    artifact_root_gitignore_entry, artifact_root_pathspec, base_is_checked_out_head_with_parent,
+    default_base_unresolved_message, is_shallow_repository, load_diff, load_diff_core,
+    load_diff_range_with_deadline_and_git_stdout_limit_core, load_diff_with_effective_base_core,
+    load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
+    parse_unified_diff, probe_head_ref_state, probe_working_tree_tracked_changes_within,
+    resolve_base_commit, resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
     untrack_artifacts_command, working_tree_has_tracked_changes,
     working_tree_has_uncommitted_changes,
 };
@@ -119,9 +124,9 @@ pub(crate) use facts::cfg_predicates;
 pub(crate) use facts::validated_file_wide_harness_targets;
 pub(crate) use generated_rust_corpus::{CorpusPayloadSize, analyzable_corpus_payload_size};
 pub(crate) use language::{
-    DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS,
-    TsJsSourceKind, is_diff_scope_oversized, is_generated_rust_file_with_patterns,
-    is_ts_js_source_extension, route, ts_js_source_kind,
+    DIFF_CHANGED_RUST_LINE_LIMIT_ENV, DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS,
+    TYPESCRIPT_SOURCE_EXTENSIONS, TsJsSourceKind, is_diff_scope_oversized,
+    is_generated_rust_file_with_patterns, is_ts_js_source_extension, route, ts_js_source_kind,
 };
 #[cfg(all(test, feature = "lang-perl"))]
 pub(crate) use language::{
@@ -129,18 +134,22 @@ pub(crate) use language::{
     with_concrete_discriminator,
 };
 pub use language::{
-    PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
-    PartialDiffStopReason,
+    OverLimitFile, PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION,
+    PartialDiffScope, PartialDiffStopReason,
 };
 #[cfg(all(test, feature = "lang-python"))]
-pub(crate) use language::{python_direct_and_advisory_finding, python_miss_matrix_findings};
+pub(crate) use language::{
+    python_direct_and_advisory_finding, python_miss_matrix_findings,
+    python_module_fstring_reader_finding, python_module_reader_assertion_parses,
+    python_module_string_reader_finding, python_module_value_without_import_identity,
+};
 pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
     normalize_rust_expression, sanitize_path,
 };
-pub(crate) use rust_index::DeclinedRustFile;
+pub(crate) use rust_index::{DeclinedRustFile, IndexDisclosureRun, RustIndex};
 #[cfg(test)]
-pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
+pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustSyntaxAdapter};
 /// Parser-backed related-test retention fixture for consumer tests (#9175);
 /// a narrow cfg(test) entry so output tests need no analysis internals.
 #[cfg(test)]
@@ -182,13 +191,17 @@ pub(crate) use seam_inventory::{
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_with_optional_prepared,
-    inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config,
+    inventory_file_guidance_at_with_config, inventory_pilot_seams_report_at_with_config,
+    inventory_seams_at_with_config, locate_seam_file_at_with_config,
     prepare_diff_scoped_classified_workspace, probe_family_for_seam_kind, repo_exposure_seam_limit,
     scoped_file_seams, seam_kind_for_probe_family,
     workspace_cache_key_and_production_files_at_with_config, workspace_cache_key_at_with_config,
 };
 pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
-pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
+#[cfg(test)]
+pub(crate) use seam_inventory::{SEAM_FILE_LOCATIONS, WORKSPACE_CLASSIFIED_INVENTORIES};
+pub(crate) use seam_inventory::{file_fact_cache_receipt, file_fact_store_failure_summary};
+pub(crate) use seams::{RepoSeam, RequiredDiscriminator, match_arm_seam_result};
 pub(crate) use syntax::fn_signature::{
     owner_call_shape_at_line, owner_fn_line_span, rust_source_parses_cleanly,
 };
@@ -1341,15 +1354,21 @@ pub(crate) fn changed_line_ownership_for_lines(
     })
 }
 
-/// Largest run of attribute lines above a `fn` token still read as that
-/// function's declaration.
-const MAX_ATTRIBUTE_RUN_LINES: usize = 16;
+/// Longest attribute/comment prefix above a `fn` token that is walked before
+/// the edit is treated as unattributable.
+const MAX_ATTRIBUTE_PREFIX_LINES: usize = 256;
 
-/// Headers of functions and tests whose attribute block holds `line`: an
-/// indexed start line is the `fn` token, so adding `#[test]` above an
+/// Headers of functions and tests whose attribute prefix holds `line`: an
+/// indexed start line is the `fn` token, so editing `#[test]` (or any
+/// attribute, including an argument line of a multi-line attribute) above an
 /// existing function edits that test without touching its span (#12940
-/// review). Every line from `line` up to the `fn` line must be an attribute,
-/// a comment, or blank; a multi-line attribute argument is not followed.
+/// review). The prefix is walked upward from the next item's `fn` line,
+/// tracking `[`/`]` depth, across blank lines, comments, and attributes.
+///
+/// When the walk cannot decide (unbalanced brackets, or a prefix longer
+/// than [`MAX_ATTRIBUTE_PREFIX_LINES`]), every test header in the file is
+/// returned, so an unattributable edit reads as "possibly edited" rather
+/// than "not edited" and second-stage pruning stays conservative.
 fn attribute_edited_headers(
     index: &rust_index::RustIndex,
     file: &Path,
@@ -1358,29 +1377,95 @@ fn attribute_edited_headers(
     let Some(facts) = rust_index::find_file_facts(index, file) else {
         return Vec::new();
     };
-    let source_lines = facts.source.lines().collect::<Vec<_>>();
-    let attribute_like = |number: usize| {
-        number
-            .checked_sub(1)
-            .and_then(|position| source_lines.get(position))
-            .is_some_and(|text| {
-                let text = text.trim_start();
-                text.is_empty() || text.starts_with("#[") || text.starts_with("//")
-            })
-    };
-    facts
+    let starts = facts
         .functions
         .iter()
         .map(|function| function.start_line)
         .chain(facts.tests.iter().map(|test| test.start_line))
-        .filter(|start| {
-            *start > line
-                && start - line <= MAX_ATTRIBUTE_RUN_LINES
-                && attribute_like(line)
-                && (line..*start).all(attribute_like)
-        })
-        .map(|start| (file.to_path_buf(), start))
-        .collect()
+        .collect::<BTreeSet<_>>();
+    let Some(next_start) = starts.range(line + 1..).next().copied() else {
+        return Vec::new();
+    };
+    let source_lines = facts.source.lines().collect::<Vec<_>>();
+    let every_test_header = || {
+        facts
+            .tests
+            .iter()
+            .map(|test| (file.to_path_buf(), test.start_line))
+            .collect::<Vec<_>>()
+    };
+    if next_start - line > MAX_ATTRIBUTE_PREFIX_LINES {
+        // Walk only the bounded prefix; still inside it at the cap means the
+        // edit cannot be placed, so stay conservative.
+        let mut depth: i64 = 0;
+        for number in (next_start - MAX_ATTRIBUTE_PREFIX_LINES..next_start).rev() {
+            let trimmed = source_lines.get(number - 1).map_or("", |text| text.trim());
+            if depth == 0 && !attribute_prefix_line(trimmed) {
+                return Vec::new();
+            }
+            depth += bracket_balance(trimmed);
+        }
+        return every_test_header();
+    }
+    let mut depth: i64 = 0;
+    for number in (line..next_start).rev() {
+        let Some(text) = number
+            .checked_sub(1)
+            .and_then(|position| source_lines.get(position))
+        else {
+            return every_test_header();
+        };
+        let trimmed = text.trim();
+        if depth == 0 && !attribute_prefix_line(trimmed) {
+            // `line` sits above the item's attribute prefix.
+            return Vec::new();
+        }
+        depth += bracket_balance(trimmed);
+        if depth < 0 {
+            return every_test_header();
+        }
+    }
+    if depth != 0 {
+        // `line` is inside an attribute whose opening line lies above it.
+        let mut probe_depth = depth;
+        for number in (1..line).rev().take(MAX_ATTRIBUTE_PREFIX_LINES) {
+            let Some(text) = source_lines.get(number - 1) else {
+                break;
+            };
+            let trimmed = text.trim();
+            probe_depth += bracket_balance(trimmed);
+            if probe_depth == 0 && trimmed.starts_with("#[") {
+                return vec![(file.to_path_buf(), next_start)];
+            }
+            if probe_depth < 0 {
+                break;
+            }
+        }
+        return every_test_header();
+    }
+    vec![(file.to_path_buf(), next_start)]
+}
+
+/// A line that can sit, at bracket depth zero, in an item's attribute
+/// prefix: blank, a comment, an attribute opener, or a line closing a
+/// bracket (an attribute closer, possibly with a trailing comment). Reading a
+/// non-attribute line with `]` as prefix only over-credits a test as edited,
+/// which keeps pruning conservative.
+fn attribute_prefix_line(trimmed: &str) -> bool {
+    trimmed.is_empty()
+        || trimmed.starts_with("//")
+        || trimmed.starts_with("#[")
+        || trimmed.contains(']')
+}
+
+/// `]` minus `[` on one line (comments count as zero), read upward.
+fn bracket_balance(trimmed: &str) -> i64 {
+    if trimmed.starts_with("//") {
+        return 0;
+    }
+    let closes = trimmed.matches(']').count();
+    let opens = trimmed.matches('[').count();
+    i64::try_from(closes).unwrap_or(i64::MAX) - i64::try_from(opens).unwrap_or(i64::MAX)
 }
 
 /// #11400: the returned expressions a changed `const` reaches, as
@@ -1543,6 +1628,121 @@ mod tests {
             decode_stable_path_text("pricing_%25FF.rs"),
             decode_stable_path_text("pricing_%FF.rs")
         );
+    }
+
+    fn path_text_config() -> proptest::test_runner::Config {
+        proptest::test_runner::Config {
+            cases: std::env::var("PROPTEST_CASES")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(256),
+            failure_persistence: None,
+            ..proptest::test_runner::Config::default()
+        }
+    }
+
+    #[cfg(unix)]
+    fn native_path(bytes: Vec<u8>) -> PathBuf {
+        use std::os::unix::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_vec(bytes))
+    }
+
+    /// #13949: every `%` the encoder emits starts a `%XX` spelling with
+    /// uppercase hex, the only spelling the decoder reads back.
+    fn percent_spellings_are_canonical(encoded: &str) -> bool {
+        let upper_hex = |byte: &u8| matches!(byte, b'0'..=b'9' | b'A'..=b'F');
+        let bytes = encoded.as_bytes();
+        bytes.iter().enumerate().all(|(at, byte)| {
+            *byte != b'%'
+                || matches!(
+                    bytes.get(at + 1..at + 3),
+                    Some([high, low]) if upper_hex(high) && upper_hex(low)
+                )
+        })
+    }
+
+    /// A small alphabet that keeps the percent layer's hazards in play: `%`,
+    /// hex digits of both cases, separators, a backslash, invalid and
+    /// multi-byte UTF-8 lead bytes, and plain text.
+    #[cfg(unix)]
+    fn hazard_bytes() -> impl proptest::strategy::Strategy<Value = Vec<u8>> {
+        proptest::collection::vec(
+            proptest::sample::select(vec![
+                b'%', b'5', b'C', b'2', b'A', b'F', b'f', b'c', b'8', b'0', b'\\', b'/', b'a',
+                0x80, 0xC3, 0xA9, 0xFF,
+            ]),
+            0..16,
+        )
+    }
+
+    proptest::proptest! {
+        #![proptest_config(path_text_config())]
+
+        /// #13949: the display form round-trips every path without a
+        /// backslash (which display normalization folds into `/` by design,
+        /// see `stable_source_path_text_preserves_literal_backslashes_before_display`),
+        /// whatever percent signs, hex digits, spaces or non-ASCII text it
+        /// carries. The comparison is on the exact OS string, so a decoder
+        /// that normalized repeated or trailing separators would fail.
+        #[test]
+        fn proptest_stable_path_text_round_trips_paths_without_backslashes(
+            text in "[%0-9A-Fa-f/ a-z\u{e9}]{0,24}"
+        ) {
+            let path = PathBuf::from(&text);
+            let encoded = stable_path_text(&path);
+            proptest::prop_assert!(percent_spellings_are_canonical(&encoded));
+            let decoded = decode_stable_path_text(&encoded);
+            proptest::prop_assert_eq!(decoded.as_os_str(), path.as_os_str());
+        }
+    }
+
+    #[cfg(unix)]
+    proptest::proptest! {
+        #![proptest_config(path_text_config())]
+
+        /// #13949: on Unix the source-identity encoding round-trips native
+        /// bytes exactly over a small hazard alphabet (see `hazard_bytes`):
+        /// invalid UTF-8, valid multi-byte sequences, backslashes and literal
+        /// `%XX` spellings that resemble the encoder's own escapes. It does
+        /// not sample the whole byte range.
+        #[test]
+        fn proptest_stable_source_path_text_round_trips_hazard_bytes(
+            bytes in hazard_bytes()
+        ) {
+            let path = native_path(bytes);
+            let encoded = stable_source_path_text(&path);
+            proptest::prop_assert!(percent_spellings_are_canonical(&encoded));
+            let decoded = decode_stable_path_text(&encoded);
+            proptest::prop_assert_eq!(decoded.as_os_str(), path.as_os_str());
+        }
+
+        /// #13949: distinct native paths never share a source-identity
+        /// spelling, so a literal `%80` or `%5C` cannot merge with an invalid
+        /// byte or a backslash. The second path is a one-edit mutation of the
+        /// first, so near-collisions are the common case.
+        #[test]
+        fn proptest_stable_source_path_text_is_injective(
+            left in hazard_bytes(),
+            edit in proptest::sample::select(vec![0u8, 1, 2]),
+            at in 0usize..16,
+            replacement in proptest::sample::select(vec![b'%', b'5', b'C', b'8', b'0', b'\\', 0x80, 0xFF]),
+        ) {
+            let mut right = left.clone();
+            let at = at.min(right.len());
+            match edit {
+                0 if at < right.len() => right[at] = replacement,
+                1 => right.insert(at, replacement),
+                _ if at < right.len() => {
+                    right.remove(at);
+                }
+                _ => {}
+            }
+            proptest::prop_assume!(left != right);
+            proptest::prop_assert_ne!(
+                stable_source_path_text(&native_path(left)),
+                stable_source_path_text(&native_path(right))
+            );
+        }
     }
 
     /// #5996: one finding, one location string. The verbatim-root MCP form
@@ -2016,6 +2216,88 @@ pub fn unrelated() -> i32 {
             vec![(PathBuf::from("src/lib.rs"), 11)],
             "only the test under the added attribute is edited"
         );
+        Ok(())
+    }
+
+    fn edited_headers_for(
+        label: &str,
+        source: &str,
+        line: usize,
+    ) -> Result<Vec<(PathBuf, usize)>, String> {
+        let root = temp_dir(label);
+        fs::create_dir_all(root.join("src"))
+            .map_err(|e| format!("failed to create src dir: {e}"))?;
+        fs::write(root.join("src/lib.rs"), source)
+            .map_err(|e| format!("failed to write src/lib.rs: {e}"))?;
+        let ownership =
+            changed_line_ownership_for_lines(&root, &[(PathBuf::from("src/lib.rs"), line)]);
+        fs::remove_dir_all(&root).map_err(|e| format!("failed to remove temp dir: {e}"))?;
+        Ok(ownership?.edited_function_headers)
+    }
+
+    const MULTILINE_ATTRIBUTE_TESTS: &str = "pub fn one() -> i32 {\n    1\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[cfg(all(\n        unix,\n        feature = \"x\"\n    ))] // gated\n    #[test]\n    fn gated() {\n        assert_eq!(one(), 1);\n    }\n\n    #[test]\n    fn neighbor() {\n        assert_eq!(one(), 1);\n    }\n}\n";
+
+    #[test]
+    fn edited_headers_name_a_test_whose_multiline_attribute_argument_changed() -> Result<(), String>
+    {
+        // #12940 review: editing only `feature = "x"` inside a multi-line
+        // `#[cfg(all(...))]` above `#[test] fn gated` (line 14) edits that
+        // test; the untouched neighbor (line 19) stays unattributed.
+        for line in [9, 11, 12, 13] {
+            let headers = edited_headers_for(
+                "edited_multiline_attribute",
+                MULTILINE_ATTRIBUTE_TESTS,
+                line,
+            )?;
+            assert_eq!(
+                headers,
+                vec![(PathBuf::from("src/lib.rs"), 14)],
+                "line {line} of the attribute prefix edits only `gated`"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_follow_an_attribute_prefix_longer_than_sixteen_lines() -> Result<(), String> {
+        let mut source = String::from("pub fn one() -> i32 {\n    1\n}\n\n");
+        // Lines 5..=24: twenty attribute lines, then `#[test]` on 25 and the
+        // `fn` token on 26.
+        for index in 0..20 {
+            source.push_str(&format!("#[doc = \"line {index}\"]\n"));
+        }
+        source.push_str("#[test]\nfn long_prefix() {\n    assert_eq!(one(), 1);\n}\n");
+        let headers = edited_headers_for("edited_long_attribute_prefix", &source, 5)?;
+        assert_eq!(headers, vec![(PathBuf::from("src/lib.rs"), 26)]);
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_credit_every_test_when_the_attribute_cannot_be_placed() -> Result<(), String>
+    {
+        // An edited, unbalanced `]]` (line 10) above `#[test] fn second`
+        // (line 12) cannot be matched to an opener, so the edit stays
+        // "possibly any test in this file" instead of "none".
+        let source = "pub fn one() -> i32 {\n    1\n}\n\n#[test]\nfn first() {\n    assert_eq!(one(), 1);\n}\n\n]]\n#[test]\nfn second() {\n    assert_eq!(one(), 1);\n}\n";
+        let headers = edited_headers_for("edited_unplaceable_attribute", source, 10)?;
+        assert_eq!(
+            headers,
+            vec![
+                (PathBuf::from("src/lib.rs"), 6),
+                (PathBuf::from("src/lib.rs"), 12)
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_do_not_credit_a_test_below_module_code() -> Result<(), String> {
+        // A changed `const` above `#[test] fn` is module code, not the test's
+        // attribute prefix.
+        let source =
+            "pub const LIMIT: usize = 3;\n#[test]\nfn below() {\n    assert_eq!(LIMIT, 3);\n}\n";
+        let headers = edited_headers_for("edited_module_code_above_test", source, 1)?;
+        assert!(headers.is_empty(), "module code edits no test: {headers:?}");
         Ok(())
     }
 

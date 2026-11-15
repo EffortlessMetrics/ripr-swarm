@@ -182,7 +182,8 @@ pub use ripr_contract::domain::verify_command_is_unbounded_repo_exposure_snapsho
 pub(crate) use ripr_contract::domain::why_capped_line;
 pub(crate) use ripr_contract::domain::{
     CanonicalSourceRole, FactCurrentnessV1, PROJECT_FACTS_SCHEMA_VERSION, ProjectFactsV1,
-    SourceUnitFactV1, TestEnvironmentFactV1, ts_oracle_kind_matches_seam,
+    RELATED_TEST_CHANGED_IN_DIFF_PREFIX, SourceUnitFactV1, TestEnvironmentFactV1,
+    python_headline_related_test, ts_oracle_kind_matches_seam,
     typescript_script_preview_related_test,
 };
 

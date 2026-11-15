@@ -33,8 +33,8 @@ use value_contradiction::{
     exact_value_assertion_verdict_for_test,
 };
 pub(in crate::analysis) use value_contradiction::{
-    InvisibilityReason, PointerReturnChange, change_is_invisible_to_every_assertion,
-    fold_owner_body_at,
+    InvisibilityReason, PointerReturnChange, RangeChangeVisibility,
+    change_is_invisible_to_every_assertion, fold_owner_body_at, range_change_visibility,
 };
 
 pub(crate) use related_tests::CompactGripContext;
@@ -55,7 +55,7 @@ use super::classify::{
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
-use super::resource_cost::trace_latency_phase;
+use super::resource_cost::{duration_percentiles, latency_trace_enabled, trace_latency_phase};
 use super::rust_index::{
     self, FunctionSummary, OracleFact, RustIndex, TestSummary, extract_call_facts,
     extract_identifier_tokens,
@@ -399,6 +399,146 @@ struct IncompleteScope {
     files: BTreeSet<PathBuf>,
 }
 
+/// One seam's measured cost in an [`EvidencePass::evidence_for`] call
+/// (#9575). Records are observation only: nothing reads them back into
+/// evidence, scheduling, memoization, or ordering, so findings are
+/// identical whether the trace is collected or not.
+#[derive(Clone)]
+struct SeamCostRecord {
+    seam_id: String,
+    duration: Duration,
+    worker: Option<usize>,
+}
+
+/// Seam identities named in the last-window trace line (#9575).
+const LAST_WINDOW_SEAMS: usize = 16;
+
+/// Completion-ordered per-seam costs for one evidence call. Workers push
+/// after computing their seam, so push order approximates completion
+/// order and the tail of the vector is the straggler window.
+#[derive(Default)]
+struct SeamCostTrace {
+    records: std::sync::Mutex<Vec<SeamCostRecord>>,
+}
+
+impl SeamCostTrace {
+    fn record(&self, seam_id: &str, duration: Duration, worker: Option<usize>) {
+        if let Ok(mut records) = self.records.lock() {
+            records.push(SeamCostRecord {
+                seam_id: seam_id.to_owned(),
+                duration,
+                worker,
+            });
+        }
+    }
+
+    fn records(&self) -> Vec<SeamCostRecord> {
+        self.records
+            .lock()
+            .map(|records| records.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// Per-worker seam counts and busy time, busiest first (#9575).
+fn worker_occupancy(records: &[SeamCostRecord]) -> Vec<(Option<usize>, usize, Duration)> {
+    let mut by_worker: BTreeMap<Option<usize>, (usize, Duration)> = BTreeMap::new();
+    for record in records {
+        let entry = by_worker.entry(record.worker).or_default();
+        entry.0 += 1;
+        entry.1 += record.duration;
+    }
+    let mut rows: Vec<(Option<usize>, usize, Duration)> = by_worker
+        .into_iter()
+        .map(|(worker, (count, busy))| (worker, count, busy))
+        .collect();
+    rows.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+    rows
+}
+
+/// Keep a seam identity inside one trace status token.
+fn trace_token(text: &str, max_chars: usize) -> String {
+    text.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '/' | ':' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .take(max_chars)
+        .collect()
+}
+
+/// Emit the #9575 per-seam cost summary through the existing latency
+/// trace owner. One pinned cold run can then read per-seam percentiles,
+/// worker occupancy, the last-window seam identities, and the run-memo
+/// hit/miss delta without a parallel telemetry system.
+fn emit_seam_cost_trace(
+    records: &[SeamCostRecord],
+    memo_delta: crate::analysis::syntax::run_memo::MemoStats,
+    total: Duration,
+) {
+    let durations: Vec<Duration> = records.iter().map(|record| record.duration).collect();
+    if let Some(percentiles) = duration_percentiles(&durations) {
+        let slowest = records
+            .iter()
+            .max_by_key(|record| record.duration)
+            .map(|record| trace_token(&record.seam_id, 96))
+            .unwrap_or_default();
+        trace_latency_phase(
+            "evidence_seam_durations",
+            &format!(
+                "seams_{}_p50_ms_{}_p90_ms_{}_p99_ms_{}_max_ms_{}_mean_ms_{}_slowest_{slowest}",
+                percentiles.count,
+                percentiles.p50_ms,
+                percentiles.p90_ms,
+                percentiles.p99_ms,
+                percentiles.max_ms,
+                percentiles.mean_ms,
+            ),
+            total,
+        );
+    }
+    let occupancy = worker_occupancy(records);
+    let busy_total: Duration = occupancy.iter().map(|row| row.2).sum();
+    trace_latency_phase(
+        "evidence_worker_occupancy",
+        &format!(
+            "summary_workers_{}_seams_{}_busy_ms_{}",
+            occupancy.len(),
+            records.len(),
+            busy_total.as_millis(),
+        ),
+        total,
+    );
+    for (worker, count, busy) in &occupancy {
+        let label = worker.map_or_else(|| "unknown".to_string(), |index| index.to_string());
+        trace_latency_phase(
+            "evidence_worker_occupancy",
+            &format!("worker_{label}_seams_{count}_busy_ms_{}", busy.as_millis()),
+            *busy,
+        );
+    }
+    let mut window: Vec<String> = records
+        .iter()
+        .rev()
+        .take(LAST_WINDOW_SEAMS)
+        .map(|record| trace_token(&record.seam_id, 96))
+        .collect();
+    window.reverse();
+    trace_latency_phase(
+        "evidence_last_window",
+        &format!("last_{}_{}", window.len(), window.join(",")),
+        Duration::ZERO,
+    );
+    trace_latency_phase(
+        "evidence_run_memo",
+        &format!("hits_{}_misses_{}", memo_delta.hits, memo_delta.misses),
+        Duration::ZERO,
+    );
+}
+
 pub(crate) struct EvidencePass<'index> {
     context: Option<CompactGripContext<'index>>,
     /// The whole-index tables are paid once per pass, not per stage.
@@ -654,6 +794,18 @@ impl<'index> EvidencePass<'index> {
     /// could not be built. Carries the same cancellation contract as
     /// [`evidence_for_seams`].
     pub(crate) fn evidence_for(&self, seams: &[RepoSeam]) -> Vec<TestGripEvidence> {
+        self.evidence_for_traced(seams, latency_trace_enabled())
+    }
+
+    /// [`Self::evidence_for`] with explicit per-seam cost collection
+    /// (#9575). Collection only observes durations, worker indices, and
+    /// memo counters; it never feeds evidence, scheduling, or ordering,
+    /// so the returned vector is byte-identical either way.
+    fn evidence_for_traced(
+        &self,
+        seams: &[RepoSeam],
+        collect_cost_trace: bool,
+    ) -> Vec<TestGripEvidence> {
         let Some(context) = self.context.as_ref() else {
             return Vec::new();
         };
@@ -662,6 +814,10 @@ impl<'index> EvidencePass<'index> {
             return Vec::new();
         }
         let evidence_started = Instant::now();
+        let cost_trace = collect_cost_trace.then(|| Arc::new(SeamCostTrace::default()));
+        let memo_before = cost_trace
+            .as_ref()
+            .map(|_| crate::analysis::syntax::run_memo::memo_stats());
         // Seams are independent and the context's memos are keyed, so the
         // pass runs on the rayon pool. Workers inherit this thread's
         // cancellation token and committed-source overlay; a cancelled
@@ -689,17 +845,34 @@ impl<'index> EvidencePass<'index> {
             return self.incomplete_evidence(seams);
         }
         let processed = AtomicUsize::new(0);
+        // Schedule heavyweight seams first (LPT) so a single high-fanout seam
+        // does not start near the end of the pass and create a Rayon tail
+        // stall (#5363); `out` is still sorted by `seam_id` below.
+        let mut ordered_seams: Vec<&RepoSeam> = seams.iter().collect();
+        ordered_seams.sort_by(|a, b| {
+            estimated_seam_cost(b, context)
+                .cmp(&estimated_seam_cost(a, context))
+                .then_with(|| a.id().as_str().cmp(b.id().as_str()))
+        });
         // Each worker holds a run memo scope for its share of the seams, so a
         // pure per-source product (the shadow check's item-syntax scan of a
         // test body) is computed once per distinct source on that worker, not
         // once per (seam, test, oracle) ask (#13577).
-        let mut out: Vec<TestGripEvidence> = seams
+        let mut out: Vec<TestGripEvidence> = ordered_seams
             .par_iter()
-            .map_init(crate::analysis::syntax::run_memo::enter, |_scope, seam| {
+            .map_init(crate::analysis::syntax::run_memo::enter, |_scope, &seam| {
                 cancellation::with_optional_token(token.as_ref(), || {
                     crate::analysis::committed_source::with_overlay(overlay.clone(), || {
                         cancellation::checkpoint().ok()?;
+                        let seam_started = cost_trace.as_ref().map(|_| Instant::now());
                         let evidence = evidence_for_seam_with_context(seam, context);
+                        if let (Some(trace), Some(started)) = (&cost_trace, seam_started) {
+                            trace.record(
+                                seam.id().as_str(),
+                                started.elapsed(),
+                                rayon::current_thread_index(),
+                            );
+                        }
                         let processed = processed.fetch_add(1, Ordering::Relaxed) + 1;
                         if processed.is_multiple_of(EVIDENCE_PROGRESS_CHUNK)
                             || processed == seams.len()
@@ -730,6 +903,10 @@ impl<'index> EvidencePass<'index> {
             // #5341: a cancelled pass must not leave provisional shared-grip
             // records pinned on the generation-local pool.
             context.clear_window_memos();
+        }
+        if let (Some(trace), Some(before)) = (&cost_trace, memo_before) {
+            let memo_delta = crate::analysis::syntax::run_memo::memo_stats().since(before);
+            emit_seam_cost_trace(&trace.records(), memo_delta, evidence_started.elapsed());
         }
         out
     }
@@ -863,13 +1040,15 @@ fn credited_related_tests<'a>(
     // (#12056, #12264).
     let pins_other_function = |owner: &FunctionSummary, test: &TestSummary, oracle: &OracleFact| {
         owner_reach.as_ref().is_some_and(|(_, reach)| {
-            let text = super::classifier::assertion_text_with_local_initializers(
-                context.index,
-                test,
-                &oracle.text,
-                owner,
-            );
-            reach.assertion_pins_other_function(owner, test, oracle, &text)
+            context.other_function_pin_decision(owner, test, oracle, || {
+                let text = super::classifier::assertion_text_with_local_initializers(
+                    context.index,
+                    test,
+                    &oracle.text,
+                    owner,
+                );
+                reach.assertion_pins_other_function(owner, test, oracle, &text)
+            })
         })
     };
     related
@@ -879,14 +1058,22 @@ fn credited_related_tests<'a>(
             if let Some((owner, _)) = owner_reach.as_ref()
                 && (reason.is_proximity_only()
                     || *reason == RelationReason::AssertionTargetAffinity)
-                && test
+            {
+                // One decision per oracle: the text it reads is rebuilt from
+                // the whole test body, so ask once and drop by position
+                // rather than once to detect and again to retain.
+                let pins: Vec<bool> = test
                     .assertions
                     .iter()
-                    .any(|oracle| pins_other_function(owner, test, oracle))
-            {
-                view.to_mut()
-                    .assertions
-                    .retain(|oracle| !pins_other_function(owner, test, oracle));
+                    .map(|oracle| pins_other_function(owner, test, oracle))
+                    .collect();
+                if pins.contains(&true) {
+                    let mut position = 0;
+                    view.to_mut().assertions.retain(|_| {
+                        position += 1;
+                        !pins[position - 1]
+                    });
+                }
             }
             // #12394 item 3: the claims statements `ripr check` credits
             // through the owner pin join the view the stages read.
@@ -909,6 +1096,30 @@ fn credited_related_tests<'a>(
             view
         })
         .collect()
+}
+
+/// Cheap lock-free cost estimate for LPT scheduling before `par_iter()` (#5363).
+fn estimated_seam_cost(seam: &RepoSeam, context: &CompactGripContext<'_>) -> (usize, usize) {
+    let owner_name = seam.owner().rsplit("::").next().unwrap_or(seam.owner());
+    let candidate_tests = context
+        .tests_by_call_name
+        .get(owner_name)
+        .map_or(0, Vec::len)
+        + context
+            .tests_by_helper_owner_call_name
+            .get(owner_name)
+            .map_or(0, Vec::len)
+        + context
+            .tests_by_target_affinity_owner_call_name
+            .get(owner_name)
+            .map_or(0, Vec::len)
+        + crate::analysis::classify::module_stem(seam.file())
+            .and_then(|stem| context.tests_by_file_stem.get(&stem))
+            .map_or(0, Vec::len);
+    let line_span = seam.source_lines().map_or(1, |(start, end)| {
+        end.saturating_sub(start).saturating_add(1)
+    });
+    (candidate_tests, line_span)
 }
 
 fn evidence_for_seam_with_context(
@@ -1267,6 +1478,9 @@ thread_local! {
     static MASK_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Times credited-view owner reach was built on this thread (#12478).
     static CREDITED_OWNER_REACH_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Times an other-function pin decision was computed rather than read
+    /// from the context's memo on this thread (#14011).
+    static PIN_DECISIONS_COMPUTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether the owner's signature or the changed expression may name a type
@@ -4596,10 +4810,12 @@ fn discriminate_evidence(
     let mut contradictions: Vec<String> = Vec::new();
     for test in related {
         for oracle in &test.assertions {
-            // The same two gates `best_oracle` applies, so this stage and the
-            // related-test record cannot disagree about one assertion (#12733).
+            // The same gates `best_oracle` applies, so this stage and the
+            // related-test record cannot disagree about one assertion (#12733,
+            // #12757).
             if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax)
                 || !error_pin_can_see_return_value(seam, oracle)
+                || !success_payload_assertion_can_see_return_arm(seam, oracle)
             {
                 continue;
             }
@@ -4930,6 +5146,72 @@ fn error_pin_can_see_return_value(seam: &RepoSeam, oracle: &OracleFact) -> bool 
         || exact_err_return_matches_error_pin(seam, &oracle.text)
 }
 
+/// #12757: the mirror of the error-pin rule above. A returned-value or
+/// error-variant seam whose changed expression constructs the failure arm (`Err(..)` or `None`) is
+/// changed only by a call that takes that exit. An exact assertion that
+/// unwraps or compares the success payload (`f(1).unwrap()`, `Ok(..)`,
+/// `Some(..)`, `assert_ok_eq!`) passes only when the call took the success
+/// exit, so it cannot notice the failure arm changing and must not be
+/// published as an oracle on it. A pin that names the failure arm itself
+/// (`Err(..)`, `None`, `unwrap_err`) keeps its grade.
+fn success_payload_assertion_can_see_return_arm(seam: &RepoSeam, oracle: &OracleFact) -> bool {
+    !matches!(seam.kind(), SeamKind::ReturnValue | SeamKind::ErrorVariant)
+        || !matches!(
+            oracle.kind,
+            OracleKind::ExactValue | OracleKind::WholeObjectEquality
+        )
+        || !constructs_failure_arm(seam.expression())
+        || !pins_success_payload_only(&oracle.text)
+}
+
+/// Whether `expression` is exactly the failure arm a `Result` / `Option`
+/// return constructs: `Err(..)` or `None`, optionally spelled `return ..;`.
+fn constructs_failure_arm(expression: &str) -> bool {
+    let trimmed = expression.trim().trim_end_matches(';').trim();
+    let trimmed = trimmed.strip_prefix("return ").unwrap_or(trimmed).trim();
+    trimmed == "None"
+        || trimmed
+            .strip_prefix("Err")
+            .is_some_and(|rest| rest.trim_start().starts_with('('))
+}
+
+/// Whether the assertion text reads the success payload and never the
+/// failure arm. The text is masked first, so a string or comment cannot supply
+/// a token; any failure-arm spelling, or an adapter that turns the failure
+/// into a value (`unwrap_or`, `ok()`, `map_err`), refuses (fail closed:
+/// the assertion keeps its existing grade).
+fn pins_success_payload_only(text: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let mentions = |token: &str| masked.contains(token);
+    let reads_failure_arm = [
+        "Err(",
+        "Err (",
+        "unwrap_err",
+        "expect_err",
+        "is_err",
+        "map_err",
+    ]
+    .iter()
+    .any(|token| mentions(token))
+        || masked
+            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .any(|word| {
+                matches!(
+                    word,
+                    "None" | "unwrap_or" | "unwrap_or_else" | "unwrap_or_default" | "ok" | "err"
+                )
+            });
+    if reads_failure_arm {
+        return false;
+    }
+    mentions(".unwrap()")
+        || mentions(".expect(")
+        || mentions("Ok(")
+        || mentions("Some(")
+        || mentions("assert_ok_eq!")
+        || mentions("assert_some_eq!")
+}
+
 /// An exact error-variant assertion published at no strength is the one
 /// `error_pin_can_see_return_value` withholds: it pins the owner's `Err` arm,
 /// not the value the returned-value seam produces (#12722, #12734). No other
@@ -4958,6 +5240,9 @@ fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact)
     if seam.kind() == SeamKind::ReturnValue && matches!(oracle.kind, OracleKind::ExactErrorVariant)
     {
         return exact_err_return_matches_error_pin(seam, &oracle.text);
+    }
+    if !success_payload_assertion_can_see_return_arm(seam, oracle) {
+        return false;
     }
     if !oracle_kind_matches_seam(seam, &oracle.kind) {
         return false;
@@ -5793,6 +6078,9 @@ fn best_oracle(
         }
         if !error_pin_can_see_return_value(seam, oracle) {
             skipped_error_pin = true;
+            continue;
+        }
+        if !success_payload_assertion_can_see_return_arm(seam, oracle) {
             continue;
         }
         let (strength, contradiction) =

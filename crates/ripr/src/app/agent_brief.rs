@@ -268,6 +268,11 @@ pub(crate) struct AgentBriefWhyNow {
 pub(crate) struct AgentBriefSelectedSeam<'a> {
     pub(crate) seam: &'a ClassifiedSeam,
     pub(crate) why_now: AgentBriefWhyNow,
+    /// #14683: a head-only match-arm seam's same-line arm result
+    /// (`Size::Medium =>` gives `450`), read by
+    /// [`attach_agent_brief_arm_results`] after selection. `None` when not
+    /// read, or for any other seam.
+    pub(crate) arm_result: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -285,6 +290,11 @@ pub(crate) struct AgentBriefSelection<'a> {
     /// limitation, not agent-visible). Like cap omissions, their absence is
     /// not evidence of resolution (#9301).
     pub(crate) omitted_by_policy: usize,
+    /// The part of `omitted_by_policy` withheld because static evidence is
+    /// opaque or unknown at a stage (or names an unresolved panic outcome or
+    /// framework oracle). These are changed seams ripr could not judge, so a
+    /// consumer must not read their absence as a clean result (#14082).
+    pub(crate) omitted_static_limited: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -384,6 +394,31 @@ pub(crate) fn select_agent_brief_seams<'a>(
         warnings,
         omitted_by_cap,
         omitted_by_policy: direct.omitted_by_policy,
+        omitted_static_limited: direct.omitted_static_limited,
+    }
+}
+
+/// #14683: name each selected head-only match-arm seam's arm result, the
+/// value a test must pin, read from the seam file under `root` with the
+/// flow model's fail-closed same-line rule. Runs after selection, so at most
+/// the brief cap's files are read, each once. An unreadable file, or a line
+/// that no longer holds the seam's head, leaves the seam without one.
+pub(crate) fn attach_agent_brief_arm_results(root: &Path, selection: &mut AgentBriefSelection<'_>) {
+    let mut sources: std::collections::BTreeMap<PathBuf, Option<String>> =
+        std::collections::BTreeMap::new();
+    for selected in &mut selection.top_seams {
+        let seam = &selected.seam.seam;
+        if seam.kind() != crate::analysis::seams::SeamKind::MatchArm {
+            continue;
+        }
+        if !sources.contains_key(seam.file()) {
+            let content = std::fs::read_to_string(root.join(seam.file())).ok();
+            sources.insert(seam.file().to_path_buf(), content);
+        }
+        selected.arm_result = sources
+            .get(seam.file())
+            .and_then(|source| source.as_deref())
+            .and_then(|source| crate::analysis::match_arm_seam_result(seam, source));
     }
 }
 
@@ -399,6 +434,7 @@ struct AgentBriefCandidateSelection<'a> {
     candidates: Vec<AgentBriefSelectedSeam<'a>>,
     allow_fallback: bool,
     omitted_by_policy: usize,
+    omitted_static_limited: usize,
 }
 
 fn direct_candidates<'a>(
@@ -412,6 +448,7 @@ fn direct_candidates<'a>(
             candidates: explicit_seam_candidate(classified, seam_id, policy, warnings),
             allow_fallback: false,
             omitted_by_policy: 0,
+            omitted_static_limited: 0,
         };
     }
 
@@ -419,6 +456,7 @@ fn direct_candidates<'a>(
     let mut matched_working_set = false;
     let mut named_omissions = 0;
     let mut omitted_by_policy = 0usize;
+    let mut omitted_static_limited = 0usize;
     let mut more_omissions: Vec<(AgentBriefOmission, usize)> = Vec::new();
     let mut named_groups: Vec<(AgentBriefOmission, String)> = Vec::new();
     let normalized_working_set = NormalizedAgentBriefWorkingSet::new(working_set);
@@ -429,6 +467,7 @@ fn direct_candidates<'a>(
         matched_working_set = true;
         if let Some(omission) = AgentBriefOmission::for_entry(entry, policy) {
             omitted_by_policy += 1;
+            omitted_static_limited += usize::from(omission.is_static_limited());
             // A large diff can match thousands of hidden seams; name
             // the first few and count the rest per reason.
             if named_omissions < AGENT_BRIEF_MAX_NAMED_OMISSIONS {
@@ -465,6 +504,7 @@ fn direct_candidates<'a>(
         candidates,
         allow_fallback: !matched_working_set,
         omitted_by_policy,
+        omitted_static_limited,
     }
 }
 
@@ -862,7 +902,11 @@ pub(crate) fn related_test_counts_for_why_now(
 }
 
 fn selected<'a>(seam: &'a ClassifiedSeam, why_now: AgentBriefWhyNow) -> AgentBriefSelectedSeam<'a> {
-    AgentBriefSelectedSeam { seam, why_now }
+    AgentBriefSelectedSeam {
+        seam,
+        why_now,
+        arm_result: None,
+    }
 }
 
 fn compare_selected(
@@ -991,6 +1035,20 @@ enum AgentBriefOmission {
 }
 
 impl AgentBriefOmission {
+    /// The seam was withheld because ripr could not judge it, as opposed to
+    /// configured off or simply not a gap. That covers a gap class with
+    /// limited evidence and a class that is itself a static limitation
+    /// (`*_unknown`, `opaque`), which `for_entry` reports as not actionable.
+    fn is_static_limited(self) -> bool {
+        match self {
+            Self::EvidenceLimited(_)
+            | Self::PanicOutcomeUnresolved(_)
+            | Self::FrameworkOracleUnresolved(_) => true,
+            Self::NotActionable(class) => class.is_static_limitation(),
+            Self::ConfiguredOff(_) => false,
+        }
+    }
+
     fn for_entry(entry: &ClassifiedSeam, policy: AgentBriefPolicy<'_>) -> Option<Self> {
         if matches!(
             policy.severity_for(entry.class, entry.seam.file()),
@@ -1127,6 +1185,13 @@ fn grouped_omission_warnings(
             _ => format!("seams {} {}", names.join(", "), omission.plural_reason()),
         })
         .collect()
+}
+
+/// Whether the brief withholds this seam, and with it the before phase that
+/// selects through the brief (#14084). The repair start gate asks this so no
+/// surface offers a start the before phase refuses.
+pub(crate) fn agent_brief_withholds(entry: &ClassifiedSeam, policy: AgentBriefPolicy<'_>) -> bool {
+    AgentBriefOmission::for_entry(entry, policy).is_some()
 }
 
 fn agent_brief_omission_reason(
@@ -2237,6 +2302,33 @@ ungripped = "warning"
         // More than the named-omission limit, so the sum must include both
         // the named and the counted-only omissions.
         assert_eq!(selection.omitted_by_policy, 13);
+        // #14082: configured off is a choice, not a seam ripr could not judge.
+        assert_eq!(selection.omitted_static_limited, 0);
+        let class = SeamGripClass::Ungripped;
+        for unknown in [
+            SeamGripClass::ActivationUnknown,
+            SeamGripClass::PropagationUnknown,
+            SeamGripClass::ObservationUnknown,
+            SeamGripClass::DiscriminationUnknown,
+            SeamGripClass::Opaque,
+        ] {
+            // A class that is itself a static limitation was not judged
+            // either, unless the user configured it off.
+            assert!(AgentBriefOmission::NotActionable(unknown).is_static_limited());
+            assert!(!AgentBriefOmission::ConfiguredOff(unknown).is_static_limited());
+        }
+        for (omission, limited) in [
+            (AgentBriefOmission::ConfiguredOff(class), false),
+            (
+                AgentBriefOmission::NotActionable(SeamGripClass::StronglyGripped),
+                false,
+            ),
+            (AgentBriefOmission::EvidenceLimited(class), true),
+            (AgentBriefOmission::PanicOutcomeUnresolved(class), true),
+            (AgentBriefOmission::FrameworkOracleUnresolved(class), true),
+        ] {
+            assert_eq!(omission.is_static_limited(), limited, "{omission:?}");
+        }
         // An explicit --seam request never reaches review-comments (its
         // scope is not diff-scoped), so its fixed 0 cannot enable a false
         // resolution.
@@ -2696,5 +2788,111 @@ weakly_gripped = "off"
             "{:?}",
             selection.warnings
         );
+    }
+
+    fn arm_seam(line: usize, expression: &str) -> ClassifiedSeam {
+        let mut entry = classified(
+            "src/lib.rs",
+            line,
+            "price",
+            expression,
+            SeamGripClass::WeaklyGripped,
+        );
+        entry.seam = RepoSeam::new(
+            "src/lib.rs",
+            "price",
+            SeamKind::MatchArm,
+            line * 10,
+            line,
+            expression,
+            RequiredDiscriminator::MatchArmTaken {
+                arm: expression.trim_end_matches("=>").trim().to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        entry
+    }
+
+    /// #14683: the brief names a head-only match-arm seam's same-line arm
+    /// result, read from the seam file after selection. An arm whose result
+    /// is a block, a head no longer on its line, a non-arm seam and an
+    /// unreadable file each read nothing.
+    #[test]
+    fn brief_names_a_head_only_arm_seam_result() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-agent-brief-arm-result-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create root: {error}"))?;
+        let source = "pub enum Size { Small, Medium, Large }\n\
+                      \n\
+                      pub fn price(size: Size) -> u32 {\n\
+                      \x20   match size {\n\
+                      \x20       Size::Small => { 300 }\n\
+                      \x20       Size::Medium => 450,\n\
+                      \x20       Size::Large => 600,\n\
+                      \x20   }\n\
+                      }\n";
+        std::fs::write(root.join("src/lib.rs"), source)
+            .map_err(|error| format!("write: {error}"))?;
+        let seams = [
+            arm_seam(6, "Size::Medium =>"),
+            arm_seam(5, "Size::Small =>"),
+            // The file's line 7 holds `Size::Large`, not this head.
+            arm_seam(7, "Size::Huge =>"),
+            classified(
+                "src/lib.rs",
+                6,
+                "price",
+                "Size::Medium =>",
+                SeamGripClass::WeaklyGripped,
+            ),
+        ];
+        let mut selection = AgentBriefSelection {
+            requested: 4,
+            returned: 4,
+            default: DEFAULT_AGENT_BRIEF_MAX_SEAMS,
+            hard_cap: AGENT_BRIEF_HARD_MAX_SEAMS,
+            top_seams: seams
+                .iter()
+                .map(|seam| {
+                    selected(
+                        seam,
+                        AgentBriefWhyNow {
+                            reason: AgentBriefWhyNowReason::SameFileSeam,
+                            confidence: AgentBriefWhyNowConfidence::Medium,
+                            evidence: "working set includes src/lib.rs".to_string(),
+                        },
+                    )
+                })
+                .collect(),
+            warnings: Vec::new(),
+            omitted_by_cap: 0,
+            omitted_by_policy: 0,
+            omitted_static_limited: 0,
+        };
+        attach_agent_brief_arm_results(&root, &mut selection);
+        let results = selection
+            .top_seams
+            .iter()
+            .map(|selected| selected.arm_result.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(results, [Some("450"), None, None, None]);
+
+        // An unreadable seam file names nothing.
+        let missing = root.join("absent");
+        for selected in &mut selection.top_seams {
+            selected.arm_result = None;
+        }
+        attach_agent_brief_arm_results(&missing, &mut selection);
+        assert!(
+            selection
+                .top_seams
+                .iter()
+                .all(|selected| selected.arm_result.is_none())
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 }
