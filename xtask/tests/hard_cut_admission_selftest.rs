@@ -4,6 +4,38 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+/// The `max-changed-lines` value the workflow actually wires, so the wrapper
+/// tests certify the same cap the gate uses instead of a third copy (#14513).
+fn wired_max_changed_lines() -> String {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let workflow = std::fs::read_to_string(root.join(".github/workflows/routed-rust.yml"))
+        .expect("routed-rust.yml must be readable");
+    let values: Vec<String> = workflow
+        .split("max-changed-lines:")
+        .skip(1)
+        .map(|rest| {
+            let rest = rest.trim_start();
+            let rest = rest
+                .strip_prefix('\'')
+                .expect("max-changed-lines value must be quoted");
+            rest[..rest.find('\'').expect("max-changed-lines value must close")].to_string()
+        })
+        .collect();
+    assert_eq!(values.len(), 2, "expected two max-changed-lines inputs");
+    assert_eq!(values[0], values[1], "max-changed-lines inputs disagree");
+    values[0].clone()
+}
+
+/// The size fixture's total changed lines: the wired cap plus the 1700-line
+/// exempt lockfile plus 3, so the residual is always just over the cap.
+fn size_fixture_total() -> u64 {
+    wired_max_changed_lines()
+        .parse::<u64>()
+        .expect("max-changed-lines must be numeric")
+        + 1700
+        + 3
+}
+
 fn run_python_control(script: &str, argument: &str, expected: &str) -> Result<(), String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let path = root
@@ -288,7 +320,7 @@ esac
         .env("ADMISSION_EXPECTED_HEAD", "a".repeat(40))
         .env("ADMISSION_DOCS_ONLY", "false")
         .env("ADMISSION_MAX_CHANGED_FILES", "160")
-        .env("ADMISSION_MAX_CHANGED_LINES", "3000")
+        .env("ADMISSION_MAX_CHANGED_LINES", wired_max_changed_lines())
         .env("ADMISSION_MODE", "admit")
         .status()
         .map_err(|e| e.to_string())?;
@@ -737,10 +769,11 @@ case "$url" in
   */contents/*) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
   */files?*) cat "$CONTROL_TMP/files.json" ;;
   */pulls\?state*) echo '[]' ;;
-  *pulls/10) if [ "$jq_arg" = ".head.sha" ]; then if [ "$(cat "$CONTROL_TMP/head_after")" = unreadable ]; then echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; fi; cat "$CONTROL_TMP/head_after"; else echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main","sha":"dddddddddddddddddddddddddddddddddddddddd"},"changed_files":4,"additions":5003,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): size envelope control"}'; fi ;;
+  *pulls/10) if [ "$jq_arg" = ".head.sha" ]; then if [ "$(cat "$CONTROL_TMP/head_after")" = unreadable ]; then echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; fi; cat "$CONTROL_TMP/head_after"; else echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main","sha":"dddddddddddddddddddddddddddddddddddddddd"},"changed_files":4,"additions":__TOTAL__,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): size envelope control"}'; fi ;;
   *) echo '{}' ;;
 esac
 "#;
+    let gh = gh.replace("__TOTAL__", &size_fixture_total().to_string());
     std::fs::write(tmp.join("gh"), gh).map_err(|e| e.to_string())?;
     let _ = Command::new("chmod").arg("+x").arg(tmp.join("gh")).status();
     // Python's subprocess cannot launch an extensionless script on Windows; a
@@ -767,7 +800,7 @@ esac
         .env("ADMISSION_EXPECTED_HEAD", "a".repeat(40))
         .env("ADMISSION_DOCS_ONLY", "false")
         .env("ADMISSION_MAX_CHANGED_FILES", "160")
-        .env("ADMISSION_MAX_CHANGED_LINES", "3000")
+        .env("ADMISSION_MAX_CHANGED_LINES", wired_max_changed_lines())
         .env("ADMISSION_MODE", "admit")
         .status()
         .map_err(|e| e.to_string())?;
@@ -807,7 +840,7 @@ const STABLE_HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 #[test]
 fn wrapper_admits_a_lockfile_pr_whose_listing_lacks_counts() -> Result<(), String> {
-    // 5003 lines in total; 1700 are listed on one lockfile, the other two lockfiles
+    // The fixture total is the wired cap plus 1703; 1700 are listed on one lockfile, the other two lockfiles
     // and src/lib.rs list without counts. The hand-written file is bounded by its
     // base+head lines (5+5), everything else is generated.
     let (code, reason, lines) = size_outcome(&SizeCase {
@@ -832,7 +865,10 @@ fn wrapper_counts_everything_when_the_head_moves_after_the_file_listing() -> Res
             blobs: "ok",
             compare: "ok",
         })?;
-        if code != 1 || reason != "qualification_scope_oversized" || lines != "5003" {
+        if code != 1
+            || reason != "qualification_scope_oversized"
+            || lines != size_fixture_total().to_string()
+        {
             return Err(format!(
                 "head_after={head_after} discounts nothing, got {code} {reason} {lines}"
             ));
@@ -858,8 +894,11 @@ fn wrapper_keeps_the_residual_counted_when_a_bound_cannot_be_read() -> Result<()
             blobs,
             compare,
         })?;
-        // Only the listed 1700-line lockfile stays exempt: 5003 - 1700.
-        if code != 1 || reason != "qualification_scope_oversized" || lines != "3303" {
+        // Only the listed 1700-line lockfile stays exempt: total - 1700.
+        if code != 1
+            || reason != "qualification_scope_oversized"
+            || lines != (size_fixture_total() - 1700).to_string()
+        {
             return Err(format!(
                 "blobs={blobs} compare={compare} must keep the residual counted, got {code} {reason} {lines}"
             ));
