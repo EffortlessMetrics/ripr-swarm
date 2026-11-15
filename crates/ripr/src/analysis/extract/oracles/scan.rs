@@ -2469,8 +2469,14 @@ pub(crate) fn unwrap_err_bound_variables(body: &str) -> std::collections::BTreeS
 /// `assert_eq!(call(..), expected);`. Until the value is filled in, the
 /// assertion cannot fail for a wrong result, so it pins no expected value
 /// (#14810). The scan is statement-sized like [`unwrap_err_bound_variables`],
-/// so a single-line body is read too. A second binding of the same name to
-/// anything else drops the name: an ambiguous body keeps today's credit.
+/// so a single-line body is read too.
+///
+/// A name is lowered only when *every* binding of it is a placeholder. A second
+/// `let` of the same name to anything else drops it, and so does any other
+/// binding form — a function or closure parameter, a `match` arm, a `for`
+/// pattern, an `if let`/`while let` pattern, or a destructuring `let`. In each
+/// of those the name holds a real value at the assertion, so the body keeps
+/// today's credit (#14810 round 2).
 pub(crate) fn placeholder_bound_variables(body: &str) -> std::collections::BTreeSet<String> {
     let masked = mask_comments_and_strings(body);
     let mut seen: std::collections::BTreeMap<String, bool> = std::collections::BTreeMap::new();
@@ -2478,18 +2484,254 @@ pub(crate) fn placeholder_bound_variables(body: &str) -> std::collections::BTree
         let Some(binding) = let_binding_substring(stmt) else {
             continue;
         };
-        let Some((var, initializer)) = let_binding_parts(binding) else {
-            continue;
-        };
-        let placeholder = is_diverging_placeholder(initializer);
-        seen.entry(var.to_string())
-            .and_modify(|every| *every = *every && placeholder)
-            .or_insert(placeholder);
+        if let Some((var, initializer)) = let_binding_parts(binding) {
+            let placeholder = is_diverging_placeholder(initializer);
+            seen.entry(var.to_string())
+                .and_modify(|every| *every = *every && placeholder)
+                .or_insert(placeholder);
+        } else if let Some(eq) = binding.find('=') {
+            // A destructuring or let-else pattern (`let (a, b) = ..`,
+            // `let Some(v) = .. else { .. }`) binds names that are not
+            // placeholders.
+            for name in pattern_binding_names(&binding[..eq]) {
+                seen.insert(name, false);
+            }
+        }
+    }
+    for name in non_placeholder_bound_names(&masked) {
+        seen.insert(name, false);
     }
     seen.into_iter()
         .filter(|(_, every)| *every)
         .map(|(var, _)| var)
         .collect()
+}
+
+/// Names `masked` binds anywhere other than a placeholder `let`: a function or
+/// closure parameter, a `match` arm, a `for` pattern, or an `if let`/`while let`
+/// pattern. Over-collecting is safe — it only keeps today's credit.
+fn non_placeholder_bound_names(masked: &str) -> std::collections::BTreeSet<String> {
+    let mut names = std::collections::BTreeSet::new();
+    collect_function_parameters(masked, &mut names);
+    collect_closure_parameters(masked, &mut names);
+    collect_match_arm_bindings(masked, &mut names);
+    collect_for_patterns(masked, &mut names);
+    collect_let_chain_patterns(masked, &mut names);
+    names
+}
+
+fn is_ident_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+/// Identifiers a pattern binds: `Some(expected)`, `Foo { expected }`, `(a, b)`,
+/// `expected`. A path segment (`Foo::Bar`) and a constructor name (`Some(`) are
+/// not bindings.
+fn pattern_binding_names(pattern: &str) -> std::collections::BTreeSet<String> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut names = std::collections::BTreeSet::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if !(chars[i].is_ascii_alphabetic() || chars[i] == '_') {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && is_ident_char(chars[i]) {
+            i += 1;
+        }
+        let word: String = chars[start..i].iter().collect();
+        let preceded_by_path = start >= 2 && chars[start - 1] == ':' && chars[start - 2] == ':';
+        let mut j = i;
+        while j < chars.len() && chars[j] == ' ' {
+            j += 1;
+        }
+        let followed_by_ctor = j < chars.len()
+            && (chars[j] == '('
+                || chars[j] == '{'
+                || (chars[j] == ':' && j + 1 < chars.len() && chars[j + 1] == ':'));
+        let keyword = matches!(
+            word.as_str(),
+            "mut"
+                | "ref"
+                | "in"
+                | "if"
+                | "let"
+                | "while"
+                | "for"
+                | "match"
+                | "move"
+                | "dyn"
+                | "impl"
+                | "as"
+                | "self"
+                | "Self"
+                | "true"
+                | "false"
+                | "_"
+        );
+        if !preceded_by_path && !followed_by_ctor && !keyword {
+            names.insert(word);
+        }
+    }
+    names
+}
+
+fn collect_function_parameters(masked: &str, out: &mut std::collections::BTreeSet<String>) {
+    let mut search = 0;
+    while let Some(rel) = masked[search..].find("fn ") {
+        let idx = search + rel;
+        search = idx + 3;
+        let prev_ok = idx == 0 || !masked[..idx].chars().next_back().is_some_and(is_ident_char);
+        if !prev_ok {
+            continue;
+        }
+        let Some(open_rel) = masked[search..].find('(') else {
+            continue;
+        };
+        let open = search + open_rel;
+        let Some(close) = matching_delimiter(masked, open, '(', ')') else {
+            continue;
+        };
+        for param in split_top_level(&masked[open + 1..close], ',') {
+            let name_part = param.split(':').next().unwrap_or("");
+            out.extend(pattern_binding_names(name_part));
+        }
+    }
+}
+
+fn collect_closure_parameters(masked: &str, out: &mut std::collections::BTreeSet<String>) {
+    let chars: Vec<char> = masked.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] != '|' {
+            i += 1;
+            continue;
+        }
+        let prev = chars[..i]
+            .iter()
+            .rev()
+            .find(|ch| !ch.is_whitespace())
+            .copied()
+            .unwrap_or(' ');
+        let after_move = i >= 5 && chars[i - 5..i - 1].iter().collect::<String>() == "move";
+        let starts_closure =
+            after_move || matches!(prev, '(' | ',' | '=' | '{' | ';' | '>' | '|' | ']' | '}');
+        if !starts_closure {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        let mut closed = false;
+        while j < chars.len() {
+            let ch = chars[j];
+            if ch == '|' {
+                closed = true;
+                break;
+            }
+            if !(is_ident_char(ch)
+                || matches!(
+                    ch,
+                    ':' | '&' | '\'' | '<' | '>' | ',' | ' ' | '(' | ')' | '[' | ']'
+                ))
+            {
+                break;
+            }
+            j += 1;
+        }
+        if !closed {
+            i += 1;
+            continue;
+        }
+        let inner: String = chars[i + 1..j].iter().collect();
+        for param in split_top_level(&inner, ',') {
+            let name_part = param.split(':').next().unwrap_or("");
+            out.extend(pattern_binding_names(name_part));
+        }
+        i = j + 1;
+    }
+}
+
+fn collect_match_arm_bindings(masked: &str, out: &mut std::collections::BTreeSet<String>) {
+    let mut search = 0;
+    while let Some(rel) = masked[search..].find("=>") {
+        let idx = search + rel;
+        search = idx + 2;
+        let before = &masked[..idx];
+        let start = before
+            .rfind([';', '{', '}', ','])
+            .map(|p| p + 1)
+            .unwrap_or(0);
+        let pattern = before[start..].trim();
+        let pattern = pattern.split(" if ").next().unwrap_or(pattern);
+        out.extend(pattern_binding_names(pattern));
+    }
+}
+
+fn collect_for_patterns(masked: &str, out: &mut std::collections::BTreeSet<String>) {
+    let mut search = 0;
+    while let Some(rel) = masked[search..].find("for ") {
+        let idx = search + rel;
+        search = idx + 4;
+        let prev_ok = idx == 0 || !masked[..idx].chars().next_back().is_some_and(is_ident_char);
+        if !prev_ok {
+            continue;
+        }
+        let rest = &masked[search..];
+        let Some(in_rel) = rest.find(" in ") else {
+            continue;
+        };
+        out.extend(pattern_binding_names(&rest[..in_rel]));
+    }
+}
+
+fn collect_let_chain_patterns(masked: &str, out: &mut std::collections::BTreeSet<String>) {
+    for keyword in ["if let ", "while let "] {
+        let mut search = 0;
+        while let Some(rel) = masked[search..].find(keyword) {
+            let idx = search + rel;
+            search = idx + keyword.len();
+            let rest = &masked[search..];
+            let Some(eq_rel) = rest.find('=') else {
+                continue;
+            };
+            out.extend(pattern_binding_names(&rest[..eq_rel]));
+        }
+    }
+}
+
+fn matching_delimiter(text: &str, open: usize, open_ch: char, close_ch: char) -> Option<usize> {
+    let mut depth = 0usize;
+    for (offset, ch) in text[open..].char_indices() {
+        if ch == open_ch {
+            depth += 1;
+        } else if ch == close_ch {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(open + offset);
+            }
+        }
+    }
+    None
+}
+
+fn split_top_level(text: &str, sep: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0;
+    for (i, ch) in text.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ => {}
+        }
+        if ch == sep && depth == 0 {
+            parts.push(&text[start..i]);
+            start = i + ch.len_utf8();
+        }
+    }
+    parts.push(&text[start..]);
+    parts
 }
 
 /// The `let` binding's `(name, initializer)` when `line` is
@@ -5800,5 +6042,81 @@ fn price_boundary_discriminator() {
             "fn t() { // let expected: u32 = todo!(\"x\");\n let note = \"let expected = todo!()\"; }",
         );
         assert!(vars.is_empty(), "{vars:?}");
+    }
+
+    /// #14810 round 2: a non-`let` binding of the same name holds a real value
+    /// at the assertion, so the name must not be lowered.
+    #[test]
+    fn a_closure_parameter_of_the_same_name_drops_the_lowering() -> Result<(), String> {
+        let body = r#"
+fn t() {
+    let expected: i32 = todo!("ripr: write the value");
+    let check = |expected: i32| assert_eq!(price(10_000), expected);
+    check(9_990);
+}
+"#;
+        let vars = placeholder_bound_variables(body);
+        if vars.contains("expected") {
+            return Err(format!("a closure parameter must drop the lowering: {vars:?}"));
+        }
+        let fact = only_fact(body)?;
+        if fact.strength != OracleStrength::Strong {
+            return Err(format!("a closure parameter keeps today's credit: {fact:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_match_arm_binding_of_the_same_name_drops_the_lowering() {
+        let body = r#"
+fn t() {
+    let expected: i32 = todo!("ripr: write the value");
+    match price(10_000) {
+        expected => assert_eq!(expected, 9_990),
+    }
+}
+"#;
+        let vars = placeholder_bound_variables(body);
+        assert!(!vars.contains("expected"), "{vars:?}");
+    }
+
+    #[test]
+    fn a_function_parameter_of_the_same_name_drops_the_lowering() {
+        let vars = placeholder_bound_variables(
+            "fn t() { let expected: i32 = todo!(\"x\"); } fn helper(expected: i32) -> i32 { expected }",
+        );
+        assert!(!vars.contains("expected"), "{vars:?}");
+    }
+
+    #[test]
+    fn a_for_pattern_of_the_same_name_drops_the_lowering() {
+        let vars = placeholder_bound_variables(
+            "fn t() { let expected: i32 = todo!(\"x\"); for expected in [1, 2] { assert_eq!(expected, 1); } }",
+        );
+        assert!(!vars.contains("expected"), "{vars:?}");
+    }
+
+    #[test]
+    fn an_if_let_pattern_of_the_same_name_drops_the_lowering() {
+        let vars = placeholder_bound_variables(
+            "fn t() { let expected: i32 = todo!(\"x\"); if let Some(expected) = f() { assert_eq!(expected, 1); } }",
+        );
+        assert!(!vars.contains("expected"), "{vars:?}");
+    }
+
+    #[test]
+    fn a_destructuring_let_of_the_same_name_drops_the_lowering() {
+        let vars = placeholder_bound_variables(
+            "fn t() { let expected: i32 = todo!(\"x\"); let (expected, other) = pair(); }",
+        );
+        assert!(!vars.contains("expected"), "{vars:?}");
+    }
+
+    #[test]
+    fn a_placeholder_with_no_other_binding_still_lowers() {
+        let vars = placeholder_bound_variables(
+            "fn t() { let expected: i32 = todo!(\"x\"); assert_eq!(price(1), expected); }",
+        );
+        assert!(vars.contains("expected"), "{vars:?}");
     }
 }
