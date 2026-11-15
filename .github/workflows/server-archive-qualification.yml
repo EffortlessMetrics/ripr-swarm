@@ -512,6 +512,10 @@ jobs:
           version="${QUALIFICATION_VERSION#v}"
           candidate_sha="${CANDIDATE_SHA,,}"
           candidate_tree="$(git rev-parse 'HEAD^{tree}')"
+          jq -c '.[]' build-identities.json | while IFS= read -r build; do
+            archive_file="$(jq -r '.archive_file' <<< "${build}")"
+            test "$(stat -c%s "dist/${archive_file}")" = "$(jq -r '.archive_size_bytes' <<< "${build}")"
+          done
           jq -e \
             --arg sha "${candidate_sha}" \
             --arg tree "${candidate_tree}" \

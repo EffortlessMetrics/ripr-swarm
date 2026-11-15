@@ -42,17 +42,41 @@ pub(crate) struct PayloadSizeSummary {
 }
 
 impl FinalNativePayloadIdentity {
-    pub(crate) fn size_summary(&self) -> PayloadSizeSummary {
-        PayloadSizeSummary {
-            total_bytes: self.files.iter().map(|file| file.size_bytes).sum(),
-            executable_bytes: self
-                .files
-                .iter()
-                .filter(|file| file.role == PayloadFileRole::Executable)
-                .map(|file| file.size_bytes)
-                .sum(),
+    pub(crate) fn size_summary(&self) -> Result<PayloadSizeSummary, String> {
+        let mut total_bytes = 0u64;
+        let mut executable_bytes = 0u64;
+        for file in &self.files {
+            total_bytes = total_bytes.checked_add(file.size_bytes).ok_or_else(|| {
+                format!(
+                    "total payload size overflows u64 when adding `{}` ({} bytes)",
+                    file.path, file.size_bytes
+                )
+            })?;
+            if file.role == PayloadFileRole::Executable {
+                executable_bytes =
+                    executable_bytes
+                        .checked_add(file.size_bytes)
+                        .ok_or_else(|| {
+                            format!(
+                                "executable payload size overflows u64 when adding `{}` ({} bytes)",
+                                file.path, file.size_bytes
+                            )
+                        })?;
+            }
         }
+        Ok(PayloadSizeSummary {
+            total_bytes,
+            executable_bytes,
+        })
     }
+}
+
+pub(crate) fn check_archive_file_size_budget(asset_path: &Path) -> Result<u64, String> {
+    let archive_size_bytes = fs::metadata(asset_path)
+        .map_err(|err| format!("failed to stat {}: {err}", asset_path.display()))?
+        .len();
+    check_archive_size_budget(archive_size_bytes)?;
+    Ok(archive_size_bytes)
 }
 
 pub(crate) fn check_payload_size_budget(summary: PayloadSizeSummary) -> Result<(), String> {
@@ -689,8 +713,13 @@ fn validate_identity_shape(identity: &FinalNativePayloadIdentity) -> Result<(), 
     {
         violations.push("native_runtime_evidence state and source must not be empty".to_string());
     }
-    if let Err(error) = check_payload_size_budget(identity.size_summary()) {
-        violations.push(error);
+    match identity.size_summary() {
+        Ok(summary) => {
+            if let Err(error) = check_payload_size_budget(summary) {
+                violations.push(error);
+            }
+        }
+        Err(error) => violations.push(error),
     }
 
     if violations.is_empty() {
@@ -896,6 +925,13 @@ fn verify_identity_projection(
 }
 
 fn render_payload_identity_markdown(identity: &FinalNativePayloadIdentity) -> String {
+    let (total_bytes, executable_bytes) = match identity.size_summary() {
+        Ok(summary) => (
+            summary.total_bytes.to_string(),
+            summary.executable_bytes.to_string(),
+        ),
+        Err(_) => ("overflow".to_string(), "overflow".to_string()),
+    };
     let mut output = format!(
         "# Final native payload identity\n\n- schema version: {}\n- kind: `{}`\n- product: `{}`\n- version: `{}`\n- target: `{}`\n- executable: `{}`\n- source commit: `{}`\n- source tree: `{}`\n- Cargo.lock SHA-256: `{}`\n- selected features: `{}`\n- build OS/arch: `{}` / `{}`\n- CI provider: `{}`\n- runner image: `{}`\n- payload aggregate SHA-256: `{}`\n- total payload bytes: {}\n- executable bytes: {}\n- native runtime evidence: `{}` from `{}`\n\n## Payload files\n\n| Path | Role | Bytes | SHA-256 |\n| --- | --- | ---: | --- |\n",
         identity.schema_version,
@@ -917,8 +953,8 @@ fn render_payload_identity_markdown(identity: &FinalNativePayloadIdentity) -> St
             .as_deref()
             .unwrap_or("not recorded"),
         identity.payload_aggregate_sha256,
-        identity.size_summary().total_bytes,
-        identity.size_summary().executable_bytes,
+        total_bytes,
+        executable_bytes,
         identity.native_runtime_evidence.state,
         identity.native_runtime_evidence.source,
     );
@@ -1110,7 +1146,7 @@ mod tests {
         )?;
         // Fixture bytes: executable 6, licences 3 + 6, readme 19.
         assert_eq!(
-            identity.size_summary(),
+            identity.size_summary()?,
             PayloadSizeSummary {
                 total_bytes: 34,
                 executable_bytes: 6
@@ -1147,6 +1183,90 @@ mod tests {
             "archive over budget",
         )?;
         assert!(error.contains("archive size"));
+        fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn validate_identity_shape_rejects_over_budget_payload() -> Result<(), String> {
+        let root = unique_temp_dir("shape-over-budget")?;
+        let payload = root.join("payload");
+        write_fixture_payload(&payload)?;
+        let identity = identity_from_context(
+            &fixture_context(),
+            payload_file_identities(&payload, "ripr")?,
+        )?;
+        validate_identity_shape(&identity)?;
+
+        let mut over_executable = identity.clone();
+        for file in &mut over_executable.files {
+            if file.role == PayloadFileRole::Executable {
+                file.size_bytes = MAX_EXECUTABLE_SIZE_BYTES + 1;
+            }
+        }
+        let error = require_error(
+            validate_identity_shape(&over_executable),
+            "over-budget executable through validate_identity_shape",
+        )?;
+        assert!(error.contains("executable size"), "{error}");
+
+        let mut over_total = identity;
+        for file in &mut over_total.files {
+            if file.path == "LICENSE-MIT" {
+                file.size_bytes = MAX_PAYLOAD_TOTAL_SIZE_BYTES;
+            }
+        }
+        let error = require_error(
+            validate_identity_shape(&over_total),
+            "over-budget total through validate_identity_shape",
+        )?;
+        assert!(error.contains("total payload size"), "{error}");
+        fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn validate_identity_shape_rejects_overflowing_payload_without_panicking() -> Result<(), String>
+    {
+        let root = unique_temp_dir("shape-overflow")?;
+        let payload = root.join("payload");
+        write_fixture_payload(&payload)?;
+        let mut identity = identity_from_context(
+            &fixture_context(),
+            payload_file_identities(&payload, "ripr")?,
+        )?;
+        for file in &mut identity.files {
+            if file.role == PayloadFileRole::Executable {
+                file.size_bytes = u64::MAX;
+            }
+        }
+        let error = require_error(identity.size_summary(), "overflowing size_summary")?;
+        assert!(error.contains("overflows u64"), "{error}");
+        let error = require_error(
+            validate_identity_shape(&identity),
+            "overflowing identity through validate_identity_shape",
+        )?;
+        assert!(error.contains("overflows u64"), "{error}");
+        fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn archive_file_size_budget_rejects_over_budget_file() -> Result<(), String> {
+        let root = unique_temp_dir("archive-file-budget")?;
+        fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        let archive = root.join("archive.tar.gz");
+        fs::write(&archive, b"small archive").map_err(|err| err.to_string())?;
+        assert_eq!(check_archive_file_size_budget(&archive)?, 13);
+        let file = fs::File::create(&archive).map_err(|err| err.to_string())?;
+        file.set_len(MAX_ARCHIVE_SIZE_BYTES + 1)
+            .map_err(|err| err.to_string())?;
+        drop(file);
+        let error = require_error(
+            check_archive_file_size_budget(&archive),
+            "over-budget archive file through release_server_archive seam",
+        )?;
+        assert!(error.contains("archive size"), "{error}");
         fs::remove_dir_all(root).map_err(|err| err.to_string())?;
         Ok(())
     }

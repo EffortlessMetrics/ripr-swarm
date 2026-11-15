@@ -130,11 +130,8 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
         }
     }
 
-    let archive_size_bytes = fs::metadata(&asset_path)
-        .map_err(|err| format!("failed to stat {}: {err}", asset_path.display()))?
-        .len();
-    payload::check_archive_size_budget(archive_size_bytes)?;
-    let size_summary = staged.identity.size_summary();
+    let archive_size_bytes = payload::check_archive_file_size_budget(&asset_path)?;
+    let size_summary = staged.identity.size_summary()?;
     eprintln!(
         "server archive size: {archive_size_bytes} bytes (budget {} bytes)",
         payload::MAX_ARCHIVE_SIZE_BYTES
