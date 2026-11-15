@@ -5322,6 +5322,12 @@ mod tests {
         for removed in [
             "match (total > limit.max, false) {",
             "match (x.total > limit, false) {",
+            "match (total > limit as u64, false) {",
+            "match (total > limit | mask, false) {",
+            "match (total > limit << 1, false) {",
+            "match (total > limit!(x), false) {",
+            "match (a | total > limit, false) {",
+            "match (a >> total > limit, false) {",
         ] {
             let probes = shapes_probes(
                 "match (total > limit, true) {",

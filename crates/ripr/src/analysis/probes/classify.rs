@@ -481,10 +481,45 @@ pub(super) fn operand_bounded_token_run_count(haystack: &str, needle: &str) -> u
             let next = haystack[start + needle.len()..].trim_start();
             let previous = haystack[..*start].trim_end();
             is_token_run(haystack, masked, *start, needle)
-                && !next.starts_with(['.', '(', '[', '?', '+', '-', '*', '/', '%', ':'])
-                && !previous.ends_with(['.', ':', '+', '-', '*', '/', '%', '!', '&'])
+                && !extends_rightward(next)
+                && !extends_leftward(previous)
         })
         .count()
+}
+
+/// Whether `next` (the text after a match, leading space trimmed) continues
+/// the right operand: a member, call, index, `?`, an arithmetic or bit
+/// operator (`|` and `&` but not `||`/`&&`, which end the operand), a shift,
+/// a macro `!`, a path, or an `as` cast.
+fn extends_rightward(next: &str) -> bool {
+    let doubled = |op: &str| next.starts_with(op);
+    if next.starts_with([
+        '.', '(', '[', '?', '+', '-', '*', '/', '%', ':', '^', '<', '>', '!',
+    ]) {
+        return true;
+    }
+    if (next.starts_with('|') && !doubled("||")) || (next.starts_with('&') && !doubled("&&")) {
+        return true;
+    }
+    next.strip_prefix("as")
+        .is_some_and(|rest| !rest.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_'))
+}
+
+/// Whether `previous` (the text before a match, trailing space trimmed)
+/// continues the left operand: a member or path, an arithmetic or bit
+/// operator (`|` and `&` but not `||`/`&&`), a unary `!`, or a shift.
+/// A struct field `:`, a match arrow `=>` and a return arrow `->` end the
+/// operand instead.
+fn extends_leftward(previous: &str) -> bool {
+    if previous.ends_with(['.', '+', '-', '*', '/', '%', '!', '^']) {
+        return !previous.ends_with("->");
+    }
+    let single = |op: char, doubled: &str| previous.ends_with(op) && !previous.ends_with(doubled);
+    single('|', "||")
+        || single('&', "&&")
+        || previous.ends_with("::")
+        || previous.ends_with(">>")
+        || previous.ends_with("<<")
 }
 
 /// A record field must be a whole syntactic unit, not the head or tail of a
@@ -2288,5 +2323,42 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    /// #14722 review: an operator that continues an operand hides the
+    /// comparison, and one that ends it (`&&`, `||`, a field `:`, `=>`,
+    /// `->`) does not.
+    #[test]
+    fn operand_bounded_count_reads_operand_boundaries() {
+        let count = |haystack: &str| operand_bounded_token_run_count(haystack, "a > b");
+        for extended in [
+            "(a > b as u8, c)",
+            "(a > b | m, c)",
+            "(a > b & m, c)",
+            "(a > b ^ m, c)",
+            "(a > b << 1, c)",
+            "(a > b >> 1, c)",
+            "(a > b!(x), c)",
+            "(a > b::C, c)",
+            "(m | a > b, c)",
+            "(m & a > b, c)",
+            "(m >> a > b, c)",
+            "(m::a > b, c)",
+            "(!a > b, c)",
+        ] {
+            assert_eq!(count(extended), 0, "{extended}");
+        }
+        for bounded in [
+            "(x && a > b, c)",
+            "(x || a > b, c)",
+            "(a > b && x, c)",
+            "(a > b || x, c)",
+            "(S { ok: a > b }, c)",
+            "x => a > b,",
+            "fn f() -> bool { a > b }",
+            "(a > b assert, c)",
+        ] {
+            assert_eq!(count(bounded), 1, "{bounded}");
+        }
     }
 }
