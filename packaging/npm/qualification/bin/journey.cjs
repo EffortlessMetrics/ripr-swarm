@@ -7,9 +7,10 @@
 const { main } = require("../lib/journey.cjs");
 
 main(process.argv.slice(2)).then(
-  (code) => { process.exitCode = code; },
+  // Exit explicitly so no stray handle can keep a CI job alive past the receipt.
+  (code) => { process.exit(code); },
   (error) => {
     process.stderr.write(`ripr npm journey: ${error && error.message ? error.message : error}\n`);
-    process.exitCode = 2;
+    process.exit(2);
   },
 );

@@ -68,6 +68,10 @@ function readTarball(bytes) {
       const match = /(?:^|\n)\d+ path=([^\n]*)\n/.exec(body.toString("utf8"));
       paxName = match ? match[1] : null;
     } else if (type === "0" || type === "\0") {
+      if (entries.some((entry) => entry.name === name)) {
+        // npm's extractor keeps the last copy; refuse rather than hash the wrong one.
+        throw new RegistryError("tarball_invalid", `tar entry ${name} appears more than once`);
+      }
       entries.push({ name, mode, bytes: Buffer.from(body) });
     } else if (type !== "5" && type !== "g") {
       throw new RegistryError("tarball_invalid", `tar entry ${name} has unsupported type ${JSON.stringify(type)}`);
@@ -95,7 +99,7 @@ function packageManifest(entries, file) {
       typeof manifest.name !== "string" || typeof manifest.version !== "string") {
     throw new RegistryError("tarball_manifest_invalid", `${file} package.json must name a package and version`);
   }
-  if (manifest.scripts && Object.keys(manifest.scripts).some((key) => /^(pre|post)?(install|prepare)$/.test(key))) {
+  if (manifest.scripts && Object.keys(manifest.scripts).some((key) => /^(pre|post)?(install|uninstall|prepare)$/.test(key))) {
     throw new RegistryError("tarball_lifecycle_script", `${file} declares an install-time lifecycle script`);
   }
   return manifest;
@@ -165,12 +169,10 @@ async function startRegistry(tarballs, options = {}) {
   const requests = [];
   let dropped = 0;
   const record = (entry) => {
-    if (requests.length < MAX_LOGGED_REQUESTS) {
-      requests.push(entry);
-      if (options.requestLog) fs.appendFileSync(options.requestLog, `${JSON.stringify(entry)}\n`);
-    } else {
-      dropped += 1;
-    }
+    // The file log is complete; only the in-memory copy is bounded.
+    if (options.requestLog) fs.appendFileSync(options.requestLog, `${JSON.stringify(entry)}\n`);
+    if (requests.length < MAX_LOGGED_REQUESTS) requests.push(entry);
+    else dropped += 1;
   };
   let origin = "";
   const server = http.createServer((request, response) => {
@@ -191,15 +193,23 @@ async function startRegistry(tarballs, options = {}) {
       reply(405, JSON.stringify({ error: "isolated registry is read-only" }), "application/json");
       return;
     }
-    if (pathname.startsWith("/-/tarballs/")) {
-      const item = byFile.get(decodeURIComponent(pathname.slice("/-/tarballs/".length)));
+    let target;
+    try {
+      target = pathname.startsWith("/-/tarballs/")
+        ? { tarball: decodeURIComponent(pathname.slice("/-/tarballs/".length)) }
+        : { name: decodeURIComponent(pathname.slice(1)) };
+    } catch {
+      reply(400, JSON.stringify({ error: "malformed request path" }), "application/json");
+      return;
+    }
+    if (target.tarball !== undefined) {
+      const item = byFile.get(target.tarball);
       if (item) reply(200, method === "HEAD" ? undefined : item.bytes, "application/octet-stream");
       else reply(404, JSON.stringify({ error: "not staged" }), "application/json");
       return;
     }
-    const name = decodeURIComponent(pathname.slice(1));
-    const list = byName.get(name);
-    if (list) reply(200, JSON.stringify(packument(name, list, origin)), "application/json");
+    const list = byName.get(target.name);
+    if (list) reply(200, JSON.stringify(packument(target.name, list, origin)), "application/json");
     else reply(404, JSON.stringify({ error: "not staged; this registry has no upstream" }), "application/json");
   });
   await new Promise((resolve, reject) => {

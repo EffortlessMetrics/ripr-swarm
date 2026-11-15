@@ -129,7 +129,8 @@ async function runJourney(packages, extra = []) {
   const out = tempDir("receipt");
   const receipt = path.join(out, "receipt.json");
   const code = await main(["--packages", packages, "--target", currentPlatform().rustTarget, "--version", VERSION,
-    "--receipt", receipt, "--log", path.join(out, "log.json"), ...extra]);
+    "--receipt", receipt, "--log", path.join(out, "log.json"),
+    "--source-commit", "a".repeat(40), "--source-tree", "b".repeat(40), ...extra]);
   return { code, receipt: JSON.parse(fs.readFileSync(receipt, "utf8")), log: JSON.parse(fs.readFileSync(path.join(out, "log.json"), "utf8")), out };
 }
 
@@ -155,7 +156,9 @@ test("isolated registry serves only staged tarballs, read-only, on loopback", as
     assert.equal((await get(`${registry.origin}/left-pad`)).status, 404, "no upstream fallback");
     assert.equal((await get(`${registry.origin}/-/tarballs/left-pad-1.0.0.tgz`)).status, 404);
     assert.equal((await get(`${registry.origin}/@effortlessmetrics%2fripr`, "PUT")).status, 405, "no publish route");
-    assert.deepEqual(registry.requests.map((entry) => entry.status), [200, 200, 404, 404, 405]);
+    assert.equal((await get(`${registry.origin}/%E0%A4%A`)).status, 400, "a malformed path must not crash the registry");
+    assert.equal((await get(`${registry.origin}/@effortlessmetrics%2fripr`)).status, 200, "the registry still serves after a malformed path");
+    assert.deepEqual(registry.requests.map((entry) => entry.status), [200, 200, 404, 404, 405, 400, 200]);
   } finally {
     await registry.close();
   }
@@ -167,6 +170,8 @@ test("isolated registry refuses install-time lifecycle scripts and duplicate sta
   const platform = currentPlatform() || launcherManifest().ripr.platforms[0];
   const scripted = packNative(dir, platform, VERSION, Buffer.from("x"), { scripts: { postinstall: "node fetch.js" } });
   await assert.rejects(startRegistry([scripted]), (error) => error instanceof RegistryError && error.code === "tarball_lifecycle_script");
+  const uninstallHook = packNative(tempDir("uninstall-hook"), platform, VERSION, Buffer.from("x"), { scripts: { preuninstall: "node cleanup.js" } });
+  await assert.rejects(startRegistry([uninstallHook]), (error) => error instanceof RegistryError && error.code === "tarball_lifecycle_script");
   const clean = packNative(tempDir("dup"), platform, VERSION, Buffer.from("x"));
   await assert.rejects(startRegistry([clean, clean]), (error) => error instanceof RegistryError && error.code === "registry_duplicate");
   await assert.rejects(startRegistry([]), (error) => error instanceof RegistryError && error.code === "registry_empty");
@@ -194,7 +199,11 @@ test("staged identities refuse range pins, missing targets and mismatched native
   assert.throws(() => stagedIdentities({ staged: [launcher(), native({ riprNative: { target: "x86_64-unknown-linux-musl", executable: platform.executable } })] }, options), /riprNative metadata must name/);
   assert.throws(() => stagedIdentities({ staged: [launcher(), native({ version: "0.0.1" })] }, options), /no staged/);
   assert.throws(() => stagedIdentities({ staged: [launcher((value) => ({ ...value, dependencies: { leftpad: "1.0.0" } })), native()] }, options), /runtime dependencies/);
-  assert.throws(() => parseArgs(["--packages", "p", "--target", "t", "--version", "v", "--receipt", "r", "--source-commit", "HEAD"]), /40-character/);
+  const base = ["--packages", "p", "--target", "t", "--version", "v", "--receipt", "r"];
+  assert.throws(() => parseArgs([...base, "--source-commit", "HEAD", "--source-tree", "b".repeat(40)]), /40-character/);
+  assert.throws(() => parseArgs(base), /--source-commit is required/);
+  assert.throws(() => parseArgs([...base, "--source-commit", "a".repeat(40), "--source-tree", "b".repeat(40), "--bogus", "x"]), /unknown argument/);
+  assert.equal(parseArgs([...base, "--keep", "--source-commit", "a".repeat(40), "--source-tree", "b".repeat(40)]).keep, true);
 });
 
 test("receipt rows fail closed on any failed check and never pass without an executed payload", () => {
@@ -207,15 +216,15 @@ test("receipt rows fail closed on any failed check and never pass without an exe
   };
   const passedPayload = { hash: identities.payloadHash };
   journey.checks = [{ name: "a", status: "passed" }, { name: "b", status: "failed", detail: "boom" }];
-  const failed = buildReceipt(options, journey, { identities, payload: passedPayload, timings: {} }, true);
+  const failed = buildReceipt(options, journey, { identities, payload: passedPayload, timings: {} }, "passed");
   assert.equal(failed.rows[0].status, "failed");
   assert.equal(failed.rows[0].subject_count, 0);
   assert.equal(failed.subjects.failed, 1);
   assert.match(failed.rows[0].limitations[0], /^b: boom/);
   journey.checks = [{ name: "a", status: "passed" }];
-  assert.equal(buildReceipt(options, journey, { identities, payload: undefined, timings: {} }, true).rows[0].status, "failed",
+  assert.equal(buildReceipt(options, journey, { identities, payload: undefined, timings: {} }, "passed").rows[0].status, "failed",
     "a row with no executed payload cannot pass");
-  const passed = buildReceipt(options, journey, { identities, payload: passedPayload, timings: {} }, true);
+  const passed = buildReceipt(options, journey, { identities, payload: passedPayload, timings: {} }, "passed");
   assert.equal(passed.rows[0].status, "passed");
   assert.equal(passed.rows[0].executed_payload_hash, identities.payloadHash);
   assert.deepEqual(passed.non_claims, ["not a public registry publication", "not a support-tier promotion", "not a runtime mutation result", "not authorization to publish"]);
@@ -267,11 +276,33 @@ test("live journey installs the real ripr payload through the isolated registry"
   const row = receipt.rows[0];
   assert.equal(row.status, "passed");
   assert.equal(row.executed_payload_hash, `sha256:${require("node:crypto").createHash("sha256").update(bytes).digest("hex")}`);
-  assert.ok(row.subject_count >= 15, `expected the full journey, got ${row.subject_count} checks`);
+  assert.ok(row.subject_count >= 18, `expected the full journey, got ${row.subject_count} checks`);
   assert.equal(receipt.cleanup.status, "passed");
   const checkNames = log.checks.map((item) => item.name);
   for (const required of ["typescript_check_nonzero_subject", "continuation_new_process_foreign_cwd_offline",
-    "control_missing_optional_package", "control_wrong_native_version", "reinstall_from_lockfile_offline", "registry_teardown"]) {
+    "control_missing_optional_package", "control_wrong_native_version", "control_foreign_target_native",
+    "reinstall_from_lockfile_offline", "registry_teardown", "tool_identities"]) {
     assert.ok(checkNames.includes(required), `${required} must run`);
   }
+});
+
+test("an explicit work directory must be new or empty and is never reused", async () => {
+  const work = tempDir("work");
+  fs.writeFileSync(path.join(work, "keep-me.txt"), "caller data");
+  const out = tempDir("work-receipt");
+  await assert.rejects(main(["--packages", work, "--target", "x86_64-unknown-linux-gnu", "--version", VERSION,
+    "--receipt", path.join(out, "r.json"), "--source-commit", "a".repeat(40), "--source-tree", "b".repeat(40), "--work", work]),
+  /must be a new or empty directory/);
+  assert.equal(fs.readFileSync(path.join(work, "keep-me.txt"), "utf8"), "caller data");
+});
+
+test("tarball reader refuses duplicate entry names", () => {
+  const dir = tempDir("dup-entry");
+  const file = path.join(dir, "dup.tgz");
+  writeTarball(file, [
+    { name: "package/package.json", bytes: Buffer.from('{"name":"a","version":"1.0.0"}'), mode: 0o644 },
+    { name: "package/bin/ripr", bytes: Buffer.from("one"), mode: 0o755 },
+    { name: "package/bin/ripr", bytes: Buffer.from("two"), mode: 0o755 },
+  ]);
+  assert.throws(() => readTarball(fs.readFileSync(file)), /appears more than once/);
 });

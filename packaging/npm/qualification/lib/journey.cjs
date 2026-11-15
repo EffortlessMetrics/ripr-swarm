@@ -93,7 +93,10 @@ function which(name, searchPath, platform = process.platform) {
     for (const extension of extensions) {
       const candidate = path.join(dir, name + extension);
       try {
-        if (fs.statSync(candidate).isFile()) return candidate;
+        if (fs.statSync(candidate).isFile()) {
+          if (!isWindows(platform)) fs.accessSync(candidate, fs.constants.X_OK);
+          return candidate;
+        }
       } catch {
         // keep looking
       }
@@ -121,24 +124,32 @@ function parseArgs(argv) {
     if (value === undefined) fail(`${flag} requires a value`);
     return value;
   };
-  for (let index = 0; index < argv.length; index += 2) {
+  const valued = {
+    "--packages": "packages",
+    "--target": "target",
+    "--version": "version",
+    "--receipt": "receipt",
+    "--log": "log",
+    "--source-commit": "sourceCommit",
+    "--source-tree": "sourceTree",
+    "--expected-version-line": "expectedVersionLine",
+    "--work": "work",
+  };
+  let index = 0;
+  while (index < argv.length) {
     const flag = argv[index];
-    switch (flag) {
-      case "--packages": options.packages = take(index, flag); break;
-      case "--target": options.target = take(index, flag); break;
-      case "--version": options.version = take(index, flag); break;
-      case "--receipt": options.receipt = take(index, flag); break;
-      case "--log": options.log = take(index, flag); break;
-      case "--source-commit": options.sourceCommit = take(index, flag); break;
-      case "--source-tree": options.sourceTree = take(index, flag); break;
-      case "--expected-version-line": options.expectedVersionLine = take(index, flag); break;
-      case "--work": options.work = take(index, flag); break;
-      case "--keep": options.keep = true; index -= 1; break;
-      default: fail(`unknown argument ${flag}`);
+    if (flag === "--keep") {
+      options.keep = true;
+      index += 1;
+    } else if (Object.hasOwn(valued, flag)) {
+      options[valued[flag]] = take(index, flag);
+      index += 2;
+    } else {
+      fail(`unknown argument ${flag}`);
     }
   }
-  for (const required of ["packages", "target", "version", "receipt"]) {
-    if (!options[required]) fail(`--${required} is required`);
+  for (const required of ["packages", "target", "version", "receipt", "sourceCommit", "sourceTree"]) {
+    if (!options[required]) fail(`--${required.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)} is required`);
   }
   for (const [field, value] of [["--source-commit", options.sourceCommit], ["--source-tree", options.sourceTree]]) {
     if (value !== undefined && !/^[0-9a-f]{40}$/.test(value)) fail(`${field} must be a 40-character lowercase git SHA`);
@@ -192,7 +203,9 @@ async function startChildRegistry(tarballs, requestLog) {
   let stderr = "";
   child.stderr.on("data", (chunk) => { stderr = tail(stderr + chunk); });
   const exited = new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
-  const banner = await new Promise((resolve, reject) => {
+  let banner;
+  try {
+    banner = await new Promise((resolve, reject) => {
     let buffer = "";
     const timer = setTimeout(() => reject(new JourneyFailure("isolated registry did not start within 30s")), 30000);
     child.stdout.on("data", (chunk) => {
@@ -212,14 +225,20 @@ async function startChildRegistry(tarballs, requestLog) {
       reject(new JourneyFailure(`isolated registry exited ${code} before starting: ${stderr}`));
     });
   });
-  if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(banner.origin)) fail(`isolated registry must bind loopback, got ${banner.origin}`);
+    if (!banner || !/^http:\/\/127\.0\.0\.1:\d+$/.test(banner.origin)) fail(`isolated registry must bind loopback, got ${banner && banner.origin}`);
+  } catch (error) {
+    // Never leave a registry process behind on a failed start.
+    child.kill("SIGKILL");
+    await exited;
+    throw error;
+  }
   return {
     origin: banner.origin,
     port: banner.port,
     staged,
     requests: () => fs.readFileSync(requestLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)),
     close: async () => {
-      child.stdin.end();
+      if (child.exitCode === null && child.signalCode === null && child.stdin && child.stdin.writable) child.stdin.end();
       const timer = setTimeout(() => child.kill("SIGKILL"), 15000);
       const result = await exited;
       clearTimeout(timer);
@@ -235,8 +254,16 @@ class Journey {
     this.checks = [];
     this.log = [];
     this.npm = npmCli();
-    const base = options.work ? path.resolve(options.work) : fs.mkdtempSync(path.join(os.tmpdir(), "ripr-npm-journey-"));
-    fs.mkdirSync(base, { recursive: true });
+    // An explicit --work must be new or empty: the run deletes it afterwards
+    // and its cold-cache and decoy claims assume no earlier state.
+    let base;
+    if (options.work) {
+      base = path.resolve(options.work);
+      if (fs.existsSync(base) && fs.readdirSync(base).length > 0) fail(`--work ${base} must be a new or empty directory`);
+      fs.mkdirSync(base, { recursive: true });
+    } else {
+      base = fs.mkdtempSync(path.join(os.tmpdir(), "ripr-npm-journey-"));
+    }
     this.root = fs.realpathSync(base);
     this.home = path.join(this.root, "home");
     this.cache = path.join(this.root, "npm-cache");
@@ -245,7 +272,8 @@ class Journey {
     this.project = path.join(this.root, "consumer ü project");
     this.foreign = path.join(this.root, "foreign cwd é");
     this.controlProject = path.join(this.root, "control project");
-    for (const dir of [this.home, this.cache, path.join(this.root, "tmp"), this.decoyDir, this.project, this.foreign, this.controlProject]) {
+    for (const dir of [this.home, path.join(this.home, "AppData", "Roaming"), path.join(this.home, "AppData", "Local"),
+      path.join(this.root, "npm-global"), this.cache, path.join(this.root, "tmp"), this.decoyDir, this.project, this.foreign, this.controlProject]) {
       fs.mkdirSync(dir, { recursive: true });
     }
     fs.writeFileSync(path.join(this.home, ".npmrc"), "");
@@ -293,7 +321,8 @@ class Journey {
 
   env(extra = {}) {
     const keep = isWindows(this.platform)
-      ? ["SystemRoot", "SystemDrive", "ComSpec", "PATHEXT", "WINDIR", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE"]
+      ? ["SystemRoot", "SystemDrive", "ComSpec", "PATHEXT", "WINDIR", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+        "ProgramFiles", "ProgramFiles(x86)", "ProgramData"]
       : ["LANG", "LC_ALL"];
     const env = {};
     for (const key of keep) {
@@ -303,6 +332,9 @@ class Journey {
       PATH: this.childPath,
       HOME: this.home,
       USERPROFILE: this.home,
+      APPDATA: path.join(this.home, "AppData", "Roaming"),
+      LOCALAPPDATA: path.join(this.home, "AppData", "Local"),
+      npm_config_prefix: path.join(this.root, "npm-global"),
       TMPDIR: path.join(this.root, "tmp"),
       TMP: path.join(this.root, "tmp"),
       TEMP: path.join(this.root, "tmp"),
@@ -381,7 +413,7 @@ class Journey {
   versionLine(stdout) {
     const line = String(stdout || "").replace(/\r/g, "").trim().split("\n").pop() || "";
     const expected = this.options.expectedVersionLine;
-    if (expected ? line !== expected : !line.startsWith(`ripr ${this.options.version}`)) {
+    if (expected ? line !== expected : !(line === `ripr ${this.options.version}` || line.startsWith(`ripr ${this.options.version} `))) {
       fail(`ripr reported ${JSON.stringify(line)}, expected ${JSON.stringify(expected || `ripr ${this.options.version} ...`)}`);
     }
     return line;
@@ -449,6 +481,13 @@ class Journey {
       return { origin: registry.origin, staged: registry.staged.map((item) => `${item.manifest.name}@${item.manifest.version}`) };
     });
 
+    this.check("tool_identities", () => {
+      const npmVersion = toolVersion(this, ["--version"]);
+      if (!/^\d+\.\d+\.\d+/.test(npmVersion)) fail(`npm --version did not report a version: ${JSON.stringify(npmVersion)}`);
+      this.npmVersion = npmVersion;
+      return { node: process.version, npm: npmVersion, platform: `${process.platform}-${process.arch}` };
+    });
+
     this.check("scrubbed_consumer_path", () => {
       this.childPath = this.scrubbedPath();
       for (const tool of ["cargo", "rustc", "rustup"]) {
@@ -489,6 +528,10 @@ class Journey {
       const lockedNative = lockfile.packages && lockfile.packages[nativeKey];
       if (!lockedNative || lockedNative.version !== options.version || lockedNative.integrity !== identities.native.integrity) {
         fail(`package-lock.json does not lock ${identities.platform.package}@${options.version} to the staged integrity`);
+      }
+      const lockedLauncher = lockfile.packages && lockfile.packages[`node_modules/${LAUNCHER}`];
+      if (!lockedLauncher || lockedLauncher.version !== options.version || lockedLauncher.integrity !== identities.launcher.integrity) {
+        fail(`package-lock.json does not lock ${LAUNCHER}@${options.version} to the staged integrity`);
       }
       this.lockfileHash = sha256File(lock);
       return { fetched, lockfile: this.lockfileHash };
@@ -624,6 +667,24 @@ class Journey {
         return result.stderr.trim().split("\n")[0];
       });
 
+      this.check("control_foreign_target_native", () => {
+        // A native package in the right place whose metadata names another
+        // target (a foreign-platform package forced into place) must be refused.
+        fs.rmSync(path.join(this.controlProject, "node_modules"), { recursive: true, force: true });
+        this.require(this.npmRun("npm ci (control, offline)", ["ci", "--offline", "--ignore-scripts", "--no-audit", "--no-fund"], this.controlProject), "control npm ci --offline");
+        const manifestPath = path.join(this.controlProject, "node_modules", ...identities.platform.package.split("/"), "package.json");
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+        const foreign = options.target === "x86_64-pc-windows-msvc" ? "x86_64-unknown-linux-gnu" : "x86_64-pc-windows-msvc";
+        manifest.riprNative = { ...manifest.riprNative, target: foreign };
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+        const result = this.run("foreign target native", process.execPath, [this.publicBin(this.controlProject), "--version"], this.foreign);
+        this.requireDecoyIdle();
+        if (result.status === 0) fail("the launcher ran a native package built for another target");
+        const expected = `native package ${identities.platform.package} must target ${options.target}`;
+        if (!result.stderr.includes(expected)) fail(`foreign-target refusal did not name the exact requirement: ${tail(result.stderr)}`);
+        return result.stderr.trim().split("\n")[0];
+      });
+
       this.check("reinstall_from_lockfile_offline", () => {
         fs.rmSync(path.join(this.project, "node_modules"), { recursive: true, force: true });
         this.require(this.npmRun("npm ci --offline", ["ci", "--offline", "--ignore-scripts", "--no-audit", "--no-fund"], this.project), "npm ci --offline");
@@ -654,12 +715,12 @@ class Journey {
   }
 
   cleanup() {
-    if (this.options.keep) return true;
+    if (this.options.keep) return "not_run";
     try {
       fs.rmSync(this.root, { recursive: true, force: true, maxRetries: 3 });
-      return !fs.existsSync(this.root);
+      return fs.existsSync(this.root) ? "failed" : "passed";
     } catch {
-      return false;
+      return "failed";
     }
   }
 }
@@ -669,7 +730,7 @@ function toolVersion(journey, args) {
   return result.status === 0 ? result.stdout.trim() : "unknown";
 }
 
-function buildReceipt(options, journey, outcome, cleanupOk) {
+function buildReceipt(options, journey, outcome, cleanupStatus) {
   const { identities } = outcome;
   const failed = journey.checks.filter((item) => item.status !== "passed");
   const passed = journey.checks.length - failed.length;
@@ -699,7 +760,7 @@ function buildReceipt(options, journey, outcome, cleanupOk) {
     payload: { target: options.target, hash: payloadHash },
     tools: {
       runtime: `node ${process.version} ${process.platform}-${process.arch}`,
-      package_manager: `npm ${toolVersion(journey, ["--version"])}`,
+      package_manager: `npm ${journey.npmVersion || "unknown"}`,
     },
     subjects: { selected: journey.checks.length, executed: journey.checks.length, failed: failed.length, skipped: 0 },
     selection_scope: "explicit_subset",
@@ -711,11 +772,13 @@ function buildReceipt(options, journey, outcome, cleanupOk) {
       install_condition: "cold private npm cache from the isolated loopback registry",
       launcher_ms: outcome.timings && outcome.timings.launcher_ms !== undefined ? outcome.timings.launcher_ms : null,
     },
-    cleanup: { status: cleanupOk ? "passed" : "failed" },
+    cleanup: { status: cleanupStatus },
     limitations: [
       "npm is the only package manager exercised; pnpm, yarn and Plug'n'Play are not claimed",
       "upgrade between two released versions is not exercised; one exact version family is staged",
-      ...(options.sourceCommit ? [] : ["source identity was not supplied; the gate must be given --expected-commit"]),
+      `exercised only with node ${process.version} and npm ${journey.npmVersion || "unknown"}; other Node or npm versions are not claimed`,
+      "executed_payload_hash is the payload the installed launcher's own resolver selects; the TypeScript check is what shows those bytes behave as ripr",
+      ...(process.platform === "win32" ? ["the node_modules/.bin/ripr.cmd shim is exercised only through npm run and npm exec"] : []),
       ...(identities ? [
         `lockfile ${journey.lockfileHash || "not written"}`,
         `native package ${identities.native.manifest.name}@${identities.native.manifest.version} ${identities.native.sha256}`,
@@ -736,17 +799,17 @@ async function main(argv) {
     journey.checks.push({ name: "journey_aborted", status: "failed", ms: 0, detail: String(error && error.stack ? error.stack : error) });
     outcome = { identities: null, payload: undefined, timings: {} };
   }
-  const receipt = buildReceipt(options, journey, outcome, true);
+  const receipt = buildReceipt(options, journey, outcome, "passed");
   const log = { checks: journey.checks, commands: journey.log };
-  const cleanupOk = journey.cleanup();
-  receipt.cleanup.status = cleanupOk ? "passed" : "failed";
+  const cleanupStatus = journey.cleanup();
+  receipt.cleanup.status = cleanupStatus;
   fs.mkdirSync(path.dirname(path.resolve(options.receipt)), { recursive: true });
   fs.writeFileSync(options.receipt, `${JSON.stringify(receipt, null, 2)}\n`);
   if (options.log) fs.writeFileSync(options.log, `${JSON.stringify(log, null, 2)}\n`);
   for (const item of journey.checks) {
     process.stderr.write(`${item.status === "passed" ? "ok  " : "FAIL"} ${item.name}${item.status === "passed" ? "" : `: ${item.detail}`}\n`);
   }
-  return receipt.rows[0].status === "passed" && cleanupOk ? 0 : 1;
+  return receipt.rows[0].status === "passed" && cleanupStatus === "passed" ? 0 : 1;
 }
 
 module.exports = { Journey, JourneyFailure, buildReceipt, main, npmCliPath: npmCli, parseArgs, stagedIdentities, which };
