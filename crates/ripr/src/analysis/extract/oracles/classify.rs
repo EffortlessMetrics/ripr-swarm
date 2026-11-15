@@ -64,6 +64,33 @@ pub(crate) fn classify_assertion_in(line: &str, decl_source: &str) -> OracleClas
     classify_assertion_with(line, &LocalDecls::from_source(decl_source))
 }
 
+/// #14810: an assertion compared with a local the test body binds only to an
+/// unfilled placeholder macro (`let expected: i32 = todo!(..)`) pins no
+/// expected value, so it earns no strong credit. `ripr agent stub --write`
+/// writes exactly this shape, and crediting it tells an agent that wrote the
+/// stub that the gap is closed. Only a strong reading is lowered: a weak or
+/// relational reading already withholds the credit.
+pub(crate) fn without_unfilled_expected(
+    classification: OracleClassification,
+    assertion: &str,
+    placeholders: &std::collections::BTreeSet<String>,
+) -> OracleClassification {
+    if classification.strength != OracleStrength::Strong || placeholders.is_empty() {
+        return classification;
+    }
+    let tokens = crate::analysis::extract::text::extract_identifier_tokens(assertion);
+    if !placeholders
+        .iter()
+        .any(|name| tokens.iter().any(|token| token == name))
+    {
+        return classification;
+    }
+    OracleClassification {
+        kind: OracleKind::Unknown,
+        strength: OracleStrength::Unknown,
+    }
+}
+
 fn classify_assertion_against(line: &str, decls: &LocalDecls) -> OracleClassification {
     // Preserve the full outer-assertion boundary before semantic operand
     // projection removes wrappers or trailing tokens from the input.

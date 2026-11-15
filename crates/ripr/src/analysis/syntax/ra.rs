@@ -49,7 +49,7 @@ use crate::analysis::rust_index::{
     extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
     extract_return_facts, guarded_result_match_scan_with_shadow_authority,
     is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
-    unwrap_err_bound_variables,
+    placeholder_bound_variables, unwrap_err_bound_variables, without_unfilled_expected,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2873,6 +2873,10 @@ fn extract_parser_oracles(
         &original_function_text,
     );
     let bound_error_vars = unwrap_err_bound_variables(&function_text);
+    // #14810: a local the body binds only to an unfilled placeholder macro
+    // (`let expected: i32 = todo!(..)`) pins no expected value, so an
+    // assertion compared with it earns no strong credit.
+    let placeholder_vars = placeholder_bound_variables(&function_text);
 
     let mut assertions = Vec::new();
     for macro_call in function
@@ -2907,6 +2911,8 @@ fn extract_parser_oracles(
             classification.kind = OracleKind::ExactErrorVariant;
             classification.strength = OracleStrength::Strong;
         }
+        let classification =
+            without_unfilled_expected(classification, &assertion_text, &placeholder_vars);
         assertions.push(OracleFact {
             line: line_index.line(range.start()),
             kind: classification.kind,

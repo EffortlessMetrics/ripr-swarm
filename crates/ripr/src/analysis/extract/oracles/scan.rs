@@ -5,7 +5,7 @@ use super::arguments::{
     assertion_oracle_text, complete_block_body, delimited_contents_at, discarded_matcher_scrutinee,
     parenthesized_contents, starts_discarded_matcher_computation,
 };
-use super::classify::{classify_assertion, classify_assertion_with};
+use super::classify::{classify_assertion, classify_assertion_with, without_unfilled_expected};
 use super::pattern_admission::LazyDecls;
 use super::patterns::{
     ExpectErrForm, contains_macro_invocation, contains_named_enum_variant, has_argument_tokens,
@@ -27,6 +27,10 @@ pub(crate) fn extract_assertions_in(
     decls: &LazyDecls,
 ) -> Vec<OracleFact> {
     let bound_error_vars = unwrap_err_bound_variables(body);
+    // #14810: a local the body binds only to an unfilled placeholder macro
+    // (`let expected: i32 = todo!(..)`) pins no expected value, so an
+    // assertion compared with it earns no strong credit.
+    let placeholder_vars = placeholder_bound_variables(body);
     // #3709: the dedicated guarded-Result-match scanner owns every recognized
     // `match <direct-call> { Ok.. Err.. }` statement. Skipping its start lines
     // keeps the generic statement joiner from swallowing the whole match block
@@ -125,6 +129,8 @@ pub(crate) fn extract_assertions_in(
                 classification.kind = OracleKind::ExactErrorVariant;
                 classification.strength = OracleStrength::Strong;
             }
+            let classification =
+                without_unfilled_expected(classification, &trimmed, &placeholder_vars);
             let observed_tokens = extract_identifier_tokens(&trimmed);
             out.push(OracleFact {
                 line: start_line + fact_offset + preceding_lines,
@@ -2453,6 +2459,73 @@ pub(crate) fn unwrap_err_bound_variables(body: &str) -> std::collections::BTreeS
         }
     }
     vars
+}
+
+/// Names `body` binds in a `let` whose every visible initializer is a diverging
+/// placeholder macro (`todo!`, `unimplemented!`, `unreachable!`, `panic!`).
+///
+/// `ripr agent stub --write` writes
+/// `let expected: T = todo!("ripr: write the value ...");` and then
+/// `assert_eq!(call(..), expected);`. Until the value is filled in, the
+/// assertion cannot fail for a wrong result, so it pins no expected value
+/// (#14810). The scan is statement-sized like [`unwrap_err_bound_variables`],
+/// so a single-line body is read too. A second binding of the same name to
+/// anything else drops the name: an ambiguous body keeps today's credit.
+pub(crate) fn placeholder_bound_variables(body: &str) -> std::collections::BTreeSet<String> {
+    let masked = mask_comments_and_strings(body);
+    let mut seen: std::collections::BTreeMap<String, bool> = std::collections::BTreeMap::new();
+    for stmt in masked.split([';', '{', '}']) {
+        let Some(binding) = let_binding_substring(stmt) else {
+            continue;
+        };
+        let Some((var, initializer)) = let_binding_parts(binding) else {
+            continue;
+        };
+        let placeholder = is_diverging_placeholder(initializer);
+        seen.entry(var.to_string())
+            .and_modify(|every| *every = *every && placeholder)
+            .or_insert(placeholder);
+    }
+    seen.into_iter()
+        .filter(|(_, every)| *every)
+        .map(|(var, _)| var)
+        .collect()
+}
+
+/// The `let` binding's `(name, initializer)` when `line` is
+/// `let [mut] <ident>[: <type>] = <initializer>`.
+fn let_binding_parts(line: &str) -> Option<(&str, &str)> {
+    let rest = line.strip_prefix("let ")?.trim_start();
+    let rest = rest
+        .strip_prefix("mut ")
+        .map(str::trim_start)
+        .unwrap_or(rest);
+    let ident_end = rest
+        .char_indices()
+        .find(|(_, ch)| !ch.is_ascii_alphanumeric() && *ch != '_')
+        .map(|(i, _)| i)
+        .unwrap_or(rest.len());
+    if ident_end == 0 {
+        return None;
+    }
+    let var = &rest[..ident_end];
+    let after_var = rest[ident_end..].trim_start();
+    // Allow an optional type annotation: `let expected: i32 = todo!(..)`.
+    let after_colon = if after_var.starts_with(':') {
+        after_var.find('=').map(|i| &after_var[i..])?
+    } else {
+        after_var
+    };
+    let after_eq = after_colon.strip_prefix('=')?.trim_start();
+    Some((var, after_eq.trim_end_matches(';').trim_start()))
+}
+
+/// Whether `initializer` is exactly a diverging placeholder macro call, so the
+/// value it would hold does not exist until a person writes it.
+fn is_diverging_placeholder(initializer: &str) -> bool {
+    ["todo!", "unimplemented!", "unreachable!", "panic!"]
+        .iter()
+        .any(|macro_name| initializer.starts_with(macro_name))
 }
 
 /// Return the slice of `stmt` starting at a `let ` token boundary (preceded by
@@ -5601,5 +5674,131 @@ mod row_tables_tests {
             return Err("an offset past the end must not open the window".to_string());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod unfilled_expected_tests {
+    use super::*;
+    use crate::domain::{OracleKind, OracleStrength};
+
+    /// The `ripr agent stub --write` template: the expected value is still a
+    /// `todo!()`, so the assertion cannot fail for a wrong result (#14810).
+    const STUB_BODY: &str = r#"
+fn price_boundary_discriminator() {
+    use super::*;
+    let amount: u32 = 100;
+    let threshold: u32 = 100;
+    let expected: u32 = todo!("ripr: write the value `price` should return");
+    assert_eq!(price(amount, threshold), expected);
+}
+"#;
+
+    fn only_fact(body: &str) -> Result<OracleFact, String> {
+        let facts = extract_assertions(body, 1);
+        if facts.len() != 1 {
+            return Err(format!("expected one oracle, got {facts:?}"));
+        }
+        facts
+            .into_iter()
+            .next()
+            .ok_or_else(|| "expected one oracle".to_string())
+    }
+
+    #[test]
+    fn an_unfilled_stub_expected_value_earns_no_strong_credit() -> Result<(), String> {
+        let fact = only_fact(STUB_BODY)?;
+        if fact.kind != OracleKind::Unknown || fact.strength != OracleStrength::Unknown {
+            return Err(format!(
+                "an unfilled todo!() expected value must not read as a discriminator: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_filled_expected_value_keeps_its_strong_credit() -> Result<(), String> {
+        let filled = STUB_BODY.replace(
+            r#"let expected: u32 = todo!("ripr: write the value `price` should return");"#,
+            "let expected: u32 = 9_990;",
+        );
+        let fact = only_fact(&filled)?;
+        if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
+            return Err(format!(
+                "a filled expected value must keep its exact credit: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_real_expression_expected_value_keeps_its_strong_credit() -> Result<(), String> {
+        let computed = STUB_BODY.replace(
+            r#"let expected: u32 = todo!("ripr: write the value `price` should return");"#,
+            "let expected: u32 = price(amount, threshold);",
+        );
+        let fact = only_fact(&computed)?;
+        if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
+            return Err(format!(
+                "a real expression expected value must keep its exact credit: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn every_diverging_placeholder_macro_is_read() -> Result<(), String> {
+        for macro_name in ["todo!", "unimplemented!", "unreachable!", "panic!"] {
+            let body = STUB_BODY.replace(
+                r#"todo!("ripr: write the value `price` should return")"#,
+                &format!(r#"{macro_name}("ripr: write the value")"#),
+            );
+            let fact = only_fact(&body)?;
+            if fact.strength != OracleStrength::Unknown {
+                return Err(format!(
+                    "`{macro_name}` must not earn strong credit: {fact:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_assertion_that_does_not_read_the_placeholder_keeps_its_credit() -> Result<(), String> {
+        let body = STUB_BODY.replace(
+            "assert_eq!(price(amount, threshold), expected);",
+            "assert_eq!(price(amount, threshold), 9_990);",
+        );
+        let fact = only_fact(&body)?;
+        if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
+            return Err(format!(
+                "an assertion that never reads the placeholder must keep its credit: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_placeholder_bound_name_is_collected_from_a_single_line_body() {
+        let vars = placeholder_bound_variables(
+            "fn t() { let expected: u32 = todo!(\"x\"); assert_eq!(price(1), expected); }",
+        );
+        assert!(vars.contains("expected"), "{vars:?}");
+    }
+
+    #[test]
+    fn a_second_binding_of_the_same_name_drops_it() {
+        let vars = placeholder_bound_variables(
+            "fn t() { let expected: u32 = todo!(\"x\"); let expected: u32 = 9_990; }",
+        );
+        assert!(vars.is_empty(), "{vars:?}");
+    }
+
+    #[test]
+    fn a_placeholder_in_a_comment_or_string_is_not_a_binding() {
+        let vars = placeholder_bound_variables(
+            "fn t() { // let expected: u32 = todo!(\"x\");\n let note = \"let expected = todo!()\"; }",
+        );
+        assert!(vars.is_empty(), "{vars:?}");
     }
 }
