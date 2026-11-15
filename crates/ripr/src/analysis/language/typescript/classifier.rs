@@ -4858,9 +4858,23 @@ pub(crate) fn owner_namespace_receivers(
                             .default_member_only_locals_in_file
                             .iter()
                             .any(|(local, member)| *local == import.local && *member == owner.name)
+                        && !test
+                            .default_member_only_locals_in_file
+                            .iter()
+                            .any(|(local, member)| {
+                                *local == import.local
+                                    && owner.default_object_unsafe_siblings.contains(member)
+                            })
                         && import_source_matches_owner(
                             import,
                             &test.file,
+                            owner,
+                            alias_map,
+                            workspace_root,
+                        )
+                        && !super::related_tests::default_object_second_binding(
+                            import,
+                            test,
                             owner,
                             alias_map,
                             workspace_root,
@@ -8236,8 +8250,9 @@ pub(crate) fn classify_resolved_owner(
         .chars()
         .map(|c| if c == '/' || c == '\\' { '_' } else { c })
         .collect();
-    let family = probe_shape.family.clone();
-    let delta = probe_shape.delta.clone();
+    // #14381: an unrecognised plain value declaration presents as a value;
+    // every analysis decision above and below reads `probe_shape`.
+    let (family, delta) = presented_typescript_shape(&probe_shape, line_text);
     let expected_sinks = if probe_shape.specific {
         probes::expected_sinks(line_text, &family)
     } else {

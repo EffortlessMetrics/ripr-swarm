@@ -463,6 +463,87 @@ fn machine_format_stdout_is_unchanged(format: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The `-v` diagnostics line that names the run's effort profile and scope.
+fn verbose_mode_lines(output: &Output) -> Vec<String> {
+    stderr_text(output)
+        .lines()
+        .filter(|line| line.starts_with("ripr: mode = "))
+        .map(str::to_string)
+        .collect()
+}
+
+/// `-v` used to print `ripr: mode = Diff`: the scope under the word the report
+/// header uses for the effort profile (`mode: draft`), spelled as a Rust enum
+/// variant. The line now carries both values under their own names, with the
+/// same tokens the report and the progress lines print.
+#[test]
+fn verbose_check_names_the_effort_mode_and_the_scope_separately() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let default_mode = run_check(&fixture, &["-v", "--format", "json"])?;
+    assert!(
+        default_mode.status.success(),
+        "{}",
+        stderr_text(&default_mode)
+    );
+    assert_eq!(
+        verbose_mode_lines(&default_mode),
+        ["ripr: mode = draft; scope = diff"],
+        "{}",
+        stderr_text(&default_mode)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&default_mode.stdout)
+        .map_err(|error| format!("stdout is not JSON: {error}"))?;
+    assert_eq!(
+        report["mode"], "draft",
+        "the stderr line and the report must agree on the mode"
+    );
+
+    let ready = run_check(&fixture, &["-v", "--mode", "ready", "--format", "json"])?;
+    assert!(ready.status.success(), "{}", stderr_text(&ready));
+    assert_eq!(
+        verbose_mode_lines(&ready),
+        ["ripr: mode = ready; scope = diff"],
+        "{}",
+        stderr_text(&ready)
+    );
+
+    let plain = run_check(&fixture, &["--format", "json"])?;
+    assert!(plain.status.success(), "{}", stderr_text(&plain));
+    assert!(
+        verbose_mode_lines(&plain).is_empty(),
+        "the line is verbose-only: {}",
+        stderr_text(&plain)
+    );
+    Ok(())
+}
+
+#[test]
+fn verbose_worktree_check_names_the_worktree_scope() -> Result<(), String> {
+    let root = sample_crate_root();
+    let output = ripr()
+        .args(["-v", "check", "--root", root.as_str(), "--worktree"])
+        .args(["--format", "json"])
+        .output()
+        .map_err(|error| format!("run verbose worktree check: {error}"))?;
+    // Same tolerance as the worktree progress test below: a checkout where
+    // the worktree read fails stops before the line, and says so.
+    if !output.status.success() {
+        assert!(
+            stderr_text(&output).contains("ripr progress: failed [worktree]"),
+            "{}",
+            stderr_text(&output)
+        );
+        return Ok(());
+    }
+    assert_eq!(
+        verbose_mode_lines(&output),
+        ["ripr: mode = draft; scope = worktree"],
+        "{}",
+        stderr_text(&output)
+    );
+    Ok(())
+}
+
 #[test]
 fn check_worktree_projects_worktree_scope_on_stderr() -> Result<(), String> {
     // Analyze the sample crate rather than this repository. A worktree scan of
@@ -1340,6 +1421,72 @@ fn context_on_a_pipe_is_silent_by_default() -> Result<(), String> {
     Ok(())
 }
 
+/// `ripr explain --format agent` is the compact report a coding agent reads,
+/// and the agent loop follows `ripr check`'s printed `next=ripr explain ...`
+/// line, which carries no `--quiet`. On a piped stderr it is silent by default
+/// like `check --format agent`; the human explain keeps its progress (negative
+/// control) and `RIPR_PROGRESS=1` restores the stream.
+#[test]
+fn explain_agent_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let check = run_check_as(ripr_default(), &fixture, &["--format", "json"])?;
+    let parsed: serde_json::Value = serde_json::from_slice(&check.stdout)
+        .map_err(|error| format!("stdout is not JSON: {error}"))?;
+    let finding_id = parsed["findings"]
+        .as_array()
+        .and_then(|findings| findings.first())
+        .and_then(|finding| finding["id"].as_str())
+        .ok_or_else(|| format!("diff fixture must report a finding id: {parsed}"))?
+        .to_string();
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("change.diff").display().to_string();
+    let human = [
+        "explain",
+        "--root",
+        root.as_str(),
+        "--diff",
+        diff.as_str(),
+        finding_id.as_str(),
+    ];
+    let mut agent = human.to_vec();
+    agent.extend_from_slice(&["--format", "agent"]);
+    let default = ripr_default()
+        .args(&agent)
+        .output()
+        .map_err(|error| format!("run ripr explain --format agent: {error}"))?;
+    assert!(default.status.success(), "{}", stderr_text(&default));
+    assert!(
+        String::from_utf8_lossy(&default.stdout).starts_with("#ripr explain agent"),
+        "explain must still render the agent report: {}",
+        String::from_utf8_lossy(&default.stdout)
+    );
+    assert!(
+        !stderr_text(&default).contains("ripr progress:"),
+        "explain --format agent on a pipe is silent by default: {}",
+        stderr_text(&default)
+    );
+    let forced = ripr()
+        .args(&agent)
+        .output()
+        .map_err(|error| format!("run ripr explain --format agent: {error}"))?;
+    assert!(
+        stderr_text(&forced).contains("ripr progress: loading_input [diff]"),
+        "RIPR_PROGRESS=1 restores explain progress (control): {}",
+        stderr_text(&forced)
+    );
+    assert_eq!(default.stdout, forced.stdout);
+    let human_default = ripr_default()
+        .args(human)
+        .output()
+        .map_err(|error| format!("run ripr explain: {error}"))?;
+    assert!(
+        stderr_text(&human_default).contains("ripr progress: loading_input [diff]"),
+        "the human explain keeps progress on a pipe: {}",
+        stderr_text(&human_default)
+    );
+    Ok(())
+}
+
 /// Catalog paths whose production path can emit progress or `wrote` narration.
 /// A path not in this list or [`NO_NARRATION`] fails so a new command cannot
 /// rot into an unclassified default (#12103). Runtime lives here because a new
@@ -1398,6 +1545,7 @@ const NO_NARRATION: &[&str] = &[
     "first-action",
     "first-pr",
     "gate",
+    "gate check",
     "gate evaluate",
     "help",
     "impacted-evidence",

@@ -1,0 +1,29 @@
+[[behavior]]
+id = "RIPR-SPEC-0429"
+name = "Structured staged-evidence rows"
+spec = "docs/specs/RIPR-SPEC-0429-structured-stage-evidence-rows.md"
+tests = [
+  "crates/ripr/src/output/stage_rows.rs::tests::rows_project_the_five_stages_in_evidence_order",
+  "crates/ripr/src/output/stage_rows.rs::tests::stage_named_basis_entries_land_on_their_stage_row_only",
+  "crates/ripr/src/output/stage_rows.rs::tests::no_row_claims_related_test_attribution",
+  "crates/ripr/src/output/json/mod.rs::tests::finding_json_emits_structured_stage_rows_without_test_attribution",
+  "crates/ripr/src/output/human/agent_tests.rs::top_gap_carries_location_missing_value_test_id_and_next_command",
+  "crates/ripr/src/output/human/agent_tests.rs::explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next",
+  "crates/ripr/src/output/human/agent_tests.rs::record_free_terminal_runs_print_no_stages_line",
+  "crates/ripr/src/output/stage_rows.rs::tests::agent_line_is_the_compact_stage_state_row",
+  "crates/ripr-contract/src/domain/confidence_basis.rs::tests::stage_named_caps_map_to_their_ripr_stage_key",
+]
+code = [
+  "crates/ripr/src/output/stage_rows.rs",
+  "crates/ripr/src/output/json/report.rs",
+  "crates/ripr/src/output/human/agent.rs",
+  "crates/ripr-contract/src/domain/confidence_basis.rs",
+]
+outputs = [
+  "schemas/ripr/check.schema.json",
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/specs/RIPR-SPEC-0429-structured-stage-evidence-rows.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

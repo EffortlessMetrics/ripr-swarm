@@ -37,9 +37,9 @@ Static exposure
   reachable_unrevealed (warning, confidence 0.66)
 Evidence
   shared evidence: E1, E2
-  - propagation yes: Changed behavior appears to influence match arm result: Self::Object(value) =>
+  - propagation yes: Changed behavior appears to influence match arm result: Some(*value)
   shared evidence: E3, E4
-  - local flow reaches match arm result: Self::Object(value) => (line 6)
+  - local flow reaches match arm result: Some(*value) (line 6)
   shared evidence: E5, E6
 Weakness
   - No detected assertion observes the changed value, error, field, or effect

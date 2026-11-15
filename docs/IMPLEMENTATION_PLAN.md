@@ -148,6 +148,15 @@ before allocating work.
 
 ## Campaign Map
 
+Every row in this table is recorded campaign history under the banner above.
+Three rows still self-describe as "Active" in their recorded work items —
+`Rust One-Shot Evidence-to-Repair Product Closure (32)`, `TypeScript Enablement`,
+and `Python Repair Routing (28)` — because those campaigns were still open when
+their rows were written. That label is their recorded state, not today's
+selection: the live active lanes and ranked backlog are
+[Current delivery priorities](#current-delivery-priorities) above. Read the
+current issue and live GitHub state before continuing any lane named here.
+
 | Campaign | Objective | Work items |
 | --- | --- | --- |
 | Rust One-Shot Evidence-to-Repair Product Closure (32) | Make RIPR's Rust PR workflow lead from one changed behavior to one exact test-only repair and a receipt, without artifact archaeology or known-ineffective routing. | Active: [RIPR-PLAN-0062](../plans/rust-one-shot-evidence-to-repair.md) and its linked GitHub issues select remaining acceptance. cargo-allow spec-system is advisory while dialect support is blocked on cargo-allow [#2260](https://github.com/EffortlessMetrics/cargo-allow/issues/2260) and [#2196](https://github.com/EffortlessMetrics/cargo-allow/issues/2196). The prior cargo-allow [#2119](https://github.com/EffortlessMetrics/cargo-allow/issues/2119) blocker was closed as not planned on 2026-08-25 when the explicit dialect/source-adapter architecture superseded it. Retired singleton goal files do not select work. |

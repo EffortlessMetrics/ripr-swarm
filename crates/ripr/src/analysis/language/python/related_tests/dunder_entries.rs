@@ -50,6 +50,11 @@ pub(in crate::analysis::language::python) struct PythonClassFacts {
     /// Trimmed text of the single-line expression statements written directly
     /// in this method's body (not nested under a guard). Set at extraction.
     pub(in crate::analysis::language::python) direct_statements: Vec<String>,
+    /// For a function whose body is only an optional docstring and one return:
+    /// the bare class name constructed by that return expression. `None` for
+    /// every other return shape, which keeps factory discovery fail-closed.
+    #[serde(default)]
+    pub(in crate::analysis::language::python) direct_class_return: Option<String>,
     /// For a module-level function owner: the module-scope names bound once to
     /// a call result and never rebound, objects the function can mutate
     /// through an attribute write. Filled after extraction; empty when unknown.
@@ -57,6 +62,106 @@ pub(in crate::analysis::language::python) struct PythonClassFacts {
     /// For a function owner: the names its own body binds (parameters, locals,
     /// walrus targets). None when unknown, which keeps every consumer closed.
     pub(in crate::analysis::language::python) bound_names: Option<Vec<String>>,
+    /// For a non-dunder method: the protocol dunder methods of the same class
+    /// (constructor and finalizer dunders excluded; at most
+    /// [`MAX_DUNDER_ENTRIES`]) from which a `self.` / `cls.` call path of at
+    /// most [`MAX_DUNDER_CALL_DEPTH`] hops reaches it (`cache[key] = v` runs
+    /// `__setitem__`, which calls `self.getsizeof(value)`; #13776). Empty when
+    /// unknown, which keeps every consumer closed.
+    #[serde(default)]
+    pub(in crate::analysis::language::python) dunder_entries: Vec<String>,
+}
+
+/// Most `self.` hops followed from a dunder method to a helper.
+const MAX_DUNDER_CALL_DEPTH: usize = 5;
+/// Most reaching dunders recorded per helper.
+const MAX_DUNDER_ENTRIES: usize = 8;
+
+/// Dunders that run on construction, class creation or finalization, never as
+/// a protocol a test exercises on an instance. They start no search: a helper
+/// called from `__init__` keeps its pre-#13776 reading, so constructing the
+/// class alone never relates it (RIPR-SPEC-0201).
+const NON_ENTRY_DUNDERS: [&str; 5] = [
+    "__init__",
+    "__new__",
+    "__post_init__",
+    "__init_subclass__",
+    "__del__",
+];
+
+/// Dunder methods of a class that reach each non-dunder method through
+/// same-class calls, keyed by (file, class) then method name. Forward search
+/// from each dunder, so the cost is dunders x class edges, not methods x edges.
+fn dunder_entries_by_method(
+    owners: &[PythonOwner],
+) -> HashMap<(std::path::PathBuf, String), HashMap<String, Vec<String>>> {
+    type ClassKey<'o> = (&'o std::path::Path, &'o str);
+    let mut edges: HashMap<ClassKey<'_>, HashMap<&str, Vec<&str>>> = HashMap::new();
+    let mut dunders: HashMap<ClassKey<'_>, Vec<&str>> = HashMap::new();
+    for owner in owners {
+        if owner.class_path.is_empty()
+            || !matches!(
+                owner.owner_kind,
+                Some(OwnerKind::Method | OwnerKind::ClassMethod)
+            )
+        {
+            continue;
+        }
+        let key = (owner.file.as_path(), owner.class_path.as_str());
+        let callees = edges
+            .entry(key)
+            .or_default()
+            .entry(&owner.name)
+            .or_default();
+        callees.extend(owner.same_class_callees.iter().map(String::as_str));
+        if super::is_dunder_name(&owner.name) && !NON_ENTRY_DUNDERS.contains(&owner.name.as_str()) {
+            let names = dunders.entry(key).or_default();
+            if !names.contains(&owner.name.as_str()) {
+                names.push(&owner.name);
+            }
+        }
+    }
+    let mut reached: HashMap<(std::path::PathBuf, String), HashMap<String, Vec<String>>> =
+        HashMap::new();
+    for (key, names) in dunders {
+        let Some(graph) = edges.get(&key) else {
+            continue;
+        };
+        for dunder in names {
+            let mut seen: std::collections::HashSet<&str> =
+                std::collections::HashSet::from([dunder]);
+            let mut frontier = vec![dunder];
+            for _ in 0..MAX_DUNDER_CALL_DEPTH {
+                let mut next = Vec::new();
+                for caller in frontier {
+                    for callee in graph.get(caller).into_iter().flatten() {
+                        if !seen.insert(callee) {
+                            continue;
+                        }
+                        next.push(*callee);
+                        if super::is_dunder_name(callee) || !graph.contains_key(callee) {
+                            continue;
+                        }
+                        let entries = reached
+                            .entry((key.0.to_path_buf(), key.1.to_string()))
+                            .or_default()
+                            .entry((*callee).to_string())
+                            .or_default();
+                        if entries.len() < MAX_DUNDER_ENTRIES
+                            && !entries.iter().any(|d| d == dunder)
+                        {
+                            entries.push(dunder.to_string());
+                        }
+                    }
+                }
+                if next.is_empty() {
+                    break;
+                }
+                frontier = next;
+            }
+        }
+    }
+    reached
 }
 
 /// One class's method names, shared by its methods, and whether `__enter__`
@@ -103,12 +208,20 @@ pub(in crate::analysis::language::python) fn apply_class_facts(owners: &mut [Pyt
             )
         })
         .collect();
+    let reached = dunder_entries_by_method(owners);
     for owner in owners.iter_mut() {
         if let Some((methods, enter_returns_self)) =
             grouped.get(&(owner.file.clone(), owner.class_path.clone()))
         {
             owner.class_facts.methods = std::sync::Arc::clone(methods);
             owner.class_facts.enter_returns_self = *enter_returns_self;
+        }
+        if !owner.class_path.is_empty()
+            && let Some(entries) = reached
+                .get(&(owner.file.clone(), owner.class_path.clone()))
+                .and_then(|methods| methods.get(&owner.name))
+        {
+            owner.class_facts.dunder_entries = entries.clone();
         }
     }
 }
@@ -138,12 +251,29 @@ fn is_comparison(operator: &str) -> bool {
 /// Locals the test binds once, as a whole value, to a construction of the
 /// owner's class: `a = Money(1)`.
 fn bound_instances(test: &PythonTest, owner: &PythonOwner, class: &str) -> Vec<String> {
+    bound_instances_for_callables(test, &owner_class_locals(test, owner, class), false)
+}
+
+/// Instances bound once to a call of one of `callables`. `callables` may be
+/// the owner class itself or a same-package factory whose imports and direct
+/// class return identify that class. Every other binding and scope guard is
+/// shared with ordinary direct constructions, so factory names do not weaken
+/// receiver identity.
+/// `factory_conversion` distinguishes a fixture's input value from an object
+/// produced by a validated factory (`dur1` string to `Duration` via
+/// `parse_duration`). It never relaxes the class, import, construction, or
+/// single-binding checks. Direct construction always passes `false`.
+fn bound_instances_for_callables(
+    test: &PythonTest,
+    callables: &[String],
+    factory_conversion: bool,
+) -> Vec<String> {
     let body = test.body_text.as_str();
     // `with rec:` reads like an annotation (`rec: int`) to the target-list
     // scan; a context-manager header binds nothing.
     let scrubbed = scrub_with_headers(body);
     let mut locals = Vec::new();
-    for local in owner_class_locals(test, owner, class) {
+    for local in callables {
         let construct = format!("{local}(");
         for (idx, _) in body.match_indices(&construct) {
             if !python_callee_start_has_boundary(body, idx)
@@ -156,7 +286,7 @@ fn bound_instances(test: &PythonTest, owner: &PythonOwner, class: &str) -> Vec<S
                 && assignment_count(body, &var) == 1
                 && !keyword_or_operator_binds_text(body, &var, true)
                 && !binds_in_target_list(&scrubbed, &var)
-                && !test.fixtures.contains(&var)
+                && (factory_conversion || !test.fixtures.contains(&var))
                 && !is_callable_parameter(body, &var)
                 && !locals.contains(&var)
             {
@@ -271,6 +401,24 @@ fn operator_runs_owner(operator: &str, owner: &PythonOwner) -> bool {
                             .any(|name| name == "__ne__"))
             })
         })
+}
+
+/// Operator dispatch for the weak module-helper relation. A non-plain class
+/// (such as a class with a dunder alias) does not exclude a factory-bound
+/// receiver here: the row never carries an oracle. The existing strict
+/// `!=`/`__eq__` fallback remains intact, including an explicit `__ne__`.
+fn operator_runs_module_helper(
+    operator: &str,
+    owner: &PythonOwner,
+    factory_receiver: bool,
+) -> bool {
+    if !factory_receiver || operator == "!=" {
+        return operator_runs_owner(operator, owner);
+    }
+    OPERATOR_DUNDERS
+        .iter()
+        .find(|(token, _)| *token == operator)
+        .is_some_and(|(_, dunders)| dunders.contains(&owner.name.as_str()))
 }
 
 /// Unclosed bracket positions before `idx`, outermost first.
@@ -524,12 +672,14 @@ fn operator_at(text: &str, idx: usize) -> Option<&'static str> {
 
 /// Whether an assertion's text runs the owner dunder through an operator whose
 /// receiver is a statically bound instance of the owner class and whose result
-/// is an asserted operand (`assert Money(5) + Money(7) == Money(12)`,
-/// `assert (a + b).cents == 12`, `assert a == b`).
-pub(in crate::analysis::language::python) fn operator_entry_in_text(
+/// is an asserted operand. With no factories supplied this is unchanged from
+/// the original strict path; validated same-module factories are allowed only
+/// for the weak module-helper receiver proof.
+pub(in crate::analysis::language::python) fn operator_entry_in_text_with_factories(
     text: &str,
     test: &PythonTest,
     owner: &PythonOwner,
+    factories: &[String],
 ) -> bool {
     let Some(class) = dunder_method_class(owner) else {
         return false;
@@ -546,7 +696,11 @@ pub(in crate::analysis::language::python) fn operator_entry_in_text(
     if super::super::test_activation::activation_control(test).is_some() {
         return false;
     }
-    let (class_locals, instances) = bound_receivers(test, owner, class);
+    let (mut class_locals, mut instances) = bound_receivers(test, owner, class);
+    if !factories.is_empty() {
+        class_locals.extend_from_slice(factories);
+        instances.extend(bound_instances_for_callables(test, factories, true));
+    }
     if class_locals.is_empty() {
         return false;
     }
@@ -556,7 +710,7 @@ pub(in crate::analysis::language::python) fn operator_entry_in_text(
         };
         if python_text_hides_code(text, at)
             || bracket_depth_at(text, at) < base
-            || !operator_runs_owner(operator, owner)
+            || !operator_runs_module_helper(operator, owner, !factories.is_empty())
             || !grouping_chain_is_plain(text, at, base)
         {
             continue;

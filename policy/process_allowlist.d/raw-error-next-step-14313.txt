@@ -1,0 +1,1 @@
+crates/ripr/tests/raw_error_next_step.rs|Command::new|1|raw-error-next-step-14313|Runs the built ripr binary with fixed argv in a scratch workspace to pin exact stderr for path and shape refusals; no shell or network.
