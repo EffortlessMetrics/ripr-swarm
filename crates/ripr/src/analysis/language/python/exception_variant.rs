@@ -325,12 +325,7 @@ fn stale_pins(
                 .imports
                 .iter()
                 .any(|import| import.alias == old_type);
-            if rebinding
-                .module_bound
-                .iter()
-                .any(|bound| *bound == old_type)
-                && (builtin || !plainly_imported)
-            {
+            if rebinding.module_bound.contains(&old_type) && (builtin || !plainly_imported) {
                 return None;
             }
             pins.push(StaleRaisedTypePin {
