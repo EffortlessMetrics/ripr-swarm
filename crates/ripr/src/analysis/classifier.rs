@@ -3660,7 +3660,7 @@ fn far_above_threshold_discounts() {
                 "{step}"
             );
             assert!(
-                step.contains("original and changed") && step.contains("may remain unknown"),
+                step.contains("old and new code") && step.contains("may remain unknown"),
                 "{step}"
             );
         } else {

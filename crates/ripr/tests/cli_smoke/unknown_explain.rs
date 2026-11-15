@@ -39,7 +39,7 @@ fn unknown_explain_real_reasons_have_supported_actions_in_every_mode() -> TestRe
                 "probe:src_lib.rs:call_deletion:75eda2b6",
                 "propagation_unknown",
                 "proc_macro_opaque",
-                vec!["macro", "output or effect", "original and changed"],
+                vec!["macro", "output or effect", "old and new code"],
             ),
             (
                 "helper_chain_one_hop",
@@ -48,7 +48,7 @@ fn unknown_explain_real_reasons_have_supported_actions_in_every_mode() -> TestRe
                 "infection_evidence_unknown",
                 vec![
                     "local or computed operand",
-                    "original and changed",
+                    "old and new code",
                     "ripr.toml",
                     "does not support",
                 ],
@@ -58,7 +58,7 @@ fn unknown_explain_real_reasons_have_supported_actions_in_every_mode() -> TestRe
                 "probe:src_lib.rs:static_unknown:c48715e6",
                 "static_unknown",
                 "no_changed_rust_line",
-                vec!["declaration", "consumes", "original and changed"],
+                vec!["declaration", "consumes", "old and new code"],
             ),
         ] {
             let root = fixture(name, &scratch)?;

@@ -55,4 +55,3 @@ Command:
 
 Updated:
 - `expected/check.json`
-- `expected/human.txt`
