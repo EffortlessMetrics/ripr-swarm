@@ -3,7 +3,9 @@
 //! probed.
 
 use super::SeededProbe;
+use super::identifier_rename::rename_only_lines;
 use super::replacement_identity_tests::git_probes;
+use crate::analysis::diff::parse_unified_diff;
 
 /// The httparse 9f6702b shape: a table renamed with its values unchanged,
 /// its one use site respelled, and the commit's real change elsewhere.
@@ -91,6 +93,30 @@ fn the_same_use_site_edit_without_a_proven_rename_is_probed() -> Result<(), Stri
             format!("#[unsafe(no_mangle)]\n{BEFORE}"),
         ),
         (
+            "a blank line separates the attribute from the item",
+            format!("#[unsafe(no_mangle)]\n\n{AFTER}"),
+            format!("#[unsafe(no_mangle)]\n\n{BEFORE}"),
+        ),
+        (
+            "a field shares the renamed spelling",
+            format!("{AFTER}\npub struct Row {{\n    pub TOKEN_MAP: u8,\n}}\n"),
+            format!("{BEFORE}\npub struct Row {{\n    pub HEADER_NAME_MAP: u8,\n}}\n"),
+        ),
+        (
+            "an assert prints the renamed name",
+            format!("{AFTER}\npub fn check() {{\n    assert!(TOKEN_MAP[1]);\n}}\n"),
+            format!("{BEFORE}\npub fn check() {{\n    assert!(HEADER_NAME_MAP[1]);\n}}\n"),
+        ),
+        (
+            "the file can print a value's type name",
+            format!(
+                "{AFTER}\npub fn name() -> &'static str {{\n    core::any::type_name_of_val(&1)\n}}\n"
+            ),
+            format!(
+                "{BEFORE}\npub fn name() -> &'static str {{\n    core::any::type_name_of_val(&1)\n}}\n"
+            ),
+        ),
+        (
             "the file can observe identifier text",
             format!("{AFTER}\npub fn name() -> &'static str {{\n    stringify!(x)\n}}\n"),
             format!("{BEFORE}\npub fn name() -> &'static str {{\n    stringify!(x)\n}}\n"),
@@ -140,5 +166,29 @@ pub fn start() -> u8 {
     let after = before.replace("count_down", "countdown");
     let probes = git_probes(before, &after)?;
     assert_eq!(probe_lines(&probes), Vec::new());
+    Ok(())
+}
+
+/// `main` is bound by its spelling, so renaming it is never proven; the
+/// same rename of an ordinary function is.
+#[test]
+fn renaming_an_entry_point_is_never_proven() -> Result<(), String> {
+    let rename = |from: &str| -> Result<Vec<usize>, String> {
+        let patch = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-fn {from}() {{\n+fn run() {{\n"
+        );
+        let files = parse_unified_diff(&patch);
+        let [changed] = files.as_slice() else {
+            return Err(format!("one changed file expected: {patch}"));
+        };
+        let old = format!("fn {from}() {{\n    work();\n}}\n");
+        let new = "fn run() {\n    work();\n}\n";
+        Ok(rename_only_lines(changed, new, &old)
+            .added
+            .into_iter()
+            .collect())
+    };
+    assert_eq!(rename("start")?, vec![1]);
+    assert_eq!(rename("main")?, Vec::<usize>::new());
     Ok(())
 }

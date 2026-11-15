@@ -23,6 +23,9 @@ use std::collections::{BTreeMap, BTreeSet};
 /// `struct` or `enum` name is excluded: a derived `Debug` prints it.
 const RENAMEABLE_ITEMS: [&str; 4] = ["static", "const", "fn", "type"];
 
+/// Names the toolchain binds by spelling: renaming one changes what runs.
+const ENTRY_POINTS: [&str; 1] = ["main"];
+
 /// Attributes that never read an item's name. Any other attribute directly
 /// above the declaration (`#[no_mangle]`, `#[export_name]`, `#[test]`, a
 /// tracing `#[instrument]`) keeps the rename probed.
@@ -30,14 +33,26 @@ const NAME_BLIND_ATTRIBUTES: [&str; 10] = [
     "inline", "must_use", "allow", "expect", "warn", "deny", "cfg", "doc", "cold", "rustfmt",
 ];
 
-/// Text whose presence anywhere in a file means identifier spelling can reach
-/// runtime output, so no rename in that file is proven.
+/// Identifier prefixes whose presence anywhere in a file means identifier
+/// spelling can reach runtime output (`type_name_of_val` too), so no rename
+/// in that file is proven.
 const NAME_OBSERVERS: [&str; 5] = [
     "stringify",
     "concat_idents",
     "type_name",
     "paste",
     "function_name",
+];
+
+/// Macros that print their arguments' source text (`assert!(OLD == 1)`
+/// panics with "assertion failed: OLD == 1"), so a name inside one is
+/// observable output.
+const SOURCE_TEXT_MACROS: [&str; 5] = [
+    "assert",
+    "debug_assert",
+    "dbg",
+    "assert_matches",
+    "debug_assert_matches",
 ];
 
 /// Lines of one changed file that only apply a rename the diff proves: the
@@ -125,13 +140,72 @@ impl<'a> SourceView<'a> {
     }
 
     fn observes_names(&self) -> bool {
-        identifiers(&self.masked, 0, self.masked.len())
-            .any(|(_, name)| NAME_OBSERVERS.contains(&name))
+        identifiers(&self.masked, 0, self.masked.len()).any(|(_, name)| {
+            NAME_OBSERVERS
+                .iter()
+                .any(|observer| name.starts_with(observer))
+        })
+    }
+
+    /// Whether `name` is spelled where its text can be observed or where it
+    /// names something other than the renamed item: a field (`name: T`,
+    /// `S { name: v }`, `value.name` without a call; a `static`/`const`
+    /// declaration's own `name: T` is not a field) or inside a
+    /// [`SOURCE_TEXT_MACROS`] invocation. A field or derived-`Debug` key that
+    /// shares the spelling would otherwise be respelled silently.
+    fn spells_observably(&self, name: &str) -> bool {
+        let masked = self.masked.as_str();
+        let mut macro_ends = Vec::new();
+        let mut previous: Option<(usize, &str)> = None;
+        for (at, found) in identifiers(masked, 0, masked.len()) {
+            let declared = previous.is_some_and(|(end, word)| {
+                matches!(word, "static" | "const" | "mut") && masked[end..at].trim().is_empty()
+            });
+            previous = Some((at + found.len(), found));
+            let after = masked[at + found.len()..].trim_start();
+            if SOURCE_TEXT_MACROS.contains(&found) && after.starts_with('!') {
+                macro_ends.push(invocation_end(masked, at + found.len()));
+            }
+            if found != name || declared {
+                continue;
+            }
+            let inside_macro = macro_ends.iter().any(|end| end.is_none_or(|end| at < end));
+            let field_type = after.starts_with(':') && !after.starts_with("::");
+            let before = masked[..at].trim_end();
+            let field_read = before.ends_with('.')
+                && !before.ends_with("..")
+                && !after.starts_with('(')
+                && !after.starts_with("::");
+            if inside_macro || field_type || field_read {
+                return true;
+            }
+        }
+        false
     }
 
     fn mentions(&self, name: &str) -> bool {
         identifiers(&self.masked, 0, self.masked.len()).any(|(_, found)| found == name)
     }
+}
+
+/// Byte offset just past the delimiter that closes the macro invocation whose
+/// `!` follows `from`. `None` when it never closes (the rest of the file then
+/// counts as inside it).
+fn invocation_end(masked: &str, from: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (offset, ch) in masked[from..].char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(from + offset + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Code identifiers in `masked[start..end]`, as (byte offset, text). Numeric
@@ -231,8 +305,12 @@ fn proven_renames<'a>(
             let [(to, new_line, old_line)] = found.as_slice() else {
                 return None;
             };
-            let proven = !new.mentions(from)
+            let proven = !ENTRY_POINTS.contains(&from)
+                && !ENTRY_POINTS.contains(to)
+                && !new.mentions(from)
                 && !old.mentions(to)
+                && !old.spells_observably(from)
+                && !new.spells_observably(to)
                 && name_blind_attributes(new, *new_line)
                 && name_blind_attributes(old, *old_line)
                 && same_item_after_rename(new, *new_line, old, *old_line, from, to);
@@ -285,10 +363,9 @@ fn name_blind_attributes(view: &SourceView<'_>, line: usize) -> bool {
             return false;
         };
         let text = view.masked[start..end].trim();
+        // A blank line or masked doc comment may sit between an attribute
+        // and its item (`#[no_mangle]`, blank, `static OLD`).
         if text.is_empty() {
-            if view.raw[start..end].trim().is_empty() {
-                return true;
-            }
             continue;
         }
         let Some(attribute) = text.strip_prefix("#[") else {
