@@ -336,6 +336,8 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
     // missing objects on demand. Offline or unauthenticated, that fetch must
     // fail at once with Git's own message instead of waiting on a terminal
     // credential prompt or a credential-manager window nobody will answer.
+    // A configured `GIT_ASKPASS`/`core.askPass` helper still runs: CI token
+    // helpers depend on it, so it is left alone (RIPR-SPEC-0084, #14799).
     command.env("GIT_TERMINAL_PROMPT", "0");
     command.env("GCM_INTERACTIVE", "never");
     let null_device = git_null_device_path();
@@ -1655,7 +1657,7 @@ mod tests {
     use serial_test::serial;
 
     #[test]
-    fn git_commands_never_wait_on_an_interactive_credential_prompt() {
+    fn git_commands_disable_terminal_and_gcm_credential_prompts() {
         let command = git_command(Path::new("."), &["status"]);
         let envs: Vec<_> = command.get_envs().collect();
         for (key, value) in [("GIT_TERMINAL_PROMPT", "0"), ("GCM_INTERACTIVE", "never")] {

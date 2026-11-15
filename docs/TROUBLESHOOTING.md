@@ -166,8 +166,9 @@ older base, Git downloads the missing contents from the clone's remote on
 demand, and here it could not: the remote was unreachable, refused access, or
 no longer has them. Re-run where Git can reach that remote, or
 analyze a full clone (in GitHub Actions, remove `filter:` from
-actions/checkout). ripr's Git calls never wait on a credential prompt, so an
-unreachable or unauthenticated remote fails at once.
+actions/checkout). ripr's Git calls never prompt on the terminal or open a
+Git Credential Manager window, so an unreachable or unauthenticated remote
+fails at once (a `GIT_ASKPASS` helper you configured still runs).
 
 ### The directory is not a Git repository
 
