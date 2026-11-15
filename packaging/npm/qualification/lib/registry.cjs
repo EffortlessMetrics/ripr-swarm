@@ -12,6 +12,8 @@ const path = require("node:path");
 const zlib = require("node:zlib");
 
 const MAX_TARBALL_BYTES = 256 * 1024 * 1024;
+// Unoptimized candidate binaries exceed 256 MiB unpacked; release payloads don't.
+const MAX_UNPACKED_BYTES = 1024 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_LOGGED_REQUESTS = 512;
 
@@ -43,7 +45,7 @@ function tarSize(block) {
 function readTarball(bytes) {
   let tar;
   try {
-    tar = zlib.gunzipSync(bytes, { maxOutputLength: MAX_TARBALL_BYTES });
+    tar = zlib.gunzipSync(bytes, { maxOutputLength: MAX_UNPACKED_BYTES });
   } catch (error) {
     throw new RegistryError("tarball_invalid", `tarball is not gzip data: ${error.message}`);
   }
