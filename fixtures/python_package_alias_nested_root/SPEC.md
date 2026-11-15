@@ -17,9 +17,10 @@ The diff changes the guard in `tomli._parser.loads`.
 
 ## Then
 
-The changed owner has one finding and no related test: the absolute hop
-`from tests import ...` names a package outside the test's own package chain
-under the root-relative reading, so RIPR-SPEC-0238 rule 33 refuses it.
+The changed owner has one finding and no related test. RIPR-SPEC-0238 rule 33
+refuses the first hop already: its root-relative spelling
+`tests.project.tests.unit` repeats `tests` on the test's path, where another
+import root can carry `tests`, so the outer initializer is never read.
 
 ## Must Not
 

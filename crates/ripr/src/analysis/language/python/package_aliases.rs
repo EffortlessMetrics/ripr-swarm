@@ -17,13 +17,16 @@
 //! performed (`import tomli as tomllib`), so every later reader sees the
 //! same evidence it would see had the test imported the module directly.
 //!
-//! Only a package that contains the test file is followed, so the
-//! dotted name always names the package Python imports for that test.
-//! It fails closed. The initializer must be read and parse, and bind the
-//! name exactly once, through one unconditional top-level `import` or
-//! `from ... import`. Any other binding of the name, a star import, a
-//! `match` or `type` statement, a module `__getattr__`, `global`, a walrus
-//! or a dynamic namespace write refuses, as
+//! Only a package of the test file's own package chain is followed (its
+//! directory and each parent while it has an `__init__.py`), and only when
+//! the spelling's first name appears once on the test's directory path, so
+//! under pytest's default prepend import mode the dotted name names the
+//! package Python imports for that test. It fails closed. The initializer
+//! must be read and parse, and bind the name exactly once, through one
+//! unconditional top-level `import` or `from ... import`. Any other binding
+//! of the name, a star import, a `match` or `type` statement at any depth
+//! the module executes, a module `__getattr__`, `global`, a walrus or a
+//! dynamic namespace write refuses, as
 //! does a submodule or subpackage of the same name, which another import
 //! could load over the binding. Chains through further package
 //! initializers stop after [`MAX_ALIAS_HOPS`].

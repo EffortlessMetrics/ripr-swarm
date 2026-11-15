@@ -18673,6 +18673,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/package_alias_tests.rs::a_name_bound_to_an_unrelated_module_stays_unlinked",
   "crates/ripr/src/analysis/language/python/package_alias_tests.rs::a_match_or_type_rebinding_nested_in_a_block_stays_unlinked",
   "crates/ripr/src/analysis/language/python/package_alias_tests.rs::an_absolute_hop_from_a_nested_project_with_a_competing_package_stays_unlinked",
+  "crates/ripr/src/analysis/language/python/package_alias_tests.rs::an_ancestor_package_outside_a_broken_package_chain_is_not_followed",
   "crates/ripr/src/analysis/language/python/package_alias_tests.rs::a_same_named_subpackage_of_the_test_package_stays_unlinked",
   "crates/ripr/src/analysis/language/python/package_alias_tests.rs::an_absolute_import_of_the_containing_test_package_links",
   "crates/ripr/src/analysis/language/python/package_alias_tests.rs::a_package_that_does_not_contain_the_test_is_not_followed",

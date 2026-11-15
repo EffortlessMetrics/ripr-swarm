@@ -361,3 +361,23 @@ fn an_absolute_hop_from_a_nested_project_with_a_competing_package_stays_unlinked
     )?;
     expect_unlinked("direct absolute import", &direct_absolute)
 }
+
+#[test]
+fn an_ancestor_package_outside_a_broken_package_chain_is_not_followed() -> Result<(), String> {
+    // `tests/unit` has no `__init__.py`, so pytest imports `sub` from
+    // `tests/unit` and `tests` is not this test's package; the hop to the
+    // ancestor `tests/__init__.py` is refused although its path contains
+    // the test.
+    let finding = nested_case(
+        "broken-chain-ancestor",
+        &[
+            ("tests/__init__.py", "import tomli as tomllib\n"),
+            ("tests/unit/sub/__init__.py", "from tests import tomllib\n"),
+            (
+                "tests/unit/sub/test_misc.py",
+                "from . import tomllib\n\n\ndef test_loads():\n    assert tomllib.loads(\"\") == {}\n",
+            ),
+        ],
+    )?;
+    expect_unlinked("ancestor outside the package chain", &finding)
+}

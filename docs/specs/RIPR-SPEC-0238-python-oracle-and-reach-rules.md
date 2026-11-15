@@ -1552,7 +1552,9 @@ mutant calibrates the rule; ripr reports only the static shape.
     `__init__.py`). A dotted name is read from the workspace root, and pytest
     imports a test package from the parent of its topmost package, so a
     root-relative spelling is the package Python imports only when it is one
-    of those directories. The import keeps its unresolved reading (no link)
+    of those directories (pytest's default prepend import mode; an ini
+    `pythonpath`, append or importlib mode, or an installed package of the
+    same name are not modelled). The import keeps its unresolved reading (no link)
     when: the package is outside that chain, or its first name also names
     another directory on the test's path (`tests/project/tests/...`, where
     another import root can carry `tests`); the
