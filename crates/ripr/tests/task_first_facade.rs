@@ -3843,7 +3843,7 @@ fn continue_no_movement_keeps_inline_test_module_restrictions() -> Result<(), St
     std::fs::remove_file(root.join("tests/pricing.rs")).map_err(|error| error.to_string())?;
     std::fs::write(
         root.join("src/lib.rs"),
-        format!("{FIXTURE_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::discounted_total;\n    #[test]\n    fn below() {{ assert_eq!(discounted_total(50, 100), 50); }}\n}}\n"),
+        format!("{FIXTURE_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::discounted_total;\n    #[test]\n    fn below() {{ assert_eq!(discounted_total(50, 100), 50); }}\n    #[test]\n    fn above() {{ assert_eq!(discounted_total(10_000, 100), 9_990); }}\n}}\n"),
     ).map_err(|error| error.to_string())?;
     run_git(root, &["add", "src", "tests"])?;
     git_commit(root, "inline test target")?;
