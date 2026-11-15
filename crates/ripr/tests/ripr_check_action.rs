@@ -1152,23 +1152,41 @@ fn a_failed_deepen_warns_once_and_leaves_the_message_to_ripr() -> TestResult {
 fn replayed_report_text_cannot_issue_workflow_commands() -> TestResult {
     let root = scratch("stop-commands")?;
     let bin = tool_dir(&root)?;
-    stand_in(&bin, "ripr", "echo '::add-mask::quoted source'")?;
+    stand_in(
+        &bin,
+        "ripr",
+        "echo '::add-mask::quoted source'\necho '::add-mask::quoted stderr' >&2",
+    )?;
     let work = single_branch_clone(&root)?;
     let (run, _, _) = check_with_files(&work, &bin)?;
     assert!(run.ok(), "{}", run.text());
     let out = String::from_utf8_lossy(&run.output.stdout).to_string();
-    let stop = out.find("::stop-commands::ripr-").ok_or(out.clone())?;
+    let stop = out
+        .find("::stop-commands::ripr-")
+        .ok_or_else(|| out.clone())?;
     let token = out[stop + "::stop-commands::".len()..]
         .lines()
         .next()
         .ok_or("token")?
         .to_string();
-    let quoted = out.find("::add-mask::quoted source").ok_or(out.clone())?;
-    let resume = out.find(&format!("::{token}::")).ok_or(out.clone())?;
+    let quoted = out
+        .find("::add-mask::quoted source")
+        .ok_or_else(|| out.clone())?;
+    let quoted_stderr = out
+        .find("::add-mask::quoted stderr")
+        .ok_or_else(|| out.clone())?;
+    let resume = out
+        .find(&format!("::{token}::"))
+        .ok_or_else(|| out.clone())?;
     assert!(stop < quoted && quoted < resume, "{out}");
+    assert!(stop < quoted_stderr && quoted_stderr < resume, "{out}");
 
     // Discriminating alternate: the github format is meant to annotate.
-    stand_in(&bin, "ripr", "echo '::warning file=src/lib.rs,line=3::gap'")?;
+    stand_in(
+        &bin,
+        "ripr",
+        "echo '::warning file=src/lib.rs,line=3::gap'\necho '::add-mask::quoted stderr' >&2",
+    )?;
     let run = bash(
         &run_block("Run ripr check")?,
         &work,
@@ -1180,11 +1198,17 @@ fn replayed_report_text_cannot_issue_workflow_commands() -> TestResult {
         ],
     )?;
     assert!(run.ok(), "{}", run.text());
-    assert!(!run.text().contains("::stop-commands::"), "{}", run.text());
-    assert!(
-        run.text().contains("::warning file=src/lib.rs"),
-        "{}",
-        run.text()
-    );
+    // The annotations come before the guard; ripr's stderr stays inside it.
+    let out = String::from_utf8_lossy(&run.output.stdout).to_string();
+    let annotation = out
+        .find("::warning file=src/lib.rs")
+        .ok_or_else(|| out.clone())?;
+    let stop = out
+        .find("::stop-commands::ripr-")
+        .ok_or_else(|| out.clone())?;
+    let quoted_stderr = out
+        .find("::add-mask::quoted stderr")
+        .ok_or_else(|| out.clone())?;
+    assert!(annotation < stop && stop < quoted_stderr, "{out}");
     Ok(())
 }

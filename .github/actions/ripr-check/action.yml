@@ -174,18 +174,18 @@ runs:
         report="$RUNNER_TEMP/ripr-check-report.$ext"; errors="$RUNNER_TEMP/ripr-check-stderr.txt"
         set -- --root . --mode "$RIPR_INPUT_MODE" --format "$RIPR_INPUT_FORMAT"
         [ -z "$base" ] || set -- "$@" --base "$base"
-        status=0
-        ripr check "$@" >"$report" 2>"$errors" || status=$?
+        status=0; ripr check "$@" >"$report" 2>"$errors" || status=$?
         # Replayed text could quote a `::command::` line from source; only the
-        # github format is meant to emit workflow commands.
+        # github format's report is meant to emit workflow commands. Both files
+        # go to stdout, one stream, so nothing lands outside the guard.
         token="ripr-$RANDOM$RANDOM$RANDOM"
-        [ "$RIPR_INPUT_FORMAT" = github ] || echo "::stop-commands::$token"
-        cat "$report"; cat "$errors" >&2
-        [ "$RIPR_INPUT_FORMAT" = github ] || echo "::$token::"
+        [ "$RIPR_INPUT_FORMAT" != github ] || cat "$report"
+        echo "::stop-commands::$token"
+        [ "$RIPR_INPUT_FORMAT" = github ] || cat "$report"
+        cat "$errors"; echo "::$token::"
         [ -z "${GITHUB_OUTPUT:-}" ] || printf 'exit-code=%s\nreport=%s\n' "$status" "$report" >> "$GITHUB_OUTPUT"
         case "$status" in
-          0) meaning="" ;;
-          2) meaning="ripr could not complete the analysis (usage, configuration or operational error)" ;;
+          0) meaning="" ;; 2) meaning="ripr could not complete the analysis (usage, configuration or operational error)" ;;
           3) meaning="ripr declined the request" ;;
           *) meaning="ripr stopped before finishing" ;;
         esac
@@ -201,7 +201,7 @@ runs:
               printf '\n````text\n%s\n````\n' "$reason"
             fi
             if [ "$ext" = txt ] && [ -s "$report" ]; then
-              printf '\n````text\n%s\n````\n' "$(head -c 60000 "$report")"
+              printf '\n````text\n%s\n````\n' "$(awk '{ n += length($0) + 1; if (n > 60000) exit; print }' "$report")"
               [ "$(wc -c < "$report")" -le 60000 ] || echo "(cut at 60 KB; the full report is in the job log)"
             elif [ -s "$report" ]; then
               echo "The $RIPR_INPUT_FORMAT report is the step output \`report\`."

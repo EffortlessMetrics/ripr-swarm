@@ -1938,9 +1938,9 @@ to the job summary (cut at 60 KB). Step outputs are `exit-code` and `report`
 are advisory: a completed check exits 0 whatever it found. A check that could
 not complete (exit 2, or 3 when ripr declines) fails the step. It also emits one
 error annotation and a job-summary line that give the exit meaning and ripr's
-own first reason lines ([exit codes](EXIT_CODES.md)). Replayed report text cannot
-issue workflow commands except with `format: github`, whose annotations are
-the point. To block on new gaps,
+own first reason lines ([exit codes](EXIT_CODES.md)). Replayed report and stderr
+text cannot issue workflow commands, except the report of `format: github`,
+whose annotations are the point. To block on new gaps,
 use the generated workflow's gate modes ([adopting in CI](ADOPTING_IN_CI.md)).
 
 Fork and Dependabot pull requests: the Action needs only `contents: read`. It
