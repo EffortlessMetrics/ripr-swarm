@@ -529,6 +529,15 @@ fn batch_wrong_parent_and_wrong_subject_still_refuse_before_the_tree_is_read() -
     run.queued = world.squash(&world.head, "feature (#43)")?;
     assert_refused(&run_resolve(&world, &shell, &run)?, "is not the live head");
 
+    // Subject names no PR at all, so the subject branch refuses before the
+    // live-head check.
+    let mut run = honest(&world, &world.head, &world.base)?;
+    run.queued = world.squash(&world.head, "feature without a PR number")?;
+    assert_refused(
+        &run_resolve(&world, &shell, &run)?,
+        "subject does not name a PR",
+    );
+
     // The group base is a commit the queued squash does not descend from (a
     // batch built on an earlier entry), so the ancestry guard refuses before
     // the single-parent shape check below it is reached.
