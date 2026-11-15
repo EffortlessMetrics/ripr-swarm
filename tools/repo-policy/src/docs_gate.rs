@@ -97,7 +97,8 @@ fn normalize(path: &str) -> String {
 }
 
 fn is_docs_path(path: &str) -> bool {
-    path.ends_with(".md")
+    path == "policy/ripr-agent-disposition.toml"
+        || path.ends_with(".md")
         || path.starts_with("docs/specs/")
         || path.starts_with("docs/handoffs/")
         || path.starts_with("docs/spec-index.d/")
@@ -210,15 +211,18 @@ impl DocsGateReport {
     }
 }
 
+fn check_encoding(rel: &str, bytes: &[u8], violations: &mut Vec<String>) {
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        violations.push(format!(
+            "{rel} starts with a UTF-8 BOM (EF BB BF); save as UTF-8 without BOM [check-text-encoding]"
+        ));
+    }
+}
+
 fn read_text(root: &Path, rel: &str, violations: &mut Vec<String>) -> Option<String> {
-    let path = root.join(rel);
-    match std::fs::read(&path) {
+    match std::fs::read(root.join(rel)) {
         Ok(bytes) => {
-            if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-                violations.push(format!(
-                    "{rel} starts with a UTF-8 BOM (EF BB BF); save as UTF-8 without BOM [check-text-encoding]"
-                ));
-            }
+            check_encoding(rel, &bytes, violations);
             Some(String::from_utf8_lossy(&bytes).into_owned())
         }
         Err(error) => {
@@ -226,6 +230,33 @@ fn read_text(root: &Path, rel: &str, violations: &mut Vec<String>) -> Option<Str
             None
         }
     }
+}
+
+/// Whole-file exceptions from `.ripr/static-language-allowlist.toml`:
+/// exact paths plus its two validated documentation globs. A missing or
+/// unparseable allowlist grants nothing (fail closed to scanning).
+fn static_language_allowed(root: &Path, rel: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string(root.join(".ripr/static-language-allowlist.toml"))
+    else {
+        return false;
+    };
+    let mut allowed_paths: Vec<&str> = Vec::new();
+    for entry in text.split("[[allow]]").skip(1) {
+        for line in entry.lines() {
+            let line = line.trim();
+            if let Some(path) = line
+                .strip_prefix("path = \"")
+                .and_then(|v| v.strip_suffix('"'))
+            {
+                allowed_paths.push(path);
+            }
+        }
+    }
+    if allowed_paths.contains(&rel) {
+        return true;
+    }
+    // The allowlist validates only these two documentation globs.
+    rel.starts_with("docs/") && rel.ends_with(".md")
 }
 
 fn contains_word(lower: &str, term: &str) -> bool {
@@ -237,7 +268,13 @@ fn contains_word(lower: &str, term: &str) -> bool {
 fn check_static_language(rel: &str, text: &str, violations: &mut Vec<String>) {
     for (index, line) in text.lines().enumerate() {
         let lower = line.to_ascii_lowercase();
-        if lower.contains("ripr-allow: static-language:") {
+        // An inline allow suppresses only with a nonempty reason, matching
+        // the canonical recognizer; a bare marker suppresses nothing.
+        if lower
+            .split("ripr-allow: static-language:")
+            .nth(1)
+            .is_some_and(|reason| !reason.trim().is_empty())
+        {
             continue;
         }
         for term in FORBIDDEN_STATIC_TERMS {
@@ -251,26 +288,97 @@ fn check_static_language(rel: &str, text: &str, violations: &mut Vec<String>) {
     }
 }
 
+/// GitHub heading slugs for one document, excluding fenced headings, with
+/// `-1`, `-2` suffixes for repeated headings.
+fn heading_slugs(text: &str) -> BTreeSet<String> {
+    let mut slugs = BTreeSet::new();
+    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut fenced = false;
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        let Some(heading) = line.trim_start().strip_prefix('#') else {
+            continue;
+        };
+        let heading = heading.trim_start_matches('#').trim();
+        if heading.is_empty() {
+            continue;
+        }
+        let mut slug = String::new();
+        for ch in heading.chars() {
+            if ch.is_alphanumeric() || ch == '-' || ch == '_' {
+                slug.push(ch.to_ascii_lowercase());
+            } else if ch.is_whitespace() {
+                slug.push('-');
+            }
+        }
+        let seen = counts.entry(slug.clone()).or_default();
+        if *seen == 0 {
+            slugs.insert(slug);
+        } else {
+            slugs.insert(format!("{slug}-{seen}"));
+        }
+        *seen += 1;
+    }
+    slugs
+}
+
 fn check_markdown_links(root: &Path, rel: &str, text: &str, violations: &mut Vec<String>) {
     let base = Path::new(rel).parent().map(Path::to_path_buf);
+    let source_slugs = heading_slugs(text);
+    let mut fenced = false;
     for (index, line) in text.lines().enumerate() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
         let mut rest = line;
         while let Some(start) = rest.find("](") {
             let after = &rest[start + 2..];
             let Some(end) = after.find(')') else { break };
-            let target = after[..end].trim().trim_matches(|c| c == '<' || c == '>');
-            let target = target.split_whitespace().next().unwrap_or_default();
+            let raw = after[..end].trim();
             rest = &after[end + 1..];
+            // Angle-bracket destinations may contain spaces; a bare
+            // destination ends at whitespace (an optional title follows).
+            let target = if let Some(inner) = raw
+                .strip_prefix('<')
+                .and_then(|inner| inner.split('>').next())
+                .filter(|_| raw.starts_with('<'))
+            {
+                inner
+            } else {
+                raw.split_whitespace().next().unwrap_or_default()
+            };
             if target.is_empty()
-                || target.starts_with('#')
                 || target.starts_with("http://")
                 || target.starts_with("https://")
                 || target.starts_with("mailto:")
             {
                 continue;
             }
-            let file_part = target.split('#').next().unwrap_or_default();
+            let (file_part, fragment) = match target.split_once('#') {
+                Some((file, fragment)) => (file, Some(fragment)),
+                None => (target, None),
+            };
             if file_part.is_empty() {
+                // A fragment-only link names a heading in this document.
+                if let Some(fragment) = fragment
+                    && !fragment.is_empty()
+                    && !source_slugs.contains(fragment)
+                {
+                    violations.push(format!(
+                        "{rel}:{} link fragment #{fragment} has no heading in this document [markdown-links]",
+                        index + 1
+                    ));
+                }
                 continue;
             }
             let decoded = file_part.replace("%20", " ");
@@ -281,6 +389,20 @@ fn check_markdown_links(root: &Path, rel: &str, text: &str, violations: &mut Vec
             if !candidate.exists() {
                 violations.push(format!(
                     "{rel}:{} relative link target does not exist: {target} [markdown-links]",
+                    index + 1
+                ));
+                continue;
+            }
+            if let Some(fragment) = fragment
+                && !fragment.is_empty()
+                && candidate
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+                && let Ok(target_text) = std::fs::read_to_string(&candidate)
+                && !heading_slugs(&target_text).contains(fragment)
+            {
+                violations.push(format!(
+                    "{rel}:{} link fragment #{fragment} has no heading in {file_part} [markdown-links]",
                     index + 1
                 ));
             }
@@ -298,12 +420,28 @@ fn spec_id_from_file_name(file_name: &str) -> Option<String> {
     .then(|| format!("{prefix}-{kind}-{number}"))
 }
 
+/// Every spec id present under `docs/specs/`, mapped to its file names, so
+/// duplicate detection and index membership see the whole inventory and
+/// not only the changed files.
+fn spec_inventory(root: &Path) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut inventory: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    if let Ok(entries) = std::fs::read_dir(root.join("docs/specs")) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if let Some(id) = spec_id_from_file_name(&name) {
+                inventory.entry(id).or_default().push(name);
+            }
+        }
+    }
+    inventory
+}
+
 fn check_spec(
     root: &Path,
     rel: &str,
     text: &str,
     violations: &mut Vec<String>,
-    seen: &mut BTreeSet<String>,
+    inventory: &std::collections::BTreeMap<String, Vec<String>>,
 ) {
     let file_name = Path::new(rel)
         .file_name()
@@ -315,7 +453,7 @@ fn check_spec(
         ));
         return;
     };
-    if !seen.insert(spec_id.clone()) {
+    if inventory.get(&spec_id).is_some_and(|files| files.len() > 1) {
         violations.push(format!(
             "{rel} duplicates spec id {spec_id} [check-spec-numbering]"
         ));
@@ -348,32 +486,153 @@ fn check_spec(
             violations.push(format!("{rel} is missing `{heading}` [check-spec-format]"));
         }
     }
-    // Index membership, only when an index surface exists in this root.
+    if text.lines().any(|line| {
+        let trimmed = line.trim();
+        trimmed == "-" || trimmed == "- " || trimmed.starts_with("- [ ]") && trimmed.len() <= 5
+    }) {
+        violations.push(format!(
+            "{rel} has an empty placeholder list item [check-spec-format]"
+        ));
+    }
+    // Index membership: an index fragment for this spec, or a README index
+    // row linking this exact file (a bare mention of the id is not a row).
     let index_file = root.join(format!("docs/spec-index.d/{spec_id}.md"));
     let readme = root.join("docs/specs/README.md");
-    if (index_file.exists() || readme.exists())
-        && !index_file.exists()
-        && !std::fs::read_to_string(&readme)
-            .map(|t| t.contains(&spec_id))
-            .unwrap_or(false)
-    {
-        violations.push(format!(
-            "{rel} spec {spec_id} has no docs/spec-index.d/{spec_id}.md row [check-spec-numbering]"
-        ));
+    if (index_file.exists() || readme.exists()) && !index_file.exists() {
+        let linked = std::fs::read_to_string(&readme)
+            .map(|t| t.contains(&format!("[{spec_id}]({file_name})")))
+            .unwrap_or(false);
+        if !linked {
+            violations.push(format!(
+                "{rel} spec {spec_id} has no docs/spec-index.d/{spec_id}.md row [check-spec-numbering]"
+            ));
+        }
     }
 }
 
+const ALLOWED_CHANGELOG_SECTIONS: &[&str] = &[
+    "Added",
+    "Changed",
+    "Deprecated",
+    "Removed",
+    "Fixed",
+    "Security",
+    "Docs",
+    "Internal / CI",
+];
+
+fn has_issue_reference(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte == b'#'
+            && (index == 0 || matches!(bytes[index - 1], b' ' | b'(' | b'['))
+            && bytes[index + 1..]
+                .iter()
+                .take_while(|b| b.is_ascii_digit())
+                .count()
+                > 0
+        {
+            return true;
+        }
+    }
+    line.contains("/issues/") || line.contains("/pull/")
+}
+
+/// Mirrors the canonical fragment validator in
+/// `xtask/src/policy/changelog_fragments.rs` for one changed fragment.
 fn check_changelog_fragment(rel: &str, text: &str, violations: &mut Vec<String>) {
-    let first = text.lines().next().unwrap_or_default();
-    if !(first.starts_with("<!-- section:") && first.ends_with("-->")) {
+    let file_name = Path::new(rel)
+        .file_name()
+        .and_then(|v| v.to_str())
+        .unwrap_or_default();
+    if file_name != "README.md" {
+        match file_name.strip_suffix(".md") {
+            None => violations.push(format!(
+                "{rel}: fragments must be `.md` files [check-changelog-fragments]"
+            )),
+            Some(stem) => {
+                let kebab = !stem.is_empty()
+                    && stem.split('-').all(|part| {
+                        !part.is_empty()
+                            && part
+                                .bytes()
+                                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+                    });
+                if !kebab {
+                    violations.push(format!(
+                        "{rel}: name must be lowercase kebab case [check-changelog-fragments]"
+                    ));
+                } else if stem.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
+                    violations.push(format!(
+                        "{rel}: name needs a slug, not just a number [check-changelog-fragments]"
+                    ));
+                }
+            }
+        }
+    }
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut lines = text.lines();
+    let first = lines.next().unwrap_or_default();
+    let section = first
+        .trim()
+        .strip_prefix("<!--")
+        .and_then(|v| v.strip_suffix("-->"))
+        .map(str::trim)
+        .and_then(|v| v.strip_prefix("section:"))
+        .map(str::trim);
+    match section {
+        Some(section) if ALLOWED_CHANGELOG_SECTIONS.contains(&section) => {}
+        Some(section) => violations.push(format!(
+            "{rel}: unknown section `{section}` [check-changelog-fragments]"
+        )),
+        None => violations.push(format!(
+            "{rel}:1 first line must be `<!-- section: X -->` [check-changelog-fragments]"
+        )),
+    }
+    let body: Vec<&str> = lines.collect();
+    if body.iter().any(|line| line.contains("<!--")) {
         violations.push(format!(
-            "{rel}:1 first line must be a `<!-- section: ... -->` marker [check-changelog-fragments]"
+            "{rel}: only the first line may hold an HTML comment [check-changelog-fragments]"
         ));
     }
-    if !text.lines().any(|l| l.starts_with("- ")) {
-        violations.push(format!(
-            "{rel} has no `- ` changelog bullet [check-changelog-fragments]"
-        ));
+    let mut entries: Vec<&str> = Vec::new();
+    for line in &body {
+        if line.trim().is_empty() || line.trim_start().starts_with("<!--") {
+            continue;
+        }
+        if line.starts_with(char::is_whitespace) {
+            continue;
+        }
+        if !line.starts_with("- ") {
+            violations.push(format!(
+                "{rel}: entry must start with a `- ` bullet at column 0 [check-changelog-fragments]"
+            ));
+        } else if line[2..].trim().is_empty() {
+            violations.push(format!(
+                "{rel}: the bullet line has no entry text [check-changelog-fragments]"
+            ));
+        }
+        entries.push(line);
+    }
+    if entries.is_empty() {
+        violations.push(format!("{rel}: entry is empty [check-changelog-fragments]"));
+    }
+    for entry in entries {
+        if !has_issue_reference(entry) {
+            violations.push(format!(
+                "{rel}: entry `{}` names no issue or PR [check-changelog-fragments]",
+                entry.trim()
+            ));
+        }
+        let text = entry.strip_prefix("- ").unwrap_or(entry).trim_start();
+        if (text.starts_with("Verdict corpus:") || text.starts_with("Repo ops:"))
+            && section != Some("Internal / CI")
+        {
+            violations.push(format!(
+                "{rel}: entry `{}` is bookkeeping; use the Internal / CI section [check-changelog-fragments]",
+                entry.trim()
+            ));
+        }
     }
 }
 
@@ -427,9 +686,23 @@ pub fn run_docs_gate(root: &Path, changed: &[String]) -> Result<DocsGateReport, 
         });
     }
     let mut violations = Vec::new();
-    let mut seen_specs = BTreeSet::new();
+    let inventory = spec_inventory(root);
     for raw in changed {
         let rel = normalize(raw);
+        // Deleted or renamed-away files name no content to check.
+        if !root.join(&rel).exists() {
+            continue;
+        }
+        // Encoding is checked for every scoped text candidate, not only
+        // the Markdown/fragment paths that go on to read_text.
+        if (rel.ends_with(".md")
+            || rel.ends_with(".toml")
+            || rel.ends_with(".json")
+            || rel.starts_with("changelog.d/"))
+            && let Ok(bytes) = std::fs::read(root.join(&rel))
+        {
+            check_encoding(&rel, &bytes, &mut violations);
+        }
         if rel.starts_with("badges/") && rel.ends_with(".json") {
             violations.push(format!(
                 "{rel}: generated badge endpoint changed in an ordinary PR [check-generated-clean]"
@@ -452,14 +725,17 @@ pub fn run_docs_gate(root: &Path, changed: &[String]) -> Result<DocsGateReport, 
         let Some(text) = read_text(root, &rel, &mut violations) else {
             continue;
         };
-        check_static_language(&rel, &text, &mut violations);
+        if !static_language_allowed(root, &rel) {
+            check_static_language(&rel, &text, &mut violations);
+        }
         if rel.ends_with(".md") {
             check_markdown_links(root, &rel, &text, &mut violations);
         }
-        if rel.starts_with("docs/specs/") && rel.ends_with(".md") {
-            check_spec(root, &rel, &text, &mut violations, &mut seen_specs);
+        // Directory READMEs are indexes, not spec records or fragments.
+        if rel.starts_with("docs/specs/") && rel.ends_with(".md") && rel != "docs/specs/README.md" {
+            check_spec(root, &rel, &text, &mut violations, &inventory);
         }
-        if rel.starts_with("changelog.d/") {
+        if rel.starts_with("changelog.d/") && rel != "changelog.d/README.md" {
             check_changelog_fragment(&rel, &text, &mut violations);
         }
     }

@@ -1,0 +1,1 @@
+tools/repo-policy/src/docs_gate.rs|Command::new|1|repo-policy|The docs-gate CLI shells out to git only to list changed files for --base/--head classification; it never writes to the repository, the network, or a shell.

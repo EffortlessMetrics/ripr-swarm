@@ -97,6 +97,136 @@ fn manifest_and_lockfile_input_widens_rather_than_silently_passing() {
 }
 
 #[test]
+fn deleted_files_and_directory_readmes_are_skipped() -> TestResult {
+    let root = fixture(&[
+        ("docs/specs/README.md", "# Specs\n\nIndex prose.\n"),
+        ("changelog.d/README.md", "# Fragments\n\nFormat doc.\n"),
+    ])?;
+    let report = run_docs_gate(
+        &root,
+        &changed(&[
+            "docs/deleted-guide.md",
+            "docs/specs/README.md",
+            "changelog.d/README.md",
+        ]),
+    )?;
+    assert!(report.violations.is_empty(), "{}", report.render());
+    Ok(())
+}
+
+#[test]
+fn allowlisted_docs_and_reasonless_marker_handling() -> TestResult {
+    let root = fixture(&[
+        (
+            ".ripr/static-language-allowlist.toml",
+            "schema_version = 1\n\n[[allow]]\npath = \"AGENTS.md\"\n",
+        ),
+        ("AGENTS.md", "# Agents\n\nDo not say killed.\n"),
+        ("docs/other/GUIDE.md", "# Guide\n\nThis was killed.\n"),
+        (
+            "notes/MARKED.md",
+            "# Marked\n\nThis was killed. ripr-allow: static-language:\nThis was survived. <!-- ripr-allow: static-language: calibration terms are data here -->\n",
+        ),
+    ])?;
+    let report = run_docs_gate(&root, &changed(&["AGENTS.md"]))?;
+    assert!(report.violations.is_empty(), "{}", report.render());
+    let report = run_docs_gate(&root, &changed(&["docs/other/GUIDE.md"]))?;
+    assert!(
+        report.violations.is_empty(),
+        "docs glob must allow: {}",
+        report.render()
+    );
+    let report = run_docs_gate(&root, &changed(&["notes/MARKED.md"]))?;
+    assert_eq!(report.violations.len(), 1, "{}", report.render());
+    Ok(())
+}
+
+#[test]
+fn disposition_path_is_accepted_and_validated() -> TestResult {
+    let root = fixture(&[(
+        "policy/ripr-agent-disposition.toml",
+        "schema_version = \"1\"\n\n[[element]]\nid = \"x\"\ndisposition = \"retire\"\n",
+    )])?;
+    let report = run_docs_gate(&root, &changed(&["policy/ripr-agent-disposition.toml"]))?;
+    assert!(report.plan.is_docs_eligible(), "{}", report.render());
+    assert!(report.plan.gates.contains(&"check-ripr-agent-disposition"));
+    assert!(report.violations.is_empty(), "{}", report.render());
+    Ok(())
+}
+
+#[test]
+fn duplicate_spec_ids_and_fragment_rules_fail() -> TestResult {
+    let root = fixture(&[
+        ("docs/specs/RIPR-SPEC-0099-example.md", GOOD_SPEC),
+        (
+            "docs/specs/RIPR-SPEC-0099-copy.md",
+            "# RIPR-SPEC-0099: Copy\n\nStatus: proposed\n\n## Problem\n\nx\n\n## Behavior\n\nx\n\n## Required Evidence\n\nx\n\n## Non-Goals\n\nx\n\n## Acceptance Examples\n\nx\n\n## Test Mapping\n\nx\n\n## Implementation Mapping\n\nx\n\n## Metrics\n\nx\n",
+        ),
+        ("docs/spec-index.d/RIPR-SPEC-0099.md", "# index\n"),
+        (
+            "changelog.d/Bad_Name.md",
+            "<!-- section: Improved -->\n- No reference here.\n",
+        ),
+    ])?;
+    let report = run_docs_gate(
+        &root,
+        &changed(&[
+            "docs/specs/RIPR-SPEC-0099-copy.md",
+            "changelog.d/Bad_Name.md",
+        ]),
+    )?;
+    assert!(
+        report
+            .violations
+            .iter()
+            .any(|v| v.contains("duplicates spec id")),
+        "{}",
+        report.render()
+    );
+    assert!(
+        report
+            .violations
+            .iter()
+            .any(|v| v.contains("unknown section")),
+        "{}",
+        report.render()
+    );
+    assert!(
+        report.violations.iter().any(|v| v.contains("kebab")),
+        "{}",
+        report.render()
+    );
+    assert!(
+        report
+            .violations
+            .iter()
+            .any(|v| v.contains("names no issue or PR")),
+        "{}",
+        report.render()
+    );
+    Ok(())
+}
+
+#[test]
+fn broken_heading_links_and_fenced_examples() -> TestResult {
+    let root = fixture(&[
+        (
+            "docs/GUIDE.md",
+            "# Guide\n\n[details](#does-not-exist)\n\n```md\n[illustrative](missing-example.md)\n```\n\n[spaced](<my guide.md>)\n",
+        ),
+        ("docs/my guide.md", "# Mine\n"),
+    ])?;
+    let report = run_docs_gate(&root, &changed(&["docs/GUIDE.md"]))?;
+    assert_eq!(report.violations.len(), 1, "{}", report.render());
+    assert!(
+        report.violations[0].contains("#does-not-exist"),
+        "{}",
+        report.render()
+    );
+    Ok(())
+}
+
+#[test]
 fn forbidden_static_language_and_broken_link_fail() -> TestResult {
     let root = fixture(&[(
         "docs/GUIDE.md",
