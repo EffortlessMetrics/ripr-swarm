@@ -96,6 +96,20 @@ fn normalize(path: &str) -> String {
     path.trim().replace('\\', "/")
 }
 
+/// Paths whose owning checks are retained product-free gates: a change
+/// touching them widens instead of passing on the scoped subset.
+fn retained_input_gate(path: &str) -> Option<&'static str> {
+    if path.starts_with("docs/spec-index.d/") {
+        Some("check-doc-index")
+    } else if path.starts_with("policy/doc-artifacts.d/") {
+        Some("check-doc-artifacts")
+    } else if path.starts_with(".ripr/traceability.d/") {
+        Some("check-traceability")
+    } else {
+        None
+    }
+}
+
 fn is_docs_path(path: &str) -> bool {
     path == "policy/ripr-agent-disposition.toml"
         || path.ends_with(".md")
@@ -143,6 +157,13 @@ pub fn plan(changed: &[String]) -> DocsGatePlan {
         }
         if let Some(reason) = is_widening_surface(&path) {
             result.widen_reasons.push(format!("{path}: {reason}"));
+            result.retained_triggers.push(path.clone());
+            continue;
+        }
+        if let Some(gate) = retained_input_gate(&path) {
+            result.widen_reasons.push(format!(
+                "{path}: input of retained gate {gate}; run full proof"
+            ));
             result.retained_triggers.push(path.clone());
             continue;
         }
@@ -232,30 +253,58 @@ fn read_text(root: &Path, rel: &str, violations: &mut Vec<String>) -> Option<Str
 }
 
 /// Whole-file exceptions from `.ripr/static-language-allowlist.toml`:
-/// exact paths plus its two validated documentation globs. A missing or
-/// unparseable allowlist grants nothing (fail closed to scanning).
+/// exact paths plus the documentation globs the allowlist itself declares.
+/// Mirrors the canonical validation shape: every entry must declare exactly
+/// one matcher (`path` or `glob`) with a nonempty owner and reason, and the
+/// only supported globs are `docs/*.md` and `docs/**/*.md`. A missing or
+/// malformed allowlist grants nothing (fail closed to scanning).
 fn static_language_allowed(root: &Path, rel: &str) -> bool {
     let Ok(text) = std::fs::read_to_string(root.join(".ripr/static-language-allowlist.toml"))
     else {
         return false;
     };
     let mut allowed_paths: Vec<&str> = Vec::new();
+    let mut allowed_globs: Vec<&str> = Vec::new();
     for entry in text.split("[[allow]]").skip(1) {
-        for line in entry.lines() {
-            let line = line.trim();
-            if let Some(path) = line
-                .strip_prefix("path = \"")
-                .and_then(|v| v.strip_suffix('"'))
-            {
-                allowed_paths.push(path);
+        let field = |name: &str| {
+            entry.lines().find_map(|line| {
+                line.trim()
+                    .strip_prefix(name)?
+                    .trim()
+                    .strip_prefix('=')?
+                    .trim()
+                    .strip_prefix('"')?
+                    .strip_suffix('"')
+            })
+        };
+        let (path, glob) = (field("path"), field("glob"));
+        let well_formed = matches!((path, glob), (Some(_), None) | (None, Some(_)))
+            && field("owner").is_some_and(|v| !v.trim().is_empty())
+            && field("reason").is_some_and(|v| !v.trim().is_empty());
+        if !well_formed {
+            return false;
+        }
+        if let Some(path) = path {
+            allowed_paths.push(path);
+        }
+        if let Some(glob) = glob {
+            if glob != "docs/*.md" && glob != "docs/**/*.md" {
+                return false;
             }
+            allowed_globs.push(glob);
         }
     }
     if allowed_paths.contains(&rel) {
         return true;
     }
-    // The allowlist validates only these two documentation globs.
-    rel.starts_with("docs/") && rel.ends_with(".md")
+    let docs_depth = rel
+        .strip_prefix("docs/")
+        .map(|rest| rest.matches('/').count());
+    allowed_globs.iter().any(|glob| match *glob {
+        "docs/*.md" => docs_depth == Some(0) && rel.ends_with(".md"),
+        "docs/**/*.md" => docs_depth.is_some() && rel.ends_with(".md"),
+        _ => false,
+    })
 }
 
 fn contains_word(lower: &str, term: &str) -> bool {
@@ -630,16 +679,51 @@ fn check_changelog_fragment(rel: &str, text: &str, violations: &mut Vec<String>)
                 entry.trim()
             ));
         }
-        let text = entry.strip_prefix("- ").unwrap_or(entry).trim_start();
-        if (text.starts_with("Verdict corpus:") || text.starts_with("Repo ops:"))
-            && section != Some("Internal / CI")
-        {
+        if is_internal_bookkeeping_line(entry) && section != Some("Internal / CI") {
             violations.push(format!(
                 "{rel}: entry `{}` is bookkeeping; use the Internal / CI section [check-changelog-fragments]",
                 entry.trim()
             ));
         }
     }
+}
+
+/// Bookkeeping entries that belong under `Internal / CI`, ported from the
+/// canonical `is_internal_bookkeeping_line` in
+/// `xtask/src/policy/changelog_fragments.rs`.
+fn is_internal_bookkeeping_line(line: &str) -> bool {
+    let text = line.strip_prefix("- ").unwrap_or(line).trim_start();
+    text.starts_with("Verdict corpus:")
+        || text.starts_with("Repo ops:")
+        || text.starts_with("Labeled Rust verdict corpus")
+        || opens_with_maintainer_path(text)
+}
+
+/// Maintainer-tooling subjects: an entry whose first token is a backticked
+/// `cargo xtask` command, workflow file, `policy/` file, agent instruction
+/// file, or maintainer doc (canonical `opens_with_maintainer_path`).
+fn opens_with_maintainer_path(text: &str) -> bool {
+    const MAINTAINER_PREFIXES: &[&str] = &[
+        "cargo xtask",
+        ".github/",
+        "policy/",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "docs/CI.md",
+        "docs/CLIPPY_POLICY.md",
+        "docs/IMPLEMENTATION_PLAN.md",
+        "docs/MERGE_FLOW.md",
+        "docs/POLICY_ALLOWLISTS.md",
+    ];
+    let Some(rest) = text.strip_prefix('`') else {
+        return false;
+    };
+    let Some(token) = rest.split('`').next() else {
+        return false;
+    };
+    MAINTAINER_PREFIXES
+        .iter()
+        .any(|prefix| token.starts_with(prefix))
 }
 
 /// The ledger is TOML in `xtask` (`toml::from_str` into a serde struct);
@@ -652,6 +736,16 @@ fn check_disposition(root: &Path, violations: &mut Vec<String>) -> Result<(), St
     if value.get("schema_version").and_then(toml::Value::as_str) != Some("1") {
         violations.push(format!(
             "{rel} schema_version must be \"1\" [check-ripr-agent-disposition]"
+        ));
+    }
+    // The canonical loader deserializes `element` into `Vec<Element>`, so a
+    // present-but-non-array value is a parse error there, not a skip here.
+    if value
+        .get("element")
+        .is_some_and(|element| element.as_array().is_none())
+    {
+        violations.push(format!(
+            "{rel} element must be an array of tables [check-ripr-agent-disposition]"
         ));
     }
     let mut ids = BTreeSet::new();
@@ -772,7 +866,12 @@ pub fn command(args: &[String]) -> Result<(), String> {
 }
 
 fn changed_files(args: &[String]) -> Result<Vec<String>, String> {
+    // Parse every argument first: mixing the explicit-path mode with the
+    // `--base`/`--head` mode, or trailing arguments after the pair, must
+    // refuse rather than silently discarding part of the request.
     let mut changed = Vec::new();
+    let mut base: Option<String> = None;
+    let mut head: Option<String> = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -781,12 +880,16 @@ fn changed_files(args: &[String]) -> Result<Vec<String>, String> {
                 changed.push(value.clone());
             }
             "--base" => {
-                let base = iter.next().ok_or("docs-gate: --base needs a sha")?.clone();
-                let head = match (iter.next(), iter.next()) {
-                    (Some(flag), Some(value)) if flag == "--head" => value.clone(),
-                    _ => return Err("docs-gate: --base must be followed by --head <sha>".into()),
-                };
-                return git_changed_files(&base, &head);
+                if base.is_some() {
+                    return Err("docs-gate: --base given twice".into());
+                }
+                base = Some(iter.next().ok_or("docs-gate: --base needs a sha")?.clone());
+            }
+            "--head" => {
+                if head.is_some() {
+                    return Err("docs-gate: --head given twice".into());
+                }
+                head = Some(iter.next().ok_or("docs-gate: --head needs a sha")?.clone());
             }
             other if !other.starts_with('-') => changed.push(other.to_string()),
             other => {
@@ -796,10 +899,46 @@ fn changed_files(args: &[String]) -> Result<Vec<String>, String> {
             }
         }
     }
-    Ok(changed)
+    match (base, head) {
+        (None, None) => Ok(changed),
+        (Some(base), Some(head)) => {
+            if !changed.is_empty() {
+                return Err("docs-gate: --changed paths cannot be mixed with --base/--head".into());
+            }
+            git_changed_files(&base, &head)
+        }
+        _ => Err("docs-gate: --base and --head must be given together".into()),
+    }
+}
+
+/// The gate reads file contents from the current checkout, so the checkout
+/// must be at `--head`; otherwise it would report on the wrong content.
+fn verify_checkout_at(head: &str) -> Result<(), String> {
+    let resolve = |rev: &str| -> Result<String, String> {
+        let output = std::process::Command::new("git")
+            .args(["rev-parse", &format!("{rev}^{{commit}}")])
+            .output()
+            .map_err(|e| format!("docs-gate: cannot run git rev-parse: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "docs-gate: git rev-parse {rev} failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    let checkout = resolve("HEAD")?;
+    let target = resolve(head)?;
+    if checkout != target {
+        return Err(format!(
+            "docs-gate: checkout is at {checkout}, not --head {head} ({target}); check out the head commit first"
+        ));
+    }
+    Ok(())
 }
 
 fn git_changed_files(base: &str, head: &str) -> Result<Vec<String>, String> {
+    verify_checkout_at(head)?;
     // Fail closed on any git error: an unavailable diff widens, never passes.
     let output = std::process::Command::new("git")
         .args([
@@ -823,4 +962,55 @@ fn git_changed_files(base: &str, head: &str) -> Result<Vec<String>, String> {
         .filter(|chunk| !chunk.is_empty())
         .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{changed_files, verify_checkout_at};
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|v| (*v).to_string()).collect()
+    }
+
+    #[test]
+    fn mixed_argument_modes_are_refused() {
+        let mixed = changed_files(&args(&[
+            "--changed",
+            "Cargo.lock",
+            "--base",
+            "a",
+            "--head",
+            "b",
+        ]));
+        assert!(
+            matches!(&mixed, Err(e) if e.contains("cannot be mixed")),
+            "{mixed:?}"
+        );
+        let trailing = changed_files(&args(&["--base", "a", "--head", "b", "extra.md"]));
+        assert!(
+            matches!(&trailing, Err(e) if e.contains("cannot be mixed")),
+            "{trailing:?}"
+        );
+    }
+
+    #[test]
+    fn base_without_head_is_refused() {
+        let lone = changed_files(&args(&["--base", "a"]));
+        assert!(
+            matches!(&lone, Err(e) if e.contains("must be given together")),
+            "{lone:?}"
+        );
+    }
+
+    #[test]
+    fn checkout_at_head_is_accepted_and_unknown_rev_refused() -> Result<(), String> {
+        // The test process runs inside this repository checkout.
+        verify_checkout_at("HEAD")?;
+        let refused = verify_checkout_at("refs/heads/does-not-exist-14772");
+        assert!(
+            matches!(&refused, Err(e) if e.contains("rev-parse")),
+            "{refused:?}"
+        );
+        Ok(())
+    }
 }

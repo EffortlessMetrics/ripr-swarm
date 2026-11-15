@@ -119,7 +119,7 @@ fn allowlisted_docs_and_reasonless_marker_handling() -> TestResult {
     let root = fixture(&[
         (
             ".ripr/static-language-allowlist.toml",
-            "schema_version = 1\n\n[[allow]]\npath = \"AGENTS.md\"\n",
+            "schema_version = 1\n\n[[allow]]\npath = \"AGENTS.md\"\nowner = \"maintainers\"\nreason = \"boundary doc\"\n\n[[allow]]\nglob = \"docs/*.md\"\nowner = \"maintainers\"\nreason = \"docs\"\n\n[[allow]]\nglob = \"docs/**/*.md\"\nowner = \"maintainers\"\nreason = \"docs\"\n",
         ),
         ("AGENTS.md", "# Agents\n\nDo not say killed.\n"),
         ("docs/other/GUIDE.md", "# Guide\n\nThis was killed.\n"),
@@ -138,6 +138,95 @@ fn allowlisted_docs_and_reasonless_marker_handling() -> TestResult {
     );
     let report = run_docs_gate(&root, &changed(&["notes/MARKED.md"]))?;
     assert_eq!(report.violations.len(), 1, "{}", report.render());
+    Ok(())
+}
+
+#[test]
+fn retained_gate_inputs_widen_instead_of_passing_scoped() {
+    for (path, gate) in [
+        ("docs/spec-index.d/RIPR-SPEC-0099.md", "check-doc-index"),
+        ("policy/doc-artifacts.d/thing.md", "check-doc-artifacts"),
+        (".ripr/traceability.d/thing.toml", "check-traceability"),
+    ] {
+        let p = plan(&changed(&[path]));
+        assert!(!p.is_docs_eligible(), "{path} must widen: {p:?}");
+        assert!(
+            p.widen_reasons.iter().any(|r| r.contains(gate)),
+            "{path} must name {gate}: {p:?}"
+        );
+        assert!(p.retained_triggers.iter().any(|t| t == path), "{p:?}");
+    }
+}
+
+#[test]
+fn undeclared_docs_glob_does_not_exempt_static_language() -> TestResult {
+    // The allowlist declares only an exact path; the docs globs the
+    // canonical check honors must be declared, not assumed.
+    let root = fixture(&[
+        (
+            ".ripr/static-language-allowlist.toml",
+            "schema_version = 1\n\n[[allow]]\npath = \"AGENTS.md\"\nowner = \"maintainers\"\nreason = \"boundary doc\"\n",
+        ),
+        ("docs/other/GUIDE.md", "# Guide\n\nThis was killed.\n"),
+    ])?;
+    let report = run_docs_gate(&root, &changed(&["docs/other/GUIDE.md"]))?;
+    assert!(
+        report.violations.iter().any(|v| v.contains("killed")),
+        "undeclared glob must not exempt: {}",
+        report.render()
+    );
+    Ok(())
+}
+
+#[test]
+fn bookkeeping_fragment_entries_require_internal_ci_section() -> TestResult {
+    let labeled = fixture(&[(
+        "changelog.d/14644-labeled-corpus.md",
+        "<!-- section: Added -->\n- Labeled Rust verdict corpus covers the new case (#14644).\n",
+    )])?;
+    let report = run_docs_gate(&labeled, &changed(&["changelog.d/14644-labeled-corpus.md"]))?;
+    assert!(
+        report.violations.iter().any(|v| v.contains("bookkeeping")),
+        "{}",
+        report.render()
+    );
+    let tooling = fixture(&[(
+        "changelog.d/14644-xtask-note.md",
+        "<!-- section: Fixed -->\n- `cargo xtask check-fast` scopes Clippy to impacted packages (#14644).\n",
+    )])?;
+    let report = run_docs_gate(&tooling, &changed(&["changelog.d/14644-xtask-note.md"]))?;
+    assert!(
+        report.violations.iter().any(|v| v.contains("bookkeeping")),
+        "{}",
+        report.render()
+    );
+    let internal = fixture(&[(
+        "changelog.d/14644-labeled-corpus.md",
+        "<!-- section: Internal / CI -->\n- Labeled Rust verdict corpus covers the new case (#14644).\n",
+    )])?;
+    let report = run_docs_gate(
+        &internal,
+        &changed(&["changelog.d/14644-labeled-corpus.md"]),
+    )?;
+    assert!(report.violations.is_empty(), "{}", report.render());
+    Ok(())
+}
+
+#[test]
+fn disposition_non_array_element_is_a_violation() -> TestResult {
+    let root = fixture(&[(
+        "policy/ripr-agent-disposition.toml",
+        "schema_version = \"1\"\nelement = \"not-an-array\"\n",
+    )])?;
+    let report = run_docs_gate(&root, &changed(&["policy/ripr-agent-disposition.toml"]))?;
+    assert!(
+        report
+            .violations
+            .iter()
+            .any(|v| v.contains("element must be an array")),
+        "{}",
+        report.render()
+    );
     Ok(())
 }
 
