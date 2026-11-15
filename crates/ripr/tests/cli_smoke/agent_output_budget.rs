@@ -5,7 +5,7 @@
 //! any of these outputs fails here instead of silently taxing every agent turn.
 //! A deliberate cut lowers the ceiling in the same change; a deliberate
 //! addition must justify raising it.
-use super::{printed_path, run_command, unique_external_workspace};
+use super::{DeclaredHunkScratch, printed_path, run_command, unique_external_workspace};
 use std::fs;
 use std::path::Path;
 
@@ -25,8 +25,9 @@ const TESTS: &str = "#[cfg(test)]\nmod tests {\n    use super::*;\n\
     #[test] fn parses() { assert!(parse(\"12\").is_ok()); }\n\
     #[test] fn gold() { assert_eq!(tier(50), \"gold\"); }\n}\n";
 
-fn workspace(label: &str) -> TestResult<std::path::PathBuf> {
+fn workspace(label: &str) -> TestResult<(std::path::PathBuf, DeclaredHunkScratch)> {
     let project = unique_external_workspace(label)?;
+    let cleanup = DeclaredHunkScratch(project.clone());
     fs::create_dir_all(project.join("src"))?;
     fs::write(
         project.join("Cargo.toml"),
@@ -48,7 +49,7 @@ fn workspace(label: &str) -> TestResult<std::path::PathBuf> {
         }
     }
     fs::write(project.join("change.diff"), diff)?;
-    Ok(project)
+    Ok((project, cleanup))
 }
 
 fn run(project: &Path, args: &[&str]) -> TestResult<String> {
@@ -80,7 +81,7 @@ fn within(label: &str, text: &str, ceiling: usize) {
 
 #[test]
 fn agent_facing_outputs_stay_inside_their_byte_budgets() -> TestResult {
-    let project = workspace("agent-output-budget")?;
+    let (project, _cleanup) = workspace("agent-output-budget")?;
     // First run prints the one-time legend; budget the steady-state rerun.
     run(&project, &["check", "--diff", "change.diff"])?;
     let human = run(&project, &["check", "--diff", "change.diff"])?;
@@ -146,7 +147,7 @@ Hidden:
 /// under `next`; per-seam `verification` carries only the suggested test.
 #[test]
 fn agent_brief_states_workflow_commands_once() -> TestResult {
-    let project = workspace("agent-brief-budget")?;
+    let (project, _cleanup) = workspace("agent-brief-budget")?;
     let brief = run(
         &project,
         &["agent", "brief", "--diff", "change.diff", "--json"],
@@ -170,6 +171,7 @@ fn agent_brief_states_workflow_commands_once() -> TestResult {
 #[test]
 fn agent_repair_start_prints_one_next_command_inside_a_line_budget() -> TestResult {
     let root = super::repair_route_workspace("agent repair start budget")?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
     let root_arg = root.to_string_lossy().into_owned();
     let output = super::run_ripr_with_env(
         &[
@@ -248,6 +250,7 @@ fn agent_repair_start_prints_one_next_command_inside_a_line_budget() -> TestResu
 #[test]
 fn ripr_repair_start_does_not_repeat_the_summary_in_the_card() -> TestResult {
     let root = super::repair_route_workspace("ripr repair start budget")?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
     let root_arg = root.to_string_lossy().into_owned();
     let output = super::run_ripr_with_env(
         &["repair", super::REPAIR_ROUTE_SEAM, "--root", &root_arg],
