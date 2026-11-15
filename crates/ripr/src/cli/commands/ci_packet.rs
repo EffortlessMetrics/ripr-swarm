@@ -13,8 +13,9 @@
 //!   failure and the packet continues;
 //! - the diff capture and the gate evaluation had no `continue-on-error`,
 //!   and the PR guidance and SARIF renders had it only in an advisory
-//!   `RIPR_GATE_MODE`, so their failure makes the command exit nonzero once
-//!   the rest of the packet is written;
+//!   `RIPR_GATE_MODE`, so their failure makes the command exit `2` once
+//!   the rest of the packet is written, or `3` when the only such failure is
+//!   a gate that blocked (#14841);
 //! - a stage whose step had no `always()` is skipped after such a failure,
 //!   as GitHub skipped the step.
 //!

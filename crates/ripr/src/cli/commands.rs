@@ -6444,10 +6444,16 @@ language = "rust"
             section.contains("always()"),
             "the section no longer names the always() steps the binding above checks"
         );
+        // #14841: the packet exits 3 when only the gate blocked and 2 on any
+        // other required failure; the section and the catalog stop states
+        // must both say so.
         assert!(
-            section.contains("nonzero")
+            section.contains("makes the packet exit `3`")
+                && section.contains("exit `2` after")
                 && include_str!("command_metadata.rs")
-                    .contains("exits nonzero after the packet is written")
+                    .contains("a blocked gate exits 3 after the packet is written")
+                && include_str!("command_metadata.rs")
+                    .contains("exits 2 after the packet is written")
                 && include_str!("commands/ci_packet.rs")
                     .contains("failed and is advisory; continuing"),
             "the section's failure-role prose no longer matches the ci-packet \
