@@ -33,7 +33,7 @@ Start here:
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach scale: rows
     - infection weak: Every related test calls the owner with literal inputs at which the changed expression and its baseline evaluate to the same value, so no test input reaches a…
-    - 6 more detail line(s) in --format human-full
+    - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
