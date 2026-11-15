@@ -12423,6 +12423,41 @@ fn ts_fieldconstruction_bracket_sibling_field_read_downgrades() -> Result<(), St
     Ok(())
 }
 
+/// #14814 must-not-move: a computed key (`f()[k]`) and an index (`f()[0]`) are
+/// not field reads, so the sibling guard must not touch them. Both keep the
+/// base verdict, `exposed`. Only a bare-identifier bracket key is rewritten.
+#[test]
+fn ts_fieldconstruction_computed_and_index_reads_stay_exposed() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    for test_src in [
+        "import { f } from \"./owner\";\ntest(\"computed\", () => { const k = \"retries\"; expect(f()[k]).toBe(5); });\n",
+        "import { f } from \"./owner\";\ntest(\"index\", () => { expect(f()[0]).toBe(5); });\n",
+    ] {
+        let owners = extract_owners(Path::new("owner.ts"), owner_src);
+        let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+        let finding = classify_change_with_alias_state(
+            Path::new("owner.ts"),
+            3,
+            "  return { retries: 5, verbose: false };",
+            Some("  return { retries: 3, verbose: false };"),
+            &owners,
+            &tests,
+            None,
+            &ReExportIndex::empty(),
+            None,
+            None,
+        )
+        .ok_or_else(|| "expected a finding".to_string())?;
+
+        assert!(
+            matches!(finding.class, ExposureClass::Exposed),
+            "a computed or index read must keep its base verdict, got {:?} for {test_src:?}",
+            finding.class
+        );
+    }
+    Ok(())
+}
+
 /// #14814 round 2: an operator glues onto the changed field's segment.
 /// `f().retries || f().verbose` reads `retries`, so it witnesses the change
 /// and must stay `exposed`; a dot-segment comparison sees `retries || f()`
