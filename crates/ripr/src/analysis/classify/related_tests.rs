@@ -4176,9 +4176,13 @@ fn opens_format_template(before: &str) -> bool {
         return false;
     };
     let name = name.trim_end();
+    // #14089: step past the found char by its own width; `+ 1` sliced
+    // inside a multibyte char that is not alphanumeric (e.g. a virama).
     let leaf_start = name
-        .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-        .map_or(0, |at| at + 1);
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| !(ch.is_alphanumeric() || *ch == '_'))
+        .map_or(0, |(at, ch)| at + ch.len_utf8());
     matches!(
         &name[leaf_start..],
         "format" | "format_args" | "print" | "println" | "eprint" | "eprintln" | "panic"
@@ -8605,6 +8609,18 @@ pub(in crate::analysis) fn body_contains_owner_call(body: &str, owner_name: &str
 /// `other.owner(..)` or path-qualified `Type::owner(..)` spelling.
 #[cfg(test)]
 mod tests {
+    /// #14089: the macro name before `!(` was cut with `+ 1` after a
+    /// Unicode predicate, so a non-alphanumeric multibyte char sliced
+    /// inside itself.
+    #[test]
+    fn format_template_reads_a_name_ending_in_a_multibyte_mark() {
+        assert!(!super::opens_format_template("क्!("));
+        assert!(!super::opens_format_template("e\u{301}!("));
+        assert!(super::opens_format_template("x\u{301}::println!("));
+        assert!(super::opens_format_template("std::format!("));
+        assert!(!super::opens_format_template("formats!("));
+    }
+
     /// #11738: one walk of a source answers every name inside a run memo
     /// scope, and the answers are the unscoped ones.
     #[test]
