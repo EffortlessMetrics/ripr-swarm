@@ -174,8 +174,9 @@ Each nightly run also keeps one dated receipt and renders one trend page
 The page ranks every measured metric by its distance from the target declared
 in `scoreboards.toml`, farthest first, with the previous comparable night, the
 value a week earlier and a sparkline over the last 14 nights. Wall time and
-memory compare only with receipts from the same runner class. Failed and
-not-measured metrics are listed by board and never count as at the bar. The
+memory compare only with receipts from the same runner class. Failed,
+incomplete and not-measured metrics are listed by board and never count as at
+the bar; an unreadable old receipt is skipped with a warning. The
 page is in the run's job summary and the `dx-trend` artifact; receipts
 accumulate in the `dx-trend-receipts` artifact (newest 120 kept). It adds no
 gate.

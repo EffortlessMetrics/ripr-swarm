@@ -23,6 +23,9 @@ const PAGE_SCHEMA: &str = "ripr-dx-trend-page-v1";
 const DEFAULT_KEEP: usize = 120;
 const SPARK_NIGHTS: usize = 14;
 const WEEK_DAYS: i64 = 7;
+/// A "week ago" value must be 7 to 9 days old; after a broken chain an older
+/// night is not shown as last week.
+const WEEK_SLACK_DAYS: i64 = 2;
 const USAGE: &str = "usage: cargo xtask dx-trend --report <dx-scoreboard.json> --history <dir> [--date <YYYY-MM-DD>] [--keep <n>]";
 
 struct Options {
@@ -92,7 +95,9 @@ fn days_from_civil(date: &str) -> Option<i64> {
     let mp = if month > 2 { month - 3 } else { month + 9 };
     let doy = (153 * mp + 2) / 5 + day - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    Some(era * 146_097 + doe - 719_468)
+    let days = era * 146_097 + doe - 719_468;
+    // Rejects impossible days (2026-02-30) and signed parts (+1).
+    (civil_from_days(days) == date).then_some(days)
 }
 
 fn civil_from_days(unix_days: i64) -> String {
@@ -146,6 +151,18 @@ fn receipt_from_report(report: &Value, date: &str) -> Result<Value, String> {
             .as_str()
             .ok_or("dx-scoreboard metric row has no string `id`")?;
         let status = row["status"].as_str().unwrap_or("not_measured");
+        // The scoreboard keeps an incomplete sample's elapsed number for
+        // context and forces the row to `below_target`; that number can sit
+        // under the target (a run that stopped early is fast), so it is not a
+        // result and must never read as at the bar.
+        let incomplete = row["samples"]
+            .as_array()
+            .is_some_and(|samples| samples.iter().any(|s| s["status"] == json!("incomplete")));
+        let status = if incomplete && admissible(status) {
+            "incomplete"
+        } else {
+            status
+        };
         let value = if admissible(status) {
             row["value"].as_f64().map_or(Value::Null, |v| json!(v))
         } else {
@@ -168,7 +185,11 @@ fn receipt_from_report(report: &Value, date: &str) -> Result<Value, String> {
             "partial": row["partial"].as_bool().unwrap_or(false),
             "status": status,
             "value": value,
-            "reason": row["reason"],
+            "reason": if status == "incomplete" {
+                json!("a sample did not complete, so its number is not a result")
+            } else {
+                row["reason"].clone()
+            },
         }));
     }
     Ok(json!({
@@ -182,27 +203,46 @@ fn receipt_from_report(report: &Value, date: &str) -> Result<Value, String> {
     }))
 }
 
-/// Receipts by date. Files of another schema are ignored; a receipt without
-/// a valid date is an error. The current receipt owns its date.
+fn is_receipt_name(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with("dx-trend-") && n.ends_with(".json"))
+}
+
+/// Receipts by date. Files of another schema are ignored; an unreadable or
+/// undated receipt is skipped with a warning. The current receipt owns its
+/// date.
 fn load_history(dir: &Path, current: &Value) -> Result<BTreeMap<String, Value>, String> {
     let mut by_date = BTreeMap::new();
     if let Ok(entries) = fs::read_dir(dir) {
         let mut paths: Vec<PathBuf> = entries
             .filter_map(Result::ok)
             .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+            .filter(|path| is_receipt_name(path))
             .collect();
         paths.sort();
         for path in paths {
-            let receipt = read_json(&path)?;
-            if receipt["schema_version"] != json!(RECEIPT_SCHEMA) {
-                continue;
-            }
-            let date = receipt["date"]
+            // One unreadable night must not stop every later trend page; it
+            // is named on stderr and left out of the history.
+            let receipt = match read_json(&path) {
+                Ok(receipt) if receipt["schema_version"] == json!(RECEIPT_SCHEMA) => receipt,
+                Ok(_) => continue,
+                Err(error) => {
+                    eprintln!("warning: skipping trend receipt: {error}");
+                    continue;
+                }
+            };
+            let Some(date) = receipt["date"]
                 .as_str()
                 .filter(|d| days_from_civil(d).is_some())
-                .ok_or_else(|| format!("{} has no valid `date`", path.display()))?
-                .to_string();
+                .map(str::to_string)
+            else {
+                eprintln!(
+                    "warning: skipping trend receipt {}: no valid `date`",
+                    path.display()
+                );
+                continue;
+            };
             by_date.insert(date, receipt);
         }
     }
@@ -311,6 +351,7 @@ fn evaluate(history: &BTreeMap<String, Value>, current: &Value) -> Result<Value,
         .ok_or("current receipt has no date")?;
     let today = days_from_civil(date).ok_or("current receipt has an invalid date")?;
     let week_cut = civil_from_days(today - WEEK_DAYS);
+    let week_floor = civil_from_days(today - WEEK_DAYS - WEEK_SLACK_DAYS);
     let metrics = current["metrics"]
         .as_array()
         .ok_or("current receipt has no metrics")?;
@@ -345,11 +386,12 @@ fn evaluate(history: &BTreeMap<String, Value>, current: &Value) -> Result<Value,
         };
         let series = comparable_series(history, current, metric);
         let previous = series.last().map(|(_, v)| *v);
-        let week_ago = series
+        let week_entry = series
             .iter()
             .rev()
             .find(|(day, _)| day.as_str() <= week_cut.as_str())
-            .map(|(_, v)| *v);
+            .filter(|(day, _)| day.as_str() >= week_floor.as_str());
+        let week_ago = week_entry.map(|(_, v)| *v);
         if let Some(prev) = previous
             && let Some(slot) = moves.get_mut(better(direction, prev, value))
         {
@@ -373,11 +415,12 @@ fn evaluate(history: &BTreeMap<String, Value>, current: &Value) -> Result<Value,
             "value": value,
             "partial": metric["partial"],
             "shortfall": short,
-            "distance": distance(short, target),
+            "distance": (target != 0.0 || short <= 0.0).then(|| distance(short, target)),
             "zero_target_miss": short > 0.0 && target == 0.0,
             "previous": previous,
             "since_previous": previous.map(|p| better(direction, p, value)),
             "week_ago": week_ago,
+            "week_ago_date": week_entry.map(|(day, _)| day.clone()),
             "since_week_ago": week_ago.map(|w| better(direction, w, value)),
             "nights": series.len() + 1,
             "sparkline": sparkline(&spark),
@@ -388,18 +431,18 @@ fn evaluate(history: &BTreeMap<String, Value>, current: &Value) -> Result<Value,
             at_bar.push(row);
         }
     }
+    // Zero-target misses first (largest miss first), then relative distance.
+    // The JSON `distance` of a zero-target miss is null (JSON has no
+    // infinity); the explicit flag carries that rank.
     off_bar.sort_by(|a, b| {
-        let key = |row: &Value| row["distance"].as_f64().unwrap_or(f64::INFINITY);
-        key(b)
-            .total_cmp(&key(a))
+        let zero = |row: &Value| row["zero_target_miss"] == json!(true);
+        let num = |row: &Value, key: &str| row[key].as_f64().unwrap_or_default();
+        zero(b)
+            .cmp(&zero(a))
+            .then_with(|| num(b, "distance").total_cmp(&num(a, "distance")))
+            .then_with(|| num(b, "shortfall").total_cmp(&num(a, "shortfall")))
             .then_with(|| a["id"].as_str().cmp(&b["id"].as_str()))
     });
-    // JSON has no infinity; the flag above carries that rank.
-    for row in &mut off_bar {
-        if row["zero_target_miss"] == json!(true) {
-            row["distance"] = Value::Null;
-        }
-    }
     at_bar.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
     let unmeasured_count: usize = unmeasured.values().map(Vec::len).sum();
     Ok(json!({
@@ -408,8 +451,8 @@ fn evaluate(history: &BTreeMap<String, Value>, current: &Value) -> Result<Value,
         "revision": current["revision"],
         "runner_class": current["runner_class"],
         "gate_status": current["gate_status"],
-        "nights": history.len(),
-        "first_night": history.keys().next(),
+        "nights": history.keys().filter(|day| day.as_str() <= date).count(),
+        "first_night": history.keys().find(|day| day.as_str() <= date),
         "counts": {
             "total": metrics.len(),
             "off_bar": off_bar.len(),
@@ -429,10 +472,15 @@ fn fmt_value(value: f64, unit: &str) -> String {
     if unit == "ratio" {
         return format!("{:.1}%", value * 100.0);
     }
-    if value.fract() == 0.0 && value.abs() < 1e15 {
-        format!("{value:.0} {unit}")
+    let suffix = if unit.is_empty() {
+        String::new()
     } else {
-        format!("{value:.2} {unit}")
+        format!(" {unit}")
+    };
+    if value.fract() == 0.0 && value.abs() < 1e15 {
+        format!("{value:.0}{suffix}")
+    } else {
+        format!("{value:.2}{suffix}")
     }
 }
 
@@ -482,7 +530,7 @@ fn render_markdown(page: &Value) -> String {
         page["since_previous"]["worse"],
         page["since_previous"]["same"],
     ));
-    out.push_str("Arrows read against each metric's direction (↑ better, ↓ worse). Wall time and memory compare only with the same runner class.\n\n");
+    out.push_str("Arrows read against each metric's direction (↑ better, ↓ worse); sparkline height is the raw value, oldest first. \"Week ago\" is a night 7 to 9 days back. Wall time and memory compare only with the same runner class.\n\n");
     out.push_str("## Off the bar, farthest first\n\n");
     if page["off_bar"].as_array().is_none_or(Vec::is_empty) {
         out.push_str("Every measured metric is at its bar.\n\n");
@@ -573,20 +621,17 @@ fn render_markdown(page: &Value) -> String {
     out
 }
 
-/// Keeps the newest `keep` receipts in the history directory.
-fn prune(dir: &Path, keep: usize) -> Result<(), String> {
+/// Keeps the newest `keep` receipts in the history directory, never
+/// removing the receipt this run wrote (a backdated `--date` stays).
+fn prune(dir: &Path, keep: usize, current: &Path) -> Result<(), String> {
     let mut receipts: Vec<PathBuf> = fs::read_dir(dir)
         .map_err(|error| format!("read {}: {error}", dir.display()))?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("dx-trend-") && n.ends_with(".json"))
-        })
+        .filter(|path| is_receipt_name(path) && path.as_path() != current)
         .collect();
     receipts.sort();
-    let excess = receipts.len().saturating_sub(keep);
+    let excess = receipts.len().saturating_sub(keep.saturating_sub(1));
     for path in receipts.into_iter().take(excess) {
         fs::remove_file(&path).map_err(|error| format!("remove {}: {error}", path.display()))?;
     }
@@ -610,7 +655,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let name = format!("dx-trend-{date}.json");
     fs::write(options.history.join(&name), format!("{body}\n"))
         .map_err(|error| format!("write receipt: {error}"))?;
-    prune(&options.history, options.keep)?;
+    prune(&options.history, options.keep, &options.history.join(&name))?;
     let page_body =
         serde_json::to_string_pretty(&page).map_err(|error| format!("serialize page: {error}"))?;
     crate::write_report("dx-trend.json", &format!("{page_body}\n"))?;
@@ -662,7 +707,16 @@ mod tests {
                 .as_deref(),
             Some("2026-11-08")
         );
-        for bad in ["2026-13-01", "26-11-15", "2026-11-1x", "2026/11/15", ""] {
+        for bad in [
+            "2026-13-01",
+            "26-11-15",
+            "2026-11-1x",
+            "2026/11/15",
+            "2026-02-30",
+            "2026-04-31",
+            "+026-11-15",
+            "",
+        ] {
             assert!(days_from_civil(bad).is_none(), "{bad}");
         }
     }
@@ -963,5 +1017,150 @@ mod tests {
         );
         assert_eq!(sparkline(&[10.0, 0.0, 5.0]), "█▁▅");
         assert_eq!(sparkline(&[2.0, 2.0]), "▄▄");
+    }
+
+    #[test]
+    fn an_incomplete_sample_is_never_at_the_bar() -> Result<(), String> {
+        // A pilot that stopped after 130 ms is under its 1000 ms target, and
+        // the scoreboard marks the row below_target with that number.
+        let mut early = row(
+            "speed.pilot",
+            "lower_is_better",
+            1000.0,
+            Some(130.0),
+            "below_target",
+        );
+        early["samples"] = json!([{"repo": "a", "value": 130.0, "status": "incomplete"}]);
+        let mut done = row(
+            "speed.check",
+            "lower_is_better",
+            1000.0,
+            Some(900.0),
+            "meets_target",
+        );
+        done["samples"] = json!([{"repo": "a", "value": 900.0, "status": "meets_target"}]);
+        let r = night("2026-11-15", "linux-x64", vec![early, done])?;
+        assert_eq!(r["metrics"][0]["status"], "incomplete");
+        assert!(r["metrics"][0]["value"].is_null());
+        assert_eq!(r["metrics"][1]["value"], 900.0);
+        let page = evaluate(&load_history(Path::new("/nonexistent"), &r)?, &r)?;
+        assert_eq!(page["counts"]["at_bar"], 1);
+        assert_eq!(page["at_bar"][0]["id"], "speed.check");
+        assert_eq!(page["counts"]["not_measured"], 1);
+        assert_eq!(page["not_measured"]["speed"][0]["id"], "speed.pilot");
+        Ok(())
+    }
+
+    #[test]
+    fn week_ago_ignores_nights_older_than_nine_days() -> Result<(), String> {
+        let mut history = BTreeMap::new();
+        for (date, value) in [
+            ("2026-10-01", 0.50),
+            ("2026-11-05", 0.45),
+            ("2026-11-14", 0.40),
+        ] {
+            history.insert(
+                date.to_string(),
+                night(
+                    date,
+                    "linux-x64",
+                    vec![row(
+                        "trust.a",
+                        "lower_is_better",
+                        0.2,
+                        Some(value),
+                        "below_target",
+                    )],
+                )?,
+            );
+        }
+        let current = night(
+            "2026-11-15",
+            "linux-x64",
+            vec![row(
+                "trust.a",
+                "lower_is_better",
+                0.2,
+                Some(0.35),
+                "below_target",
+            )],
+        )?;
+        // 11-05 is 10 days back: outside the 7-9 day window, so no week-ago value.
+        let page = evaluate(&history, &current)?;
+        assert!(page["off_bar"][0]["week_ago"].is_null());
+        assert_eq!(page["off_bar"][0]["previous"], 0.40);
+        history.insert(
+            "2026-11-07".to_string(),
+            night(
+                "2026-11-07",
+                "linux-x64",
+                vec![row(
+                    "trust.a",
+                    "lower_is_better",
+                    0.2,
+                    Some(0.42),
+                    "below_target",
+                )],
+            )?,
+        );
+        let page = evaluate(&history, &current)?;
+        assert_eq!(page["off_bar"][0]["week_ago"], 0.42);
+        assert_eq!(page["off_bar"][0]["week_ago_date"], "2026-11-07");
+        Ok(())
+    }
+
+    #[test]
+    fn an_unreadable_receipt_is_skipped_not_fatal() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-dx-trend-bad-{}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        fs::write(dir.join("dx-trend-2026-11-10.json"), "{not json").map_err(|e| e.to_string())?;
+        fs::write(
+            dir.join("dx-trend-2026-11-11.json"),
+            json!({"schema_version": RECEIPT_SCHEMA, "date": "2026-02-30", "metrics": []})
+                .to_string(),
+        )
+        .map_err(|e| e.to_string())?;
+        let good = night("2026-11-12", "linux-x64", vec![])?;
+        fs::write(dir.join("dx-trend-2026-11-12.json"), good.to_string())
+            .map_err(|e| e.to_string())?;
+        let current = night("2026-11-15", "linux-x64", vec![])?;
+        let history = load_history(&dir, &current)?;
+        assert_eq!(
+            history.keys().cloned().collect::<Vec<_>>(),
+            ["2026-11-12", "2026-11-15"]
+        );
+        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn zero_target_misses_rank_by_size_and_units_render_cleanly() -> Result<(), String> {
+        let r = night(
+            "2026-11-15",
+            "linux-x64",
+            vec![
+                row(
+                    "trust.a_small",
+                    "lower_is_better",
+                    0.0,
+                    Some(0.01),
+                    "below_target",
+                ),
+                row(
+                    "trust.b_large",
+                    "lower_is_better",
+                    0.0,
+                    Some(0.05),
+                    "below_target",
+                ),
+            ],
+        )?;
+        let page = evaluate(&BTreeMap::new(), &r)?;
+        assert_eq!(page["off_bar"][0]["id"], "trust.b_large");
+        assert_eq!(page["off_bar"][1]["id"], "trust.a_small");
+        assert_eq!(fmt_value(5.0, ""), "5");
+        assert_eq!(fmt_value(5.5, "ms"), "5.50 ms");
+        assert_eq!(fmt_value(0.368, "ratio"), "36.8%");
+        Ok(())
     }
 }
