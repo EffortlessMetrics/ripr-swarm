@@ -86,15 +86,29 @@ STATE_LINE_PREFIX = r"^(?:[ \t>*\-+_#~`]|\d{1,9}[.)]|\[[ \txX]?\])*"
 # A ``disposition`` field label anywhere on the line (``Final disposition:``, a
 # ``| Disposition | ... |`` table row) and a table cell that holds only a state token
 # also state one.
-# A short field label whose value is a state token (``Status: REPAIR_REQUIRED``,
-# ``VERDICT: CHANGES_REQUESTED``) states it too, whatever the label is called.
+# A short field label (at most 61 characters, no backticks, so a quoted
+# ``Status: REPAIR_REQUIRED`` inside prose stays narration) whose value is a
+# non-positive state token states it too: ``Status: REPAIR_REQUIRED``,
+# ``Status (round 2): REPAIR_REQUIRED``, ``Verdict, after review: CHANGES_REQUESTED``,
+# ``Status -> REPAIR_REQUIRED``. The separator is a colon (ASCII or fullwidth), an
+# arrow or an equals sign. A positive value (``- **Status:** REVIEW_READY``) is not
+# matched here, so it stays narration rather than voiding the body (#14653).
+NEGATIVE_STATE_TOKEN = (
+    r"(?:SOURCE_)?REVIEW_(?:INCOMPLETE|BLOCKED)|REPAIR_REQUIRED"
+    r"|NOT_READY|WITHDRAWN|SUPERSEDED|CHANGES_REQUESTED"
+)
+LABELLED_STATE_FIELD = (
+    STATE_LINE_PREFIX
+    + r"[A-Za-z][^:\uff1a\n`]{0,60}?[ \t*_`]*(?::|\uff1a|->|=>|=)[ \t*_`]*(?:"
+    + NEGATIVE_STATE_TOKEN
+    + r")\b"
+)
 STATE_LINE = re.compile(
     STATE_LINE_PREFIX + r"(?:disposition[ \t*_`]*:|(?:" + STATE_TOKEN.pattern + r")\b)"
     r"|" + STATE_LINE_PREFIX + r"(?:" + STATE_TOKEN.pattern + r")[ \t*_`.:!]*$"
     r"|^.*?\bdisposition[ \t*_`]*[:|]"
     r"|^[ \t]*\|(?:.*\|)?[ \t*_`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.]*\|"
-    r"|" + STATE_LINE_PREFIX + r"[A-Za-z][\w \t/-]{0,40}?[ \t*_`]*:[ \t*_`]*(?:"
-    + STATE_TOKEN.pattern + r")\b",
+    r"|" + LABELLED_STATE_FIELD,
     re.IGNORECASE,
 )
 # Retraction and blocker phrases for body prose after the marker (and for fenced text,
@@ -829,13 +843,24 @@ def self_test() -> None:
         # Any cell position, including the first and a sole cell.
         ("REVIEW_READY\n| State | Detail |\n| --- | --- |\n| REPAIR_REQUIRED | fix oracle |", False),
         ("REVIEW_READY\n| a | REPAIR_REQUIRED | b |", False),
-        # Any short field label whose value is a state token states it (#14592):
+        # A short field label whose value is a negative state token states it (#14592):
         # ``VERDICT: REPAIR_REQUIRED`` and ``Status: CHANGES_REQUESTED`` refuse.
         ("SOURCE_REVIEW_READY\nVERDICT: REPAIR_REQUIRED 1cc13d3d", False),
         ("SOURCE_REVIEW_READY\nVERDICT: CHANGES_REQUESTED 1cc13d3d", False),
         ("REVIEW_READY\nStatus: REPAIR_REQUIRED", False),
         ("REVIEW_READY\n- **Verdict:** `CHANGES_REQUESTED`", False),
         ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d", True),
+        # Labels with punctuation and arrow or fullwidth separators (#14653 review).
+        ("SOURCE_REVIEW_READY\nStatus (round 2): REPAIR_REQUIRED", False),
+        ("SOURCE_REVIEW_READY\nVerdict, after the second thread: REPAIR_REQUIRED", False),
+        ("SOURCE_REVIEW_READY\nStatus -> REPAIR_REQUIRED", False),
+        ("SOURCE_REVIEW_READY\nVerdict\uff1aREPAIR_REQUIRED", False),
+        # A positive value under a label is not a refusal (#14653 review).
+        ("REVIEW_READY\n- **Status:** REVIEW_READY", True),
+        ("REVIEW_READY\nStatus: REVIEW_READY", True),
+        ("REVIEW_READY\n- **Status:** green", True),
+        # A quoted label inside prose stays narration.
+        ("REVIEW_READY\nThe earlier `Status: REPAIR_REQUIRED` review was superseded.", True),
         ("REVIEW_READY\n| REPAIR_REQUIRED |", False),
         ("REVIEW_READY\n| **`REPAIR_REQUIRED`** | fix oracle |", False),
         ("REVIEW_READY\n| Check | Result |\n| --- | --- |\n| fmt | pass |", True),

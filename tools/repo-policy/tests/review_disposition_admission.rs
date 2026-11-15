@@ -1374,6 +1374,21 @@ fn a_labelled_field_whose_value_is_a_state_token_refuses() -> Result<(), String>
             true,
             "approve control",
         ),
+        (
+            "SOURCE_REVIEW_READY\nStatus (round 2): REPAIR_REQUIRED",
+            false,
+            "punctuated status label",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nStatus -> REPAIR_REQUIRED",
+            false,
+            "arrow separator",
+        ),
+        (
+            "REVIEW_READY\n- **Status:** REVIEW_READY",
+            true,
+            "positive value under a label",
+        ),
     ];
     for (body, admit, what) in cases {
         let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
