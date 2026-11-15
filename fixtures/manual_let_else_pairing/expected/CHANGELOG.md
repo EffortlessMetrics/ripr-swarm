@@ -57,3 +57,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — manual_let_else_pairing (6)
+
+Reason:
+RIPR-SPEC-0001: main output reads 49 spots in the finding's file, not 45; the count was already 49 at the bless commit a4b8617d (#14484), so the blessed text was stale at landing
+
+Command:
+`cargo xtask goldens bless manual_let_else_pairing --reason "..."`
+
+Updated:
+- `expected/human.txt`
