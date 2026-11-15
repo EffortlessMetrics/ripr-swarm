@@ -866,28 +866,24 @@ pub fn run_docs_gate_at_revision(
     base: &str,
     head: &str,
 ) -> Result<DocsGateReport, String> {
-    verify_checkout_at(checkout, head)?;
-    let changed = git_diff_files(checkout, base, head)?;
-    let tree = materialize_tree(checkout, head)?;
+    // Resolve both revs to commit IDs once and use only those IDs afterwards.
+    // The checkout check, the diff selection and the archive therefore bind to
+    // the same two commits: a ref that moves after the check can no longer make
+    // the gate classify one commit's diff and read another commit's tree.
+    let base_id = resolve_commit(checkout, base)?;
+    let head_id = resolve_commit(checkout, head)?;
+    verify_checkout_at(checkout, &head_id, head)?;
+    let changed = git_diff_files(checkout, &base_id, &head_id)?;
+    let tree = materialize_tree(checkout, &head_id)?;
     let result = run_docs_gate(&tree, &changed);
     let _ = std::fs::remove_dir_all(&tree);
     result
 }
 
-fn materialize_tree(checkout: &Path, head: &str) -> Result<PathBuf, String> {
-    let tree = std::env::temp_dir().join(format!(
-        "ripr-docs-gate-tree-{}-{}",
-        std::process::id(),
-        head.chars().take(12).collect::<String>()
-    ));
-    if tree.exists() {
-        std::fs::remove_dir_all(&tree)
-            .map_err(|e| format!("docs-gate: cannot clear {}: {e}", tree.display()))?;
-    }
-    std::fs::create_dir_all(&tree)
-        .map_err(|e| format!("docs-gate: cannot create {}: {e}", tree.display()))?;
+fn materialize_tree(checkout: &Path, head_id: &str) -> Result<PathBuf, String> {
+    let tree = create_staging_dir(head_id)?;
     let mut archive = std::process::Command::new("git")
-        .args(["archive", "--format=tar", head])
+        .args(["archive", "--format=tar", head_id])
         .current_dir(checkout)
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -908,11 +904,42 @@ fn materialize_tree(checkout: &Path, head: &str) -> Result<PathBuf, String> {
     if !archive_status.success() || !extract.status.success() {
         let _ = std::fs::remove_dir_all(&tree);
         return Err(format!(
-            "docs-gate: materializing {head} failed (git archive: {archive_status}, tar: {})",
+            "docs-gate: materializing {head_id} failed (git archive: {archive_status}, tar: {})",
             String::from_utf8_lossy(&extract.stderr).trim()
         ));
     }
     Ok(tree)
+}
+
+/// Create a staging directory that this process owns.
+///
+/// `create_dir` fails when the path exists, so an existing path — a leftover
+/// from a killed run, another process's tree, or a path a user chose — is
+/// never deleted or reused. The name is built from the resolved commit ID, so
+/// a caller-supplied revision string cannot shape the path.
+fn create_staging_dir(head_id: &str) -> Result<PathBuf, String> {
+    let root = std::env::temp_dir();
+    let stem = format!(
+        "ripr-docs-gate-tree-{}-{}",
+        std::process::id(),
+        head_id.chars().take(12).collect::<String>()
+    );
+    for attempt in 0..64u32 {
+        let candidate = root.join(format!("{stem}-{attempt}"));
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "docs-gate: cannot create {}: {error}",
+                    candidate.display()
+                ));
+            }
+        }
+    }
+    Err(format!(
+        "docs-gate: cannot create a staging directory for {head_id}: 64 candidates already exist"
+    ))
 }
 
 /// CLI entry: `cargo policy docs-gate --base <sha> --head <sha>` or
@@ -998,35 +1025,45 @@ fn changed_files(args: &[String]) -> Result<Vec<String>, String> {
     match parse_mode(args)? {
         CommandMode::Changed(changed) => Ok(changed),
         CommandMode::Revision { base, head } => {
-            verify_checkout_at(Path::new("."), &head)?;
+            let head_id = resolve_commit(Path::new("."), &head)?;
+            verify_checkout_at(Path::new("."), &head_id, &head)?;
             git_diff_files(Path::new("."), &base, &head)
         }
     }
 }
 
+/// Resolve a revision to the full commit ID. Every revision the gate acts on is
+/// resolved once here and used by ID afterwards, so a symbolic or mutable name
+/// cannot denote different commits at selection time and at read time.
+fn resolve_commit(checkout: &Path, rev: &str) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", &format!("{rev}^{{commit}}")])
+        .current_dir(checkout)
+        .output()
+        .map_err(|e| format!("docs-gate: cannot run git rev-parse: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "docs-gate: git rev-parse {rev} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let resolved = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if resolved.is_empty() {
+        return Err(format!("docs-gate: git rev-parse {rev} returned no commit"));
+    }
+    Ok(resolved)
+}
+
 /// The gate reads file contents from the committed tree of `--head`, and
 /// the checkout is the git authority for that tree, so the checkout must
-/// be at `--head`; otherwise the requested subject is ambiguous.
-fn verify_checkout_at(checkout: &Path, head: &str) -> Result<(), String> {
-    let resolve = |rev: &str| -> Result<String, String> {
-        let output = std::process::Command::new("git")
-            .args(["rev-parse", &format!("{rev}^{{commit}}")])
-            .current_dir(checkout)
-            .output()
-            .map_err(|e| format!("docs-gate: cannot run git rev-parse: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "docs-gate: git rev-parse {rev} failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    };
-    let checkout_sha = resolve("HEAD")?;
-    let target = resolve(head)?;
-    if checkout_sha != target {
+/// be at `--head`; otherwise the requested subject is ambiguous. `head_id` is
+/// the already-resolved commit, so this compares IDs and never re-resolves the
+/// caller's ref.
+fn verify_checkout_at(checkout: &Path, head_id: &str, head_label: &str) -> Result<(), String> {
+    let checkout_sha = resolve_commit(checkout, "HEAD")?;
+    if checkout_sha != head_id {
         return Err(format!(
-            "docs-gate: checkout is at {checkout_sha}, not --head {head} ({target}); check out the head commit first"
+            "docs-gate: checkout is at {checkout_sha}, not --head {head_label} ({head_id}); check out the head commit first"
         ));
     }
     Ok(())
@@ -1061,7 +1098,7 @@ fn git_diff_files(checkout: &Path, base: &str, head: &str) -> Result<Vec<String>
 
 #[cfg(test)]
 mod tests {
-    use super::{changed_files, verify_checkout_at};
+    use super::{changed_files, create_staging_dir, resolve_commit, verify_checkout_at};
     use std::path::Path;
 
     fn args(values: &[&str]) -> Vec<String> {
@@ -1101,12 +1138,74 @@ mod tests {
     #[test]
     fn checkout_at_head_is_accepted_and_unknown_rev_refused() -> Result<(), String> {
         // The test process runs inside this repository checkout.
-        verify_checkout_at(Path::new("."), "HEAD")?;
-        let refused = verify_checkout_at(Path::new("."), "refs/heads/does-not-exist-14772");
+        let head_id = resolve_commit(Path::new("."), "HEAD")?;
+        verify_checkout_at(Path::new("."), &head_id, "HEAD")?;
+        let refused = resolve_commit(Path::new("."), "refs/heads/does-not-exist-14772");
         assert!(
             matches!(&refused, Err(e) if e.contains("rev-parse")),
             "{refused:?}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn resolved_head_is_a_stable_commit_id() -> Result<(), String> {
+        // The gate passes IDs, not refs, to the diff and the archive. Resolving
+        // the same commit twice — once through a ref, once through its own ID —
+        // must yield the same subject, and the ID must be a full commit ID.
+        let head_id = resolve_commit(Path::new("."), "HEAD")?;
+        assert_eq!(head_id.len(), 40, "{head_id}");
+        assert!(head_id.chars().all(|c| c.is_ascii_hexdigit()), "{head_id}");
+        assert_eq!(resolve_commit(Path::new("."), &head_id)?, head_id);
+        let checkout_sha = resolve_commit(Path::new("."), "HEAD")?;
+        assert_eq!(checkout_sha, head_id);
+        Ok(())
+    }
+
+    #[test]
+    fn staging_dir_never_reuses_or_deletes_an_existing_path() -> Result<(), String> {
+        // Occupy both the legacy unsuffixed name (which the previous
+        // implementation cleared with `remove_dir_all` and reused) and the
+        // first name this allocator would try. Neither may be reused or
+        // deleted; the run must take a fresh directory instead.
+        let head_id = resolve_commit(Path::new("."), "HEAD")?;
+        let stem = format!(
+            "ripr-docs-gate-tree-{}-{}",
+            std::process::id(),
+            head_id.chars().take(12).collect::<String>()
+        );
+        let legacy = std::env::temp_dir().join(&stem);
+        let occupied = std::env::temp_dir().join(format!("{stem}-0"));
+        let sentinels = [legacy.join("not-ours.txt"), occupied.join("not-ours.txt")];
+        for (dir, sentinel) in [(&legacy, &sentinels[0]), (&occupied, &sentinels[1])] {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            std::fs::write(sentinel, b"sentinel").map_err(|e| e.to_string())?;
+        }
+
+        let created = create_staging_dir(&head_id)?;
+        let result = (|| -> Result<(), String> {
+            if created == legacy || created == occupied {
+                return Err("allocator reused a pre-existing path".into());
+            }
+            for sentinel in &sentinels {
+                if !sentinel.is_file() {
+                    return Err(format!(
+                        "allocator deleted a pre-existing path: {}",
+                        sentinel.display()
+                    ));
+                }
+            }
+            let entries = std::fs::read_dir(&created)
+                .map_err(|e| e.to_string())?
+                .count();
+            if entries != 0 {
+                return Err("allocator returned a non-empty directory".into());
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&created);
+        let _ = std::fs::remove_dir_all(&legacy);
+        let _ = std::fs::remove_dir_all(&occupied);
+        result
     }
 }

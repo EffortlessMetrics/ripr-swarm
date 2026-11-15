@@ -315,17 +315,30 @@ fn broken_heading_links_and_fenced_examples() -> TestResult {
     Ok(())
 }
 
-fn git(root: &std::path::Path, args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
-    let status = std::process::Command::new("git")
+fn git_output(
+    root: &std::path::Path,
+    args: &[&str],
+) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+    let output = std::process::Command::new("git")
         .args(args)
         .current_dir(root)
         .env("GIT_AUTHOR_NAME", "docs-gate test")
         .env("GIT_AUTHOR_EMAIL", "docs-gate@example.invalid")
         .env("GIT_COMMITTER_NAME", "docs-gate test")
         .env("GIT_COMMITTER_EMAIL", "docs-gate@example.invalid")
-        .status()?;
-    assert!(status.success(), "git {args:?} failed");
+        .output()?;
+    assert!(output.status.success(), "git {args:?} failed");
+    Ok(output)
+}
+
+fn git(root: &std::path::Path, args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
+    git_output(root, args)?;
     Ok(())
+}
+
+fn rev_parse(root: &std::path::Path, rev: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let output = git_output(root, &["rev-parse", rev])?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 #[test]
@@ -357,6 +370,19 @@ fn revision_mode_reads_committed_tree_not_working_files() -> TestResult {
         revision.violations.is_empty(),
         "revision mode must read committed bytes, not the dirty file: {}",
         revision.render()
+    );
+    // Revision mode stages the committed tree under the temp directory and owns
+    // that path for the duration of the run only: it must leave nothing behind.
+    let head_id = rev_parse(&root, "HEAD")?;
+    let leftovers: Vec<_> = fs::read_dir(std::env::temp_dir())?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("ripr-docs-gate-tree-"))
+        .filter(|name| name.contains(&head_id[..12]))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "revision mode left staging directories behind: {leftovers:?}"
     );
     Ok(())
 }
