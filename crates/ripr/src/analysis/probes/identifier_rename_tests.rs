@@ -192,3 +192,49 @@ fn renaming_an_entry_point_is_never_proven() -> Result<(), String> {
     assert_eq!(rename("main")?, Vec::<usize>::new());
     Ok(())
 }
+
+/// Same-spelled names that are not the renamed item, or a renamed item whose
+/// value still changes: the use site keeps its probe (Devin review on #14779).
+#[test]
+fn a_rename_that_may_not_mean_the_same_item_stays_probed() -> Result<(), String> {
+    let cases: [(&str, &str, &str, &str); 4] = [
+        (
+            "a receiver method shares the renamed spelling",
+            "fn len() -> usize {\n    0\n}\n\npub fn measure(v: &Vec<u8>) -> usize {\n    v.len() + len()\n}\n",
+            "fn capacity() -> usize {\n    0\n}\n\npub fn measure(v: &Vec<u8>) -> usize {\n    v.capacity() + capacity()\n}\n",
+            "v.capacity() + capacity()",
+        ),
+        (
+            "a macro defined elsewhere sees the renamed token",
+            "const OLD: bool = true;\n\npub fn pick() -> bool {\n    dispatch!(OLD)\n}\n",
+            "const NEW: bool = true;\n\npub fn pick() -> bool {\n    dispatch!(NEW)\n}\n",
+            "dispatch!(NEW)",
+        ),
+        (
+            "a block-valued constant's suffix changed",
+            "const OLD: i32 = { 1 }\n    + 2;\n\npub fn value() -> i32 {\n    OLD * 2\n}\n",
+            "const NEW: i32 = { 1 }\n    + 3;\n\npub fn value() -> i32 {\n    NEW * 2\n}\n",
+            "NEW * 2",
+        ),
+        (
+            "an enum variant shares the renamed spelling",
+            "#[derive(Debug)]\npub enum Mode {\n    Old,\n}\n\nconst Old: u8 = 1;\n\npub fn mode() -> u8 {\n    Old + 1\n}\n",
+            "#[derive(Debug)]\npub enum Mode {\n    New,\n}\n\nconst New: u8 = 1;\n\npub fn mode() -> u8 {\n    New + 1\n}\n",
+            "New + 1",
+        ),
+    ];
+    let mut unprobed = Vec::new();
+    for (case, before, after, use_site) in cases {
+        let probes = git_probes(before, after)?;
+        let use_line = after
+            .lines()
+            .position(|line| line.contains(use_site))
+            .ok_or("fixture lost its use site")?
+            + 1;
+        if !probed(&probes, use_line) {
+            unprobed.push((case, probe_lines(&probes)));
+        }
+    }
+    assert_eq!(unprobed, Vec::new());
+    Ok(())
+}

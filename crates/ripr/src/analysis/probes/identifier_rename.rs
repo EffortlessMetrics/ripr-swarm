@@ -10,6 +10,9 @@
 //! - the whole item, after the name, is byte-identical on both sides;
 //! - the old name no longer appears in the new file's code, and the new name
 //!   did not appear in the old file's code;
+//! - neither name is spelled after `.` or `::`, as a field, inside a macro
+//!   invocation, or inside a `struct`/`enum`/`union` body, where the same
+//!   spelling may name something else;
 //! - neither file can observe identifier text (`stringify!`, `type_name`).
 //!
 //! Anything else (a body edit, a new name that already existed, a partial
@@ -44,16 +47,9 @@ const NAME_OBSERVERS: [&str; 5] = [
     "function_name",
 ];
 
-/// Macros that print their arguments' source text (`assert!(OLD == 1)`
-/// panics with "assertion failed: OLD == 1"), so a name inside one is
-/// observable output.
-const SOURCE_TEXT_MACROS: [&str; 5] = [
-    "assert",
-    "debug_assert",
-    "dbg",
-    "assert_matches",
-    "debug_assert_matches",
-];
+/// Items whose bodies hold fields or variants: a name spelled there is a
+/// field or variant, not the renamed item.
+const TYPE_BODY_ITEMS: [&str; 3] = ["struct", "enum", "union"];
 
 /// Lines of one changed file that only apply a rename the diff proves: the
 /// new-side lines of the added half and the old-side lines of the removed
@@ -147,15 +143,20 @@ impl<'a> SourceView<'a> {
         })
     }
 
-    /// Whether `name` is spelled where its text can be observed or where it
-    /// names something other than the renamed item: a field (`name: T`,
-    /// `S { name: v }`, `value.name` without a call; a `static`/`const`
-    /// declaration's own `name: T` is not a field) or inside a
-    /// [`SOURCE_TEXT_MACROS`] invocation. A field or derived-`Debug` key that
-    /// shares the spelling would otherwise be respelled silently.
+    /// Whether `name` is spelled where it may name something other than the
+    /// renamed item, or where its text can be observed:
+    ///
+    /// - a field (`name: T`, `S { name: v }`; a `static`/`const`
+    ///   declaration's own `name: T` is not a field);
+    /// - after `.` (`v.name()` may be a receiver's unrelated method) or `::`
+    ///   (a path may resolve to another item);
+    /// - inside any macro invocation or `macro_rules!` body: a macro sees
+    ///   tokens, not resolved names, and may match or print them;
+    /// - inside a `struct`, `enum` or `union` body, where a same-spelled
+    ///   field or variant reaches derived `Debug`/serde output.
     fn spells_observably(&self, name: &str) -> bool {
         let masked = self.masked.as_str();
-        let mut macro_ends = Vec::new();
+        let mut opaque_ends = Vec::new();
         let mut previous: Option<(usize, &str)> = None;
         for (at, found) in identifiers(masked, 0, masked.len()) {
             let declared = previous.is_some_and(|(end, word)| {
@@ -163,20 +164,21 @@ impl<'a> SourceView<'a> {
             });
             previous = Some((at + found.len(), found));
             let after = masked[at + found.len()..].trim_start();
-            if SOURCE_TEXT_MACROS.contains(&found) && after.starts_with('!') {
-                macro_ends.push(invocation_end(masked, at + found.len()));
+            if after.starts_with('!') && !after.starts_with("!=") {
+                opaque_ends.push(invocation_end(masked, at + found.len()));
+            }
+            if TYPE_BODY_ITEMS.contains(&found) {
+                opaque_ends.push(type_body_end(masked, at + found.len()));
             }
             if found != name || declared {
                 continue;
             }
-            let inside_macro = macro_ends.iter().any(|end| end.is_none_or(|end| at < end));
+            let opaque = opaque_ends.iter().any(|end| end.is_none_or(|end| at < end));
             let field_type = after.starts_with(':') && !after.starts_with("::");
             let before = masked[..at].trim_end();
-            let field_read = before.ends_with('.')
-                && !before.ends_with("..")
-                && !after.starts_with('(')
-                && !after.starts_with("::");
-            if inside_macro || field_type || field_read {
+            let member = before.ends_with('.') && !before.ends_with("..");
+            let qualified = before.ends_with("::") || after.starts_with("::");
+            if opaque || field_type || member || qualified {
                 return true;
             }
         }
@@ -186,6 +188,28 @@ impl<'a> SourceView<'a> {
     fn mentions(&self, name: &str) -> bool {
         identifiers(&self.masked, 0, self.masked.len()).any(|(_, found)| found == name)
     }
+}
+
+/// Byte offset just past the end of the `struct`/`enum`/`union` whose keyword
+/// ends at `from`: its `;` or the `}` closing its body. `None` when it never
+/// ends.
+fn type_body_end(masked: &str, from: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (offset, ch) in masked[from..].char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' => depth = depth.checked_sub(1)?,
+            '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(from + offset + 1);
+                }
+            }
+            ';' if depth == 0 => return Some(from + offset + 1),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Byte offset just past the delimiter that closes the macro invocation whose
@@ -394,8 +418,17 @@ fn same_item_after_rename(
     from: &str,
     to: &str,
 ) -> bool {
-    let (Some(new_item), Some(old_item)) = (item_range(new, new_line), item_range(old, old_line))
-    else {
+    let brace_ends = |view: &SourceView<'_>, line: usize, name: &str| {
+        view.line_range(line).is_some_and(|(start, end)| {
+            identifiers(&view.masked, start, end)
+                .take_while(|(_, word)| *word != name)
+                .any(|(_, word)| word == "fn")
+        })
+    };
+    let (Some(new_item), Some(old_item)) = (
+        item_range(new, new_line, brace_ends(new, new_line, to)),
+        item_range(old, old_line, brace_ends(old, old_line, from)),
+    ) else {
         return false;
     };
     let mut rebuilt = String::new();
@@ -412,9 +445,11 @@ fn same_item_after_rename(
 }
 
 /// Byte range of the item that starts on 1-based `line`: through the first
-/// `;` outside any bracket, or through the `}` that closes a top-level `{`.
-/// `None` when the item never ends.
-fn item_range(view: &SourceView<'_>, line: usize) -> Option<(usize, usize)> {
+/// `;` outside any bracket, or, for a `fn` (`brace_ends`), through the `}`
+/// that closes its body. A `static`/`const` initializer may hold a block
+/// (`= { 1 } + 2;`), so only its `;` ends it. `None` when the item never
+/// ends.
+fn item_range(view: &SourceView<'_>, line: usize, brace_ends: bool) -> Option<(usize, usize)> {
     let (start, _) = view.line_range(line)?;
     let mut depth = 0usize;
     for (offset, ch) in view.masked[start..].char_indices() {
@@ -423,7 +458,7 @@ fn item_range(view: &SourceView<'_>, line: usize) -> Option<(usize, usize)> {
             ')' | ']' => depth = depth.checked_sub(1)?,
             '}' => {
                 depth = depth.checked_sub(1)?;
-                if depth == 0 {
+                if depth == 0 && brace_ends {
                     return Some((start, start + offset + 1));
                 }
             }
