@@ -20,6 +20,11 @@
 //!    dropped alias once in `dropped_aliases`. Other fields remain verbatim even
 //!    when values match.
 //!
+//! 3. A related-test row core (`name`, `file`, `line`, `oracle`,
+//!    `oracle_kind`, `oracle_strength`) that repeats across rows is emitted
+//!    once in a document-level `related_test_table` (#13673). Each row that
+//!    used it keeps `table_row` (the table index) and its per-finding fields.
+//!
 //! What terse does *not* do: it never drops a finding, never changes a
 //! verdict/classification/severity/confidence or `ripr` stage state and
 //! confidence, and never touches nested prose outside the coded surfaces
@@ -49,6 +54,21 @@ const RIPR_SUMMARY_KEY: &str = "summary";
 /// every other finding, and the `why` sentence repeats across rows.
 const RELATED_TESTS: &str = "related_tests";
 const RELATED_TEST_PROSE: [&str; 2] = ["oracle", "why"];
+
+/// Related-test row fields that describe the test itself, not its relation to
+/// the finding (#13673). A core repeated across rows is emitted once in the
+/// document-level [`RELATED_TEST_TABLE_KEY`] array, and each row that used it
+/// keeps only [`TABLE_ROW_KEY`] plus its per-finding fields.
+const RELATED_TEST_CORE: [&str; 6] = [
+    "name",
+    "file",
+    "line",
+    "oracle",
+    "oracle_kind",
+    "oracle_strength",
+];
+const RELATED_TEST_TABLE_KEY: &str = "related_test_table";
+const TABLE_ROW_KEY: &str = "table_row";
 
 /// Marker stamped at the document head so consumers can key on the rendering
 /// profile without sniffing for the legend.
@@ -95,6 +115,7 @@ pub(crate) fn render_terse(rendered: &str) -> Result<String, String> {
         return Err("failed to render terse JSON: check document is not an object".to_string());
     };
 
+    let mut table = hoist_related_test_cores(root);
     let mut coder = LegendCoder::default();
     if let Some(Value::Array(findings)) = root.get("findings") {
         for finding in findings.iter().filter_map(Value::as_object) {
@@ -120,11 +141,25 @@ pub(crate) fn render_terse(rendered: &str) -> Result<String, String> {
             }
         }
     }
+    for core in table.iter().filter_map(Value::as_object) {
+        for text in RELATED_TEST_PROSE
+            .iter()
+            .filter_map(|key| core.get(*key).and_then(Value::as_str))
+        {
+            coder.observe(text);
+        }
+    }
     coder.select_legend()?;
     if let Some(Value::Array(findings)) = root.get_mut("findings") {
         for finding in findings.iter_mut().filter_map(Value::as_object_mut) {
             compact_finding(finding, &mut coder);
         }
+    }
+    for core in table.iter_mut().filter_map(Value::as_object_mut) {
+        code_related_test_prose(core, &coder);
+    }
+    if !table.is_empty() {
+        root.insert(RELATED_TEST_TABLE_KEY.to_string(), Value::Array(table));
     }
 
     if !coder.legend.is_empty() {
@@ -262,16 +297,90 @@ fn compact_finding(finding: &mut serde_json::Map<String, Value>, coder: &mut Leg
     }
     if let Some(Value::Array(rows)) = finding.get_mut(RELATED_TESTS) {
         for row in rows.iter_mut().filter_map(Value::as_object_mut) {
-            for key in RELATED_TEST_PROSE {
-                if let Some(value) = row.get_mut(key)
-                    && let Some(code) = value.as_str().and_then(|text| coder.code_for(text))
-                {
-                    *value = Value::String(code);
-                }
-            }
+            code_related_test_prose(row, coder);
         }
     }
     drop_same_value_aliases(finding, coder);
+}
+
+fn code_related_test_prose(row: &mut serde_json::Map<String, Value>, coder: &LegendCoder) {
+    for key in RELATED_TEST_PROSE {
+        if let Some(value) = row.get_mut(key)
+            && let Some(code) = value.as_str().and_then(|text| coder.code_for(text))
+        {
+            *value = Value::String(code);
+        }
+    }
+}
+
+/// Moves every related-test core (the [`RELATED_TEST_CORE`] fields a row
+/// carries) that appears in two or more rows into one document-level table,
+/// in first-appearance order. Each such row drops those fields and records the
+/// table index under [`TABLE_ROW_KEY`]; restoring merges the indexed core back
+/// into the row. A core seen once and a row without core fields stay
+/// verbatim. A `table_row` key is a reference only when the table is present,
+/// so a document in which any row already carries a literal `table_row` is
+/// left wholly unhoisted (fail closed: no table, every row verbatim).
+fn hoist_related_test_cores(root: &mut serde_json::Map<String, Value>) -> Vec<Value> {
+    let core_of = |row: &serde_json::Map<String, Value>| -> Option<serde_json::Map<String, Value>> {
+        let core: serde_json::Map<String, Value> = RELATED_TEST_CORE
+            .iter()
+            .filter_map(|key| {
+                row.get(*key)
+                    .map(|value| ((*key).to_string(), value.clone()))
+            })
+            .collect();
+        (!core.is_empty()).then_some(core)
+    };
+    let Some(Value::Array(findings)) = root.get_mut("findings") else {
+        return Vec::new();
+    };
+    let literal_reference = findings
+        .iter()
+        .filter_map(|finding| finding.get(RELATED_TESTS).and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_object)
+        .any(|row| row.contains_key(TABLE_ROW_KEY));
+    if literal_reference {
+        return Vec::new();
+    }
+    let mut counts: Vec<(serde_json::Map<String, Value>, usize)> = Vec::new();
+    for finding in findings.iter().filter_map(Value::as_object) {
+        let Some(Value::Array(rows)) = finding.get(RELATED_TESTS) else {
+            continue;
+        };
+        for core in rows.iter().filter_map(Value::as_object).filter_map(core_of) {
+            match counts.iter_mut().find(|(seen, _)| *seen == core) {
+                Some((_, count)) => *count += 1,
+                None => counts.push((core, 1)),
+            }
+        }
+    }
+    let table: Vec<serde_json::Map<String, Value>> = counts
+        .into_iter()
+        .filter(|(_, count)| *count >= 2)
+        .map(|(core, _)| core)
+        .collect();
+    if table.is_empty() {
+        return Vec::new();
+    }
+    for finding in findings.iter_mut().filter_map(Value::as_object_mut) {
+        let Some(Value::Array(rows)) = finding.get_mut(RELATED_TESTS) else {
+            continue;
+        };
+        for row in rows.iter_mut().filter_map(Value::as_object_mut) {
+            let Some(index) =
+                core_of(row).and_then(|core| table.iter().position(|seen| *seen == core))
+            else {
+                continue;
+            };
+            for key in RELATED_TEST_CORE {
+                row.remove(key);
+            }
+            row.insert(TABLE_ROW_KEY.to_string(), Value::from(index));
+        }
+    }
+    table.into_iter().map(Value::Object).collect()
 }
 
 /// The `related_tests[].oracle` and `.why` strings, in row order.
@@ -379,6 +488,39 @@ pub(crate) fn expand_terse_string(text: &str, legend: &BTreeMap<String, String>)
         .get(text)
         .cloned()
         .unwrap_or_else(|| text.to_string())
+}
+
+#[cfg(test)]
+/// Test-only decoder: merges each `table_row` reference back into its
+/// row from `related_test_table`, leaving legend codes unexpanded.
+pub(crate) fn restore_related_test_rows(terse: &Value) -> Result<Value, String> {
+    let mut findings = terse["findings"].clone();
+    // `table_row` is a reference only when the table is present.
+    let Some(table) = terse.get(RELATED_TEST_TABLE_KEY).and_then(Value::as_array) else {
+        return Ok(findings);
+    };
+    for finding in findings.as_array_mut().ok_or("findings")? {
+        let Some(rows) = finding.get_mut(RELATED_TESTS).and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for row in rows.iter_mut().filter_map(Value::as_object_mut) {
+            let Some(index) = row.remove(TABLE_ROW_KEY) else {
+                continue;
+            };
+            let index = index.as_u64().ok_or("table_row is not an index")?;
+            let core = usize::try_from(index)
+                .ok()
+                .and_then(|index| table.get(index))
+                .and_then(Value::as_object)
+                .ok_or("table_row points outside related_test_table")?;
+            for (key, value) in core {
+                if row.insert(key.clone(), value.clone()).is_some() {
+                    return Err(format!("core field {key} was not removed"));
+                }
+            }
+        }
+    }
+    Ok(findings)
 }
 
 #[cfg(test)]
@@ -994,9 +1136,8 @@ mod tests {
         let terse: Value =
             serde_json::from_str(&super::render_terse(&input)?).map_err(|e| e.to_string())?;
         let legend = terse[LEGEND_KEY].as_object().ok_or("legend")?;
-        let rows = terse["findings"][0]["related_tests"]
-            .as_array()
-            .ok_or("rows")?;
+        let findings = super::restore_related_test_rows(&terse)?;
+        let rows = findings[0]["related_tests"].as_array().ok_or("rows")?;
         let oracle_code = rows[0]["oracle"].as_str().ok_or("oracle")?;
         let why_code = rows[0]["why"].as_str().ok_or("why")?;
         assert_eq!(
@@ -1015,7 +1156,7 @@ mod tests {
         assert_eq!(rows[0]["name"], row["name"]);
         assert_eq!(rows[0]["relation_reason"], row["relation_reason"]);
         // Expanding every code restores the full document's rows exactly.
-        let mut restored = terse["findings"].clone();
+        let mut restored = findings.clone();
         for finding in restored.as_array_mut().ok_or("findings")? {
             for row in finding["related_tests"].as_array_mut().ok_or("rows")? {
                 for key in RELATED_TEST_PROSE {
@@ -1033,6 +1174,76 @@ mod tests {
             }
         }
         assert_eq!(restored, full["findings"]);
+        Ok(())
+    }
+
+    #[test]
+    fn terse_hoists_repeated_related_test_cores_into_one_table() -> Result<(), String> {
+        // #13673: the same test row (name, file, line, oracle, kind, strength)
+        // repeats in every finding; only the relation fields differ.
+        let core = serde_json::json!({
+            "name": "clamp_ok", "file": "src/lib.rs", "line": 10,
+            "oracle": "assert_eq!(clamp(5, 0, 10), 5);",
+            "oracle_kind": "exact_value", "oracle_strength": "strong"
+        });
+        let row = |reason: &str, miss: &str| {
+            let mut row = core.clone();
+            row["relation_reason"] = Value::from(reason);
+            row["miss"] = Value::from(miss);
+            row
+        };
+        let once = serde_json::json!({"name": "only_once", "file": "src/lib.rs", "line": 3});
+        let full = serde_json::json!({"findings": [
+            {"id": "probe:a", "related_tests": [row("direct_owner_call", "missing_input"), once.clone()]},
+            {"id": "probe:b", "related_tests": [row("same_test_file", "no_call_path"), {"relation_reason": "x"}]},
+            {"id": "probe:c", "related_tests": []},
+            {"id": "probe:d"}
+        ]});
+        let input = serde_json::to_string(&full).map_err(|error| error.to_string())?;
+        let terse: Value =
+            serde_json::from_str(&super::render_terse(&input)?).map_err(|e| e.to_string())?;
+        let table = terse[RELATED_TEST_TABLE_KEY].as_array().ok_or("table")?;
+        assert_eq!(table.len(), 1, "only the repeated core is hoisted: {terse}");
+        assert_eq!(table[0], core);
+        // Each hoisted row keeps only its index and per-finding fields.
+        assert_eq!(
+            terse["findings"][0]["related_tests"][0],
+            serde_json::json!({"table_row": 0, "relation_reason": "direct_owner_call", "miss": "missing_input"})
+        );
+        assert_eq!(
+            terse["findings"][1]["related_tests"][0],
+            serde_json::json!({"table_row": 0, "relation_reason": "same_test_file", "miss": "no_call_path"})
+        );
+        // A core seen once and a row without core fields stay verbatim.
+        assert_eq!(terse["findings"][0]["related_tests"][1], once);
+        assert_eq!(
+            terse["findings"][1]["related_tests"][1],
+            serde_json::json!({"relation_reason": "x"})
+        );
+        assert_eq!(super::restore_related_test_rows(&terse)?, full["findings"]);
+
+        // A literal `table_row` anywhere would be ambiguous, so the whole
+        // document stays unhoisted and every row stays verbatim.
+        let mut literal = full.clone();
+        literal["findings"][1]["related_tests"][1] = serde_json::json!({"table_row": 7});
+        let input = serde_json::to_string(&literal).map_err(|error| error.to_string())?;
+        let terse: Value =
+            serde_json::from_str(&super::render_terse(&input)?).map_err(|e| e.to_string())?;
+        assert!(terse.get(RELATED_TEST_TABLE_KEY).is_none(), "{terse}");
+        assert_eq!(terse["findings"], literal["findings"]);
+        assert_eq!(
+            super::restore_related_test_rows(&terse)?,
+            literal["findings"]
+        );
+
+        // Without a repeated core, no table is emitted.
+        let single =
+            serde_json::json!({"findings": [{"id": "probe:a", "related_tests": [core.clone()]}]});
+        let input = serde_json::to_string(&single).map_err(|error| error.to_string())?;
+        let terse: Value =
+            serde_json::from_str(&super::render_terse(&input)?).map_err(|e| e.to_string())?;
+        assert!(terse.get(RELATED_TEST_TABLE_KEY).is_none(), "{terse}");
+        assert_eq!(terse["findings"], single["findings"]);
         Ok(())
     }
 
