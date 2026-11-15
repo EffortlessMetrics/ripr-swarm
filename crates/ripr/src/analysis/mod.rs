@@ -68,6 +68,7 @@ pub(crate) mod seams;
 mod sort;
 #[cfg(test)]
 mod source_role_corpus;
+pub(crate) mod stale_raised_type_pin;
 pub(crate) mod summary;
 mod sync_memo;
 mod syntax;

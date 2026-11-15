@@ -46,8 +46,6 @@ pub(super) struct MessagePinGap {
     pub(super) discriminator: String,
     /// Which patterns accept both messages.
     pub(super) reason: String,
-    /// What a discriminating assertion would add; rendered after the reason.
-    pub(super) advice: String,
 }
 
 /// Evidence that every strong error-variant assertion pins the changed
@@ -114,7 +112,6 @@ pub(super) fn python_message_pin_gap(
         reason: format!(
             "every strong related error assertion pins `{new_exception}` with a literal message pattern ({names}) that matches the old message {old_message:?} and the new message {new_message:?} alike, so it pins only the exception class"
         ),
-        advice: "Add a `match=` pattern that the old message does not satisfy.".to_string(),
     })
 }
 

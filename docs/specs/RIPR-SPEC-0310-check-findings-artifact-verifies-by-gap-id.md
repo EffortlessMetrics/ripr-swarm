@@ -22,6 +22,7 @@ Linked issues:
 
 - #9103
 - #11136
+- #13622
 
 Linked PRs:
 
@@ -79,6 +80,23 @@ could not be verified without trusting hand-authored JSON.
    artifact, the message names that limitation and the next step instead of
    "regenerate it", which reproduces the same artifact. The validator is not
    loosened.
+7. Stale raised type (#13622): a Python gap that reads `exposed` after the
+   edit is still not closed when its finding evidence carries a
+   `stale_raised_type_pin:` fact. The Python analyzer records that fact, as
+   advisory evidence only, when the changed line replaces `raise Old(...)`
+   with `raise New(...)`, every strong related exact-error assertion expects
+   `Old` exactly (`pytest.raises(Old, ...)`, `assertRaises(Old)`), no related
+   test names `New`, and `New` is statically known not to be `Old` or a
+   subclass of it (resolved through single top-level module classes and the
+   builtin exception table). Such a test fails against the new raise. The
+   refusal is the same named gap-binding refusal (exit `3`; the attempt stays
+   `awaiting_edit`), names the assertion, `Old` and `New`, and names the next
+   step: assert `New`, or run the test. The exposure class is unchanged: a
+   pre-existing old-type assertion does notice the edit (RIPR-SPEC-0238
+   example 14). Any shape the analyzer cannot read exactly (non-literal raise
+   arguments, an attribute, tuple or keyword expected class, an aliased or
+   imported class, an unresolvable base) records no fact and keeps today's
+   closure.
 
 ## Required Evidence
 
@@ -129,6 +147,15 @@ could not be verified without trusting hand-authored JSON.
 3. The same pair with `--gap-id` set to the printed gap succeeds and reports
    `bound_gap.closed`; an unknown gap id is refused with exit `3` and empty
    stdout.
+4. `raise ValueError("negative quantity")` changes to
+   `raise TypeError("negative quantity")`, and the repair's new test asserts
+   `pytest.raises(ValueError, match="negative quantity")`. `ripr continue`
+   refuses with exit `3`, says the test pins the old raised type `ValueError`
+   and will fail against the new `TypeError` raise, and names
+   `pytest.raises(TypeError, ...)` or running the test as the next step. The
+   corrected `pytest.raises(TypeError, ...)` test then closes the gap, as do
+   `excinfo.type is TypeError` and an old-type assertion when the new class
+   subclasses the old one.
 
 ## Test Mapping
 
@@ -151,6 +178,18 @@ could not be verified without trusting hand-authored JSON.
 - `crates/ripr/tests/installed_python_typescript_journeys.rs`:
   `typescript_incomplete_analysis_withholds_the_gap_bound_start` (positive
   control: a complete analysis still prints its start).
+- `crates/ripr/tests/python_stale_raised_type_closure.rs` (#13622, behavior 7):
+  `stale_old_type_test_is_not_reported_closed_and_names_both_types`,
+  `new_type_forms_close_the_gap`,
+  `old_type_assertion_closes_when_the_new_type_subclasses_it`.
+- `crates/ripr/src/agent/artifact.rs` tests:
+  `stale_raised_type_pin_refuses_python_closure_and_names_both_types`;
+  `crates/ripr/src/analysis/stale_raised_type_pin.rs`:
+  `evidence_line_round_trips_and_rejects_other_shapes`;
+  `crates/ripr/src/analysis/language/python/exception_variant_tests.rs`:
+  `stale_builtin_raised_type_is_advisory_evidence_and_keeps_the_class`,
+  `new_type_or_subclass_assertions_record_no_stale_pin`,
+  `user_class_subclass_records_no_stale_pin`.
 
 ## Implementation Mapping
 
@@ -160,6 +199,9 @@ could not be verified without trusting hand-authored JSON.
   `check_findings_outcome_is_complete`.
 - `crates/ripr/src/app/task_first.rs`: `gap_bound_route` (start admission).
 - `crates/ripr/src/cli/commands/agent.rs`: `render_agent_verify` (`--gap-id`).
+- `crates/ripr/src/analysis/stale_raised_type_pin.rs`: the evidence fact;
+  `crates/ripr/src/analysis/language/python/exception_variant.rs`:
+  `stale_raised_type_pins` (producer); `evaluate_gap_closure` (consumer).
 
 ## Metrics
 

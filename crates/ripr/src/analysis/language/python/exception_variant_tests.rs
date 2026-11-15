@@ -482,142 +482,128 @@ fn specific_exception_variant_requires_verified_module_import() -> Check {
     Ok(())
 }
 
-const MSG_SOURCE: &str = r#"class EmptyError(Exception): pass
-class TooLongError(Exception): pass
+// #13622: an old-type exact assertion after a raised-type replacement is
+// recorded as advisory evidence, never as a class change.
+const STALE_PREFIX: &str = "stale_raised_type_pin: ";
 
-def parse(s):
-    if len(s) > 10:
-        raise TooLongError("too long")
-    return len(s)
-"#;
-const MSG_OLD: &str = "        raise EmptyError(\"too long\")";
-const MSG_NEW: &str = "        raise TooLongError(\"too long\")";
-
-fn classify_message(expected: &str) -> Result<Finding, String> {
-    let tests = format!(
-        "{IMPORTS}\ndef test_variant():\n    with pytest.raises({expected}, match=\"too long\"):\n        parse('abcdefghijklmnop')\n"
-    );
-    classify(MSG_SOURCE, &tests, MSG_OLD, MSG_NEW)
+fn stale_pins(finding: &Finding) -> Vec<&String> {
+    finding
+        .evidence
+        .iter()
+        .filter(|line| line.starts_with(STALE_PREFIX))
+        .collect()
 }
 
-#[test]
-fn stale_exception_type_with_match_does_not_close_the_gap() -> Check {
-    // #13622: `match=` alone must not credit a class the raise no longer uses.
-    let stale = classify_message("EmptyError")?;
-    assert_eq!(stale.class, ExposureClass::WeaklyExposed, "{stale:?}");
-    assert!(
-        stale
-            .missing
-            .iter()
-            .any(|text| text.contains("old exception type `EmptyError`")
-                && text.contains("`TooLongError`")),
-        "the message must name the old and new type: {stale:?}"
+fn builtin_finding(old: &str, new: &str, body: &str) -> Result<Finding, String> {
+    let source = format!(
+        "def parse(s):\n    if len(s) > 10:\n        raise {new}(\"m\")\n    return len(s)\n"
     );
-    // Negative control: the same test with the new type is not stale.
-    let current = classify_message("TooLongError")?;
-    assert_eq!(current.class, ExposureClass::Exposed, "{current:?}");
-    assert!(
-        current
-            .missing
-            .iter()
-            .all(|text| !text.contains("old exception type")),
-        "{current:?}"
-    );
-    // Unrelated classes fail open to the existing rules.
-    let other = classify_message("Exception")?;
-    assert!(
-        other
-            .missing
-            .iter()
-            .all(|text| !text.contains("old exception type")),
-        "{other:?}"
-    );
-    Ok(())
-}
-
-const BUILTIN_SOURCE: &str = r#"def parse(s):
-    if len(s) > 10:
-        raise TypeError("m")
-    return len(s)
-"#;
-
-fn classify_builtin(expected: &str) -> Result<Finding, String> {
-    let tests = format!(
-        "import pytest\nfrom fx.core import parse\n\ndef test_variant():\n    with pytest.raises({expected}, match=\"m\"):\n        parse('abcdefghijklmnop')\n"
-    );
-    classify(
-        BUILTIN_SOURCE,
+    let tests = format!("import pytest\nfrom fx.core import parse\n\ndef test_variant():\n{body}");
+    classify_with_context(
+        &source,
         &tests,
-        "        raise ValueError(\"m\")",
-        "        raise TypeError(\"m\")",
+        Some(&format!("        raise {old}(\"m\")")),
+        &format!("        raise {new}(\"m\")"),
+        true,
     )
 }
 
-#[test]
-fn stale_builtin_exception_type_with_match_does_not_close_the_gap() -> Check {
-    // The issue's own case: ValueError("m") -> TypeError("m").
-    let stale = classify_builtin("ValueError")?;
-    assert_eq!(stale.class, ExposureClass::WeaklyExposed, "{stale:?}");
-    assert!(
-        stale
-            .missing
-            .iter()
-            .any(|text| text.contains("old exception type `ValueError`")
-                && text.contains("`TypeError`")),
-        "{stale:?}"
-    );
-    let current = classify_builtin("TypeError")?;
-    assert_eq!(current.class, ExposureClass::Exposed, "{current:?}");
-    assert!(
-        current
-            .missing
-            .iter()
-            .all(|text| !text.contains("old exception type")),
-        "{current:?}"
-    );
-    Ok(())
-}
-
-fn classify_tests(tests: &str) -> Result<Finding, String> {
-    classify(MSG_SOURCE, tests, MSG_OLD, MSG_NEW)
-}
+const RAISES_BODY: &str =
+    "    with pytest.raises({T}, match=\"m\"):\n        parse('abcdefghijklmnop')\n";
 
 #[test]
-fn stale_exception_type_keeps_a_credit_from_another_test() -> Check {
-    // A stale `match=` test must not override a plain new-type test that the
-    // finding-specific credit promotes (#13622 review).
-    let tests = format!(
-        "{IMPORTS}\ndef test_stale():\n    with pytest.raises(EmptyError, match=\"too long\"):\n        parse('abcdefghijklmnop')\n\ndef test_current():\n    with pytest.raises(TooLongError):\n        parse('abcdefghijklmnop')\n"
-    );
-    let mixed = classify_tests(&tests)?;
-    assert_eq!(mixed.class, ExposureClass::Exposed, "{mixed:?}");
-    assert!(
-        mixed
-            .missing
-            .iter()
-            .all(|text| !text.contains("old exception type")),
-        "{mixed:?}"
-    );
+fn stale_builtin_raised_type_is_advisory_evidence_and_keeps_the_class() -> Check {
+    // The issue's shape: ValueError("m") -> TypeError("m") under
+    // `pytest.raises(ValueError, match="m")`.
+    let stale = builtin_finding(
+        "ValueError",
+        "TypeError",
+        &RAISES_BODY.replace("{T}", "ValueError"),
+    )?;
+    let pins = stale_pins(&stale);
+    let expected = "stale_raised_type_pin: `pytest.raises(ValueError, match=\"m\")` pins the old raised type `ValueError`; the changed raise now raises `TypeError` (test_variant)";
+    if pins != vec![expected] {
+        return Err(format!(
+            "expected exactly `{expected}`: {pins:?}\n{stale:?}"
+        ));
+    }
+    // RIPR-SPEC-0238 example 14: the class is not touched by the advisory.
+    let baseline = builtin_finding(
+        "ValueError",
+        "KeyError",
+        &RAISES_BODY.replace("{T}", "ValueError"),
+    )?;
+    if stale.class != baseline.class || stale.class != ExposureClass::Exposed {
+        return Err(format!(
+            "the advisory must not change the class: {:?} vs {:?}",
+            stale.class, baseline.class
+        ));
+    }
     Ok(())
 }
 
 #[test]
-fn stale_exception_type_keeps_subclass_with_captured_type_check() -> Check {
-    let source = MSG_SOURCE.replace(
-        "class TooLongError(Exception): pass",
-        "class TooLongError(EmptyError): pass",
-    );
+fn new_type_or_subclass_assertions_record_no_stale_pin() -> Check {
+    let cases = [
+        // `pytest.raises(New)` names the new type.
+        ("ValueError", "TypeError", RAISES_BODY.replace("{T}", "TypeError")),
+        // `excinfo.type is New` mentions the new type.
+        (
+            "ValueError",
+            "TypeError",
+            "    with pytest.raises(TypeError) as excinfo:\n        parse('abcdefghijklmnop')\n    assert excinfo.type is TypeError\n".to_string(),
+        ),
+        // KeyError is a builtin subclass of LookupError.
+        ("LookupError", "KeyError", RAISES_BODY.replace("{T}", "LookupError")),
+        // Another expected class fails open.
+        ("ValueError", "TypeError", RAISES_BODY.replace("{T}", "Exception")),
+        // An alias of the new class never resolves, so it fails open.
+        ("IOError", "OSError", RAISES_BODY.replace("{T}", "IOError")),
+    ];
+    for (old, new, body) in cases {
+        let finding = builtin_finding(old, new, &body)?;
+        if !stale_pins(&finding).is_empty() {
+            return Err(format!(
+                "{old} -> {new} with {body:?} recorded a stale pin: {finding:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn user_class_subclass_records_no_stale_pin() -> Check {
+    let source = |base: &str| {
+        format!(
+            "class EmptyError(Exception): pass\nclass TooLongError({base}): pass\n\ndef parse(s):\n    if len(s) > 10:\n        raise TooLongError(\"too long\")\n    return len(s)\n"
+        )
+    };
     let tests = format!(
-        "{IMPORTS}\ndef test_variant():\n    with pytest.raises(EmptyError, match=\"too long\") as exc:\n        parse('abcdefghijklmnop')\n    assert exc.type == TooLongError\n"
+        "{IMPORTS}\ndef test_variant():\n    with pytest.raises(EmptyError, match=\"too long\"):\n        parse('abcdefghijklmnop')\n"
     );
-    let finding = classify(&source, &tests, MSG_OLD, MSG_NEW)?;
-    assert!(
-        finding
-            .missing
-            .iter()
-            .all(|text| !text.contains("old exception type")),
-        "the captured-type comparison must keep the gate off: {finding:?}"
-    );
-    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    let old = "        raise EmptyError(\"too long\")";
+    let new = "        raise TooLongError(\"too long\")";
+    // Unrelated sibling classes: the old-type assertion is stale.
+    let sibling = classify(&source("Exception"), &tests, old, new)?;
+    if stale_pins(&sibling).len() != 1 {
+        return Err(format!(
+            "sibling classes must record one stale pin: {sibling:?}"
+        ));
+    }
+    // `TooLongError(EmptyError)`: `pytest.raises(EmptyError)` still passes.
+    let subclass = classify(&source("EmptyError"), &tests, old, new)?;
+    if !stale_pins(&subclass).is_empty() {
+        return Err(format!("a subclass must record no stale pin: {subclass:?}"));
+    }
+    // An imported base cannot be resolved, so it fails open.
+    let imported = classify(
+        &format!("from elsewhere import Base\n{}", source("Base")),
+        &tests,
+        old,
+        new,
+    )?;
+    if !stale_pins(&imported).is_empty() {
+        return Err(format!("an unresolved base must fail open: {imported:?}"));
+    }
     Ok(())
 }

@@ -9,7 +9,7 @@
 //! no credit. The shared repair validator is unchanged.
 
 use super::assertion_selection::PythonAssertionFocus;
-use super::message_pin::{MessagePinGap, is_strong_error_variant};
+use super::message_pin::is_strong_error_variant;
 use super::module_constants::{
     ModuleBindingFacts, function_bound_names, mentions_identifier, visit_exprs_in_statements,
 };
@@ -23,6 +23,7 @@ use super::related_tests::{
 use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, line_for_range_start};
 use super::{PythonAssertion, PythonFramework, PythonOracleShape, PythonOwner, PythonTest};
+use crate::analysis::stale_raised_type_pin::StaleRaisedTypePin;
 use crate::domain::{OracleKind, OwnerKind};
 use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
 use std::collections::BTreeSet;
@@ -233,57 +234,185 @@ fn credits<'a>(
     Some(credits)
 }
 
-/// A raised-type replacement (#13622) whose strong error-variant assertions
-/// all still expect the OLD class. Such an assertion fails (or passes only
-/// by subclassing) once the raise changed, so it must not close the gap, even
-/// when its `match=` pattern accepts the unchanged message. Any assertion that
-/// names another class fails open to the existing credit rules.
-pub(super) fn stale_exception_type_gap(
+/// A raised-type replacement (#13622) whose strong related error-variant
+/// assertions all still expect the OLD class exactly, while the new class is
+/// neither that class nor a statically known subclass of it. Such a test fails
+/// against the new raise. The fact is advisory evidence only: the exposure
+/// class is unchanged, because a pre-existing old-type assertion does notice
+/// the edit (RIPR-SPEC-0238 example 14). The gap-bound repair closure reads it
+/// so a test written during the repair is not reported as closing the gap.
+///
+/// Fails open (no fact) for any shape it cannot read exactly: non-literal
+/// raise arguments, a cause, an attribute or tuple expected class, a related
+/// test that names the new class anywhere, an assertion expecting another
+/// class, or a class hierarchy it cannot resolve within the module and the
+/// builtin exception table.
+pub(super) fn stale_raised_type_pins(
     line_text: &str,
     old_line_text: Option<&str>,
+    module_source: Option<&str>,
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
-) -> Option<MessagePinGap> {
-    let (old_type, old_args) = raised_type(old_line_text?)?;
-    let (new_type, new_args) = raised_type(line_text)?;
-    if old_type == new_type || old_args != new_args {
+) -> Vec<StaleRaisedTypePin> {
+    stale_pins(
+        line_text,
+        old_line_text,
+        module_source,
+        related_candidates,
+        focus,
+    )
+    .unwrap_or_default()
+}
+
+fn stale_pins(
+    line_text: &str,
+    old_line_text: Option<&str>,
+    module_source: Option<&str>,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> Option<Vec<StaleRaisedTypePin>> {
+    let (old_type, _) = raised_type(old_line_text?)?;
+    let (new_type, _) = raised_type(line_text)?;
+    if old_type == new_type {
         return None;
     }
-    let mut stale = Vec::new();
     let oracle_tests = related_candidates
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle());
     // A related test that names the new type anywhere in its body may tell the
-    // new raise apart (`exc.type == New`, `isinstance(exc.value, New)` when
-    // `New` subclasses `Old`, or a plain `pytest.raises(New)`). The gate does
-    // not evaluate those forms and fails open.
+    // new raise apart (`excinfo.type is New`, `isinstance(exc.value, New)`, or
+    // a plain `pytest.raises(New)`); those forms are not evaluated here.
     if oracle_tests
         .clone()
         .any(|candidate| mentions_identifier(&candidate.test.body_text, &new_type))
     {
         return None;
     }
-    for assertion in oracle_tests
-        .flat_map(|candidate| &candidate.test.assertions)
-        .filter(|assertion| is_strong_error_variant(assertion) && focus.admits(assertion))
-    {
-        if expected_class(&assertion.text)? != old_type {
-            return None;
+    let mut pins = Vec::new();
+    for candidate in oracle_tests {
+        for assertion in candidate
+            .test
+            .assertions
+            .iter()
+            .filter(|assertion| is_strong_error_variant(assertion) && focus.admits(assertion))
+        {
+            if expected_class(&assertion.text)? != old_type {
+                return None;
+            }
+            pins.push(StaleRaisedTypePin {
+                assertion: assertion.text.trim().to_string(),
+                old_type: old_type.clone(),
+                new_type: new_type.clone(),
+                test: candidate.test.name.clone(),
+            });
         }
-        stale.push(format!("`{}`", assertion.text));
     }
-    if stale.is_empty() {
+    if pins.is_empty() || !known_not_subclass(module_source?, &new_type, &old_type)? {
         return None;
     }
-    stale.sort();
-    stale.dedup();
-    Some(MessagePinGap {
-        discriminator: format!("raised type `{new_type}`"),
-        reason: format!(
-            "every strong related error assertion ({}) still expects the old exception type `{old_type}` while the changed raise now raises `{new_type}`, so it does not observe the new type",
-            stale.join(", ")
-        ),
-        advice: format!("Expect `{new_type}` in the `pytest.raises` assertion."),
+    pins.sort_by(|left, right| (&left.test, &left.assertion).cmp(&(&right.test, &right.assertion)));
+    pins.dedup();
+    Some(pins)
+}
+
+/// `Some(true)` only when `new` is statically known not to be `old` or a
+/// subclass of it; `None` when either hierarchy cannot be read exactly.
+fn known_not_subclass(source: &str, new: &str, old: &str) -> Option<bool> {
+    let Mod::Module(module) = parse_module_result(Path::new("<module>"), source).ok()? else {
+        return None;
+    };
+    let facts = ModuleBindingFacts::of(source, &module.body);
+    // `old` must itself resolve, so an alias such as `IOError` (the same class
+    // as `OSError`) or an imported name never reads as unrelated.
+    exception_ancestry(&module.body, &facts, old, 0)?;
+    let ancestry = exception_ancestry(&module.body, &facts, new, 0)?;
+    Some(!ancestry.iter().any(|name| name == old))
+}
+
+/// `name` and every class it derives from, resolved through single top-level
+/// plain class definitions in the module and the builtin exception table.
+fn exception_ancestry(
+    body: &[Stmt],
+    facts: &ModuleBindingFacts,
+    name: &str,
+    depth: usize,
+) -> Option<Vec<String>> {
+    if depth > 32 {
+        return None;
+    }
+    if facts.unbound(name) {
+        let mut chain = vec![name.to_string()];
+        let mut current = name;
+        while current != "BaseException" {
+            current = builtin_exception_parent(current)?;
+            chain.push(current.to_string());
+        }
+        return Some(chain);
+    }
+    if !facts.bound_once(name) {
+        return None;
+    }
+    let class = body.iter().find_map(|statement| match statement {
+        Stmt::ClassDef(class) if class.name.as_str() == name => Some(class),
+        _ => None,
+    })?;
+    if !class.keywords.is_empty() || !class.type_params.is_empty() || class.bases.is_empty() {
+        return None;
+    }
+    let mut chain = vec![name.to_string()];
+    for base in &class.bases {
+        let Expr::Name(base) = base else {
+            return None;
+        };
+        chain.extend(exception_ancestry(
+            body,
+            facts,
+            base.id.as_str(),
+            depth + 1,
+        )?);
+    }
+    Some(chain)
+}
+
+/// The single base of a builtin exception class (CPython 3 hierarchy). Names
+/// with several bases (`ExceptionGroup`) and aliases (`IOError`,
+/// `EnvironmentError`) are absent, so they never resolve.
+fn builtin_exception_parent(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "SystemExit" | "KeyboardInterrupt" | "GeneratorExit" | "Exception"
+        | "BaseExceptionGroup" => "BaseException",
+        "ArithmeticError" | "AssertionError" | "AttributeError" | "BufferError" | "EOFError"
+        | "ImportError" | "LookupError" | "MemoryError" | "NameError" | "OSError"
+        | "ReferenceError" | "RuntimeError" | "StopIteration" | "StopAsyncIteration"
+        | "SyntaxError" | "SystemError" | "TypeError" | "ValueError" | "Warning" => "Exception",
+        "FloatingPointError" | "OverflowError" | "ZeroDivisionError" => "ArithmeticError",
+        "ModuleNotFoundError" => "ImportError",
+        "IndexError" | "KeyError" => "LookupError",
+        "UnboundLocalError" => "NameError",
+        "BlockingIOError" | "ChildProcessError" | "ConnectionError" | "FileExistsError"
+        | "FileNotFoundError" | "InterruptedError" | "IsADirectoryError" | "NotADirectoryError"
+        | "PermissionError" | "ProcessLookupError" | "TimeoutError" => "OSError",
+        "BrokenPipeError"
+        | "ConnectionAbortedError"
+        | "ConnectionRefusedError"
+        | "ConnectionResetError" => "ConnectionError",
+        "NotImplementedError" | "RecursionError" | "PythonFinalizationError" => "RuntimeError",
+        "IndentationError" => "SyntaxError",
+        "TabError" => "IndentationError",
+        "UnicodeError" => "ValueError",
+        "UnicodeDecodeError" | "UnicodeEncodeError" | "UnicodeTranslateError" => "UnicodeError",
+        "DeprecationWarning"
+        | "PendingDeprecationWarning"
+        | "RuntimeWarning"
+        | "SyntaxWarning"
+        | "UserWarning"
+        | "FutureWarning"
+        | "ImportWarning"
+        | "UnicodeWarning"
+        | "BytesWarning"
+        | "ResourceWarning"
+        | "EncodingWarning" => "Warning",
+        _ => return None,
     })
 }
 

@@ -1161,24 +1161,26 @@ fn classify_change_for_owner_inner<'a>(
                 &related_candidates,
                 &focus,
             )
-            // A raised-type replacement every strong error assertion still
-            // pins to the old type is stale, not credit (#13622).
-            .or_else(|| {
-                // A finding-specific credit for the new type keeps its verdict.
-                exception_variants
-                    .is_empty()
-                    .then(|| {
-                        super::exception_variant::stale_exception_type_gap(
-                            line_text,
-                            old_line_text,
-                            &related_candidates,
-                            &focus,
-                        )
-                    })
-                    .flatten()
-            })
         })
         .flatten();
+    // #13622: an old-type exact assertion after a raised-type replacement is
+    // recorded as advisory evidence only; it never changes the class here. The
+    // gap-bound repair closure reads it (RIPR-SPEC-0310).
+    let stale_raised_type_pins = if static_limit.is_none()
+        && matches!(family, ProbeFamily::ErrorPath)
+        && !no_behavior.multi_line_def_header_line
+        && exception_variants.is_empty()
+    {
+        super::exception_variant::stale_raised_type_pins(
+            line_text,
+            old_line_text,
+            owner_source,
+            &related_candidates,
+            &focus,
+        )
+    } else {
+        Vec::new()
+    };
     let mut message_pin_downgraded = false;
     // Table-driven expected values that never vary the changed returned
     // operand cannot discriminate `return default` -> `return None` (#6651).
@@ -1536,8 +1538,8 @@ fn classify_change_for_owner_inner<'a>(
             StageState::Yes,
             StageState::Weak,
             vec![format!(
-                "A strong Python oracle reaches `{}`, but {}. {}",
-                owner.name, gap.reason, gap.advice,
+                "A strong Python oracle reaches `{}`, but {}. Add a `match=` pattern that the old message does not satisfy.",
+                owner.name, gap.reason,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -2098,6 +2100,11 @@ fn classify_change_for_owner_inner<'a>(
             ),
         },
         alignment_prep,
+    );
+    evidence.extend(
+        stale_raised_type_pins
+            .iter()
+            .map(crate::analysis::stale_raised_type_pin::StaleRaisedTypePin::evidence_line),
     );
     for candidate in related_candidates {
         let test = candidate.test;

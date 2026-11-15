@@ -6,6 +6,7 @@
 //! commitment is calculated over the exact JSON bytes with the digest field
 //! replaced by the fixed placeholder described by this module.
 
+use crate::analysis::stale_raised_type_pin::StaleRaisedTypePin;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::io::{self, Write};
@@ -837,6 +838,10 @@ pub(crate) struct CheckFindingsGap {
     /// The discriminator the finding says no test supplies, as the artifact
     /// states it (`missing_discriminators[0].value`); `None` when it names none.
     pub(crate) missing_discriminator: Option<String>,
+    /// Related assertions the finding's evidence says still pin the old raised
+    /// type after a raised-type replacement (#13622). Advisory evidence that
+    /// never changes the class; closure refuses on it.
+    pub(crate) stale_raised_type_pins: Vec<StaleRaisedTypePin>,
 }
 
 /// A `check-findings-json` artifact whose producer envelope, content
@@ -996,6 +1001,9 @@ pub(crate) fn evaluate_gap_closure(
                 + &python_assertion_form_hint(&after_gap)
         )));
     }
+    if let Some(reason) = stale_raised_type_refusal(&after_gap) {
+        return Err(refuse(reason));
+    }
     Ok(GapClosure {
         gap_id: gap_id.to_string(),
         before_classification: before_gap.classification,
@@ -1003,6 +1011,29 @@ pub(crate) fn evaluate_gap_closure(
         file: after_gap.file,
         line: after_gap.line,
     })
+}
+
+/// #13622: a Python gap that reads `exposed` only through assertions that
+/// still pin the old raised type is not closed: the new code raises another
+/// type, so those tests fail against it. The exposure class is unchanged (a
+/// pre-existing old-type assertion does notice the edit, RIPR-SPEC-0238
+/// example 14); only the repair outcome refuses to call the gap closed.
+fn stale_raised_type_refusal(gap: &CheckFindingsGap) -> Option<String> {
+    if !gap.file.ends_with(".py") {
+        return None;
+    }
+    let first = gap.stale_raised_type_pins.first()?;
+    let assertions = gap
+        .stale_raised_type_pins
+        .iter()
+        .map(|pin| format!("`{}` in `{}`", pin.assertion, pin.test))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "reads `{GAP_CLOSED_CLASSIFICATION}` in the after artifact, but its crediting assertion ({assertions}) pins the old raised type `{old}`, and the changed code now raises `{new}`, which is not `{old}` or a known subclass of it, so that test will fail against the new `{new}` raise and is not closure evidence. Next: assert the new type (for example `pytest.raises({new}, ...)`), or run the test to confirm, then rerun",
+        old = first.old_type,
+        new = first.new_type,
+    ))
 }
 
 /// #13620: a Python gap that stays open may be open only because of the
@@ -1124,12 +1155,18 @@ fn check_findings_gaps(
             .map(str::trim)
             .find(|value| !value.is_empty())
             .map(str::to_string);
+        let stale_raised_type_pins = finding
+            .evidence
+            .iter()
+            .filter_map(|line| StaleRaisedTypePin::parse(line))
+            .collect();
         gaps.push(CheckFindingsGap {
             gap_id,
             classification,
             file,
             line,
             missing_discriminator,
+            stale_raised_type_pins,
         });
     }
     let mut seen = std::collections::BTreeSet::new();
@@ -1767,6 +1804,8 @@ struct CheckFindingsFinding {
     probe: Option<CheckFindingsProbe>,
     #[serde(default)]
     missing_discriminators: Vec<CheckFindingsMissingDiscriminator>,
+    #[serde(default)]
+    evidence: Vec<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -2596,6 +2635,7 @@ mod tests {
     fn gap(id: &str, classification: &str) -> CheckFindingsGap {
         CheckFindingsGap {
             missing_discriminator: None,
+            stale_raised_type_pins: Vec::new(),
             gap_id: id.to_string(),
             classification: classification.to_string(),
             file: "src/pricing.ts".to_string(),
@@ -2764,6 +2804,48 @@ mod tests {
         if !bare.ends_with("still reads `weakly_exposed` in the after artifact") {
             return Err(format!("invented a reason: `{bare}`"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn stale_raised_type_pin_refuses_python_closure_and_names_both_types() -> Result<(), String> {
+        let pin = StaleRaisedTypePin {
+            assertion: "pytest.raises(ValueError, match=\"neg\")".to_string(),
+            old_type: "ValueError".to_string(),
+            new_type: "TypeError".to_string(),
+            test: "test_neg".to_string(),
+        };
+        let python = |classification: &str, pins: Vec<StaleRaisedTypePin>| CheckFindingsGap {
+            file: "src/shop.py".to_string(),
+            stale_raised_type_pins: pins,
+            ..gap("gap:a", classification)
+        };
+        let before = [python("weakly_exposed", Vec::new())];
+        let Err(error) =
+            evaluate_gap_closure("gap:a", &before, &[python("exposed", vec![pin.clone()])])
+        else {
+            return Err("a stale old-type pin closed the gap".to_string());
+        };
+        for fragment in [
+            GAP_BINDING_REFUSAL_PREFIX,
+            "pins the old raised type `ValueError`",
+            "will fail against the new `TypeError` raise",
+            "pytest.raises(TypeError, ...)",
+            "run the test",
+            "`test_neg`",
+        ] {
+            if !error.contains(fragment) {
+                return Err(format!("`{error}` lacks `{fragment}`"));
+            }
+        }
+        // Negative controls: no pin closes, and a pin on a non-Python gap is
+        // not read.
+        evaluate_gap_closure("gap:a", &before, &[python("exposed", Vec::new())])?;
+        let rust = CheckFindingsGap {
+            stale_raised_type_pins: vec![pin],
+            ..gap("gap:a", "exposed")
+        };
+        evaluate_gap_closure("gap:a", &[gap("gap:a", "weakly_exposed")], &[rust])?;
         Ok(())
     }
 
