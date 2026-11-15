@@ -1024,10 +1024,16 @@ mod tests {
         let Some((head, _)) = cause.split_once(". Retry with one of those locations") else {
             return Vec::new();
         };
-        let listed = head
-            .rsplit_once(" are at ")
-            .or_else(|| head.rsplit_once(" is at "))
-            .map_or("", |(_, listed)| listed);
+        // After `of that file: ` comes `it is at`, `they are at` or the
+        // bounded `the 5 nearest of 7 are`, then the list.
+        let scope = head
+            .split_once("of that file: ")
+            .map_or("", |(_, scope)| scope);
+        let listed = scope
+            .strip_prefix("it is at ")
+            .or_else(|| scope.strip_prefix("they are at "))
+            .or_else(|| scope.split_once(" are ").map(|(_, listed)| listed))
+            .unwrap_or("");
         listed
             .split(", ")
             .filter(|location| !location.is_empty())
@@ -1102,6 +1108,39 @@ mod tests {
             &cause,
             "it is at src/lib.rs:7. Retry with one of those locations",
         )?;
+        require_contains(
+            &cause,
+            "; src/lib.rs:3 holds several findings, so select one there by its probe id",
+        )?;
+
+        // More uniquely held lines than the clause lists: the bounded form
+        // still offers only unique locations, and the shared line stays out.
+        for line in [20, 21, 22, 23, 24, 25] {
+            let mut extra = output.findings[0].clone();
+            extra.id = format!("probe:src_lib.rs:unique_line:000000{line}");
+            extra.probe.id = crate::domain::ProbeId(extra.id.clone());
+            extra.probe.location.line = line;
+            extra.canonical_gap = None;
+            output.findings.push(extra);
+        }
+        let cause = location_miss_cause("src/lib.rs:30", &output)
+            .map(|cause| cause.text)
+            .ok_or("a same-file miss must carry a cause")?;
+        require_contains(&cause, "the 5 nearest of 7 are ")?;
+        let advised = advised_retry_locations(&cause);
+        if advised.len() != 5 {
+            return Err(format!("the bounded list must offer 5 locations: {cause}"));
+        }
+        for location in &advised {
+            if !matches!(
+                super::super::selector::select_finding(&output.findings, location),
+                FindingSelection::Unique(_)
+            ) {
+                return Err(format!(
+                    "advised retry {location:?} does not select exactly one finding: {cause}"
+                ));
+            }
+        }
         require_contains(
             &cause,
             "; src/lib.rs:3 holds several findings, so select one there by its probe id",
