@@ -1412,7 +1412,10 @@ mod tests {
             ])
         );
         let missing = parse_gate_check_plan(&args(&["--base", "x", "--suppression-policy"]));
-        assert!(missing.is_err(), "a bare --suppression-policy is a usage error");
+        assert!(
+            missing.is_err(),
+            "a bare --suppression-policy is a usage error"
+        );
         Ok(())
     }
 
