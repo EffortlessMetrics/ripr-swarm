@@ -151,7 +151,7 @@ fn issue_14578_positive_carriers_cannot_bypass_unresolved_negatives() -> Result<
     let approved = make("a", "APPROVED", &head, 1, "");
     let negative = make("a", "COMMENTED", &head, 2, "REPAIR_REQUIRED");
     let reply = make("a", "COMMENTED", &head, 3, "");
-    let chatter = make("a", "COMMENTED", &head, 4, "Thanks for the explanation.");
+    let chatter = make("a", "COMMENTED", &head, 4, "Thanks, will look.");
     let other_ready = make("b", "COMMENTED", &head, 5, "SOURCE_REVIEW_READY");
     let ready = make("a", "COMMENTED", &head, 6, "SOURCE_REVIEW_READY");
     let reapproved = make("a", "APPROVED", &head, 6, "");
@@ -1479,6 +1479,185 @@ fn verdict_first_line_carries_or_refuses_the_attestation() -> Result<(), String>
                 &head,
                 &at(1),
                 "VERDICT: APPROVE aaaaaaaaaaaa"
+            )]),
+            false,
+        ),
+    ];
+    for (name, reviews, admit) in cases {
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, name)?;
+    }
+    Ok(())
+}
+
+/// #14728: a later neutral, empty or prose review from the same login does not
+/// erase that login's marker, and a mis-formatted positive marker is neutral
+/// rather than a veto.
+#[test]
+fn issue_14728_stated_marker_selection_and_neutral_tail() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let at = |second: u8| format!("2026-10-15T04:00:0{second}Z");
+    let sha = "1cc13d3de7941b83f2488853e120fbdfd3d9cee5";
+    let cases: Vec<(&str, serde_json::Value, bool)> = vec![
+        (
+            "marker then neutral reply, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), "Thanks, will look."),
+            ]),
+            true,
+        ),
+        (
+            "marker then empty body, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), ""),
+            ]),
+            true,
+        ),
+        (
+            "marker then prose follow-up, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("Exact-head review (head {head})")
+                ),
+            ]),
+            true,
+        ),
+        (
+            "marker then stated negative, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), "REPAIR_REQUIRED"),
+            ]),
+            false,
+        ),
+        (
+            "marker then plain-English blocker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), "do not merge"),
+            ]),
+            false,
+        ),
+        (
+            "marker then prose blocker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), "The build is red."),
+            ]),
+            false,
+        ),
+        (
+            "marker then unknown objection, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    "I don't think this is right."
+                ),
+            ]),
+            false,
+        ),
+        (
+            "marker then recognised chatter, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    "No code change needed."
+                ),
+            ]),
+            true,
+        ),
+        (
+            "a blocker statement vetoes another login's later ready",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REPAIR_REQUIRED"),
+                review("author", "COMMENTED", &head, &at(2), "The build is red."),
+                review("other", "COMMENTED", &head, &at(3), "SOURCE_REVIEW_READY"),
+            ]),
+            false,
+        ),
+        (
+            "a blocker alone does not veto another login's marker",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "The build is red."),
+                review("other", "COMMENTED", &head, &at(2), "SOURCE_REVIEW_READY"),
+            ]),
+            true,
+        ),
+        (
+            "marker then hedged approve, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("VERDICT: APPROVE {head} \u{2014} pending the fix")
+                ),
+            ]),
+            false,
+        ),
+        (
+            "marker then deferred approve, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("VERDICT: APPROVE {head} \u{2014} after the rebase")
+                ),
+            ]),
+            false,
+        ),
+        (
+            "mis-formatted positive marker alone attests nothing",
+            serde_json::json!([review(
+                "author",
+                "COMMENTED",
+                &head,
+                &at(1),
+                &format!("REVIEW_READY {sha}")
+            )]),
+            false,
+        ),
+        (
+            "mis-formatted positive marker does not veto another login's marker",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "other",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("REVIEW_READY {sha}")
+                ),
+            ]),
+            true,
+        ),
+        (
+            "a contradicting tail still refuses",
+            serde_json::json!([review(
+                "author",
+                "COMMENTED",
+                &head,
+                &at(1),
+                "REVIEW_READY: no"
             )]),
             false,
         ),
