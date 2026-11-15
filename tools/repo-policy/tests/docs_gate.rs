@@ -227,6 +227,38 @@ fn broken_heading_links_and_fenced_examples() -> TestResult {
 }
 
 #[test]
+fn root_relative_link_resolves_from_repo_root() -> TestResult {
+    let root = fixture(&[
+        (
+            "docs/GUIDE.md",
+            "# Guide\n\nSee [target](/docs/TARGET.md) and [gone](/docs/GONE.md).\n",
+        ),
+        ("docs/TARGET.md", "# Target\n"),
+    ])?;
+    let report = run_docs_gate(&root, &changed(&["docs/GUIDE.md"]))?;
+    assert_eq!(report.violations.len(), 1, "{}", report.render());
+    assert!(
+        report.violations[0].contains("/docs/GONE.md"),
+        "{}",
+        report.render()
+    );
+    Ok(())
+}
+
+#[test]
+fn bom_markdown_reports_one_encoding_violation() -> TestResult {
+    let root = fixture(&[("docs/GUIDE.md", "\u{feff}# Guide\n\nPlain text.\n")])?;
+    let report = run_docs_gate(&root, &changed(&["docs/GUIDE.md"]))?;
+    assert_eq!(report.violations.len(), 1, "{}", report.render());
+    assert!(
+        report.violations[0].contains("UTF-8 BOM"),
+        "{}",
+        report.render()
+    );
+    Ok(())
+}
+
+#[test]
 fn forbidden_static_language_and_broken_link_fail() -> TestResult {
     let root = fixture(&[(
         "docs/GUIDE.md",

@@ -220,11 +220,10 @@ fn check_encoding(rel: &str, bytes: &[u8], violations: &mut Vec<String>) {
 }
 
 fn read_text(root: &Path, rel: &str, violations: &mut Vec<String>) -> Option<String> {
+    // Encoding is checked once by the caller for every scoped candidate;
+    // checking here again would report a BOM twice for the same file.
     match std::fs::read(root.join(rel)) {
-        Ok(bytes) => {
-            check_encoding(rel, &bytes, violations);
-            Some(String::from_utf8_lossy(&bytes).into_owned())
-        }
+        Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
         Err(error) => {
             violations.push(format!("{rel}: cannot read changed file: {error}"));
             None
@@ -382,9 +381,16 @@ fn check_markdown_links(root: &Path, rel: &str, text: &str, violations: &mut Vec
                 continue;
             }
             let decoded = file_part.replace("%20", " ");
-            let candidate: PathBuf = match &base {
-                Some(dir) if !dir.as_os_str().is_empty() => root.join(dir).join(&decoded),
-                _ => root.join(&decoded),
+            // A root-relative target names a path from the repository root,
+            // as GitHub resolves it; joining it as-is would replace the base
+            // with the filesystem root.
+            let candidate: PathBuf = if let Some(stripped) = decoded.strip_prefix('/') {
+                root.join(stripped.trim_start_matches('/'))
+            } else {
+                match &base {
+                    Some(dir) if !dir.as_os_str().is_empty() => root.join(dir).join(&decoded),
+                    _ => root.join(&decoded),
+                }
             };
             if !candidate.exists() {
                 violations.push(format!(
