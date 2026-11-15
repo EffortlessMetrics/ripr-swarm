@@ -677,23 +677,23 @@ def reviews_allow_source_attestation(
         and str(r.get("state") or "") == "APPROVED"
         and _trusted(r)
     ]
-    # #14728 review: `effective` holds only bodies that state something — ready,
-    # negative, a verdict, or a blocker. A neutral body (including a
-    # mis-formatted marker, `LGTM` or ordinary prose) neither attests nor
-    # supersedes; recognised chatter and an empty body are excluded too.
+    # #14728: a body supersedes the login's earlier statement unless it is
+    # inert. Recognised chatter, an empty body and a mis-formatted marker that
+    # ``marker_line_neutral`` scores neutral add nothing, so they must not
+    # remove a marker either. Any other body still supersedes, fail-closed.
+    def neutral_marker_body(body: str) -> bool:
+        for line in normalize_body(body).split("\n"):
+            if line.strip():
+                return marker_line_neutral(line)
+        return False
+
     effective = [
         r for r in reviews
         if str(r.get("commit_id") or "") == head
         and _trusted(r)
         and str(r.get("state") or "") == "COMMENTED"
         and not comment_body_chatter(str(r.get("body") or ""))
-        and (
-            comment_body_ready(str(r.get("body") or ""))
-            or comment_body_negative(str(r.get("body") or ""))
-            or comment_body_verdict_ready(str(r.get("body") or ""), head)
-            or comment_body_verdict_negative(str(r.get("body") or ""))
-            or comment_body_blocks(str(r.get("body") or ""))
-        )
+        and not neutral_marker_body(str(r.get("body") or ""))
     ]
     # #14728 review: a later native withdrawal (CHANGES_REQUESTED or DISMISSED)
     # from the same login supersedes its earlier statement; a dismissed approval
@@ -1210,9 +1210,24 @@ def self_test() -> None:
             ],
             head=head,
         ), body
-    # A neutral body is not a statement: it neither attests nor supersedes, so
-    # the earlier marker survives it. This includes a mis-formatted marker and
-    # ordinary prose.
+    # A body supersedes the marker unless it is inert. Chatter, an empty body and
+    # a mis-formatted marker that `marker_line_neutral` scores neutral add
+    # nothing, so the earlier marker survives them. Any other body, including
+    # plain prose, supersedes fail-closed.
+    for body in (
+        f"REVIEW_READY {sha}",
+        f"REVIEW_READY - {sha}",
+        f"REVIEW_READY head {sha}",
+        "No code change needed.",
+    ):
+        assert reviews_allow_source_attestation(
+            [
+                marker,
+                review(state="COMMENTED", commit_id=head, id=2, body=body,
+                       submitted_at="2026-10-15T01:00:02Z"),
+            ],
+            head=head,
+        ), body
     for body in (
         "I don't think this is right.",
         "This is wrong.",
@@ -1222,12 +1237,8 @@ def self_test() -> None:
         "Looks good.",
         "Nice work.",
         "Thanks for the explanation.",
-        f"REVIEW_READY {sha}",
-        f"REVIEW_READY - {sha}",
-        f"REVIEW_READY head {sha}",
-        "No code change needed.",
     ):
-        assert reviews_allow_source_attestation(
+        assert not reviews_allow_source_attestation(
             [
                 marker,
                 review(state="COMMENTED", commit_id=head, id=2, body=body,
@@ -1258,11 +1269,11 @@ def self_test() -> None:
         ],
         head=head,
     )
-    # A hedged approve is not a stated verdict, so it neither attests nor
-    # supersedes; the hedge design is #14770.
+    # A hedged approve is not inert, so it supersedes the marker fail-closed;
+    # the hedge design is #14770.
     for tail in ("pending the fix", "after the rebase", "once CI passes", "if the shards pass"):
         body = f"VERDICT: APPROVE {head} \u2014 {tail}"
-        assert reviews_allow_source_attestation(
+        assert not reviews_allow_source_attestation(
             [
                 marker,
                 review(state="COMMENTED", commit_id=head, id=2, body=body,

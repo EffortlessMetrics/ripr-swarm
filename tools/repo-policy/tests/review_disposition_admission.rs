@@ -1632,7 +1632,7 @@ fn issue_14728_stated_marker_selection_and_neutral_tail() -> Result<(), String> 
                     "I don't think this is right."
                 ),
             ]),
-            true,
+            false,
         ),
         (
             "marker then recognised chatter, same login",
@@ -1647,6 +1647,28 @@ fn issue_14728_stated_marker_selection_and_neutral_tail() -> Result<(), String> 
                 ),
             ]),
             true,
+        ),
+        (
+            "marker then a mis-formatted marker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("REVIEW_READY {head}")
+                ),
+            ]),
+            true,
+        ),
+        (
+            "marker then plain prose, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), "LGTM"),
+            ]),
+            false,
         ),
         (
             "a blocker statement vetoes another login's later ready",
@@ -1677,7 +1699,7 @@ fn issue_14728_stated_marker_selection_and_neutral_tail() -> Result<(), String> 
                     &format!("VERDICT: APPROVE {head} \u{2014} pending the fix")
                 ),
             ]),
-            true,
+            false,
         ),
         (
             "marker then deferred approve, same login",
@@ -1691,7 +1713,7 @@ fn issue_14728_stated_marker_selection_and_neutral_tail() -> Result<(), String> 
                     &format!("VERDICT: APPROVE {head} \u{2014} after the rebase")
                 ),
             ]),
-            true,
+            false,
         ),
         (
             "an emoji tail is negative and vetoes another login",
