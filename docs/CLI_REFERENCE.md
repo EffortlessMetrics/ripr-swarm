@@ -2480,6 +2480,7 @@ Check options:
   --base REV                          Required. Base revision of the change, for example origin/main.
   --head REV                          Head revision. Defaults to HEAD.
   --timeout-ms N                      Passed to review-comments.
+  --suppression-policy PATH           Passed to review-comments; suppressed seams are non-blocking.
   --guidance-out PATH                 Guidance JSON path. Defaults to target/ripr/review/comments.json.
                                       Any existing file there (and its .md) is removed before the
                                       run, and again if review-comments fails.
