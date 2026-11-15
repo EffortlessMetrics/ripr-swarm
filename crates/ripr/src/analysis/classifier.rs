@@ -909,7 +909,9 @@ fn owner_sole_change(
         return None;
     };
     let paired = changed.replaced_line_counterpart(line)?;
-    (added.new_side_line == line && paired.text == removed.text).then(|| removed.text.clone())
+    // The counterpart must be this very removed line, not one elsewhere in
+    // the file with the same text (#14786 review).
+    (added.new_side_line == line && std::ptr::eq(paired, removed)).then(|| removed.text.clone())
 }
 
 #[cfg(test)]
