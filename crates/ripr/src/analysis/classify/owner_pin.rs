@@ -8429,6 +8429,9 @@ impl ReturnPathGate {
             Self::Adaptor {
                 requires_ok: true, ..
             } => &["Ok", "Err"],
+            // The closed subset reads `Ok(..)`, `Some(..)` and `None` by
+            // spelling (#14786 review).
+            Self::ClosedGuardReturn { .. } => &["Ok", "Err", "Some", "None"],
             _ => &[],
         }
     }

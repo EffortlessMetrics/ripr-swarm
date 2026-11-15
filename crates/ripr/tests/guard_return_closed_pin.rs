@@ -245,3 +245,43 @@ fn a_diff_that_also_changes_the_guard_keeps_the_pin_unproven() -> Result<(), Str
     assert_eq!(changed.class, ExposureClass::Exposed, "{changed:?}");
     Ok(())
 }
+
+/// The subset reads `Some(..)` and `None` by spelling, so a file that binds
+/// one of those names keeps the pin unproven (#14786 review). The same owner
+/// without the rival binding is the control.
+#[test]
+fn a_file_that_rebinds_a_prelude_variant_keeps_the_pin_unproven() -> Result<(), String> {
+    let owner = |rival: &str, divisor: &str| {
+        format!(
+            "pub fn pick(total: u32) -> Option<u32> {{
+    if total >= 100 {{
+        return Some(total / {divisor});
+    }}
+    None
+}}
+{rival}"
+        )
+    };
+    for (rival, expected_exposed) in [
+        ("", true),
+        (
+            "#[allow(non_upper_case_globals)]\nconst None: Option<u32> = Some(7);",
+            false,
+        ),
+    ] {
+        let after = owner(rival, "5");
+        let before = owner(rival, "10");
+        let findings = TempRepo::create(
+            &lib(&after, "assert_eq!(pick(200), Some(40));"),
+            &fn_diff(&before, &after),
+        )?
+        .findings()?;
+        let changed = finding_on_line(&findings, 3, "total / 5")?;
+        assert_eq!(
+            changed.class == ExposureClass::Exposed,
+            expected_exposed,
+            "rival {rival:?}: {changed:?}"
+        );
+    }
+    Ok(())
+}
