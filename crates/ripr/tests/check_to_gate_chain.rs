@@ -1008,3 +1008,82 @@ fn review_comments_never_applies_the_default_policy_implicitly_and_fails_closed(
     }
     Ok(())
 }
+
+/// An expired entry is reported and never applied, so the gate keeps blocking
+/// on the seam it named; a plain `path` glob suppresses every seam of the
+/// files it matches and no others.
+#[test]
+fn review_comments_skips_expired_entries_and_applies_path_globs() -> Result<(), String> {
+    let fixture = build_retry_repo("policy-expired-glob")?;
+    let root = &fixture.0;
+    mkdir_chain_dirs(root)?;
+
+    let expired = function_entry("retry_allowed") + "expires = \"2000-01-01\"\n";
+    write_policy(root, "expired.toml", &expired)?;
+    run_ok(
+        root,
+        "review-comments with an expired entry",
+        &review_comments_args(COMMENTS_JSON, &["--suppression-policy", "expired.toml"]),
+    )?;
+    let doc = read_json(&root.join(COMMENTS_JSON))?;
+    assert!(
+        listed_seam_lines(&doc, "suppressed").is_empty(),
+        "an expired entry must not suppress anything: {doc}"
+    );
+    assert!(
+        listed_seam_lines(&doc, "comments")
+            .into_iter()
+            .chain(listed_seam_lines(&doc, "summary_only"))
+            .any(|line| line == RETRY_LINE),
+        "the seam named by the expired entry stays listed: {doc}"
+    );
+    let warnings = doc["warnings"].to_string();
+    assert!(
+        warnings.contains("expired"),
+        "expiry must be reported: {doc}"
+    );
+    let (gate, exit) = evaluate_gate(root, COMMENTS_JSON)?;
+    assert_eq!(exit, Some(3), "{gate}");
+    assert_eq!(gate_count(&gate, "suppressed")?, 0, "{gate}");
+
+    let glob_entry = |pattern: &str| {
+        format!(
+            "\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"{pattern}\"\nreason = \"generated retry table\"\nowner = \"team-retry\"\n"
+        )
+    };
+    write_policy(root, "miss.toml", &glob_entry("src/other*.rs"))?;
+    run_ok(
+        root,
+        "review-comments with a non-matching glob",
+        &review_comments_args(COMMENTS_JSON, &["--suppression-policy", "miss.toml"]),
+    )?;
+    let doc = read_json(&root.join(COMMENTS_JSON))?;
+    assert!(
+        listed_seam_lines(&doc, "suppressed").is_empty(),
+        "a glob naming another file suppresses nothing: {doc}"
+    );
+
+    write_policy(root, "glob.toml", &glob_entry("src/retry*.rs"))?;
+    run_ok(
+        root,
+        "review-comments with a matching glob",
+        &review_comments_args(COMMENTS_JSON, &["--suppression-policy", "glob.toml"]),
+    )?;
+    let doc = read_json(&root.join(COMMENTS_JSON))?;
+    let suppressed = listed_seam_lines(&doc, "suppressed");
+    assert!(
+        suppressed.contains(&RETRY_LINE) && suppressed.contains(&BACKOFF_LINE),
+        "a glob over src/retry.rs suppresses both functions, got {suppressed:?}: {doc}"
+    );
+    for key in ["comments", "summary_only"] {
+        assert!(listed_seam_lines(&doc, key).is_empty(), "{key}: {doc}");
+    }
+    let (gate, _) = evaluate_gate(root, COMMENTS_JSON)?;
+    assert_eq!(gate_count(&gate, "blocking")?, 0, "{gate}");
+    assert_eq!(
+        gate_count(&gate, "suppressed")?,
+        suppressed.len() as u64,
+        "{gate}"
+    );
+    Ok(())
+}

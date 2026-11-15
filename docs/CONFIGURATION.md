@@ -1007,8 +1007,10 @@ exactly one seam of the whole diff-scoped inventory; an id shared with another
 seam (even one outside the brief cap), or carrying a collision ordinal, is
 reported and not applied. An entry narrowed by `static_class` does not apply
 to review-comments seams (their grip classes use a different vocabulary); it
-is reported as "static_class selector does not apply to review-comments
-seams; entry not applied" instead of being skipped silently. Policy-suppressed
+is reported with a warning ("... uses static_class, which does not apply to
+review-comments seams; entry not applied") instead of being skipped silently.
+A `path` + `function` entry must name the file exactly as the repository
+root sees it (`src/retry.rs`, not `./src/retry.rs`). Policy-suppressed
 seams still count against the brief cap, which stays disclosed.
 
 `static_class` is optional narrowing for a path-glob selector and must name a

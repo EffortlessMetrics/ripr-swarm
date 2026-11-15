@@ -28,6 +28,7 @@ tests = [
   "crates/ripr/tests/check_to_gate_chain.rs::check_output_suppresses_only_the_named_finding_of_a_multi_seam_function",
   "crates/ripr/tests/check_to_gate_chain.rs::finding_id_entry_applied_through_review_comments_policy_suppresses_one_seam",
   "crates/ripr/tests/check_to_gate_chain.rs::review_comments_never_applies_the_default_policy_implicitly_and_fails_closed",
+  "crates/ripr/tests/check_to_gate_chain.rs::review_comments_skips_expired_entries_and_applies_path_globs",
 ]
 
 # gate check forwards --suppression-policy to its review-comments step (#13895).

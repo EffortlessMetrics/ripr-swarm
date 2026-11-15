@@ -147,9 +147,10 @@ pub(crate) fn render_review_comments_json_with_scope(
     }
 
     // #13895: one suppression decision, from the shared policy matcher. A
-    // suppressed seam leaves the comment/summary slots (so it cannot crowd out
-    // an unsuppressed one) and stays visible in `suppressed`, which
-    // `gate evaluate` reads as non-blocking.
+    // suppressed seam leaves the inline comment and summary slots and stays
+    // visible in `suppressed`, which `gate evaluate` reads as non-blocking.
+    // Suppression runs after the brief cap, so a suppressed seam still uses
+    // a cap slot (disclosed in SPEC-0007 and CONFIGURATION.md).
     if let Some(policy) = context.suppression {
         let seams = actionable
             .iter()

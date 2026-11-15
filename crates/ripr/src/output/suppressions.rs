@@ -470,6 +470,19 @@ fn finalize_suppression(
                         ));
                         return;
                     }
+                    // The owner match is an exact compare against the
+                    // normalized root-relative path, so a `./` or `..`
+                    // segment would silently match nothing.
+                    if path.starts_with("./")
+                        || path
+                            .split('/')
+                            .any(|segment| segment == "." || segment == "..")
+                    {
+                        violations.push(format!(
+                            "{SUPPRESSIONS_PATH}:{block_line} `function` selects by exact file, so `path` `{path}` must be a plain root-relative path without `.` or `..` segments, for example `src/retry.rs`"
+                        ));
+                        return;
+                    }
                     if is_ambiguous_owner_function(function) {
                         violations.push(format!(
                             "{SUPPRESSIONS_PATH}:{block_line} `function` `{function}` names a line-disambiguated duplicate owner; rename or merge the duplicate functions so the owner is unambiguous"
@@ -2167,6 +2180,18 @@ owner = "repo-owner"
             violations.iter().any(|v| v.contains("line-disambiguated")),
             "{violations:?}"
         );
+        for dotted in ["./src/retry.rs", "src/../src/retry.rs"] {
+            let manifest = function_entry_manifest(&format!(
+                "path = \"{dotted}\"\nfunction = \"retry_allowed\"\n"
+            ));
+            let (_, violations) = parse_suppressions_manifest(&manifest);
+            assert!(
+                violations
+                    .iter()
+                    .any(|v| v.contains("plain root-relative path")),
+                "{dotted}: {violations:?}"
+            );
+        }
         let blank = function_entry_manifest("path = \"src/retry.rs\"\nfunction = \" \"\n");
         let (_, violations) = parse_suppressions_manifest(&blank);
         assert!(
