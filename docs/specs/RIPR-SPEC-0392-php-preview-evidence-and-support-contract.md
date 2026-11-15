@@ -1,6 +1,6 @@
 # RIPR-SPEC-0392: PHP Preview Evidence and Support Contract
 
-Status: proposed
+Status: accepted
 
 Owner: language-adapter / swarm
 
@@ -187,6 +187,56 @@ Distinct states that must not collapse:
 - data-provider registration vs resolved dataset row vs unknown generation
 - group-filtered or dependent tests that never execute in the static configuration
 
+Groups, filters, and dependencies:
+
+- PHPUnit `#[Group]` / `@group`, `#[Depends]` / `@depends`, and `phpunit.xml`
+  `<groups>` include/exclude lists, plus Pest `->group()` and `->depends()`,
+  are recorded as static metadata. A test excluded by a statically read group
+  list is `filtered_or_not_selected`. A test whose selection depends on CLI
+  flags, environment, or an unread configuration file is
+  `conditional_activation_unknown`. Neither state is `active`.
+- A `depends` target that is skipped, unresolved, or itself filtered makes the
+  dependent test `conditional_activation_unknown`; the dependency never
+  donates oracle credit to the dependent test.
+
+Verification selector availability:
+
+- A verification selector is a focused command a later route could run, such
+  as `vendor/bin/phpunit --filter 'Class::method'` or `vendor/bin/pest
+  --filter 'description'`. This spec only defines when such a selector may be
+  *named*; ripr never runs it during passive analysis.
+- A selector is named only when the test identity is exact: a statically
+  resolved class and method, or a literal Pest description that is unique in
+  the file. Data-provider and dataset rows name the parent test, never a
+  guessed row index.
+- Dynamic test names, duplicate Pest descriptions, closures registered
+  through helpers, and unresolved Composer `bin` paths yield
+  `selector_unavailable` with the reason. They never yield a broader selector
+  that runs more than the related test.
+
+### Capability cells (planned)
+
+PHPUnit and Pest are separate capability cells, split by framework and mode.
+They share one evidence meaning (the same #5542 activation states and #5546
+oracle strengths), but neither framework's proof or support state transfers to
+the other. Each row starts at `support_state = not_proven` and must not appear
+in `CAPABILITY_CELLS` or default `[languages]` until implementation and eval
+evidence for that exact row lands.
+
+| Cell id | Family | Notes |
+| --- | --- | --- |
+| `php/any/any/availability` | adapter availability | `lang-php` compiled and `php` enabled; names a missing adapter instead of skipping |
+| `php/any/any/parser_coverage` | syntax bands | Per PHP version band; unsupported syntax is `unsupported_syntax` |
+| `php/composer/repo/project_facts` | Composer and autoload facts | Context only; never strengthens semantic reach |
+| `php/phpunit/diff/static_facts` | PHPUnit owners, probes, activation, oracles | Diff mode |
+| `php/phpunit/repo/static_facts` | PHPUnit, repository mode | Separate proof from diff mode |
+| `php/pest/diff/static_facts` | Pest owners, probes, activation, oracles | Diff mode |
+| `php/pest/repo/static_facts` | Pest, repository mode | Separate proof from diff mode |
+| `php/any/diff/relations` | relation strength | Trait, inheritance, provider, dataset, container edges |
+| `php/any/diff/actionability` | repair-packet readiness | Stays `false` until a later promotion spec |
+| `php/phpunit/diff/verification_route` | focused PHPUnit selector | Named only under the selector rules above |
+| `php/pest/diff/verification_route` | focused Pest selector | Named only under the selector rules above |
+
 ### Oracle facts
 
 Oracle kinds map into the shared oracle strength model (RIPR-SPEC-0062 /
@@ -240,6 +290,7 @@ Map or add typed limits (fail-closed; no silent `no_static_path` promotion):
 | `magic_method_dispatch` | `__call`, `__callStatic`, `__get`, `__set`, other magic routing |
 | `dynamic_dispatch` | Variable functions `$fn()`, variable methods `$this->$m()`, `new $class` |
 | `dynamic_property` | Variable property access |
+| `unresolved_inheritance_target` | Trait, parent class, or interface whose concrete declaration is not statically resolved |
 | `reflection_runtime` | `ReflectionClass`, attributes interpreted only at runtime |
 | `generated_proxy` | Generated proxies where source is not stable |
 | `dependency_injection_container` | Service locators, container `get`, facades without static binding |
@@ -248,6 +299,7 @@ Map or add typed limits (fail-closed; no silent `no_static_path` promotion):
 | `opaque_custom_assertion_helper` | User-defined assertion wrappers |
 | `framework_bootstrap` | Kernel boot, global state mutation outside test body |
 | `extension_native_boundary` | Extension or native calls without static model |
+| `eval_or_string_code` | `eval`, `create_function`, and code assembled from strings at runtime |
 | `unsupported_syntax` | Parser gap |
 
 Each limit emits explicit `static_limit_kind` (or successor shared vocabulary),
@@ -287,6 +339,27 @@ traceability, capability, and doc-artifact rows.
 - No generated tests, automatic edits, or provider calls
 - No support-tier promotion, default feature enablement, or publication
 - No runtime mutation, coverage, or CI gate authority claims
+
+## Support Non-Claims
+
+Until a capability cell above has its own implementation and eval evidence,
+ripr makes none of these claims for PHP:
+
+- **Diff mode:** no PHP finding, classification, or related-test pointer is
+  produced. Changed `.php` files are reported as unanalyzed by a missing
+  adapter, not as clean.
+- **Repo mode:** no PHP seam inventory, repository-wide exposure summary, or
+  badge input. Diff-mode proof for a framework does not imply repo-mode support.
+- **Frameworks:** PHPUnit evidence does not establish Pest support, and the
+  reverse. Codeception, Behat, phpspec, Laravel Dusk, and other runners are not
+  covered by this spec and produce no activation.
+- **Frameworks and containers:** Laravel, Symfony, and other framework
+  resolution (facades, service containers, autowiring, route/event dispatch)
+  is never treated as static reach. It maps to
+  `dependency_injection_container` or `framework_bootstrap`.
+- **Authority:** no gate, badge, baseline, RIPR Zero, repair-packet readiness,
+  or mutation-calibrated confidence. Preview findings stay advisory under
+  RIPR-SPEC-0030.
 
 ## Acceptance Examples
 
@@ -457,6 +530,21 @@ file, emit `unresolved_composer_autoload` rather than attributing a seam.
 
 Changed file under `vendor/` must not produce exposure attribution or repair
 gaps on third-party symbols.
+
+### Positive-shape controls
+
+Every admitted positive shape has a negative or typed-limit control, so a
+future fixture corpus can fail if a positive is admitted too broadly:
+
+| Positive shape | Control |
+| --- | --- |
+| 1. Owner + predicate + strong oracle | 8. Mock inverts observation; loose `assertEquals` stays weak (Oracle facts) |
+| 2. Trait provenance | 6. Magic method dispatch; an unresolved trait or parent declaration maps to `unresolved_inheritance_target` |
+| 3. Data provider registration | 3's unknown row (`parameterized_or_generated`); 5. Skipped test |
+| 4. Pest dataset | Unresolved external dataset → `conditional_activation_unknown` (Test activation) |
+| Composer autoload resolution | 9. Unresolved autoload |
+| Project path roles | 10. Vendor boundary |
+| Named verification selector | `selector_unavailable` (Verification selector availability) |
 
 ## Test Mapping
 

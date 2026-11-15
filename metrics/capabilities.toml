@@ -1719,11 +1719,27 @@ spec = "RIPR-SPEC-0392"
 evidence = [
   "RIPR-SPEC-0392 defines wire language php, lang-php feature gating, Composer project context, exact-span probes, PHPUnit/Pest activation shared with #5542, oracle and relation law, typed dynamic limits, and preview-only authority boundary (#5620).",
   "Acceptance examples in the spec cover owners, trait/data-provider provenance, activation refusals, oracle strength, relations, and fail-closed limits; implementation fixtures and lang-php adapter remain future slices.",
+  "The accepted spec lists separate planned capability cells for PHPUnit and Pest in diff and repo mode, plus availability, parser, Composer, relation, actionability, and verification-route rows, all not_proven, with explicit support non-claims.",
   "Spec index, doc-artifacts, traceability, and capability rows register the contract; gates/badges/RIPR Zero/stable PHP claims stay false until later promotion evidence exists."
 ]
 fixtures = []
 next = "php-preview-adapter-and-corpus"
 metric = "language_adapter_php_findings_preview, language_adapter_php_owner_trait_provenance, language_adapter_php_static_limit_magic_method_dispatch, language_adapter_php_static_limit_dynamic_dispatch, language_adapter_php_static_limit_unresolved_composer_autoload, language_adapter_php_test_activation_unresolved"
+
+[[capability]]
+id = "dotnet_evidence_contract"
+cells = []
+name = ".NET shared project and C#/F#/VB evidence contract"
+status = "planned"
+spec = "RIPR-SPEC-0393"
+evidence = [
+  "RIPR-SPEC-0393 defines the shared .NET project fact envelope (solutions, projects, target frameworks, configurations, generated files, package and project references) as context only, plus separate ripr-csharp-evidence.v1, ripr-fsharp-evidence.v1, and ripr-visualbasic-evidence.v1 owner/probe/oracle/limit laws (#5632).",
+  "The spec's planned capability-cell registry lists separate xUnit, NUnit, MSTest, Expecto, and FsCheck rows per language at not_proven, plus a substrate-only project-facts row; unregistered repo-mode, actionability, and verification-route rows are explicit non-claims.",
+  "fixtures/dotnet-evidence-contract-corpus/corpus.json pins accept/reject acceptance shapes; adapter, routing, and repo-mode work remain #5633-#5645, and gates/badges/RIPR Zero/stable .NET claims stay false."
+]
+fixtures = ["fixtures/dotnet-evidence-contract-corpus"]
+next = "dotnet-project-facts-and-adapters"
+metric = "boundary_disclosure"
 
 [[capability]]
 id = "python_repair_routing_loop"

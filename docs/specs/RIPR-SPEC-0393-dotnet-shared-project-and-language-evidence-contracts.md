@@ -485,6 +485,34 @@ The substrate row is identified by `scope = substrate`, not by a language code. 
 used only for project-fact exports. Semantic capability cells remain `csharp`, `fsharp`,
 and `visualbasic` only.
 
+Rows this registry does not list are unregistered, which means they are not claimed.
+That covers repo-mode semantic cells for each language and framework, actionability
+(repair-packet readiness), and verification routes (`dotnet test --filter` style
+selectors). Each needs its own row and proof before any output may depend on it.
+A diff-mode row never implies the matching repo-mode row.
+
+### Per-language non-claims
+
+Until a registered cell for that exact language, framework, and mode has
+implementation and eval evidence, ripr makes none of these claims:
+
+- **C#:** no owner, probe, or oracle finding for `.cs` files; no credit from
+  xUnit, NUnit, or MSTest attributes; no resolution of `dynamic`, reflection,
+  expression trees, source-generator output, or DI/runtime proxies. Razor
+  (`.cshtml`, `.razor`) and scripts (`.csx`) are not covered by this spec.
+- **F#:** no owner, probe, or oracle finding for `.fs`/`.fsi` files; no credit
+  from Expecto or FsCheck, and no NUnit/xUnit/MSTest credit for F# test code
+  unless an F#-scoped cell is registered for that framework. Type providers,
+  quotations, active patterns, and computation expressions stay typed limits.
+  F# scripts (`.fsx`) are not covered.
+- **Visual Basic:** no owner, probe, or oracle finding for `.vb` files; no
+  credit from xUnit, NUnit, or MSTest. Late binding (`Option Strict Off`),
+  default properties, and `Handles`/`WithEvents` wiring stay typed limits.
+- **All three:** no support tier is inherited from another .NET language or
+  from Rust, Python, or TypeScript. Shared MSBuild project facts never
+  strengthen a language's semantic evidence. No gate, badge, baseline, RIPR
+  Zero, repair-packet readiness, or mutation-calibrated confidence.
+
 ## Required Evidence
 
 - `fixtures/dotnet-evidence-contract-corpus/corpus.json` pins positive and negative
