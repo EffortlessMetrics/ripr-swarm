@@ -52,14 +52,122 @@ const MAX_ALIAS_HOPS: usize = 3;
 fn rebinds_dynamically(text: &str) -> bool {
     writes_namespace_dynamically(text)
         || text.contains(":=")
-        || text
-            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .any(|token| {
-                matches!(
-                    token,
-                    "locals" | "global" | "eval" | "__getattr__" | "modules"
-                )
-            })
+        || identifier_tokens(text).any(|token| {
+            matches!(
+                token,
+                "global" | "eval" | "__getattr__" | "modules" | "__import__"
+            ) || writes_through_namespace(token)
+                || ["frame", "import_module", "importlib", "runpy"]
+                    .iter()
+                    .any(|part| token.contains(part))
+        })
+}
+
+fn identifier_tokens(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|token| !token.is_empty())
+}
+
+/// A token that can write a namespace entry by a computed name:
+/// `setattr`/`__setattr__`, `delattr`, `globals`, `locals`, a frame's
+/// `f_globals`/`f_locals`, or `__dict__`.
+fn writes_through_namespace(token: &str) -> bool {
+    ["setattr", "delattr", "globals", "locals", "__dict__"]
+        .iter()
+        .any(|part| token.contains(part))
+}
+
+/// Whether a read module of the test tree (the directory of the package's
+/// first name) or any conftest, other than the initializer itself, can
+/// replace the package attribute `name`: it spells `.name` (or a non-ASCII
+/// attribute, which Python may fold to `name`), or names `name` next to a
+/// namespace writer such as `setattr`.
+fn replaced_elsewhere(
+    package: &str,
+    name: &str,
+    init: &Path,
+    sources: &HashMap<PathBuf, String>,
+) -> bool {
+    let Some(first) = package.split('.').next() else {
+        return true;
+    };
+    sources.iter().any(|(path, text)| {
+        let in_scope =
+            path.starts_with(first) || path.file_name().is_some_and(|f| f == "conftest.py");
+        in_scope
+            && path != init
+            && path.extension().is_some_and(|ext| ext == "py")
+            && (names_attribute(text, name)
+                || (identifier_tokens(text).any(writes_through_namespace)
+                    && identifier_tokens(text).any(|token| token == name)))
+    })
+}
+
+/// Whether any import statement other than `binder`, at any depth the
+/// module executes, is relative or names a module present in the workspace
+/// (at the root or under `src`).
+fn imports_workspace_module(
+    body: &[Stmt],
+    binder: &Stmt,
+    init: &Path,
+    is_present: &impl Fn(&Path) -> bool,
+) -> bool {
+    let in_workspace = |dotted: &str| {
+        let path: PathBuf = dotted.split('.').collect();
+        [PathBuf::new(), PathBuf::from("src")].iter().any(|base| {
+            let module = base.join(&path);
+            is_present(&module.with_extension("py")) || is_present(&module.join("__init__.py"))
+        })
+    };
+    let mut pending: Vec<&Stmt> = body.iter().collect();
+    while let Some(stmt) = pending.pop() {
+        if std::ptr::eq(stmt, binder) {
+            continue;
+        }
+        match stmt {
+            Stmt::Import(import) => {
+                if import
+                    .names
+                    .iter()
+                    .any(|alias| in_workspace(alias.name.as_str()))
+                {
+                    return true;
+                }
+            }
+            Stmt::ImportFrom(import) => {
+                let level = import.level.as_ref().map_or(0, |level| level.to_usize());
+                if level > 0 {
+                    return true;
+                }
+                let source = import_source_module(init, import);
+                if source.is_empty() || in_workspace(&source) {
+                    return true;
+                }
+            }
+            Stmt::If(s) => pending.extend(s.body.iter().chain(&s.orelse)),
+            Stmt::For(s) => pending.extend(s.body.iter().chain(&s.orelse)),
+            Stmt::AsyncFor(s) => pending.extend(s.body.iter().chain(&s.orelse)),
+            Stmt::While(s) => pending.extend(s.body.iter().chain(&s.orelse)),
+            Stmt::With(s) => pending.extend(&s.body),
+            Stmt::AsyncWith(s) => pending.extend(&s.body),
+            Stmt::Try(s) => {
+                pending.extend(s.body.iter().chain(&s.orelse).chain(&s.finalbody));
+                for handler in &s.handlers {
+                    let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                    pending.extend(&handler.body);
+                }
+            }
+            Stmt::TryStar(s) => {
+                pending.extend(s.body.iter().chain(&s.orelse).chain(&s.finalbody));
+                for handler in &s.handlers {
+                    let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                    pending.extend(&handler.body);
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Whether `name` appears as an attribute (`.name`, whitespace or line
@@ -71,23 +179,24 @@ fn names_attribute(text: &str, name: &str) -> bool {
         let end = rest
             .find(|c: char| !(c.is_alphanumeric() || c == '_'))
             .unwrap_or(rest.len());
-        &rest[..end] == name
+        let attribute = &rest[..end];
+        attribute == name || !attribute.is_ascii()
     })
 }
 
 /// Rewrites every test import of a name its package initializer binds by
-/// import. `source` answers for a read workspace file and `is_present` for
-/// any workspace-relative path.
-pub(super) fn apply_package_import_aliases<'s>(
+/// import. `sources` holds every read workspace file and `is_present`
+/// answers for any workspace-relative path.
+pub(super) fn apply_package_import_aliases(
     tests: &mut [PythonTest],
-    source: impl Fn(&Path) -> Option<&'s str>,
+    sources: &HashMap<PathBuf, String>,
     is_present: impl Fn(&Path) -> bool,
 ) {
     let mut bindings: HashMap<(String, String), Option<PythonImport>> = HashMap::new();
     for test in tests {
         let file = test.file.clone();
         for import in &mut test.imports {
-            if let Some(resolved) = resolve(&file, import, &source, &is_present, &mut bindings) {
+            if let Some(resolved) = resolve(&file, import, sources, &is_present, &mut bindings) {
                 *import = resolved;
             }
         }
@@ -102,10 +211,10 @@ pub(super) fn apply_package_import_aliases<'s>(
 /// one of those chain directories. A spelling whose first part also names
 /// another directory on the test's path (`tests/project/tests/...`) is
 /// ambiguous under another import root and refuses.
-fn resolve<'s>(
+fn resolve(
     test_file: &Path,
     import: &PythonImport,
-    source: &impl Fn(&Path) -> Option<&'s str>,
+    sources: &HashMap<PathBuf, String>,
     is_present: &impl Fn(&Path) -> bool,
     bindings: &mut HashMap<(String, String), Option<PythonImport>>,
 ) -> Option<PythonImport> {
@@ -122,7 +231,7 @@ fn resolve<'s>(
         let bound = bindings
             .entry(key)
             .or_insert_with(|| {
-                initializer_binding(&step.source_module, &step.imported, source, is_present)
+                initializer_binding(&step.source_module, &step.imported, sources, is_present)
             })
             .clone();
         let Some(mut bound) = bound else {
@@ -165,10 +274,10 @@ fn package_directory(package: &str) -> PathBuf {
 
 /// The import through which package `package`'s initializer binds `name`,
 /// when that binding is the only one and nothing else can replace it.
-fn initializer_binding<'s>(
+fn initializer_binding(
     package: &str,
     name: &str,
-    source: &impl Fn(&Path) -> Option<&'s str>,
+    sources: &HashMap<PathBuf, String>,
     is_present: &impl Fn(&Path) -> bool,
 ) -> Option<PythonImport> {
     let directory = package_directory(package);
@@ -181,10 +290,18 @@ fn initializer_binding<'s>(
         return None;
     }
     let init = directory.join("__init__.py");
-    let text = source(&init)?;
+    let text = sources.get(&init).map(String::as_str)?;
     // An attribute spelled `name` (`tests.tomllib = other`, through any
     // receiver) can replace the package attribute the test later reads.
-    if rebinds_dynamically(text) || names_attribute(text, name) {
+    // Identifiers are NFKC-folded by Python (`ｔｏｍｌｌｉｂ` is
+    // `tomllib`), so a non-ASCII initializer is not read at all.
+    if !text.is_ascii() || rebinds_dynamically(text) || names_attribute(text, name) {
+        return None;
+    }
+    // Another module of the test tree, or a conftest, that spells the name as
+    // an attribute or reaches it through a namespace writer can replace the
+    // package attribute after the initializer ran.
+    if replaced_elsewhere(package, name, &init, sources) {
         return None;
     }
     let Ok(Mod::Module(module)) = parse_module_result(&init, text) else {
@@ -201,6 +318,12 @@ fn initializer_binding<'s>(
         .filter(|stmt| stmt_binds(stmt, name, true));
     let binder = binders.next()?;
     if binders.next().is_some() {
+        return None;
+    }
+    // Any other import of a workspace module (the package itself, one of its
+    // submodules, or a module on the root or `src`) runs code that can write
+    // the package attribute; only the binding import itself is admitted.
+    if imports_workspace_module(&module.body, binder, &init, is_present) {
         return None;
     }
     match binder {

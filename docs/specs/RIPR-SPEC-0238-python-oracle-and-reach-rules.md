@@ -1567,10 +1567,17 @@ mutant calibrates the rule; ripr reports only the static shape.
     executes (outside `def` and `class` bodies), or names a dynamic namespace
     writer anywhere, even in a comment, as an identifier token so spacing
     (`vars ()`) cannot hide it (`globals`, `locals`, `vars`, `exec`, `eval`,
-    `setattr`, `__dict__`, `global`, `__getattr__`, any `modules`), a
-    walrus `:=`, or `X` as an attribute anywhere (`.X`, as in
-    `tests.X = other`, which replaces the package attribute through any
-    receiver); or `P`
+    `setattr`, `__dict__`, `global`, `__getattr__`, any `modules`; any
+    token containing `setattr`, `delattr`, `globals`, `locals`, `frame`,
+    `import_module`, `importlib` or `runpy`; `__import__`), a walrus `:=`,
+    a non-ASCII character (Python NFKC-folds identifiers), `X` as an
+    attribute anywhere (`.X`, as in `tests.X = other`, which replaces the
+    package attribute through any receiver), or any import other than the
+    binding one that is relative or names a workspace module (at the root
+    or under `src`), whose code could write the attribute; another read
+    module under the package's top directory, or any read conftest, spells
+    `.X` or a non-ASCII attribute, or names `X` beside such a namespace
+    writer token (modules the bounded read skipped are not scanned); or `P`
     has a submodule or subpackage named `X`, which an import elsewhere could
     load over the binding. A followed `from M import Y as X` is a rename
     the package re-export reading does not follow; it is followed here

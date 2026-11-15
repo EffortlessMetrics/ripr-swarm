@@ -180,11 +180,13 @@ fn a_rebound_or_conditional_package_name_stays_unlinked() -> Result<(), String> 
 }
 
 #[test]
-fn an_attribute_write_or_dotted_import_of_the_package_name_stays_unlinked() -> Result<(), String> {
-    // `tests.tomllib = json` replaces the package attribute the relative
-    // import reads, and `import tomllib.sub` binds `tomllib` again in the
-    // same statement as the aliased import; Python then hands the test
-    // another module than tomli.
+fn a_package_name_replaceable_by_attribute_write_or_other_code_stays_unlinked() -> Result<(), String>
+{
+    // `tests.tomllib = json` (however spelled: spaced, continued, through
+    // `__setattr__`, a frame's globals, or NFKC-folded fullwidth letters)
+    // replaces the package attribute the relative import reads, and `import
+    // tomllib.sub` binds `tomllib` again in the same statement as the aliased
+    // import; Python then hands the test another module than tomli.
     let cases = [
         (
             "attribute-write",
@@ -202,9 +204,60 @@ fn an_attribute_write_or_dotted_import_of_the_package_name_stays_unlinked() -> R
             "mixed-aliased-and-dotted",
             "import tomli as tomllib, tomllib.sub\n",
         ),
+        (
+            "dunder-setattr",
+            "import tomli as tomllib\nimport json\nimport sys\nsys.modules[__name__].__setattr__(\"tomllib\", json)\n",
+        ),
+        (
+            "object-setattr",
+            "import tomli as tomllib\nimport json\nobject.__setattr__(__import__(__name__), \"tomllib\", json)\n",
+        ),
+        (
+            "frame-globals",
+            "import tomli as tomllib\nimport json\nimport inspect\ninspect.currentframe().f_globals[\"tomllib\"] = json\n",
+        ),
+        (
+            "fullwidth-attribute",
+            "import tomli as tomllib\nimport json\nimport tests\ntests.\u{ff54}\u{ff4f}\u{ff4d}\u{ff4c}\u{ff4c}\u{ff49}\u{ff42} = json\n",
+        ),
     ];
     for (label, init) in cases {
         let finding = tomli_case(label, Some(init), "from . import tomllib", &[])?;
+        expect_unlinked(label, &finding)?;
+    }
+    // Code outside the initializer that runs before the test can replace the
+    // attribute too: a submodule the initializer imports, a conftest, or
+    // another test module.
+    let elsewhere: [(&str, &str, &[(&str, &str)]); 4] = [
+        (
+            "initializer-runs-helper",
+            "import tomli as tomllib\nfrom . import helper\n",
+            &[("tests/helper.py", "import json\n")],
+        ),
+        (
+            "helper-writes-attribute",
+            "import tomli as tomllib\n",
+            &[(
+                "tests/helper.py",
+                "import json\nimport tests\ntests.tomllib = json\n",
+            )],
+        ),
+        (
+            "conftest-writes-attribute",
+            "import tomli as tomllib\n",
+            &[(
+                "conftest.py",
+                "import json\nimport tests\nsetattr(tests, \"tomllib\", json)\n",
+            )],
+        ),
+        (
+            "root-module-import",
+            "import tomli as tomllib\nimport support\n",
+            &[("support.py", "X = 1\n")],
+        ),
+    ];
+    for (label, init, extra) in elsewhere {
+        let finding = tomli_case(label, Some(init), "from . import tomllib", extra)?;
         expect_unlinked(label, &finding)?;
     }
     // An attribute read through the bound name is not a write of it.

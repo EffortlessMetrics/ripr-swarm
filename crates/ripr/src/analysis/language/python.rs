@@ -1688,7 +1688,7 @@ impl PythonAdapter {
         // before every reach and oracle reader of test imports.
         package_aliases::apply_package_import_aliases(
             &mut all_tests,
-            |file| workspace_read.sources.get(file).map(String::as_str),
+            &workspace_read.sources,
             |path| options.root.join(path).exists(),
         );
         // A chain conftest that exists but was never read (capped, excluded or
