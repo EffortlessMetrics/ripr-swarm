@@ -2085,7 +2085,7 @@ struct BindingFreeFileIndex {
 
 /// What [`binding_free_local_wrapper`] needs from a `macro_rules!`
 /// definition, independent of the call and the trusted names.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct WrapperDefinition {
     /// The byte range the definition reaches by textual scope: the rest of
     /// the file for a file-level definition, the bounding inline module
@@ -2095,6 +2095,10 @@ struct WrapperDefinition {
     /// The body exists, holds only inert tokens and captures no `tt`
     /// fragment.
     inert_body: bool,
+    /// The plain names the body invokes with `!` (`assert_eq!`, a recursive
+    /// `case!`). A call admits the wrapper only when each is this wrapper's
+    /// own name or a trusted name, which it checks against its own names.
+    body_bangs: Vec<String>,
 }
 
 #[cfg(test)]
@@ -2125,22 +2129,51 @@ impl WrapperDefinition {
             }
             _ => None,
         };
+        let mut body_bangs = Vec::new();
         let inert_body = definition.token_tree().is_some_and(|body| {
+            use ra_ap_syntax::SyntaxKind::{BANG, COLON, DOLLAR, IDENT};
             let body_tokens = non_trivia_tokens(body.syntax());
-            // A definition body admits no `!` at all, so the trusted names
-            // never decide this answer.
-            //
+            // A `!` in the body passes only right after a plain literal name
+            // (`assert_eq!`, a recursive `case!`): never after a fragment
+            // (`$m!` could be anything); `inert_tokens` refuses a path.
+            // Which names are allowed depends on the call, so they are
+            // kept, not judged, here.
+            let plain_bangs = body_tokens.iter().enumerate().all(|(index, token)| {
+                if token.kind() != BANG {
+                    return true;
+                }
+                let previous = index
+                    .checked_sub(1)
+                    .and_then(|before| body_tokens.get(before))
+                    .filter(|previous| previous.kind() == IDENT);
+                let fragment = index
+                    .checked_sub(2)
+                    .and_then(|before| body_tokens.get(before))
+                    .is_some_and(|before| before.kind() == DOLLAR);
+                match previous {
+                    Some(previous) if !fragment => {
+                        body_bangs.push(previous.text().trim_start_matches("r#").to_string());
+                        true
+                    }
+                    _ => false,
+                }
+            });
+            let names: Vec<&str> = body_bangs.iter().map(String::as_str).collect();
             // Only a `tt` fragment can capture a lone `!` (or `#`) from the
             // arguments and splice it after another name: `$m $bang ($n)`
             // turns `case!(define assert_eq!(x))` into `define!(assert_eq)`.
             // Every other fragment keeps a macro call or attribute whole.
-            inert_tokens(&body_tokens, &[], true)
+            plain_bangs
+                && inert_tokens(&body_tokens, &names)
                 && !body_tokens.windows(2).any(|pair| {
-                    pair[0].kind() == ra_ap_syntax::SyntaxKind::COLON
-                        && pair[1].text().trim_start_matches("r#") == "tt"
+                    pair[0].kind() == COLON && pair[1].text().trim_start_matches("r#") == "tt"
                 })
         });
-        Self { reach, inert_body }
+        Self {
+            reach,
+            inert_body,
+            body_bangs,
+        }
     }
 }
 
@@ -2231,10 +2264,11 @@ impl BindingFreeFileIndex {
 /// textual scope before the call, whose expansion cannot bind a macro name
 /// (#6648). The definition and the call arguments hold no binding word
 /// ([`BINDING_WORDS`]) and no attribute outside [`INERT_ATTRIBUTES`]; the
-/// definition invokes no bang macro and captures no `tt` fragment, and the
-/// arguments invoke only trusted names by their bare name. Nothing between
-/// the definition and this call may shadow it: no module item, and no macro
-/// call other than another inert call of the same wrapper. A wrapper
+/// definition captures no `tt` fragment and, like the arguments, invokes
+/// only trusted names by their bare name (the definition may also invoke
+/// itself). Nothing between the definition and this call may shadow it: no
+/// module item, and no macro call outside a block other than another inert
+/// call of the same wrapper. A wrapper
 /// reached by path (`a::wrap!`), named by a `use` in this file, defined
 /// twice, under an attribute other than a doc comment, inside a function or
 /// block, or used before or outside its definition's scope fails closed: it
@@ -2249,7 +2283,7 @@ fn binding_free_local_wrapper(
     let Some(name) = bare_macro_name(call) else {
         return false;
     };
-    if !inert_tokens(argument_tokens, trusted, false) {
+    if !inert_tokens(argument_tokens, trusted) {
         return false;
     }
     let named = |candidate: Option<ast::Name>| {
@@ -2270,16 +2304,28 @@ fn binding_free_local_wrapper(
     if definition_end > call_start {
         return false;
     }
-    let facts_of_definition = *facts
+    let facts_of_definition = facts
         .wrapper_definitions
         .borrow_mut()
         .entry(definition.syntax().text_range().start())
-        .or_insert_with(|| WrapperDefinition::of(definition));
+        .or_insert_with(|| WrapperDefinition::of(definition))
+        .clone();
     // The file-level reach is the whole file, which holds every call.
     if !facts_of_definition
         .reach
         .is_some_and(|reach| reach.contains(call_start))
         || !facts_of_definition.inert_body
+    {
+        return false;
+    }
+    // A body call of a trusted name resolves exactly as the same call
+    // passed in the arguments would, and a recursive call re-enters this
+    // same inert definition: neither can bind a name. Any other name may
+    // be a macro that emits a binding.
+    if !facts_of_definition
+        .body_bangs
+        .iter()
+        .all(|bang| *bang == name || trusted.contains(&bang.as_str()))
     {
         return false;
     }
@@ -2297,16 +2343,26 @@ fn binding_free_local_wrapper(
     // second `macro_rules!` of the same name, which this file never shows
     // but which shadows the first at the call. Even a trusted name may be
     // a local or imported macro there (`macro_rules! vec`), so only inert
-    // calls of this same wrapper may sit between them.
+    // calls of this same wrapper may sit between them. A call inside a
+    // block (a function body) is the exception: what it defines is scoped
+    // to that block, and a `#[macro_export]` copy only reaches path scope,
+    // which the textual definition takes precedence over.
+    let in_block = |other: &ast::MacroCall| {
+        other
+            .syntax()
+            .ancestors()
+            .skip(1)
+            .any(|node| ast::BlockExpr::can_cast(node.kind()))
+    };
     facts
         .calls
         .iter()
-        .filter(|other| between(other.syntax()))
+        .filter(|other| between(other.syntax()) && !in_block(other))
         .all(|other| {
             bare_macro_name(other).is_some_and(|other_name| other_name == name)
-                && other.token_tree().is_some_and(|tree| {
-                    inert_tokens(&non_trivia_tokens(tree.syntax()), trusted, false)
-                })
+                && other
+                    .token_tree()
+                    .is_some_and(|tree| inert_tokens(&non_trivia_tokens(tree.syntax()), trusted))
         })
 }
 
@@ -2330,10 +2386,9 @@ fn non_trivia_tokens(node: &SyntaxNode) -> Vec<ra_ap_syntax::SyntaxToken> {
 
 /// Whether macro tokens can bind nothing once expanded: no binding word, no
 /// attribute outside [`INERT_ATTRIBUTES`], and no `!` other than a bare
-/// trusted `name!` (none at all in a definition body, whose `$name!` could
-/// be anything). A unary `!` fails closed too: a `$b:tt` or a repetition
-/// can splice it after a name.
-fn inert_tokens(tokens: &[ra_ap_syntax::SyntaxToken], trusted: &[&str], definition: bool) -> bool {
+/// trusted `name!`. A unary `!` fails closed too: a `$b:tt` or a
+/// repetition can splice it after a name.
+fn inert_tokens(tokens: &[ra_ap_syntax::SyntaxToken], trusted: &[&str]) -> bool {
     use ra_ap_syntax::SyntaxKind::{BANG, COLON, COLON2, IDENT, L_BRACK, POUND};
     let word =
         |token: &ra_ap_syntax::SyntaxToken| token.text().trim_start_matches("r#").to_string();
@@ -2354,7 +2409,7 @@ fn inert_tokens(tokens: &[ra_ap_syntax::SyntaxToken], trusted: &[&str], definiti
                     .checked_sub(2)
                     .and_then(|before| tokens.get(before))
                     .is_some_and(|before| matches!(before.kind(), COLON | COLON2));
-                !definition && !qualified && trusted.contains(&word(previous).as_str())
+                !qualified && trusted.contains(&word(previous).as_str())
             }
             POUND => {
                 tokens

@@ -2596,14 +2596,22 @@ not themselves a static propagation proof.
   the call's arguments hold a binding word (`macro_rules`, `macro`, `use`,
   `extern`, `mod`, `include`, `macro_use`, `macro_export`,
   `no_implicit_prelude`) or an attribute other than a built-in test, lint,
-  `cfg` or `doc` attribute. The definition holds no `!` at all and captures
-  no `tt` fragment (the only fragment that can lift a lone `!` or `#` out of
-  the arguments and splice it after another name), and the arguments hold a
-  `!` only as a bare trusted `name!` (a unary `!` fails closed, since a `tt`
-  fragment or a repetition can splice it after a name). No module item sits
-  between the definition and the call, and every macro call there is another
-  such call of the same wrapper (even a trusted name may be a local macro
-  there), so nothing can bring in a shadowing definition. Attribute proc
+  `cfg` or `doc` attribute. The definition captures no `tt` fragment (the
+  only fragment that can lift a lone `!` or `#` out of the arguments and
+  splice it after another name), and the arguments hold a `!` only as a bare
+  trusted `name!` (a unary `!` fails closed, since a `tt` fragment or a
+  repetition can splice it after a name). The definition's body holds a `!`
+  only after a plain literal name that is a trusted name or the wrapper
+  itself (#14761): such a call resolves as the same call passed in the
+  arguments would, and a recursive call re-enters the same definition. A
+  `!` after a fragment (`$m!`), a path (`std::assert!`) or any other name
+  fails closed. No module item sits between the definition and the call,
+  and every macro call there outside a block is another such call of the
+  same wrapper (even a trusted name may be a local macro there), so nothing
+  can bring in a shadowing definition. A call inside a block, such as a
+  plain test function's `assert_eq!`, defines nothing outside that block,
+  and the textual definition takes precedence over a `#[macro_export]`
+  copy it might emit. Attribute proc
   macros elsewhere in the file stay invisible, as for every other site.
   `macro_use` or `no_implicit_prelude` anywhere in a non-trusted macro's
   arguments makes every trusted name ambiguous (stricter than the same
