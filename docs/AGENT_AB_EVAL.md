@@ -16,8 +16,8 @@ without ripr. Governing issue: #12912.
 | wall seconds per run (mean) | 34.5 | 44.7 | 1.30x |
 | test functions written (mean) | 12.7 | 10.8 | 0.85x |
 
-Paired (same task, same rep): ripr costs +5,200 tokens per run (95% CI
-+3,761 to +6,639) and +3.25 tool calls (95% CI +2.4 to +4.1).
+Paired (same task, same rep): ripr costs +5,200 tokens per run (t 95% CI
++3,709 to +6,690, n=36 pairs) and +3.25 tool calls (+2.4 to +4.1).
 
 **Reading.** Both arms hit the mutant ceiling on every task, including the
 two harder multi-change tasks written for this rerun. So ripr showed no
@@ -32,10 +32,11 @@ Where the extra calls go:
   `ripr check` first, gets `no_scope` because HEAD is the default base,
   then retries with `--base HEAD~1`.
 - **DONE is unreachable on 7 of 12 tasks (#14821).** `verify=complete`
-  appeared only on the single-change `ev_*` scenarios (15 of 36 runs
-  overall). Every multi-change task ended `verify=refused`
-  (`reason=unexposed_findings_remain`) on every rep, even with gaps=0 and
-  tests that kill every mutant. Agents then spend explain and recheck rounds
+  appeared in 15 of 36 ripr runs, all on five of the `ev_*` scenarios. The
+  four `ab_*` tasks, both `hard_*` tasks and `ev_struct_field` ended
+  `verify=refused` (`reason=unexposed_findings_remain`) on every rep where
+  the final check was captured. That includes runs with gaps=0 and tests
+  that kill every mutant. Agents then spend explain and recheck rounds
   and end with a "STOP, not DONE" hand-off.
 - **No signal on untested code (#14820).** On `hard_version`, FIND reported
   gaps=0 and a stop line while a new `compare` function had no test at all.
@@ -77,9 +78,9 @@ missing) test. The agent sees only the commit message.
 - `hard_*` (2): `ratelimit` (5 mutants) and `version` (7 mutants). These are
   multi-change commits with terse messages ("ratelimit: refill and take fixes").
 
-**Controls.** For every task the original weak tests catch 0 mutants (except
-`ev_tested_control`, which catches 1 of 1 by design), and a reference test file
-catches all of them. So the scorer can tell good tests from weak ones.
+**Controls.** For every task except `ev_tested_control`, the original weak
+tests catch 0 mutants and a reference test file catches all of them.
+`ev_tested_control`'s existing test already catches its 1 mutant, by design. So the scorer can tell good tests from weak ones.
 
 **Arms.** One fresh agent per run, the same small fast model in both arms. The
 prompt is identical except that the ripr arm adds the ripr binary path and
