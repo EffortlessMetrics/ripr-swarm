@@ -7,6 +7,8 @@
   the "Why this verdict" block no longer repeats the
   paragraph-long Next step or the stop-reason list the finding block already
   shows; it points at Next step instead. `Tests examined: 1 listed (3
-  assertion row(s) of 3)` now reads `Tests examined: 1 (3 assertions)`.
+  assertion row(s) of 3)` now reads `Tests examined: 1 (3 assertions)`,
+  counting only assertions ripr recorded (an assertion-free test reads `no
+  assertion recorded`).
   Verdicts, classes, evidence and next steps are unchanged;
   `--format human-full` is unchanged (#14811).

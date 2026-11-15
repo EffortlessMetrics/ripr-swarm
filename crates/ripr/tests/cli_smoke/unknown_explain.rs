@@ -163,6 +163,15 @@ fn unknown_explain_real_reasons_have_supported_actions_in_every_mode() -> TestRe
                     !text.contains("To change the verdict, a test needs to:"),
                     "{text}"
                 );
+                if name == "propagate_stdout_macro" {
+                    // Its test only calls `report(5)`: the retained row is an
+                    // evidence record, not an assertion, so the summary must
+                    // not count one.
+                    assert!(
+                        text.contains("  Tests examined: 1 (no assertion recorded)\n"),
+                        "{text}"
+                    );
+                }
                 let body = text
                     .split_once("\nNext step\n")
                     .ok_or("no Next step section")?

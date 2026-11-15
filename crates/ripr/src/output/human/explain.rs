@@ -45,6 +45,11 @@ pub(crate) fn render_verdict_explanation(
         let groups = group_rows_by_test(&finding.related_tests);
         out.push_str(&tests_examined_line(
             groups.len(),
+            finding
+                .related_tests
+                .iter()
+                .filter(|row| row.oracle.is_some())
+                .count(),
             finding.related_tests.len(),
             total,
         ));
@@ -149,27 +154,30 @@ pub(crate) fn render_verdict_explanation(
     out
 }
 
-/// `Tests examined: N (M assertions)`, with the retention window disclosed
-/// in the same line when ripr kept fewer assertion rows than it examined.
-fn tests_examined_line(tests: usize, kept_rows: usize, total_rows: usize) -> String {
-    let noun = |count: usize| {
-        if count == 1 {
-            "assertion"
-        } else {
-            "assertions"
-        }
+/// `Tests examined: N (M assertions)`. `M` counts only rows whose assertion
+/// ripr recorded: a related-test row is an evidence record, and an
+/// assertion-free test keeps one row with no assertion (`oracle: None`), so
+/// counting rows would report assertions a test does not have. When ripr
+/// kept fewer rows than it examined, the dropped rows' assertions are
+/// unknown, so the window is disclosed in rows.
+fn tests_examined_line(
+    tests: usize,
+    recorded_assertions: usize,
+    kept_rows: usize,
+    total_rows: usize,
+) -> String {
+    let assertions = match recorded_assertions {
+        0 => "no assertion recorded".to_string(),
+        1 => "1 assertion".to_string(),
+        n => format!("{n} assertions"),
     };
     if total_rows > kept_rows {
         format!(
-            "  Tests examined: {tests} listed ({kept_rows} of {total_rows} {} shown; \
-             ripr keeps the most closely related)\n",
-            noun(total_rows)
+            "  Tests examined: {tests} listed ({assertions}; showing {kept_rows} of \
+             {total_rows} matched rows, ripr keeps the most closely related)\n"
         )
     } else {
-        format!(
-            "  Tests examined: {tests} ({kept_rows} {})\n",
-            noun(kept_rows)
-        )
+        format!("  Tests examined: {tests} ({assertions})\n")
     }
 }
 
@@ -525,16 +533,22 @@ mod tests {
     #[test]
     fn tests_examined_line_counts_assertions_and_discloses_the_window() {
         assert_eq!(
-            tests_examined_line(1, 1, 1),
+            tests_examined_line(1, 1, 1, 1),
             "  Tests examined: 1 (1 assertion)\n"
         );
         assert_eq!(
-            tests_examined_line(1, 3, 3),
+            tests_examined_line(1, 3, 3, 3),
             "  Tests examined: 1 (3 assertions)\n"
         );
+        // An assertion-free test keeps one row with no recorded assertion;
+        // that row is not an assertion.
         assert_eq!(
-            tests_examined_line(2, 3, 9),
-            "  Tests examined: 2 listed (3 of 9 assertions shown; ripr keeps the most closely related)\n"
+            tests_examined_line(1, 0, 1, 1),
+            "  Tests examined: 1 (no assertion recorded)\n"
+        );
+        assert_eq!(
+            tests_examined_line(2, 2, 3, 9),
+            "  Tests examined: 2 listed (2 assertions; showing 3 of 9 matched rows, ripr keeps the most closely related)\n"
         );
     }
 
