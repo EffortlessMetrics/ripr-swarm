@@ -5645,10 +5645,7 @@ mod tests {
                             return Err(format!("orthogonal fixture eligible: {name}"));
                         }
                     }
-                    (
-                        Some("orthogonal"),
-                        Some("other_behavior_assertion_passed_over"),
-                    ) => {
+                    (Some("orthogonal"), Some("other_behavior_assertion_passed_over")) => {
                         orthogonal += 1;
                         if eligible {
                             return Err(format!("orthogonal fixture eligible: {name}"));
