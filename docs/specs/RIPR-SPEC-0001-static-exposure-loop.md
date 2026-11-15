@@ -271,13 +271,15 @@ and literal consumer controls are specified by
 - LSP diagnostics and hover content when used through the editor
 - agent context packet for a selected finding
 
-For the same workspace and diff, diff-scoped `check` output is byte-identical
-across repeated runs, a cold or warm run cache, analysis worker counts
-(`RAYON_NUM_THREADS`), and the order in which the workspace's files were
-written. Exceptions are documented, not drift: formats whose contract stamps
-a per-run time (`check-findings-json` and the `repo-*` artifacts), the
-absolute root carried in rerun commands, and the human digest's one-time
-first-run legend (#10481) (#14230).
+For the same workspace, diff and root path, `ripr check --diff` stdout in the
+pinned formats (`human`, `human-full`, `json`, `json-terse`, `agent`,
+`github`, `sarif`, `missed-txt`) is byte-identical across repeated runs, a
+cold or warm run cache, one or four analysis workers (`RAYON_NUM_THREADS`),
+and the workspace's files written in reverse order. Not covered by this
+contract: `check-findings-json`, whose artifact stamps a per-run time, and
+the human digest's one-time first-run legend (#10481), which is intended
+state. Rerun commands carry the absolute root, so output also differs by
+checkout location (#14230).
 
 ## Classifications
 
