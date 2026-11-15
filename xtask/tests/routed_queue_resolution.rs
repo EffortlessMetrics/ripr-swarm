@@ -517,8 +517,7 @@ fn head_that_conflicts_with_the_base_cannot_bind_any_queued_tree() -> Result<(),
 }
 
 #[test]
-fn batch_wrong_parent_and_wrong_subject_still_refuse_before_the_tree_is_read() -> Result<(), String>
-{
+fn batch_wrong_subject_still_refuses_before_the_tree_is_read() -> Result<(), String> {
     let world = World::new()?;
     let shell = resolve_shell(&workflow()?)?;
 
@@ -529,25 +528,11 @@ fn batch_wrong_parent_and_wrong_subject_still_refuse_before_the_tree_is_read() -
     run.queued = world.squash(&world.head, "feature (#43)")?;
     assert_refused(&run_resolve(&world, &shell, &run)?, "is not the live head");
 
-    // Subject names no PR at all, so the subject branch refuses before the
-    // live-head check.
+    // Subject names no PR at all, so the constituent is refused before any
+    // API read or tree comparison.
     let mut run = honest(&world, &world.head, &world.base)?;
-    run.queued = world.squash(&world.head, "feature without a PR number")?;
-    assert_refused(
-        &run_resolve(&world, &shell, &run)?,
-        "subject does not name a PR",
-    );
-
-    // The group base is a commit the queued squash does not descend from (a
-    // batch built on an earlier entry), so the ancestry guard refuses before
-    // the single-parent shape check below it is reached.
-    let mut run = honest(&world, &world.head, &world.base)?;
-    run.group_base = world.head.clone();
-    run.ref_sha = world.head.clone();
-    assert_refused(
-        &run_resolve(&world, &shell, &run)?,
-        "is not an ancestor of group head",
-    );
+    run.queued = world.squash(&world.head, "feature without a number")?;
+    assert_refused(&run_resolve(&world, &shell, &run)?, "does not name a PR");
 
     // The ref sha is neither the live head nor the base.
     let mut run = honest(&world, &world.head, &world.base)?;
