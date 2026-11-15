@@ -66,12 +66,16 @@ first Ready, validate the body offline and fix every line it names:
 ## Draft to Ready handoff
 
 Publish a coherent candidate as Draft. The review, repair and evidence boundaries
-below apply to candidate preparation. The label-request sequence describes the
-installed legacy route until verified migration; after verified queue activation,
-use [the native-queue procedure](MERGE_FLOW.md#selected-native-queue-procedure-after-verified-activation)
-for qualification and conditional landing authorization instead. For the legacy
-route, the delivery owner completes this order before spending the
-`merge-ready`-requested `Ripr Rust Small Result` qualification:
+below apply to candidate preparation. Ordinary development does not request CI.
+The selected, reviewed candidate uses the installed qualification route. After
+verified queue activation, use
+[the native-queue procedure](MERGE_FLOW.md#selected-native-queue-procedure-after-verified-activation)
+for conditional landing and actual-G qualification. During the current bootstrap,
+GitHub can still require the installed H check before enqueue; the delivery owner
+may request that check through `merge-ready` after completing this preparation.
+Auxiliary event retirement does not replace that producer with cheap H admission.
+Retire its label request only after the replacement is qualified and enforced.
+The delivery owner completes this preparation order:
 
 1. Bind the exact candidate head and integration basis. Complete directed
    substantive review through `review-pr` inline in the owning session's main
@@ -112,13 +116,15 @@ route, the delivery owner completes this order before spending the
    [local and hosted proof route](agent-context/validation.md#local-and-hosted-proof):
    record the unavailable dimension and reason, completed available checks, and
    existing authorized narrow hosted qualification that will establish it.
-   `REVIEW_INCOMPLETE` may retain that evidence gap and merge-ready-requested proof;
-   unavailable proof is not a pass. It cannot excuse an executable but unrun
+   `REVIEW_INCOMPLETE` may retain that evidence gap pending the applicable
+   authorized qualification route; unavailable proof is not a pass. It cannot excuse an executable but unrun
    applicable local check, unfinished review or repair, a known-red test, or
-   missing claim-essential native proof. After Ready, inspect the existing label, request and runs for the exact head
-   and subject before acting. The `merge-ready` label requests qualification;
-   Ready alone requests nothing;
-   `REVIEW_READY` and required proof still govern merge under `finish-pr`.
+   missing claim-essential native proof. After Ready, inspect the existing
+   native request and runs for the exact head and subject before acting. Ready
+   alone requests nothing; `REVIEW_READY` and required proof still govern merge
+   under `finish-pr`. If the installed required H check is still needed before
+   enqueue, use its retained label request as described below; do not duplicate
+   an existing current-subject request.
 
 After Ready, inspect the actual job checkout commit, parents and tree against
 the reviewed candidate and basis. A run's head SHA or a pre-Ready ref observation
@@ -128,7 +134,13 @@ or subject is verified; do not relabel that run as proof for the local tree or
 re-apply `merge-ready` merely to refresh it.
 
 A new head or material finding returns the candidate to Draft for one joined
-repair/proof/review wave. Preserve unaffected evidence. Before any label request,
+repair/proof/review wave. Preserve unaffected evidence.
+
+### Retained label-request reconciliation
+
+These details apply while the installed qualification producer still needs its
+label request. A selected, reviewed candidate may use that route; it is not
+development feedback and cannot restore a retired auxiliary subscriber. Before a label request,
 read the current head, label and admitted run state, including the run subject:
 
 - Preserve a queued or running current-subject run and its link; reapplying the

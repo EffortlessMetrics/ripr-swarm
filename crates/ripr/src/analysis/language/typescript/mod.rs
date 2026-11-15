@@ -1397,11 +1397,46 @@ impl TypeScriptAdapter {
                 .filter(|facts| facts.parse_error.is_none())?;
                 Some((source.lines().collect::<Vec<_>>(), facts))
             });
+            // #14097: the wrapped signature of a new owner, read once per
+            // changed file. A header line whose removed counterpart looks
+            // like it is a changed signature, so it does not count as added
+            // and the whole header keeps its probes.
+            let wrapped_header_lines = ast_probe_facts
+                .as_ref()
+                .map(|(source_lines, _)| {
+                    let added_line_numbers: std::collections::HashSet<usize> = changed
+                        .added_lines
+                        .iter()
+                        .filter(|added| {
+                            !counterparts
+                                .get(&added.line)
+                                .is_some_and(|removed| lines_look_alike(&removed.text, &added.text))
+                        })
+                        .map(|added| added.line)
+                        .collect();
+                    new_owner_wrapped_header_lines(
+                        &changed.path,
+                        &changed_norm,
+                        source_lines,
+                        &all_owners,
+                        &removed_texts,
+                        |line| added_line_numbers.contains(&line),
+                        |line| {
+                            changed.added_lines.iter().any(|other| {
+                                other.line == line && is_probe_candidate(other.line, &other.text)
+                            })
+                        },
+                    )
+                })
+                .unwrap_or_default();
             for added in &changed.added_lines {
                 if inside_private_member_boundary(&private_boundaries, added.line) {
                     continue;
                 }
                 if !is_probe_candidate(added.line, &added.text) {
+                    continue;
+                }
+                if wrapped_header_lines.contains(&added.line) {
                     continue;
                 }
                 // New-declaration guard: the opening line of a NEW function,

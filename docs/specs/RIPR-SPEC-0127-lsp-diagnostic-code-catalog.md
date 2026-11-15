@@ -10,6 +10,7 @@ Linked issues:
 
 - #1662
 - #11253
+- #11666
 
 ## Problem
 
@@ -81,7 +82,17 @@ constructor that is the single source of truth for that family:
   the marker state changes (re-served to other open documents, cleared from
   quarantined open documents when it is withdrawn), once when a document is
   opened after the snapshot committed, and retracts it when a document is
-  closed or the workspace root changes or the session shuts down;
+  closed or the workspace root changes or the session shuts down; the same
+  code and the same serve-time lifecycle also mark (#13562) every in-root
+  document of a snapshot whose outcome is incomplete (`partial_with_limitations`,
+  `unsupported_input`, `analysis_failed`) and which holds no finding, gap row
+  or stored diagnostic (`data.kind` `incomplete_analysis`), so an incomplete
+  run with no row, such as a `diff_scope_oversized`, `malformed_diff` or
+  `combined_hunk_unsupported` limitation, does not read as an all-clear. Its
+  text is the typed outcome's own limitation wording (plain labels and
+  producer-owned recovery text, at most three limitations named and the rest
+  counted), a static advisory and not runtime evidence; it never stacks on
+  the empty-scope marker or on a stored per-file marker;
   `ripr-diagnostic-preview-withheld` (#11296) is the Hint on a file whose
   preview-language findings the actionable profile withheld, or (#11798) any
   other gap-class finding it withheld, outside the
@@ -95,6 +106,38 @@ constructor that is the single source of truth for that family:
   are silent apart from the marker count), are absent in the `full` profile, never use Warning severity, and carry no
   finding id, repair, witness, or `preview_actionability` data.
   These are not analyzer findings or actionable repairs.
+
+The quarantine-withdrawn marker names its cause through `data.reason`, the
+hover and log text, and the workspace-status `staleness_reason`. When a
+`didOpen` is refused because the store-wide open-document or retained-text
+limit was reached (#11666), the document is held as an unknown-authority
+placeholder with empty text and the reason is `document_store_limit_reached`,
+not `invalid_incremental_change`: the text says the editor buffer was not
+tracked because the open-document limit was reached, with the recovery of
+closing other open files and reopening this one (`data.recovery`
+`close_other_documents_then_reopen`). The placeholder stays fail-closed (no
+line-local diagnostics, no restored authority from a save without client text
+or from a replacement past either limit), so the reason changes disclosure
+only and never relaxes withdrawal. A healthy document's client-provided
+`didSave` text is retained text too: when it would exceed the retained-text
+limit it is not adopted (neither the text nor its digest), and the document
+loses buffer authority under the same `document_store_limit_reached` reason,
+as an over-limit full-replacement `didChange` does. Placeholders are bounded as
+well (4,096). A refused URI beyond that bound is not stored at all; instead the
+store withdraws every URI that has no stored state under
+`document_store_limit_reached` (push publication, document and workspace pull,
+hover, lens and actions all read the same accessor), so an untracked buffer is
+never served line-local diagnostics. This is deliberately over-broad: a
+never-opened URI reads as withdrawn too while the latch is set, and closed or
+never-opened workspace files in the workspace pull are likewise withdrawn as
+`document_store_limit_reached`. Closing documents, even all of them, does not
+clear it, because untracked buffers may still be open in the client. Neither
+does a root transition, which keeps the open documents and the client's
+untracked buffers. Only shutdown clears it, so within a session recovery
+requires a server restart. A document already quarantined under another
+reason that then loses authority to the store limit refreshes its marker to
+the new reason without repeating the once-per-episode disclosure. This is a
+static delivery limitation, not a finding, repair, or runtime outcome.
 
 Each catalog entry carries the code identity used today: the stable `code` and
 the deprecated `aliases` that still resolve to it. Compatibility aliases are
@@ -173,9 +216,22 @@ asks for an action that is already underway (#11253):
 - With no committed snapshot and no queued or running attempt, the existing
   "has not analyzed this workspace yet" wording and `ripr.refresh` route stay.
 
-The `ripr-diagnostic-analysis-pending` marker, its result ids and its wire
-shape are unchanged. These are advisory hover words using static vocabulary;
-they make no runtime-outcome or test-sufficiency claim.
+The `ripr-diagnostic-analysis-pending` marker follows the same rule (#14447).
+While no snapshot exists and an attempt is queued or running, the marker says
+"ripr analysis is in progress" and that results replace it when the attempt
+finishes, under recovery `analysis_running`, on push and on both pull paths.
+A push client also gets that route when an unblocked refresh is about to
+start an attempt; a pull client is asked to re-pull once the attempt is
+queued. The marker does not request `ripr.refresh`. When the attempt ends
+without a snapshot and no follow-up attempt starts, the marker returns to
+recovery `save_or_refresh` and its "has not analyzed this workspace yet"
+wording. Blocked states keep their own recovery routes. A pull client is
+asked to re-pull only when the served recovery route changes.
+
+The marker's code, data kind and state are unchanged; #14447 adds only the
+`analysis_running` recovery and its result id. These are advisory hover
+words using static vocabulary; they make no runtime-outcome or
+test-sufficiency claim.
 
 ## Required Evidence
 
@@ -241,6 +297,15 @@ they make no runtime-outcome or test-sufficiency claim.
   covers production constructors for pending, overflow, and unsupported
   markers: they keep their existing wire recovery ids and resolve to the
   catalog metadata for those families.
+- `analysis_pending_tests.rs::analysis_pending_marker_names_a_running_attempt_instead_of_asking_to_start_one`
+  pins the pull marker's `analysis_running` route while an attempt is queued
+  or running and the return to `save_or_refresh` after a failed attempt;
+  `lsp/tests.rs::framed_push_client_pending_marker_names_the_running_first_analysis`
+  pins the push marker on an unblocked didOpen and its retraction on commit;
+  `lsp/tests.rs::framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_first_analysis`
+  pins the return to `save_or_refresh` after a failed first attempt; and
+  `analysis_pending_tests.rs::analysis_pending_blocked_routes_win_over_a_running_attempt`
+  pins blocked routes over a running attempt (#14447).
 - `lsp/tests.rs::hover_without_evidence_states_are_distinct_and_static` and
   the two `backend.rs::pull_disclosure_dedup_tests::no_evidence_hover_*` tests pin the in-progress
   and clean-workspace hover states against their discriminating negatives

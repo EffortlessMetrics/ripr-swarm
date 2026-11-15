@@ -429,7 +429,7 @@ fn refuse_with_stale_cleanup(
 
 fn load_pr_evidence(repo: &Path, relative: &str) -> PrEvidenceInput {
     let path = repo.join(relative);
-    let Ok(text) = fs::read_to_string(&path) else {
+    let Ok(text) = crate::bounded_input::read_to_string(&path) else {
         return PrEvidenceInput {
             value: None,
             state: InputState::Missing,
