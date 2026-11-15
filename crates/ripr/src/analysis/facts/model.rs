@@ -1805,8 +1805,8 @@ impl ProbeShapeKind {
 }
 
 /// One parser-owned probe site. Lines and byte offsets are stored as `u32`
-/// (rust-analyzer's `TextSize` bounds every offset, and a line number never
-/// exceeds its byte offset), which keeps the run-wide shape vectors about a
+/// (rust-analyzer's `TextSize` bounds every offset, and a 1-based line number
+/// never exceeds its byte offset plus one), which keeps the run-wide shape vectors about a
 /// third smaller (#13703). Read them through the `usize` accessors.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProbeShapeFact {

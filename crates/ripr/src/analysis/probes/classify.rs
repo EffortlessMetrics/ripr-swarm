@@ -356,7 +356,7 @@ fn unsafe_boundary_syntax_range(
         let Some(token) = function.unsafe_token() else {
             continue;
         };
-        if u32::from(token.text_range().start()) as usize == shape.start_byte() {
+        if u32::from(token.text_range().start()) == shape.start_byte {
             return Some(function.syntax().text_range());
         }
     }
@@ -364,7 +364,7 @@ fn unsafe_boundary_syntax_range(
         let Some(token) = block.unsafe_token() else {
             continue;
         };
-        if u32::from(token.text_range().start()) as usize == shape.start_byte() {
+        if u32::from(token.text_range().start()) == shape.start_byte {
             return Some(block.syntax().text_range());
         }
     }
