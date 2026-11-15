@@ -75,12 +75,14 @@ fn rerun_missing_gap_ledger_recovery_executes_the_rust_producer() -> TestResult 
             "fixture inventory failed: {inventory:?}"
         );
         let inventory_json: serde_json::Value = serde_json::from_slice(&inventory.stdout)?;
+        // The predicate seam plus the two strongly gripped `return_value`
+        // branch seams (#14385); only the predicate seam carries the gap.
         assert_eq!(
             inventory_json["seams"]
                 .as_array()
                 .ok_or("missing seams")?
                 .len(),
-            1
+            3
         );
         assert_eq!(
             inventory_json["seams"][0]["evidence_record"]["canonical_gap_id"],
@@ -167,9 +169,11 @@ fn rerun_missing_gap_ledger_recovery_executes_the_rust_producer() -> TestResult 
         );
         let ledger: serde_json::Value =
             serde_json::from_slice(&std::fs::read(foreign.join("gap-ledger.json"))?)?;
+        // The predicate gap plus the two already-observed `return_value`
+        // branch records (#14385); the gap stays first.
         assert_eq!(
             ledger["records"].as_array().ok_or("missing records")?.len(),
-            1
+            3
         );
         assert_eq!(ledger["records"][0]["canonical_gap_id"], gap);
         assert!(stderr.contains("retry with `--gap-ledger gap-ledger.json`"));
@@ -369,9 +373,11 @@ fn root_binding_fixture_named(
         "default capture failed: {captured:?}"
     );
     let inventory: serde_json::Value = serde_json::from_slice(&captured.stdout)?;
+    // The predicate seam plus the two strongly gripped `return_value` branch
+    // seams (#14385); only the predicate seam carries the gap.
     assert_eq!(
         inventory["seams"].as_array().ok_or("missing seams")?.len(),
-        1
+        3
     );
     assert_eq!(
         inventory["seams"][0]["evidence_record"]["canonical_gap_id"],
@@ -397,9 +403,11 @@ fn root_binding_fixture_named(
         "default producer failed: {produced:?}"
     );
     let ledger: serde_json::Value = serde_json::from_slice(&std::fs::read(&fixture.ledger)?)?;
+    // The predicate gap plus the two already-observed `return_value`
+    // branch records (#14385); the gap stays first.
     assert_eq!(
         ledger["records"].as_array().ok_or("missing records")?.len(),
-        1
+        3
     );
     assert_eq!(ledger["records"][0]["canonical_gap_id"], ROOT_BINDING_GAP);
     assert!(
@@ -861,12 +869,14 @@ fn root_binding_lsp_alias_contract(
     )?;
     assert!(captured.status.success(), "B capture failed: {captured:?}");
     let inventory: serde_json::Value = serde_json::from_slice(&captured.stdout)?;
+    // The predicate seam plus the two strongly gripped `return_value` branch
+    // seams (#14385); only the predicate seam carries the gap.
     assert_eq!(
         inventory["seams"]
             .as_array()
             .ok_or("missing B seams")?
             .len(),
-        1
+        3
     );
     assert_eq!(
         inventory["seams"][0]["evidence_record"]["canonical_gap_id"],

@@ -792,7 +792,7 @@ fn brief_artifact_command_inspect_packet_prepares_its_directory() -> Result<(), 
 #[test]
 fn brief_artifact_command_after_snapshot_prepares_its_directory() -> Result<(), String> {
     brief_artifact_command_journey(
-        "/top_seams/0/verification/after_snapshot_command",
+        "/next/after_snapshot_command",
         "after.repo-exposure.json",
         "seams",
     )
@@ -801,7 +801,7 @@ fn brief_artifact_command_after_snapshot_prepares_its_directory() -> Result<(), 
 #[test]
 fn brief_artifact_command_before_snapshot_prepares_its_directory() -> Result<(), String> {
     brief_artifact_command_journey(
-        "/top_seams/0/verification/before_snapshot_command",
+        "/next/before_snapshot_command",
         "before.repo-exposure.json",
         "seams",
     )

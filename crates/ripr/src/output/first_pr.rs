@@ -782,7 +782,7 @@ fn materialize_check_output_gap_ledger(
         return Ok(());
     };
     let check_output_path = resolve_path(root, check_output);
-    let contents = fs::read_to_string(&check_output_path).map_err(|err| {
+    let contents = crate::bounded_input::read_to_string(&check_output_path).map_err(|err| {
         format!(
             "first-pr --check-output {} is invalid: read failed: {err}",
             check_output_path.display()
@@ -3020,7 +3020,7 @@ enum ArtifactReadError {
 }
 
 fn read_json(path: &Path) -> Result<Value, ArtifactReadError> {
-    let text = fs::read_to_string(path).map_err(|error| {
+    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             ArtifactReadError::Missing
         } else {
@@ -3033,7 +3033,7 @@ fn read_json(path: &Path) -> Result<Value, ArtifactReadError> {
 /// Read and hash the same bytes that selection consumes. A later replacement
 /// at the same path cannot validate an older no-action packet as current.
 fn read_json_with_digest(path: &Path) -> Result<(Value, String), ArtifactReadError> {
-    let bytes = fs::read(path).map_err(|error| {
+    let bytes = crate::bounded_input::read(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             ArtifactReadError::Missing
         } else {
@@ -9157,7 +9157,13 @@ mod tests {
             Err(error) => error,
             Ok(()) => return Err("file occupying --out-dir must fail".to_string()),
         };
-        assert!(error.contains(&format!("create {out} failed:")), "{error}");
+        assert!(
+            error.contains(&format!(
+                "--out-dir {out} is an existing file, but --out-dir names the directory"
+            )),
+            "a file occupying the output directory names the flag and the fix: {error}"
+        );
+        assert!(!error.contains("os error"), "{error}");
         assert!(
             !error.contains("write elsewhere"),
             "a file occupying --out-dir is not a not-writable tree: {error}"

@@ -504,6 +504,17 @@ pub(crate) fn render_with_config(
             true,
         );
         field(&mut out, 2, "stop_reason", scope.stop_reason.as_str(), true);
+        // #13641: files that alone exceed the analysis-cost line limit and
+        // were left out instead of refusing. Emitted only when present, so
+        // existing partial-scope goldens are unchanged.
+        if !scope.over_limit_files.is_empty() {
+            let paths: Vec<String> = scope
+                .over_limit_files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect();
+            array_field(&mut out, 2, "over_limit_files", &paths, true);
+        }
         field(
             &mut out,
             2,
@@ -785,6 +796,14 @@ pub(crate) fn render_with_config(
         out.push_str(",\n  \"language_completeness\": ");
         out.push_str(&view.to_json_value().to_string());
     }
+    // Additive verbose-only file-fact cache telemetry (#4975). Default JSON
+    // stays byte-identical; `-v`/`--verbose` names reuse/recompute/failures.
+    if crate::is_verbose() {
+        crate::output::check_file_fact_cache::append_verbose_json_fields(
+            &mut out,
+            output.file_fact_cache.as_ref(),
+        );
+    }
     out.push_str("}\n");
     out
 }
@@ -1016,6 +1035,10 @@ fn finding_json_with_config_and_counts(
         false,
     );
     out.push_str(&format!("{} }},\n", "  ".repeat(indent + 1)));
+    // RIPR-SPEC-0429: the staged-evidence rows, additive beside the `ripr`
+    // stages they project. The human Evidence block stays prose; this is the
+    // row form machine consumers read instead of parsing `evidence_path`.
+    crate::output::stage_rows::stage_rows_json(out, indent + 1, finding, true);
     let evidence_path = evidence_path_values(finding);
     array_field(out, indent + 1, "evidence_path", &evidence_path, true);
     flow_sinks_json(out, finding, indent + 1);
@@ -2028,6 +2051,7 @@ mod harness_projection_tests {
             owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
             analyzed_revisions: None,
         }
     }
