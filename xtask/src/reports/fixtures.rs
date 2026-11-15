@@ -40,38 +40,51 @@ pub(crate) fn fixtures_impl(name: Option<&String>) -> Result<(), String> {
         Some(value) => vec![fixture_dir_for_name(value)?],
         None => fixture_dirs,
     };
-    // Parallelize fixture execution via rayon (#2415). Each fixture is
-    // independent (disjoint input/expected dirs), so parallel runs produce
-    // identical output.
-    let results: Vec<FixtureResult> = selected
-        .par_iter()
-        .map(|path| {
-            if !path.exists() {
-                return Ok((
-                    vec![format!("fixture does not exist: {}", normalize_path(path))],
-                    None,
-                ));
-            }
-            if !path.is_dir() {
-                return Ok((
-                    vec![format!(
-                        "fixture is not a directory: {}",
-                        normalize_path(path)
-                    )],
-                    None,
-                ));
-            }
-            let contract_violations = fixture_contract_violations(path)?;
-            if !contract_violations.is_empty() {
-                return Ok((contract_violations, None));
-            }
-            match run_fixture(path) {
-                Ok(run) => Ok((run.comparison_violations(), Some(run))),
-                Err(err) => Err(err),
-            }
-        })
-        .collect();
+    let run_set = collect_fixture_runs(selected, evaluate_fixture);
+    write_fixture_report(name.map(String::as_str), &run_set)?;
+    if run_set.violations.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "fixture command failed; see target/ripr/reports/fixtures.md\n{}",
+            run_set.violations.join("\n")
+        ))
+    }
+}
 
+fn evaluate_fixture(path: &Path) -> FixtureResult {
+    if !path.exists() {
+        return Ok((
+            vec![format!("fixture does not exist: {}", normalize_path(path))],
+            None,
+        ));
+    }
+    if !path.is_dir() {
+        return Ok((
+            vec![format!(
+                "fixture is not a directory: {}",
+                normalize_path(path)
+            )],
+            None,
+        ));
+    }
+    let contract_violations = fixture_contract_violations(path)?;
+    if !contract_violations.is_empty() {
+        return Ok((contract_violations, None));
+    }
+    match run_fixture(path) {
+        Ok(run) => Ok((run.comparison_violations(), Some(run))),
+        Err(err) => Err(err),
+    }
+}
+
+/// Evaluate each selected fixture once, retaining deterministic input order.
+/// Both reports consume this in-memory result; no persisted result is reused.
+fn collect_fixture_runs(
+    selected: Vec<PathBuf>,
+    evaluate: impl Fn(&Path) -> FixtureResult + Sync,
+) -> GoldenRunSet {
+    let results: Vec<FixtureResult> = selected.par_iter().map(|path| evaluate(path)).collect();
     let mut violations = Vec::new();
     let mut runs = Vec::new();
     for result in results {
@@ -85,24 +98,28 @@ pub(crate) fn fixtures_impl(name: Option<&String>) -> Result<(), String> {
             Err(err) => violations.push(err),
         }
     }
-
-    let body = fixture_report_body(name.map(String::as_str), &selected, &runs, &violations);
-    write_report("fixtures.md", &body)?;
-
-    if violations.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "fixture command failed; see target/ripr/reports/fixtures.md\n{}",
-            violations.join("\n")
-        ))
+    GoldenRunSet {
+        fixtures: selected,
+        runs,
+        violations,
     }
+}
+
+fn write_fixture_report(name: Option<&str>, run_set: &GoldenRunSet) -> Result<(), String> {
+    let body = fixture_report_body(name, &run_set.fixtures, &run_set.runs, &run_set.violations);
+    write_report("fixtures.md", &body)
 }
 
 pub(crate) fn goldens_impl(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("prepare") => preparation::prepare(&args[1..]),
         Some("check") => goldens_check(),
+        Some("check-with-fixtures") if args.len() == 1 => {
+            match golden_check_run_with_fixture_report(true)? {
+                GoldenCheckRun::Clean => Ok(()),
+                GoldenCheckRun::Failed { message, .. } => Err(message),
+            }
+        }
         Some("bless") => {
             let Some(name) = args.get(1) else {
                 return Err(
@@ -114,10 +131,10 @@ pub(crate) fn goldens_impl(args: &[String]) -> Result<(), String> {
             goldens_bless(name, &reason)
         }
         Some(other) => Err(format!(
-            "unknown goldens command `{other}`\nusage: cargo xtask goldens prepare [--offline]\n       cargo xtask goldens check\n       cargo xtask goldens bless <name> --reason <reason>"
+            "unknown goldens command `{other}`\nusage: cargo xtask goldens prepare [--offline]\n       cargo xtask goldens check\n       cargo xtask goldens check-with-fixtures\n       cargo xtask goldens bless <name> --reason <reason>"
         )),
         None => Err(
-            "missing goldens command\nusage: cargo xtask goldens prepare [--offline]\n       cargo xtask goldens check\n       cargo xtask goldens bless <name> --reason <reason>"
+            "missing goldens command\nusage: cargo xtask goldens prepare [--offline]\n       cargo xtask goldens check\n       cargo xtask goldens check-with-fixtures\n       cargo xtask goldens bless <name> --reason <reason>"
                 .to_string(),
         ),
     }
@@ -143,6 +160,10 @@ enum GoldenCheckRun {
 }
 
 fn golden_check_run() -> Result<GoldenCheckRun, String> {
+    golden_check_run_with_fixture_report(false)
+}
+
+fn golden_check_run_with_fixture_report(fixtures_report: bool) -> Result<GoldenCheckRun, String> {
     if let Err(err) = preparation::ensure_ready() {
         let violations = vec![err];
         let provenance = golden_drift_provenance();
@@ -152,7 +173,7 @@ fn golden_check_run() -> Result<GoldenCheckRun, String> {
             violations,
         });
     }
-    let mut run_set = collect_golden_runs()?;
+    let mut run_set = collect_golden_runs_with_fixture_report(fixtures_report)?;
     // #12928: print the expected-class ledger; the per-language count may only rise.
     let (ledger_line, ratchet_violations) = crate::fixture_expected_classes::ledger_report(
         Path::new("fixtures"),
@@ -343,44 +364,23 @@ pub(crate) fn golden_drift_impl() -> Result<(), String> {
 }
 
 fn collect_golden_runs() -> Result<GoldenRunSet, String> {
-    let fixture_dirs = fixture_dirs()?;
+    collect_golden_runs_with_fixture_report(false)
+}
+
+fn collect_golden_runs_with_fixture_report(fixtures_report: bool) -> Result<GoldenRunSet, String> {
+    let selected = fixture_dirs()?;
     let mut violations = golden_assistant_loop_health_contract_violations_at(Path::new(
         "fixtures/boundary_gap/expected/assistant-loop-health",
     ))?;
-    // Parallelize fixture execution via rayon (#2415). Each fixture is independent
-    // (disjoint input/expected dirs), so parallel runs produce identical output.
-    // The sequential results are collected in input order for deterministic reports.
-    let results: Vec<FixtureResult> = fixture_dirs
-        .par_iter()
-        .map(|fixture| {
-            let contract_violations = fixture_contract_violations(fixture)?;
-            if !contract_violations.is_empty() {
-                return Ok((contract_violations, None));
-            }
-            match run_fixture(fixture) {
-                Ok(run) => Ok((run.comparison_violations(), Some(run))),
-                Err(err) => Err(err),
-            }
-        })
-        .collect();
-
-    let mut runs = Vec::new();
-    for result in results {
-        match result {
-            Ok((vios, maybe_run)) => {
-                violations.extend(vios);
-                if let Some(run) = maybe_run {
-                    runs.push(run);
-                }
-            }
-            Err(err) => violations.push(err),
-        }
+    let mut run_set = collect_fixture_runs(selected, evaluate_fixture);
+    if fixtures_report {
+        // Preserve the fixtures-only verdict before adding golden-only checks.
+        // A failed write fails the joint command; it cannot certify both reports.
+        write_fixture_report(None, &run_set)?;
     }
-    Ok(GoldenRunSet {
-        fixtures: fixture_dirs,
-        runs,
-        violations,
-    })
+    violations.append(&mut run_set.violations);
+    run_set.violations = violations;
+    Ok(run_set)
 }
 
 /// One `git ls-files --eol` row: index/worktree ending classes and the raw
@@ -624,76 +624,188 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
     }
 
     let expected = fixture.join("expected");
-    fs::create_dir_all(&expected)
-        .map_err(|err| format!("failed to create {}: {err}", normalize_path(&expected)))?;
-    fs::copy(&run.check_json, expected.join("check.json")).map_err(|err| {
-        format!(
-            "failed to update {} from {}: {err}",
-            normalize_path(&expected.join("check.json")),
-            normalize_path(&run.check_json)
-        )
-    })?;
-    fs::copy(&run.human_txt, expected.join("human.txt")).map_err(|err| {
-        format!(
-            "failed to update {} from {}: {err}",
-            normalize_path(&expected.join("human.txt")),
-            normalize_path(&run.human_txt)
-        )
-    })?;
+    // #14498: only surfaces whose bytes actually differ are copied and named in
+    // the CHANGELOG. A bless over unchanged output used to append a `Pending`
+    // block claiming an update that did not happen.
+    let applied = apply_bless_outputs(&expected, &run, name, reason)?;
+    let body = bless_report_body(&fixture, reason, &run, &applied);
+    write_report("goldens-bless.md", &body)
+}
+
+/// The body of `goldens-bless.md`, including the no-change outcome (#14498).
+/// Split out so a test can assert that outcome reaches the report, not just the
+/// `BlessedOutputs` a caller sees.
+fn bless_report_body(
+    fixture: &Path,
+    reason: &str,
+    run: &FixtureRun,
+    applied: &BlessedOutputs,
+) -> String {
+    let mut actual_outputs = format!(
+        "- `{}`\n- `{}`\n",
+        normalize_path(&run.check_json),
+        normalize_path(&run.human_txt)
+    );
+    if applied.updated_human_full {
+        actual_outputs.push_str(&format!("- `{}`\n", normalize_path(&run.human_full_txt)));
+    }
+    let mut updated_outputs = String::new();
+    for target in &applied.changed {
+        updated_outputs.push_str(&format!("- `{}`\n", normalize_path(target)));
+    }
+    if !applied.changed.is_empty() {
+        updated_outputs.push_str(&format!("- `{}`\n", normalize_path(&applied.changelog)));
+    }
+    let outcome = if applied.changed.is_empty() {
+        no_change_outcome(&applied.changelog)
+    } else {
+        String::new()
+    };
+    format!(
+        "# ripr goldens bless report\n\nStatus: pass\n\nFixture:\n- `{}`\n\nReason:\n```text\n{reason}\n```\n\n{outcome}Actual outputs:\n{actual_outputs}\nUpdated:\n{updated_outputs}",
+        normalize_path(fixture)
+    )
+}
+
+/// One blessed output surface: the run-side file, the golden it writes to, and
+/// the name the CHANGELOG entry uses.
+struct BlessSurface {
+    label: &'static str,
+    source: PathBuf,
+    target: PathBuf,
+}
+
+impl BlessSurface {
+    /// Whether blessing this surface would change a byte. A missing golden is a
+    /// change; an unreadable one is an error, not a silent overwrite.
+    ///
+    /// This is a raw-byte comparison on purpose (#14498): `goldens check`
+    /// compares normalized text, so the two can disagree. A golden that differs
+    /// only where the gate normalizes (a Windows python-verify projection, for
+    /// example) can be blessed and reported changed here while `check` still
+    /// calls it unchanged. Aligning the two is #14509; this claim does not.
+    fn differs(&self) -> Result<bool, String> {
+        let target = match fs::read(&self.target) {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+            Err(err) => {
+                return Err(format!(
+                    "failed to read {}: {err}",
+                    normalize_path(&self.target)
+                ));
+            }
+        };
+        let source = fs::read(&self.source)
+            .map_err(|err| format!("failed to read {}: {err}", normalize_path(&self.source)))?;
+        Ok(source != target)
+    }
+}
+
+/// The report line a bless carries when nothing changed (#14498), so a caller
+/// can tell a no-op from a rewrite without diffing the tree.
+fn no_change_outcome(changelog: &Path) -> String {
+    format!(
+        "No change: every expected file already matched the run output, so nothing was copied and `{}` was left untouched.\n",
+        normalize_path(changelog)
+    )
+}
+
+/// The result of applying one bless run to `expected/`.
+struct BlessedOutputs {
+    /// Golden paths that were rewritten. Empty means the bless was a no-op.
+    changed: Vec<PathBuf>,
+    updated_human_full: bool,
+    changelog: PathBuf,
+}
+
+/// Copies only the surfaces whose bytes changed and records exactly one pending
+/// CHANGELOG entry naming them. When every surface already matches, nothing is
+/// written at all (#14498).
+fn apply_bless_outputs(
+    expected: &Path,
+    run: &FixtureRun,
+    name: &str,
+    reason: &str,
+) -> Result<BlessedOutputs, String> {
     let expected_human_full = expected.join("human-full.txt");
     let updated_human_full = expected_human_full.exists();
+    let mut surfaces = vec![
+        BlessSurface {
+            label: "check.json",
+            source: run.check_json.clone(),
+            target: expected.join("check.json"),
+        },
+        BlessSurface {
+            label: "human.txt",
+            source: run.human_txt.clone(),
+            target: expected.join("human.txt"),
+        },
+    ];
     if updated_human_full {
-        fs::copy(&run.human_full_txt, &expected_human_full).map_err(|err| {
-            format!(
-                "failed to update {} from {}: {err}",
-                normalize_path(&expected_human_full),
-                normalize_path(&run.human_full_txt)
-            )
-        })?;
+        surfaces.push(BlessSurface {
+            label: "human-full.txt",
+            source: run.human_full_txt.clone(),
+            target: expected_human_full,
+        });
     }
     for surface in ["sarif.json", "github.txt"] {
         let target = expected.join(surface);
         if target.exists() {
-            fs::copy(run.actual_dir.join(surface), &target)
-                .map_err(|error| format!("failed to bless {}: {error}", normalize_path(&target)))?;
+            surfaces.push(BlessSurface {
+                label: surface,
+                source: run.actual_dir.join(surface),
+                target,
+            });
+        }
+    }
+    let mut changed = Vec::new();
+    for surface in &surfaces {
+        if surface.differs()? {
+            changed.push(surface);
         }
     }
     let changelog = expected.join("CHANGELOG.md");
+    if changed.is_empty() {
+        return Ok(BlessedOutputs {
+            changed: Vec::new(),
+            updated_human_full,
+            changelog,
+        });
+    }
+    fs::create_dir_all(expected)
+        .map_err(|err| format!("failed to create {}: {err}", normalize_path(expected)))?;
+    for surface in &changed {
+        fs::copy(&surface.source, &surface.target).map_err(|err| {
+            format!(
+                "failed to update {} from {}: {err}",
+                normalize_path(&surface.target),
+                normalize_path(&surface.source)
+            )
+        })?;
+    }
     let mut text = if changelog.exists() {
         read_text_lossy(&changelog)?
     } else {
         "# Golden Output Changes\n".to_string()
     };
     let mut entry = format!(
-        "\n{}\n\nReason:\n{reason}\n\nCommand:\n`cargo xtask goldens bless {name} --reason \"...\"`\n\nUpdated:\n- `expected/check.json`\n- `expected/human.txt`\n",
+        "\n{}\n\nReason:\n{reason}\n\nCommand:\n`cargo xtask goldens bless {name} --reason \"...\"`\n\nUpdated:\n",
         next_pending_heading(&text, name)
     );
-    if updated_human_full {
-        entry.push_str("- `expected/human-full.txt`\n");
+    for surface in &changed {
+        entry.push_str(&format!("- `expected/{}`\n", surface.label));
     }
     text.push_str(&entry);
     fs::write(&changelog, text)
         .map_err(|err| format!("failed to write {}: {err}", normalize_path(&changelog)))?;
-    let mut actual_outputs = format!(
-        "- `{}`\n- `{}`\n",
-        normalize_path(&run.check_json),
-        normalize_path(&run.human_txt)
-    );
-    let mut updated_outputs = format!(
-        "- `{}`\n- `{}`\n",
-        normalize_path(&expected.join("check.json")),
-        normalize_path(&expected.join("human.txt"))
-    );
-    if updated_human_full {
-        actual_outputs.push_str(&format!("- `{}`\n", normalize_path(&run.human_full_txt)));
-        updated_outputs.push_str(&format!("- `{}`\n", normalize_path(&expected_human_full)));
-    }
-    updated_outputs.push_str(&format!("- `{}`\n", normalize_path(&changelog)));
-    let body = format!(
-        "# ripr goldens bless report\n\nStatus: pass\n\nFixture:\n- `{}`\n\nReason:\n```text\n{reason}\n```\n\nActual outputs:\n{actual_outputs}\nUpdated:\n{updated_outputs}",
-        normalize_path(&fixture)
-    );
-    write_report("goldens-bless.md", &body)
+    Ok(BlessedOutputs {
+        changed: changed
+            .into_iter()
+            .map(|surface| surface.target.clone())
+            .collect(),
+        updated_human_full,
+        changelog,
+    })
 }
 
 /// Unique heading for the next appended pending changelog entry.
@@ -3333,6 +3445,106 @@ fn fixtures_new(name: &str) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn joint_fixture_reports_consume_one_evaluation_per_subject() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = [AtomicUsize::new(0), AtomicUsize::new(0)];
+        let selected = vec![PathBuf::from("first"), PathBuf::from("second")];
+        let run_set = collect_fixture_runs(selected.clone(), |path| {
+            let index = usize::from(path == Path::new("second"));
+            calls[index].fetch_add(1, Ordering::SeqCst);
+            Ok((Vec::new(), Some(joint_fixture_run(path, true))))
+        });
+        assert_eq!(run_set.fixtures, selected);
+        assert_eq!(run_set.runs.len(), 2);
+        assert!(run_set.violations.is_empty());
+        for report in [
+            fixture_report_body(None, &run_set.fixtures, &run_set.runs, &run_set.violations),
+            goldens_check_report_body(&run_set.fixtures, &run_set.runs, &run_set.violations),
+        ] {
+            assert!(report.contains("Status: pass"), "{report}");
+            assert!(
+                report.contains("first") && report.contains("second"),
+                "{report}"
+            );
+        }
+        assert_eq!(calls.map(|count| count.load(Ordering::SeqCst)), [1, 1]);
+    }
+
+    fn joint_fixture_run(path: &Path, matches: bool) -> FixtureRun {
+        FixtureRun {
+            name: normalize_path(path),
+            actual_dir: path.join("actual"),
+            check_json: path.join("actual/check.json"),
+            human_txt: path.join("actual/human.txt"),
+            human_full_txt: path.join("actual/human-full.txt"),
+            comparisons: vec![GoldenComparison {
+                surface: "check.json",
+                expected: path.join("expected/check.json"),
+                actual: path.join("actual/check.json"),
+                matches,
+                first_difference: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn joint_fixture_reports_retain_contract_execution_and_drift_failures() {
+        let selected = ["contract", "execution", "drift"]
+            .map(PathBuf::from)
+            .to_vec();
+        let run_set = collect_fixture_runs(selected.clone(), |path| {
+            if path == Path::new("contract") {
+                Ok((vec!["missing fixture contract".into()], None))
+            } else if path == Path::new("execution") {
+                Err("fixture child failed".into())
+            } else {
+                let run = joint_fixture_run(path, false);
+                Ok((run.comparison_violations(), Some(run)))
+            }
+        });
+        assert_eq!(run_set.fixtures, selected);
+        assert_eq!(run_set.runs.len(), 1);
+        assert_eq!(run_set.violations.len(), 3);
+        assert_eq!(run_set.violations[0], "missing fixture contract");
+        assert_eq!(run_set.violations[1], "fixture child failed");
+        assert!(run_set.violations[2].contains("check.json drift for fixture `drift`"));
+        for report in [
+            fixture_report_body(None, &run_set.fixtures, &run_set.runs, &run_set.violations),
+            goldens_check_report_body(&run_set.fixtures, &run_set.runs, &run_set.violations),
+        ] {
+            assert!(report.contains("Status: fail"), "{report}");
+            for violation in &run_set.violations {
+                assert!(report.contains(violation), "{report}");
+            }
+        }
+    }
+
+    #[test]
+    fn joint_fixture_evaluator_refuses_invalid_inputs_without_running_them() -> Result<(), String> {
+        let root = unique_temp_path("joint-fixture-invalid");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        fs::write(root.join("file"), "not a directory").map_err(|error| error.to_string())?;
+        fs::create_dir(root.join("contract")).map_err(|error| error.to_string())?;
+        let run_set = collect_fixture_runs(
+            ["missing", "file", "contract"]
+                .map(|name| root.join(name))
+                .to_vec(),
+            evaluate_fixture,
+        );
+        assert!(run_set.runs.is_empty());
+        assert_eq!(run_set.violations.len(), 3);
+        assert!(run_set.violations[0].starts_with("fixture does not exist:"));
+        assert!(run_set.violations[1].starts_with("fixture is not a directory:"));
+        assert!(run_set.violations[2].ends_with("is missing SPEC.md"));
+        fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn joint_fixture_command_rejects_extra_arguments_before_execution() {
+        let result = goldens_impl(&["check-with-fixtures".into(), "ignored-filter".into()]);
+        assert!(result.is_err());
+    }
 
     #[test]
     fn isolated_default_target_sits_beside_the_shared_debug_dir_not_inside_it() {
@@ -3750,6 +3962,85 @@ mod tests {
     }
 
     use super::*;
+
+    // #14498: a bless whose output is byte-identical must not append a
+    // `Pending` block, and a bless that does change a golden must still record
+    // exactly one block naming the changed file.
+    #[test]
+    fn bless_with_identical_output_leaves_the_changelog_untouched() -> Result<(), String> {
+        let dir = unique_temp_path("bless-noop");
+        let _ = std::fs::remove_dir_all(&dir);
+        let expected = dir.join("fixture/expected");
+        let actual = dir.join("actual");
+        let write = |path: std::path::PathBuf, body: &str| -> Result<(), String> {
+            std::fs::write(&path, body).map_err(|err| format!("write {}: {err}", path.display()))
+        };
+        let read_bytes = |path: std::path::PathBuf| -> Result<Vec<u8>, String> {
+            std::fs::read(&path).map_err(|err| format!("read {}: {err}", path.display()))
+        };
+        let read_text = |path: std::path::PathBuf| -> Result<String, String> {
+            std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))
+        };
+        std::fs::create_dir_all(&expected)
+            .map_err(|err| format!("create {}: {err}", expected.display()))?;
+        std::fs::create_dir_all(&actual)
+            .map_err(|err| format!("create {}: {err}", actual.display()))?;
+        write(expected.join("check.json"), "{\"findings\":[]}")?;
+        write(expected.join("human.txt"), "# report\n")?;
+        write(expected.join("CHANGELOG.md"), "# Golden Output Changes\n")?;
+        write(actual.join("check.json"), "{\"findings\":[]}")?;
+        write(actual.join("human.txt"), "# report\n")?;
+        let run = FixtureRun {
+            name: "synthetic".to_string(),
+            actual_dir: actual.clone(),
+            check_json: actual.join("check.json"),
+            human_txt: actual.join("human.txt"),
+            human_full_txt: actual.join("human-full.txt"),
+            comparisons: Vec::new(),
+        };
+
+        let before = read_bytes(expected.join("CHANGELOG.md"))?;
+        let applied = super::apply_bless_outputs(&expected, &run, "synthetic", "no-op")?;
+        assert!(
+            applied.changed.is_empty(),
+            "identical output must report no change, got {:?}",
+            applied.changed
+        );
+        assert_eq!(
+            read_bytes(expected.join("CHANGELOG.md"))?,
+            before,
+            "a no-op bless must not append a Pending block"
+        );
+        let outcome = super::no_change_outcome(&applied.changelog);
+        assert!(outcome.starts_with("No change:"), "{outcome}");
+        assert!(
+            outcome.contains("CHANGELOG.md` was left untouched"),
+            "{outcome}"
+        );
+        // The outcome must reach the report, not just the return value.
+        let body = super::bless_report_body(&dir.join("fixture"), "no-op", &run, &applied);
+        assert!(body.contains("No change:"), "{body}");
+        assert!(body.contains("was left untouched"), "{body}");
+
+        // Negative control: a real change still records exactly one block.
+        write(actual.join("human.txt"), "# report\nchanged\n")?;
+        let applied = super::apply_bless_outputs(&expected, &run, "synthetic", "change")?;
+        assert_eq!(applied.changed, vec![expected.join("human.txt")]);
+        let after = read_text(expected.join("CHANGELOG.md"))?;
+        assert_eq!(after.matches("## Pending").count(), 1, "{after}");
+        assert!(after.contains("- `expected/human.txt`"), "{after}");
+        assert!(
+            !after.contains("- `expected/check.json`"),
+            "an unchanged surface must not be named: {after}"
+        );
+        assert_eq!(read_text(expected.join("check.json"))?, "{\"findings\":[]}");
+        let body = super::bless_report_body(&dir.join("fixture"), "change", &run, &applied);
+        assert!(!body.contains("No change:"), "{body}");
+        assert!(body.contains("expected/human.txt"), "{body}");
+        assert!(body.contains("CHANGELOG.md"), "{body}");
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
 
     #[test]
     fn normalize_json_handles_double_backslash() {

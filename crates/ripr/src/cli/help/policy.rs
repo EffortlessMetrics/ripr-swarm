@@ -83,14 +83,15 @@ Check options:
   --guidance-out PATH                 Guidance JSON path. Defaults to target/ripr/review/comments.json.
                                       Any existing file there (and its .md) is removed before the
                                       run, and again if review-comments fails.
-  --mode                              Same modes as gate evaluate, but defaults to acknowledgeable.
+  --mode MODE                         Same modes as gate evaluate, but defaults to acknowledgeable.
   --root, --label, --labels-json, --acknowledgement-label, --exception-policy,
   --acknowledgements, --baseline, --out, --out-md
                                       As for gate evaluate.
-  gate check produces its own guidance, so it does not accept --pr-guidance,
-  --gap-ledger or the other evaluate-only inputs (--repo-exposure, --sarif-policy,
-  --agent-verify, --agent-receipt, --recommendation-calibration, --mutation-calibration);
-  run review-comments and gate evaluate yourself to supply them.
+
+gate check produces its own guidance, so it does not accept --pr-guidance,
+--gap-ledger or the other evaluate-only inputs (--repo-exposure, --sarif-policy,
+--agent-verify, --agent-receipt, --recommendation-calibration, --mutation-calibration);
+run review-comments and gate evaluate yourself to supply them.
 
 Evaluate options:
   --root PATH                         Workspace root. Must be an existing directory. Defaults to current directory.
@@ -309,22 +310,31 @@ Suppression health options:
 The policy readiness report is read-only advisory governance over explicit
 existing artifacts. It recommends advisory-only, visible-only, acknowledgeable,
 baseline-check, or calibrated-gate posture without executing a gate. Preview
-language evidence stays visible and advisory by default. The policy operations
-report composes existing policy artifacts into current ceiling, next safe
-action, safe/not-safe promotion modes, blockers, and input health without
-promoting anything. The policy history report shows whether readiness, waivers,
-suppressions, baseline debt, calibration, and preview boundaries are improving
-or decaying without appending history unless `--out-jsonl` is supplied. The
-policy promotion packet reads policy operations plus optional policy history
-and writes manual-review promotion evidence without changing config. The preview
-promotion packet writes default blocked evidence accounting for TypeScript and
-Python preview classes while
-keeping preview evidence visible, advisory, non-gating, outside RIPR Zero, and
-outside calibrated confidence until a later explicit policy is reviewed. The
-waiver-aging report keeps repeated waivers visible as repair or policy-review
-signals. The suppression-health report flags durable exception metadata gaps
-while keeping suppressed findings visible. These commands do not run analysis,
-mutate baselines or suppressions, post comments, edit source, generate tests,
-run mutation testing, change gate policy, promote preview evidence, or make CI
-blocking.
+language evidence stays visible and advisory by default.
+
+The policy operations report composes existing policy artifacts into current
+ceiling, next safe action, safe/not-safe promotion modes, blockers, and input
+health without promoting anything.
+
+The policy history report shows whether readiness, waivers, suppressions,
+baseline debt, calibration, and preview boundaries are improving or decaying
+without appending history unless `--out-jsonl` is supplied.
+
+The policy promotion packet reads policy operations plus optional policy
+history and writes manual-review promotion evidence without changing config.
+
+The preview promotion packet writes default blocked evidence accounting for
+TypeScript and Python preview classes while keeping preview evidence visible,
+advisory, non-gating, outside RIPR Zero, and outside calibrated confidence
+until a later explicit policy is reviewed.
+
+The waiver-aging report keeps repeated waivers visible as repair or
+policy-review signals.
+
+The suppression-health report flags durable exception metadata gaps while
+keeping suppressed findings visible.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
 "#;

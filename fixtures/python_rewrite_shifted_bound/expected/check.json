@@ -49,6 +49,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"weak","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `handling_fee`", "infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: if amount > 99: (line 2)", "related test tests/test_shop.py:7 test_handling_fee uses strong exact value oracle: assert handling_fee(amount) == fee", "source function argument value amount = 99 at line 8", "source function argument value amount == 99 at line 8", "missing discriminator amount == 100: A strong related test call places amount equal to 99, but none places amount equal to 100, where the shifted bound `amount > 100` differs; observed amount values: 99"],
       "flow_sinks": [
         {"kind":"unknown","text":"if amount > 99:","line":2}

@@ -77,6 +77,9 @@ pub(super) struct CiPacketOptions {
 
 pub(super) fn ci_packet(args: &[String]) -> Result<(), String> {
     let options = parse_ci_packet_options(args)?;
+    // #14222: a mistyped `--root` is refused by the shared validator instead of
+    // being created as a new directory tree.
+    crate::cli::commands_context::ensure_command_root(&options.root, COMMAND)?;
     crate::atomic_file::ensure_report_output_contained(&options.root)?;
     let exe = std::env::current_exe()
         .map_err(|err| format!("{COMMAND} cannot locate the running ripr binary: {err}; install ripr again, or run it by its full path"))?;
@@ -268,7 +271,7 @@ impl CiSettings {
         }
     }
 
-    fn pull_request(&self) -> bool {
+    pub(super) fn pull_request(&self) -> bool {
         self.event_name == "pull_request"
     }
 
@@ -655,11 +658,15 @@ impl PacketRun {
             },
         );
 
+        // The repo seam SARIF covers every seam in the repository. On a pull
+        // request its alerts on changed lines repeat the diff SARIF's, so a
+        // reviewer saw two or three code-scanning alerts on one line; it is
+        // rendered (and uploaded) only on a manual run of the workflow.
         self.stage(
             "Render RIPR repo seam SARIF",
             When::Success,
             Role::GateCritical,
-            sarif,
+            sarif && !pr,
             |run| {
                 run.mkdir(REPORTS)?;
                 run.ripr_to(
@@ -2172,7 +2179,6 @@ mod tests {
             "ripr review-comments --root . --base origin/main --head HEAD --check-output target/ripr/pr/check.json --out target/ripr/review/comments.json",
             "ripr pr-comments plan --root . --pr-guidance target/ripr/review/comments.json --mode inline --event-name pull_request --pull-request 7 --head-repo owner/repo --base-repo owner/repo --out target/ripr/review/comment-publish-plan.json --out-md target/ripr/review/comment-publish-plan.md --existing-comments target/ripr/review/existing-comments.json --token-available --write-permission",
             "ripr check --root . --diff target/ripr/reports/pr.diff --format sarif > target/ripr/reports/ripr-findings.sarif",
-            "ripr check --root . --mode ready --format repo-sarif > target/ripr/reports/ripr-seams.sarif",
             "ripr check --root . --mode ready --format repo-badge-json > target/ripr/reports/repo-ripr-badge.json",
             "ripr check --root . --mode ready --format repo-badge-shields > target/ripr/reports/repo-ripr-badge-shields.json",
             "ripr gate evaluate --root . --pr-guidance target/ripr/review/comments.json --mode acknowledgeable --out target/ripr/reports/gate-decision.json --out-md target/ripr/reports/gate-decision.md --repo-exposure target/ripr/reports/repo-exposure.json --labels-json target/ci/labels.json --sarif-policy target/ripr/reports/sarif-policy.json --agent-verify target/ripr/workflow/agent-verify.json --agent-receipt target/ripr/reports/agent-receipt.json --recommendation-calibration target/ripr/reports/recommendation-calibration.json --mutation-calibration target/ripr/reports/mutation-calibration.json --baseline .ripr/gate-baseline.json",
@@ -2263,6 +2269,40 @@ mod tests {
         assert!(line(&manual, "ripr first-pr ").contains(" --base origin/trunk "));
         assert!(!manual.contains("ripr review-comments "), "{manual}");
         assert!(!line(&manual, "ripr policy history ").contains("--pr-number"));
+        Ok(())
+    }
+
+    /// On a pull request the repo seam SARIF repeated the diff SARIF's alerts
+    /// on every changed line (a second code-scanning category over the same
+    /// lines), so it renders only on a manual run. The diff SARIF stays on
+    /// pull requests, and `RIPR_UPLOAD_SARIF=false` still turns both off.
+    #[test]
+    fn repo_seam_sarif_renders_on_manual_runs_only() -> Result<(), String> {
+        const SEAMS: &str = "--format repo-sarif > target/ripr/reports/ripr-seams.sarif";
+        const FINDINGS: &str = "--format sarif > target/ripr/reports/ripr-findings.sarif";
+        let (pr, failed) = recorded_full_packet()?;
+        assert!(failed.is_empty(), "{failed:?}");
+        assert!(pr.contains(FINDINGS), "{pr}");
+        assert!(!pr.contains(SEAMS), "{pr}");
+
+        let manual_settings = || CiSettings {
+            event_name: "workflow_dispatch".to_string(),
+            base_ref: String::new(),
+            pr_number: String::new(),
+            event_number: String::new(),
+            ..full_packet_settings()
+        };
+        let (manual, failed) = recorded_packet_with(manual_settings())?;
+        assert!(failed.is_empty(), "{failed:?}");
+        assert!(manual.contains(SEAMS), "{manual}");
+        assert!(!manual.contains(FINDINGS), "{manual}");
+
+        let (off, failed) = recorded_packet_with(CiSettings {
+            upload_sarif: "false".to_string(),
+            ..manual_settings()
+        })?;
+        assert!(failed.is_empty(), "{failed:?}");
+        assert!(!off.contains(SEAMS), "{off}");
         Ok(())
     }
 

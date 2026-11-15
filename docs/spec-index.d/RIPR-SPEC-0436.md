@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0436](../specs/RIPR-SPEC-0436-dx-scoreboard-workload-identity-pairing.md) | proposed | DX scoreboard workload identity pairing (#13177): a per-repository measured sample pairs with its baseline only on an identical url, sha, base and language; every other case is excluded with a named reason |

@@ -33,7 +33,7 @@ Start here:
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach band: commented, nested
     - infection yes: Detected related test input at the changed boundary
-    - 15 more detail line(s) in --format human-full
+    - 14 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)

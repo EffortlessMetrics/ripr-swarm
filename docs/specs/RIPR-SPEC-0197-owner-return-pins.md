@@ -288,7 +288,17 @@ wrong credits.
    `crate = ..` swaps the runtime path and `unhandled_panic = ..` changes what
    a panic does, so they refuse. The same completion rule applies under
    `#[async_std::test]` when `async_std` is the crate in the test's module and
-   the attribute carries no arguments (#5040). An `async` owner's return value is then read
+   the attribute carries no arguments (#5040), and under `#[actix_rt::test]`
+   and `#[actix_web::test]` on the same terms (#14073): the exact
+   crate-qualified path, the crate not rebound in the test's module, and no
+   arguments (`system = ..` swaps the runtime). `#[test_log::test]` (#14211)
+   runs the unchanged body after installing a logger: it is admitted bare on a
+   sync `fn`, or as exactly `#[test_log::test(tokio::test)]` on an `async fn`,
+   with neither `test_log` nor `tokio` rebound in the test's module.
+   `#[tracing_test::traced_test]` (#14213) installs a subscriber and enters a
+   span before the unchanged body: it is admitted by its crate-qualified path,
+   or by the bare name bound by one unrenamed `use tracing_test::traced_test`,
+   with no arguments and the crate not rebound. An `async` owner's return value is then read
    through one trailing `.await` on its call (`assert_eq!(total(&[1, 2]).await,
    3)`). Its bare call is a future and refuses; a sync owner's `.await` awaits
    a future it returns and stays refused. A sync `fn` under `#[tokio::test]`
@@ -338,7 +348,20 @@ wrong credits.
    the block itself holds no `return` or `?` (they would skip the assertion,
    and the closure escape gate does not read `async` blocks); a detached task, a handle kept in a binding, an
    `.await` whose result is dropped or converted (`.ok()`, `let _ =`), and
-   any other spawn function stay refused. An `#[rstest]` case table is admitted
+   any other spawn function stay refused. In a synchronous test, the one
+   `async` block that is the only argument of a crate-qualified `block_on`
+   free function is admitted too (#14106): `futures::executor::block_on`,
+   `futures_executor::block_on`, `tokio_test::block_on`, `pollster::block_on`,
+   `smol::block_on` and `async_std::task::block_on` each poll the block to
+   completion on the test thread before the call returns, so its panic is the
+   test's own. The file must hold no item, binding or alias named like the
+   path's crate, under the same `use` rule as `tokio::spawn`, and the block
+   itself holds no `return` or `?`. A bare or partially qualified `block_on`
+   (a test-local helper or any crate may define the name), a method
+   `block_on` on a runtime value, a second argument, a block nothing polls,
+   and a `block_on` inside an `async fn` test stay refused. This admits the
+   block's assertions; it supplies no polling-helper pin for an owner future
+   passed to the executor directly. An `#[rstest]` case table is admitted
    (cluster 12a, #6578): rstest runs the body once per `#[case(..)]` row with
    the row's values bound to the parameters, so
    `assert_eq!(scale(input), expected)` under `#[case(2, 4)]` pins the owner
@@ -486,7 +509,8 @@ wrong credits.
    A compared operand that is a plain identifier the test binds exactly
    once, by an immutable `let v [: T] = <call>;`, is that call (#6974) when
    `v` appears nowhere else in the test but as a whole operand of
-   `assert_eq!` assertions on later lines, and the assertion is the
+   `assert_eq!` assertions (or one whole side of a plain lone-equality
+   `assert!(v == e)`, see Lone-equality pins) on later lines, and the assertion is the
    statement right after the `let` and the only statement on its line (a
    statement between them, or one sharing the assertion's line, could
    change the value through a shared handle). A `mut` binding, a second binding, a
@@ -1739,6 +1763,18 @@ change.
 5. Fail open to today's reading. A call or owner outside the subset, an
    `Err(..)` payload, a wrapper mismatch the compiler would reject and every
    pin either version agrees with keep their current result.
+6. Tuple-struct owners and operands both versions agree on (#12808). When the
+   changed tail is the whole `T(e)` / `Self(e)` of a one-field built-in
+   integer tuple struct, the owner is lowered to the same subset (every `T`
+   or `Self` parameter and `self` becomes the field's integer, `p.0` becomes
+   `p`, the constructor is dropped; a parameter named `self_` or a repeated
+   name is not lowered) and the call must pass only `T(<decimal literal>)`
+   operands, receiver first. When both versions return the same value for
+   those operands, and differ for some operand vector drawn from `1, 2, 3, 5,
+   -2`, no assertion on that call can tell the change apart and the pin does
+   not credit. A rewrite equal on every probed vector (`a + b` to `b + a`)
+   and anything outside the subset keep their current result. This is a
+   bounded static check, not a proof of equivalence.
 
 ### Bool-owner pins
 
@@ -1845,7 +1881,14 @@ reads `assert_eq!` operands when:
    macro admission (the parser keys each terminal Err-return guard by its
    `if` line and whitespace-free condition, with the same eager-path
    gates), `#[should_panic]`, the test's line range and the return-path
-   gate. The #6974 let-bound result rule applies to `assert_eq!` only.
+   gate. The #6974 let-bound result rule reads a plain `assert!` here as
+   it reads `assert_eq!` (#14085): `let v = owner(..); assert!(v == 4);`
+   fails exactly when `assert_eq!(v, 4)` does, so `v` is the call when one
+   side of the single `==` is the binding alone, the assertion names it
+   nowhere else (a message argument `"{}", v` refuses; an inline `"{v}"`
+   is string text), and every #6974 binding condition holds. A guard twin
+   over a binding (`let v = owner(..); if v != 4 { return Err(..) }`)
+   stays unpinned.
 4. A guard reads only its condition. A macro inside its body runs only
    when the guard fires, so it is never the pinned assertion, and the
    self-computed check selects its reader the same way: an `assert_eq!`
@@ -2032,6 +2075,27 @@ no gate the stand-in passes depends on the text. Rejected: keeping
 `expect_file!` at `snapshot` / medium. It compares the whole value exactly,
 as the inline form does; the corpus row
 `lib-expect-test-expect-file-golden` kills both mutants at runtime.
+
+### Tail `if`/`else` branch values (#14385)
+
+When the owner's tail is an `if`/`else`, each branch block's tail value is
+what the owner returns, so it gets a `return_value` probe like a plain tail
+(and an `error_path` probe when it builds an error). `else if` chains and
+nested `if` branch tails recurse. Exclusions:
+
+- a branch tail that is itself `if`, `match` or a loop gets no shape, decided
+  by AST kind (so `if` or `match` alone on its line is still excluded);
+- a value on any line of its `if`'s condition gets no shape, because an inline
+  branch already flows to the return through that line's predicate (#7626);
+- a branch value that is a comparison or boolean expression
+  (`input.len() > 3`, also inside parentheses or under `!`) keeps only its
+  predicate probe, so a weaker second row
+  cannot turn a discriminated predicate into a gap (verdict corpus
+  `spec-b-0159-recursive-helper`);
+- an `if` without `else` is a statement, not the owner's value.
+
+This adds probes only; it does not widen Rule 3. A pin of the owner's result
+still credits a branch value only weakly, as for an early return (#14387).
 
 ### Short-circuit tails (#7969)
 
@@ -2513,6 +2577,22 @@ not themselves a static propagation proof.
   an `async` test, or the file and line of the macro binding). A refused
   context does not also claim that no assertion or oracle was detected. The
   disclosure is computed after admission and never changes what is credited.
+  When an include makes placement unavailable and a private, unscoped glob
+  outside the assertion's own file therefore cannot be confined, the blocker
+  says so and names the first workspace-reaching include expression, location
+  and reason code; an inert include or a separate placement failure is not
+  blamed. A glob in the assertion's own file keeps its direct macro-binding
+  explanation, and so does a glob whose ambiguity does not depend on
+  placement: a public glob is unconfined by construction, a scoped import is
+  confined lexically, a glob whose own module composition did not resolve has
+  a separate cause, another disabling input (a lexical fallback, an unknown
+  `#[path]` target or an unseen unindexed member) keeps placement off without
+  the include, and a glob that reaches the assertion from an ancestor module
+  or along the module chain is ambiguous with placement on
+  (`the_refusal_names_the_include_that_makes_placement_unavailable`,
+  `a_public_glob_keeps_its_direct_explanation_with_an_include_present`,
+  `a_separate_placement_failure_keeps_the_direct_glob_explanation`,
+  `a_glob_reaching_from_an_ancestor_keeps_its_direct_explanation`).
   A refused assertion whose text calls the changed owner is named first.
   Only that one earns the next step that calls the refusal a possible static
   limit to confirm with a real mutation run; a refused assertion that does
@@ -2593,7 +2673,16 @@ not themselves a static propagation proof.
   through resolved module edges, recognized only when that root is a Cargo
   autodiscovered target (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`,
   `src/bin/NAME/main.rs`, and `tests/*.rs`, `benches/*.rs`, `examples/*.rs`,
-  `build.rs` beside an indexed `src/`). humantime's `benches/datetime_format.rs`
+  `build.rs` beside an indexed `src/`) or a root the nearest package
+  manifest names: a `[lib] path`, or an explicit `[[test]]`, `[[bin]]`,
+  `[[example]]` or `[[bench]]` `path` (#7128). So a test in
+  `[[test]] path = "it/pin.rs"` is its own crate root and its exact
+  assertion on a crate-qualified owner call is credited like the same test
+  under `tests/`; the same file with no declaring target is an orphan no
+  crate is known to compile and stays unrecognized (tests
+  `a_declared_test_target_outside_tests_dir_pins_like_an_autodiscovered_one`,
+  `an_undeclared_file_outside_the_layout_stays_unplaced`). humantime's
+  `benches/datetime_format.rs`
   (`#[macro_use] extern crate bencher;`) no longer refuses the library's
   `tests/*.rs` assertions. An unresolved `#[macro_use] mod` may
   `#[macro_export]` its macros, so it stays workspace-wide like exported
@@ -2606,7 +2695,33 @@ not themselves a static propagation proof.
   `tests/common/mod.rs` composes under its first owner only), and, while any
   `include!` in the workspace is unresolved (ambiguous, cfg-conflicting,
   capped, dynamic or unindexed), every file: an unresolved fragment and its
-  module children otherwise look like a crate root of their own. The same
+  module children otherwise look like a crate root of their own. #14116
+  narrows that last clause to what the paste can reach. An `include!` of a
+  literal path inside the repository, either inside an inline module or at
+  file level with a target the index does not hold, is read: an inert
+  fragment (no out-of-line `mod`, no `include!`, no `#[path]`, so it compiles
+  no further file) that the index holds as a file no crate claims is already
+  scanned as a file any crate may compile, and one the index does not hold
+  is read from disk with the same assertion-macro scan every indexed file
+  gets. A fragment with no possible binding leaves placement on. One that
+  may bind an assertion macro turns placement off only for the including
+  crate when that crate is an integration test, bench or example root, which
+  nothing can import (a `[lib] path` moved under `tests/` is a library and
+  does not count), and its crate-local sites stay charged to that crate;
+  inside a library or binary it keeps the workspace-wide refusal. A dynamic
+  expression, a missing, unreadable or oversized target, a path that
+  resolves outside the repository through a symlink, a fragment that
+  mounts a file, and a fragment that is itself a module of some crate keep
+  the workspace-wide refusal too. The fragment's items stay unread, so a
+  test that reaches a fragment's function by import, glob or path is not
+  taken for the owner's
+  (`an_include_in_a_test_crate_leaves_the_librarys_tests_credited`,
+  `a_read_inert_fragment_in_the_library_leaves_its_tests_credited`,
+  `an_unread_mounting_or_binding_fragment_keeps_the_refusal`,
+  `a_fragments_namesake_is_never_taken_for_the_owner`,
+  `a_library_rooted_under_tests_is_not_an_unimportable_crate`,
+  `a_fragment_symlinked_out_of_the_repository_is_not_read`,
+  `the_glob_alone_and_an_unresolved_include_are_the_two_baselines`). The same
   holds while any `#[path]` is unresolvable (`cfg_attr`, non-literal), which
   records no module edge for its target. A withheld file in the
   dependent scope is routed by root only when its own path is a `src/lib.rs`,
@@ -2978,6 +3093,12 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Test Mapping
 
+- Tuple-struct owners and agreeing operands (#12808):
+  `crates/ripr/src/analysis/classify/owner_pin/tests/tuple_projection.rs`
+  (agreeing operands withheld, distinguishing and unreadable operands kept,
+  free-function form, operand order, an equal-on-every-input rewrite, a
+  `self_` alias) and the verdict corpus trap case
+  `trap-tuple-agreeing-operands`.
 - Selected tier literals (#13037): `crates/ripr/tests/tier_value_flow_13037.rs`
   covers direct and added-owner paths, the named guard, input/return-path
   controls, assertion identity and execution order, distinct evidence rows
@@ -2986,7 +3107,7 @@ assertions. This repair shares the existing callback without that larger migrati
   runtime truth for the direct, wrong-input, transformed, masked, discarded,
   opaque-input and unrelated-test shapes.
 - Claims payload equality pins (#12304):
-  `crates/ripr/tests/claims_payload_eq_owner_pin.rs` (the credited twins and
+  `crates/ripr/tests/wrapped_owner_pins/claims_payload_eq_owner_pin.rs` (the credited twins and
   one negative control per refusal above, the early-`Err` and `None` exit
   directions, the non-`return_value` families, and multi-line invocations: credited
   when the closing line holds only the `;` and a comment, unknown otherwise).
@@ -2994,7 +3115,12 @@ assertions. This repair shares the existing callback without that larger migrati
   `crates/ripr/tests/rust_assertion_provider_macro_inventory.rs` use a
   `predicate` probe and therefore stay `unknown` on purpose; the
   return-value twins are in the test above.
-- Claims payload pins (#9619): `crates/ripr/tests/claims_payload_owner_pin.rs`
+  (#13558) The same file pins that the claims forms do not credit the
+  `field_construction` clone and err-variant gates (`assert_ok_eq!` /
+  `assert_some_eq!` over a hand-written `clone` owner and an `Err(..)`
+  struct-variant owner stay `unknown`), with the `assert_eq!` twins credited
+  on the same subjects.
+- Claims payload pins (#9619): `crates/ripr/tests/wrapped_owner_pins/claims_payload_owner_pin.rs`
   (single and grouped import, trailing `assert_err!`, `assert_some!`
   positives; missing, foreign, renamed, locally redefined import, `mut`,
   owner-derived expected value, wrapped operand, method use, converted
@@ -3025,7 +3151,7 @@ assertions. This repair shares the existing callback without that larger migrati
   is compiled directly by the integration suite; native proc-macro removal
   controls are separate engineering evidence, not claimed by the API assertions.
 - Unwrapped `Ok`/`Some` pins (#9619):
-  `crates/ripr/tests/unwrapped_ok_owner_pin.rs` (direct, reversed, `expect`,
+  `crates/ripr/tests/wrapped_owner_pins/unwrapped_ok_owner_pin.rs` (direct, reversed, `expect`,
   bound and `Option` positives; `mut`, shadowing, method use, owner-derived
   expected value, `unwrap_or`, `unwrap_err`, `assert_ne!`, other owner,
   discarded unwrap and wrapper- or opposite-exit-binding negatives).
@@ -3284,6 +3410,11 @@ assertions. This repair shares the existing callback without that larger migrati
   `fixtures/tail_comparison_boundary`, whose tests pin a free owner's
   unconditional tail.
 
+- Let-bound lone-equality pins (#14085):
+  `crates/ripr/tests/let_bound_lone_equality_pin.rs`
+  (`a_let_bound_result_compared_by_a_lone_equality_pins_the_owner`,
+  `refused_bindings_and_conditions_lend_no_lone_equality_pin`,
+  `an_equality_the_test_never_runs_stays_unrevealed`).
 - Check-helper argument pins: `crates/ripr/tests/check_helper_argument_pins.rs`
   (`a_helper_comparing_its_parameters_pins_the_arguments_the_test_passes`,
   `a_direct_template_rendering_pins_a_scalar_owner`,
