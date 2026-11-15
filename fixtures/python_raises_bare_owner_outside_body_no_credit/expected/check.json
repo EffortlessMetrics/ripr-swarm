@@ -159,5 +159,5 @@
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
   ],
-  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/levels.py","digest":"sha256:273af6c2b494801d1e5a2916fdc68afff4b9c4b49a9b22ee01e2c7d37c5196d5"},{"path":"tests/test_levels.py","digest":"sha256:b4d8a6ea2f80d814d0b490a00b7f54b383a14e5f35b86afb33ac92d968b46444"}]}
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/levels.py","digest":"sha256:273af6c2b494801d1e5a2916fdc68afff4b9c4b49a9b22ee01e2c7d37c5196d5"},{"path":"tests/test_levels.py","digest":"sha256:5272752228322df096faaa5d49a8395290adb295f124fe13d03bde3c56304868"}]}
 }

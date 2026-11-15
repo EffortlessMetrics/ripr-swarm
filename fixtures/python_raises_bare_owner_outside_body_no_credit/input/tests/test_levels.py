@@ -1,5 +1,5 @@
 import pytest
-from src.levels import parse
+from src.levels import other, parse
 
 
 def test_blank():

@@ -240,12 +240,31 @@ fn the_exception_body_reader_reads_f_string_fields() -> Check {
         "the text scanner must not hide a call in a field"
     );
     assert!(
-        super::related_tests::exception_body_calls(gate, item, "levels.parse"),
+        super::related_tests::exception_body_calls(gate, item, None, "levels.parse"),
         "the exception body reader must see a call in an f-string field"
     );
     assert!(
-        super::related_tests::exception_body_observes_token(gate, item, "parse"),
+        super::related_tests::exception_body_observes_token(gate, item, None, "parse"),
         "the exception token reader must see a token in an f-string field"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_column_zero_comment_inside_the_body_is_not_the_rule_14_comparison() -> Check {
+    // #14754 review: a column-zero comment inside a `with` body still belongs
+    // to the body; the recorded boundary keeps the later call in scope.
+    let item = "pytest.raises(ValueError, match=\"blank level\"):";
+    let body = "        note = 1\n# explanatory comment\n        parse(\"\")";
+    let gate = format!("{item}\n{body}\nassert str(excinfo.value) == \"blank level\"");
+    let body_end = item.len() + 1 + body.len();
+    assert!(
+        super::related_tests::exception_body_observes_token(&gate, item, Some(body_end), "parse"),
+        "a column-zero comment inside the body must not end it"
+    );
+    assert!(
+        !super::related_tests::exception_body_observes_token(&gate, item, None, "parse"),
+        "the fallback still stops at the first column-zero line"
     );
     Ok(())
 }

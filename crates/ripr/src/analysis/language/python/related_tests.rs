@@ -2266,8 +2266,13 @@ pub(super) fn oracle_operand_calls(text: &str, callee: &str) -> bool {
 /// A rule 14 comparison joined after the body (`assert str(exc.value) ==
 /// ...`) runs after the `with`, when the error was already raised, so an
 /// owner call there is not the call that raises and is not read.
-pub(super) fn exception_body_calls(gate_text: &str, item_text: &str, callee: &str) -> bool {
-    let Some(body) = exception_body(gate_text, item_text) else {
+pub(super) fn exception_body_calls(
+    gate_text: &str,
+    item_text: &str,
+    body_end: Option<usize>,
+    callee: &str,
+) -> bool {
+    let Some(body) = exception_body(gate_text, item_text, body_end) else {
         return false;
     };
     if exception_body_defers(body) {
@@ -2284,11 +2289,16 @@ pub(super) fn exception_body_calls(gate_text: &str, item_text: &str, callee: &st
 /// (its `match=` pattern), anything before the `with`, and the rule 14
 /// comparison appended after the body are not read, nor is a token spelled
 /// only inside a string or comment or deferred by a `lambda`/`def`/`class`.
-pub(super) fn exception_body_observes_token(gate_text: &str, item_text: &str, token: &str) -> bool {
+pub(super) fn exception_body_observes_token(
+    gate_text: &str,
+    item_text: &str,
+    body_end: Option<usize>,
+    token: &str,
+) -> bool {
     if token.is_empty() {
         return false;
     }
-    let Some(body) = exception_body(gate_text, item_text) else {
+    let Some(body) = exception_body(gate_text, item_text, body_end) else {
         return false;
     };
     if exception_body_defers(body) {
@@ -2304,12 +2314,21 @@ pub(super) fn exception_body_observes_token(gate_text: &str, item_text: &str, to
 }
 
 /// The exception body of an assertion's gate text: the text after its item,
-/// ending at the appended rule 14 comparison (see [`exception_body_text`]).
-fn exception_body<'a>(gate_text: &'a str, item_text: &str) -> Option<&'a str> {
-    gate_text
+/// ending at the recorded body boundary, or at the appended rule 14 comparison
+/// when the fact predates that boundary (see [`exception_body_text`]).
+fn exception_body<'a>(
+    gate_text: &'a str,
+    item_text: &str,
+    body_end: Option<usize>,
+) -> Option<&'a str> {
+    let rest = gate_text
         .strip_prefix(item_text)
-        .and_then(|rest| rest.strip_prefix('\n'))
-        .map(exception_body_text)
+        .and_then(|rest| rest.strip_prefix('\n'))?;
+    let start = gate_text.len() - rest.len();
+    let end = body_end
+        .filter(|end| *end >= start && *end <= gate_text.len())
+        .unwrap_or_else(|| start + exception_body_text(rest).len());
+    Some(&gate_text[start..end])
 }
 
 /// Whether a `lambda` or nested `def`/`class` in the body defers its calls,
@@ -4496,7 +4515,7 @@ mod oracle_operand_tests {
         ] {
             let gate = format!("{item}{body}");
             assert_eq!(
-                exception_body_calls(&gate, item, "utils.sign"),
+                exception_body_calls(&gate, item, None, "utils.sign"),
                 expected,
                 "{gate}"
             );
@@ -4506,11 +4525,13 @@ mod oracle_operand_tests {
         assert!(!exception_body_calls(
             "pytest.raises(ValueError, utils.sign(0))",
             "pytest.raises(ValueError, utils.sign(0))",
+            None,
             "utils.sign"
         ));
         assert!(!exception_body_calls(
             "assert utils.sign(0) == 0",
             "assert utils.sign(0) == 0, \"message\"",
+            None,
             "utils.sign"
         ));
     }

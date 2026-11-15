@@ -1308,9 +1308,14 @@ fn sink_alignment_and_rows(
     };
     let observes_body_scoped = |unit: &AlignmentUnit<'_>, group: &[String]| -> bool {
         if exception_body_scoped(unit) {
-            group
-                .iter()
-                .any(|token| exception_body_observes_token(&unit.text, &unit.reported, token))
+            group.iter().any(|token| {
+                exception_body_observes_token(
+                    &unit.text,
+                    &unit.reported,
+                    unit.exception_body_end,
+                    token,
+                )
+            })
         } else {
             observes(unit, group)
         }
@@ -1319,10 +1324,14 @@ fn sink_alignment_and_rows(
         |unit: &AlignmentUnit<'_>, group: &[String]| -> bool {
             if exception_body_scoped(unit) {
                 group.iter().any(|token| {
-                    exception_body_observes_token(&unit.text, &unit.reported, token)
-                        && !unit
-                            .test
-                            .is_some_and(|test| function_scope_stand_in(test, token, owner))
+                    exception_body_observes_token(
+                        &unit.text,
+                        &unit.reported,
+                        unit.exception_body_end,
+                        token,
+                    ) && !unit
+                        .test
+                        .is_some_and(|test| function_scope_stand_in(test, token, owner))
                 })
             } else {
                 observes_imported_owner(unit, group)
@@ -1391,7 +1400,12 @@ fn sink_alignment_and_rows(
                 // callable) makes (RIPR-SPEC-0238 rule 4).
                 let raised_in_body = |callee: &String| {
                     matches!(unit.kind, OracleKind::ExactErrorVariant)
-                        && exception_body_calls(&unit.text, &unit.reported, callee)
+                        && exception_body_calls(
+                            &unit.text,
+                            &unit.reported,
+                            unit.exception_body_end,
+                            callee,
+                        )
                 };
                 callees.iter().any(|callee| {
                     oracle_operand_calls(&unit.text, callee) || raised_in_body(callee)
@@ -1768,6 +1782,8 @@ struct AlignmentUnit<'a> {
     test: Option<&'a PythonTest>,
     /// The text every gate reads ([`super::PythonAssertion::gate_text`]).
     text: String,
+    /// Where the exception body ends in `text`, before the rule 14 comparison.
+    exception_body_end: Option<usize>,
     /// The assertion text a crediting finding reports.
     reported: String,
     /// The file line the assertion starts on, when it is a source assertion.
@@ -1811,6 +1827,7 @@ fn alignment_units<'a>(
                     related,
                     test: Some(test),
                     text: assertion.gate_text.clone(),
+                    exception_body_end: assertion.exception_body_end,
                     reported: assertion.text.clone(),
                     line: Some(assertion.line),
                     source_range: assertion.source_range,
@@ -1833,6 +1850,7 @@ fn alignment_units<'a>(
                 related,
                 test,
                 text: text.clone(),
+                exception_body_end: None,
                 reported: text.clone(),
                 line: None,
                 source_range: None,
