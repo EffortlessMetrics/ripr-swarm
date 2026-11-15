@@ -856,6 +856,74 @@ fn wrong_head_changes_requested_and_identity_controls() -> Result<(), String> {
 }
 
 #[test]
+fn clearing_comment_binds_the_admitted_head_and_trust() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let other = "b".repeat(40);
+    let mut negative = review(
+        "a",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:01Z",
+        "REPAIR_REQUIRED",
+    );
+    negative["id"] = serde_json::json!(1);
+    let mut wrong_head_ready = review(
+        "a",
+        "COMMENTED",
+        &other,
+        "2026-10-15T01:00:02Z",
+        "SOURCE_REVIEW_READY",
+    );
+    wrong_head_ready["id"] = serde_json::json!(2);
+    let mut untrusted_ready = review(
+        "a",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:02Z",
+        "SOURCE_REVIEW_READY",
+    );
+    untrusted_ready["id"] = serde_json::json!(2);
+    untrusted_ready["author_association"] = serde_json::json!("NONE");
+    let mut trusted_ready = review(
+        "a",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:02Z",
+        "SOURCE_REVIEW_READY",
+    );
+    trusted_ready["id"] = serde_json::json!(2);
+    let mut later_marker = review(
+        "b",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:03Z",
+        "SOURCE_REVIEW_READY",
+    );
+    later_marker["id"] = serde_json::json!(3);
+    let controls = [
+        (
+            "clearing comment on an earlier head",
+            serde_json::json!([negative.clone(), wrong_head_ready, later_marker.clone()]),
+            false,
+        ),
+        (
+            "clearing comment from an untrusted association",
+            serde_json::json!([negative.clone(), untrusted_ready, later_marker.clone()]),
+            false,
+        ),
+        (
+            "clearing comment on the admitted head",
+            serde_json::json!([negative, trusted_ready, later_marker]),
+            true,
+        ),
+    ];
+    for (name, reviews, expected) in controls {
+        expect_outcome(&check_reviews(&reviews, &head)?, expected, name)?;
+    }
+    Ok(())
+}
+
+#[test]
 fn malformed_review_pages_refuse_instead_of_crashing() -> Result<(), String> {
     let head = "a".repeat(40);
     for page in [

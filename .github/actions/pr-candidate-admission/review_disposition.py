@@ -703,7 +703,13 @@ def reviews_allow_source_attestation(
             and not withdrawn_by_later_native(review)
             and (
                 (
+                    # #14728 finding: a clearing COMMENT must satisfy the same
+                    # head and trust guard as a clearing APPROVED review. A body
+                    # posted at an earlier head, or by an untrusted association,
+                    # cannot withdraw a statement made at the admitted head.
                     str(review.get("state") or "") == "COMMENTED"
+                    and str(review.get("commit_id") or "") == head
+                    and _trusted(review)
                     and (
                         comment_body_ready(str(review.get("body") or ""))
                         or comment_body_verdict_ready(
@@ -1258,6 +1264,33 @@ def self_test() -> None:
         [marker, approval, dismissed], head=head
     )
     assert reviews_allow_source_attestation([marker], head=head)
+    # #14728 finding: a later same-login COMMENTED body only clears that login's
+    # negative when it is trusted and posted at the admitted head. A body written
+    # for an earlier head, or by an untrusted association, cannot withdraw a
+    # statement made at this head. The APPROVED branch already carries the guard.
+    negative = review(state="COMMENTED", commit_id=head, id=1, body="REPAIR_REQUIRED",
+                      submitted_at="2026-10-15T01:00:01Z")
+    later_marker = review(state="COMMENTED", commit_id=head, id=3, body="SOURCE_REVIEW_READY",
+                          submitted_at="2026-10-15T01:00:03Z", user={"login": "other"})
+    assert not reviews_allow_source_attestation([negative, later_marker], head=head)
+    for wrong_head_or_trust in (
+        review(state="COMMENTED", commit_id=other, id=2, body="SOURCE_REVIEW_READY",
+               submitted_at="2026-10-15T01:00:02Z"),
+        review(state="COMMENTED", commit_id=head, id=2, body="SOURCE_REVIEW_READY",
+               author_association="NONE", submitted_at="2026-10-15T01:00:02Z"),
+    ):
+        assert not reviews_allow_source_attestation(
+            [negative, wrong_head_or_trust, later_marker], head=head
+        )
+    assert reviews_allow_source_attestation(
+        [
+            negative,
+            review(state="COMMENTED", commit_id=head, id=2, body="SOURCE_REVIEW_READY",
+                   submitted_at="2026-10-15T01:00:02Z"),
+            later_marker,
+        ],
+        head=head,
+    )
     # Another reviewer's prose that names a state and retracts it still refuses, while
     # prose that only quotes a state word is narration (#11566).
     for body, allowed in (
