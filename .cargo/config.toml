@@ -16,9 +16,7 @@ policy = "run --locked -p repo-policy --"
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld.exe"
 
-# Test scratch lives in one deletable subtree so fixture dirs from
-# interrupted runs stay out of the target/ root that caches scan and save.
 [env]
-TEMP = { value = "target/test-tmp", relative = true, force = true }
-TMP = { value = "target/test-tmp", relative = true, force = true }
-TMPDIR = { value = "target/test-tmp", relative = true, force = true }
+TEMP = { value = "target", relative = true, force = true }
+TMP = { value = "target", relative = true, force = true }
+TMPDIR = { value = "target", relative = true, force = true }
