@@ -1157,5 +1157,34 @@ fn compound_predicate_gap_id_names_one_seam() -> Result<(), String> {
         !repair.contains("item_names_several_seams") && repair.contains("names gap `"),
         "the gap id must resolve to one seam:\n{repair}"
     );
+    let inner = seam_id_for_expression(&repo, "s.len() > 1")?;
+    let outer = seam_id_for_expression(&repo, "s.starts_with('-') && s.len() > 1")?;
+    assert_ne!(inner, outer, "the fixture must mint two distinct seams");
+    assert!(
+        repair.contains(&format!("names gap `{inner}`")) && !repair.contains(&format!("`{outer}`")),
+        "repair must pick the inner comparison seam {inner}, not the enclosing {outer}:\n{repair}"
+    );
     Ok(())
+}
+
+/// The seam id `ripr pilot` lists for the one seam whose changed expression is
+/// exactly `expression`.
+fn seam_id_for_expression(repo: &Repo, expression: &str) -> Result<String, String> {
+    repo.ripr(&["pilot", "--root", "."])?;
+    let text = std::fs::read_to_string(repo.0.join("target/ripr/pilot/agent-seam-packets.json"))
+        .map_err(|e| e.to_string())?;
+    let packets: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    let ids: Vec<&str> = packets["packets"]
+        .as_array()
+        .ok_or("pilot packets must be an array")?
+        .iter()
+        .filter(|packet| packet["changed_expression"] == expression)
+        .filter_map(|packet| packet["seam_id"].as_str())
+        .collect();
+    match ids.as_slice() {
+        [id] => Ok((*id).to_string()),
+        other => Err(format!(
+            "expected one seam for `{expression}`, found {other:?}"
+        )),
+    }
 }
