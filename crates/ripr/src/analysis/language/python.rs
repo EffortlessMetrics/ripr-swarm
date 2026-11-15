@@ -2597,6 +2597,8 @@ mod cli_subcommand_tests;
 #[cfg(test)]
 mod dunder_helper_reach_tests;
 #[cfg(test)]
+mod repo_module_identity_tests;
+#[cfg(test)]
 mod helper_owner_call_tests;
 #[cfg(test)]
 mod imported_literal_tests;
