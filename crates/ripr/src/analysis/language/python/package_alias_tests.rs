@@ -179,6 +179,9 @@ fn a_rebound_or_conditional_package_name_stays_unlinked() -> Result<(), String> 
     Ok(())
 }
 
+/// A labelled initializer plus the extra workspace files beside it.
+type ElsewhereCase<'a> = (&'a str, &'a str, &'a [(&'a str, &'a str)]);
+
 #[test]
 fn a_package_name_replaceable_by_attribute_write_or_other_code_stays_unlinked() -> Result<(), String>
 {
@@ -228,7 +231,7 @@ fn a_package_name_replaceable_by_attribute_write_or_other_code_stays_unlinked() 
     // Code outside the initializer that runs before the test can replace the
     // attribute too: a submodule the initializer imports, a conftest, or
     // another test module.
-    let elsewhere: [(&str, &str, &[(&str, &str)]); 15] = [
+    let elsewhere: [ElsewhereCase; 15] = [
         (
             "helper-object-graph-write",
             "import tomli as tomllib\n",
