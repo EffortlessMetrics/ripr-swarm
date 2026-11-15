@@ -2282,14 +2282,21 @@ fn exception_body<'a>(gate_text: &'a str, item_text: &str) -> Option<&'a str> {
 }
 
 /// Whether a `lambda` or nested `def`/`class` in the body defers its calls,
-/// so nothing in it runs as the body runs.
+/// so nothing in it runs as the body runs. A line that only spells `def ` or
+/// `class ` inside a string or docstring defines nothing (#14754 review), so
+/// it is read only where code is visible.
 fn exception_body_defers(body: &str) -> bool {
     let visible = |idx: usize| !python_text_hides_code(body, idx);
-    let defers_by_keyword = body.lines().any(|line| {
-        let line = line.trim_start();
-        ["def ", "async def ", "class "]
-            .iter()
-            .any(|keyword| line.starts_with(keyword))
+    let mut offset = 0usize;
+    let defers_by_keyword = body.split_inclusive('\n').any(|line| {
+        let line_start = offset;
+        offset += line.len();
+        let text = line.trim_start();
+        let start = line_start + (line.len() - text.len());
+        visible(start)
+            && ["def ", "async def ", "class "]
+                .iter()
+                .any(|keyword| text.starts_with(keyword))
     });
     let defers_by_lambda = body.match_indices("lambda").any(|(idx, word)| {
         let before = body[..idx].chars().next_back();
@@ -3930,10 +3937,8 @@ fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
             // (3.12 same-quote nesting in a field, a newline in a field)
             // hides the rest of the text: a miss, never an invented call
             // (#9230).
-            if !rest.starts_with('#')
-                && string_prefix_is_f_string(text, cursor)
-                && super::static_limits::single_line_fstring_is_ambiguous(rest.chars())
-            {
+            let formatted = !rest.starts_with('#') && string_prefix_is_f_string(text, cursor);
+            if formatted && super::static_limits::single_line_fstring_is_ambiguous(rest.chars()) {
                 return true;
             }
             let len = if rest.starts_with('#') {
@@ -3941,10 +3946,12 @@ fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
             } else {
                 single_line_string_len(rest)
             };
-            // `idx` inside a comment or a (possibly backslash-continued)
-            // string literal is hidden code, not a call.
             if idx < cursor + len {
-                return true;
+                // A replacement field of a single-line f-string is code, not
+                // string text, so a call there stays visible (#14754 review).
+                if !(formatted && single_line_fstring_offset_is_code(rest, idx - cursor)) {
+                    return true;
+                }
             }
             cursor += len;
         } else {
@@ -3964,6 +3971,68 @@ fn string_prefix_is_f_string(text: &str, quote: usize) -> bool {
         .map_or(0, |(at, ch)| at + ch.len_utf8());
     let prefix = &text[prefix_start..quote];
     prefix.len() <= 2 && matches!(prefix.to_ascii_lowercase().as_str(), "f" | "rf" | "fr")
+}
+
+/// Whether byte `offset` of the single-line literal that starts at the first
+/// character of `literal` (its opening quote) sits inside a replacement field.
+/// A field is code, so a call spelled there is not string text (#14754 review).
+/// `false` for literal text, for the text after the closing quote, and for a
+/// literal this reader cannot follow (the ambiguity rule hides those instead).
+pub(super) fn single_line_fstring_offset_is_code(literal: &str, offset: usize) -> bool {
+    let Some((_, opening)) = literal.char_indices().next() else {
+        return false;
+    };
+    let mut chars = literal.char_indices().peekable();
+    chars.next();
+    let mut field = false;
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    while let Some((at, ch)) = chars.next() {
+        if at >= offset {
+            break;
+        }
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(open) = quote {
+            if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        if field {
+            match ch {
+                '\'' | '"' => quote = Some(ch),
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        field = false;
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+        if ch == opening {
+            break;
+        }
+        if ch == '{' {
+            if chars.peek().is_some_and(|(_, next)| *next == '{') {
+                chars.next();
+                continue;
+            }
+            field = true;
+            depth = 1;
+        }
+    }
+    field
 }
 
 /// The extent of one f-string replacement field.

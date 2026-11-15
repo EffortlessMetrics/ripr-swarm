@@ -501,50 +501,111 @@ pub(super) fn line_prefix_before(text: &str, idx: usize) -> &str {
 /// a comment or an open string. A tripled quote opens a string that only the
 /// same tripled delimiter closes, so `'''it's'''` is one balanced literal and
 /// code after it is visible (#9992); a triple string left open at the end of
-/// the prefix hides what follows. F-string fields are not read here.
+/// the prefix hides what follows. The replacement field of an f-string is code
+/// (#14754 review): `f"{parse('')}"` ends the prefix inside a field, so the
+/// call there stays visible.
 pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
+    /// One open string literal on the prefix scanner's stack.
+    struct Literal {
+        quote: char,
+        triple: bool,
+        formatted: bool,
+        /// The scanner is inside this f-string's replacement field: its text
+        /// is code, not string text.
+        in_field: bool,
+        /// Open braces of that field (a dict or set literal nests).
+        field_depth: usize,
+    }
     let chars: Vec<char> = prefix.chars().collect();
-    // The active delimiter and its width (1 or 3).
-    let mut open: Option<(char, usize)> = None;
+    let mut stack: Vec<Literal> = Vec::new();
     let mut index = 0;
     while index < chars.len() {
         let ch = chars[index];
-        if let Some((quote, width)) = open {
-            let closes = ch == quote
-                && chars.len() - index >= width
-                && chars[index..index + width].iter().all(|c| *c == quote);
-            if ch == '\\' {
-                index += 2;
-            } else if closes {
-                open = None;
-                index += width;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-        if ch == '#' {
-            return true;
-        }
-        if ch == '\'' || ch == '"' {
-            let triple = chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch);
-            let width = if triple { 3 } else { 1 };
-            // A single-line f-string whose quote pairing cannot be followed
-            // (3.12 same-quote nesting in a field, a newline in a field)
-            // hides what follows: a miss, never an invented call (#9230).
-            if !triple
-                && chars_end_with_f_prefix(&chars[..index])
-                && single_line_fstring_is_ambiguous(chars[index..].iter().copied())
-            {
+        let in_code = stack.last().map_or(true, |literal| literal.in_field);
+        if in_code {
+            if ch == '#' {
                 return true;
             }
-            open = Some((ch, width));
-            index += width;
+            if ch == '\'' || ch == '"' {
+                let triple = chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch);
+                let formatted = chars_end_with_f_prefix(&chars[..index]);
+                // A single-line f-string whose quote pairing cannot be followed
+                // (3.12 same-quote nesting in a field, a newline in a field)
+                // hides what follows: a miss, never an invented call (#9230).
+                if !triple
+                    && formatted
+                    && single_line_fstring_is_ambiguous(chars[index..].iter().copied())
+                {
+                    return true;
+                }
+                stack.push(Literal {
+                    quote: ch,
+                    triple,
+                    formatted,
+                    in_field: false,
+                    field_depth: 0,
+                });
+                index += if triple { 3 } else { 1 };
+                continue;
+            }
+            if let Some(literal) = stack.last_mut() {
+                if literal.in_field {
+                    if ch == '{' {
+                        literal.field_depth += 1;
+                    } else if ch == '}' {
+                        literal.field_depth = literal.field_depth.saturating_sub(1);
+                        if literal.field_depth == 0 {
+                            literal.in_field = false;
+                        }
+                    }
+                }
+            }
+            index += 1;
             continue;
+        }
+        let Some((quote, triple, formatted)) = stack
+            .last()
+            .map(|literal| (literal.quote, literal.triple, literal.formatted))
+        else {
+            index += 1;
+            continue;
+        };
+        if ch == '\\' {
+            index += 2;
+            continue;
+        }
+        if triple {
+            if chars.len() - index >= 3 && chars[index..index + 3].iter().all(|c| *c == quote) {
+                stack.pop();
+                index += 3;
+                continue;
+            }
+        } else if ch == quote {
+            stack.pop();
+            index += 1;
+            continue;
+        }
+        if formatted {
+            if ch == '{' {
+                if chars.get(index + 1) == Some(&'{') {
+                    index += 2;
+                    continue;
+                }
+                if let Some(literal) = stack.last_mut() {
+                    literal.in_field = true;
+                    literal.field_depth = 1;
+                }
+                index += 1;
+                continue;
+            }
+            if ch == '}' && chars.get(index + 1) == Some(&'}') {
+                index += 2;
+                continue;
+            }
         }
         index += 1;
     }
-    open.is_some()
+    stack.last().is_some_and(|literal| !literal.in_field)
 }
 
 /// Whether the identifier run that ends `before` is an `f` string prefix
