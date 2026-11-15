@@ -153,8 +153,9 @@ with `result_too_large` instead of shipping a success without
 `structuredContent` (#7768; details in
 [MCP workspace status server](interop/mcp.md)). `content[0].text` is the
 compact JSON copy by default; `RIPR_MCP_TEXT_CONTENT=summary` opts a server
-process into a digest instead (`brief` gives one line per gap) while
-`structuredContent` stays the one complete result (#9360, #11621). Argument
+process into a digest instead (`brief` gives one line per gap, and for
+`ripr_get_gap` the gap's test-author facts one per line) while
+`structuredContent` stays the one complete result (#9360, #11621, #14327). Argument
 errors on a known tool are `invalid_argument` tool failures (`isError: true`),
 not JSON-RPC errors (#11621).
 
@@ -285,6 +286,8 @@ terse document rewrites repeated content. Exactly what differs:
 | `evidence_path`, `evidence`, `missing` entries | full prose sentences | repeated strings of 24+ bytes are coded only when their JSON byte savings exceed legend cost; other prose stays verbatim |
 | `assertion_texts` values | assertion source lines | long values coded the same way |
 | `ripr.<stage>.summary` (#13673) | stage prose, usually repeated verbatim in `evidence` | coded the same way and sharing the `evidence` code; `state` and `confidence` stay verbatim |
+| `related_tests[].oracle` and `related_tests[].why` (#13673) | each related-test row's assertion line and miss sentence, repeated across findings that list the same test | coded the same way; an oracle line shares the code of the identical `assertion_texts` value; every other row field stays verbatim |
+| Related-test row cores (#13673) | every finding's `related_tests` rows repeat the same test's `name`, `file`, `line`, `oracle`, `oracle_kind` and `oracle_strength` | a core that appears in two or more rows is emitted once in the document-level `related_test_table`; each row that used it omits those fields and carries `table_row`, the zero-based table index, next to its per-finding `relation_reason`, `relation_confidence`, `miss` and `why`. A core seen once stays verbatim. `table_row` is a reference only when `related_test_table` is present: if any producer row already has a `table_row` key, nothing is hoisted |
 | `evidence_legend` | absent | code → full template, emitted only when useful, in first-appearance order; codes avoid literal values on coded surfaces |
 | Next-action alias | both keys emitted | `suggested_next_action` is omitted only when its value equals `recommended_next_step` and is at least 24 UTF-8 bytes; the alias is listed once in `dropped_aliases` |
 | Activation aliases (#13673) | finding-level `observed_values` and `missing_discriminators` repeat `activation` | each is omitted only when it is non-empty and equal to the same-named array in that finding's `activation`; each dropped alias is listed once in `dropped_aliases` |
@@ -302,8 +305,10 @@ Guarantees and limits, stated precisely:
   the terse document alone. Restore an omitted `suggested_next_action` from
   that finding's `recommended_next_step`, an omitted `observed_values` or
   `missing_discriminators` from that finding's `activation`, an omitted
-  `canonical_gap_id` from `canonical_gap.id`, and an omitted `evidence_stages`
-  from `ripr` as described above. All other fields remain verbatim
+  `canonical_gap_id` from `canonical_gap.id`, an omitted `evidence_stages`
+  from `ripr` as described above, and a row carrying `table_row` by merging
+  `related_test_table[table_row]` back into it and removing `table_row` (a
+  table `oracle` may itself be a legend code). All other fields remain verbatim
   even when their strings coincide. The schema permits omitting
   `suggested_next_action` only when both `rendering: "terse"` and the known
   alias declaration are present; full JSON continues to require it. The
@@ -313,12 +318,14 @@ Guarantees and limits, stated precisely:
   property tests, not the schema, hold that guarantee. Tying their omission
   to the alias declaration in the schema needs a narrowing change and a
   schema version bump, which is deferred.
-- What terse does *not* code: related-test oracle lines, flow-sink text and
-  repair cards stay inline. Those are the remaining cross-finding
-  duplication; coding them is follow-up work if measurements justify it.
-  (`ripr` stage summaries joined the coded surfaces in #13673: on a
-  four-finding `dtolnay/semver` diff each long stage summary appeared in
-  `ripr` and again in `evidence`.)
+- What terse does *not* code: flow-sink text and repair cards stay inline.
+  Those are the remaining cross-finding duplication; coding them is
+  follow-up work if measurements justify it. (`ripr` stage summaries joined
+  the coded surfaces in #13673: on a four-finding `dtolnay/semver` diff each
+  long stage summary appeared in `ripr` and again in `evidence`. Related-test
+  `oracle` and `why` strings followed: on the five-gap budget fixture every
+  finding lists the same five test rows; their repeated row cores then moved
+  into `related_test_table`.)
 - The transform runs on the stamped `json` document (including the CLI's
   canonical next-action member when present) and fails closed: an
   unparseable producer document aborts the run instead of emitting an
@@ -397,7 +404,9 @@ not edit authorization. No field shape or schema version changes.
 finds the offered route executable, so the reference and the decision cannot
 disagree. The canonical DTO carries the closed action class (see the
 `next_action_class` values list), the exact subject/currentness binding, the
-referenced command or a typed stop, and bounded subordinate alternatives.
+referenced command or a typed stop, and bounded subordinate alternatives
+(for `ripr check`, the two best-ranked unselected findings by the shared
+findings priority, #14266).
 The semantic digest pins the decision's portable parts (schema, producer,
 class, command identity, stop kind, transition labels); displays, stop
 details, and alternative routes stay out like `next_action.display`. The
@@ -1195,7 +1204,12 @@ verify=complete|outcome=O|findings=N|exposed=N
   holds two arms, or when the line's head is not the probe's head. The
   match-arm `flow_sinks[].text` in JSON and the human `Changed behavior`,
   propagation and local-flow evidence lines carry the same result; the probe
-  expression, finding ids and classes do not change.
+  expression, finding ids and classes do not change. The same rule names the
+  result in MCP `ripr_get_gap` as `changed_behavior.arm_result` (present
+  only when read; `expression` stays the head, and `ripr_prepare_repair`
+  carries the same `changed_behavior`) and in the editor hover's
+  changed expression and line-findings heading; LSP diagnostic data keeps the
+  head (#14683).
 - 5 gap lines are printed, plus one more per 8 gaps, up to 10 (#13081): top
   triage gap first, then the remaining gaps in finding order; `+M more gaps not
   shown` states the exact remainder. The `open=` form (unconfirmed findings)
@@ -1899,20 +1913,28 @@ classes are:
 - an unknown flag or stray positional argument;
 - an unrecognized enum-style value rejected by the CLI's shared unknown-value
   builder (for example `check --format yaml`), and `explain --format json`;
+- a value flag with no value or an empty one, caught by the CLI's shared
+  value reader (for example `check --json --base` with nothing after it), as
+  `missing_value` with the flag as `token` (#11979);
+- a malformed number caught by the CLI's shared numeric parsers (for example
+  `context --max-related-tests zz` or `check --timeout zz`), as
+  `invalid_value` with the typed value as `token` (#11979);
 - a `context --at`/`--finding` selector that matched no finding, matched
   more than one, or could not be decided.
 
 Every other argv usage error keeps empty stdout even under a JSON request,
-with the cause on stderr only: a flag missing its value, a malformed value
-(for example a non-numeric number), conflicting or disagreeing flags, an
-unrecognized value rejected outside the CLI's shared builder (for example a
-gate mode), and any other argv error. These are a named gap, not a clean
-result.
+with the cause on stderr only: a missing required flag (`requires --X`),
+a missing or malformed value rejected by a command's own parser rather than
+the shared readers (for example `impacted-evidence`, or most `agent`
+subcommands given an empty value), conflicting or disagreeing flags, an unrecognized value
+rejected outside the CLI's shared builder (for example a gate mode), and any
+other argv error. These are a named gap, not a clean result.
 
 The document carries `schema_version`, `tool`, `status: "refused"` and
 `error {code, message, token?, next}` with `code` one of `unknown_argument`,
-`unknown_command`, `unknown_value`, `selector_miss`. `token` is the offending
-argument, command, value or selector; `next` is a fixed help pointer
+`unknown_command`, `unknown_value`, `missing_value`, `invalid_value`,
+`selector_miss`. `token` is the offending argument, command, flag, value or
+selector (an empty malformed value has none); `next` is a fixed help pointer
 (`list_valid_arguments`, `list_valid_commands`) or `null`; `selector_miss`
 always carries `next: null`, because its message embeds the caller's selector
 and nothing is lifted from caller-controlled text. No argv echo and no
@@ -3929,7 +3951,11 @@ diagnostic, hover repair text, code action or code lens for a finding id in
 withheld count and the `owner_mutants_skip` reason under
 `diagnostics.owner_opt_out_findings` and `diagnostics.owner_opt_out_reason`
 (the reason is `null` when nothing is withheld). The set is recomputed on every
-refresh, so removing the attribute brings the findings back.
+refresh, so removing the attribute brings the findings back. The count is the
+owner opt-out count, which equals the withheld set because withheld findings are
+removed before the out-of-scope test-file partition; the partition therefore
+cannot reduce it. The fixed `owner_mutants_skip` reason holds while
+the editor supplies no suppression policy (#14610).
 
 Surfaces that still report withheld findings (not yet wired to the opt-out):
 MCP gaps and repair cards; `ripr explain`; and the repo-scope formats
@@ -16668,7 +16694,8 @@ Field contract:
   failed.
 - `version` - requested release version from `--version`.
 - `checks[].id` - stable check identifier such as `package-list`,
-  `publish-dry-run`, `package-install`, `installed-command-surface`,
+  `publish-dry-run`, `package-upload-size`, `package-install`,
+  `installed-command-surface`,
   `pilot-boundary-fixture`, `outcome-boundary-fixture`,
   `agent-verify-boundary-fixture`, `agent-receipt-boundary-fixture`,
   `repo-exposure-latency`, `lsp-cockpit`, `github-workflow-defaults`,
@@ -18389,6 +18416,11 @@ Field contract:
   `changed_test_for_related_seam`, `changed_assertion_near_related_test`,
   `same_file_seam`, `explicit_seam_id`, or `repo_actionable_fallback`.
 - `top_seams[].packet_ref` — pointer to the full agent seam packet.
+- `top_seams[].arm_result` — optional. Present only on a match-arm seam whose
+  `expression` is a single arm head (`Size::Medium =>`) and whose result sits on
+  the same line in the current file. It names the value a test must pin, for
+  example `"450"`. `expression` stays the head, and the key is omitted when no
+  result can be read (#14683).
 - `top_seams[].verification` — before/after static evidence commands and an
   optional focused test command. The snapshot and verify commands are anchored
   at the analyzed root, so they run from any directory; both snapshot commands
@@ -21225,7 +21257,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.59",
+    "schema_version": "1.61",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,

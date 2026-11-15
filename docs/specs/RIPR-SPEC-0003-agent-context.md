@@ -74,7 +74,10 @@ partial diff scope, a non-`Ok` language run or unanalyzed preview files says
 analysis was incomplete (#14406), stated once when the miss cause already
 says so, and a replayed `--from` miss says the artifact does not
 record whether its run was complete (#14440), so a finding there may be
-missing.
+missing. When no finding path matches exactly but one matches ignoring ASCII
+case, the sentence starts "Paths match case-sensitively." and names the
+correctly cased file and selector; resolution itself stays case-sensitive
+(#14416).
 
 The packet should include:
 

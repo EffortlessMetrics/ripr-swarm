@@ -2076,6 +2076,27 @@ no gate the stand-in passes depends on the text. Rejected: keeping
 as the inline form does; the corpus row
 `lib-expect-test-expect-file-golden` kills both mutants at runtime.
 
+### Tail `if`/`else` branch values (#14385)
+
+When the owner's tail is an `if`/`else`, each branch block's tail value is
+what the owner returns, so it gets a `return_value` probe like a plain tail
+(and an `error_path` probe when it builds an error). `else if` chains and
+nested `if` branch tails recurse. Exclusions:
+
+- a branch tail that is itself `if`, `match` or a loop gets no shape, decided
+  by AST kind (so `if` or `match` alone on its line is still excluded);
+- a value on any line of its `if`'s condition gets no shape, because an inline
+  branch already flows to the return through that line's predicate (#7626);
+- a branch value that is a comparison or boolean expression
+  (`input.len() > 3`, also inside parentheses or under `!`) keeps only its
+  predicate probe, so a weaker second row
+  cannot turn a discriminated predicate into a gap (verdict corpus
+  `spec-b-0159-recursive-helper`);
+- an `if` without `else` is a statement, not the owner's value.
+
+This adds probes only; it does not widen Rule 3. A pin of the owner's result
+still credits a branch value only weakly, as for an early return (#14387).
+
 ### Short-circuit tails (#7969)
 
 Rule 3 refuses `&&`/`||` because a pin may never evaluate the changed
@@ -2556,6 +2577,22 @@ not themselves a static propagation proof.
   an `async` test, or the file and line of the macro binding). A refused
   context does not also claim that no assertion or oracle was detected. The
   disclosure is computed after admission and never changes what is credited.
+  When an include makes placement unavailable and a private, unscoped glob
+  outside the assertion's own file therefore cannot be confined, the blocker
+  says so and names the first workspace-reaching include expression, location
+  and reason code; an inert include or a separate placement failure is not
+  blamed. A glob in the assertion's own file keeps its direct macro-binding
+  explanation, and so does a glob whose ambiguity does not depend on
+  placement: a public glob is unconfined by construction, a scoped import is
+  confined lexically, a glob whose own module composition did not resolve has
+  a separate cause, another disabling input (a lexical fallback, an unknown
+  `#[path]` target or an unseen unindexed member) keeps placement off without
+  the include, and a glob that reaches the assertion from an ancestor module
+  or along the module chain is ambiguous with placement on
+  (`the_refusal_names_the_include_that_makes_placement_unavailable`,
+  `a_public_glob_keeps_its_direct_explanation_with_an_include_present`,
+  `a_separate_placement_failure_keeps_the_direct_glob_explanation`,
+  `a_glob_reaching_from_an_ancestor_keeps_its_direct_explanation`).
   A refused assertion whose text calls the changed owner is named first.
   Only that one earns the next step that calls the refusal a possible static
   limit to confirm with a real mutation run; a refused assertion that does
@@ -3070,7 +3107,7 @@ assertions. This repair shares the existing callback without that larger migrati
   runtime truth for the direct, wrong-input, transformed, masked, discarded,
   opaque-input and unrelated-test shapes.
 - Claims payload equality pins (#12304):
-  `crates/ripr/tests/claims_payload_eq_owner_pin.rs` (the credited twins and
+  `crates/ripr/tests/wrapped_owner_pins/claims_payload_eq_owner_pin.rs` (the credited twins and
   one negative control per refusal above, the early-`Err` and `None` exit
   directions, the non-`return_value` families, and multi-line invocations: credited
   when the closing line holds only the `;` and a comment, unknown otherwise).
@@ -3083,7 +3120,7 @@ assertions. This repair shares the existing callback without that larger migrati
   `assert_some_eq!` over a hand-written `clone` owner and an `Err(..)`
   struct-variant owner stay `unknown`), with the `assert_eq!` twins credited
   on the same subjects.
-- Claims payload pins (#9619): `crates/ripr/tests/claims_payload_owner_pin.rs`
+- Claims payload pins (#9619): `crates/ripr/tests/wrapped_owner_pins/claims_payload_owner_pin.rs`
   (single and grouped import, trailing `assert_err!`, `assert_some!`
   positives; missing, foreign, renamed, locally redefined import, `mut`,
   owner-derived expected value, wrapped operand, method use, converted
@@ -3114,7 +3151,7 @@ assertions. This repair shares the existing callback without that larger migrati
   is compiled directly by the integration suite; native proc-macro removal
   controls are separate engineering evidence, not claimed by the API assertions.
 - Unwrapped `Ok`/`Some` pins (#9619):
-  `crates/ripr/tests/unwrapped_ok_owner_pin.rs` (direct, reversed, `expect`,
+  `crates/ripr/tests/wrapped_owner_pins/unwrapped_ok_owner_pin.rs` (direct, reversed, `expect`,
   bound and `Option` positives; `mut`, shadowing, method use, owner-derived
   expected value, `unwrap_or`, `unwrap_err`, `assert_ne!`, other owner,
   discarded unwrap and wrapper- or opposite-exit-binding negatives).

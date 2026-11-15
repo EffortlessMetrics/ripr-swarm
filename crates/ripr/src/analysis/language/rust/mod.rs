@@ -2945,12 +2945,9 @@ impl RustAdapter {
         );
         rust_consumed_sources.file_fact_cache = Some(cached.file_fact_cache.clone());
         let mut index = cached.index;
-        if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
-            eprintln!("{disclosure}");
-        }
-        if let Some(disclosure) = rust_index::module_composition_disclosure(&index) {
-            eprintln!("{disclosure}");
-        }
+        // #14700: within one `ripr check`, this index owns each limitation
+        // family; a scoped inventory index built later stays silent.
+        rust_index::eprint_index_limit_disclosures(&index);
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
         // #13703: keep raw bytes only for files whose indexed text differs;
         // origin capture borrows the rest from the index.

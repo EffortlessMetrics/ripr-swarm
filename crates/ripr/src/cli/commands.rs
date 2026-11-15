@@ -634,6 +634,10 @@ fn pr_evidence_ledger_record(args: &[String]) -> Result<(), String> {
 
 fn pr_comments_plan(args: &[String]) -> Result<(), String> {
     let options = parse_pr_comments_plan_options(args)?;
+    crate::cli::commands_context::ensure_command_root(
+        Path::new(&options.root),
+        "pr-comments plan",
+    )?;
     let pr_guidance_path = options
         .pr_guidance
         .as_ref()
@@ -755,7 +759,7 @@ fn pr_review_front_panel(args: &[String]) -> Result<(), String> {
         assistant_proof_json: options
             .assistant_proof
             .as_ref()
-            .map(|path| read_report_input_plain("assistant proof", path)),
+            .map(|path| read_report_input_plain_typed("assistant proof", path)),
         assistant_health_json: options
             .assistant_health
             .as_ref()
@@ -1996,6 +2000,28 @@ fn read_report_input_plain(label: &str, path: &Path) -> Result<String, String> {
     })
 }
 
+/// [`read_report_input_plain`] with the not-found case kept separate, so the
+/// front panel can say "missing" only when the path is really absent (#14553).
+fn read_report_input_plain_typed(
+    label: &str,
+    path: &Path,
+) -> Result<String, output::pr_review_front_panel::PanelInputError> {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
+        let detail = crate::bounded_input::read_failure_detail(&err);
+        let detail = match detail.find(" (os error ") {
+            Some(index) => detail[..index].to_string(),
+            None => detail,
+        };
+        output::pr_review_front_panel::PanelInputError {
+            not_found: err.kind() == std::io::ErrorKind::NotFound,
+            message: format!(
+                "read {label} {} failed: {detail}",
+                output::baseline_delta::display_path(path)
+            ),
+        }
+    })
+}
+
 /// Render report warnings in the sibling `baseline create` stderr style
 /// (#9824): a `Warnings: <n>` count line followed by one `Warning: <text>`
 /// line per entry. Returns an empty string when there is nothing to warn
@@ -2085,7 +2111,9 @@ fn non_empty_string_arg(
 ) -> Result<String, String> {
     let value = expect_value(args, index, flag)?;
     if value.trim().is_empty() {
-        Err(format!("{command} {flag} requires a non-empty value"))
+        let message = format!("{command} {flag} requires a non-empty value");
+        crate::cli::usage_refusal::note_missing_value(flag, &message);
+        Err(message)
     } else {
         Ok(value.to_string())
     }

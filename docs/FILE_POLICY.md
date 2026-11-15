@@ -95,6 +95,15 @@ neighboring files.
 Other repo automation, release helpers, fixture runners, and policy checks
 should be converted to Rust/`xtask` rather than newly allowlisted.
 
+The exact `tools/ci/shard-verifier-artifact.py` and
+`tools/ci/test_shard_verifier_artifact.py` paths are retained for #14580. The
+unprivileged verify job has no Rust toolchain and must validate the downloaded
+`xtask` before executing it. Its stdlib Python controls exercise that bootstrap
+and the actual workflow shell with inert ZIP payloads; the Linux Rust-owned
+`shard_verifier_artifact` integration target runs them during qualification.
+The exception does not retain other scripts under `tools/ci/` or make candidate
+execution suitable for a privileged finalizer.
+
 If the file does not match the current allowlist, update the allowlist with an
 owner and reason in the same PR. If it is a programming-language file, also
 update the Rust retention classifier in `xtask` or convert it to Rust.

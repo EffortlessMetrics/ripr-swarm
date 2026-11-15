@@ -747,9 +747,9 @@ fn full_real_review_bodies_admit_or_refuse_as_recorded() -> Result<(), String> {
         )]);
         expect_outcome(&check_reviews(&reviews, &head)?, admit, &name)?;
     }
-    if ready != 12 || refused != 7 {
+    if ready != 13 || refused != 8 {
         return Err(format!(
-            "expected 12 ready and 7 refuse fixtures, saw {ready}/{refused}"
+            "expected 13 ready and 8 refuse fixtures, saw {ready}/{refused}"
         ));
     }
     Ok(())
@@ -1393,6 +1393,151 @@ fn a_labelled_field_whose_value_is_a_state_token_refuses() -> Result<(), String>
     for (body, admit, what) in cases {
         let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
         expect_outcome(&check_reviews(&reviews, &head)?, admit, what)?;
+    }
+    Ok(())
+}
+
+/// #8157: a standalone automated VERDICT review states a disposition instead
+/// of superseding an earlier marker from the same login as neutral chatter
+/// (observed on #14652 and #13898). Only an exact column-zero first line
+/// counts: `VERDICT: APPROVE <full head>` attests, `VERDICT: BLOCK` /
+/// `VERDICT: BLOCKED <sha>` refuses, and every other VERDICT prose is neutral.
+#[test]
+fn verdict_first_line_carries_or_refuses_the_attestation() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let other = "b".repeat(40);
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/review_bodies");
+    let approve_body = std::fs::read_to_string(dir.join("ready-verdict-approve-pr14652.md"))
+        .map_err(|e| format!("approve fixture: {e}"))?;
+    let block_body = std::fs::read_to_string(dir.join("refuse-verdict-block-pr14652.md"))
+        .map_err(|e| format!("block fixture: {e}"))?;
+    if !approve_body.starts_with(&format!("VERDICT: APPROVE {head}"))
+        || !block_body.starts_with(&format!("VERDICT: BLOCK {head}"))
+    {
+        return Err("fixture setup: verdict fixtures lost their first lines".into());
+    }
+    let at = |second: u8| format!("2026-10-15T03:00:0{second}Z");
+    let mut untrusted_approve = review("author", "COMMENTED", &head, &at(1), &approve_body);
+    untrusted_approve["author_association"] = serde_json::json!("NONE");
+    let mut untrusted_block = review("other", "COMMENTED", &head, &at(2), &block_body);
+    untrusted_block["author_association"] = serde_json::json!("NONE");
+    untrusted_block["id"] = serde_json::json!(2);
+    let mut other_block = review("other", "COMMENTED", &head, &at(2), &block_body);
+    other_block["id"] = serde_json::json!(2);
+    let cases: [(&str, serde_json::Value, bool); 13] = [
+        (
+            "marker then verdict approve, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), &approve_body),
+            ]),
+            true,
+        ),
+        (
+            "marker then verdict block, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), &block_body),
+            ]),
+            false,
+        ),
+        (
+            "verdict approve then marker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), &approve_body),
+                review("author", "COMMENTED", &head, &at(2), "SOURCE_REVIEW_READY"),
+            ]),
+            true,
+        ),
+        (
+            "standalone verdict approve",
+            serde_json::json!([review("author", "COMMENTED", &head, &at(1), &approve_body)]),
+            true,
+        ),
+        (
+            "standalone verdict block",
+            serde_json::json!([review("author", "COMMENTED", &head, &at(1), &block_body)]),
+            false,
+        ),
+        (
+            "verdict block from another trusted reviewer",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                other_block,
+            ]),
+            false,
+        ),
+        (
+            "verdict approve naming another head",
+            serde_json::json!([review(
+                "author",
+                "COMMENTED",
+                &head,
+                &at(1),
+                &format!("VERDICT: APPROVE {other}")
+            )]),
+            false,
+        ),
+        (
+            "verdict approve posted on another head",
+            serde_json::json!([review("author", "COMMENTED", &other, &at(1), &approve_body)]),
+            false,
+        ),
+        (
+            "untrusted verdict approve",
+            serde_json::json!([untrusted_approve]),
+            false,
+        ),
+        (
+            "untrusted verdict block adds no veto",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                untrusted_block,
+            ]),
+            true,
+        ),
+        (
+            "observed verdict approve tail after marker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("VERDICT: APPROVE {head} \u{2014} no blocking findings on this head.")
+                ),
+            ]),
+            true,
+        ),
+        (
+            "observed verdict block tail after marker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("VERDICT: BLOCK {head} \u{2014} one finding remains open")
+                ),
+            ]),
+            false,
+        ),
+        (
+            "abbreviated verdict approve attests nothing",
+            serde_json::json!([review(
+                "author",
+                "COMMENTED",
+                &head,
+                &at(1),
+                "VERDICT: APPROVE aaaaaaaaaaaa"
+            )]),
+            false,
+        ),
+    ];
+    for (name, reviews, admit) in cases {
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, name)?;
     }
     Ok(())
 }

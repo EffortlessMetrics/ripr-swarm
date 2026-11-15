@@ -1,5 +1,6 @@
 //! CLI adapter for `ripr reports` index, gap-ledger, and TypeScript routes (#4854).
 
+use crate::cli::commands_context::ensure_command_root;
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
 use crate::cli::help;
@@ -49,6 +50,7 @@ pub(in crate::cli) fn reports(args: &[String]) -> Result<(), String> {
 
 fn report_packet_index(args: &[String]) -> Result<(), String> {
     let options = parse_report_packet_index_options(args)?;
+    ensure_command_root(Path::new(&options.root), "reports index")?;
     let input = output::report_packet_index::ReportPacketIndexInput {
         root: options.root,
         generated_at: report_packet_index_generated_at()?,

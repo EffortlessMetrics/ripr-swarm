@@ -459,7 +459,17 @@ ignoring one leading `./` on both sides, `class` takes an exposure-class wire
 token (for example `exposed`), `language` takes a language wire string (for
 example `rust`), and `repair_ready: true` (or `false`) selects the
 commit-time readiness projection. `selected` stays the full stored-selection
-count while `filtered` counts the narrowed set the page walks. An unknown
+count while `filtered` counts the narrowed set the page walks. With no
+`class`, `exposed` items whose `repair_ineligibility` is `seam_already_gripped`
+(the shared seam gate found existing tests already check the seam) are left
+out of `items` and `filtered` and disclosed as `exposed_omitted` plus an
+`exposed_route` hint (both absent when zero or when `class` is given; the
+default applies under `repair_ready: false` too). An `exposed` item that is
+repair-ready, or unready for any other cause (for example
+`seam_inventory_truncated` or `worktree_source_not_committed`), stays listed:
+missing or limited evidence is never read as "no action needed". `total`, `eligible`,
+`selected` and `outcome` still describe the whole snapshot, and
+`class: "exposed"` lists them. An unknown
 `file` value is an empty disclosed page; an unknown `class` or `language` is
 an `invalid_argument` tool failure (`isError: true`, see "Argument errors" below)
 naming the accepted tokens in `failure.data.allowed` (the echoed token is
@@ -544,7 +554,7 @@ the default and the token saver is an explicit opt-in per server process:
 |---|---|
 | unset, `full`, or any unrecognized value | the compact JSON copy of the document (default) |
 | `summary` (ASCII case-insensitive, surrounding whitespace ignored) | a digest, not a copy |
-| `brief` (ASCII case-insensitive, surrounding whitespace ignored) | for `ripr_list_gaps`, one line per gap; every other tool falls back to the `summary` digest (#11621) |
+| `brief` (ASCII case-insensitive, surrounding whitespace ignored) | for `ripr_list_gaps`, one line per gap (#11621); for `ripr_get_gap`, the gap's test-author facts one per line (#14327); every other tool falls back to the `summary` digest |
 
 `brief` exists because `summary` shows only counts and identities for a list, so
 a text-only host cannot tell which gap is which. A `brief` list is a header
@@ -562,6 +572,42 @@ example, an empty no-scope result from a complete one; absent fields are marked
 escaped, so a document string cannot forge a line. It is opt-in, not the
 default, for the compatibility reason below: a host that feeds only text to its
 model would lose the detail that is not in a line (evidence, discriminators).
+
+A `brief` `ripr_get_gap` (#14327) gives the facts a test author acts on, in
+the order the `check --format agent` gap row gives them:
+
+```text
+ripr gap: <class> <file>:<line> owner=<owner>. This text is a brief, not a copy: ...
+canonical_id: <canonical_id>; snapshot_id: <snapshot_id>
+changed: <before> -> <after>; probe: <probe_family>
+missing: <discriminator value> (<reason>)
+test: <name> <file>:<line> oracle=<strength> miss=<miss|none>: <oracle>
+readiness: repair_ready=<true|false> (<reason>); static_limitation: <kind|none>; source: <currentness>
+next: <recommended_next_step>
+```
+
+It lists up to three `missing` and three `test` lines. When the document holds
+more, a `+N more ... entries in structuredContent` line follows. When
+`related_tests_total` counts more matches than the document retained, a
+separate `+N more related tests matched but not retained in this document` line
+says so, because those tests are not in `structuredContent` either. A test
+with no oracle reads `none` after its colon. `changed`
+falls back to the expression when `before` or `after` is absent and adds `arm
+result: <result>` when the document carries `changed_behavior.arm_result`.
+`missing` falls back to the producer's `missing` prose when no discriminator is
+listed, and says `missing: none listed` when neither exists. A gap with no
+related test says `test: none related`, and a document with neither the
+related-test array nor its count says `test: ?`. An absent value is `?`, an
+explicit `null` (`static_limitation`, a test's `miss`) is `none`, and an absent
+`next` step is left out rather than written. Identities (`canonical_id`,
+`snapshot_id`, file paths) are escaped but never clipped, so they can be passed
+back to a tool. Other strings are clipped at 200 characters like the digest.
+The following stay in `structuredContent` only: observed values, evidence
+prose, the producer's `missing` prose when discriminators are listed, causal
+attribution beyond the owner, `delta_kind`, `expected_sinks`, each test's `why`
+and relation, `repair_boundary`, `claim_boundary`, `limitations`, and links. Measured with `cargo xtask agent-eval` (routes `mcp` and `mcp-brief`),
+the eight `ripr_get_gap` reads across the six scenarios cost 12,294 estimated
+tokens as JSON and 3,083 as `brief`, and every scenario is still answered.
 
 Set it in the host's server `env` (for example `"env": {"RIPR_MCP_TEXT_CONTENT":
 "summary"}` beside `command` and `args`) only for a host known to read
@@ -648,7 +694,8 @@ input selection, which reads saved tracked edits on a dirty tree.
 `ripr_get_gap` (and the equivalent resource `ripr://gap/{canonical_id}`)
 returns one canonical item's complete bounded evidence bound to its snapshot
 identity: identity and location, the changed behavior (expression,
-before/after, delta kind, probe family), causal attribution (canonical gap
+before/after, delta kind, probe family, and for a head-only match arm the
+`arm_result` its line names, #14683), causal attribution (canonical gap
 owner, behavior kind, probe kind, normalized discriminator), discriminator
 availability and the producer's observed/missing evidence, related tests with
 oracle kind and strength, the nonnegative `related_tests_total` before the

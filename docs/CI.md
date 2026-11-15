@@ -120,6 +120,13 @@ characters without backticks, followed by a colon (ASCII or fullwidth), `->`, `=
 and a non-positive state token, also states it (`VERDICT: REPAIR_REQUIRED`,
 `Status (round 2): CHANGES_REQUESTED`, `Status -> REPAIR_REQUIRED`, #14592). A positive
 value under a label (`- **Status:** REVIEW_READY`) is narration, not a refusal.
+A COMMENT whose first line is `VERDICT: APPROVE <full 40-character head SHA>` at
+column zero, with the SHA equal to that review's head and only a blocker-free tail
+after it, is the same attestation in verdict form, and `VERDICT: BLOCK` /
+`VERDICT: BLOCKED <sha>` on that first line is a negative statement; every other
+`VERDICT:` prose is neutral (#8157). This keeps an
+automated verdict review from superseding an earlier marker from the same login as
+neutral chatter.
 A state word inside prose, such as a backticked quotation of a marker or "the earlier
 review is superseded", is narration and is not read, because that scan ejected fully
 green queue entries after the whole run (#11566). The PR author can still
@@ -1247,7 +1254,16 @@ target/sample build residue and shares the same badge endpoint boundary.
 `goldens check` validate the current fixture and
 expected-output scaffolding without accepting output drift. `golden-drift`
 writes advisory Markdown and JSON summaries of semantic expected-output drift
-for reviewers. `test-oracle-report` writes an advisory baseline for the strength
+for reviewers. The opt-in `cargo xtask goldens check-with-fixtures` evaluates
+each selected fixture once and writes both `fixtures.md` and the existing golden
+reports from that in-memory result. It retains preparation, assistant-loop corpus,
+expected-class ratchet, drift, line-ending and provenance checks. The fixture
+report retains its fixtures-only verdict; golden-only failures still fail the
+combined command. Early preparation or report-write failures return non-success
+and do not establish both reports. This command does not reuse prior reports,
+change hosted obligation rows, or qualify a timing improvement. The existing
+CI/DAG owner must retain both obligations when integrating it (#8198).
+`test-oracle-report` writes an advisory baseline for the strength
 of `ripr`'s own Rust test oracles. If no tests are selected, both report formats
 use status `not_run` and explain that oracle evidence was not established; this
 is distinct from a nonempty all-strong `pass` and remains advisory. `dogfood` writes a
@@ -1466,7 +1482,25 @@ minutes), so before calling a head dark the watchdog also lists
 `routed-rust.yml` runs with `event=pull_request` on that SHA. A queued or
 in-progress run is reported as in flight. Re-applying `merge-ready` on such a
 head would cancel the real run, so the watchdog never recommends it. This uses
-`actions: read` only. Drafts and fork heads are
+`actions: read` only. Mergeability is read once per head and never retried
+in-sweep (#14636): `mergeable_state` is not resolved for heads in the merge
+queue, which read `unknown` on repeated polls, and the former in-sweep retry
+spent 10 s of sleep per queued head, which alone exceeded the job cap once most
+eligible heads were queued. A non-queued head that reads `unknown` is the lazy
+first read after a base push and resolves on its own. A head whose
+mergeability is still unreadable is classified `mergeability unreadable` and
+deferred to the next sweep rather than given the re-apply remedy, which cannot
+create a merge ref for a conflicted head; it is counted in the sweep totals and
+re-read by the next sweep, so each sweep defers a head at most once per
+interval; a queued head can stay unresolved for as long as it remains queued,
+because GitHub does not resolve mergeability for a queued head. Conflict
+detection requires `mergeable_state == "dirty"`, so conflict notices are
+unavailable for those heads — and a queued head is the
+worst place to lose that signal, because it is about to merge. The sweep says so
+per head and in its totals rather than implying coverage; the queue's own
+`removed_from_merge_queue` event with `reason=merge_conflict` is the only signal
+that exists for a queued head, and watching it is a separate change. Drafts and
+fork heads are
 not qualified, as are PRs without the `merge-ready` label (no request was made); the sweep still clears their stale conflict status, as described below. The one write is the conflict report (#10136): a labeled, non-draft, same-repo PR that is `dirty` and whose head has no `merge-ready conflict` failure from the actions bot gets one comment per head and base plus that failing status (the same marker and context the label-time notice uses, so the two never double up), and a PR that is no longer conflicting and still carries that failure gets a success status. The job holds `pull-requests: write` and `statuses: write` and still never dispatches. A labeled, non-draft, same-repo head that is not conflicting (mergeability computed), has no required check and no merge-ready run in flight was pushed after the label or lost its label event: the sweep comments once per head (marker `merge-ready-dark`) asking the author to remove and re-apply `merge-ready` (#10136). The comment names the cause (no run exists, or a run finished without the check, for example an admission refusal), and the sweep stays quiet for 10 minutes after any PR activity so a label just applied is not mistaken for a dropped one. A draft or unlabeled same-repo PR whose head still carries the actions bot's failing `merge-ready conflict` status gets a success status, so a removed label or a draft conversion does not leave a stale red status (#10136). Each sweep's summary table is the audit
 trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
 shape (no dispatch command, no `actions: write`), the in-flight check, and
