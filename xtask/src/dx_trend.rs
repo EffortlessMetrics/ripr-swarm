@@ -293,8 +293,12 @@ fn sparkline(values: &[f64]) -> String {
             if hi - lo <= f64::EPSILON {
                 BARS[3]
             } else {
-                let step = ((v - lo) / (hi - lo) * 7.0).round();
-                BARS[(step.clamp(0.0, 7.0)) as usize]
+                // Nearest of the eight levels, without a float-to-index cast.
+                let scaled = (v - lo) / (hi - lo) * 7.0;
+                let level = (0_u8..8)
+                    .find(|i| f64::from(*i) + 0.5 > scaled)
+                    .unwrap_or(7);
+                BARS[usize::from(level)]
             }
         })
         .collect()
@@ -949,5 +953,15 @@ mod tests {
             .map(|s| (*s).to_string())
             .collect();
         assert!(matches!(parse_options(&args), Err(m) if m.contains("is not YYYY-MM-DD")));
+    }
+
+    #[test]
+    fn sparkline_maps_the_range_onto_eight_levels() {
+        assert_eq!(
+            sparkline(&[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]),
+            "▁▂▃▄▅▆▇█"
+        );
+        assert_eq!(sparkline(&[10.0, 0.0, 5.0]), "█▁▅");
+        assert_eq!(sparkline(&[2.0, 2.0]), "▄▄");
     }
 }
