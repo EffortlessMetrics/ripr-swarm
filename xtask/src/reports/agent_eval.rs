@@ -1194,9 +1194,10 @@ fn instrument_failures(report: &Value) -> Vec<String> {
 }
 
 /// `cli-agent-loop` opens with the same FIND command that `cli-agent-find`
-/// runs, on an identical fresh workspace, so the two captures must match.
-/// When they do not, the run measured host noise (a stray stderr note, an
-/// unnormalized path), not ripr's output, and must not become a baseline.
+/// runs, on an identical fresh workspace, so the two captures must match in
+/// exit, bytes and tokens (all the record keeps). When they differ, the run
+/// measured host noise (a stray stderr note, an unnormalized path), not
+/// ripr's output, and must not become a baseline.
 fn find_runs_disagree(scenario: &Value) -> Option<String> {
     let first_step = |route: &str| {
         scenario["routes"]
@@ -1207,13 +1208,20 @@ fn find_runs_disagree(scenario: &Value) -> Option<String> {
             .cloned()
     };
     let (looped, found) = (first_step("cli-agent-loop")?, first_step("cli-agent-find")?);
-    let size = |step: &Value| (step["bytes"].as_u64(), step["tokens"].as_u64());
+    let size = |step: &Value| {
+        (
+            step["exit"].clone(),
+            step["bytes"].as_u64(),
+            step["tokens"].as_u64(),
+        )
+    };
     if size(&looped) == size(&found) {
         return None;
     }
     let show = |step: &Value| {
         format!(
-            "{} bytes/{} tokens",
+            "exit {}, {} bytes/{} tokens",
+            step["exit"],
             step["bytes"]
                 .as_u64()
                 .map_or("?".to_string(), |n| n.to_string()),
@@ -1641,7 +1649,7 @@ verify=refused|outcome=complete_with_findings\n";
         assert!(instrument_failures(&agreeing).is_empty());
         assert_eq!(validate_baseline(&agreeing), Ok(()));
         let noisy = run(776, 243);
-        let expected = "s: identical FIND runs disagree (cli-agent-loop 776 bytes/243 tokens, cli-agent-find 232 bytes/75 tokens); the run measured host noise";
+        let expected = "s: identical FIND runs disagree (cli-agent-loop exit 0, 776 bytes/243 tokens, cli-agent-find exit 0, 232 bytes/75 tokens); the run measured host noise";
         assert_eq!(instrument_failures(&noisy), vec![expected.to_string()]);
         assert!(
             validate_baseline(&noisy)
@@ -1650,6 +1658,9 @@ verify=refused|outcome=complete_with_findings\n";
         // Same size is all the record keeps; a byte or a token difference alone fails.
         assert_eq!(instrument_failures(&run(233, 75)).len(), 1);
         assert_eq!(instrument_failures(&run(232, 76)).len(), 1);
+        let mut exited = agreeing.clone();
+        exited["scenarios"][0]["routes"][0]["steps"][0]["exit"] = json!(2);
+        assert_eq!(instrument_failures(&exited).len(), 1);
         // A report without one of the two routes has nothing to compare.
         let mut lone = noisy.clone();
         if let Some(routes) = lone["scenarios"][0]["routes"].as_array_mut() {
