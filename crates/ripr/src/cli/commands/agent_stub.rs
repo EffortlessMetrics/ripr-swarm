@@ -264,6 +264,9 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             stub.derived_inputs.join(", ")
         );
     }
+    if let Some(receiver) = &stub.receiver_setup {
+        println!("Receiver: {receiver}");
+    }
     for fill_in in &stub.fill_ins {
         println!("Fill in: {fill_in}");
     }

@@ -1930,3 +1930,144 @@ fn proof_obligation_describes_a_single_relational_boundary_and_nothing_else() ->
     }
     Ok(())
 }
+
+/// #8361: the receiver is built from the constructor an existing test calls
+/// with literal arguments; a non-literal call, a cfg-gated constructor and a
+/// constructor that does not return the type are not used.
+#[test]
+fn receiver_reuses_a_literal_constructor_call_from_an_existing_test() -> Result<(), String> {
+    let source = "pub struct Bucket { tokens: u32 }
+impl Bucket {
+    pub fn new(capacity: u32) -> Self { Bucket { tokens: capacity } }
+    pub fn allow(&mut self, n: u32) -> bool {
+        if self.tokens > n { self.tokens -= n; true } else { false }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn variable_capacity() {
+        let cap = 9;
+        let mut b = Bucket::new(cap);
+        assert!(b.allow(1));
+    }
+    #[test]
+    fn literal_capacity() {
+        let mut b = Bucket::new(5);
+        assert!(b.allow(2));
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "self.tokens > n",
+        SeamKind::PredicateBoundary,
+        boundary("self.tokens == n"),
+    )?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text
+            .contains("let mut subject: Bucket = Bucket::new(5);"),
+        "{}",
+        stub.text
+    );
+    assert!(
+        stub.text
+            .contains("// ripr: built like the existing test `literal_capacity`")
+    );
+    assert!(!stub.fill_ins.iter().any(|fill| fill.contains("build the")));
+    assert_eq!(
+        stub.receiver_setup.as_deref(),
+        Some("subject = Bucket::new(5), as in the existing test `literal_capacity`")
+    );
+    Ok(())
+}
+
+#[test]
+fn receiver_stays_a_todo_without_an_established_constructor() -> Result<(), String> {
+    // `new` needs an argument no test supplies as a literal, `fresh` is
+    // cfg-gated, and `maybe` returns `Option<Self>`: none builds a receiver.
+    let source = "pub struct Gauge { v: u32 }
+impl Gauge {
+    pub fn new(v: u32) -> Self { Gauge { v } }
+    #[cfg(feature = \"extra\")]
+    pub fn fresh() -> Self { Gauge { v: 0 } }
+    pub fn maybe() -> Option<Self> { None }
+    pub fn read(&self, n: u32) -> u32 {
+        if n > 4 { self.v } else { 0 }
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "n > 4",
+        SeamKind::PredicateBoundary,
+        boundary("n == 4"),
+    )?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text.contains(
+            "let subject: Gauge = todo!(\"ripr: build the `Gauge` that `read` runs on\");"
+        )
+    );
+    assert_eq!(stub.receiver_setup, None);
+    Ok(())
+}
+
+#[test]
+fn receiver_prefers_a_no_argument_new_then_default() -> Result<(), String> {
+    let with_new = "pub struct Pool { n: u8 }
+impl Pool {
+    pub fn blank() -> Pool { Pool { n: 1 } }
+    pub fn new() -> Self { Pool { n: 0 } }
+    pub fn size(&self, k: u8) -> u8 {
+        if k > 2 { self.n } else { k }
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        with_new,
+        "k > 2",
+        SeamKind::PredicateBoundary,
+        boundary("k == 2"),
+    )?;
+    let stub = rust_test_stub(&seam, None, with_new, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text.contains("let subject: Pool = Pool::new();"),
+        "{}",
+        stub.text
+    );
+
+    let with_default = "#[derive(Default)]
+pub struct Pool { n: u8 }
+impl Pool {
+    pub fn size(&self, k: u8) -> u8 {
+        if k > 2 { self.n } else { k }
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        with_default,
+        "k > 2",
+        SeamKind::PredicateBoundary,
+        boundary("k == 2"),
+    )?;
+    let stub =
+        rust_test_stub(&seam, None, with_default, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text.contains("let subject: Pool = Pool::default();"),
+        "{}",
+        stub.text
+    );
+    assert_eq!(
+        stub.receiver_setup.as_deref(),
+        Some("subject = Pool::default(), its `Default` implementation")
+    );
+    Ok(())
+}

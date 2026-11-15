@@ -309,7 +309,12 @@ owner file's inline `#[cfg(test)]` module, a new inline module, or the
 proposed `tests/` file, calling the changed function with its real receiver
 and arguments and a boundary input when the changed comparison names one. A
 trait-impl method is called as `<Type as Trait>::method`, and an impl with
-only lifetime generics binds its receiver as `Type<'_>`. When the owner file
+only lifetime generics binds its receiver as `Type<'_>`. A method's receiver
+is built from a constructor of its type when one is established: the first
+call with all-literal arguments that an existing test in the target module
+makes (copied as written), else a no-argument constructor (`new` first), else
+`Type::default()`; otherwise it stays a labelled `todo!()`. Human output
+names the source on a `Receiver:` line (#8361). When the owner file
 has several inline test modules enabled under plain `cfg(test)`, the stub goes
 into the one that already names the owner, else the nearest one after it, else
 the nearest one before it; feature- or target-gated modules are never chosen.
