@@ -1344,25 +1344,15 @@ fn operand_end(tail: &str) -> usize {
     tail.len()
 }
 
-/// The contents of each char literal in `text`, in order, read with the
-/// same literal test the comment-and-string masker uses, so a space char
-/// (`' '`) counts like any other.
-fn char_literal_contents(text: &str) -> Vec<&[u8]> {
-    use crate::analysis::extract::mask::char_literal_close;
-    let bytes = text.as_bytes();
-    let mut contents = Vec::new();
-    let mut index = 0usize;
-    while index < bytes.len() {
-        if bytes[index] == b'\''
-            && let Some(close) = char_literal_close(bytes, index)
-        {
-            contents.push(bytes.get(index + 1..close).unwrap_or_default());
-            index = close + 1;
-        } else {
-            index += 1;
-        }
-    }
-    contents
+/// The text of each char literal in code in `text`, in order, as the
+/// comment-and-string masker reads them: a space char (`' '`) counts like
+/// any other, and a quote inside a string or comment is not a char.
+fn char_literal_contents(text: &str) -> Vec<&str> {
+    let (_, spans) = crate::analysis::extract::mask::mask_with_char_literals(text);
+    spans
+        .into_iter()
+        .map(|(start, end)| text.get(start..=end).unwrap_or_default())
+        .collect()
 }
 
 /// Whether `before` and `after` hold the same number of ranges and at least
@@ -2244,6 +2234,8 @@ mod tests {
             "matches!(c, 'b'..='z') && s == \"x\""
         ));
         assert!(range_bound_change("' '..='a' => 1,", "'a'..=' ' => 1,").is_some());
+        // A char-like quote inside a string is string text.
+        assert!(range_bound_change("say(\"'a'..='z'\")", "say(\"'b'..='z'\")").is_none());
         assert!(absorbing(
             "matches!(c, 'a'..='z') // 0..5",
             "matches!(c, 'b'..='z') // 0..5"
