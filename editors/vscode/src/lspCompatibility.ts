@@ -1,6 +1,6 @@
 import * as cp from 'child_process';
 import * as crypto from 'crypto';
-import { hasUnsafeShellMetacharacter } from './packetJson';
+import { hasUnsafeShellMetacharacter } from './packetJson.js';
 
 const DEFAULT_PROBE_TIMEOUT_MS = 5000;
 const MAX_MESSAGE_BYTES = 1024 * 1024;

@@ -48,6 +48,8 @@ suite('Explicit full-development coordinator', function () {
     for (const relative of ['test/developerSetup.cjs', 'test/hostDiagnostics.ts', 'src/lspCompatibility.ts', 'src/packetJson.ts']) {
       fs.copyFileSync(path.join(editorSource, relative), path.join(editor, relative));
     }
+    // Node's native TypeScript loader follows the emitted .js module specifier.
+    fs.copyFileSync(path.join(editorSource, 'out/src/packetJson.js'), path.join(editor, 'src/packetJson.js'));
     const npmCandidates = [process.env.npm_execpath
       ? path.join(path.dirname(fs.realpathSync.native(process.env.npm_execpath)), 'npm-cli.js') : undefined,
     path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js'),
