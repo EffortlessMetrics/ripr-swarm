@@ -17,7 +17,7 @@ inputs:
     required: false
     default: 'draft'
   format:
-    description: 'Output format: human, json, or sarif'
+    description: 'Output format: any ripr check format, for example human, json, sarif, or github (file annotations)'
     required: false
     default: 'human'
   base:
@@ -26,6 +26,25 @@ inputs:
       on pull_request events and ripr's own default-branch detection elsewhere.
     required: false
     default: ''
+  cache:
+    description: >-
+      'true' (default) restores and saves ripr's analysis cache with
+      actions/cache, so later pushes re-analyze only changed files. 'false'
+      skips the cache step.
+    required: false
+    default: 'true'
+
+outputs:
+  exit-code:
+    description: >-
+      The `ripr check` exit code: 0 completed (findings are advisory), 2 could
+      not complete, 3 declined. A nonzero code also fails the step.
+    value: ${{ steps.check.outputs.exit-code }}
+  report:
+    description: >-
+      Path of the file holding the report in the requested format (for example
+      a SARIF file to pass to an upload step).
+    value: ${{ steps.check.outputs.report }}
 
 runs:
   using: 'composite'
@@ -103,29 +122,92 @@ runs:
         reported="$("$ripr" --version)"; echo "$reported"
         case "$reported" in "ripr $version" | "ripr $version "*) ;; *) echo "::error::the installed ripr reports \"$reported\", not ripr $version"; exit 1 ;; esac
 
-    # A pull_request checkout often lacks the base branch (single-branch or
-    # shallow clone). Fetch just that branch so the diff has a base; deeper
-    # history is the checkout step's `fetch-depth: 0`, which ripr names when
-    # it is still missing.
+    # ripr's analysis cache lives in the runner's temp directory, outside the
+    # checkout. Entries are keyed on file contents, configuration and the ripr
+    # version, so a restored entry that no longer matches is a miss, never
+    # stale evidence. Pinned to a commit SHA like the generated workflow's.
+    - name: Restore ripr analysis cache
+      if: inputs.cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/ripr-cache
+        key: ripr-check-${{ inputs.version }}-${{ runner.os }}-${{ github.event.pull_request.head.sha || github.sha }}
+        restore-keys: ripr-check-${{ inputs.version }}-${{ runner.os }}-
+
+    # A pull_request checkout often lacks the base branch, and actions/checkout's
+    # default `fetch-depth: 1` has no merge base with it. Fetch just that branch
+    # and deepen both sides in doubling steps until they meet (then fetch the
+    # rest), so the default checkout works. The report goes to the job log, a
+    # file (output `report`) and the job summary; a run that could not complete
+    # fails the step with an error annotation that names why.
     - name: Run ripr check
+      id: check
       shell: bash
       env:
         RIPR_INPUT_BASE: ${{ inputs.base }}
         RIPR_INPUT_MODE: ${{ inputs.mode }}
         RIPR_INPUT_FORMAT: ${{ inputs.format }}
+        RIPR_CACHE_DIR: ${{ runner.temp }}/ripr-cache
       run: |
         base="$RIPR_INPUT_BASE"
         if [ -z "$base" ] && [ -n "${GITHUB_BASE_REF:-}" ]; then
-          branch="$GITHUB_BASE_REF"
-          if ! git rev-parse --verify --quiet "origin/$branch^{commit}" >/dev/null; then
-            git fetch --no-tags --quiet origin "+refs/heads/$branch:refs/remotes/origin/$branch" \
+          branch="$GITHUB_BASE_REF"; base="origin/$branch"
+          refspec="+refs/heads/$branch:refs/remotes/origin/$branch"
+          shallow="$(git rev-parse --is-shallow-repository 2>/dev/null || echo false)"
+          if ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+            depth=(); [ "$shallow" != true ] || depth=(--depth=50)
+            git fetch --no-tags --quiet "${depth[@]}" origin "$refspec" \
               || echo "::warning::could not fetch the pull request base branch '$branch'; ripr will report the missing base"
           fi
-          base="origin/$branch"
+          step=50
+          while [ "$shallow" = true ] && git rev-parse --verify --quiet "$base^{commit}" >/dev/null \
+            && ! git merge-base HEAD "$base" >/dev/null 2>&1; do
+            if [ "$step" -gt 1600 ]; then
+              git fetch --no-tags --quiet --unshallow origin "$refspec" || echo "::warning::could not fetch the full history; ripr will name the repair"
+              break
+            fi
+            git fetch --no-tags --quiet --deepen="$step" origin "$refspec" || { echo "::warning::could not deepen the shallow checkout; ripr will name the repair"; break; }
+            step=$((step * 2))
+          done
         fi
+        case "$RIPR_INPUT_FORMAT" in json | json-compact) ext=json ;; sarif | sarif-compact) ext=sarif ;; *) ext=txt ;; esac
+        report="$RUNNER_TEMP/ripr-check-report.$ext"; errors="$RUNNER_TEMP/ripr-check-stderr.txt"
         set -- --root . --mode "$RIPR_INPUT_MODE" --format "$RIPR_INPUT_FORMAT"
         [ -z "$base" ] || set -- "$@" --base "$base"
-        ripr check "$@"
+        status=0
+        ripr check "$@" >"$report" 2>"$errors" || status=$?
+        cat "$report"; cat "$errors" >&2
+        [ -z "${GITHUB_OUTPUT:-}" ] || printf 'exit-code=%s\nreport=%s\n' "$status" "$report" >> "$GITHUB_OUTPUT"
+        case "$status" in
+          0) meaning="" ;;
+          2) meaning="ripr could not complete the analysis (usage, configuration or operational error)" ;;
+          3) meaning="ripr declined the request" ;;
+          *) meaning="ripr stopped before finishing" ;;
+        esac
+        reason="$(awk 'NF && n < 3 { print; n++ }' "$errors")"
+        [ -n "$reason" ] || reason="$(awk 'NF && n < 3 { print; n++ }' "$report")"
+        if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+          {
+            echo "### ripr check"
+            if [ "$status" -eq 0 ]; then
+              echo "Completed: \`ripr check $*\`. Findings are advisory and never fail this step."
+            else
+              echo "**Exit $status: $meaning.** Exit codes: https://github.com/EffortlessMetrics/ripr/blob/main/docs/EXIT_CODES.md"
+              printf '\n````text\n%s\n````\n' "$reason"
+            fi
+            if [ "$ext" = txt ] && [ -s "$report" ]; then
+              printf '\n````text\n%s\n````\n' "$(head -c 60000 "$report")"
+              [ "$(wc -c < "$report")" -le 60000 ] || echo "(cut at 60 KB; the full report is in the job log)"
+            elif [ -s "$report" ]; then
+              echo "The $RIPR_INPUT_FORMAT report is the step output \`report\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+        if [ "$status" -ne 0 ]; then
+          message="$meaning. ${reason:-See the job log.}"; message="${message//%/%25}"; message="${message//$'\r'/}"
+          echo "::error title=ripr check exited $status::${message//$'\n'/%0A}"
+        fi
+        exit "$status"
 
 branding:
   icon: 'shield'
