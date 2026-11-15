@@ -121,7 +121,7 @@ pub(in crate::analysis) use facade_reach::{
 pub(in crate::analysis) use field_reach::{FieldTable, owner_name_mentions};
 pub(in crate::analysis) use flow::{
     local_flow_sinks, predicate_branch_side_effect_only_in_body, predicate_line_arms_all_agree,
-    propagation_evidence_with_witness,
+    propagation_evidence_with_witness, same_line_arm_result_in,
 };
 pub(in crate::analysis) use framework_oracle::{
     insta_field_snapshot_limitation, withhold_framework_oracle_gap,

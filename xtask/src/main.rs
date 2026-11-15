@@ -73,6 +73,7 @@ mod packaged_repair_receipt;
 mod policy;
 #[cfg(test)]
 mod portable_consumer;
+mod pr_admission_preflight;
 mod precommit_formatting;
 mod product_gate_plan;
 mod product_route_parity;
@@ -2684,8 +2685,9 @@ fn commands_report() -> Result<(), String> {
     write_report("commands.json", &commands_report_json(&entries))
 }
 
-fn pr_ready() -> Result<(), String> {
-    let steps = vec![
+fn pr_ready(args: &[String]) -> Result<(), String> {
+    let pr_number = pr_admission_preflight::parse_pr_arg(args)?;
+    let mut steps = vec![
         run_readiness_step(
             "worktree_doctor",
             "cargo xtask worktree doctor",
@@ -2744,6 +2746,15 @@ fn pr_ready() -> Result<(), String> {
             || check_badge_diff_policy().map(|()| ReadinessOutcome::Completed),
         ),
     ];
+    if let Some(number) = pr_number {
+        steps.push(run_readiness_step(
+            "pr_candidate_admission",
+            "cargo xtask pr-ready --pr <number>",
+            "target/ripr/reports/pr-ready.md",
+            true,
+            || pr_admission_preflight::run(number).map(|()| ReadinessOutcome::Completed),
+        ));
+    }
     let status = pr_ready_status(&steps);
     write_report("pr-ready.md", &pr_ready_markdown(&steps))?;
     write_report("pr-ready.json", &pr_ready_json(&steps))?;
@@ -23885,6 +23896,14 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 }
 
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+    if matches!(
+        path,
+        "tools/ci/shard-verifier-artifact.py" | "tools/ci/test_shard_verifier_artifact.py"
+    ) {
+        return Some(
+            "The unprivileged verifier must validate downloaded xtask before executing it, without a Rust toolchain; its stdlib Python command-entry and ZIP controls run through the Rust-owned shard_verifier_artifact integration target (#14580).",
+        );
+    }
     if matches!(
         path,
         "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"

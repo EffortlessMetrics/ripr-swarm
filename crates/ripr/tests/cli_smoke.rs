@@ -172,6 +172,8 @@ mod snapshot_recovery;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/source_unicode.rs"]
 mod source_unicode;
+#[path = "cli_smoke/startup_budget.rs"]
+mod startup_budget;
 #[cfg(any(feature = "lang-rust", feature = "lang-typescript"))]
 #[path = "cli_smoke/structural_workspace_markers.rs"]
 mod structural_workspace_markers;
@@ -6796,6 +6798,106 @@ fn pr_review_front_panel_names_unusable_inputs_on_stderr() -> Result<(), Box<dyn
         stderr.contains("Optional gate decision input is malformed"),
         "{stderr}"
     );
+    assert!(!stderr.contains("os error"), "{stderr}");
+    std::fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+/// #14553: the claim is "keeps the read cause", so the text after the prefix
+/// must still name the failing read operation, not just be non-empty and not
+/// merely the path the renderer appends.
+fn assert_unreadable_cause(stderr: &str) {
+    let found = stderr
+        .lines()
+        .find_map(|line| line.split_once("Assistant proof artifact is unreadable: "));
+    assert!(
+        found.is_some(),
+        "no unreadable assistant-proof warning line: {stderr}"
+    );
+    if let Some((_, cause)) = found {
+        let cause = cause.trim();
+        assert!(!cause.is_empty(), "empty read cause: {stderr}");
+        assert!(
+            cause.contains("read assistant proof "),
+            "read cause lost its operation: {stderr}"
+        );
+    }
+}
+
+/// #14553: an explicit `--assistant-proof` that exists but cannot be read (a
+/// directory here) keeps its read cause instead of the generic "missing"
+/// sentence, and the cause carries no raw `os error` text.
+#[test]
+fn pr_review_front_panel_names_an_unreadable_assistant_proof()
+-> Result<(), Box<dyn std::error::Error>> {
+    let workspace = unique_temp_workspace("front-panel-unreadable-proof");
+    std::fs::create_dir_all(&workspace)?;
+    let proof_dir = workspace.join("test-oracle-assistant-proof.json");
+    std::fs::create_dir_all(&proof_dir)?;
+    let out = workspace.join("panel.json");
+    let out_md = workspace.join("panel.md");
+    let proof_arg = proof_dir.display().to_string();
+    let out_arg = out.display().to_string();
+    let out_md_arg = out_md.display().to_string();
+    let output = run_ripr_in_workspace(&[
+        "pr-review",
+        "front-panel",
+        "--assistant-proof",
+        &proof_arg,
+        "--out",
+        &out_arg,
+        "--out-md",
+        &out_md_arg,
+    ])?;
+    assert_success(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Assistant proof artifact is unreadable: "),
+        "{stderr}"
+    );
+    assert_unreadable_cause(&stderr);
+    assert!(
+        stderr.contains("test-oracle-assistant-proof.json"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("os error"), "{stderr}");
+    std::fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+/// #14553: the same unreadable proof under a name that is not the canonical
+/// `test-oracle-assistant-proof.json` is not promoted to a required input, so
+/// the stderr renderer must still surface its read cause.
+#[test]
+fn pr_review_front_panel_names_an_unreadable_non_canonical_assistant_proof()
+-> Result<(), Box<dyn std::error::Error>> {
+    let workspace = unique_temp_workspace("front-panel-unreadable-other-proof");
+    std::fs::create_dir_all(&workspace)?;
+    let proof_dir = workspace.join("other-proof.json");
+    std::fs::create_dir_all(&proof_dir)?;
+    let out = workspace.join("panel.json");
+    let out_md = workspace.join("panel.md");
+    let proof_arg = proof_dir.display().to_string();
+    let out_arg = out.display().to_string();
+    let out_md_arg = out_md.display().to_string();
+    let output = run_ripr_in_workspace(&[
+        "pr-review",
+        "front-panel",
+        "--assistant-proof",
+        &proof_arg,
+        "--out",
+        &out_arg,
+        "--out-md",
+        &out_md_arg,
+    ])?;
+    assert_success(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Assistant proof artifact is unreadable: "),
+        "{stderr}"
+    );
+    assert_unreadable_cause(&stderr);
+    assert!(stderr.contains("other-proof.json"), "{stderr}");
     assert!(!stderr.contains("os error"), "{stderr}");
     std::fs::remove_dir_all(workspace)?;
     Ok(())
@@ -20981,7 +21083,10 @@ fn rerun_changed_test_check_parity_matches_full_pipeline_for_boundary_gap() -> R
         || report["parity"]["selected_seam_count"] != report["parity"]["matched_seam_count"]
         || report["parity"]["mismatches"] != serde_json::json!([])
         || report["parity"]["input_mismatches"] != serde_json::json!([])
-        || report["parity"]["selected_seam_count"] != serde_json::json!(1)
+        // The predicate seam plus the two `return_value` branch seams the
+        // changed test grips (#14385); the predicate seam stays first.
+        || report["parity"]["selected_seam_count"] != serde_json::json!(3)
+        || report["seams"][0]["seam_id"] != "67fc764ba37d77bd"
         || !report["cache"]["input_fingerprint"].is_object()
         || report["cache"]["input_fingerprint"]["workspace_manifests_hash"]
             .as_str()
@@ -36603,7 +36708,7 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
     let missing = scratch.join("nope").join("deep");
     let file = scratch.join("a-file");
     std::fs::write(&file, "not a directory\n")?;
-    let commands: [(&str, &[&str]); 3] = [
+    let commands: [(&str, &[&str]); 8] = [
         ("reports ci-packet", &["reports", "ci-packet"]),
         ("feedback export", &["feedback", "export"]),
         (
@@ -36617,6 +36722,11 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
                 "useful_actionable",
             ],
         ),
+        ("policy readiness", &["policy", "readiness"]),
+        ("policy waiver-aging", &["policy", "waiver-aging"]),
+        ("pr-comments plan", &["pr-comments", "plan"]),
+        ("reports index", &["reports", "index"]),
+        ("reports ci-summary", &["reports", "ci-summary"]),
     ];
     let mut failures = Vec::new();
     for (name, argv) in commands {
@@ -36624,7 +36734,7 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
             let root_text = root.display().to_string();
             let mut args = argv.to_vec();
             args.extend(["--root", root_text.as_str()]);
-            let output = run_ripr(&args);
+            let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&scratch), &args)?;
             let stderr = String::from_utf8_lossy(&output.stderr);
             let expected = format!("{name} root {root_text} is not a directory");
             if output.status.code() != Some(2) || !stderr.contains(&expected) {
@@ -36636,10 +36746,15 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
         }
     }
     let created = scratch.join("nope").exists();
+    let wrote_target = scratch.join("target").exists();
     let file_kept = std::fs::read_to_string(&file)?;
     let _ = std::fs::remove_dir_all(&scratch);
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert!(!created, "the mistyped --root was created");
+    assert!(
+        !wrote_target,
+        "a refused command wrote under the CWD (target/ripr)"
+    );
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert_eq!(file_kept, "not a directory\n");
     Ok(())
 }

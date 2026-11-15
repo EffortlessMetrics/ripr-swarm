@@ -130,9 +130,10 @@ pub(crate) fn selected_triage_finding<'a>(
     triage::select_human_triage(output, config).selected
 }
 
-/// The selected subject and only the eligible rows inside the displayed
-/// Hidden window. The app resolves these before rendering, without inventing
-/// a second selection/currentness policy.
+/// The selected subject and the eligible rows from the first 20 omitted
+/// findings in report order, which is the stub-route cutoff rather than the
+/// displayed Hidden window. The app resolves these before rendering, without
+/// inventing a second selection/currentness policy.
 pub(crate) fn stub_route_subjects<'a>(
     output: &'a CheckOutput,
     config: &RiprConfig,
@@ -5733,11 +5734,14 @@ mod tests {
             &crate::config::RiprConfig::default(),
             Path::new("."),
         );
-        if !digest.contains(
-            "Why unknown: ripr could not follow the changed value to something a test can check (a return value or side effect)",
-        ) {
-            return Err(format!("honest why-hint missing:
-{digest}"));
+        // The Why hint and the Analyzer limit line carry the same plain
+        // sentence here, so the digest states it once, under the limit label.
+        let honest = "ripr could not follow the changed value to something a test can check (a return value or side effect)";
+        if digest.matches(honest).count() != 1 || digest.contains("Why unknown:") {
+            return Err(format!(
+                "the honest limit must render exactly once, without a Why restatement:
+{digest}"
+            ));
         }
         if digest.contains("the change propagates but") {
             return Err(format!(

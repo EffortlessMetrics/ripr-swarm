@@ -825,6 +825,7 @@ mod tests {
                 .iter()
                 .map(|seam| AgentBriefSelectedSeam {
                     seam,
+                    arm_result: None,
                     why_now: AgentBriefWhyNow {
                         reason: AgentBriefWhyNowReason::ChangedLineIntersectsSeam,
                         confidence: AgentBriefWhyNowConfidence::High,
@@ -1820,6 +1821,7 @@ mod tests {
             hard_cap: 10,
             top_seams: vec![AgentBriefSelectedSeam {
                 seam: &seams[0],
+                arm_result: None,
                 why_now: AgentBriefWhyNow {
                     reason: AgentBriefWhyNowReason::RepoActionableFallback,
                     confidence: AgentBriefWhyNowConfidence::Low,
