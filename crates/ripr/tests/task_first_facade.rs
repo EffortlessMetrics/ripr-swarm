@@ -6394,13 +6394,14 @@ fn member_directory_agent_artifact_commands_use_the_resolved_workspace_root() ->
     // #14385) are configured off; binding adds none.
     let warnings = brief_json["warnings"].as_array().ok_or("no warnings")?;
     assert!(
-        warnings
-            .iter()
-            .all(|warning| warning.as_str().is_some_and(|text| {
-                text.contains(" at pkg/src/lib.rs:3, ")
-                    && text.contains(" at pkg/src/lib.rs:5 ")
-                    && text.contains("configured off for strongly_gripped seams")
-            })),
+        warnings.len() == 1
+            && warnings
+                .iter()
+                .all(|warning| warning.as_str().is_some_and(|text| {
+                    text.contains(" at pkg/src/lib.rs:3, ")
+                        && text.contains(" at pkg/src/lib.rs:5 ")
+                        && text.contains("configured off for strongly_gripped seams")
+                })),
         "unexpected brief warnings: {warnings:?}"
     );
     let seams = brief_json["top_seams"].as_array().ok_or("no top_seams")?;

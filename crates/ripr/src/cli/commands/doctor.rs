@@ -49,9 +49,9 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                         )));
                     }
                     None => {
-                        return Err(CommandError::from(
-                            "missing value for --profile; pass a value right after it".to_string(),
-                        ));
+                        return Err(CommandError::from(crate::cli::parse::missing_value(
+                            "--profile",
+                        )));
                     }
                 };
             }
@@ -63,15 +63,15 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                     // pre-#4318 parser answered `missing value for --root`
                     // here. Other dash-prefixed paths stay legitimate values.
                     Some("--help" | "-h" | "--json" | "--timings" | "--profile" | "--root") => {
-                        return Err(CommandError::from(
-                            "missing value for --root; pass a value right after it".to_string(),
-                        ));
+                        return Err(CommandError::from(crate::cli::parse::missing_value(
+                            "--root",
+                        )));
                     }
                     Some(value) => value,
                     None => {
-                        return Err(CommandError::from(
-                            "missing value for --root; pass a value right after it".to_string(),
-                        ));
+                        return Err(CommandError::from(crate::cli::parse::missing_value(
+                            "--root",
+                        )));
                     }
                 };
                 // #4318: a known doctor flag in the value position means the

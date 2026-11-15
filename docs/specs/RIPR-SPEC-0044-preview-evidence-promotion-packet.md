@@ -408,6 +408,16 @@ Python packet with partial receipts:
 - `allowed_now = false`.
 - Required repairs name the missing receipts.
 
+Mistyped root refusal:
+
+- Command is `ripr policy preview-promote --root <missing-or-file> --language python --class behavioral`.
+- The command refuses before building any report: exit 2 with
+  `policy preview-promote root <path> is not a directory`.
+- Nothing is written under the caller's working directory, and a file passed
+  as `--root` is left untouched.
+- A valid directory `--root` still writes the default JSON and Markdown
+  reports and exits 0.
+
 Preview boundary protection:
 
 - The packet repeats that preview evidence is not gate-eligible by default.
@@ -433,6 +443,9 @@ Implementation includes:
   `--out-md`.
 - CLI write-path tests proving only the requested JSON and Markdown reports are
   written.
+- CLI root-refusal tests proving a missing or file `--root` is refused with
+  exit 2 before any write, plus a valid-root control that still writes the
+  default reports.
 
 ## Implementation Mapping
 

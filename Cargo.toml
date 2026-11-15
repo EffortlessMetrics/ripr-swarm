@@ -194,6 +194,16 @@ codegen-units = 16
 [profile.dev]
 debug = "line-tables-only"
 
+# Test profile: no debuginfo at all. Test binaries only need panic messages
+# and assertion output, not file:line backtraces, and on MSVC the inherited
+# line-tables-only still emits a separate PDB per test binary (measured
+# 749 MB for the ripr lib-test binary alone; ~43 GB of PDBs across a full
+# local target dir). Dropping test debuginfo shrinks every test artifact
+# and speeds up linking and cache save/restore. Step-debugging a failing
+# test remains available via `CARGO_PROFILE_TEST_DEBUG=line-tables-only`.
+[profile.test]
+debug = 0
+
 # Optimize retained JSON parsing without changing repository code settings or
 # debug assertions in the normal dev and inherited test profiles.
 [profile.dev.package.serde_json]

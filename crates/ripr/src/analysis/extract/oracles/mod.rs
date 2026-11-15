@@ -19,7 +19,7 @@ pub(crate) use patterns::{
     OracleTextShape, has_oracle_text_shape, is_exact_membership_any_assertion,
     is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
 };
-pub(crate) use reach::retain_reached_oracles;
+pub(crate) use reach::{lines_touching_unreached, retain_reached_oracles};
 pub(crate) use scan::{
     err_return_guard_oracles, err_return_guard_twin, extract_assertions, extract_assertions_in,
     extract_line_scanned_oracles, guarded_result_match_scan_with_shadow_authority,

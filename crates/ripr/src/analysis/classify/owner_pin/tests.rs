@@ -7149,6 +7149,7 @@ fn a_macro_binding_refusal_points_at_its_site() {
         Some(AssertionRefusal::MacroBinding {
             name,
             site: Some((path, site)),
+            ..
         }) => Some((name, path, site)),
         _ => None,
     };
@@ -7420,7 +7421,7 @@ fn refusal_site_lookups_pay_at_most_two_full_index_passes() {
         assert!(
             matches!(
                 &refusal,
-                Some(AssertionRefusal::MacroBinding { name, site: Some((path, _)) })
+                Some(AssertionRefusal::MacroBinding { name, site: Some((path, _)), .. })
                     if name == "assert_eq" && path.as_path() == Path::new(CONVERGENCE_GLOB)
             ),
             "{tests_path}: {refusal:?}"
@@ -8912,6 +8913,7 @@ fn binding_refusal(kind: Option<MacroBindingKind>) -> AssertionRefusal {
                 },
             )
         }),
+        placement_include: None,
     }
 }
 
