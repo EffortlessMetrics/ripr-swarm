@@ -1909,20 +1909,28 @@ classes are:
 - an unknown flag or stray positional argument;
 - an unrecognized enum-style value rejected by the CLI's shared unknown-value
   builder (for example `check --format yaml`), and `explain --format json`;
+- a value flag with no value or an empty one, caught by the CLI's shared
+  value reader (for example `check --json --base` with nothing after it), as
+  `missing_value` with the flag as `token` (#11979);
+- a malformed number caught by the CLI's shared numeric parsers (for example
+  `context --max-related-tests zz` or `check --timeout zz`), as
+  `invalid_value` with the typed value as `token` (#11979);
 - a `context --at`/`--finding` selector that matched no finding, matched
   more than one, or could not be decided.
 
 Every other argv usage error keeps empty stdout even under a JSON request,
-with the cause on stderr only: a flag missing its value, a malformed value
-(for example a non-numeric number), conflicting or disagreeing flags, an
-unrecognized value rejected outside the CLI's shared builder (for example a
-gate mode), and any other argv error. These are a named gap, not a clean
-result.
+with the cause on stderr only: a missing required flag (`requires --X`),
+a missing or malformed value rejected by a command's own parser rather than
+the shared readers (for example `impacted-evidence`, or most `agent`
+subcommands given an empty value), conflicting or disagreeing flags, an unrecognized value
+rejected outside the CLI's shared builder (for example a gate mode), and any
+other argv error. These are a named gap, not a clean result.
 
 The document carries `schema_version`, `tool`, `status: "refused"` and
 `error {code, message, token?, next}` with `code` one of `unknown_argument`,
-`unknown_command`, `unknown_value`, `selector_miss`. `token` is the offending
-argument, command, value or selector; `next` is a fixed help pointer
+`unknown_command`, `unknown_value`, `missing_value`, `invalid_value`,
+`selector_miss`. `token` is the offending argument, command, flag, value or
+selector (an empty malformed value has none); `next` is a fixed help pointer
 (`list_valid_arguments`, `list_valid_commands`) or `null`; `selector_miss`
 always carries `next: null`, because its message embeds the caller's selector
 and nothing is lifted from caller-controlled text. No argv echo and no
