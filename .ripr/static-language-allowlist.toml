@@ -237,3 +237,15 @@ reason = "Verbatim Nov 2-4 seed-study context capture (#13113 encoding); byte co
 path = "benchmarks/agent-discrimination/contexts/silent-return/tool-note.txt"
 owner = "agent-efficiency-bench"
 reason = "Verbatim Nov 2-4 seed-study context capture (#13113 encoding); byte count is pinned in scenarios/silent-return/scenario.json, so inline allows would falsify the recorded evidence. The captured tool note describes the analyzer boundary and names the prohibited vocabulary as boundary data, not static classification output."
+
+[[allow]]
+path = "tools/repo-policy/src/docs_gate.rs"
+owner = "maintainers"
+reason = "The repo-policy docs-gate checker implementation contains the literal prohibited term list it scans for, mirroring the xtask checker allowlist entry."
+
+[[allow]]
+path = "tools/repo-policy/tests/docs_gate.rs"
+owner = "maintainers"
+reason = "The docs-gate regression tests embed prohibited terms inside fixture documents that the checker must reject."
+
+
