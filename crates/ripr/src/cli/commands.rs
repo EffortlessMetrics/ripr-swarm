@@ -170,7 +170,9 @@ pub(crate) mod ripr_plus_command;
 pub(super) use assistant_loop::assistant_loop;
 pub(super) use first_action::first_action;
 pub(super) use first_pr::first_pr;
+#[cfg(test)]
 pub(super) use reports::reports;
+pub(super) use reports::reports_command;
 
 #[path = "commands/capabilities.rs"]
 mod capabilities;
