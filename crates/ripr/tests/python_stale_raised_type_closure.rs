@@ -277,3 +277,60 @@ fn old_type_assertion_closes_when_the_new_type_subclasses_it() -> Result<(), Str
         "subclass closes",
     )
 }
+
+/// Review follow-up: a message built with an f-string does not change which
+/// class is raised, so the stale old-type test is still refused.
+#[test]
+fn stale_old_type_test_is_refused_when_the_raise_message_is_an_f_string() -> Result<(), String> {
+    let base = BASE_SOURCE.replace(
+        "ValueError(\"negative quantity\")",
+        "ValueError(f\"negative quantity {qty}\")",
+    );
+    let head = HEAD_SOURCE.replace(
+        "TypeError(\"negative quantity\")",
+        "TypeError(f\"negative quantity {qty}\")",
+    );
+    let (_guard, root) = repository_with("fstring", &base, &head)?;
+    let attempt = start_attempt(&root)?;
+    commit_test(
+        &root,
+        STALE_TEST,
+        "stale old-type test of an f-string raise",
+    )?;
+    let after = continue_attempt(&root, &attempt)?;
+    let text = combined(&after);
+    if after.status.code() != Some(3) || text.contains("closed: weakly_exposed -> exposed") {
+        return Err(format!(
+            "an f-string raise with a stale old-type test must be refused, got {:?}:\n{text}",
+            after.status.code()
+        ));
+    }
+    need(&text, "pins the old raised type `ValueError`", "old type")?;
+    need(
+        &text,
+        "will fail against the new `TypeError` raise",
+        "new type",
+    )
+}
+
+/// Review follow-up: `excinfo.type is New` under a broad `pytest.raises` names
+/// the new class, so it is never refused as a stale old-type pin.
+#[test]
+fn broad_raises_with_excinfo_type_new_is_not_refused_as_stale() -> Result<(), String> {
+    let (_guard, root) = repository("excinfo-only")?;
+    let attempt = start_attempt(&root)?;
+    commit_test(
+        &root,
+        "def test_negative():\n    with pytest.raises(Exception) as excinfo:\n        validate_qty(-1)\n    assert excinfo.type is TypeError\n",
+        "excinfo type test",
+    )?;
+    let after = continue_attempt(&root, &attempt)?;
+    let text = combined(&after);
+    eprintln!("excinfo-only outcome {:?}:\n{text}", after.status.code());
+    if text.contains("pins the old raised type") {
+        return Err(format!(
+            "excinfo.type is TypeError was refused as stale:\n{text}"
+        ));
+    }
+    Ok(())
+}

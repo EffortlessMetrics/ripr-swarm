@@ -242,8 +242,8 @@ fn credits<'a>(
 /// the edit (RIPR-SPEC-0238 example 14). The gap-bound repair closure reads it
 /// so a test written during the repair is not reported as closing the gap.
 ///
-/// Fails open (no fact) for any shape it cannot read exactly: non-literal
-/// raise arguments, a cause, an attribute or tuple expected class, a related
+/// Fails open (no fact) for any shape it cannot read exactly: a raise that is
+/// not one `raise Name(...)` line, an attribute or tuple expected class, a related
 /// test that names the new class anywhere, an assertion expecting another
 /// class, or a class hierarchy it cannot resolve within the module and the
 /// builtin exception table.
@@ -271,8 +271,8 @@ fn stale_pins(
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> Option<Vec<StaleRaisedTypePin>> {
-    let (old_type, _) = raised_type(old_line_text?)?;
-    let (new_type, _) = raised_type(line_text)?;
+    let old_type = raised_type_name(old_line_text?)?;
+    let new_type = raised_type_name(line_text)?;
     if old_type == new_type {
         return None;
     }
@@ -300,7 +300,11 @@ fn stale_pins(
                 return None;
             }
             pins.push(StaleRaisedTypePin {
-                assertion: assertion.text.trim().to_string(),
+                assertion: assertion
+                    .text
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" "),
                 old_type: old_type.clone(),
                 new_type: new_type.clone(),
                 test: candidate.test.name.clone(),
@@ -440,6 +444,25 @@ fn expected_class(assertion_text: &str) -> Option<String> {
         Expr::Name(name) => Some(name.id.to_string()),
         _ => None,
     }
+}
+
+/// The class a one-line `raise Name(...)` constructs. The arguments, keywords
+/// and cause do not change which class is raised, so a message built with an
+/// f-string or a variable still names its type (#13622 review).
+fn raised_type_name(line: &str) -> Option<String> {
+    let Mod::Module(module) = parse_module_result(Path::new("raise.py"), line.trim()).ok()? else {
+        return None;
+    };
+    let [Stmt::Raise(raise)] = module.body.as_slice() else {
+        return None;
+    };
+    let Expr::Call(call) = raise.exc.as_deref()? else {
+        return None;
+    };
+    let Expr::Name(name) = call.func.as_ref() else {
+        return None;
+    };
+    Some(name.id.to_string())
 }
 
 /// Only the constructor's name changes; evaluating its arguments runs no code.

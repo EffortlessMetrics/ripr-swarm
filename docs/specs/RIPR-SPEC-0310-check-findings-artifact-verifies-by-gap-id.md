@@ -85,16 +85,17 @@ could not be verified without trusting hand-authored JSON.
    `stale_raised_type_pin:` fact. The Python analyzer records that fact, as
    advisory evidence only, when the changed line replaces `raise Old(...)`
    with `raise New(...)`, every strong related exact-error assertion expects
-   `Old` exactly (`pytest.raises(Old, ...)`, `assertRaises(Old)`), no related
+   `Old` exactly (`pytest.raises(Old, ...)`), no related
    test names `New`, and `New` is statically known not to be `Old` or a
    subclass of it (resolved through single top-level module classes and the
-   builtin exception table). Such a test fails against the new raise. The
+   builtin exception table). Such an assertion fails wherever the test reaches the new raise. The
    refusal is the same named gap-binding refusal (exit `3`; the attempt stays
    `awaiting_edit`), names the assertion, `Old` and `New`, and names the next
    step: assert `New`, or run the test. The exposure class is unchanged: a
    pre-existing old-type assertion does notice the edit (RIPR-SPEC-0238
-   example 14). Any shape the analyzer cannot read exactly (non-literal raise
-   arguments, an attribute, tuple or keyword expected class, an aliased or
+   example 14). The raise arguments do not matter (an f-string message still names its
+   type). Any shape the analyzer cannot read exactly (a raise that is not one
+   `raise Name(...)` line, an attribute, tuple or keyword expected class, an aliased or
    imported class, an unresolvable base) records no fact and keeps today's
    closure.
 
