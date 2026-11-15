@@ -1,12 +1,12 @@
 //! Per-finding verdict lines for `-v`/`--verbose` and `RIPR_VERBOSE`.
 //!
 //! When a run looks wrong, the first question is why each finding landed in
-//! its class. These lines print, for every finding the run produced, the
-//! class, the five static stage states, the first stage that is not `yes`
-//! with the reason ripr recorded for it, and any analysis stop reason. They
-//! read only fields the finding already carries, so they cannot disagree
-//! with `ripr explain` or the JSON output, and they are printed only in
-//! verbose mode: a default run neither formats nor prints them.
+//! its class. These lines print, for every finding the run reports (after
+//! suppression and owner opt-outs), the class, the five static stage states,
+//! the first stage that is not `yes` with the reason ripr recorded for it,
+//! and any analysis stop reason. They read only fields the finding already
+//! carries, and they are printed only when stderr diagnostics are on: a
+//! default run neither formats nor prints them.
 
 use crate::domain::{Finding, StageEvidence, StageState};
 use crate::terminal_text::terminal_safe;
@@ -28,7 +28,7 @@ pub(crate) fn verdict_lines(findings: &[Finding]) -> Vec<String> {
         .collect();
     if findings.len() > MAX_VERDICT_LINES {
         lines.push(format!(
-            "ripr: verdict: {} more finding(s) not traced here; `--format json` lists every finding with its stage evidence",
+            "ripr: verdict: {} more finding(s) not traced here; `ripr explain <file:line>` shows the stage evidence for one",
             findings.len() - MAX_VERDICT_LINES
         ));
     }
@@ -61,7 +61,7 @@ fn verdict_line(finding: &Finding) -> String {
     {
         let reason = one_line_bounded(&stage.summary);
         if !reason.is_empty() {
-            line.push_str(&format!(" because {name}: {reason}"));
+            line.push_str(&format!("; first stage short of yes: {name}: {reason}"));
         }
     }
     if !finding.stop_reasons.is_empty() {
@@ -128,7 +128,7 @@ mod tests {
         );
         assert_eq!(
             verdict_line(&f),
-            "ripr: verdict src/lib.rs:7 weakly_exposed [reach=yes infect=yes propagate=not_applicable observe=weak discriminate=unknown] because observe: the test only checks is_ok()"
+            "ripr: verdict src/lib.rs:7 weakly_exposed [reach=yes infect=yes propagate=not_applicable observe=weak discriminate=unknown]; first stage short of yes: observe: the test only checks is_ok()"
         );
     }
 
@@ -141,7 +141,7 @@ mod tests {
         f.stop_reasons = vec![StopReason::MaxDepthReached];
         let line = verdict_line(&f);
         assert!(line.ends_with("[reach=no infect=yes propagate=not_applicable observe=unknown discriminate=unknown]; stopped: max_depth_reached"), "{line}");
-        assert!(!line.contains("because"), "{line}");
+        assert!(!line.contains("first stage short"), "{line}");
     }
 
     #[test]

@@ -39,8 +39,8 @@ fn routed_mcp_args(args: &[String]) -> Option<Vec<String>> {
         ripr::set_verbose(true);
         eprintln!("ripr: verbose mode enabled");
     } else if ripr::cli::verbose_requested_by_env() {
-        ripr::set_verbose(true);
-        eprintln!("ripr: verbose mode enabled (RIPR_VERBOSE)");
+        // Stderr diagnostics only and no notice: MCP frames own stdout.
+        ripr::set_stderr_diagnostics(true);
     }
     if is_help_route {
         let mut routed = vec!["--help".to_string()];

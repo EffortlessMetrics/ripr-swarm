@@ -149,6 +149,17 @@ fn machine_discovery_route(args: &[String]) -> bool {
     args.get(1).is_some_and(|arg| arg == "help") && args.get(2).is_some_and(|arg| arg == "--json")
 }
 
+/// Routes where the `RIPR_VERBOSE` environment twin may apply: never a
+/// version query in any position (`ripr lsp --version` included) and never
+/// the machine-discovery route.
+fn env_verbose_applies(args: &[String]) -> bool {
+    !machine_discovery_route(args)
+        && !args
+            .iter()
+            .skip(1)
+            .any(|arg| matches!(arg.as_str(), "--version" | "-V"))
+}
+
 /// Whether `RIPR_VERBOSE` asks for the global verbose diagnostics. Shared by
 /// the CLI dispatch and the binary's MCP route so both read one switch.
 #[doc(hidden)]
@@ -183,12 +194,12 @@ fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
             ));
         }
         eprintln!("ripr: verbose mode enabled");
-    } else if !version_requested && !machine_discovery_route(&args) && verbose_requested_by_env() {
-        // `RIPR_VERBOSE` is the flag's environment twin. Unlike the flag it
-        // never turns the machine-discovery route into a usage error: an
-        // ambient variable leaves that route's silent-stderr contract alone.
-        crate::set_verbose(true);
-        eprintln!("ripr: verbose mode enabled (RIPR_VERBOSE)");
+    } else if env_verbose_applies(&args) && verbose_requested_by_env() {
+        // `RIPR_VERBOSE` turns on only the stderr diagnostics. It prints no
+        // notice of its own and never changes stdout, so an exported variable
+        // leaves completions, machine-discovery and parsed-stdout routes as
+        // they are.
+        crate::set_stderr_diagnostics(true);
     }
     // Selection is side-effect-free parsing; the lock is acquired before the
     // first side-effecting step (workflow execution and attempt publication),

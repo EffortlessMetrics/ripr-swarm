@@ -289,20 +289,23 @@ ripr -v check 2> ripr-debug.log
 ```
 
 When you cannot edit the command (the editor extension, an MCP host, a Git
-hook or CI), set `RIPR_VERBOSE=1` in its environment instead. The log goes to
-stderr only, so stdout, JSON, SARIF and the exit code are unchanged.
+hook or CI), set `RIPR_VERBOSE=1` in its environment instead. The variable
+adds stderr lines only: stdout, JSON, SARIF and the exit code stay as they
+are. The `-v` flag itself also widens a few screens on stdout (`ripr doctor`,
+`ripr agent card`, and the file-cache fields of `ripr check --format json`),
+so use the variable when another tool reads stdout.
 
 ```text
 ripr: verbose mode enabled
 ripr: mode = draft; scope = worktree
 ripr: timing [worktree] analyzing took
-weakly_exposed [reach=yes infect=weak propagate=yes observe=yes discriminate=yes] because infect:
+weakly_exposed [reach=yes infect=weak propagate=yes observe=yes discriminate=yes]; first stage short of yes: infect:
 ```
 
 It names the analyzed languages, the mode and diff scope, how long each phase
-took, and one `ripr: verdict` line per finding (at most 50) with its class,
-the five stage states and the first stage that is not `yes`, with the reason
-ripr recorded for it. The log carries file paths and short source excerpts
+took, and one `ripr: verdict` line per reported finding (at most 50) with its
+class, the five stage states and the first stage that is not `yes`, with the
+reason ripr recorded for it. The log carries file paths and short source excerpts
 from your repository; read it before attaching it to a public issue.
-Verbose mode costs nothing when it is off: a default run neither formats nor
-prints these lines.
+These diagnostics cost nothing when they are off: a default run neither
+formats nor prints these lines.

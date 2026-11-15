@@ -21,7 +21,10 @@ fn ripr() -> Command {
 /// The binary exactly as a script runs it: no progress switches set.
 fn ripr_default() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
-    command.env_remove("RIPR_PROGRESS").env_remove("RIPR_QUIET");
+    command
+        .env_remove("RIPR_PROGRESS")
+        .env_remove("RIPR_QUIET")
+        .env_remove("RIPR_VERBOSE");
     command
 }
 
@@ -514,6 +517,97 @@ fn verbose_check_names_the_effort_mode_and_the_scope_separately() -> Result<(), 
         "the line is verbose-only: {}",
         stderr_text(&plain)
     );
+    Ok(())
+}
+
+/// `RIPR_VERBOSE` turns on the stderr diagnostics only: phase timings and
+/// per-finding verdict lines appear on stderr, no notice is printed, and the
+/// JSON stdout stays byte-identical to a plain run (the `-v` flag's stdout
+/// widenings never ride on an ambient variable).
+#[test]
+fn ripr_verbose_env_adds_stderr_diagnostics_and_keeps_json_stdout_identical() -> Result<(), String>
+{
+    let fixture = DiffFixture::new()?;
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("change.diff").display().to_string();
+    let args = [
+        "check",
+        "--root",
+        root.as_str(),
+        "--diff",
+        diff.as_str(),
+        "--format",
+        "json",
+    ];
+    let traced = ripr()
+        .env("RIPR_VERBOSE", "1")
+        .args(args)
+        .output()
+        .map_err(|error| format!("run traced check: {error}"))?;
+    let plain = run_check(&fixture, &["--format", "json"])?;
+    assert!(traced.status.success(), "{}", stderr_text(&traced));
+    assert!(plain.status.success(), "{}", stderr_text(&plain));
+    assert_eq!(
+        traced.stdout, plain.stdout,
+        "RIPR_VERBOSE must not change machine stdout"
+    );
+    let err = stderr_text(&traced);
+    for needle in [
+        "ripr: mode = draft; scope = diff",
+        "ripr: timing [diff] analyzing took ",
+        "ripr: timing [diff] completed after ",
+        "ripr: verdict ",
+    ] {
+        assert!(err.contains(needle), "missing {needle:?} in:\n{err}");
+    }
+    assert!(
+        !err.contains("verbose mode enabled"),
+        "the variable prints no notice: {err}"
+    );
+    let plain_err = stderr_text(&plain);
+    assert!(
+        !plain_err.contains("ripr: timing") && !plain_err.contains("ripr: verdict"),
+        "diagnostics are off by default: {plain_err}"
+    );
+
+    let off = ripr()
+        .env("RIPR_VERBOSE", "0")
+        .args(args)
+        .output()
+        .map_err(|error| format!("run check with RIPR_VERBOSE=0: {error}"))?;
+    assert!(
+        !stderr_text(&off).contains("ripr: verdict"),
+        "RIPR_VERBOSE=0 leaves diagnostics off: {}",
+        stderr_text(&off)
+    );
+    Ok(())
+}
+
+/// The machine-discovery route and version queries keep a silent stderr
+/// under an exported `RIPR_VERBOSE`.
+#[test]
+fn ripr_verbose_env_leaves_help_json_and_version_stderr_silent() -> Result<(), String> {
+    for args in [
+        ["help", "--json"].as_slice(),
+        ["--version"].as_slice(),
+        ["lsp", "--version"].as_slice(),
+    ] {
+        let output = ripr_default()
+            .env("RIPR_VERBOSE", "1")
+            .args(args)
+            .output()
+            .map_err(|error| format!("run ripr {args:?}: {error}"))?;
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            stderr_text(&output)
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "{args:?} must keep stderr silent: {}",
+            stderr_text(&output)
+        );
+    }
     Ok(())
 }
 

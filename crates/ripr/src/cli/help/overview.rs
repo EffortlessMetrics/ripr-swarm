@@ -60,7 +60,7 @@ not run (the output says why), 130 interrupted standalone check. Full
 contract: docs/EXIT_CODES.md.
 Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: languages,
 scope, phase timings and why each finding got its class (any position, except
-on `ripr help --json`; or set RIPR_VERBOSE=1).
+on `ripr help --json`; RIPR_VERBOSE=1 for stderr only).
 
 ripr reads your changed code, imagines small bugs in it, and checks whether
 your tests would likely catch them. It does not run mutants or your tests and
@@ -87,8 +87,9 @@ Global flags (accepted in any position, before or after the command, except on r
                   the first stage that is not yes; ripr pilot also prints a
                   per-stage timing table after a complete run. A -v/--verbose
                   token is always this global flag, never another flag's
-                  value. RIPR_VERBOSE=1 turns the same diagnostics on without
-                  editing argv (unset, empty, 0 or false leave it off).
+                  value. RIPR_VERBOSE=1 turns on the stderr diagnostics only,
+                  without editing argv and without changing stdout (unset,
+                  empty, 0 or false leave it off).
 
 Flag values: `--name value` and `--name=value` are the same on every command;
 tokens after a literal `--` are left as written. Switches take no value, so
