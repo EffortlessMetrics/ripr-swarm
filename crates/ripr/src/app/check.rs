@@ -996,8 +996,9 @@ impl PerlProducerStaging {
 /// real timeout with process kill and writing atomically. The packet path is
 /// keyed on root/base/head/schema/producer/timeout; that key omits diff
 /// content, so no cached packet is ever reused and every run regenerates
-/// (item 4b). Returns the final packet path on success. The canonical producer is `perl-ripr-facts`; `perllsp` and
-/// `perl-lsp` are compatibility wrappers.
+/// (item 4b). Returns the final packet path on success. The canonical
+/// producer is `perl-ripr-facts`; `perllsp` and `perl-lsp` are compatibility
+/// wrappers.
 ///
 /// Capability handshake: DEFERRED. Requires a defined exporter probe surface
 /// (`--version`/`--capabilities`); do not fabricate a capability taxonomy.
@@ -1047,9 +1048,10 @@ fn invoke_perl_lsp_producer(
     let timeout_ms = perl_config.timeout_ms();
     let executable_str = executable.display().to_string();
 
-    // Cache key: content/diff/schema/producer/config, not root only. A packet
-    // built for a different base/diff/producer/timeout must not be reused for
-    // this run. FNV-1a, non-crypto, cache-naming only (see `simple_hash` doc).
+    // Packet path key: root/base/HEAD/schema/producer/timeout. It only names
+    // the final packet and its staging; it omits diff content, so it is never
+    // used to reuse a packet (item 4b below). FNV-1a, non-crypto, naming only
+    // (see `simple_hash` doc).
     let cache_key = format!(
         "{}|{}|{}|{}|{}|{}",
         root_str,
@@ -1855,9 +1857,9 @@ mod tests {
 
     #[test]
     fn perl_facts_cache_key_is_deterministic_and_input_sensitive() {
-        // The cache key MUST differ across different base/diff/producer/config
-        // inputs so a stale packet for one analysis is never reused for
-        // another. Same inputs MUST hash identically.
+        // The packet path key MUST differ across different base/producer
+        // inputs so concurrent analyses never share a final packet name.
+        // Same inputs MUST hash identically.
         let k1 = simple_hash(".|origin/main|HEAD|ripr-perl-facts-v1|perllsp|30000");
         let k1_again = simple_hash(".|origin/main|HEAD|ripr-perl-facts-v1|perllsp|30000");
         let k2 = simple_hash(".|feature/x|HEAD|ripr-perl-facts-v1|perllsp|30000");
