@@ -302,6 +302,14 @@ fn stale_pins(
             // The test module may rebind the expected name
             // (`from builtins import TypeError as ValueError`), so a renamed
             // import, or any import of a builtin class name, is not read.
+            // A test that rebinds the expected name (`ValueError = Exception`)
+            // may accept the new class: a builtin name bound anywhere in the
+            // test module, or a workspace name bound other than by one plain
+            // import, is not read.
+            let rebinding = &candidate.test.constant_rebinding;
+            if rebinding.module_opaque || rebinding.rebinds(&old_type) {
+                return None;
+            }
             let builtin =
                 old_type == "BaseException" || builtin_exception_parent(&old_type).is_some();
             if candidate
@@ -309,6 +317,19 @@ fn stale_pins(
                 .imports
                 .iter()
                 .any(|import| import.alias == old_type && (builtin || import.imported != old_type))
+            {
+                return None;
+            }
+            let plainly_imported = candidate
+                .test
+                .imports
+                .iter()
+                .any(|import| import.alias == old_type);
+            if rebinding
+                .module_bound
+                .iter()
+                .any(|bound| *bound == old_type)
+                && (builtin || !plainly_imported)
             {
                 return None;
             }
@@ -492,17 +513,20 @@ fn raised_type_name(line: &str) -> Option<String> {
     let [Stmt::Raise(raise)] = module.body.as_slice() else {
         return None;
     };
+    // A cause (`from fail()`) is evaluated before the raise and could raise
+    // another class first.
+    if raise.cause.is_some() {
+        return None;
+    }
     let Expr::Call(call) = raise.exc.as_deref()? else {
         return None;
     };
     let Expr::Name(name) = call.func.as_ref() else {
         return None;
     };
-    let inert = call.args.iter().all(inert_raise_argument)
-        && call
-            .keywords
-            .iter()
-            .all(|keyword| inert_raise_argument(&keyword.value));
+    // Keywords are refused: `**value` may not be a mapping, and exception
+    // constructors reject named keywords, so the call could raise first.
+    let inert = call.keywords.is_empty() && call.args.iter().all(inert_raise_argument);
     inert.then(|| name.id.to_string())
 }
 

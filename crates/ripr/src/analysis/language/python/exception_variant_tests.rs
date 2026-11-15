@@ -633,11 +633,37 @@ fn unreadable_raise_or_class_shapes_record_no_stale_pin() -> Check {
         return Err(format!("an f-string over a name must pin: {fstring:?}"));
     }
     // An argument that can itself raise first (`1 / 0`, a call) fails open.
-    for args in ["f\"m {1 / 0}\"", "str(s)"] {
+    for args in ["f\"m {1 / 0}\"", "str(s)", "\"m\", code=1", "**s"] {
         let finding = named(args, args)?;
         if !stale_pins(&finding).is_empty() {
             return Err(format!("`{args}` must fail open: {finding:?}"));
         }
+    }
+    // A cause is evaluated first and fails open.
+    let caused = classify_with_context(
+        "def parse(s):\n    if len(s) > 10:\n        raise TypeError(\"m\") from s\n    return len(s)\n",
+        &format!("import pytest\nfrom fx.core import parse\n\ndef test_variant():\n{raises}"),
+        Some("        raise ValueError(\"m\") from s"),
+        "        raise TypeError(\"m\") from s",
+        true,
+    )?;
+    if !stale_pins(&caused).is_empty() {
+        return Err(format!("a raise with a cause must fail open: {caused:?}"));
+    }
+    // A test module that assigns the expected name fails open.
+    let assigned = classify_with_context(
+        "def parse(s):\n    if len(s) > 10:\n        raise TypeError(\"m\")\n    return len(s)\n",
+        &format!(
+            "import pytest\nfrom fx.core import parse\n\nValueError = Exception\n\ndef test_variant():\n{raises}"
+        ),
+        Some("        raise ValueError(\"m\")"),
+        "        raise TypeError(\"m\")",
+        true,
+    )?;
+    if !stale_pins(&assigned).is_empty() {
+        return Err(format!(
+            "an assigned expected name must fail open: {assigned:?}"
+        ));
     }
     // A test module that rebinds the builtin name fails open.
     let rebound = classify_with_context(
