@@ -29,6 +29,12 @@ Plan item:
 Governing issue or accepted claim:
 Acceptance delta (one sentence):
 
+## Claim
+
+Primary claim: EffortlessMetrics/ripr-swarm#<n>
+Acceptance slice: <nonempty>
+Closure proposal: complete | partial | supersedes | no_parent_effect
+
 <!-- A ripr <-> ripr-swarm sync merge with the `history-sync` label also adds the
 two History-sync source and destination base lines described in
 docs/MERGE_FLOW.md (History-sync route). Other PRs leave them out. -->
