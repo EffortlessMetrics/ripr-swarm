@@ -539,7 +539,7 @@ pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
     let mut index = 0;
     while index < chars.len() {
         let ch = chars[index];
-        let in_code = stack.last().map_or(true, |literal| literal.in_field);
+        let in_code = stack.last().is_none_or(|literal| literal.in_field);
         if in_code {
             if ch == '#' {
                 return true;
@@ -566,15 +566,15 @@ pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
                 index += if triple { 3 } else { 1 };
                 continue;
             }
-            if let Some(literal) = stack.last_mut() {
-                if literal.in_field {
-                    if ch == '{' {
-                        literal.field_depth += 1;
-                    } else if ch == '}' {
-                        literal.field_depth = literal.field_depth.saturating_sub(1);
-                        if literal.field_depth == 0 {
-                            literal.in_field = false;
-                        }
+            if let Some(literal) = stack.last_mut()
+                && literal.in_field
+            {
+                if ch == '{' {
+                    literal.field_depth += 1;
+                } else if ch == '}' {
+                    literal.field_depth = literal.field_depth.saturating_sub(1);
+                    if literal.field_depth == 0 {
+                        literal.in_field = false;
                     }
                 }
             }
