@@ -543,3 +543,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — oracle_confirmation_mixed (41)
+
+Reason:
+RIPR-SPEC-0224 #14483: a proximity-only related row has no established path to the change, so it ranks with no_call_path in the shared observation tier and no longer speaks for the JSON oracle summary or the Related test headline
+
+Command:
+`cargo xtask goldens bless oracle_confirmation_mixed --reason "..."`
+
+Updated:
+- `expected/check.json`

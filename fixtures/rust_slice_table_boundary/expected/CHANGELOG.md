@@ -349,3 +349,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_slice_table_boundary (28)
+
+Reason:
+RIPR-SPEC-0224 #14483: a proximity-only related row has no established path to the change, so it ranks with no_call_path in the shared observation tier and no longer speaks for the JSON oracle summary or the Related test headline
+
+Command:
+`cargo xtask goldens bless rust_slice_table_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

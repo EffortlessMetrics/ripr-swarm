@@ -710,14 +710,23 @@ impl RelatedTest {
 
     /// How well this row can observe the changed behavior, for every picker
     /// that names one related test to open or edit (#14454, #14483). Higher
-    /// is better: `2` when no recorded miss says it cannot, `1` for
-    /// [`RelatedTestMiss::AssertionNotObserving`] (the test runs the change
-    /// but asserts on something else), `0` for [`RelatedTestMiss::NoCallPath`]
-    /// (no established path to the change). Display row selection only: no
-    /// class, gate or credit reads it.
+    /// is better:
+    /// - `0`: no established path to the change, either a
+    ///   [`RelatedTestMiss::NoCallPath`] miss or a proximity-only relation
+    ///   (`same_test_file`, `same_module`, `weak_token_substring`), whatever
+    ///   other miss the row records;
+    /// - `1`: [`RelatedTestMiss::AssertionNotObserving`], the test runs the
+    ///   change but asserts on something else;
+    /// - `2`: every other row.
+    ///
+    /// Display row selection only: no class, gate or credit reads it.
     pub fn observation_tier(&self) -> u8 {
+        let proximity_only = self
+            .relation_reason
+            .is_some_and(crate::domain::RelationReason::is_proximity_only);
         match self.miss {
             Some(RelatedTestMiss::NoCallPath) => 0,
+            _ if proximity_only => 0,
             Some(RelatedTestMiss::AssertionNotObserving) => 1,
             _ => 2,
         }
@@ -728,8 +737,10 @@ impl RelatedTest {
 /// listed order within that tier. The one observing-first rule for pickers
 /// that otherwise take the first listed row (#14483).
 pub fn first_observing_related_test(tests: &[RelatedTest]) -> Option<&RelatedTest> {
-    let best = tests.iter().map(RelatedTest::observation_tier).max()?;
-    tests.iter().find(|test| test.observation_tier() == best)
+    // `min_by_key` keeps the first of equal keys.
+    tests
+        .iter()
+        .min_by_key(|test| std::cmp::Reverse(test.observation_tier()))
 }
 
 /// Why one examined test would not notice the changed behavior being wrong.

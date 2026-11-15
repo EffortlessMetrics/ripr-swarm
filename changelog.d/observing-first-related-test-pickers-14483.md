@@ -2,8 +2,9 @@
 - The human `Related test` headline, the JSON finding `oracle_kind` /
   `oracle_strength` summary and the agent `open=` test row now follow the same
   observing-first rule as the agent `tK=` row and the context fix site: a test
-  whose assertion cannot observe the change, or that has no call path to it,
-  is not named while one that can is listed. The JSON summary therefore no
+  whose assertion cannot observe the change, or that has no call path to it
+  (including a test linked only by file, module or name proximity), is not
+  named while one that can is listed. The JSON summary therefore no
   longer reports a strong oracle that only an unreached test holds; it can now
   read `weak` or `none` where the tests that reach the change assert weakly or
   not at all. On a changed `Err` variant, every surface names the

@@ -400,8 +400,10 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
   `missing_exact_assertion`, and the Rust oracle pass on
   `assertion_not_credited` when choosing the macro-wrapped-assertion limit
   and its next step. One ranking read orders rows, never admits or drops
-  them: `RelatedTest::observation_tier` (#14454, #14483) ranks a row whose
-  miss is `no_call_path` lowest, then `assertion_not_observing`, then every
+  them: `RelatedTest::observation_tier` (#14454, #14483) ranks a row with
+  no established path to the change lowest (a `no_call_path` miss, or a
+  proximity-only `same_test_file`, `same_module` or `weak_token_substring`
+  relation whatever its miss), then `assertion_not_observing`, then every
   other row. Every picker that names one row of a finding uses it: the agent
   `tK=` row (`strongest_test`), the fix site
   (`DiagnosticWitness::best_related_test`, which the code lens and hover

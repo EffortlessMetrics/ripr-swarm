@@ -2700,7 +2700,13 @@ The evidence-first fields are additive in schema `0.2`:
   which decision paths consume a row, and the role is not runtime execution
   evidence.
 - `oracle_kind` and `oracle_strength` summarize the strongest related oracle
-  currently visible to the finding.
+  currently visible to the finding among the rows best placed to observe the
+  change (`RelatedTest::observation_tier`, RIPR-SPEC-0224, #14483): a row with
+  no established path to the change (`no_call_path`, or a proximity-only
+  relation) or an `assertion_not_observing` row speaks for the finding only
+  when no better-placed row is listed, so the summary can read `weak` or
+  `none` while an unreached test holds a strong oracle. TypeScript and
+  JavaScript findings summarize the shared preview row instead.
 - `suggested_next_action` mirrors `recommended_next_step` for action-oriented
   integrations.
 - Both are always present and may be the empty string, which is the producer's

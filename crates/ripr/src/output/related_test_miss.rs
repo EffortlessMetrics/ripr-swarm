@@ -760,6 +760,15 @@ mod tests {
             headline_related_test_for_finding(&rust).map(|t| t.name.as_str()),
             Some("c")
         );
+        // A row linked only by file location has no established path to the
+        // change whatever miss it records, so it ranks with `no_call_path`.
+        let mut located = rust.clone();
+        located.related_tests[2].relation_reason = Some(RelationReason::SameTestFile);
+        located.related_tests[2].miss = Some(RelatedTestMiss::NoAssertion);
+        assert_eq!(
+            headline_related_test_for_finding(&located).map(|t| t.name.as_str()),
+            Some("b")
+        );
         rust.related_tests.truncate(2);
         assert_eq!(
             headline_related_test_for_finding(&rust).map(|t| t.name.as_str()),

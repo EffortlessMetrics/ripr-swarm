@@ -370,3 +370,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_adversarial_shared_error_variant_proximity (28)
+
+Reason:
+RIPR-SPEC-0224 #14483: a proximity-only related row has no established path to the change, so it ranks with no_call_path in the shared observation tier and no longer speaks for the JSON oracle summary or the Related test headline
+
+Command:
+`cargo xtask goldens bless rust_adversarial_shared_error_variant_proximity --reason "..."`
+
+Updated:
+- `expected/check.json`
