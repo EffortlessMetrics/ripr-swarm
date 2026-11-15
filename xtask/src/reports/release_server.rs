@@ -476,26 +476,50 @@ pub(crate) fn release_server_readme(version: &str) -> String {
     )
 }
 
+/// Maximum compression for release server archives: download-size only.
+/// The archive formats, file names and entry layout are unchanged, so
+/// existing extractors (Expand-Archive, `tar -xzf`) need no change; only
+/// the deflate effort inside the same gzip/zip containers rises.
+pub(crate) const ARCHIVE_COMPRESSION_LEVEL: u32 = 9;
+
+pub(crate) fn gzip_compression() -> flate2::Compression {
+    flate2::Compression::new(ARCHIVE_COMPRESSION_LEVEL)
+}
+
+pub(crate) fn zip_file_options() -> zip::write::SimpleFileOptions {
+    zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .compression_level(Some(i64::from(ARCHIVE_COMPRESSION_LEVEL)))
+        .unix_permissions(0o644)
+}
+
 pub(crate) fn create_tar_gz_archive(package_dir: &Path, asset_path: &Path) -> Result<(), String> {
-    run_owned(
-        "tar",
-        &[
-            "-czf".to_string(),
-            asset_path.to_string_lossy().to_string(),
-            "-C".to_string(),
-            package_dir.to_string_lossy().to_string(),
-            ".".to_string(),
-        ],
-    )
+    // In-process tar+gzip instead of shelling out to `tar -czf`: there is
+    // no portable way to pass a gzip level to external tar (GNU tar takes
+    // it from the environment, libarchive/bsdtar from `--options`, and
+    // Windows ships bsdtar), while flate2 level 9 is identical on every
+    // release runner. The output stays a plain `.tar.gz`.
+    let file = fs::File::create(asset_path)
+        .map_err(|err| format!("failed to create {}: {err}", asset_path.display()))?;
+    let encoder = flate2::write::GzEncoder::new(file, gzip_compression());
+    let mut builder = tar::Builder::new(encoder);
+    builder
+        .append_dir_all(".", package_dir)
+        .map_err(|err| format!("failed to write {}: {err}", asset_path.display()))?;
+    let encoder = builder
+        .into_inner()
+        .map_err(|err| format!("failed to finish {}: {err}", asset_path.display()))?;
+    encoder
+        .finish()
+        .map_err(|err| format!("failed to finish {}: {err}", asset_path.display()))?;
+    Ok(())
 }
 
 pub(crate) fn create_zip_archive(package_dir: &Path, asset_path: &Path) -> Result<(), String> {
     let file = fs::File::create(asset_path)
         .map_err(|err| format!("failed to create {}: {err}", asset_path.display()))?;
     let mut writer = zip::ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
-        .unix_permissions(0o644);
+    let options = zip_file_options();
 
     let entries = fs::read_dir(package_dir)
         .map_err(|err| format!("failed to read {}: {err}", package_dir.display()))?;
@@ -611,6 +635,99 @@ mod hash_reader_tests {
             Some(io::ErrorKind::PermissionDenied)
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod archive_compression_tests {
+    use super::*;
+
+    fn fixture_dir(label: &str) -> Result<PathBuf, String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-archive-compression-{label}-{}",
+            std::process::id()
+        ));
+        if dir.exists() {
+            fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        }
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        // Highly compressible payload so level choice changes bytes.
+        fs::write(dir.join("ripr"), vec![b'x'; 64 * 1024]).map_err(|e| e.to_string())?;
+        fs::write(
+            dir.join("README-server.txt"),
+            release_server_readme("0.11.0"),
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(dir)
+    }
+
+    #[test]
+    fn compression_level_is_pinned_at_maximum_for_both_formats() {
+        assert_eq!(ARCHIVE_COMPRESSION_LEVEL, 9);
+        assert_eq!(gzip_compression(), flate2::Compression::new(9));
+        let options = zip_file_options();
+        assert_eq!(options.get_compression_level(), Some(9));
+    }
+
+    #[test]
+    fn tar_gz_is_level_nine_gzip_and_round_trips() -> Result<(), String> {
+        let dir = fixture_dir("tar")?;
+        let asset = dir.with_extension("tar.gz");
+        let result = (|| {
+            create_tar_gz_archive(&dir, &asset)?;
+            let bytes = fs::read(&asset).map_err(|e| e.to_string())?;
+            // RFC 1952: magic + deflate, XFL=2 marks maximum compression.
+            assert_eq!(&bytes[0..3], &[0x1f, 0x8b, 8]);
+            assert_eq!(bytes[8], 2, "gzip XFL must mark level 9");
+            let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(&bytes[..]));
+            let mut names = Vec::new();
+            for entry in archive.entries().map_err(|e| e.to_string())? {
+                let mut entry = entry.map_err(|e| e.to_string())?;
+                let name = entry
+                    .path()
+                    .map_err(|e| e.to_string())?
+                    .to_string_lossy()
+                    .replace("./", "");
+                if name.is_empty() || name.ends_with('/') {
+                    continue;
+                }
+                let mut body = Vec::new();
+                entry.read_to_end(&mut body).map_err(|e| e.to_string())?;
+                assert_eq!(body, fs::read(dir.join(&name)).map_err(|e| e.to_string())?);
+                names.push(name);
+            }
+            names.sort();
+            assert_eq!(names, ["README-server.txt", "ripr"]);
+            Ok(())
+        })();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_file(&asset);
+        result
+    }
+
+    #[test]
+    fn zip_stays_deflated_and_round_trips() -> Result<(), String> {
+        let dir = fixture_dir("zip")?;
+        let asset = dir.with_extension("zip");
+        let result = (|| {
+            create_zip_archive(&dir, &asset)?;
+            let file = fs::File::open(&asset).map_err(|e| e.to_string())?;
+            let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+            assert_eq!(archive.len(), 2);
+            for index in 0..archive.len() {
+                let mut entry = archive.by_index(index).map_err(|e| e.to_string())?;
+                assert_eq!(entry.compression(), zip::CompressionMethod::Deflated);
+                let name = entry.name().map_err(|e| e.to_string())?.to_string();
+                let mut body = Vec::new();
+                entry.read_to_end(&mut body).map_err(|e| e.to_string())?;
+                assert_eq!(body, fs::read(dir.join(&name)).map_err(|e| e.to_string())?);
+                assert!(entry.size() > entry.compressed_size());
+            }
+            Ok(())
+        })();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_file(&asset);
+        result
     }
 }
 
