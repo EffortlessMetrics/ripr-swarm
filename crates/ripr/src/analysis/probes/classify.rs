@@ -463,18 +463,28 @@ fn is_token_run(haystack: &str, masked: &[u8], start: usize, needle: &str) -> bo
     open_start && open_end
 }
 
-/// Whether `needle` occurs in `haystack` as a token run (see
-/// [`is_token_run`]): `total > limit` is not found inside the old
-/// `subtotal > limit`, and text inside a string or comment does not count.
-pub(super) fn contains_token_run(haystack: &str, needle: &str) -> bool {
+/// How often `needle` occurs in `haystack` as a code token run that no
+/// neighbouring operand syntax extends (#14722): `total > limit` is not
+/// found in `subtotal > limit`, `total > limit.max`, `total > limit[0]`,
+/// `total > limit + 1` or `x.total > limit`, but is found in
+/// `let over = total > limit;`. A shape the diff producer cannot cut is
+/// unchanged only when the old line holds it at least this often.
+pub(super) fn operand_bounded_token_run_count(haystack: &str, needle: &str) -> usize {
     if needle.is_empty() {
-        return false;
+        return 0;
     }
     let masked = mask_comments_and_strings(haystack);
     let masked = masked.as_bytes();
     haystack
         .match_indices(needle)
-        .any(|(start, _)| is_token_run(haystack, masked, start, needle))
+        .filter(|(start, _)| {
+            let next = haystack[start + needle.len()..].trim_start();
+            let previous = haystack[..*start].trim_end();
+            is_token_run(haystack, masked, *start, needle)
+                && !next.starts_with(['.', '(', '[', '?', '+', '-', '*', '/', '%', ':'])
+                && !previous.ends_with(['.', ':', '+', '-', '*', '/', '%', '!', '&'])
+        })
+        .count()
 }
 
 /// A record field must be a whole syntactic unit, not the head or tail of a
