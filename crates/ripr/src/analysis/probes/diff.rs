@@ -1100,7 +1100,7 @@ fn retarget_changed_const_readers(
     if readers.is_empty()
         || readers
             .iter()
-            .any(|shape| changed_lines.contains(&shape.start_line))
+            .any(|shape| changed_lines.contains(&shape.start_line()))
     {
         return None;
     }
@@ -1109,8 +1109,8 @@ fn retarget_changed_const_readers(
             .iter()
             .map(|shape| {
                 let line = ChangedLine {
-                    line: shape.start_line,
-                    new_side_line: shape.start_line,
+                    line: shape.start_line(),
+                    new_side_line: shape.start_line(),
                     text: shape.text.to_string(),
                 };
                 let mut seeded = SeededProbe::from_probe(build_probe(
@@ -3650,8 +3650,10 @@ mod tests {
                 ProbeShapeFact {
                     start_line: 3,
                     end_line: 3,
-                    start_byte,
-                    end_byte: start_byte + shape_text.len(),
+                    start_byte: crate::analysis::facts::probe_shape_position(start_byte),
+                    end_byte: crate::analysis::facts::probe_shape_position(
+                        start_byte + shape_text.len(),
+                    ),
                     kind: *kind,
                     text: (*shape_text).into(),
                     value_consumed: false,
@@ -5574,8 +5576,10 @@ mod tests {
                     probe_shapes: vec![ProbeShapeFact {
                         start_line: 2,
                         end_line: 2,
-                        start_byte: producer,
-                        end_byte: producer + PREDICATE.len(),
+                        start_byte: crate::analysis::facts::probe_shape_position(producer),
+                        end_byte: crate::analysis::facts::probe_shape_position(
+                            producer + PREDICATE.len(),
+                        ),
                         kind: ProbeShapeKind::Predicate,
                         text: PREDICATE.into(),
                         value_consumed: false,
@@ -5682,7 +5686,7 @@ mod tests {
                         start_line: 10,
                         end_line: 13,
                         start_byte: 0,
-                        end_byte: expression.len(),
+                        end_byte: crate::analysis::facts::probe_shape_position(expression.len()),
                         kind: ProbeShapeKind::CallDeletion,
                         text: expression.into(),
                         value_consumed: false,

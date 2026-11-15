@@ -128,8 +128,8 @@ pub(in crate::analysis) fn const_reader_returns<'a>(
     for owner in &readers {
         let mut returns = facts.data().probe_shapes.iter().filter(|shape| {
             shape.kind == ProbeShapeKind::ReturnValue
-                && owner.start_line <= shape.start_line
-                && shape.end_line <= owner.end_line
+                && owner.start_line <= shape.start_line()
+                && shape.end_line() <= owner.end_line
         });
         // The reader's whole body is one returned expression: no branch,
         // binding, closure or async block can stand between the constant and
@@ -158,7 +158,7 @@ pub(in crate::analysis) fn const_reader_returns<'a>(
                 name,
                 &reader.name,
                 declaration_line,
-                shape.start_line,
+                shape.start_line(),
             ) =>
         {
             found

@@ -1804,19 +1804,23 @@ impl ProbeShapeKind {
     }
 }
 
+/// One parser-owned probe site. Lines and byte offsets are stored as `u32`
+/// (rust-analyzer's `TextSize` bounds every offset, and a line number never
+/// exceeds its byte offset), which keeps the run-wide shape vectors about a
+/// third smaller (#13703). Read them through the `usize` accessors.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProbeShapeFact {
-    pub start_line: usize,
-    pub end_line: usize,
+    pub start_line: u32,
+    pub end_line: u32,
     /// Byte offset of the shape's start within the source file. Populated
     /// by the parser-backed summarizer; the lexical fallback emits no
     /// probe shapes at all, so this stays accurate.
-    pub start_byte: usize,
+    pub start_byte: u32,
     /// Byte offset one past the shape's parser-owned end within the source
     /// file. Unlike `text` (trimmed, `;`-stripped display snippet), this is
     /// the verbatim syntax range end, so span consumers must derive geometry
     /// from these bytes, never from `text.len()`.
-    pub end_byte: usize,
+    pub end_byte: u32,
     pub kind: ProbeShapeKind,
     pub text: SourceText,
     /// A `call_deletion` shape whose value feeds a consumer (a condition, a
@@ -1827,7 +1831,47 @@ pub struct ProbeShapeFact {
     pub value_consumed: bool,
     /// Inclusive parser-owned match-head lines, independent of the token
     /// anchor and normalized display text. Other shapes retain their bounds.
-    pub source_lines: Option<(usize, usize)>,
+    pub source_lines: Option<(u32, u32)>,
+}
+
+impl ProbeShapeFact {
+    /// First source line, 1-based.
+    pub fn start_line(&self) -> usize {
+        widen(self.start_line)
+    }
+
+    /// Last source line, 1-based and inclusive.
+    pub fn end_line(&self) -> usize {
+        widen(self.end_line)
+    }
+
+    /// Byte offset of the shape's start; see the field.
+    pub fn start_byte(&self) -> usize {
+        widen(self.start_byte)
+    }
+
+    /// Byte offset one past the shape's parser-owned end; see the field.
+    pub fn end_byte(&self) -> usize {
+        widen(self.end_byte)
+    }
+
+    /// Inclusive parser-owned match-head lines; see the field.
+    pub fn source_lines(&self) -> Option<(usize, usize)> {
+        self.source_lines
+            .map(|(start, end)| (widen(start), widen(end)))
+    }
+}
+
+/// `u32` to `usize`, lossless on every target ripr builds for.
+fn widen(value: u32) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+/// A line or byte position as stored in a [`ProbeShapeFact`]. Positions come
+/// from rust-analyzer's `u32` text sizes, so saturation is unreachable for a
+/// parsed file.
+pub(crate) fn probe_shape_position(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
 }
 
 /// Cache payload mirrors of the fact structs. The wire carries [`WireText`]
@@ -1879,17 +1923,17 @@ pub(crate) struct TestFactWire {
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ProbeShapeFactWire {
-    pub start_line: usize,
-    pub end_line: usize,
-    pub start_byte: usize,
-    pub end_byte: usize,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub start_byte: u32,
+    pub end_byte: u32,
     pub kind: ProbeShapeKind,
     pub text: WireText,
     /// Omitted when false, so payloads without it read as unconsumed (#6677).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub value_consumed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_lines: Option<(usize, usize)>,
+    pub source_lines: Option<(u32, u32)>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -2324,16 +2368,16 @@ struct TestFactWireRef<'a> {
 
 #[derive(serde::Serialize)]
 struct ProbeShapeFactWireRef<'a> {
-    start_line: usize,
-    end_line: usize,
-    start_byte: usize,
-    end_byte: usize,
+    start_line: u32,
+    end_line: u32,
+    start_byte: u32,
+    end_byte: u32,
     kind: ProbeShapeKind,
     text: WireTextRef<'a>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     value_consumed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    source_lines: Option<(usize, usize)>,
+    source_lines: Option<(u32, u32)>,
 }
 
 #[derive(serde::Serialize)]

@@ -40,6 +40,7 @@ use super::{
     NameScope, RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange, UseBinding,
     name_scope::path_segments, name_scope_for_items, parse_clean_source_file, rust_nesting_refusal,
 };
+use crate::analysis::facts::probe_shape_position;
 use crate::analysis::rust_index::{
     FunctionFact, LazyDecls, OracleFact, ProbeShapeFact, ProbeShapeKind, SharedFactSlice,
     SourceText, TestFact, classify_assertion_with, err_return_guard_oracles, extract_call_facts,
@@ -2168,14 +2169,15 @@ fn push_probe_shape_with_text(
         return;
     }
     shapes.push(ProbeShapeFact {
-        start_line: line_index.line(start),
-        end_line: line_index.line_for_range_end(end),
-        start_byte: u32::from(start) as usize,
-        end_byte: u32::from(end) as usize,
+        start_line: probe_shape_position(line_index.line(start)),
+        end_line: probe_shape_position(line_index.line_for_range_end(end)),
+        start_byte: u32::from(start),
+        end_byte: u32::from(end),
         kind,
         text,
         value_consumed: false,
-        source_lines,
+        source_lines: source_lines
+            .map(|(first, last)| (probe_shape_position(first), probe_shape_position(last))),
     });
 }
 
@@ -4252,11 +4254,13 @@ static SHADOW: () = {
             .map(|offset| decoy.saturating_add(1).saturating_add(offset))
             .ok_or("producer missing")?;
         assert!(
-            predicates.iter().any(|shape| shape.start_byte == producer),
+            predicates
+                .iter()
+                .any(|shape| shape.start_byte() == producer),
             "if-condition start_byte missing: decoy={decoy} producer={producer} shapes={predicates:?}"
         );
         assert!(
-            predicates.iter().all(|shape| shape.start_byte != decoy),
+            predicates.iter().all(|shape| shape.start_byte() != decoy),
             "string decoy was credited as a predicate origin: {predicates:?}"
         );
         Ok(())
@@ -4283,7 +4287,9 @@ static SHADOW: () = {
             .find("montant_é > discount_threshold")
             .ok_or("predicate missing")?;
         assert!(
-            predicates.iter().any(|shape| shape.start_byte == producer),
+            predicates
+                .iter()
+                .any(|shape| shape.start_byte() == producer),
             "producer={producer} shapes={predicates:?}"
         );
         Ok(())

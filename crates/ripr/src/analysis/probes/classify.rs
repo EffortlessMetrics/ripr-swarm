@@ -189,7 +189,7 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
     let ranker = ChangedLineRank::build(
         changed_text,
         facts.probe_shapes.iter().filter_map(|shape| {
-            (shape.start_line <= line && line <= shape.end_line).then_some(shape.text.as_str())
+            (shape.start_line() <= line && line <= shape.end_line()).then_some(shape.text.as_str())
         }),
     );
     // The unchanged test counts token runs of every overlapping shape in the
@@ -200,7 +200,7 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
         let needles = facts
             .probe_shapes
             .iter()
-            .filter(|shape| shape.start_line <= line && line <= shape.end_line)
+            .filter(|shape| shape.start_line() <= line && line <= shape.end_line())
             .map(|shape| {
                 (
                     shape.text.trim(),
@@ -234,7 +234,7 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
     };
     let mut selected = Vec::<(ParserProbeShape<'a>, Option<(u8, bool, usize)>)>::new();
     for shape in &facts.probe_shapes {
-        if shape.start_line > line || line > shape.end_line {
+        if shape.start_line() > line || line > shape.end_line() {
             continue;
         }
         let family = family_for_probe_shape(shape.kind);
@@ -255,9 +255,9 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             start_line: if unsafe_boundary {
                 line
             } else {
-                shape.start_line
+                shape.start_line()
             },
-            start_byte: shape.start_byte,
+            start_byte: shape.start_byte(),
             text: shape.text.as_str(),
             // Resolved for the winners only: it scans the line prefix, which
             // is linear in the line per shape (#9895).
@@ -325,7 +325,7 @@ fn unsafe_boundary_owns_changed_line(
         return false;
     }
 
-    if line == shape.start_line {
+    if line == shape.start_line() {
         let prefix_end = boundary_start.max(line_range.start).min(line_range.end);
         let Some(prefix) = facts.source.get(line_range.start..prefix_end) else {
             return false;
@@ -334,7 +334,7 @@ fn unsafe_boundary_owns_changed_line(
             return false;
         }
     }
-    if line == shape.end_line {
+    if line == shape.end_line() {
         let suffix_start = boundary_end.max(line_range.start).min(line_range.end);
         let Some(suffix) = facts.source.get(suffix_start..line_range.end) else {
             return false;
@@ -356,7 +356,7 @@ fn unsafe_boundary_syntax_range(
         let Some(token) = function.unsafe_token() else {
             continue;
         };
-        if u32::from(token.text_range().start()) as usize == shape.start_byte {
+        if u32::from(token.text_range().start()) as usize == shape.start_byte() {
             return Some(function.syntax().text_range());
         }
     }
@@ -364,7 +364,7 @@ fn unsafe_boundary_syntax_range(
         let Some(token) = block.unsafe_token() else {
             continue;
         };
-        if u32::from(token.text_range().start()) as usize == shape.start_byte {
+        if u32::from(token.text_range().start()) as usize == shape.start_byte() {
             return Some(block.syntax().text_range());
         }
     }
@@ -1538,8 +1538,12 @@ mod tests {
                         ProbeShapeFact {
                             start_line: 1,
                             end_line: 5,
-                            start_byte: function_start,
-                            end_byte: function_start + 18,
+                            start_byte: crate::analysis::facts::probe_shape_position(
+                                function_start,
+                            ),
+                            end_byte: crate::analysis::facts::probe_shape_position(
+                                function_start + 18,
+                            ),
                             kind: ProbeShapeKind::UnsafeBoundary,
                             text: "unsafe fn read_raw".into(),
                             value_consumed: false,
@@ -1548,8 +1552,10 @@ mod tests {
                         ProbeShapeFact {
                             start_line: 2,
                             end_line: 4,
-                            start_byte: block_start,
-                            end_byte: block_start + 12,
+                            start_byte: crate::analysis::facts::probe_shape_position(block_start),
+                            end_byte: crate::analysis::facts::probe_shape_position(
+                                block_start + 12,
+                            ),
                             kind: ProbeShapeKind::UnsafeBoundary,
                             text: "unsafe block".into(),
                             value_consumed: false,
@@ -1558,8 +1564,12 @@ mod tests {
                         ProbeShapeFact {
                             start_line: 3,
                             end_line: 3,
-                            start_byte: predicate_start,
-                            end_byte: predicate_start + 13,
+                            start_byte: crate::analysis::facts::probe_shape_position(
+                                predicate_start,
+                            ),
+                            end_byte: crate::analysis::facts::probe_shape_position(
+                                predicate_start + 13,
+                            ),
                             kind: ProbeShapeKind::Predicate,
                             text: "value < limit".into(),
                             value_consumed: false,
@@ -1606,8 +1616,8 @@ mod tests {
                     probe_shapes: vec![ProbeShapeFact {
                         start_line: 1,
                         end_line: 1,
-                        start_byte: block_start,
-                        end_byte: block_start + 12,
+                        start_byte: crate::analysis::facts::probe_shape_position(block_start),
+                        end_byte: crate::analysis::facts::probe_shape_position(block_start + 12),
                         kind: ProbeShapeKind::UnsafeBoundary,
                         text: "unsafe block".into(),
                         value_consumed: false,
@@ -1645,8 +1655,8 @@ mod tests {
                     probe_shapes: vec![ProbeShapeFact {
                         start_line: 2,
                         end_line: 2,
-                        start_byte: block_start,
-                        end_byte: block_start + 12,
+                        start_byte: crate::analysis::facts::probe_shape_position(block_start),
+                        end_byte: crate::analysis::facts::probe_shape_position(block_start + 12),
                         kind: ProbeShapeKind::UnsafeBoundary,
                         text: "unsafe block".into(),
                         value_consumed: false,
@@ -1685,8 +1695,8 @@ mod tests {
                         ProbeShapeFact {
                             start_line: 2,
                             end_line: 2,
-                            start_byte: first,
-                            end_byte: first + 6,
+                            start_byte: crate::analysis::facts::probe_shape_position(first),
+                            end_byte: crate::analysis::facts::probe_shape_position(first + 6),
                             kind: ProbeShapeKind::CallDeletion,
                             text: "read()".into(),
                             value_consumed: false,
@@ -1695,8 +1705,8 @@ mod tests {
                         ProbeShapeFact {
                             start_line: 3,
                             end_line: 3,
-                            start_byte: second,
-                            end_byte: second + 6,
+                            start_byte: crate::analysis::facts::probe_shape_position(second),
+                            end_byte: crate::analysis::facts::probe_shape_position(second + 6),
                             kind: ProbeShapeKind::CallDeletion,
                             text: "read()".into(),
                             value_consumed: false,
@@ -1792,8 +1802,8 @@ mod tests {
         ProbeShapeFact {
             start_line: 1,
             end_line: 1,
-            start_byte,
-            end_byte,
+            start_byte: crate::analysis::facts::probe_shape_position(start_byte),
+            end_byte: crate::analysis::facts::probe_shape_position(end_byte),
             kind,
             text,
             value_consumed: false,
@@ -1815,7 +1825,7 @@ mod tests {
         inner.push_str("_=>0}");
         shapes.push(shape_fact(ProbeShapeKind::MatchArm, tail_start, "_=>0"));
         let prefix = "Id { a: 1, b: 2, x: ";
-        let shift = prefix.len();
+        let shift = crate::analysis::facts::probe_shape_position(prefix.len());
         for shape in &mut shapes {
             shape.start_byte = shape.start_byte.saturating_add(shift);
             shape.end_byte = shape.end_byte.saturating_add(shift);
@@ -2134,8 +2144,8 @@ mod tests {
                 let key = Some((category, unchanged, distance));
                 let candidate = ParserProbeShape {
                     family,
-                    start_line: shape.start_line,
-                    start_byte: shape.start_byte,
+                    start_line: shape.start_line(),
+                    start_byte: shape.start_byte(),
                     text: shape.text.as_str(),
                     standalone_call: true,
                     unsafe_boundary: false,

@@ -4838,7 +4838,7 @@ fn build_seam_from_shape(
         && crate::analysis::classify::field_assignment_target(&shape.text).is_some()
     {
         Some(written_field_of_shape(
-            owners.owner(shape.start_line)?,
+            owners.owner(shape.start_line())?,
             shape,
         )?)
     } else {
@@ -4851,7 +4851,7 @@ fn build_seam_from_shape(
     if kind == SeamKind::CallPresence && shape.value_consumed {
         return None;
     }
-    let owner_fact = owners.owner(shape.start_line)?;
+    let owner_fact = owners.owner(shape.start_line())?;
     // Skip shapes whose owner is itself a test function (e.g.,
     // `#[test] fn ...` inside an in-file `#[cfg(test)] mod tests`).
     // the source-role model already excludes physical test files;
@@ -4872,7 +4872,7 @@ fn build_seam_from_shape(
         && crate::analysis::classify::predicate_branch_side_effect_only_in_body(
             owner_fact.body.as_str(),
             owner_fact.start_line,
-            shape.start_line,
+            shape.start_line(),
         ) {
         ExpectedSink::SideEffect
     } else {
@@ -4886,15 +4886,15 @@ fn build_seam_from_shape(
         path,
         owner,
         kind,
-        shape.start_byte,
-        shape.start_line,
+        shape.start_byte(),
+        shape.start_line(),
         expression,
         required_discriminator,
         expected_sink,
         crlf_pairs,
     )
     .with_owner_call(owner_call)
-    .with_source_lines(shape.source_lines);
+    .with_source_lines(shape.source_lines());
     // #12061: a field write is read back from the receiver only when the
     // owner borrows it; record which so every surface words the read alike.
     let seam = if kind == SeamKind::FieldConstruction
@@ -4911,7 +4911,7 @@ fn build_seam_from_shape(
     // not its coverage: use the separately parsed pattern-through-body range.
     // The `match` keyword shape has no arm range and remains line-only.
     let (start_line, start_byte, end_byte) = if shape.kind == ProbeShapeKind::MatchArm {
-        let Some(&(start, end)) = arm_ranges.get(&shape.start_byte) else {
+        let Some(&(start, end)) = arm_ranges.get(&shape.start_byte()) else {
             return Some(seam);
         };
         (
@@ -4920,7 +4920,7 @@ fn build_seam_from_shape(
             end,
         )
     } else {
-        (shape.start_line, shape.start_byte, shape.end_byte)
+        (shape.start_line(), shape.start_byte(), shape.end_byte())
     };
     match byte_span_to_lines_with_starts(source, line_starts, start_line, start_byte, end_byte) {
         Some(span) => Some(seam.with_span(span)),
@@ -4941,7 +4941,7 @@ fn written_field_of_shape(
     crate::analysis::classify::assigned_field_path(
         owner.body.as_str(),
         owner.start_line,
-        shape.start_line,
+        shape.start_line(),
         &shape.text,
         &|_| None,
     )
