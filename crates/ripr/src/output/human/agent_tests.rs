@@ -992,6 +992,31 @@ fn gap_lines_are_bounded_and_the_rest_is_counted_explicitly() {
     );
 }
 
+/// #14454: the `tK=` row skips a strong related test whose assertion cannot
+/// observe the change for a weaker one that does, at equal relation
+/// confidence; without that miss the strong row still leads.
+#[test]
+fn the_test_row_skips_a_strong_row_that_cannot_observe_the_change() {
+    let mut gap = weak_gap("probe:g", 12);
+    let mut strong = gap.related_tests[0].clone();
+    strong.name = "accepts_short_names".to_string();
+    strong.oracle_strength = OracleStrength::Strong;
+    strong.miss = Some(RelatedTestMiss::AssertionNotObserving);
+    gap.related_tests[0].name = "rejects_long_names".to_string();
+    gap.related_tests.insert(0, strong);
+    let text = rendered(&output(vec![gap.clone()]));
+    assert!(
+        text.contains("\nt1=tests/t.rs:3 rejects_long_names "),
+        "{text}"
+    );
+    gap.related_tests[0].miss = Some(RelatedTestMiss::MissingExactAssertion);
+    let text = rendered(&output(vec![gap]));
+    assert!(
+        text.contains("\nt1=tests/t.rs:3 accepts_short_names "),
+        "{text}"
+    );
+}
+
 /// #14338: an `error_path` and a `return_value` probe on one changed line
 /// with the same class, expression, missing value, test and stages print as
 /// one row; `gaps=` counts the row and `folded_gaps=` the extra finding. Any

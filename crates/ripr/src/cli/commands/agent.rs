@@ -498,6 +498,9 @@ fn write_agent_start_with_report(
         )));
     }
     add_agent_brief_provenance_warning(&input.root, &mut selection);
+    // #14683: the started brief names a head-only arm seam's result, as
+    // `agent brief --json` does for the same seam.
+    crate::app::agent_brief::attach_agent_brief_arm_results(&input.root, &mut selection);
 
     let out_dir = resolve_agent_start_out_dir(&input.root, &options.out_dir);
     std::fs::create_dir_all(&out_dir).map_err(|err| {
@@ -593,6 +596,7 @@ fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, CoreError> 
     );
     route_preview_only_empty_brief(&input.root, &config, &working_set, &mut selection);
     add_agent_brief_provenance_warning(&input.root, &mut selection);
+    crate::app::agent_brief::attach_agent_brief_arm_results(&input.root, &mut selection);
     output::agent_brief::render_agent_brief_json(
         &input.root,
         &input.mode,
