@@ -190,8 +190,10 @@ fn same_workload(past_receipt: &Value, past: &Value, current: &Value, metric: &V
             let Some(repo) = repo.as_str() else {
                 return false;
             };
-            let now = &current["workloads"][repo];
-            !now.is_null() && past_receipt["workloads"][repo] == *now
+            // A corpus repository must keep its workload. An ingested
+            // sample (a first-run case name) has no corpus entry on either
+            // night, so only its name in the repository set identifies it.
+            past_receipt["workloads"][repo] == current["workloads"][repo]
         })
 }
 
@@ -1395,6 +1397,33 @@ mod tests {
         );
         let page = evaluate(&history, &current)?;
         assert_eq!(page["off_bar"][0]["previous"], 1800.0);
+        Ok(())
+    }
+
+    #[test]
+    fn an_ingested_per_repo_metric_trends_by_case_name() -> Result<(), String> {
+        let walk = |value: f64| {
+            let mut m = row(
+                "first_run.walk_secs",
+                "lower_is_better",
+                60.0,
+                Some(value),
+                "below_target",
+            );
+            m["per_repo"] = json!(true);
+            m["samples"] =
+                json!([{"repo": "fresh-clone", "status": "below_target", "value": value}]);
+            m
+        };
+        let mut history = BTreeMap::new();
+        history.insert(
+            "2026-11-14".to_string(),
+            night("2026-11-14", "linux-x64", vec![walk(90.0)])?,
+        );
+        let current = night("2026-11-15", "linux-x64", vec![walk(80.0)])?;
+        let page = evaluate(&history, &current)?;
+        assert_eq!(page["off_bar"][0]["previous"], 90.0);
+        assert_eq!(page["off_bar"][0]["since_previous"], "better");
         Ok(())
     }
 }
