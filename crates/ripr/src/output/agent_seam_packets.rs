@@ -7960,6 +7960,7 @@ mod tests {
     /// #13204: the card, the packet and MCP read the selected proposal
     /// through one projection, so they agree on kind and file; a seam with no
     /// proposal projects none in any of them and MCP keeps its plain verdict.
+    #[cfg(feature = "mcp")]
     #[test]
     fn selected_proposal_reads_the_same_in_card_packet_and_mcp() -> Result<(), String> {
         use crate::analysis::new_test_target::SelectedProposal;

@@ -60,7 +60,13 @@ pub(super) fn execute(command: CliCommand) -> Result<(), CommandError> {
         CliCommand::Doctor(args) => commands::doctor(&args),
         CliCommand::Capabilities(args) => commands::capabilities(&args).map_err(CommandError::from),
         CliCommand::Completions(args) => commands::completions(&args).map_err(CommandError::from),
+        #[cfg(feature = "lsp")]
         CliCommand::Lsp(args) => commands::lsp(&args).map_err(CommandError::from),
+        #[cfg(not(feature = "lsp"))]
+        CliCommand::Lsp(_args) => Err(CommandError::from(
+            "ripr lsp is not built into this binary; rebuild with `--features lsp` (or default features) to use the language server"
+                .to_string(),
+        )),
         CliCommand::PrSummary(args) => commands::pr_summary(&args).map_err(CommandError::from),
         CliCommand::Annotations(args) => commands::annotations(&args).map_err(CommandError::from),
         CliCommand::PrEvidence(args) => commands::pr_evidence(&args).map_err(CommandError::from),
@@ -70,7 +76,13 @@ pub(super) fn execute(command: CliCommand) -> Result<(), CommandError> {
         CliCommand::RiprPlus(args) => commands::ripr_plus(&args).map_err(CommandError::from),
         CliCommand::Cache(args) => commands::cache(&args).map_err(CommandError::from),
         CliCommand::Rerun(args) => rerun::run(&args).map_err(CommandError::from),
+        #[cfg(feature = "mcp")]
         CliCommand::Mcp(args) => crate::mcp::run(&args).map_err(CommandError::from),
+        #[cfg(not(feature = "mcp"))]
+        CliCommand::Mcp(_args) => Err(CommandError::from(
+            "ripr mcp is not built into this binary; rebuild with `--features mcp` (or default features) to use the MCP server"
+                .to_string(),
+        )),
         // Task-first façade typed outcomes carry the Decision variant (exit 3).
         CliCommand::Repair(args) => commands::repair(&args),
         CliCommand::Continue(args) => commands::continue_repair(&args),
@@ -309,10 +321,19 @@ mod tests {
                 "missing --at or --finding selector; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `ripr check --json` to list finding ids".to_string()
             ))
         );
+        #[cfg(feature = "lsp")]
         assert_eq!(
             execute(CliCommand::Lsp(args(&["--bad"]))),
             Err(CommandError::Failure(
                 "unknown lsp argument \"--bad\". Run `ripr lsp --help`.".to_string()
+            ))
+        );
+        #[cfg(not(feature = "lsp"))]
+        assert_eq!(
+            execute(CliCommand::Lsp(args(&["--bad"]))),
+            Err(CommandError::Failure(
+                "ripr lsp is not built into this binary; rebuild with `--features lsp` (or default features) to use the language server"
+                    .to_string()
             ))
         );
     }

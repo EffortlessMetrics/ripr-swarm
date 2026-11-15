@@ -35,8 +35,10 @@ mod context;
 mod feedback_command;
 #[path = "commands/kani_report.rs"]
 mod kani_report;
+#[cfg(feature = "lsp")]
 #[path = "commands/lsp.rs"]
 mod lsp;
+#[cfg(feature = "lsp")]
 pub(super) use lsp::lsp;
 #[path = "commands/policy.rs"]
 mod policy_commands;
@@ -3105,6 +3107,7 @@ mod tests {
         assert_eq!(context(&args(&["--help"])), Ok(()));
         assert_eq!(reports(&args(&["--help"])), Ok(()));
         assert_eq!(doctor(&args(&["--help"])), Ok(()));
+        #[cfg(feature = "lsp")]
         assert_eq!(lsp(&args(&["--help"])), Ok(()));
     }
 
