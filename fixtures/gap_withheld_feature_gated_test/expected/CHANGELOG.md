@@ -313,3 +313,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — gap_withheld_feature_gated_test (27)
+
+Reason:
+RIPR-SPEC-0122: the full human report keeps the assertion-not-credited evidence line the standard report shows (#14038)
+
+Command:
+`cargo xtask goldens bless gap_withheld_feature_gated_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -6,16 +6,6 @@ name: Zed extension
 # its own Cargo workspace, lockfile, and toolchain pin.
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
-    paths:
-      - "editors/zed/**"
-      - ".github/workflows/zed-extension.yml"
-  push:
-    branches: [main, master]
-    paths:
-      - "editors/zed/**"
-      - ".github/workflows/zed-extension.yml"
   workflow_dispatch:
 
 permissions:

@@ -15,7 +15,7 @@ use super::exception_variant::exception_variant_credits;
 use super::guard_activation;
 use super::imported_call_operator::{IMPORTED_CALL_LIMIT_EVIDENCE, imported_call_credits};
 use super::message_pin;
-use super::module_value::{ModuleEdit, module_constant_credits};
+use super::module_value::{ModuleConstantEvidence, ModuleEdit, module_constant_evidence};
 use super::no_behavior::{
     changed_default_overridden_params, format_param_name_list, is_annotation_only_def_change,
     is_annotation_only_var_change, is_comment_or_whitespace_only_change,
@@ -36,9 +36,9 @@ use super::sink_alignment::{
     enclosing_literal_pair,
 };
 use super::static_limits::{
-    LAMBDA_LIMIT_EVIDENCE, contains_lambda_keyword, heuristic_only_relation_limit,
-    implicit_dunder_dispatch_limit, integer_literal_swap, module_object_rebind_limit,
-    static_limit_for_focused_change, unpinned_equality_dunder_limit,
+    LAMBDA_LIMIT_EVIDENCE, PythonStaticLimit, contains_lambda_keyword,
+    heuristic_only_relation_limit, implicit_dunder_dispatch_limit, integer_literal_swap,
+    module_object_rebind_limit, static_limit_for_focused_change, unpinned_equality_dunder_limit,
     unresolved_pytest_fixture_names,
 };
 use super::table_rows::python_unvaried_table_operand;
@@ -126,6 +126,11 @@ pub(super) fn classify_change_with_source(
 pub(super) struct PythonNoBehaviorContext {
     pub(super) new_line_in_docstring: bool,
     pub(super) old_line_in_docstring: bool,
+    /// The changed line lies in the body of `if TYPE_CHECKING:`, which never
+    /// runs (`type_checking_block.rs`, #14156).
+    pub(super) new_line_type_checking_only: bool,
+    /// The paired old line lay in such a body of the old file.
+    pub(super) old_line_type_checking_only: bool,
     /// The changed line lies inside a string literal that crosses a line
     /// break, or the file could not be lexed to rule that out. A spacing or
     /// comment-looking change there edits the string (#10706).
@@ -265,9 +270,17 @@ fn classify_change_full<'a>(
     // tests notice a behavior change that does not exist. The change is a no-op only
     // when BOTH sides are non-behavioral: if real code was replaced by a docstring
     // (old line behavioral), keep analyzing rather than silently dropping it.
-    let new_is_noop = no_behavior.new_line_in_docstring || is_python_no_behavior_line(line_text);
-    let old_is_noop = old_line_text
-        .is_none_or(|old| no_behavior.old_line_in_docstring || is_python_no_behavior_line(old));
+    // A line in a type-checking-only block (#14156) is the same kind of fact:
+    // it never runs. Runtime code moved INTO such a block (old line
+    // behavioral) keeps its probe.
+    let new_is_noop = no_behavior.new_line_in_docstring
+        || no_behavior.new_line_type_checking_only
+        || is_python_no_behavior_line(line_text);
+    let old_is_noop = old_line_text.is_none_or(|old| {
+        no_behavior.old_line_in_docstring
+            || no_behavior.old_line_type_checking_only
+            || is_python_no_behavior_line(old)
+    });
     if new_is_noop && old_is_noop {
         return None;
     }
@@ -344,6 +357,7 @@ fn classify_change_full<'a>(
 /// Where a change is classified: its file, the line its evidence names, and
 /// the owner that holds it. A deleted line (#7587) names its own projected
 /// line while its owner is resolved from a live neighbour.
+#[derive(Clone)]
 pub(super) struct ChangeSite<'a> {
     pub(super) file: &'a Path,
     pub(super) line: usize,
@@ -356,6 +370,7 @@ pub(super) struct ChangeSite<'a> {
 /// to old-side coordinates and the old line number. The guarded-arm reader
 /// walks the guards around that line exactly as it does for a live one, so a
 /// deleted line that no observed input could enter is not credited.
+#[derive(Clone)]
 pub(super) struct OldGuardView<'a> {
     pub(super) owner: PythonOwner,
     pub(super) source: &'a str,
@@ -366,6 +381,11 @@ pub(super) struct OldGuardView<'a> {
 }
 
 /// Classify a change at a resolved owner.
+///
+/// A non-substituting related test is credited independently of mock-patched
+/// siblings (#13633): the finding is first read with the siblings set aside,
+/// and kept only when that reading is `exposed`. Any weaker reading falls back
+/// to the full read, where the siblings still keep their `mocked_module` limit.
 #[allow(
     clippy::too_many_arguments,
     reason = "resolved owner inputs plus explicit run-local origin context"
@@ -378,8 +398,66 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     all_tests: &'a [PythonTest],
     no_behavior: PythonNoBehaviorContext,
     owner_source: Option<&str>,
+    mut value_origins: Option<&mut crate::value_origins::ValueOrigins>,
+    mut related: Option<&mut RelatedCandidateMemo<'a>>,
+) -> Option<Finding> {
+    let mut dropped = false;
+    // The sibling-dropped pass is speculative: it records into a fresh scratch
+    // that is merged into the real receipts only when its result is returned.
+    let mut scratch = value_origins
+        .as_deref()
+        .map(|_| crate::value_origins::ValueOrigins::default());
+    let independent = classify_change_for_owner_inner(
+        site.clone(),
+        line_text,
+        old_line_text,
+        owners,
+        all_tests,
+        no_behavior,
+        owner_source,
+        scratch.as_mut(),
+        related.as_deref_mut(),
+        Some(&mut dropped),
+    );
+    let keep_independent = !dropped
+        || independent
+            .as_ref()
+            .is_some_and(|finding| finding.class == ExposureClass::Exposed);
+    if keep_independent {
+        if let (Some(real), Some(recorded)) = (value_origins.as_deref_mut(), scratch) {
+            real.extend(recorded);
+        }
+        return independent;
+    }
+    classify_change_for_owner_inner(
+        site,
+        line_text,
+        old_line_text,
+        owners,
+        all_tests,
+        no_behavior,
+        owner_source,
+        value_origins,
+        related,
+        None,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "resolved owner inputs plus explicit run-local origin context"
+)]
+fn classify_change_for_owner_inner<'a>(
+    site: ChangeSite<'_>,
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owners: &[PythonOwner],
+    all_tests: &'a [PythonTest],
+    no_behavior: PythonNoBehaviorContext,
+    owner_source: Option<&str>,
     value_origins: Option<&mut crate::value_origins::ValueOrigins>,
     mut related: Option<&mut RelatedCandidateMemo<'a>>,
+    set_aside_mock_siblings: Option<&mut bool>,
 ) -> Option<Finding> {
     let ChangeSite {
         file,
@@ -443,15 +521,25 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             relation: candidate.relation,
         })
         .collect();
+    if let Some(dropped) = set_aside_mock_siblings {
+        *dropped = super::callee_patch::drop_substituting_siblings(
+            &mut related_candidates,
+            owner,
+            owner_source.unwrap_or(""),
+            old_line_text,
+            line_text,
+        );
+    }
     // A module-level constant edit has no callable owner. A test whose
     // assertion provably holds under the old value and fails under the new one
     // (`module_value.rs`, #9423) is related through that value, and its
     // assertion is the credited oracle.
     let mut imported_call = false;
+    let mut module_constant = ModuleConstantEvidence::default();
     let module_value = if owner.is_module_owner() && no_behavior.sole_line_replacement {
-        owner_source
+        module_constant = owner_source
             .map(|source| {
-                module_constant_credits(
+                module_constant_evidence(
                     &ModuleEdit {
                         file,
                         line,
@@ -462,9 +550,11 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                     owner,
                     owners,
                     all_tests,
+                    no_behavior.module_import_unshadowed,
                 )
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+        std::mem::take(&mut module_constant.credits)
     } else if no_behavior.sole_line_replacement {
         // A default edit inside a plain `@dataclass` class body, or an
         // operator swap around an imported call (#9619).
@@ -548,9 +638,44 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             }),
         }
     }
-    if !module_value.is_empty() || bool_credit.is_some() {
+    for reading in &module_constant.weak_reads {
+        match related_candidates
+            .iter_mut()
+            .find(|candidate| std::ptr::eq(candidate.test, reading.test))
+        {
+            Some(candidate) => candidate.relation = PythonRelationKind::ModuleValueRead,
+            None => related_candidates.push(PythonRelatedCandidate {
+                test: reading.test,
+                relation: PythonRelationKind::ModuleValueRead,
+            }),
+        }
+    }
+    if !module_value.is_empty() || !module_constant.weak_reads.is_empty() || bool_credit.is_some() {
         sort_related_candidates(&mut related_candidates);
     }
+    // Match the same first runnable relation the repair-placement producer
+    // selects. Strong credit elsewhere already closes the finding.
+    let module_read = module_value
+        .is_empty()
+        .then(|| {
+            related_candidates
+                .iter()
+                .filter(|candidate| candidate.relation.uses_oracle())
+                .find(|candidate| verify_command_for_test(candidate.test).is_some())
+                .and_then(|candidate| {
+                    module_constant
+                        .weak_reads
+                        .iter()
+                        .find(|reading| std::ptr::eq(candidate.test, reading.test))
+                })
+        })
+        .flatten();
+    let module_string_sink = module_read.map(|reading| &reading.sink).or_else(|| {
+        module_value
+            .first()
+            .and_then(|credit| module_constant.string_pin(credit.assertion))
+            .map(|pin| &pin.sink)
+    });
     let memo = related;
     let mut related = related_tests_for_candidates(&related_candidates, Some(&focus));
     // A class-only exception assertion is exact only for this raised-type
@@ -591,6 +716,20 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         }) {
             row.oracle = Some(credit.assertion.text.clone());
             row.oracle_kind = OracleKind::ExactErrorVariant;
+            row.oracle_strength = OracleStrength::Strong;
+        }
+    }
+    for credit in module_value
+        .iter()
+        .filter(|credit| module_constant.string_pin(credit.assertion).is_some())
+    {
+        if let Some(row) = related.iter_mut().find(|row| {
+            row.file == credit.test.file
+                && row.line == credit.test.line
+                && row.name == credit.test.name
+        }) {
+            row.oracle = Some(credit.assertion.text.clone());
+            row.oracle_kind = credit.assertion.oracle_kind.clone();
             row.oracle_strength = OracleStrength::Strong;
         }
     }
@@ -664,7 +803,11 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 test_name: credit.test.name.clone(),
                 test_file: credit.test.file.clone(),
                 text: credit.assertion.text.clone(),
-                kind: OracleKind::ExactValue,
+                kind: if module_constant.string_pin(credit.assertion).is_some() {
+                    credit.assertion.oracle_kind.clone()
+                } else {
+                    OracleKind::ExactValue
+                },
             }),
         },
         None => match &bool_credit {
@@ -754,6 +897,16 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 && !owner.decorators.iter().any(|decorator| {
                     limit.evidence == format!("static_limit decorator_indirection: `{decorator}`")
                 }))
+    })
+    .or_else(|| {
+        module_constant
+            .unresolved_string_read
+            .then(|| PythonStaticLimit {
+                kind: StaticLimitKind::MissingImportGraph,
+                evidence: "static_limit missing_import_graph: module string reader path unresolved"
+                    .to_string(),
+                missing: "Static limit `missing_import_graph`: the module string changed, but the preview adapter cannot resolve a reached reader and a deciding assertion under its binding, activation and value limits. The consumer path is unknown.".to_string(),
+            })
     })
     .or_else(&fallback_limits);
     let has_oracle_eligible_relation = related_candidates
@@ -1110,21 +1263,27 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     {
         (
             ExposureClass::StaticUnknown,
-            if related.is_empty() {
+            if module_constant.unresolved_string_read {
+                StageState::Unknown
+            } else if related.is_empty() {
                 StageState::No
             } else if has_oracle_eligible_relation {
                 StageState::Yes
             } else {
                 StageState::Weak
             },
-            if related.is_empty() {
+            if module_constant.unresolved_string_read {
+                StageState::Unknown
+            } else if related.is_empty() {
                 StageState::No
             } else if has_oracle_eligible_relation {
                 StageState::Yes
             } else {
                 StageState::Weak
             },
-            if related.is_empty() {
+            if module_constant.unresolved_string_read {
+                StageState::Unknown
+            } else if related.is_empty() {
                 StageState::No
             } else {
                 StageState::Unknown
@@ -1140,6 +1299,33 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             vec![format!(
                 "No Python test references {}; add a pytest or unittest test that calls the changed owner.",
                 owner.missing_test_reference()
+            )],
+        )
+    } else if !has_oracle_eligible_relation
+        && super::callee_patch::owner_patched_by_every_test(owner, &related_candidates)
+    {
+        // Every related test replaces the changed function itself, so none
+        // runs the changed code: the tests reach its callers and reveal
+        // nothing about the edit (#13632).
+        (
+            ExposureClass::ReachableUnrevealed,
+            StageState::Weak,
+            StageState::No,
+            StageState::No,
+            vec![format!(
+                "Every related Python test replaces `{}` with a stand-in (patch or monkeypatch), so none of them runs the changed code; add a test that calls `{}` without patching it and asserts its result.",
+                owner.name, owner.name
+            )],
+        )
+    } else if let Some(reading) = module_read {
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Weak,
+            StageState::Weak,
+            vec![format!(
+                "Related Python test calls `{}` through `{}` and reads `{}`, whose return changes from {} to {}; its membership assertion accepts both values. Pin the intended return value.",
+                reading.call, reading.reader, reading.constant, reading.old, reading.new
             )],
         )
     } else if !has_oracle_eligible_relation {
@@ -1229,13 +1415,25 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             StageState::Yes,
             StageState::Yes,
             StageState::Yes,
-            vec![format!(
-                // #7752: the article follows the oracle-kind label ("an `exact_value`").
-                "Related Python test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value check.",
-                owner.name,
-                indefinite_article(strongest_kind.as_str()),
-                strongest_kind.as_str()
-            )],
+            vec![if module_value
+                .first()
+                .is_some_and(|credit| module_constant.string_pin(credit.assertion).is_some())
+            {
+                format!(
+                    "Related Python test reaches a string reader of `{}` with {} `{}` oracle. The evaluated comparison accepts exactly one of the old and new return values.",
+                    owner.name,
+                    indefinite_article(strongest_kind.as_str()),
+                    strongest_kind.as_str()
+                )
+            } else {
+                format!(
+                    // #7752: the article follows the oracle-kind label ("an `exact_value`").
+                    "Related Python test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value check.",
+                    owner.name,
+                    indefinite_article(strongest_kind.as_str()),
+                    strongest_kind.as_str()
+                )
+            }],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
         && alignment.observes()
@@ -1487,7 +1685,9 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     };
 
     let related_count = related.len();
-    let reach_summary = if related_count == 0 {
+    let reach_summary = if module_constant.unresolved_string_read {
+        "The preview adapter could not resolve the module string's consumer path.".to_string()
+    } else if related_count == 0 {
         format!("0 related Python test(s) found for owner `{}`", owner.name)
     } else if has_oracle_eligible_relation {
         format!(
@@ -1553,9 +1753,21 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             python_infection_evidence(&family, line_text).summary
         },
     );
-    let propagate = python_propagation_evidence(&family, line_text, static_limit.as_ref());
+    let propagate = if module_string_sink.is_some() && static_limit.is_none() {
+        StageEvidence::new(
+            StageState::Yes,
+            Confidence::Low,
+            "The resolved module reader returns different strings before and after the edit.",
+        )
+    } else {
+        python_propagation_evidence(&family, line_text, static_limit.as_ref())
+    };
     let flow_sink = (static_limit.is_none() && !imported_literal_gap)
-        .then(|| python_flow_sink_for(&family, owner, line, line_text))
+        .then(|| {
+            module_string_sink
+                .cloned()
+                .or_else(|| python_flow_sink_for(&family, owner, line, line_text))
+        })
         .flatten();
     let missing_discriminators = if static_limit.is_none()
         && matches!(class, ExposureClass::WeaklyExposed)
@@ -1563,7 +1775,18 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         && !unproven_list_equality
         && !imported_literal_gap
     {
-        if boundary_downgraded {
+        if let Some(reading) = module_read {
+            vec![MissingDiscriminatorFact {
+                value: format!("{} == {}", reading.call, reading.new),
+                reason: format!(
+                    "the selected reader returns {} before and {} after the edit, while `{}` accepts both",
+                    reading.old, reading.new, reading.assertion.text
+                ),
+                flow_sink: Some(reading.sink.clone()),
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
+            }]
+        } else if boundary_downgraded {
             // The boundary downgrade names the equality that would activate the
             // changed predicate, with the reason listing the operand values the
             // strong related calls actually bind.
@@ -1734,10 +1957,15 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     let discriminate =
         StageEvidence::new(discriminate_state, Confidence::Low, discriminate_summary);
 
+    let repair_family = if module_read.is_some() {
+        ProbeFamily::ReturnValue
+    } else {
+        family.clone()
+    };
     let recommended = python_recommended_next_step(
         &class,
         owner,
-        &family,
+        &repair_family,
         has_oracle_eligible_relation,
         &missing_discriminators,
     );
@@ -1905,8 +2133,22 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             .iter()
             .find(|credit| std::ptr::eq(credit.test, test))
         {
+            let current_pin = module_constant
+                .current_pins
+                .iter()
+                .any(|assertion| std::ptr::eq(*assertion, credit.assertion));
+            let prefix = if current_pin {
+                "module_value_current_pin"
+            } else {
+                "module_value_read"
+            };
+            let outcome = if current_pin {
+                "rejects the old value with"
+            } else {
+                "fails"
+            };
             evidence.push(format!(
-                "module_value_read: `{}` {} -> {}{} fails `{}` ({})",
+                "{prefix}: `{}` {} -> {}{} {outcome} `{}` ({})",
                 credit.constant,
                 credit.old,
                 credit.new,
@@ -1916,6 +2158,21 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                     .map(|reader| format!(" through `{reader}`"))
                     .unwrap_or_default(),
                 credit.assertion.text,
+                test.name
+            ));
+        }
+        if let Some(reading) = module_constant
+            .weak_reads
+            .iter()
+            .find(|reading| std::ptr::eq(reading.test, test))
+        {
+            evidence.push(format!(
+                "module_value_reader: `{}` through `{}` returns {} -> {}; `{}` accepts both ({})",
+                reading.constant,
+                reading.call,
+                reading.old,
+                reading.new,
+                reading.assertion.text,
                 test.name
             ));
         }
@@ -1965,6 +2222,15 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             ));
             evidence.push(format!(
                 "test_oracle_shape: exception_assertion ({})",
+                test.name
+            ));
+        } else if let Some(credit) = module_value.iter().find(|credit| {
+            std::ptr::eq(credit.test, test)
+                && module_constant.string_pin(credit.assertion).is_some()
+        }) {
+            evidence.push(format!(
+                "test_oracle: {} strong ({})",
+                credit.assertion.oracle_kind.as_str(),
                 test.name
             ));
         } else if let Some(PythonAssertionSelection::Selected(assertion)) = selection {
