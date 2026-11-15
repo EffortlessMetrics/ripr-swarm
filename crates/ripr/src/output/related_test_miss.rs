@@ -760,28 +760,23 @@ mod tests {
             headline_related_test_for_finding(&rust).map(|t| t.name.as_str()),
             Some("c")
         );
-        // A row linked only by file location has no established path to the
-        // change whatever miss it records, so it ranks with `no_call_path`.
+        // The tier reads only the recorded miss, never the relation: a row
+        // linked by file location may still reach the owner through a helper.
+        // `no_assertion` ranks with the observing rows (a reaching test is
+        // where the missing assertion goes), ahead of `assertion_not_observing`.
         let mut located = rust.clone();
-        located.related_tests[2].relation_reason = Some(RelationReason::SameTestFile);
-        located.related_tests[2].miss = Some(RelatedTestMiss::NoAssertion);
+        located.related_tests[1].relation_reason = Some(RelationReason::SameTestFile);
+        located.related_tests[1].miss = Some(RelatedTestMiss::NoAssertion);
+        located.related_tests[2].miss = Some(RelatedTestMiss::AssertionNotObserving);
         assert_eq!(
             headline_related_test_for_finding(&located).map(|t| t.name.as_str()),
             Some("b")
         );
-        // `no_assertion` ranks with `assertion_not_observing` (the listed
-        // order decides between them), and an unknown-edge miss ranks with the
-        // observing rows.
-        let mut silent = rust.clone();
-        silent.related_tests[1].miss = Some(RelatedTestMiss::NoAssertion);
-        silent.related_tests[2].miss = Some(RelatedTestMiss::AssertionNotObserving);
+        // An unknown-edge miss ranks with the observing rows too.
+        let mut unknown = rust.clone();
+        unknown.related_tests[2].miss = Some(RelatedTestMiss::ObservationUnconfirmed);
         assert_eq!(
-            headline_related_test_for_finding(&silent).map(|t| t.name.as_str()),
-            Some("b")
-        );
-        silent.related_tests[2].miss = Some(RelatedTestMiss::ObservationUnconfirmed);
-        assert_eq!(
-            headline_related_test_for_finding(&silent).map(|t| t.name.as_str()),
+            headline_related_test_for_finding(&unknown).map(|t| t.name.as_str()),
             Some("c")
         );
         rust.related_tests.truncate(2);

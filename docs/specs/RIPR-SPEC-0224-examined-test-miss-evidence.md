@@ -400,23 +400,27 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
   `missing_exact_assertion`, and the Rust oracle pass on
   `assertion_not_credited` when choosing the macro-wrapped-assertion limit
   and its next step. One ranking read orders rows, never admits or drops
-  them: `RelatedTest::observation_tier` (#14454, #14483) ranks a row with
-  no established path to the change lowest (a `no_call_path` miss, or a
-  proximity-only `same_test_file`, `same_module` or `weak_token_substring`
-  relation whatever its miss), then `assertion_not_observing` and
-  `no_assertion` (the test runs the change but cannot observe it), then every
-  other row; the unknown-edge misses such as `observation_unconfirmed` rank
-  with the observing rows because they record an unestablished observation,
-  not an absent one. Every picker that names one row of a finding uses it: the agent
+  them: `RelatedTest::observation_tier` (#14454, #14483) reads only the
+  recorded miss and ranks a `no_call_path` row lowest, then
+  `assertion_not_observing`, then every other row, including `no_assertion`
+  (a reaching test is where the missing assertion goes) and the unknown-edge
+  misses such as `observation_unconfirmed`, which record an unestablished
+  observation, not an absent one. It does not read the relation: a
+  proximity-only row can still reach the owner through a helper, and the
+  producer's `no_call_path` miss is the one owner of that fact. Every
+  picker that names one row of a finding uses it, keeping its own keys
+  within a tier: the agent
   `tK=` row (`strongest_test`), the fix site
   (`DiagnosticWitness::best_related_test`, which the code lens and hover
   read), the human `Related test` headline (the first row of the best tier,
   then the Python changed-file rule within that tier), the JSON
   `oracle_kind`/`oracle_strength` summary (the tier, then strength, so a
   strong oracle held only by a `no_call_path` row no longer speaks for the
-  finding) and the agent `open=` row (`triage::weak_assertion_row`, the first
-  bound weak row of the best tier) and the agent `done=` noticer
-  (`noticing_test`, the tier, then strength). The
+  finding, last of equal rows as before), the agent `open=` row
+  (`triage::weak_assertion_row`, the first bound weak row of the best tier)
+  and the agent `done=` noticer (`noticing_test`, the tier, then strength).
+  The headline therefore can name a weaker row than the JSON summary
+  describes within one tier; the tier itself never disagrees. The
   TypeScript/JavaScript preview row and the per-test lead row of `ripr
   explain` keep their own rules, and editor seam actions read seam grips,
   which carry no miss. The fix site keeps reach as its leading key

@@ -2067,7 +2067,7 @@ fn rows_without_a_recorded_relation_still_pick_the_stronger_oracle() {
 
 /// #13603 review: a `done=` line names the test that appears to notice the
 /// change, so a stronger pin outranks a direct caller holding a smoke check
-/// when both reach the change (#14483).
+/// unless the producer marked the pin `no_call_path` (#14483).
 #[test]
 fn a_done_line_names_the_pinning_test_over_a_smoke_only_direct_caller() {
     use crate::domain::{RelationConfidence, RelationReason};
@@ -2083,9 +2083,7 @@ fn a_done_line_names_the_pinning_test_over_a_smoke_only_direct_caller() {
     done.related_tests[0].name = "exact_pin".to_string();
     done.related_tests[0].oracle_strength = OracleStrength::Strong;
     done.related_tests[0].miss = None;
-    // A medium-confidence affinity that still binds the test to the owner;
-    // a proximity-only link would rank below the caller (#14483, below).
-    done.related_tests[0].relation_reason = Some(RelationReason::ImportPathAffinity);
+    done.related_tests[0].relation_reason = Some(RelationReason::SameTestFile);
     done.related_tests[0].relation_confidence = Some(RelationConfidence::Medium);
     done.related_tests.insert(0, caller);
     let text = explained(&done);
@@ -2093,25 +2091,17 @@ fn a_done_line_names_the_pinning_test_over_a_smoke_only_direct_caller() {
     assert!(text.contains("exact_pin"), "{text}");
     assert!(!text.contains("caller_smoke"), "{text}");
 
-    // #14483: a strong pin with no established path to the change (a
-    // `no_call_path` miss, or a link by file location only) is never the
-    // noticer while a reaching test is listed; with the pin bound to the
-    // owner again it leads.
-    for (reason, miss) in [
-        (
-            RelationReason::OwnerNamedTest,
-            Some(RelatedTestMiss::NoCallPath),
-        ),
-        (RelationReason::SameTestFile, None),
-    ] {
-        let mut unreached = done.clone();
-        unreached.related_tests[1].relation_reason = Some(reason);
-        unreached.related_tests[1].miss = miss;
-        let text = explained(&unreached);
-        assert!(text.lines().any(|line| line.starts_with("done=")), "{text}");
-        assert!(text.contains("caller_smoke"), "{reason:?}: {text}");
-        assert!(!text.contains("exact_pin"), "{reason:?}: {text}");
-    }
+    // #14483: a strong pin the producer marked `no_call_path` is never the
+    // noticer while a reaching test is listed. The relation alone decides
+    // nothing: the file-location pin above can reach the owner through a
+    // helper and credit the exposure, so it stays the noticer.
+    let mut unreached = done.clone();
+    unreached.related_tests[1].relation_reason = Some(RelationReason::OwnerNamedTest);
+    unreached.related_tests[1].miss = Some(RelatedTestMiss::NoCallPath);
+    let text = explained(&unreached);
+    assert!(text.lines().any(|line| line.starts_with("done=")), "{text}");
+    assert!(text.contains("caller_smoke"), "{text}");
+    assert!(!text.contains("exact_pin"), "{text}");
 }
 
 fn verify_line(output: &CheckOutput) -> Result<String, String> {

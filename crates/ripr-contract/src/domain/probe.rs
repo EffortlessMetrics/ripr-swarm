@@ -709,33 +709,28 @@ impl RelatedTest {
     }
 
     /// How well this row can observe the changed behavior, for every picker
-    /// that names one related test to open or edit (#14454, #14483). Higher
-    /// is better:
-    /// - `0`: no established path to the change, either a
-    ///   [`RelatedTestMiss::NoCallPath`] miss or a proximity-only relation
-    ///   (`same_test_file`, `same_module`, `weak_token_substring`), whatever
-    ///   other miss the row records;
-    /// - `1`: an established miss that says the test runs the change but
-    ///   cannot observe it: [`RelatedTestMiss::AssertionNotObserving`] (it
-    ///   asserts on something else) or [`RelatedTestMiss::NoAssertion`] (it
-    ///   asserts nothing ripr recognizes);
-    /// - `2`: every other row, including the assertion-strength misses
-    ///   (`weak_assertion`, `missing_input`, `missing_exact_assertion`) and
-    ///   the unknown-edge misses (`observation_unconfirmed`,
+    /// that names one related test to open or edit (#14454, #14483). It reads
+    /// only the producer's recorded miss, the one owner of whether a row
+    /// reaches the change (a proximity relation can still reach the owner
+    /// through a helper and credit exposure). Higher is better:
+    /// - `0`: [`RelatedTestMiss::NoCallPath`], no established path to the
+    ///   change;
+    /// - `1`: [`RelatedTestMiss::AssertionNotObserving`], the test runs the
+    ///   change but its assertion pins something the change cannot move;
+    /// - `2`: every other row. That includes `no_assertion` (the test reaches
+    ///   the change and is the place to add the missing assertion; its `none`
+    ///   strength already ranks it last where strength decides), the strength
+    ///   misses (`weak_assertion`, `missing_input`, `missing_exact_assertion`)
+    ///   and the unknown-edge misses (`observation_unconfirmed`,
     ///   `assertion_not_credited`, `assertion_inert`,
-    ///   `assertion_admission_unproven`), which record that ripr could not
-    ///   establish the observation, not that it is absent (#5508). Strength
-    ///   then orders them.
+    ///   `assertion_admission_unproven`), which record an observation ripr
+    ///   could not establish, not one that is absent (#5508).
     ///
     /// Display row selection only: no class, gate or credit reads it.
     pub fn observation_tier(&self) -> u8 {
-        let proximity_only = self
-            .relation_reason
-            .is_some_and(crate::domain::RelationReason::is_proximity_only);
         match self.miss {
             Some(RelatedTestMiss::NoCallPath) => 0,
-            _ if proximity_only => 0,
-            Some(RelatedTestMiss::AssertionNotObserving | RelatedTestMiss::NoAssertion) => 1,
+            Some(RelatedTestMiss::AssertionNotObserving) => 1,
             _ => 2,
         }
     }
