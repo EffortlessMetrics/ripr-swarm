@@ -1280,6 +1280,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
@@ -1856,6 +1857,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
@@ -1926,6 +1928,7 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
@@ -2018,6 +2021,7 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
@@ -2055,6 +2059,131 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
     ));
 }
 
+/// #13786: a package that re-exports the owner (`core/__init__.py` importing
+/// from `core/impl.py`) is shadowed by a same-project plain `core.py` just as
+/// the owner's own src short name is; without that rival it keeps its credit.
+#[test]
+fn reexport_package_name_with_a_same_project_plain_module_identifies_neither() {
+    let owner = PythonOwner {
+        name: "price".to_string(),
+        qualified_name: "price".to_string(),
+        file: PathBuf::from("svc/a/src/core/impl.py"),
+        start_line: 1,
+        end_line: 4,
+        owner_kind: Some(OwnerKind::Function),
+        decorators: Vec::new(),
+        imports: Vec::new(),
+        cli_receiver_names: Vec::new(),
+        route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
+        dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
+        parameters: Vec::new(),
+        reexport_modules: vec!["core".to_string()],
+        star_exported: false,
+        ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
+        rival_definition_modules: Vec::new(),
+        module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
+        class_path: String::new(),
+        term_facts: Default::default(),
+        class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
+        cli_subcommand: None,
+        nested_called_by_parent: false,
+        nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
+    };
+    let import = PythonImport {
+        imported: "price".to_string(),
+        alias: "price".to_string(),
+        source_module: "core".to_string(),
+    };
+    let identifies = |sources: &[&str]| {
+        let sources = sources.iter().map(PathBuf::from).collect::<Vec<_>>();
+        let mut owners = vec![owner.clone()];
+        super::related_tests::apply_src_module_ambiguity(&mut owners, sources.iter());
+        import_source_module_matches_owner(
+            &import,
+            &owners[0],
+            Path::new("svc/a/tests/test_core.py"),
+        )
+    };
+    let package = ["svc/a/src/core/__init__.py", "svc/a/src/core/impl.py"];
+    // Positive control: no rival, the re-exporting package name identifies the owner.
+    assert!(identifies(&package));
+    // A plain module beside the project's `src/` loads instead on some paths.
+    assert!(!identifies(&[package[0], package[1], "svc/a/core.py"]));
+    // So does one at the repository root.
+    assert!(!identifies(&[package[0], package[1], "core.py"]));
+    // A plain `core.py` of a different project does not shadow this one.
+    assert!(identifies(&[package[0], package[1], "svc/b/core.py"]));
+}
+
+/// #13988: the receiver spelling `core.price(...)` for `import core` is gated
+/// like the `from core import price` form: a same-project plain `core.py`
+/// shadows the re-exporting package, so no owner callee is produced; without
+/// that rival the spelling keeps its credit (discriminating pair).
+#[test]
+fn reexport_package_receiver_spelling_is_withheld_when_the_package_is_shadowed() {
+    let owner = PythonOwner {
+        name: "price".to_string(),
+        qualified_name: "price".to_string(),
+        file: PathBuf::from("svc/a/src/core/impl.py"),
+        start_line: 1,
+        end_line: 4,
+        owner_kind: Some(OwnerKind::Function),
+        decorators: Vec::new(),
+        imports: Vec::new(),
+        cli_receiver_names: Vec::new(),
+        route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
+        dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
+        parameters: Vec::new(),
+        reexport_modules: vec!["core".to_string()],
+        star_exported: false,
+        ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
+        rival_definition_modules: Vec::new(),
+        module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
+        class_path: String::new(),
+        term_facts: Default::default(),
+        class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
+        cli_subcommand: None,
+        nested_called_by_parent: false,
+        nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
+    };
+    let mut test = align_importing_test("core", "");
+    test.file = PathBuf::from("svc/a/tests/test_core.py");
+    let callees = |sources: &[&str]| {
+        let sources = sources.iter().map(PathBuf::from).collect::<Vec<_>>();
+        let mut owners = vec![owner.clone()];
+        super::related_tests::apply_src_module_ambiguity(&mut owners, sources.iter());
+        super::related_tests::owner_module_callees(&test, &owners[0])
+    };
+    let package = ["svc/a/src/core/__init__.py", "svc/a/src/core/impl.py"];
+    let receiver = "core.price".to_string();
+    // Positive control: no rival, `import core` + `core.price(...)` is an owner spelling.
+    assert!(callees(&package).contains(&receiver));
+    // A plain module beside the project's `src/` shadows the package name.
+    assert!(!callees(&[package[0], package[1], "svc/a/core.py"]).contains(&receiver));
+    // A plain `core.py` of a different project does not.
+    assert!(callees(&[package[0], package[1], "svc/b/core.py"]).contains(&receiver));
+}
+
 /// #13745: a src short name that a plain module of the same project also
 /// produces identifies neither; the same short name with no such rival keeps
 /// its credit (discriminating pair).
@@ -2080,6 +2209,7 @@ fn src_short_name_with_a_same_project_plain_module_identifies_neither() {
         reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
@@ -2197,6 +2327,7 @@ fn same_stem_related_handles_missing_stems() {
         reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
@@ -4816,6 +4947,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
@@ -4903,6 +5035,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
@@ -4994,6 +5127,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
@@ -5783,4 +5917,263 @@ fn module_constant_edit_credits_through_the_diff_pipeline_only_when_the_workspac
         ExposureClass::Exposed
     );
     Ok(())
+}
+
+/// #13706: under pytest prepend import mode a test-local module in a directory
+/// ahead on `sys.path` for the test answers a bare import of the same name, so
+/// the project module of that name is not the owner for that test.
+#[test]
+fn test_local_module_shadows_a_bare_owner_import_for_tests_it_precedes() {
+    let owner = |file: &str| PythonOwner {
+        name: "price".to_string(),
+        qualified_name: "price".to_string(),
+        file: PathBuf::from(file),
+        start_line: 1,
+        end_line: 4,
+        owner_kind: Some(OwnerKind::Function),
+        decorators: Vec::new(),
+        imports: Vec::new(),
+        cli_receiver_names: Vec::new(),
+        route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
+        dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
+        parameters: Vec::new(),
+        reexport_modules: Vec::new(),
+        star_exported: false,
+        ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
+        rival_definition_modules: Vec::new(),
+        module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
+        class_path: String::new(),
+        term_facts: Default::default(),
+        class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
+        cli_subcommand: None,
+        nested_called_by_parent: false,
+        nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
+    };
+    let identifies = |files: &[&str], module: &str, test: &str| {
+        let files = files.iter().map(PathBuf::from).collect::<Vec<_>>();
+        let mut owners = vec![owner("svc/a/src/core.py")];
+        super::related_tests::apply_src_module_ambiguity(
+            &mut owners,
+            files.iter().filter(|file| !is_test_file(file)),
+        );
+        super::related_tests::apply_test_local_shadows(&mut owners, files.iter());
+        let import = PythonImport {
+            imported: "price".to_string(),
+            alias: "price".to_string(),
+            source_module: module.to_string(),
+        };
+        import_source_module_matches_owner(&import, &owners[0], Path::new(test))
+    };
+    let test = "svc/a/tests/test_x.py";
+    // Positive control: no helper module, the src short name is the owner's.
+    assert!(identifies(
+        &["svc/a/src/core.py", "svc/a/tests/test_x.py"],
+        "core",
+        test
+    ));
+    // A helper in the test's own directory is first on `sys.path`.
+    let local = [
+        "svc/a/src/core.py",
+        "svc/a/tests/core.py",
+        "svc/a/tests/test_x.py",
+    ];
+    assert!(!identifies(&local, "core", test));
+    // A helper package of the same name shadows the module too.
+    let local_package = [
+        "svc/a/src/core.py",
+        "svc/a/tests/core/__init__.py",
+        "svc/a/tests/test_x.py",
+    ];
+    assert!(!identifies(&local_package, "core", test));
+    // Only the shadowed bare name is lost: the full repository path is not
+    // shadowed and stays the owner's.
+    assert!(identifies(&local, "svc.a.src.core", test));
+    // A helper in another project's test directory is not on this path.
+    let elsewhere = [
+        "svc/a/src/core.py",
+        "svc/b/tests/core.py",
+        "svc/a/tests/test_x.py",
+    ];
+    assert!(identifies(&elsewhere, "core", test));
+    // A helper in a tests directory above a non-package test directory is
+    // not on its path ...
+    let nested = [
+        "svc/a/src/core.py",
+        "svc/a/tests/core.py",
+        "svc/a/tests/unit/test_x.py",
+    ];
+    assert!(identifies(&nested, "core", "svc/a/tests/unit/test_x.py"));
+    // ... and stays off it when the directories between are packages: only
+    // the basedir above the package chain (`svc/a`) is inserted, never the
+    // package directories themselves.
+    let packaged = [
+        "svc/a/src/core.py",
+        "svc/a/tests/__init__.py",
+        "svc/a/tests/core.py",
+        "svc/a/tests/unit/__init__.py",
+        "svc/a/tests/unit/test_x.py",
+    ];
+    assert!(identifies(&packaged, "core", "svc/a/tests/unit/test_x.py"));
+}
+
+/// #13706: the issue's layout (a project with its own `pyproject.toml`, a
+/// project-relative `core` and a helper `tests/core.py`), every import form,
+/// and a `conftest.py` whose basedir pytest also puts on `sys.path`.
+#[test]
+fn test_local_module_shadow_covers_project_names_import_forms_and_conftest_dirs() {
+    let owner = |file: &str, name: &str| PythonOwner {
+        name: name.to_string(),
+        qualified_name: name.to_string(),
+        file: PathBuf::from(file),
+        start_line: 1,
+        end_line: 4,
+        owner_kind: Some(OwnerKind::Function),
+        decorators: Vec::new(),
+        imports: Vec::new(),
+        cli_receiver_names: Vec::new(),
+        route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
+        dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
+        parameters: Vec::new(),
+        reexport_modules: Vec::new(),
+        star_exported: false,
+        ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
+        rival_definition_modules: Vec::new(),
+        module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
+        class_path: String::new(),
+        term_facts: Default::default(),
+        class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
+        cli_subcommand: None,
+        nested_called_by_parent: false,
+        nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
+    };
+    // All forms of `core` imported by `test`; true when the owner at
+    // `owner_file` stays the owner.
+    let identifies = |files: &[&str], owner_file: &str, test: &str| {
+        let files = files.iter().map(PathBuf::from).collect::<Vec<_>>();
+        let mut owners = vec![owner(owner_file, "limit")];
+        super::related_tests::apply_src_module_ambiguity(
+            &mut owners,
+            files.iter().filter(|file| !is_test_file(file)),
+        );
+        super::related_tests::apply_project_module_names(
+            &mut owners,
+            files.iter().filter(|file| !is_test_file(file)),
+            |path| files.iter().any(|file| file == path),
+        );
+        super::related_tests::apply_test_local_shadows(&mut owners, files.iter());
+        let from = |module: &str| PythonImport {
+            imported: "limit".to_string(),
+            alias: "limit".to_string(),
+            source_module: module.to_string(),
+        };
+        let bare = PythonImport {
+            imported: "core".to_string(),
+            alias: "core".to_string(),
+            source_module: String::new(),
+        };
+        let from_form =
+            import_source_module_matches_owner(&from("core"), &owners[0], Path::new(test));
+        let dotted_form =
+            import_source_module_matches_owner(&from("core.sub"), &owners[0], Path::new(test));
+        let plain_form =
+            super::related_tests::imported_module_matches_owner(&bare, &owners[0], Path::new(test));
+        (from_form, dotted_form, plain_form)
+    };
+    let test = "svc/a/tests/test_x.py";
+    // The issue's layout: `core` is the project-relative name of
+    // `svc/a/core.py`. Control without the helper identifies the owner.
+    let project = ["svc/a/pyproject.toml", "svc/a/core.py", test];
+    assert!(identifies(&project, "svc/a/core.py", test).0);
+    assert!(identifies(&project, "svc/a/core.py", test).2);
+    // With `svc/a/tests/core.py` the bare `from core import limit` and
+    // `import core` name the helper.
+    let shadowed = [
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/tests/core.py",
+        test,
+    ];
+    let (from_form, _, plain_form) = identifies(&shadowed, "svc/a/core.py", test);
+    assert!(!from_form);
+    assert!(!plain_form);
+    // A dotted `from core.sub import limit` is shadowed by the same helper;
+    // the control without it identifies the submodule owner.
+    let sub = ["svc/a/pyproject.toml", "svc/a/core/sub.py", test];
+    assert!(identifies(&sub, "svc/a/core/sub.py", test).1);
+    let sub_shadowed = [
+        "svc/a/pyproject.toml",
+        "svc/a/core/sub.py",
+        "svc/a/tests/core.py",
+        test,
+    ];
+    assert!(!identifies(&sub_shadowed, "svc/a/core/sub.py", test).1);
+    // A helper beside a test directory that is not `tests/` still shadows
+    // (`e2e/core.py` is not test-flagged by name).
+    let e2e = [
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/e2e/core.py",
+        "svc/a/e2e/test_x.py",
+    ];
+    assert!(!identifies(&e2e, "svc/a/core.py", "svc/a/e2e/test_x.py").0);
+    // A collected conftest inserts its basedir: the helper is ahead for a
+    // test in a non-package subdirectory only when `tests/conftest.py` exists.
+    let nested = [
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/tests/core.py",
+        "svc/a/tests/unit/test_x.py",
+    ];
+    let unit = "svc/a/tests/unit/test_x.py";
+    assert!(identifies(&nested, "svc/a/core.py", unit).0);
+    let with_conftest = [
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/tests/core.py",
+        "svc/a/tests/conftest.py",
+        "svc/a/tests/unit/test_x.py",
+    ];
+    assert!(!identifies(&with_conftest, "svc/a/core.py", unit).0);
+    // Package directories are never inserted, only the basedir above them:
+    // a `tests` package holding `core.py` does not shadow the root `core.py` ...
+    let tests_package = [
+        "pyproject.toml",
+        "core.py",
+        "tests/__init__.py",
+        "tests/core.py",
+        "tests/test_x.py",
+    ];
+    let (from_form, _, plain_form) = identifies(&tests_package, "core.py", "tests/test_x.py");
+    assert!(from_form);
+    assert!(plain_form);
+    // ... while the same helper in a non-package `tests` directory does.
+    let tests_plain = [
+        "pyproject.toml",
+        "core.py",
+        "tests/core.py",
+        "tests/test_x.py",
+    ];
+    let (from_form, _, plain_form) = identifies(&tests_plain, "core.py", "tests/test_x.py");
+    assert!(!from_form);
+    assert!(!plain_form);
 }

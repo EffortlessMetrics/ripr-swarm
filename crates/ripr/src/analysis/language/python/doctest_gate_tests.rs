@@ -132,7 +132,12 @@ fn a_function_the_evaluator_cannot_run_is_an_opaque_comparison() -> Result<(), S
     // so a collected example the evaluator cannot run still abstains.
     let unicode = "    >>> clip('abcdef', 3)\n    'café'\n";
     let (old, new) = pair("text[:n]", "other(text)[:n]", unicode);
-    sole_opaque_test("unicode", &old, &new)
+    sole_opaque_test("unicode", &old, &new)?;
+    // Output that cannot be written as a plain literal (a no-break space)
+    // is named by a placeholder; the example still abstains.
+    let spaced = "    >>> clip('abcdef', 3)\n    'a\u{a0}b'\n";
+    let (old, new) = pair("text[:n]", "other(text)[:n]", spaced);
+    sole_opaque_test("placeholder", &old, &new)
 }
 
 #[test]

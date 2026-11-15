@@ -689,7 +689,11 @@ fn undecided_example_test(
     let synthetic = format!(
         "from {import_module} import {name}\n\n\ndef {test_name}():\n    assert_doctest_output_matches(\n        {}\n        ,\n        {},\n    )\n",
         example.call,
-        python_string_literal(&example.expected)?
+        // The comparison is opaque, so the expected text is evidence only; a
+        // text that cannot be written plainly is named by a placeholder and
+        // the example still abstains instead of reading no test path.
+        python_string_literal(&example.expected)
+            .unwrap_or_else(|| "\"<doctest output>\"".to_string())
     );
     synthetic_test(file, example, &synthetic)
 }

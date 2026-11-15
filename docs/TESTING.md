@@ -581,3 +581,39 @@ cargo test --locked -p ripr --test mcp_sdk
 ```
 
 These tests qualify wire behavior, not installation or every protocol version.
+
+## MCP default gap-list exposure omission
+
+[RIPR-SPEC-0211](specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md)
+defines the default `ripr_list_gaps` exclusion (#14327): with no `class`, only
+`exposed` items refused as `seam_already_gripped` are left out and counted in
+`exposed_omitted`. The unit control separates that cause from a
+truncation-refused `exposed` item; the real-stdio parity case proves a gripped
+Rust seam is omitted by default and recovered by `class: "exposed"`; the
+truncation stdio controls keep evidence-limited `exposed` items listed.
+
+```bash
+cargo test --locked -p ripr --lib mcp::workspace::tests::default_gap_list_omits_exposed_and_discloses_the_count -- --exact
+cargo test --locked -p ripr --test mcp_cli_repair_parity already_gripped_seam_is_refused_with_one_cause_on_every_surface -- --exact
+cargo test --locked -p ripr --test mcp_stdio truncated_seam_inventory
+```
+
+## Stub routes past the seam cap
+
+[RIPR-SPEC-0287](specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md)
+and #14369 cover `ripr agent stub --seam-id` on a workspace larger than the
+seam cap. The subprocess controls set `RIPR_REPO_EXPOSURE_SEAM_LIMIT=1`, so a
+small fixture behaves like a capped large repository:
+
+```bash
+cargo test --locked -p ripr --test agent_stub_compiles printed_seam_id_route_yields_its_stub_past_the_seam_cap -- --exact
+cargo test --locked -p ripr --test agent_stub_compiles seam_id_stub_names_a_repair_start_only_when_the_capped_before_phase_finds_it -- --exact
+```
+
+The first test checks that the route `check` prints yields its stub, after a
+precondition shows that the capped inventory lacks the seam. The second test
+checks that, past the cap, the stub omits the repair start the capped
+`--phase before` refuses, and that inside the cap the start is printed and
+runs. The in-process `app::test_stub` controls pin that the ambiguity
+validator classifies only the finding's file, reuses that inventory across
+findings, and refuses stand-in evidence.

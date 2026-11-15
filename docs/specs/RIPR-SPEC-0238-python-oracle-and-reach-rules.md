@@ -450,12 +450,13 @@ one changed raise only (#12952); the general class-only table row stays weak.
    observed sink. The related-test row reports `exact_error_variant` /
    strong, alignment is `direct` with reason
    `strong_oracle_observes_changed_exception_variant`, and
-   `exception_variant_read` evidence names the rejected old and accepted new
-   classes. Another strong assertion cannot donate its call or hide this
-   context. A broad base class, old/wrong class, tuple, alias, reexport,
-   subclass relation, unresolved class, unchanged class or message-only edit
-   receives no such credit. Callable-form assertions, `unittest`, builtin
-   exception swaps and arbitrary class hierarchies remain outside this
+   `exception_variant_read` evidence names the class the context rejects
+   and the class it accepts. Another strong assertion cannot donate its call
+   or hide this context. A broad base class, a class other than the two
+   swapped ones, tuple, alias, reexport, subclass relation, unresolved
+   class, unchanged class or message-only edit receives no such credit.
+   Callable-form assertions, `unittest`, builtin swaps outside the listed
+   disjoint builtins and arbitrary class hierarchies remain outside this
    bounded reading. Static limits and the shared repair validator remain
    authoritative; no support-tier or schema change follows from this credit.
 
@@ -751,7 +752,13 @@ effect-channel credit need module identity. An empty owner or changed-sink token
 set does not itself establish observation. All owners, including `<module>` and
 one-letter free functions, require an assertion that satisfies a credit branch
 under rule 4. A genuine short-function output assertion can still credit the
-existing module-identified call branch. With no crediting branch, a strong oracle
+existing module-identified call branch. For an exception assertion, which
+compares no operand (rule 4), that branch reads the module-qualified owner call
+in the assertion's `with` body or rule 13 callable instead of an asserted
+operand, so `levels.parse("")` and an imported `parse("")` under the same
+`pytest.raises(ValueError, match=...)` read alike (#14090). A body holding a
+`lambda` or a nested `def`/`class` is not read, since the call may be deferred.
+With no crediting branch, a strong oracle
 is `orthogonal`; without an admitted strong oracle alignment stays `unknown`.
 This reverses the legacy no-token observing exception (#7526), which could
 credit an unrelated strong assertion. Ordinary module-import links retain their
@@ -1569,6 +1576,7 @@ the first matching row wins (reach / observe / discriminate):
 | --- | --- | --- | --- |
 | 1 | a static limit | `static_unknown` | no / no / no with no related test; else yes (eligible) or weak (heuristic only) / same / unknown |
 | 2 | no related test | `no_static_path` | no / no / no |
+| 2a | no static limit, no oracle-eligible relation, and every related test replaces the owner itself via `monkeypatch`/`patch` (#13632) | `reachable_unrevealed`, never a credit | weak / no / no |
 | 3 | only heuristic relations | `weakly_exposed`, no repair card | weak / weak / weak |
 | 4 | strong, credited, gates pass | `exposed` | yes / yes / yes |
 | 5 | strong, credited, changed default always overridden | `weakly_exposed` | yes / weak / weak |
@@ -1577,8 +1585,9 @@ the first matching row wins (reach / observe / discriminate):
 | 8 | weaker than strong | `weakly_exposed` | yes / weak / weak |
 
 Confidence is 0.6 for `exposed`, 0.2 for `static_unknown` and 0.4
-otherwise. Python never emits `reachable_unrevealed` or
-`infection_unknown`. The ladder is the existing behavior and is normative.
+otherwise. Python emits `reachable_unrevealed` only for row 2a, where every
+related test replaces the owner itself so none runs the changed code; the
+class never carries credit. Python never emits `infection_unknown`. The ladder is the existing behavior and is normative.
 
 ### Decisions
 
@@ -2063,7 +2072,13 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `account.deposit(50)` / `assert account.balance == 150`: the same
     verdict as `account = Account(100)` inlined in the test body (today
     `static_unknown`, `unresolved_pytest_fixture`; L8,
-    `py-fixtures-deposit`). A `yield`, an extra statement, a fixture
+    `py-fixtures-deposit`). An argument may also be a list, tuple, set or
+    dict display built only from literals (`Cart([3, 4])`,
+    `Account(balance=[100])`): a display names no variable and calls
+    nothing, so the fixture still builds the value the inlined construction
+    would. A display that names a variable, calls something, stars an
+    element or is a comprehension is a non-literal argument. A `yield`, an
+    extra statement, a fixture
     parameter, decorator arguments, a second decorator, an `async def`, a
     non-literal or starred argument, another class, a class from another
     module, a renamed import, a second binding of the class or the
