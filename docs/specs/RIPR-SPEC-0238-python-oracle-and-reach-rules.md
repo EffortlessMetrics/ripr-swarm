@@ -1583,8 +1583,16 @@ mutant calibrates the rule; ripr reports only the static shape.
     initializer rule would refuse, or has a reference writer (`setattr`,
     `delattr`, `__dict__`, `vars`, `globals`, `locals`, a frame, `exec`,
     `eval`, `modules`) at all, since its target can be computed
-    (`sys.modules[__package__]`) (modules the bounded read skipped are not
-    scanned); or `P`
+    (`sys.modules[__package__]`), or names the package as an identifier,
+    spells `.__class__`, uses `__import__`, `builtins`, `meta_path`,
+    `path_hooks`, `reload` or `patch`, or has a string equal to `X`, the
+    package or a dotted path under it, or containing `setattr`, `delattr`,
+    `__dict__`, `__class__` or `__import__`. Not modelled, as for every
+    directly imported module: modules the bounded read skipped, code inside
+    installed packages, and a write through a reference and attribute name
+    both computed at run time (`importlib.import_module` of a built name
+    then a built dunder lookup), which can equally patch a directly
+    imported module's function; or `P`
     has a submodule or subpackage named `X`, which an import elsewhere could
     load over the binding. A followed `from M import Y as X` is a rename
     the package re-export reading does not follow; it is followed here

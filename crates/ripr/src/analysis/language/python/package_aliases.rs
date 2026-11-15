@@ -30,8 +30,10 @@
 //! spelled as an attribute anywhere (`tests.tomllib = other` replaces the
 //! package attribute), or any statement besides a docstring, `pass`, a
 //! literal `__all__` or an import of a non-workspace module refuses. Any
-//! other read workspace module whose code spells that attribute or has a
-//! reference writer (`setattr`, `vars`, `sys.modules`, ...) refuses too, as
+//! other read workspace module whose code can reach the package object or
+//! the import machinery (it names the package, spells that attribute or a
+//! class swap, has a reference writer, `__import__`, `builtins`, a
+//! `mock.patch`, or a string naming the target) refuses too, as
 //! does a submodule or subpackage of the same name, which another import
 //! could load over the binding. Chains through further package
 //! initializers stop after [`MAX_ALIAS_HOPS`].
@@ -78,37 +80,81 @@ fn writes_through_namespace(token: &str) -> bool {
 /// Whether another read workspace module (a test module, a conftest, a
 /// helper on the root or under `src`) can replace the package attribute
 /// `name` when it runs. Modules the bounded read skipped are not scanned.
-fn replaced_elsewhere(name: &str, init: &Path, sources: &HashMap<PathBuf, String>) -> bool {
+fn replaced_elsewhere(
+    package: &str,
+    name: &str,
+    init: &Path,
+    sources: &HashMap<PathBuf, String>,
+) -> bool {
     sources.iter().any(|(path, text)| {
         path != init
             && path.extension().is_some_and(|ext| ext == "py")
-            && module_may_replace(text, name)
+            && module_may_replace(text, name, package)
     })
 }
 
 /// Reads one module's code tokens, so a mention in a comment or a plain
 /// string (tomli's `'tomli._re' not in sys.modules` inside a subprocess
-/// script) is not code. It refuses when the code spells `.name` (or a
-/// non-ASCII attribute, which Python may NFKC-fold to `name`), when an
-/// f-string, whose fields run, holds anything the initializer text rule
-/// refuses, or when the code has any writer `replaces_by_reference` names:
-/// the target can be computed (`sys.modules[__package__]`, `"to" + "mllib"`),
-/// so what the module mentions cannot rule it out. A module that does not
-/// lex refuses.
-fn module_may_replace(text: &str, name: &str) -> bool {
+/// script) is not code. It refuses on any way this module can reach and
+/// rewrite the package object or the import machinery:
+///
+/// - code that spells `.name`, `.__class__` (a module class swap) or a
+///   non-ASCII attribute (which Python may NFKC-fold to `name`);
+/// - any reference writer (`replaces_by_reference`), whatever it names,
+///   since its target can be computed (`sys.modules[__package__]`);
+/// - `__import__`, `builtins`, `meta_path`, `path_hooks`, `reload` or
+///   `patch`, which replace what an import returns;
+/// - the package referenced by name (any part of its dotted spelling as an
+///   identifier, as in `import tests`), outside a `from ... import` path;
+/// - a string that is `name`, the package or a dotted path under it (a
+///   `mock.patch("tests.tomllib")` target), or that spells a writer
+///   (`getattr(m, "__setattr__")`);
+/// - an f-string, whose fields run, that the initializer text rule refuses.
+///
+/// A module that does not lex refuses.
+fn module_may_replace(text: &str, name: &str, package: &str) -> bool {
     let Ok(tokens) = lex(text, Mode::Module).collect::<Result<Vec<_>, _>>() else {
         return true;
     };
+    let parts: Vec<&str> = package.split('.').collect();
+    let first = parts.first().copied().unwrap_or_default();
     let mut after_dot = false;
+    // The module path of `from tests import X` names the package without
+    // binding it, so only an identifier outside that path is a reference.
+    let mut from_path = false;
     for (token, _) in tokens {
         let dot = matches!(token, Tok::Dot);
+        match token {
+            Tok::From => from_path = true,
+            // `raise E from e` has no `import`; a logical line ends either.
+            Tok::Import | Tok::Newline => from_path = false,
+            _ => {}
+        }
         let replaces = match token {
             Tok::Name { name: ident } => {
-                (after_dot && (ident == name || !ident.is_ascii())) || replaces_by_reference(&ident)
+                (after_dot && (ident == name || ident == "__class__" || !ident.is_ascii()))
+                    || replaces_by_reference(&ident)
+                    || matches!(
+                        ident.as_str(),
+                        "__import__"
+                            | "builtins"
+                            | "__builtins__"
+                            | "meta_path"
+                            | "path_hooks"
+                            | "reload"
+                            | "patch"
+                    )
+                    || (!from_path && parts.contains(&ident.as_str()))
             }
             Tok::String { value, kind, .. } => {
-                matches!(kind, StringKind::FString | StringKind::RawFString)
-                    && (rebinds_dynamically(&value) || names_attribute(&value, name))
+                value == name
+                    || value == first
+                    || value.starts_with(&format!("{first}."))
+                    || ["setattr", "delattr", "__dict__", "__class__", "__import__"]
+                        .iter()
+                        .any(|part| value.contains(part))
+                    || (matches!(kind, StringKind::FString | StringKind::RawFString)
+                        && (rebinds_dynamically(&value) || names_attribute(&value, name)))
             }
             _ => false,
         };
@@ -324,7 +370,7 @@ fn initializer_binding(
     // Another workspace module that spells the name as an attribute or
     // reaches it through a namespace writer can replace the package
     // attribute after the initializer ran.
-    if replaced_elsewhere(name, &init, sources) {
+    if replaced_elsewhere(package, name, &init, sources) {
         return None;
     }
     let Ok(Mod::Module(module)) = parse_module_result(&init, text) else {

@@ -228,7 +228,39 @@ fn a_package_name_replaceable_by_attribute_write_or_other_code_stays_unlinked() 
     // Code outside the initializer that runs before the test can replace the
     // attribute too: a submodule the initializer imports, a conftest, or
     // another test module.
-    let elsewhere: [(&str, &str, &[(&str, &str)]); 10] = [
+    let elsewhere: [(&str, &str, &[(&str, &str)]); 14] = [
+        (
+            "helper-overrides-import",
+            "import tomli as tomllib\n",
+            &[(
+                "tests/helper.py",
+                "import builtins\n_real = builtins.__import__\nbuiltins.__import__ = _real\n",
+            )],
+        ),
+        (
+            "helper-swaps-module-class",
+            "import tomli as tomllib\n",
+            &[(
+                "tests/helper.py",
+                "import importlib\nimport types\nm = importlib.import_module(__package__)\nm.__class__ = types.ModuleType\n",
+            )],
+        ),
+        (
+            "helper-getattr-dunder-writer",
+            "import tomli as tomllib\n",
+            &[(
+                "tests/helper.py",
+                "import importlib\nm = importlib.import_module(__package__)\ngetattr(m, \"__setattr__\")(\"tomllib\", None)\n",
+            )],
+        ),
+        (
+            "helper-mock-patch-target",
+            "import tomli as tomllib\n",
+            &[(
+                "tests/helper.py",
+                "import json\nfrom unittest import mock\nmock.patch(\"tests.tomllib\", json).start()\n",
+            )],
+        ),
         (
             "helper-computed-name-writer",
             "import tomli as tomllib\n",
