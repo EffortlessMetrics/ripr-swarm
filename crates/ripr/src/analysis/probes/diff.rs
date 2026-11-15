@@ -170,6 +170,23 @@ pub(crate) fn probes_for_file_with_relations(
             skip_removed[removed_index] = true;
         }
     }
+    // #14760: a line that only applies an identifier rename this file's diff
+    // proves at the declaration (`HEADER_NAME_MAP[b]` -> `TOKEN_MAP[b]`)
+    // reads the same item, and the declaration line only renames it.
+    if let (Some(facts), Some(old_source)) = (find_file_facts(index, &changed.path), old_source) {
+        let rename_only =
+            super::identifier_rename::rename_only_lines(changed, &facts.source, old_source);
+        for &new_side_line in &rename_only.added {
+            if let Some(&added_index) = added_at.get(&new_side_line) {
+                skip_added[added_index] = true;
+            }
+        }
+        for old_line in &rename_only.removed {
+            if let Some(&removed_index) = removed_at.get(old_line) {
+                skip_removed[removed_index] = true;
+            }
+        }
+    }
     // A line that is byte-identical on both sides of one replacement run
     // (unchanged or moved inside a rewritten block) is not an edit (#8389).
     for (new_side_line, old_line) in changed.identical_replacement_lines() {
