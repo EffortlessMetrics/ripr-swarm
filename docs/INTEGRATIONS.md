@@ -218,8 +218,9 @@ If commits feel slow, add `--mode instant` to the commit hook:
 ```
 
 In lefthook, husky or a plain hook, append `--mode instant` to the commit
-command. `instant` indexes only the changed files, so a test that lives in
-another file is not seen. In a crate whose boundary test sits in `tests/`,
+command. `instant` indexes the changed files plus the parent module files that
+declare them, so it can miss tests that live elsewhere, such as integration
+tests under `tests/`. In a crate whose boundary test sits in `tests/`,
 the default mode reported that edit as `exposed` and `instant` reported
 `no_static_path`. Keep the push hook (`ripr check --committed`) on the default
 mode so the branch gets the fuller check before it leaves your machine.
