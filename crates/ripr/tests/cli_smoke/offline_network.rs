@@ -191,6 +191,17 @@ fn offline_partial_clone_names_the_missing_download_not_object_damage() -> TestR
         &outer,
         &["clone", "-q", "--filter=blob:none", &origin_url, "clone"],
     )?;
+    // Assert the fixture premise: a Git or server that ignores the filter
+    // makes a full clone, and the check below would then prove nothing.
+    let promisor = Command::new("git")
+        .args(["config", "--get", "remote.origin.promisor"])
+        .current_dir(outer.join("clone"))
+        .output()?;
+    assert_eq!(
+        text(&promisor.stdout).trim(),
+        "true",
+        "fixture must be a partial clone (Git 2.19+ with uploadpack.allowFilter)"
+    );
     // The remote is gone: the base-side blob can no longer be fetched.
     fs::rename(&origin, outer.join("origin-unreachable"))?;
 

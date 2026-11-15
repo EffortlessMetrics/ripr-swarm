@@ -1060,9 +1060,10 @@ const OBJECT_DAMAGE_REPAIR: &str = "Git reports a damaged object store; run `git
 /// reads as local object damage, whose `git fsck` repair cannot help.
 const PROMISOR_FETCH_REPAIR: &str = "This is a partial clone (for example \
     `--filter=blob:none`): the file contents for this range were never downloaded, and Git \
-    could not fetch them from the clone's remote (the analysis did not run; ripr itself makes no \
-    network requests). Re-run with network access, or analyze a full clone (in GitHub Actions, \
-    remove `filter:` from actions/checkout).";
+    could not fetch them from the clone's remote, which is unreachable (offline), refused access, \
+    or no longer has them (the analysis did not run; ripr itself makes no network requests). \
+    Re-run where Git can reach and authenticate to that remote, or analyze a full clone (in \
+    GitHub Actions, remove `filter:` from actions/checkout).";
 
 /// Whether Git's stderr reports a failed on-demand fetch from a partial
 /// clone's promisor remote. Git words it `could not fetch <oid> from promisor

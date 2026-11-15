@@ -163,7 +163,8 @@ This is a partial clone (for example `--filter=blob:none`): the file contents fo
 Exit code `2`. ripr makes no network requests and runs fully offline, but a
 blob-filtered clone stores only the files it checked out. To diff against an
 older base, Git downloads the missing contents from the clone's remote on
-demand, and here it could not reach it. Re-run with network access, or
+demand, and here it could not: the remote was unreachable, refused access, or
+no longer has them. Re-run where Git can reach that remote, or
 analyze a full clone (in GitHub Actions, remove `filter:` from
 actions/checkout). ripr's Git calls never wait on a credential prompt, so an
 unreachable or unauthenticated remote fails at once.
