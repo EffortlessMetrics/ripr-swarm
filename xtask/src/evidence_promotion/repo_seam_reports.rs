@@ -763,7 +763,7 @@ pub(super) fn check_regenerated_reports(violations: &mut Vec<String>) -> Result<
     // Resolve the analyzer's cache generation once. A capture recorded at this
     // generation has its `evidence_path` summaries judged; a capture a pin holds
     // at an older generation stays tolerated, which leaves the pin's "judged
-    // seams are unchanged" reason untested until the corpus is recaptured
+    // seams are unchanged" reason unexercised until the corpus is recaptured
     // (#14555). The exemption cannot widen to an unpinned capture: a capture
     // older than the current generation that no pin holds is a violation in
     // `check_report_cache_schemas`, which runs in the same pass.
@@ -1414,14 +1414,13 @@ mod tests {
     /// not. This is the oracle the caller lacked: forcing the comparison off
     /// reds `a_changed_evidence_path_summary_is_a_difference_when_judged`.
     #[test]
-    fn the_generation_switch_follows_the_analyzers_constant() {
+    fn the_generation_switch_follows_the_analyzers_constant() -> Result<(), String> {
         let source = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../crates/ripr/src/analysis/seam_cache.rs"
         ))
-        .expect("the analyzer source is in this tree");
-        let current = super::super::report_cache_schema::current_cache_schema_version(&source)
-            .expect("CACHE_SCHEMA_VERSION is declared");
+        .map_err(|error| format!("the analyzer source is in this tree: {error}"))?;
+        let current = super::super::report_cache_schema::current_cache_schema_version(&source)?;
         let mut at_current = report("strongly_gripped", "yes", "strong");
         at_generation(&mut at_current, &current);
         assert!(super::super::report_cache_schema::judges_evidence_path(
@@ -1440,6 +1439,7 @@ mod tests {
             ),
             "a capture with no recorded generation is not judged"
         );
+        Ok(())
     }
 
     #[test]
