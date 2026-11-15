@@ -1571,7 +1571,7 @@ fn sink_alignment_and_rows(
     // names come from the test body alone and only for the owner's own
     // application; the changed-key gate in `gates_ok` still decides which
     // response field observes the edit.
-    let returns_changed_dict = !owner.route_paths.is_empty()
+    let returns_changed_dict = owner.route_returns_body
         && line_text.trim_start().starts_with("return ")
         && dict_change.is_some();
     let route_response_observed = |unit: &AlignmentUnit<'_>| {
@@ -2377,6 +2377,7 @@ mod row_sink_alignment_tests {
             nested_called_by_parent: false,
             nested_result_discarded: false,
             trusted_stdlib_click_alias: false,
+            route_returns_body: false,
         }
     }
 

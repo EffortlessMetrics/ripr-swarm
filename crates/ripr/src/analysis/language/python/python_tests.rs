@@ -1294,6 +1294,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1871,6 +1872,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1942,6 +1944,7 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
     };
     let sources = [
         PathBuf::from("a/src/shared/calc.py"),
@@ -2035,6 +2038,7 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
     };
     let sources = [
         PathBuf::from("src/shared/calc.py"),
@@ -2098,6 +2102,7 @@ fn reexport_package_name_with_a_same_project_plain_module_identifies_neither() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
     };
     let import = PythonImport {
         imported: "price".to_string(),
@@ -2165,6 +2170,7 @@ fn reexport_package_receiver_spelling_is_withheld_when_the_package_is_shadowed()
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
     };
     let mut test = align_importing_test("core", "");
     test.file = PathBuf::from("svc/a/tests/test_core.py");
@@ -2223,6 +2229,7 @@ fn src_short_name_with_a_same_project_plain_module_identifies_neither() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
     };
     let import = |module: &str| PythonImport {
         imported: "price".to_string(),
@@ -2341,6 +2348,7 @@ fn same_stem_related_handles_missing_stems() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
     };
     let test = PythonTest {
         setup_receivers: Vec::new(),
@@ -4961,6 +4969,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -5049,6 +5058,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -5141,6 +5151,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
     }
 }
 
@@ -5958,6 +5969,7 @@ fn test_local_module_shadows_a_bare_owner_import_for_tests_it_precedes() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
     };
     let identifies = |files: &[&str], module: &str, test: &str| {
         let files = files.iter().map(PathBuf::from).collect::<Vec<_>>();
@@ -6065,6 +6077,7 @@ fn test_local_module_shadow_covers_project_names_import_forms_and_conftest_dirs(
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
     };
     // All forms of `core` imported by `test`; true when the owner at
     // `owner_file` stays the owner.

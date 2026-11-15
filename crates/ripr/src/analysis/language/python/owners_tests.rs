@@ -561,6 +561,12 @@ fn owner_from_function(
         .map(|class| format!("{}.{name}", innermost_class(class)))
         .unwrap_or_else(|| name.to_string());
     let route_paths = collect_static_route_paths(context.source, decorators);
+    let route_returns_body = !route_paths.is_empty()
+        && route_returns_body(decorators, body)
+        && !super::module_constants::mentions_identifier(
+            &text_for_range(context.source, range),
+            "yield",
+        );
     let route_methods = collect_static_route_methods(context.source, decorators);
     let route_receivers = collect_static_route_receivers(context.source, decorators);
     let dynamic_route_decorators = collect_dynamic_route_decorators(context.source, decorators);
@@ -648,6 +654,7 @@ fn owner_from_function(
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body,
     }
 }
 
@@ -780,6 +787,7 @@ fn owner_from_class(
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
     }
 }
 
@@ -823,6 +831,7 @@ pub(super) fn module_owner(
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
     }
 }
 
@@ -2158,6 +2167,104 @@ fn called_decorator_names(decorators: &[Expr]) -> Vec<String> {
 
 pub(super) fn decorator_names(decorators: &[Expr]) -> Vec<String> {
     decorators.iter().filter_map(expr_full_name).collect()
+}
+
+/// Whether a route handler's response body is the dict it returns (#13869):
+/// each static route decorator is a call whose keywords cannot reshape the
+/// body, and the function has one `return`, of a dict literal, and no
+/// `yield`. Nested functions and classes are not searched.
+fn route_returns_body(decorators: &[Expr], body: &[Stmt]) -> bool {
+    const BODY_NEUTRAL_KEYWORDS: [&str; 7] = [
+        "methods",
+        "status_code",
+        "name",
+        "tags",
+        "summary",
+        "description",
+        "endpoint",
+    ];
+    let decorators_ok = decorators.iter().all(|decorator| {
+        let Some(name) = expr_full_name(decorator) else {
+            return true;
+        };
+        if !is_static_route_decorator(&name) {
+            return true;
+        }
+        let Expr::Call(call) = decorator else {
+            return false;
+        };
+        call.keywords.iter().all(|keyword| {
+            keyword
+                .arg
+                .as_ref()
+                .is_some_and(|arg| BODY_NEUTRAL_KEYWORDS.contains(&arg.as_str()))
+        })
+    });
+    if !decorators_ok {
+        return false;
+    }
+    let mut returns = Vec::new();
+    let mut yields = false;
+    collect_returns(body, &mut returns, &mut yields);
+    !yields && matches!(returns.as_slice(), [Some(Expr::Dict(_))])
+}
+
+/// The value of each `return` in `body` (not inside a nested function or
+/// class) and whether any statement mentions `yield`.
+fn collect_returns<'a>(body: &'a [Stmt], returns: &mut Vec<Option<&'a Expr>>, yields: &mut bool) {
+    for statement in body {
+        match statement {
+            Stmt::Return(ret) => returns.push(ret.value.as_deref()),
+            Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::ClassDef(_) => {}
+            Stmt::If(node) => {
+                collect_returns(&node.body, returns, yields);
+                collect_returns(&node.orelse, returns, yields);
+            }
+            Stmt::For(node) => {
+                collect_returns(&node.body, returns, yields);
+                collect_returns(&node.orelse, returns, yields);
+            }
+            Stmt::AsyncFor(node) => {
+                collect_returns(&node.body, returns, yields);
+                collect_returns(&node.orelse, returns, yields);
+            }
+            Stmt::While(node) => {
+                collect_returns(&node.body, returns, yields);
+                collect_returns(&node.orelse, returns, yields);
+            }
+            Stmt::With(node) => collect_returns(&node.body, returns, yields),
+            Stmt::AsyncWith(node) => collect_returns(&node.body, returns, yields),
+            Stmt::Try(node) => {
+                collect_returns(&node.body, returns, yields);
+                collect_returns(&node.orelse, returns, yields);
+                collect_returns(&node.finalbody, returns, yields);
+                for handler in &node.handlers {
+                    let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                    collect_returns(&handler.body, returns, yields);
+                }
+            }
+            Stmt::TryStar(node) => {
+                collect_returns(&node.body, returns, yields);
+                collect_returns(&node.orelse, returns, yields);
+                collect_returns(&node.finalbody, returns, yields);
+                for handler in &node.handlers {
+                    let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                    collect_returns(&handler.body, returns, yields);
+                }
+            }
+            Stmt::Match(node) => {
+                for case in &node.cases {
+                    collect_returns(&case.body, returns, yields);
+                }
+            }
+            Stmt::Expr(expr) => {
+                if matches!(expr.value.as_ref(), Expr::Yield(_) | Expr::YieldFrom(_)) {
+                    *yields = true;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn collect_static_route_paths(source: &str, decorators: &[Expr]) -> Vec<String> {

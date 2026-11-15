@@ -2922,18 +2922,21 @@ pub(super) fn identified_route_response_names(
             {
                 continue;
             }
-            for verb in ["get", "post", "put", "patch", "delete", "options", "head"] {
-                if !verbs.is_empty() && !verbs.iter().any(|accepted| accepted == verb) {
-                    continue;
-                }
-                let callee = format!("{receiver}.{verb}");
-                for (name, _) in super::route_client::single_call_bindings(&test.body_text, &callee)
+            for (name, verb, path) in route_response_assignments(test, receiver) {
+                let http_verb = ["get", "post", "put", "patch", "delete", "options", "head"]
+                    .contains(&verb.as_str());
+                if http_verb
+                    && (verbs.is_empty() || verbs.iter().any(|accepted| *accepted == verb))
+                    && python_route_matches_call_path(route, &path)
+                    && super::route_client::single_call_bindings(
+                        &test.body_text,
+                        &format!("{receiver}.{verb}"),
+                    )
+                    .iter()
+                    .any(|(bound, _)| *bound == name)
+                    && !names.contains(&name)
                 {
-                    if binding_calls_route(&test.body_text, &name, &callee, route)
-                        && !names.contains(&name)
-                    {
-                        names.push(name);
-                    }
+                    names.push(name);
                 }
             }
         }
@@ -2941,41 +2944,58 @@ pub(super) fn identified_route_response_names(
     names
 }
 
-/// Whether the raw source line binding `name` (`name = callee("<path>", ...)`)
-/// calls `callee` with a first argument the route accepts. The binding is the
-/// body's only one for `name`, so its first line is the one that starts with
-/// the name and a plain `=`.
-fn binding_calls_route(body_text: &str, name: &str, callee: &str, route: &str) -> bool {
-    let mut offset = 0usize;
-    for line in body_text.split_inclusive('\n') {
-        let start = offset;
-        offset += line.len();
-        let code = line.trim_start();
-        let Some(rest) = code.strip_prefix(name) else {
-            continue;
-        };
-        let rest = rest.trim_start();
-        let rest = rest
-            .strip_prefix(':')
-            .and_then(|annotated| annotated.split_once('=').map(|(_, value)| value))
-            .or_else(|| {
-                rest.strip_prefix('=')
-                    .filter(|value| !value.starts_with('='))
-            });
-        let Some(value) = rest else {
-            continue;
-        };
-        let value_start = start + line.len() - value.len();
-        let Some(call) = body_text.get(value_start..) else {
-            return false;
-        };
-        let call = call.trim_start();
-        return call
-            .strip_prefix(callee)
-            .and_then(|arguments| first_parenthesized_string_argument(arguments.trim_start()))
-            .is_some_and(|argument| python_route_matches_call_path(route, &argument));
-    }
-    false
+/// `(name, verb, path)` of each top-level statement of the test function
+/// that assigns one plain name to `receiver.<verb>("<path>", ...)`, read from
+/// the parsed body so text inside strings or comments cannot pose as the
+/// binding (#13869). The caller still requires the name to be bound once.
+fn route_response_assignments(test: &PythonTest, receiver: &str) -> Vec<(String, String, String)> {
+    use rustpython_parser::ast::{Constant, Expr, Mod, Stmt};
+    let Ok(Mod::Module(module)) =
+        super::source_facts::parse_module_result(&test.file, &test.body_text)
+    else {
+        return Vec::new();
+    };
+    let body = match module.body.as_slice() {
+        [Stmt::FunctionDef(function)] => &function.body,
+        [Stmt::AsyncFunctionDef(function)] => &function.body,
+        _ => return Vec::new(),
+    };
+    body.iter()
+        .filter_map(|statement| {
+            let (target, value) = match statement {
+                Stmt::Assign(assign) => match assign.targets.as_slice() {
+                    [target] => (target, assign.value.as_ref()),
+                    _ => return None,
+                },
+                Stmt::AnnAssign(assign) => (assign.target.as_ref(), assign.value.as_deref()?),
+                _ => return None,
+            };
+            let Expr::Name(name) = target else {
+                return None;
+            };
+            let Expr::Call(call) = value else {
+                return None;
+            };
+            let Expr::Attribute(method) = call.func.as_ref() else {
+                return None;
+            };
+            if !matches!(method.value.as_ref(), Expr::Name(client) if client.id.as_str() == receiver)
+            {
+                return None;
+            }
+            let Some(Expr::Constant(first)) = call.args.first() else {
+                return None;
+            };
+            let Constant::Str(path) = &first.value else {
+                return None;
+            };
+            Some((
+                name.id.to_string(),
+                method.attr.to_string(),
+                path.clone(),
+            ))
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

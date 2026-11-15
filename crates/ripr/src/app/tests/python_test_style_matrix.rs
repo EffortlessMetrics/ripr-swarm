@@ -387,6 +387,46 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             failures.push(format!("{name}: read exposed"));
         }
     }
+    // A docstring that spells the binding is not the binding.
+    let docstring = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    \"\"\"\n    response = client.get(\"/price\")\n    \"\"\"\n    client = TestClient(app)\n    response = client.get(\"/other\")\n    assert response.json()[\"total\"] == 190\n"
+    );
+    let finding = check_style(
+        "docstring binding",
+        &[("src/app.py", PRICE_APP)],
+        PRICE_EDIT,
+        &docstring,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        failures.push("docstring binding: read exposed".to_string());
+    }
+    // A response model can drop or reshape the returned dict, and another
+    // `return` may be the one the request takes, so the body is not known.
+    let strong = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 190\n"
+    );
+    let nested = Edit {
+        owner: "src/app.py",
+        old: "        return {\"total\": 200 - 10, \"count\": 3}",
+        new: "        return {\"total\": 200 - 5, \"count\": 3}",
+    };
+    for (name, app, edit) in [
+        (
+            "response model",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\n@app.get(\"/price\", response_model=Price)\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+            PRICE_EDIT,
+        ),
+        (
+            "two returns",
+            "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price(vip: bool = False):\n    if vip:\n        return {\"total\": 200 - 10, \"count\": 3}\n    return {\"total\": 190, \"count\": 3}\n",
+            nested,
+        ),
+    ] {
+        let finding = check_style(name, &[("src/app.py", app)], edit, &strong)?;
+        if finding.class == ExposureClass::Exposed {
+            failures.push(format!("{name}: read exposed"));
+        }
+    }
     // A client over another application does not reach the owner's handler.
     let rival = "from fastapi import FastAPI\nfrom fastapi.testclient import TestClient\n\nfrom src.app import app\n\nother_app = FastAPI()\n\n\ndef test_price():\n    client = TestClient(other_app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 190\n";
     let finding = check_style("rival app", &[("src/app.py", PRICE_APP)], PRICE_EDIT, rival)?;

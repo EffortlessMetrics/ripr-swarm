@@ -725,6 +725,13 @@ struct PythonOwner {
     /// click-alias decorators require this; reassigned aliases stay fail-closed.
     #[serde(default)]
     trusted_stdlib_click_alias: bool,
+    /// The owner is a route handler whose response body is its returned dict
+    /// (#13869): every static route decorator takes only keywords that leave
+    /// the body alone (no `response_model` or `response_class`), and the
+    /// function has exactly one `return`, of a dict literal, and no `yield`.
+    /// `false` by default, which grants no response-read credit.
+    #[serde(default)]
+    route_returns_body: bool,
 }
 
 /// One declared parameter of a Python function owner.
