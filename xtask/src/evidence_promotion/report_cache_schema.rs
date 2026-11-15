@@ -21,7 +21,7 @@ const CONSTANT_PREFIX: &str = "pub(crate) const CACHE_SCHEMA_VERSION: &str = \""
 
 /// Read the analyzer's current full-cache generation from its source, so the
 /// gate follows the constant instead of a copy that could itself go stale.
-fn current_cache_schema_version(seam_cache_source: &str) -> Result<String, String> {
+pub(super) fn current_cache_schema_version(seam_cache_source: &str) -> Result<String, String> {
     seam_cache_source
         .lines()
         .find_map(|line| line.trim().strip_prefix(CONSTANT_PREFIX))
@@ -45,7 +45,17 @@ fn is_older(version: &str, current: &str) -> bool {
     }
 }
 
-fn recorded_version(report: &Value) -> Option<&str> {
+/// The generation the analyzer is at now, read from its source in this tree.
+/// One reader, so the currentness guard and the summary comparison can never
+/// disagree about which generation is current.
+pub(super) fn current_generation() -> Result<String, String> {
+    current_cache_schema_version(
+        &std::fs::read_to_string(SEAM_CACHE_SOURCE)
+            .map_err(|error| format!("failed to read {SEAM_CACHE_SOURCE}: {error}"))?,
+    )
+}
+
+pub(super) fn recorded_version(report: &Value) -> Option<&str> {
     report
         .pointer("/source_subject/corpus/cache_schema_version")
         .and_then(Value::as_str)
@@ -180,10 +190,7 @@ pub(super) fn check_report_cache_schemas(violations: &mut Vec<String>) -> Result
     if reports.is_empty() && pins.is_empty() {
         return Ok(());
     }
-    let current = current_cache_schema_version(
-        &std::fs::read_to_string(SEAM_CACHE_SOURCE)
-            .map_err(|error| format!("failed to read {SEAM_CACHE_SOURCE}: {error}"))?,
-    )?;
+    let current = current_generation()?;
     check_reports(&reports, &current, &pins, violations);
     Ok(())
 }
