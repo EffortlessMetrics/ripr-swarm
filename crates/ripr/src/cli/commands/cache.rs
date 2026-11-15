@@ -54,10 +54,10 @@ otherwise target/ripr/cache under the Cargo workspace root).
             (those carry their own version in their directory names).
 
 `reclaimable_entry_count` and `reclaimable_size_bytes` count the per-file
-fact entries (Rust, TypeScript, Python) that the next run writing facts
-removes: entries from older cache schemas, and entries from other ripr builds
-other than the two most recently used and any that served a cache hit in the
-last 7 days. Kept entries, including any newer cache schema an editor server
+fact entries (Rust, TypeScript, Python) that the next run writing facts to a
+usable cache removes: entries from older cache schemas, and entries from
+other ripr builds other than the two most recently used and any that served
+a cache hit in the last 7 days. Kept entries, including any newer cache schema an editor server
 on another ripr version still reads, are not counted. They are a subset of
 the recognized-layer totals.
 
@@ -700,7 +700,14 @@ fn run_status(args: &[String]) -> Result<(), String> {
     let cache_dir = resolve_cache_dir(root.as_deref())?;
     let (inspect_dir, real_dir) = resolve_status_base(&cache_dir);
     let status = inspect_cache_root(&inspect_dir);
-    let reclaimable = file_fact_reclaimable(&inspect_dir);
+    // Read separately from the status, so a cache created in between could
+    // otherwise report reclaimable entries beside `not_found`; the schema
+    // pins every count to 0 there.
+    let reclaimable = if matches!(status.state, "not_found" | "unavailable") {
+        Reclaimable::default()
+    } else {
+        file_fact_reclaimable(&inspect_dir)
+    };
     println!(
         "{}",
         render_status(

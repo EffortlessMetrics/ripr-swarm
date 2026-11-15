@@ -990,7 +990,8 @@ or offending component it protects.
 
 Schema `0.3` is additive on `0.2` (#7047): `reclaimable_entry_count` and
 `reclaimable_size_bytes` count the per-file fact entries (Rust, TypeScript,
-Python) that the next run writing facts removes: entries from older cache
+Python) that the next run writing facts to a usable cache removes (a
+Git-tracked cache is never pruned): entries from older cache
 schemas, and entries from other ripr builds other than the two most recently
 used and any that served a cache hit in the last 7 days. Kept entries,
 including any newer cache schema, are not counted. They are a subset of the

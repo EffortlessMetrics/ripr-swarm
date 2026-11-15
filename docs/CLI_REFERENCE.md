@@ -1253,10 +1253,10 @@ otherwise target/ripr/cache under the Cargo workspace root).
             (those carry their own version in their directory names).
 
 `reclaimable_entry_count` and `reclaimable_size_bytes` count the per-file
-fact entries (Rust, TypeScript, Python) that the next run writing facts
-removes: entries from older cache schemas, and entries from other ripr builds
-other than the two most recently used and any that served a cache hit in the
-last 7 days. Kept entries, including any newer cache schema an editor server
+fact entries (Rust, TypeScript, Python) that the next run writing facts to a
+usable cache removes: entries from older cache schemas, and entries from
+other ripr builds other than the two most recently used and any that served
+a cache hit in the last 7 days. Kept entries, including any newer cache schema an editor server
 on another ripr version still reads, are not counted. They are a subset of
 the recognized-layer totals.
 
