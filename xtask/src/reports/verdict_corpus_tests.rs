@@ -2098,6 +2098,196 @@ fn language_option_parses_in_any_position_and_refuses_misuse() -> Result<(), Str
 }
 
 #[test]
+fn check_affected_parser_accepts_one_source_and_refuses_misuse() -> Result<(), String> {
+    for given in [
+        args(&["check-affected", "--paths", "a.rs,b.py"]),
+        args(&["check-affected", "--paths-file", "paths.txt"]),
+        args(&["check-affected", "--paths-file", "-"]),
+        args(&["--paths", "a.rs", "check-affected"]),
+    ] {
+        let parsed = parse_corpus_args(&given)?;
+        assert_eq!(parsed.sub, "check-affected", "{given:?}");
+    }
+    for (given, refusal) in [
+        (args(&["check-affected"]), "exactly one"),
+        (
+            args(&["check-affected", "--paths", "a.rs", "--paths", "b.rs"]),
+            "twice",
+        ),
+        (
+            args(&["check-affected", "--paths-file", "x", "--paths-file", "y"]),
+            "twice",
+        ),
+        (
+            args(&["check-affected", "--paths", "a.rs", "--paths-file", "x"]),
+            "exactly one",
+        ),
+        (
+            args(&["check-affected", "--paths", "a.rs", "--language", "rust"]),
+            "--language",
+        ),
+        (
+            args(&["check-affected", "--paths", "a.rs", "--out", "x"]),
+            "--out",
+        ),
+        (
+            args(&["check-affected", "--paths", "a.rs", "--cases", "c1"]),
+            "--cases",
+        ),
+        (args(&["check", "--paths", "a.rs"]), "check-affected"),
+        (args(&["check-affected", "--paths"]), "--paths needs"),
+    ] {
+        let err = parse_corpus_args(&given)
+            .err()
+            .ok_or(format!("{given:?} was accepted"))?;
+        assert!(err.contains(refusal), "{given:?}: {err}");
+    }
+    Ok(())
+}
+
+#[test]
+fn check_affected_normalization_refuses_no_changed_paths() {
+    for raw in [Vec::new(), args(&["", "  ", "./"]), args(&[","])] {
+        let err = normalize_affected_paths(&raw).err().unwrap_or_default();
+        assert!(err.contains("no changed paths"), "{raw:?}: {err}");
+    }
+    assert_eq!(
+        normalize_affected_paths(&args(&[
+            "./crates\\ripr\\src\\lib.rs",
+            "crates/ripr/src/lib.rs"
+        ])),
+        Ok(vec!["crates/ripr/src/lib.rs".to_string()])
+    );
+}
+
+#[test]
+fn check_affected_classification_matrix() {
+    use AffectedPath::{All, Ignored, Language};
+    let lang = |name: &str| Language(name.to_string());
+    for (path, expected) in [
+        ("fixtures/rust-verdict-corpus/cases/a.json", lang("rust")),
+        (
+            "fixtures/typescript-verdict-corpus/cases/a.json",
+            lang("typescript"),
+        ),
+        (
+            "fixtures/python-verdict-corpus/cases/a.json",
+            lang("python"),
+        ),
+        // Perl packets are JSON but route to Perl by corpus, never by a
+        // global *.json rule.
+        ("fixtures/perl-verdict-corpus/packets/a.json", lang("perl")),
+        ("fixtures/go-verdict-corpus/cases/a.json", All),
+        (
+            "crates/ripr/src/analysis/language/rust/mod.rs",
+            lang("rust"),
+        ),
+        (
+            "crates/ripr/src/analysis/language/typescript/mod.rs",
+            lang("typescript"),
+        ),
+        (
+            "crates/ripr/src/analysis/language/python.rs",
+            lang("python"),
+        ),
+        (
+            "crates/ripr/src/analysis/language/python/mod.rs",
+            lang("python"),
+        ),
+        (
+            "crates/ripr/src/analysis/language/perl/mod.rs",
+            lang("perl"),
+        ),
+        ("crates/ripr/src/analysis/language/mod.rs", All),
+        ("crates/ripr/src/analysis/language/router.rs", All),
+        ("crates/ripr/src/analysis/language/adapter.rs", All),
+        ("crates/ripr/src/analysis/language/id.rs", All),
+        ("crates/ripr/src/analysis/language/other/mod.rs", All),
+        ("src/lib.rs", lang("rust")),
+        ("tools/tool.py", lang("python")),
+        ("web/app.tsx", lang("typescript")),
+        ("web/app.mjs", lang("typescript")),
+        ("web/app.cts", lang("typescript")),
+        ("lib/Mod.pm", lang("perl")),
+        ("t/test.t", lang("perl")),
+        ("app.psgi", lang("perl")),
+        ("script.pl", lang("perl")),
+        // Extensions are case-sensitive per production route().
+        ("src/LIB.RS", All),
+        ("data.json", All),
+        ("main.go", All),
+        ("no_extension", All),
+        ("crates/ripr/src/domain/model.rs", All),
+        ("crates/ripr-contract/src/analysis/source_kind.rs", All),
+        ("crates/ripr/src/analysis/classifier.rs", All),
+        ("crates/ripr/src/output/human.rs", All),
+        ("crates/ripr/src/app/check.rs", All),
+        ("crates/ripr/src/cli/mod.rs", All),
+        ("crates/ripr/src/config/mod.rs", All),
+        ("Cargo.toml", All),
+        ("crates/ripr/Cargo.lock", All),
+        ("crates/ripr/build.rs", All),
+        ("rust-toolchain.toml", All),
+        (".cargo/config.toml", All),
+        ("xtask/src/reports/verdict_corpus.rs", All),
+        ("xtask/src/reports/verdict_corpus_tests.rs", All),
+        ("xtask/src/reports/fixtures.rs", All),
+        ("xtask/src/command.rs", All),
+        ("xtask/src/dispatch.rs", All),
+        ("docs/specs/RIPR-SPEC-0001.md", All),
+        (".github/workflows/rust-gates.yml", All),
+        ("schemas/report.json", All),
+        ("docs/guide.md", Ignored),
+        ("editors/vscode/src/main.ts", Ignored),
+        ("plugins/ripr/tool.rs", Ignored),
+        ("README.md", Ignored),
+        ("CHANGELOG.md", Ignored),
+        ("badges/coverage.svg", Ignored),
+        ("metrics/report.json", Ignored),
+        ("examples/demo.rs", Ignored),
+        ("fixtures/some-fixture/input.rs", Ignored),
+    ] {
+        assert_eq!(classify_affected_path(path), expected, "{path}");
+    }
+}
+
+#[test]
+fn check_affected_selection_and_output_lines() {
+    let selected = select_affected(&args(&["src/a.rs", "docs/guide.md", "tools/b.py"]));
+    assert_eq!(
+        selected,
+        AffectedSelection::Languages(BTreeSet::from(["python".to_string(), "rust".to_string()]))
+    );
+    let discovered = args(&["perl", "python", "rust", "typescript"]);
+    assert_eq!(
+        affected_lines(&selected, &discovered, 2),
+        vec![
+            "verdict-corpus: check-affected selected: python, rust".to_string(),
+            "verdict-corpus: checked 2 corpora".to_string(),
+            "verdict-corpus: perl, typescript not run (not a pass)".to_string(),
+        ]
+    );
+    let widened = select_affected(&args(&["src/a.rs", "crates/ripr/src/domain/model.rs"]));
+    assert_eq!(
+        affected_lines(&widened, &discovered, 4)
+            .first()
+            .map(String::as_str),
+        Some(
+            "verdict-corpus: check-affected selected: all (widened: crates/ripr/src/domain/model.rs)"
+        )
+    );
+    let none = select_affected(&args(&["docs/guide.md"]));
+    assert_eq!(
+        affected_lines(&none, &discovered, 0),
+        vec![
+            "verdict-corpus: check-affected selected: none".to_string(),
+            "verdict-corpus: checked 0 corpora".to_string(),
+            "verdict-corpus: perl, python, rust, typescript not run (not a pass)".to_string(),
+        ]
+    );
+}
+
+#[test]
 fn a_report_and_its_rebless_hint_name_the_corpus_language() -> Result<(), String> {
     let corpus = load_corpus(&typescript_corpus_dir())?;
     let checks: Vec<(String, Value)> = corpus
