@@ -97,7 +97,7 @@ could not be verified without trusting hand-authored JSON.
    names, and f-strings over those) are read, so an f-string message still
    names its type. Any shape the analyzer cannot read exactly (a raise that is
    not one `raise Name(...)` line, an argument with a call, operator or
-   subscript, a class with several bases or its own `__new__`, a test module
+   subscript, a class with several bases, its own `__new__` or any class-body statement other than `pass`, a docstring or an undecorated method, a test module
    that rebinds the expected name, an attribute, tuple or keyword expected class, an aliased or
    imported class, an unresolvable base) records no fact and keeps today's
    closure.

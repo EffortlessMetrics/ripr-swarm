@@ -394,17 +394,19 @@ fn exception_ancestry(
     Some(chain)
 }
 
-/// Whether a class body binds `__new__` (a method, an assignment or an import).
+/// Whether a class body may change construction. Only a plain body is read:
+/// `pass`, `...`, docstrings and methods other than `__new__`. Any other
+/// statement (an assignment, an `if` or `try` that could define `__new__`, a
+/// decorator-built binding) is treated as overriding construction.
 fn overrides_construction(class_body: &[Stmt]) -> bool {
-    class_body.iter().any(|statement| match statement {
-        Stmt::FunctionDef(function) => function.name.as_str() == "__new__",
-        Stmt::AsyncFunctionDef(function) => function.name.as_str() == "__new__",
-        Stmt::Assign(assign) => assign
-            .targets
-            .iter()
-            .any(|target| matches!(target, Expr::Name(name) if name.id.as_str() == "__new__")),
-        Stmt::AnnAssign(assign) => {
-            matches!(assign.target.as_ref(), Expr::Name(name) if name.id.as_str() == "__new__")
+    !class_body.iter().all(|statement| match statement {
+        Stmt::Pass(_) => true,
+        Stmt::Expr(expression) => matches!(expression.value.as_ref(), Expr::Constant(_)),
+        Stmt::FunctionDef(function) => {
+            function.name.as_str() != "__new__" && function.decorator_list.is_empty()
+        }
+        Stmt::AsyncFunctionDef(function) => {
+            function.name.as_str() != "__new__" && function.decorator_list.is_empty()
         }
         _ => false,
     })

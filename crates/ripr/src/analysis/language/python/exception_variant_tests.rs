@@ -661,6 +661,8 @@ fn unreadable_raise_or_class_shapes_record_no_stale_pin() -> Check {
     for class in [
         "class TooLongError(Exception):\n    def __new__(cls, message):\n        return EmptyError(message)\n",
         "class Mixin(Exception): pass\nclass TooLongError(Mixin, Exception): pass\n",
+        "class TooLongError(Exception):\n    if True:\n        def __new__(cls, message):\n            return EmptyError(message)\n",
+        "class TooLongError(Exception):\n    __new__ = staticmethod(lambda cls, message: EmptyError(message))\n",
     ] {
         let source = format!(
             "class EmptyError(Exception): pass\n{class}\ndef parse(s):\n    if len(s) > 10:\n        raise TooLongError(\"too long\")\n    return len(s)\n"
