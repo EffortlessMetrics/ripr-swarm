@@ -563,7 +563,11 @@ impl Backend {
                 if let Some(request) = self.refresh_scheduler.pending_request(generation) {
                     self.mark_pending_attempt(&request);
                     self.publish_analysis_status().await;
-                    self.refresh_pending_marker_surfaces().await;
+                    // #14526: no inline pull-marker re-serve here. It would
+                    // await `workspace/diagnostic/refresh` (bounded only by
+                    // the 30s client-request timeout) and hold this handler
+                    // despite the answer-once-queued contract below; the
+                    // active attempt's loop re-serves on its next transition.
                 }
                 self.log_refresh_queued(generation).await;
                 // #8733: answer once the scheduler has accepted (and
