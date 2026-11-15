@@ -783,26 +783,46 @@ fn predicate_as_owner_tail(
 /// [`is_obvious_return_expression`] reads (`false`, `!ready`, `-delta`,
 /// `mask & bits`, `vec![]`). Same fail-closed parser rule as the predicate
 /// tail ([`owner_single_line_tail`]); the tail must be one operand-level
-/// expression: a literal, a path, a unary/binary operator expression, a call,
+/// expression: a literal, a path, a unary or arithmetic/bitwise binary
+/// expression (no comparison or `&&`/`||`), a call,
 /// a method call, a field read, an index, a cast, an array or tuple literal,
 /// or a bare `vec!` invocation. Blocks, branches, closures, loops, `?`,
 /// `.await` and other macros keep the unknown sink.
 ///
-/// The changed text must also occur exactly once in the owner body. The
-/// infection stage's same-value check (#8659) locates the change by that
-/// text; when it is ambiguous (`-a` edited to `a` in `fn f(a: i32)`) the
-/// check cannot run, and a direct sink would let an exact assertion at an
-/// input where both versions agree (`f(0)`) read `exposed`. Such a tail keeps
-/// the unknown sink (fail closed).
+/// A direct sink lets an exact assertion read `exposed`, so it is admitted
+/// only where an assertion at an input on which both versions agree cannot
+/// borrow that credit (independent review of #14797):
+///
+/// - the tail is the owner's whole body (no statement can shadow an operand
+///   or feed it a value the test's literal arguments do not show); and
+/// - either the tail names nothing (`false`, `"x"`, `vec![]`, `[1, 2]`), so
+///   its old and new values differ at every input, or the infection stage's
+///   same-value fold (#8659) can decide the edit
+///   ([`owner_change_folds`](crate::analysis::test_grip_evidence::owner_change_folds)):
+///   the changed text is unique in the body and both versions fold to
+///   integers that differ somewhere. `-a` to `a` in `fn f(a: i32)`, `-p.x`,
+///   `v[i]` and casts fold to nothing and keep the unknown sink.
 fn return_value_as_owner_tail(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
 ) -> Option<LocalTextFact> {
     use ra_ap_syntax::{AstNode, SyntaxKind};
-    if owner_fn?.body.matches(probe.expression.as_str()).count() != 1 {
+    let owner = owner_fn?;
+    if !owner_tail_is_whole_body(owner) {
         return None;
     }
-    owner_single_line_tail(probe, owner_fn, |tail| {
+    let mut names_something = false;
+    let tail = owner_single_line_tail(probe, owner_fn, |tail| {
+        names_something = tail.syntax().descendants().any(|node| {
+            node.kind() == SyntaxKind::PATH_EXPR
+                || ra_ap_syntax::ast::MacroCall::cast(node).is_some_and(|call| {
+                    call.token_tree().is_some_and(|tree| {
+                        tree.syntax()
+                            .descendants_with_tokens()
+                            .any(|element| element.kind() == SyntaxKind::IDENT)
+                    })
+                })
+        });
         tail.syntax().descendants().all(|node| {
             matches!(
                 node.kind(),
@@ -835,7 +855,49 @@ fn return_value_as_owner_tail(
                 call.path()
                     .is_some_and(|path| path.syntax().text() == "vec")
             })
+        }) && tail.syntax().descendants().all(|node| {
+            // Comparison and short-circuit tails keep their own readers
+            // (the predicate tail above, RIPR-SPEC-0197 short-circuit tails,
+            // RIPR-SPEC-0158/0353 fixtures): this sink admits value operators
+            // only.
+            ra_ap_syntax::ast::BinExpr::cast(node).is_none_or(|binary| {
+                !matches!(
+                    binary.op_kind(),
+                    Some(
+                        ra_ap_syntax::ast::BinaryOp::CmpOp(_)
+                            | ra_ap_syntax::ast::BinaryOp::LogicOp(_)
+                            | ra_ap_syntax::ast::BinaryOp::Assignment { .. }
+                    )
+                )
+            })
         })
+    })?;
+    if names_something
+        && !probe.before.as_deref().is_some_and(|before| {
+            crate::analysis::test_grip_evidence::owner_change_folds(
+                &owner.body,
+                before,
+                &probe.expression,
+            )
+        })
+    {
+        return None;
+    }
+    Some(tail)
+}
+
+/// Whether the owner's body is one tail expression with no statements.
+fn owner_tail_is_whole_body(owner: &FunctionSummary) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    crate::analysis::syntax::parse_clean_source_file(&owner.body).is_some_and(|parse| {
+        parse
+            .tree()
+            .syntax()
+            .children()
+            .find_map(ast::Fn::cast)
+            .and_then(|function| function.body())
+            .and_then(|body| body.stmt_list())
+            .is_some_and(|list| list.statements().next().is_none() && list.tail_expr().is_some())
     })
 }
 
@@ -844,7 +906,7 @@ fn return_value_as_owner_tail(
 fn owner_single_line_tail(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
-    accept: impl Fn(&ra_ap_syntax::ast::Expr) -> bool,
+    accept: impl FnOnce(&ra_ap_syntax::ast::Expr) -> bool,
 ) -> Option<LocalTextFact> {
     use crate::analysis::syntax::parse_clean_source_file;
     use ra_ap_syntax::{
@@ -2464,29 +2526,33 @@ mod tests {
     /// binary, a bare `vec!`) is still what the owner returns.
     #[test]
     fn owner_tail_value_without_text_cues_reaches_return_sink() {
-        for (body, expression, line) in [
-            ("pub fn ready() -> bool {\n    false\n}", "false", 2),
-            ("pub fn flag(on: bool) -> bool {\n    !on\n}", "!on", 2),
+        for (body, before, expression, line) in [
+            // Constant tails: old and new values differ at every input.
+            ("pub fn ready() -> bool {\n    false\n}", None, "false", 2),
+            (
+                "pub fn ids() -> Vec<u32> {\n    vec![]\n}",
+                None,
+                "vec![]",
+                2,
+            ),
+            (
+                "pub fn pair() -> [u8; 2] { [b'a', b'b'] }",
+                None,
+                "[b'a', b'b']",
+                1,
+            ),
+            // Named operands the same-value fold decides.
             (
                 "pub fn neg(delta: i32) -> i32 {\n    -delta\n}",
+                Some("delta"),
                 "-delta",
                 2,
             ),
             (
                 "pub fn mask(bits: u32, keep: u32) -> u32 {\n    bits & keep\n}",
+                Some("bits | keep"),
                 "bits & keep",
                 2,
-            ),
-            (
-                "pub fn shift(bits: u32, by: u32) -> u32 {\n    bits<<by\n}",
-                "bits<<by",
-                2,
-            ),
-            ("pub fn ids() -> Vec<u32> {\n    vec![]\n}", "vec![]", 2),
-            (
-                "pub fn pair() -> [u8; 2] { [b'a', b'b'] }",
-                "[b'a', b'b']",
-                1,
             ),
         ] {
             assert!(
@@ -2494,7 +2560,8 @@ mod tests {
                 "{expression} must exercise the parser path"
             );
             let owner = tail_owner(body);
-            let probe = probe(ProbeFamily::ReturnValue, expression, line);
+            let mut probe = probe(ProbeFamily::ReturnValue, expression, line);
+            probe.before = before.map(str::to_string);
             let sinks = local_flow_sinks(&probe, Some(&owner));
             assert_eq!(sinks.len(), 1, "{body}: {sinks:?}");
             assert_eq!(
@@ -2508,46 +2575,116 @@ mod tests {
     }
 
     #[test]
-    fn owner_tail_value_refuses_ambiguous_non_tail_and_opaque_shapes() {
-        for (body, expression, line) in [
-            // Ambiguous text: the infection same-value check cannot locate it.
-            ("pub fn neg(a: i32) -> i32 {\n    -a\n}", "a", 2),
-            ("pub fn flag(on: bool) -> bool {\n    on\n}", "on", 2),
-            // Not the tail.
+    fn owner_tail_value_refuses_unfoldable_non_tail_and_opaque_shapes() {
+        for (body, before, expression, line) in [
+            // Ambiguous text: the same-value fold cannot locate the change, so
+            // `assert_eq!(neg(0), 0)` would otherwise read exposed.
+            ("pub fn neg(a: i32) -> i32 {\n    a\n}", Some("-a"), "a", 2),
+            // Named operands the fold cannot evaluate (review of #14797).
+            (
+                "pub fn x(p: P) -> i32 {\n    -p.x\n}",
+                Some("p.x"),
+                "-p.x",
+                2,
+            ),
+            (
+                "pub fn at(v: [i32; 1], i: usize) -> i32 {\n    -v[i]\n}",
+                Some("v[i]"),
+                "-v[i]",
+                2,
+            ),
+            (
+                "pub fn wide(a: i32) -> i64 {\n    -a as i64\n}",
+                Some("a as i64"),
+                "-a as i64",
+                2,
+            ),
+            // Named operand with no baseline text to fold.
+            (
+                "pub fn mask(bits: u32, keep: u32) -> u32 {\n    bits & keep\n}",
+                None,
+                "bits & keep",
+                2,
+            ),
+            // A statement before the tail can shadow an operand.
+            (
+                "pub fn mix(a: u32, b: u32) -> u32 {\n    let b = 0;\n    a | b\n}",
+                Some("a ^ b"),
+                "a | b",
+                3,
+            ),
             (
                 "pub fn ready() -> bool {\n    let x = false;\n    x\n}",
+                None,
                 "let x = false;",
                 2,
             ),
+            // Comparisons and short-circuit chains keep their own readers.
+            (
+                "pub fn gate(k: u8, bound: u8) -> bool {\n    k <= bound\n}",
+                Some("k < bound"),
+                "k <= bound",
+                2,
+            ),
+            (
+                "pub fn ship(paid: bool, stock: bool) -> bool {\n    stock && paid\n}",
+                Some("paid && stock"),
+                "stock && paid",
+                2,
+            ),
             // Unit owner.
-            ("pub fn noop(on: bool) {\n    !on\n}", "!on", 2),
-            // Blocks, branches, closures and other macros stay opaque.
+            ("pub fn noop(on: bool) {\n    !on\n}", Some("on"), "!on", 2),
+            // Blocks, closures and other macros stay opaque.
             (
                 "pub fn blocky() -> bool {\n    { false }\n}",
+                None,
                 "{ false }",
                 2,
             ),
             (
                 "pub fn lazy(on: bool) -> impl Fn() -> bool {\n    move || on\n}",
+                None,
                 "move || on",
                 2,
             ),
             (
-                "pub fn names() -> Vec<u32> {\n    my_vec![x]\n}",
-                "my_vec![x]",
+                "pub fn names() -> Vec<u32> {\n    my_vec![]\n}",
+                None,
+                "my_vec![]",
                 2,
             ),
             (
                 "pub fn scoped() -> Vec<u32> {\n    std::vec![]\n}",
+                None,
                 "std::vec![]",
+                2,
+            ),
+            // A `vec!` naming an operand is not a constant tail.
+            (
+                "pub fn one(x: u32) -> Vec<u32> {\n    vec![x]\n}",
+                None,
+                "vec![x]",
                 2,
             ),
         ] {
             let owner = tail_owner(body);
-            let probe = probe(ProbeFamily::ReturnValue, expression, line);
+            let mut probe = probe(ProbeFamily::ReturnValue, expression, line);
+            probe.before = before.map(str::to_string);
             assert_eq!(
                 return_value_as_owner_tail(&probe, Some(&owner)),
                 None,
+                "{body}"
+            );
+            // `-a as i64` carries digits, so the text-cue reader still sinks it.
+            if is_obvious_return_expression(expression) {
+                continue;
+            }
+            assert_eq!(
+                local_flow_sinks(&probe, Some(&owner))
+                    .iter()
+                    .filter(|sink| sink.kind == FlowSinkKind::ReturnValue)
+                    .count(),
+                0,
                 "{body}"
             );
         }
