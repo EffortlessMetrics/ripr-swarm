@@ -792,7 +792,9 @@ fn literal_runtime_commands_propagate_native_failure() -> TestResult {
         early_host_checked,
         "early editor host was not failure-injected"
     );
-    assert_eq!(count, 14, "nonempty payload denominator");
+    // 15 since #8115 added the single-line SCIP admission cargo step to the
+    // release-proof payload; it is failure-injected above like the others.
+    assert_eq!(count, 15, "nonempty payload denominator");
     Ok(())
 }
 
