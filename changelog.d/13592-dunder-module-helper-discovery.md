@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python dunder-helper discovery now records the weak `helper_owner_call` relation when a test binds an owner-class instance through a validated same-package factory and applies a binary operator to it. Dunder aliases are supported only along this oracle-free path; `!=` preserves the explicit `__ne__` guard, while unrelated imports, operands and modules never gain reach or `exposed`. This lets `Duration.__add__` reached through `parse_duration` connect its module-level helper without turning the relation into runtime or coverage proof (#13592).

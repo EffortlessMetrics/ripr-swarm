@@ -184,6 +184,13 @@ PR transition. Keep that receipt with the issue; a structural pass is not it.
 
 ## Selected-candidate pre-merge flow
 
+Development checks and review belong in the owning session. Ordinary PR
+publication, Draft/Ready transitions, updates and review comments must not start
+Actions, including cheap or skipped-job wrappers. #4842 retires auxiliary
+subscribers; the explicit legacy label route and its main cache writer remain
+bootstrap debt under #4838, not an exception in the final design. Do not restore
+an automated advisory reviewer to compensate for the retirement.
+
 Keep development cheap: focused warm proof, substantive review and joined repairs
 before expensive qualification. Useful alternative Drafts may be compared, but
 select the candidate intended to land for that objective before requesting full
@@ -262,8 +269,9 @@ implementation packages, re-exported at their established `ripr::` paths, and
 do not expose a product API. The first is `ripr-contract` (domain DTOs and
 adapter result shells).
 The unpublished `repo-policy` package is the bounded #7158/#7324 automation
-exception: it owns only workflow-policy, agent-skill and Git-index executable-file
-checks and has no normal/build dependency on the product or its parser stack.
+exception: it owns workflow-policy, agent-skill, Git-index executable-file
+checks and the shared user-text matcher (#8198), with no normal/build dependency
+on the product or its parser stack.
 It does not expose a product API.
 Do not split into `ripr-core`, `ripr-cli`, `ripr-lsp`, `ripr-engine` or
 `ripr-schema` without a real external contract; ADR 0027 support crates are

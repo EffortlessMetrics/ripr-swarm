@@ -968,6 +968,12 @@ manifest (no `[package]`) does not own a proposed test, and a manifest that
 exists but cannot be read or parsed refuses rather than falling through to an
 ancestor.
 
+The limitation records the before-phase observation in historical language, so
+it remains accurate after the proposed test is created and the attempt finishes.
+Package-name syntax follows stable Cargo 1.95 (Unicode XID start or underscore,
+then XID continuation or hyphen), rather than cargo-new or registry restrictions.
+This check establishes name identity, not complete Cargo manifest validity.
+
 ## Amendment (#13204): one projection of the selected new-test proposal
 
 The selected producer-owned new-test proposal is read through one projection,
@@ -1038,8 +1044,66 @@ a stray positional argument) under `--json` keeps exit 2 and its stderr prose
 and writes the standalone `cli_refusal` document to stdout (#6834 decision);
 other argv usage errors keep empty stdout.
 
+## Amendment (#13833): line-ending-only files are named, not silently dropped
+
+A path whose before and after states differ only in line endings, on a path
+Git itself normalizes (`core.autocrlf` or a `text` attribute), stays out of the
+attempt delta (#7377). The after phase records each such path in
+`after.line_ending_only_paths`, beside the verdict and omitted when empty, and
+narrates one bounded stderr line that starts `not counted as edits:`. Path
+names in that line are shown with control characters escaped. The bound delta
+digest, the stored verdict and the receipt binding do not include the list. A
+flip on a path Git does not normalize, a real content change, and a path a
+committed change also touches are not listed.
+
+- `crates/ripr/src/edit_cage/mod.rs::tests::eol_only_flip_of_a_forbidden_file_is_not_an_edit` (the flipped file is reported exactly; its real-edit control is not)
+- `crates/ripr/src/edit_cage/mod.rs::tests::eol_flip_without_git_normalization_remains_an_edit` (a git-visible flip is not reported)
+- `crates/ripr/src/cli/commands/agent.rs::tests::line_ending_only_note_names_skipped_files_and_stays_silent_without_them` (narration, bound, escaping, manifest round-trip)
+
+## Amendment (#14271): a refused production edit names the start that follows the undo
+
+The after phase withholds the new-attempt recipe from a narrated recovery when
+the shared start gate refuses a new start (#8766). It asks the gate while the
+refused changes are still in the tree. When the gate's only hold is that the
+attempt's inline test target has uncommitted changes, those can be the refused
+changes themselves, and undoing them lifts the hold. For that hold the
+edit-cage recovery line ("undo the refused changes ...") does not say "a new
+attempt is not offered"; it says no new attempt can start while the refused
+changes are in place and names `ripr repair --root <root>`, which asks the gate
+again once they are undone. A refusal about the gap itself keeps the withheld
+wording.
+
 ## Test Mapping
 
+- `crates/ripr/tests/repair_refused_production_edit_recovery.rs::refused_production_edit_recovery_points_at_a_start_that_then_works` (#14271)
+- `crates/ripr/src/app/task_first.rs::tests::held_by_uncommitted_target_reads_only_the_held_inline_reason` (#14271)
+
+## Amendment (#14084): no start the before phase would withhold
+
+The before phase selects its seam through the agent brief, which withholds a
+gap-class seam whose static evidence is unknown or opaque at a stage (for
+example a test that calls the changed function and asserts nothing, so the
+propagation stage is unknown). The shared repair-admission gate asks that same
+brief predicate after route eligibility and policy, and refuses such a seam up
+front: bare repair lists it under `no_eligible_seam`, an explicit item refuses
+with `seam_not_repair_eligible` (exit 3), and no attempt is created. The reason
+names the first unclear stage in plain words ("it cannot tell from reading the
+code whether the changed value reaches a result a test can check") and ends
+with "write the test by hand". `ripr agent start`, the card hold and the MCP
+admission use the same gate.
+
+The check screen prints `no repair start offered:` with that reason when its
+finding is a gap. When its finding is already read as unclear, the finding's
+own limitation guidance stands and no repair advisory is added. The brief owns
+the decision; the gate only words it. Whether such a gap should start a repair
+is not decided here.
+
+## Test Mapping
+
+- `crates/ripr/tests/check_repair_agree.rs::no_assertion_gap_is_not_offered_a_start_the_before_phase_refuses` (#14084)
+- `crates/ripr/tests/check_repair_agree.rs::weak_assertion_gap_start_offered_by_check_starts` (#14084 control)
+- `crates/ripr/tests/check_repair_agree.rs::unclear_finding_on_a_withheld_seam_adds_no_repair_advisory` (#14084)
+- `crates/ripr/src/app/task_first.rs::tests::evidence_limited_reason_names_the_first_unclear_stage` (#14084)
 - `crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve` (agent group help, the missing-`--seam-id` refusal and the workflow catalog agree that `--phase before` resolves `ripr check` finding IDs)
 - `crates/ripr/tests/repair_check_recommended_start.rs::boundary_change_starts_the_seam_check_recommends` (#12831)
 - `crates/ripr/tests/repair_check_recommended_start.rs::error_variant_change_starts_the_changed_branch_check_recommends` (#12831)
@@ -1056,6 +1120,8 @@ other argv usage errors keep empty stdout.
 - `crates/ripr/src/app/repair_card_handoff.rs::tests::a_proposal_names_the_workspace_only_when_the_evidence_admitted_it` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::created_proposed_file_binds_the_attempt_to_its_proposal` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::edit_outside_the_proposals_cage_is_refused` (#13203)
+- `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_with_an_invalid_package_identity_leaves_no_attempt` (#13205)
+- `crates/ripr/tests/proposal_only_repair_start.rs::package_name_preflight_agrees_with_cargo_metadata` (#13205)
 - `crates/ripr/src/output/agent_seam_packets.rs::tests::selected_proposal_reads_the_same_in_card_packet_and_mcp` (#13204)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::a_proposal_attempt_says_no_test_exists_yet` (#13205)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::an_existing_test_target_attempt_has_no_not_yet_disclosure` (#13205)

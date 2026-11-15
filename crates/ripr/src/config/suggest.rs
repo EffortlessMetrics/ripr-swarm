@@ -92,9 +92,15 @@ pub(super) fn expected_fields(error: &str) -> Vec<&str> {
 /// The closest candidate within a small edit distance, or `None` when nothing
 /// is close enough to be a believable typo. Ties go to the first candidate.
 pub(super) fn did_you_mean<'a>(key: &str, candidates: &[&'a str]) -> Option<&'a str> {
-    let limit = (key.chars().count() / 3).clamp(1, 3);
+    let length = key.chars().count();
+    let limit = (length / 3).clamp(1, 3);
     candidates
         .iter()
+        // The distance is at least the length difference, so a candidate
+        // whose length differs by more than the limit cannot match. Skipping
+        // it keeps the distance table small: an oversized rejected key or
+        // value (the file may be megabytes) is never aligned against anything.
+        .filter(|candidate| candidate.chars().count().abs_diff(length) <= limit)
         .map(|candidate| (edit_distance(key, candidate), *candidate))
         .filter(|(distance, _)| *distance <= limit)
         .min_by_key(|(distance, _)| *distance)

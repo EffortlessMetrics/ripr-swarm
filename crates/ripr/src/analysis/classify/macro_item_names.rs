@@ -211,7 +211,17 @@ pub(in crate::analysis) fn macro_may_define_item_named(source: &str, name: &str)
     if !contains_as_whole_word(source, name) && !source.contains("macro_rules!") {
         return false;
     }
-    MacroSites::scan(source).may_define(name)
+    // One scan answers every name. The helper-entry gate asks once per
+    // distinct entry name, so a diff that changes many functions of one file
+    // re-parsed that file once per changed function (#11738); within a run
+    // memo scope the file is scanned once.
+    crate::analysis::syntax::run_memo::memoize(
+        crate::analysis::syntax::run_memo::Product::MacroSites,
+        0,
+        source,
+        || std::rc::Rc::new(MacroSites::scan(source)),
+    )
+    .may_define(name)
 }
 
 /// Whether the file invokes an item- or statement-position macro whose body

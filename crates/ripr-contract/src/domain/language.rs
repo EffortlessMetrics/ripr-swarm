@@ -891,7 +891,7 @@ mod tests {
 
     #[test]
     fn language_feature_availability_matches_build() {
-        assert!(LanguageId::Rust.is_available());
+        assert_eq!(LanguageId::Rust.is_available(), cfg!(feature = "lang-rust"));
         assert_eq!(
             LanguageId::TypeScript.is_available(),
             cfg!(feature = "lang-typescript")

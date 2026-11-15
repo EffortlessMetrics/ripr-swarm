@@ -1,0 +1,9 @@
+#[kani::proof]
+#[kani::unwind(2)]
+fn cover_undetermined_compact() {
+    let mut steps: u8 = 0;
+    while steps < 3 {
+        steps += 1;
+    }
+    kani::cover!(steps == 3, "the loop must finish before the witness");
+}
