@@ -133,7 +133,7 @@ map is:
 | `ripr receipt write/check` | `schema_version` | `0.1` |
 | `ripr feedback record/export` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.8` |
-| `ripr cache status --json` (published as `schemas/ripr/cache-status.schema.json`) | `schema_version` | `0.2` |
+| `ripr cache status --json` (published as `schemas/ripr/cache-status.schema.json`) | `schema_version` | `0.3` |
 | `ripr cache export` success stdout | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v5`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
@@ -167,7 +167,7 @@ records that distinction.
 
 | Published schema | Current version | Version owner and rationale |
 | --- | --- | --- |
-| `schemas/ripr/cache-status.schema.json` | `0.2` | `crates/ripr/src/cli/commands/cache.rs`; cache status report (`ripr cache status --json`) |
+| `schemas/ripr/cache-status.schema.json` | `0.3` | `crates/ripr/src/cli/commands/cache.rs`; cache status report (`ripr cache status --json`) |
 | `schemas/ripr/capabilities.schema.json` | `0.1` | `crates/ripr-contract/src/domain/language_capability.rs`; language capability registry (`ripr capabilities --json`, #5531, #14067) |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
 | `schemas/ripr/check-timeout-refusal.schema.json` | `0.3` | `crates/ripr/src/app.rs`; analysis-timeout refusal envelope with input context (RIPR-SPEC-0241 amendment #10796) |
@@ -958,18 +958,19 @@ environment field above reproduces `ripr.toml` source text.
 The published schema for `ripr cache status --json` is
 [`schemas/ripr/cache-status.schema.json`](../schemas/ripr/cache-status.schema.json).
 It also states the two cross-field rules below: `via_symlink` agrees with
-`real_cache_dir`, and a `not_found` or `unavailable` report has all four
+`real_cache_dir`, and a `not_found` or `unavailable` report has all six
 counts at `0`. `crates/ripr/tests/cache_clear_safety.rs` validates the bytes
 the real command writes against it.
 
-`ripr cache status --json` (schema `0.2`) prints one object with
+`ripr cache status --json` (schema `0.3`) prints one object with
 `schema_version`, `cache_dir` (the directory as resolved from
 `RIPR_CACHE_DIR` or the workspace default), `real_cache_dir` (the resolved
 real directory when the configured cache path traverses a symlink or
 junction — as its leaf or through an ancestor component — otherwise
 `null`), `via_symlink` (`true` exactly when `real_cache_dir` is present),
-`status`, `entry_count`, `total_size_bytes`, `foreign_entry_count`, and
-`foreign_total_size_bytes`. `entry_count` and `total_size_bytes` cover only
+`status`, `entry_count`, `total_size_bytes`, `foreign_entry_count`,
+`foreign_total_size_bytes`, `reclaimable_entry_count`, and
+`reclaimable_size_bytes` (see below). `entry_count` and `total_size_bytes` cover only
 the recognized ripr cache layers — the recognized top-level layer
 directories, exactly the set `ripr cache clear` removes (schema `0.2`,
 #5987; earlier versions counted every regular file under the cache root). A
@@ -980,16 +981,25 @@ foreign layers, stray notes, stale-schema orphans — are disclosed
 separately as `foreign_entry_count` / `foreign_total_size_bytes`; clear
 preserves them. That `schema_version` versions this status report, not the
 on-disk cache layers (those carry their own versions in their directory
-names). `status` is `ok`, `not_found` (no cache directory yet; all four
+names). `status` is `ok`, `not_found` (no cache directory yet; all six
 counts are `0`), `partial` (some directories or entries, including the
 cache directory itself, could not be read, so the counts are lower bounds),
 or `unavailable` (the inspected path is not a directory, is a broken
-symlink, or its metadata could not be read; all four counts are `0`). A
+symlink, or its metadata could not be read; all six counts are `0`). A
 cache path that traverses a symlink or junction is resolved to the real
 directory for inspection (#5989), matching the directory `ripr check` reads
 and writes through the alias; `cache clear` keeps its fail-closed symlink
 refusal for the leaf and for symlinked ancestors, and names the real path
 or offending component it protects.
+
+Schema `0.3` is additive on `0.2` (#7047): `reclaimable_entry_count` and
+`reclaimable_size_bytes` count the per-file fact entries (Rust, TypeScript,
+Python) that the next run writing facts to a usable cache removes (a
+Git-tracked cache is never pruned): entries from older cache
+schemas, and entries from other ripr builds other than the two most recently
+used and any that served a cache hit in the last 7 days. Kept entries,
+including any newer cache schema, are not counted. They are a subset of the
+recognized-layer totals.
 
 `ripr cache export [--root PATH] --out NEW_DIRECTORY` prints a success JSON object
 with `schema_version: "0.1"`, `cache_dir` (absolute export directory),
