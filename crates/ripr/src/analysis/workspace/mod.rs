@@ -43,7 +43,6 @@ pub(crate) use discover::UnlinkedPythonTests;
 #[cfg(test)]
 pub(crate) use discover::discover_probe;
 pub use discover::discover_rust_files;
-pub(crate) use discover::path_enters_ignored_dir;
 pub(crate) use discover::{
     changed_source_files_absent_from_worktree, discover_preview_language_files,
     discover_python_test_files, discover_routed_language_files,
@@ -52,6 +51,7 @@ pub(crate) use discover::{
     limitations_for_unreadable_unchanged_paths, split_unreadable_unchanged_files,
     supplement_absent_file_limitations, worktree_contains_regular_source_file,
 };
+pub(crate) use discover::{is_ignored_dir_name, path_enters_ignored_dir};
 pub(crate) use named_dependent_scope::{
     composes_modules, withheld_source_disables_crate_root_routing,
 };

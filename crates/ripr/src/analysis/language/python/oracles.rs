@@ -635,10 +635,158 @@ fn assertion_from_assert(
 /// only literal positional arguments. Whether the call pins a value is
 /// decided once the callee is resolved (`bool_oracle.rs`).
 fn bare_bool_call(expr: &Expr, source: &SourceText<'_>) -> Option<super::PythonBareBoolCall> {
-    let (inner, negated) = match expr {
-        Expr::UnaryOp(unary) if unary.op == ast::UnaryOp::Not => (unary.operand.as_ref(), true),
-        other => (other, false),
+    match expr {
+        Expr::UnaryOp(unary) if unary.op == ast::UnaryOp::Not => {
+            literal_bool_call(unary.operand.as_ref(), true, source)
+        }
+        // `assert f(lit) is True` / `is False` (#13620): identity with a bool
+        // literal pins the same value `== True` / `== False` does, once the
+        // owner provably returns a `bool`. `is not`, `==`-free chains and a
+        // non-bool literal are not this form.
+        Expr::Compare(compare) => {
+            let ([ast::CmpOp::Is], [right]) =
+                (compare.ops.as_slice(), compare.comparators.as_slice())
+            else {
+                return None;
+            };
+            let (call, expected) = match (compare.left.as_ref(), right) {
+                (
+                    call,
+                    Expr::Constant(ast::ExprConstant {
+                        value: ast::Constant::Bool(value),
+                        ..
+                    }),
+                )
+                | (
+                    Expr::Constant(ast::ExprConstant {
+                        value: ast::Constant::Bool(value),
+                        ..
+                    }),
+                    call,
+                ) => (call, *value),
+                _ => return None,
+            };
+            literal_bool_call(call, !expected, source)
+        }
+        Expr::Call(call) => {
+            unittest_bool_call(call, source).or_else(|| literal_bool_call(expr, false, source))
+        }
+        other => literal_bool_call(other, false, source),
+    }
+}
+
+/// `self.assertTrue(f(lit))` / `assertFalse` / `assertIs(f(lit), True)`
+/// (#13620). Only the standard unittest receivers count; another receiver may
+/// be a project helper. `assertIsNot`, `assertIsNone` and a non-bool literal
+/// are not this form.
+fn unittest_bool_call(
+    call: &ast::ExprCall,
+    source: &SourceText<'_>,
+) -> Option<super::PythonBareBoolCall> {
+    let name = expr_full_name(call.func.as_ref())?;
+    // The receiver spelling alone proves nothing: a `TestCase` subclass may
+    // define its own `assertTrue`, so the file must visibly use stock ones.
+    if !source.standard_unittest_receivers(stock_unittest_receivers) {
+        return None;
+    }
+    let (inner, expected) = if is_unittest_receiver(&name, "assertTrue") {
+        (call.args.first()?, true)
+    } else if is_unittest_receiver(&name, "assertFalse") {
+        (call.args.first()?, false)
+    } else if is_unittest_receiver(&name, "assertIs") {
+        let [first, second, ..] = call.args.as_slice() else {
+            return None;
+        };
+        match (first, second) {
+            (
+                inner,
+                Expr::Constant(ast::ExprConstant {
+                    value: ast::Constant::Bool(value),
+                    ..
+                }),
+            )
+            | (
+                Expr::Constant(ast::ExprConstant {
+                    value: ast::Constant::Bool(value),
+                    ..
+                }),
+                inner,
+            ) => (inner, *value),
+            _ => return None,
+        }
+    } else {
+        return None;
     };
+    literal_bool_call(inner, !expected, source)
+}
+
+/// Whether every `self.assertTrue/assertFalse/assertIs` in this file can only
+/// reach `unittest.TestCase`'s own methods, judged on the text alone and
+/// conservatively (#13620): the file defines or assigns none of the guarded
+/// method names, and every class base is `unittest.TestCase`, or `TestCase`
+/// imported from `unittest`. Any other base may define them out of sight.
+fn stock_unittest_receivers(text: &str) -> bool {
+    const GUARDED: [&str; 4] = ["assertTrue", "assertFalse", "assertIs", "assertEqual"];
+    let imports_test_case = text.lines().any(|line| {
+        let line = line.trim();
+        line.starts_with("from unittest import")
+            && line
+                .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                .any(|word| word == "TestCase")
+    });
+    text.lines().all(|line| {
+        let line = line.trim_start();
+        let line = line.strip_prefix("async ").unwrap_or(line);
+        let defines = |rest: &str| {
+            GUARDED.iter().any(|name| {
+                rest.strip_prefix(name).is_some_and(|after| {
+                    !after.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_')
+                })
+            })
+        };
+        if let Some(rest) = line.strip_prefix("def ") {
+            return !defines(rest.trim_start());
+        }
+        // Any assignment to a guarded name, bare (`assertTrue = ...`) or as
+        // an attribute (`self.assertTrue = ...` in `setUp`), may replace it.
+        let assigns = GUARDED.iter().any(|name| {
+            line.match_indices(name).any(|(at, _)| {
+                let before_ok = line[..at]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
+                let after = line[at + name.len()..].trim_start();
+                before_ok
+                    && (after.starts_with(':')
+                        || (after.starts_with('=') && !after.starts_with("==")))
+            })
+        });
+        if assigns {
+            return false;
+        }
+        let Some(header) = line.strip_prefix("class ") else {
+            return true;
+        };
+        let Some((_, bases)) = header.split_once('(') else {
+            return true;
+        };
+        // Bases continued on later lines are unseen here: fail closed.
+        let Some((bases, _)) = bases.split_once(')') else {
+            return false;
+        };
+        bases.split(',').map(str::trim).all(|base| {
+            base.is_empty()
+                || base == "unittest.TestCase"
+                || (base == "TestCase" && imports_test_case)
+        })
+    })
+}
+
+fn literal_bool_call(
+    inner: &Expr,
+    negated: bool,
+    source: &SourceText<'_>,
+) -> Option<super::PythonBareBoolCall> {
     let Expr::Call(call) = inner else {
         return None;
     };
@@ -799,7 +947,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         oracle_kind,
         oracle_strength,
         oracle_shape,
-        bare_bool_call: None,
+        bare_bool_call: unittest_bool_call(call, source),
         known_equality_helper: (oracle_shape == PythonOracleShape::UnknownCustomHelper)
             .then(|| known_equality_candidate(call, source))
             .flatten(),
@@ -1181,6 +1329,27 @@ fn oracle_for_call(
             OracleStrength::Smoke,
             PythonOracleShape::BroadSmokeAssertion,
         )),
+        // #13620: `assertIs(f(x), True)` is an identity check against a bool
+        // literal. It is weak until `bool_oracle.rs` resolves a bool owner;
+        // any other `assertIs` stays unrecorded as before.
+        "assertIs"
+            if is_unittest_receiver(&name, "assertIs")
+                && call.args.iter().take(2).any(|argument| {
+                    matches!(
+                        argument,
+                        Expr::Constant(ast::ExprConstant {
+                            value: ast::Constant::Bool(_),
+                            ..
+                        })
+                    )
+                }) =>
+        {
+            Some((
+                OracleKind::RelationalCheck,
+                OracleStrength::Weak,
+                PythonOracleShape::BoundaryAssertion,
+            ))
+        }
         "assertRaisesRegex"
             if call
                 .args

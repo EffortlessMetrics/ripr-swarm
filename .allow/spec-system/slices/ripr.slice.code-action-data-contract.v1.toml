@@ -19,8 +19,9 @@ client_capability_missing named) while other clients keep the fail-closed
 omission. The same disabled form names the previously silent suppression
 sites: stale_snapshot (stale gap diagnostic), verification_route_unavailable
 and receipt_route_unavailable (gap record without a safe verify/receipt
-command), and preview_or_static_limitation (cross-language unresolved
-target). Disabled reasons are a closed vocabulary with a fail-closed emit
+command), preview_or_static_limitation (cross-language unresolved
+target), and repair_route_not_ready (no bounded test target yet, #13716).
+Disabled reasons are a closed vocabulary with a fail-closed emit
 guard; reserved reasons name their future producers and stay unemittable.
 It does not change the advertised capability set (resolve_provider stays
 false), the command-negotiation rules themselves, quickfix.ripr emissions

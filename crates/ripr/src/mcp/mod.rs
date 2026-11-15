@@ -26,7 +26,7 @@ pub(super) const MAX_RESPONSE_BYTES: usize = 128 * 1024;
 /// [`outer_envelope_budget`] always leaves a usable budget.
 pub(super) const MAX_REQUEST_ID_BYTES: usize = 16 * 1024;
 
-/// Fixed wire overhead the pinned SDK (rmcp 3.7.0) can add around a
+/// Fixed wire overhead the pinned SDK (rmcp 3.9.0) can add around a
 /// measured tool or resource envelope when it serializes the complete
 /// JSON-RPC response: the `{"jsonrpc":"2.0","id":` + `,"result":` + `}` +
 /// `\n` frame fields (34 bytes) plus, when the negotiated peer keeps the
@@ -84,18 +84,15 @@ The MCP surface is read-only. It exposes tools `ripr_workspace_status`,
 `ripr://snapshot/{snapshot_id}`, `ripr://gap/{canonical_id}`,
 `ripr://gap/{canonical_id}/limitation`, `ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
 `ripr://repair-card/{canonical_id}`.
-`ripr_refresh` analyzes the committed default-branch diff by default through
-the shared check authority; its optional `base` argument selects another
-revision. By default, staged and unstaged tracked edits and untracked files
-are outside the analyzed scope. Opt in with `source: "worktree"` to include
-saved staged and unstaged tracked edits; unsaved buffers and untracked files
-remain outside. Worktree cards require established producer custody; otherwise
-withheld with the cause. Readiness depends on per-item gates. Refresh after
-edits. Its warm cache lives under the root's `target/ripr/`.
-`ripr check` defaults to the working tree
-when staged or unstaged tracked edits exist; shared check authority does not
-mean identical input. Use `ripr check --committed` for committed input, or
-`ripr check --worktree --format json` for saved tracked edits outside MCP.
+`ripr_refresh` analyzes the default-branch diff through the shared check
+authority; its optional `base` argument selects another revision. Like
+`ripr check`, it reads saved staged and unstaged tracked edits when any exist
+and committed input otherwise; `source: "committed"` or `source: "worktree"`
+forces one; unsaved buffers and untracked files remain outside. Worktree cards
+require established producer custody; otherwise withheld with the cause.
+Readiness depends on per-item gates. Refresh after edits. Its warm cache lives
+under the root's `target/ripr/`. Outside MCP, `ripr check --committed` reads
+committed input and `ripr check --worktree --format json` saved tracked edits.
 Gap tools read their captured snapshot and never re-run analysis.
 `ripr_list_repair_attempts` discovers durable CLI attempts before or after
 refresh, with bounded inventory-bound pages; it never creates the store.

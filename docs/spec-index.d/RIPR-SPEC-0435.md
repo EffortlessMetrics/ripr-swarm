@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0435](../specs/RIPR-SPEC-0435-gate-check-one-command-ci-gate.md) | accepted | `ripr gate check` one-command CI gate: review-comments then gate evaluate, fail closed on producer failure (#13772) |

@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"unknown"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach next: drains_all, empty, single", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 9)", "related test src/lib.rs:19 drains_all uses smoke only oracle, not graded against this probe: assert!(s.next().is_none());", "related test src/lib.rs:17 empty uses exact value oracle, not graded against this probe: assert_eq!(Scheduler::new().next(), None);", "related test src/lib.rs:18 single uses no oracle: assert_eq!(s.next().unwrap().name, \"a\");", "source assertion argument value \"a\" at line 18", "source assertion argument value 0 at line 18"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":9}

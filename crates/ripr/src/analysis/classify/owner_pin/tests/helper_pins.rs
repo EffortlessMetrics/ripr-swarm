@@ -455,7 +455,7 @@ fn a_helper_scoped_assert_eq_binding_refuses_the_loan() -> Result<(), String> {
         // The disclosure names the helper's own binding, a real rebinding,
         // not a site-less analyzer limit.
         match helper_assertion_refusal(&module(&helper, CALLS))? {
-            Some(AssertionRefusal::MacroBinding { name, site }) => {
+            Some(AssertionRefusal::MacroBinding { name, site, .. }) => {
                 assert_eq!(name, "assert_eq", "{shadow}");
                 let (_, site) = site.ok_or("the helper's binding is disclosed")?;
                 assert_eq!(site.line, 10, "{shadow}");

@@ -22,6 +22,10 @@ const BEGIN_LINE: &str = "<!-- ripr:agents:begin (written by `ripr init --agents
 const END_LINE: &str = "<!-- ripr:agents:end -->";
 
 pub(super) const FOLLOW_UP: &str = "Commit the agent instruction file(s) so every session sees them. Register the MCP server only if your agent prefers tools over the CLI: see docs/AGENT_QUICKSTART.md.";
+/// Used when the same run already plans the MCP config, so the registration
+/// hint would tell the user to do what `--mcp` just did.
+pub(super) const FOLLOW_UP_WITH_MCP: &str =
+    "Commit the agent instruction file(s) so every session sees them.";
 
 /// The instruction block. `docs/AGENT_QUICKSTART.md` carries the identical
 /// text; a unit test keeps the two equal.
@@ -181,7 +185,7 @@ impl AgentLanguages {
         }
         if self.rust {
             return format!(
-                "{AGENT_BLOCK}\nPython/TypeScript files here are a preview and their results are advisory: steps 1, 2\nand 5 are the same, but `ripr repair` and `ripr agent stub` are Rust only. Step 5 still\nneeds `summary.findings` = `summary.exposed` for those files too. Write the test by\nhand next to the related test with exact values, and verify it with {}.\n",
+                "{AGENT_BLOCK}\nPython/TypeScript files here are a preview and their results are advisory: steps 1, 2\nand 5 are the same, but `ripr repair` and `ripr agent stub` are Rust only. Write the\ntest by hand next to the related test with exact values, and verify it with {}.\n",
                 self.verify_command()
             );
         }
@@ -198,23 +202,20 @@ Keep the same --base and source options for every check below.
 Loop (max 3 rounds per gap):
 1. FIND    `ripr check --quiet --format agent` (add `--base <branch>` if no origin/main|master).
            Read gap, test and next lines. Exit 0 can still mean gaps; 2/3 = stop (read stderr).
-           A `stop=` line about preview evidence is expected; it is not an error.
+           An `open=`, `stop=` or `done=` line saying preview evidence is advisory is expected.
 2. DETAIL  Follow the printed `ripr explain ...` command as printed, then the `ripr context ...`
            it names (JSON).
 3. WRITE   One focused test next to the related test. Assert exact changed values: every
            changed field, branch and boundary (below, equal, above). {advice}
 4. VERIFY  Run {verify}; it must pass.
-           Then run `ripr check --quiet --format json-compact` once on the same root, base and
+           Then run `ripr check --quiet --format agent` once on the same root, base and
            saved source (new files need `git add -N PATH`). The new test must be in the
            analyzed source: commit it, or pass `--worktree` to both FIND and VERIFY. Check that
-           run's exit status before reading the JSON; do not change inputs before DONE.
-5. DONE    Use that same report; require exit 0 and these fields:
-           `analysis_outcome.outcome.kind`: `complete_no_findings` or `complete_with_findings`;
-           `analysis_outcome.analysis_complete`: true; `summary.findings` = `summary.exposed`.
-           Missing required fields, `analysis_outcome.document_complete: false`, or
-           `unanalyzed_working_tree: true` mean STOP.
-           `gaps=0` in the agent header is not enough: `no_static_path`, `reachable_unrevealed`
-           and `*_unknown` findings are not exposed. If findings remain, return to FIND.
+           run's exit status before reading it; do not change inputs before DONE.
+5. DONE    Use that same report; require exit 0 and its last line `verify=complete|...`.
+           `verify=refused`, a missing `verify=` line, or a cut-off report mean STOP.
+           `done=` or an empty gap list alone is never enough.
+           If gaps remain, return to FIND; if inputs change, repeat VERIFY before DONE.
            Report tests and static result; this does not establish runtime bug detection.
 
 STOP and report instead of looping when:
@@ -654,6 +655,100 @@ mod tests {
     const ALL_ENABLED: [LanguageId; 3] =
         [LanguageId::Rust, LanguageId::Python, LanguageId::TypeScript];
 
+    fn assert_compact_verification(block: &str) {
+        let (before_verify, verify) = block.split_once("4. VERIFY").unwrap_or(("", ""));
+        let (verify, done) = verify.split_once("5. DONE").unwrap_or(("", ""));
+        let done = done.split("STOP and report").next().unwrap_or("");
+        assert!(before_verify.contains("ripr check --quiet --format agent"));
+        assert_eq!(
+            verify.matches("ripr check --quiet --format agent").count(),
+            1,
+            "VERIFY must request one compact post-edit check:\n{block}"
+        );
+        assert!(
+            !done.contains("ripr check"),
+            "DONE must reuse VERIFY:\n{block}"
+        );
+        for condition in [
+            "same report",
+            "require exit 0",
+            "last line `verify=complete|...`",
+            "`verify=refused`",
+            "a missing `verify=` line",
+            "cut-off report",
+            "`done=` or an empty gap list alone is never enough",
+            "if inputs change, repeat VERIFY",
+            "does not establish runtime bug detection",
+        ] {
+            assert!(
+                done.contains(condition),
+                "block lost {condition:?}:\n{block}"
+            );
+        }
+        for obsolete in ["--format json", "summary.findings", "summary.exposed"] {
+            assert!(
+                !block.contains(obsolete),
+                "ordinary completion must not require JSON drilldown ({obsolete}):\n{block}"
+            );
+        }
+    }
+
+    #[test]
+    fn preview_blocks_verify_from_the_same_compact_report() {
+        for languages in [
+            PYTHON,
+            TYPESCRIPT,
+            AgentLanguages {
+                python: true,
+                ..TYPESCRIPT
+            },
+        ] {
+            let block = languages.block();
+            assert_compact_verification(&block);
+            assert!(block.contains(languages.verify_command()), "{block}");
+            assert!(
+                block.contains("preview, so results are advisory"),
+                "{block}"
+            );
+            assert!(
+                block.contains("commit it, or pass `--worktree` to both FIND and VERIFY"),
+                "{block}"
+            );
+            assert!(
+                block.contains("new files need `git add -N PATH`"),
+                "{block}"
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_language_blocks_do_not_reintroduce_json_completion_fields() {
+        for languages in [
+            AgentLanguages::RUST,
+            AgentLanguages {
+                python: true,
+                ..AgentLanguages::RUST
+            },
+            AgentLanguages {
+                typescript: true,
+                ..AgentLanguages::RUST
+            },
+            AgentLanguages {
+                python: true,
+                typescript: true,
+                ..AgentLanguages::RUST
+            },
+        ] {
+            let block = languages.block();
+            assert!(block.starts_with(AGENT_BLOCK), "{block}");
+            assert_compact_verification(&block);
+            if languages.python || languages.typescript {
+                assert!(block.contains(languages.verify_command()), "{block}");
+                assert!(block.contains("results are advisory"), "{block}");
+            }
+        }
+    }
+
     #[test]
     fn rust_root_keeps_the_rust_text_and_globs() {
         assert_eq!(AgentLanguages::RUST.block(), AGENT_BLOCK);
@@ -689,14 +784,13 @@ mod tests {
             "weak DONE rule came back"
         );
         for needle in [
-            "`summary.findings` = `summary.exposed`",
-            "analysis_outcome.analysis_complete",
-            "complete_no_findings",
+            "last line `verify=complete|...`",
+            "`verify=refused`",
+            "a missing `verify=` line",
             "empty scope, no changed behavior, partial analysis",
             "Analyzer limit",
             "after 3 exact-assert tests",
             "exits 2 or 3",
-            "`unanalyzed_working_tree: true` mean STOP",
             "commit it, or pass `--worktree` to both FIND and VERIFY",
         ] {
             assert!(block.contains(needle), "python block lost {needle:?}");
@@ -751,7 +845,7 @@ mod tests {
         assert!(block.contains("`ripr repair` and `ripr agent stub` are Rust only"));
         assert!(block.contains("pytest -k"));
         assert!(block.contains("advisory"));
-        assert!(block.contains("`summary.findings` = `summary.exposed`"));
+        assert_compact_verification(&block);
         let front = mixed.cursor_frontmatter();
         assert!(front.contains("Rust/Python behavior"), "{front}");
         assert!(front.contains("\"**/*.rs\", \"**/*.py\""), "{front}");

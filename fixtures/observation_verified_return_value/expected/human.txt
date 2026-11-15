@@ -9,7 +9,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: no gap selected for repair
-  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
+  Safe next action: none for this change; a test appears to notice it. 1 other finding did not read as noticed; see below. This is a static reading of the code, not a test run
   File: ./src/lib.rs:4
   Static exposure: exposed (severity: info, confidence 1.00)
   Gap ID (for scripts): gap:rust:src/lib.rs:compute_score:return_value:return_value:x*scale_factor
