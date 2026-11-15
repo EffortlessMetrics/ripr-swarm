@@ -6,7 +6,9 @@
 //! when the diff proves it in this file:
 //!
 //! - one `static`, `const`, `fn` or `type` declaration line changes only its
-//!   name, and that item has no attribute that could observe the name;
+//!   name, outside any `extern "ABI" { .. }` block (a foreign item links by
+//!   its spelling), and that item has no attribute that could observe the
+//!   name;
 //! - the whole item, after the name, is byte-identical on both sides;
 //! - the old name no longer appears in the new file's code, and the new name
 //!   did not appear in the old file's code;
@@ -375,6 +377,30 @@ fn declares(view: &SourceView<'_>, line: usize, name: &str) -> bool {
         && view.masked[start..words[at].0]
             .chars()
             .all(|ch| ch.is_alphanumeric() || ch.is_whitespace() || "_()".contains(ch))
+        && !inside_extern_block(view, start)
+}
+
+/// Whether byte `at` sits inside an `extern "ABI" { .. }` block, whose
+/// foreign `fn`/`static` items bind a linker symbol by their spelling.
+fn inside_extern_block(view: &SourceView<'_>, at: usize) -> bool {
+    let mut blocks = Vec::<bool>::new();
+    let mut segment_start = 0;
+    for (index, ch) in view.masked[..at].char_indices() {
+        match ch {
+            '{' => {
+                let opener = identifiers(&view.masked, segment_start, index).last();
+                blocks.push(matches!(opener, Some((_, "extern"))));
+                segment_start = index + 1;
+            }
+            '}' => {
+                blocks.pop();
+                segment_start = index + 1;
+            }
+            ';' => segment_start = index + 1,
+            _ => {}
+        }
+    }
+    blocks.contains(&true)
 }
 
 /// Whether every attribute line directly above 1-based `line` (doc comments

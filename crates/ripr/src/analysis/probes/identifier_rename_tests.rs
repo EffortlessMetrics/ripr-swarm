@@ -197,7 +197,7 @@ fn renaming_an_entry_point_is_never_proven() -> Result<(), String> {
 /// value still changes: the use site keeps its probe (Devin review on #14779).
 #[test]
 fn a_rename_that_may_not_mean_the_same_item_stays_probed() -> Result<(), String> {
-    let cases: [(&str, &str, &str, &str); 4] = [
+    let cases: [(&str, &str, &str, &str); 5] = [
         (
             "a receiver method shares the renamed spelling",
             "fn len() -> usize {\n    0\n}\n\npub fn measure(v: &Vec<u8>) -> usize {\n    v.len() + len()\n}\n",
@@ -215,6 +215,12 @@ fn a_rename_that_may_not_mean_the_same_item_stays_probed() -> Result<(), String>
             "const OLD: i32 = { 1 }\n    + 2;\n\npub fn value() -> i32 {\n    OLD * 2\n}\n",
             "const NEW: i32 = { 1 }\n    + 3;\n\npub fn value() -> i32 {\n    NEW * 2\n}\n",
             "NEW * 2",
+        ),
+        (
+            "a foreign item binds its linker symbol by spelling",
+            "unsafe extern \"C\" {\n    fn strlen(s: *const u8) -> usize;\n}\n\npub fn length(s: *const u8) -> usize {\n    unsafe { strlen(s) }\n}\n",
+            "unsafe extern \"C\" {\n    fn my_strlen(s: *const u8) -> usize;\n}\n\npub fn length(s: *const u8) -> usize {\n    unsafe { my_strlen(s) }\n}\n",
+            "unsafe { my_strlen(s) }",
         ),
         (
             "an enum variant shares the renamed spelling",

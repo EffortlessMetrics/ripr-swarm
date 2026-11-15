@@ -142,8 +142,9 @@ usize]`). `crates/ripr/src/analysis/probes/identifier_rename.rs` owns the
 decision. The rename is established only when all of these hold:
 
 - exactly one `static`, `const`, `fn` or `type` declaration line changes
-  only its name (`struct`/`enum` names reach derived `Debug`; `main` is
-  bound by spelling);
+  only its name (`struct`/`enum` names reach derived `Debug`; `main` and
+  foreign items inside an `extern "ABI" { .. }` block are bound by
+  spelling);
 - the whole item, through its item-level `;` or a `fn` body's closing `}`,
   is byte-identical after the respelling;
 - the old name no longer appears in the new file's code and the new name
