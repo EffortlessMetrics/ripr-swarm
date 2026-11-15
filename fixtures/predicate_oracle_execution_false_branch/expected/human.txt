@@ -35,7 +35,7 @@ Start here:
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach discounted_total: equality_threshold_discounts
     - infection yes: Detected related test input at the changed boundary
-    - 10 more detail line(s) in --format human-full
+    - 9 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)

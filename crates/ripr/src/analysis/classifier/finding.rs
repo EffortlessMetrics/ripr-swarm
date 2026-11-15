@@ -158,6 +158,9 @@ pub(in crate::analysis) fn build_finding_with_origins(
             unconfirmed,
             &evidence.implicit_dispatch_tests,
         );
+        if swaps_one_error_variant_for_another(context.probe) {
+            mark_ok_only_pins_not_observing(&mut related_tests);
+        }
     }
     let fallback_pin_syntax = OwnerPinSyntax::default();
     let collection_contents_check_side_effect =
@@ -534,6 +537,104 @@ fn annotate_related_test_misses(
     }
 }
 
+/// Whether the probe's line only replaces one `Err` variant with a different
+/// one (#14454): an `error_path` or `return_value` probe whose base and head
+/// lines each hold exactly one `Err` construction, with differing literal
+/// variants, and are otherwise identical up to whitespace. A guard, pattern
+/// or second return changed on the same line, or unknown base text, fails
+/// closed.
+fn swaps_one_error_variant_for_another(probe: &Probe) -> bool {
+    if !matches!(
+        probe.family,
+        ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
+    ) {
+        return false;
+    }
+    let Some(before_line) = probe.before.as_deref() else {
+        return false;
+    };
+    let one_err = |text: &str| text.matches("Err(").count() + text.matches("Err::<").count() == 1;
+    if !one_err(before_line) || !one_err(&probe.expression) {
+        return false;
+    }
+    let (Some(before), Some(after)) = (
+        exact_error_variant(before_line),
+        exact_error_variant(&probe.expression),
+    ) else {
+        return false;
+    };
+    // Whitespace and a trailing `;` or `,` are spelling, not behavior: the
+    // probe expression is stored without the statement terminator.
+    let squeeze = |text: &str| {
+        text.split_whitespace()
+            .collect::<String>()
+            .trim_end_matches([';', ','])
+            .to_string()
+    };
+    before != after
+        && before_line.matches(before.as_str()).count() == 1
+        && squeeze(&before_line.replacen(before.as_str(), &after, 1)) == squeeze(&probe.expression)
+}
+
+/// #14454: on an `Err`-to-`Err` variant swap, a row the annotation pass
+/// marked `missing_exact_assertion` whose oracle pins only the `Ok` arm
+/// cannot observe the change. If its input reaches the changed branch the
+/// pin fails on old and new code alike, and if not the change is never
+/// seen. Such a row is `assertion_not_observing`; its role and oracle stay,
+/// so no class or gate moves.
+fn mark_ok_only_pins_not_observing(related_tests: &mut [RelatedTest]) {
+    for test in related_tests.iter_mut() {
+        if test.miss == Some(RelatedTestMiss::MissingExactAssertion)
+            && test.oracle.as_deref().is_some_and(pins_only_the_ok_arm)
+        {
+            test.miss = Some(RelatedTestMiss::AssertionNotObserving);
+            test.miss_support = None;
+        }
+    }
+}
+
+/// Whether an oracle is a plain `assert_eq!` whose one side is an `Ok(..)`
+/// value or a direct `.unwrap()` / `.expect(..)` of the call, so it only
+/// ever passes on the success arm (#14454). `assert_ne!`, any text naming
+/// `Err`, and error accessors (`.err()`, `.unwrap_err()`, `.expect_err(..)`,
+/// `.map_err(..)`) are excluded: those can observe an error.
+fn pins_only_the_ok_arm(oracle: &str) -> bool {
+    let oracle = oracle.trim_start();
+    if !oracle.starts_with("assert_eq!")
+        || oracle.contains("Err")
+        || [".err()", "_err(", "_err::<"]
+            .iter()
+            .any(|accessor| oracle.contains(accessor))
+    {
+        return false;
+    }
+    crate::analysis::classify::assertion_comparison_operands(oracle).is_some_and(|operands| {
+        let [left, right] = &operands;
+        let (left, right) = (left.trim(), right.trim());
+        pins_ok_against(left, right) || pins_ok_against(right, left)
+    })
+}
+
+/// Whether `side` pins the success arm of the call compared against `other`.
+/// Fails closed when the Ok side cannot be the changed call's result: an
+/// `Ok(..)` wrapping a call compared with a bare binding (`Ok(f(x))` against
+/// `expected`, which may hold an `Err`), or an unwrap of a bare binding
+/// compared with a call (`f(x)` against `expected.unwrap()`).
+fn pins_ok_against(side: &str, other: &str) -> bool {
+    // An argument list marks a call; `()` (a unit value or a no-argument
+    // method such as `.to_string()`) does not.
+    let has_call = |text: &str| text.replace("()", "").contains('(');
+    if let Some(inner) = side.strip_prefix("Ok(") {
+        return !has_call(inner) || has_call(other);
+    }
+    let receiver = side.strip_suffix(".unwrap()").or_else(|| {
+        side.rfind(".expect(")
+            .filter(|&at| side.ends_with(')') && !side[at..].contains(")."))
+            .map(|at| &side[..at])
+    });
+    receiver.is_some_and(|receiver| has_call(receiver) || !has_call(other))
+}
+
 /// Strongest first.
 fn strength_rank(strength: &OracleStrength) -> u8 {
     match strength {
@@ -691,7 +792,8 @@ fn text_calls_owner(text: &str, owner_name: &str) -> bool {
 /// whose initializer (to the next `;`) calls `owner_name` binds the name; the
 /// name is dropped when the body binds it through a covered non-owner form:
 /// another `let` of the same name, a destructuring pattern that mentions it,
-/// a `for` loop variable, or a plain `<ident> = ...` reassignment. The scan is
+/// a `for` loop variable, a plain `<ident> = ...` reassignment, a field write
+/// (`<ident>.0 = ...`) or a `&mut <ident>` borrow. The scan is
 /// position-blind, so each covered rebinding fails closed (RIPR-SPEC-0001): an
 /// assertion after `let amount = tax(100); let amount = 0;` is not credited as
 /// observing `tax`. Uppercase single-name patterns (`let Some(x) = ...`) and
@@ -735,6 +837,34 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
                 events.push((word.to_string(), false));
             }
         }
+    }
+    /// The part of `text` that belongs to one statement or match arm: it stops
+    /// at `;` or `,` outside brackets, or at an unmatched closing bracket, so
+    /// a block-tail `amount = 0 }` does not swallow the code after it.
+    fn statement_prefix(text: &str) -> &str {
+        let mut depth = 0usize;
+        for (index, byte) in text.bytes().enumerate() {
+            match byte {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    if depth == 0 {
+                        return &text[..index];
+                    }
+                    depth -= 1;
+                }
+                b';' | b',' if depth == 0 => return &text[..index],
+                _ => {}
+            }
+        }
+        text
+    }
+    /// Whether an initializer's value is the owner's result. A block whose
+    /// statements precede its tail (`{ tax(2); 0 }`, or one cut at its first
+    /// `;`) cannot be read as the owner's value, so it fails closed.
+    fn value_from_owner(initializer: &str, owner_name: &str) -> bool {
+        let opens = initializer.matches(['(', '[', '{']).count();
+        let closes = initializer.matches([')', ']', '}']).count();
+        opens == closes && !initializer.contains(';') && text_calls_owner(initializer, owner_name)
     }
     // Quoted text and comments are not code: mask them before every scan.
     let masked = crate::analysis::extract::mask::mask_comments_and_strings(body);
@@ -781,10 +911,11 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
                     .next()
                     .is_some_and(|character| character.is_ascii_uppercase())
                 && !head[name.len()..].trim_start().starts_with(['(', '{', '@'])
+                && !head[name.len()..].trim_start().starts_with("::")
         });
         match simple {
             Some(name) => {
-                events.push((name.to_string(), text_calls_owner(initializer, owner_name)))
+                events.push((name.to_string(), value_from_owner(initializer, owner_name)))
             }
             None => record_pattern_bindings(pattern, &mut events),
         }
@@ -816,6 +947,46 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
                 continue;
             }
             let tail = body[from..].trim_start();
+            // `&mut name` lets the callee overwrite it, and `name.0 = ..` /
+            // `name.field = ..` rewrites part of it: neither is still the
+            // owner's result.
+            let head = body[..at].trim_end();
+            if head.ends_with("&mut") {
+                events.push((name.clone(), false));
+                continue;
+            }
+            if at > 0 && bytes[at - 1] == b'.' {
+                // `other.name`: a field label, not the local.
+                continue;
+            }
+            if tail.starts_with('.') {
+                // `name.0 = ..`, `name.a.b -= ..`: walk the field path, then
+                // look for a plain or compound assignment operator.
+                let mut after_field = tail;
+                let mut segments = 0usize;
+                while let Some(field) = after_field.strip_prefix('.') {
+                    let field_end = field
+                        .find(|character: char| {
+                            !character.is_ascii_alphanumeric() && character != '_'
+                        })
+                        .unwrap_or(field.len());
+                    if field_end == 0 {
+                        break;
+                    }
+                    after_field = field[field_end..].trim_start();
+                    segments += 1;
+                }
+                const COMPOUND: [&str; 10] =
+                    ["+=", "-=", "*=", "/=", "%=", "^=", "&=", "|=", "<<=", ">>="];
+                let plain = after_field.starts_with('=')
+                    && !after_field.starts_with("==")
+                    && !after_field.starts_with("=>");
+                let compound = COMPOUND.iter().any(|op| after_field.starts_with(op));
+                if segments > 0 && (plain || compound) {
+                    events.push((name.clone(), false));
+                }
+                continue;
+            }
             // `=` or a compound assignment (`+=`, `<<=`, ...); comparisons
             // (`==`, `<=`, `>=`, `!=`) and `=>` are not rebindings.
             let operator = ["<<", ">>"]
@@ -829,15 +1000,11 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
             if !assign.starts_with('=') || assign.starts_with("==") || assign.starts_with("=>") {
                 continue;
             }
-            if at > 0 && bytes[at - 1] == b'.' {
-                continue;
-            }
-            let head = body[..at].trim_end();
             if head.ends_with("let") || head.ends_with("mut") || head.ends_with("ref") {
                 continue;
             }
-            let initializer = assign[1..].split(';').next().unwrap_or("");
-            events.push((name.clone(), text_calls_owner(initializer, owner_name)));
+            let initializer = statement_prefix(&assign[1..]);
+            events.push((name.clone(), value_from_owner(initializer, owner_name)));
         }
     }
     let mut bound: Vec<String> = Vec::new();
@@ -944,7 +1111,8 @@ mod tests {
     use super::{
         ActivationEvidence, Unconfirmed, annotate_related_test_misses,
         bound_identifiers_from_owner_calls, exact_oracle_aligns_with_sink,
-        oracle_binds_sink_identity, oracle_text_aligns_with_sink, sink_kind_corresponds,
+        mark_ok_only_pins_not_observing, oracle_binds_sink_identity, oracle_text_aligns_with_sink,
+        sink_kind_corresponds, swaps_one_error_variant_for_another,
     };
     use crate::analysis::classifier::evidence::ClassifiedProbeEvidence;
     use crate::analysis::rust_index::TestSummary;
@@ -1212,6 +1380,239 @@ mod tests {
             Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
             "only no_static_path rewrites a recorded miss"
         );
+    }
+
+    /// #14454: on an `Err`-to-`Err` variant swap, a strong row whose only pin
+    /// is the `Ok` arm (`assert_eq!(f(..), Ok(..))`, a direct `.unwrap()` or
+    /// `.expect(..)`) cannot observe the change, so it is
+    /// `assertion_not_observing`, not `missing_exact_assertion`. Controls:
+    /// `assert_ne!`, an operand naming `Err`, and `.err().unwrap()` keep
+    /// `missing_exact_assertion`; a weak `is_err()` row stays
+    /// `weak_assertion`; a guard flip (an `Ok` pin can fail on the new code),
+    /// on its own or on the variant's line, an `Ok`-to-`Err` change, two
+    /// returns on one line, a new guarded branch, a match-arm probe, an
+    /// unknown base and a struct-field sink change nothing.
+    #[test]
+    fn an_ok_only_pin_does_not_observe_a_changed_error_variant() {
+        use crate::domain::{
+            DiscriminatorShape, FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact,
+            RelatedTestMiss,
+        };
+        let fact = |kind: FlowSinkKind| MissingDiscriminatorFact {
+            value: "NameError::TooLong".to_string(),
+            reason: "No exact error variant assertion for NameError::TooLong".to_string(),
+            flow_sink: Some(FlowSinkFact {
+                kind,
+                text: "Result::Err(NameError::TooLong)".to_string(),
+                line: 12,
+                owner: None,
+            }),
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
+        };
+        let row = |name: &str, strength: OracleStrength, oracle: &str| RelatedTest {
+            oracle: Some(oracle.to_string()),
+            ..matched_row(name, strength)
+        };
+        let run = |kind: FlowSinkKind, changed: &Probe| {
+            let mut rows = vec![
+                row(
+                    "accepts_short_names",
+                    OracleStrength::Strong,
+                    "assert_eq!(parse_name(\"ada\"), Ok(\"ada\".to_string()));",
+                ),
+                row(
+                    "unwraps_short_names",
+                    OracleStrength::Strong,
+                    "assert_eq!(parse_name(\"ada\").unwrap(), \"ada\");",
+                ),
+                row(
+                    "expects_short_names",
+                    OracleStrength::Medium,
+                    "assert_eq!(parse_name(\"ada\").expect(\"valid\"), \"ada\");",
+                ),
+                row(
+                    "rejects_long_names",
+                    OracleStrength::Weak,
+                    "assert!(parse_name(\"abcdefghij\").is_err());",
+                ),
+                row(
+                    "not_an_ok",
+                    OracleStrength::Strong,
+                    "assert_ne!(parse_name(\"ada\"), Ok(String::new()));",
+                ),
+                row(
+                    "names_err",
+                    OracleStrength::Strong,
+                    "assert_eq!(parse_name(\"abcdefghij\"), Err(NameError::Empty));",
+                ),
+                row(
+                    "unwraps_the_error",
+                    OracleStrength::Strong,
+                    "assert_eq!(parse_name(\"abcdefghij\").err().unwrap(), Problem::TooLong);",
+                ),
+                row(
+                    "wraps_the_call",
+                    OracleStrength::Strong,
+                    "assert_eq!(Ok(parse_name(\"abcdefghij\")), expected);",
+                ),
+                row(
+                    "unwraps_the_expectation",
+                    OracleStrength::Strong,
+                    "assert_eq!(parse_name(\"abcdefghij\"), expected.unwrap());",
+                ),
+                row(
+                    "pins_a_bound_result",
+                    OracleStrength::Strong,
+                    "assert_eq!(Ok(7), result);",
+                ),
+                row(
+                    "pins_a_bound_string",
+                    OracleStrength::Strong,
+                    "assert_eq!(result, Ok(\"ada\".to_string()));",
+                ),
+                row(
+                    "unwraps_a_bound_result",
+                    OracleStrength::Strong,
+                    "assert_eq!(result.unwrap(), \"ada\".to_string());",
+                ),
+                row(
+                    "pins_unit",
+                    OracleStrength::Strong,
+                    "assert_eq!(result, Ok(()));",
+                ),
+            ];
+            let activation = ActivationEvidence {
+                missing_discriminators: vec![fact(kind)],
+                ..ActivationEvidence::default()
+            };
+            annotate_related_test_misses(
+                &mut rows,
+                &crate::domain::ExposureClass::WeaklyExposed,
+                true,
+                &changed.family,
+                &activation,
+                Unconfirmed::Confirmed,
+                &Default::default(),
+            );
+            if swaps_one_error_variant_for_another(changed) {
+                mark_ok_only_pins_not_observing(&mut rows);
+            }
+            rows.into_iter()
+                .map(|row| (row.name, row.miss))
+                .collect::<Vec<_>>()
+        };
+        let changed = |family: ProbeFamily, before: Option<&str>, after: &str| Probe {
+            before: before.map(str::to_string),
+            ..probe(family, after)
+        };
+        let swap = changed(
+            ProbeFamily::ErrorPath,
+            Some("        return Err(NameError::Empty);"),
+            "return Err(NameError::TooLong)",
+        );
+        let not_observing = Some(RelatedTestMiss::AssertionNotObserving);
+        let exact = Some(RelatedTestMiss::MissingExactAssertion);
+        let weak = Some(RelatedTestMiss::WeakAssertion);
+        let unchanged = vec![
+            ("accepts_short_names".to_string(), exact),
+            ("unwraps_short_names".to_string(), exact),
+            ("expects_short_names".to_string(), exact),
+            ("rejects_long_names".to_string(), weak),
+            ("not_an_ok".to_string(), exact),
+            ("names_err".to_string(), exact),
+            ("unwraps_the_error".to_string(), exact),
+            ("wraps_the_call".to_string(), exact),
+            ("unwraps_the_expectation".to_string(), exact),
+            ("pins_a_bound_result".to_string(), exact),
+            ("pins_a_bound_string".to_string(), exact),
+            ("unwraps_a_bound_result".to_string(), exact),
+            ("pins_unit".to_string(), exact),
+        ];
+        let mut swapped = unchanged.clone();
+        for row in &mut swapped[..3] {
+            row.1 = not_observing;
+        }
+        // An `Ok` pin or unwrap of a bound result still pins the success arm,
+        // in either operand order and with a no-argument or unit inner value.
+        for row in &mut swapped {
+            if [
+                "pins_a_bound_result",
+                "pins_a_bound_string",
+                "unwraps_a_bound_result",
+                "pins_unit",
+            ]
+            .contains(&row.0.as_str())
+            {
+                row.1 = not_observing;
+            }
+        }
+        assert_eq!(run(FlowSinkKind::ErrorVariant, &swap), swapped);
+        // The return_value probe on the same line gets the same rows.
+        let return_value = Probe {
+            family: ProbeFamily::ReturnValue,
+            ..swap.clone()
+        };
+        assert_eq!(run(FlowSinkKind::ErrorVariant, &return_value), swapped);
+        // A flipped guard keeps the same `Err` but sends `Ok` inputs to it,
+        // so an `Ok` pin can fail on the new code: no rewrite.
+        let guard_flip = changed(
+            ProbeFamily::Predicate,
+            Some("if name.is_empty() {"),
+            "if !name.is_empty() {",
+        );
+        assert_eq!(run(FlowSinkKind::ErrorVariant, &guard_flip), unchanged);
+        // `Ok` to `Err`: an `Ok` pin that reaches the line now fails.
+        let ok_to_err = changed(
+            ProbeFamily::ErrorPath,
+            Some("return Ok(name);"),
+            "return Err(NameError::TooLong);",
+        );
+        assert_eq!(run(FlowSinkKind::ErrorVariant, &ok_to_err), unchanged);
+        // A guard flipped on the same line as the variant: not a swap.
+        let same_line_guard = changed(
+            ProbeFamily::ErrorPath,
+            Some("if a.is_empty() { return Err(NameError::Empty); }"),
+            "if !a.is_empty() { return Err(NameError::TooLong); }",
+        );
+        assert_eq!(run(FlowSinkKind::ErrorVariant, &same_line_guard), unchanged);
+        // Two returns on one line, the first turned into `Ok`: not a swap.
+        let two_returns = changed(
+            ProbeFamily::ReturnValue,
+            Some("if a { Err(NameError::Empty) } else { Err(NameError::TooLong) }"),
+            "if a { Ok(1) } else { Err(NameError::TooLong) }",
+        );
+        assert_eq!(run(FlowSinkKind::ErrorVariant, &two_returns), unchanged);
+        // A new guarded branch next to an unrelated removed `Err` line.
+        let new_branch = changed(
+            ProbeFamily::ErrorPath,
+            Some("return Err(NameError::Empty);"),
+            "if y { return Err(NameError::TooLong); }",
+        );
+        assert_eq!(run(FlowSinkKind::ErrorVariant, &new_branch), unchanged);
+        // Match-arm probes are out of scope: the arm's pattern is part of
+        // what changed.
+        let arm = changed(
+            ProbeFamily::MatchArm,
+            Some("Kind::A => Err(NameError::Empty),"),
+            "Kind::A => Err(NameError::TooLong),",
+        );
+        assert_eq!(run(FlowSinkKind::ErrorVariant, &arm), unchanged);
+        // Unknown base text fails closed.
+        let no_base = changed(
+            ProbeFamily::ErrorPath,
+            None,
+            "return Err(NameError::TooLong);",
+        );
+        assert_eq!(run(FlowSinkKind::ErrorVariant, &no_base), unchanged);
+        // Struct-field control: a strong pin of another field of the same
+        // value reaches the change; it stays `missing_exact_assertion`.
+        let field = changed(
+            ProbeFamily::FieldConstruction,
+            Some("limit: 10,"),
+            "limit: 20,",
+        );
+        assert_eq!(run(FlowSinkKind::StructField, &field), unchanged);
     }
 
     /// #5564: Rust assigns `missing_input` / `missing_exact_assertion` to
@@ -1794,6 +2195,46 @@ mod tests {
                 "type annotation containing semicolon",
                 "let amount = tax(100); let amount: [u8; 3] = [0; 3]; assert_eq!(amount, 0);",
             ),
+            (
+                "lowercase path pattern",
+                "let amount = tax(100); let wrap::W(amount) = w; assert_eq!(amount, 0);",
+            ),
+            (
+                "block-tail reassignment",
+                "let mut amount = tax(100); if flag { amount = 0 } record(tax(2)); assert_eq!(amount, 0);",
+            ),
+            (
+                "match-arm reassignment",
+                "let mut amount = tax(100); match x { A => amount = 0, B => {} } record(tax(2)); assert_eq!(amount, 0);",
+            ),
+            (
+                "tuple field write",
+                "let mut amount = tax(100); amount.0 = 5; assert_eq!(amount.0, 5);",
+            ),
+            (
+                "mutable borrow",
+                "let mut amount = tax(100); reset(&mut amount); assert_eq!(amount, 0);",
+            ),
+            (
+                "compound field write",
+                "let mut amount = tax(100); amount.0 += 1; assert_eq!(amount.0, 5);",
+            ),
+            (
+                "nested field write",
+                "let mut amount = tax(100); amount.a.b = 1; assert_eq!(amount.a.b, 1);",
+            ),
+            (
+                "block with a leading discarded owner call",
+                "let mut amount = tax(1); amount = { tax(2); 0 }; assert_eq!(amount, 0);",
+            ),
+            (
+                "let block with a leading discarded owner call",
+                "let amount = { tax(1); 0 }; assert_eq!(amount, 0);",
+            ),
+            (
+                "block initializer discarding the owner call",
+                "let mut amount = tax(1); amount = { let x = 0; tax(2); 0 }; assert_eq!(amount, 0);",
+            ),
         ] {
             assert!(bound(body).is_empty(), "{label}: {body}");
         }
@@ -1817,6 +2258,22 @@ mod tests {
             (
                 "field write",
                 "let amount = tax(100); other.amount = 0; assert_eq!(amount, 90);",
+            ),
+            (
+                "nested field of another receiver",
+                "let amount = tax(100); other.amount.value = 0; assert_eq!(amount, 90);",
+            ),
+            (
+                "field comparison and method call on the local",
+                "let amount = tax(100); assert!(amount.value <= 3 && amount.value == 1 && amount.len() > 0);",
+            ),
+            (
+                "compound write on another receiver",
+                "let amount = tax(100); other.amount += 1; assert_eq!(amount, 90);",
+            ),
+            (
+                "block tail is the owner call",
+                "let amount = { tax(100) }; assert_eq!(amount, 90);",
             ),
             (
                 "quoted loop",

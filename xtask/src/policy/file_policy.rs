@@ -111,17 +111,54 @@ fn capture_past_lock_wait(
 /// Validate the repository's non-Rust file policy and write its standard
 /// report. The parser and shared path predicates remain in `main.rs` until
 /// their other policy/report consumers can move in a later slice.
+/// Whether `check-file-policy` builds test binaries to enumerate the
+/// test-valued `covered_by` selectors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CoverageEnumeration {
+    /// Build and list every applicable selector. Hosted `ci-policy` and the
+    /// standalone `cargo xtask check-file-policy` always use this.
+    Enumerate,
+    /// Local `precommit` for a change set that can change a listing. As
+    /// `Enumerate`, except that a library unit-test selector that resolves in
+    /// source (`library_selector`) is accepted without building the library
+    /// test target; its row says it was not listed. A selector that does not
+    /// resolve is built and listed as usual (#13705).
+    EnumerateResolvingLibrarySelectorsInSource,
+    /// The local `precommit` change set touches no Rust source, manifest,
+    /// workspace-wide Rust control file or `policy/` path, so no selector's
+    /// listing can differ from the merge base. The selectors are still parsed;
+    /// no Cargo build runs and no coverage is claimed (#13705).
+    SkipUnaffectedChangeSet,
+}
+
+/// Disclosure row published in place of coverage observations when the
+/// enumeration is skipped. It must never read as an enumerated selector.
+const COVERAGE_NOT_ENUMERATED_DISCLOSURE: &str = "not_enumerated; the local change set touches no Rust source, manifest, workspace-wide Rust control file or `policy/` path, so no test-valued selector was built or listed in this run. Hosted qualification and `cargo xtask check-file-policy` enumerate every applicable selector.";
+
 pub(crate) fn check_file_policy() -> Result<(), String> {
+    check_file_policy_with(CoverageEnumeration::Enumerate)
+}
+
+pub(crate) fn check_file_policy_with(enumeration: CoverageEnumeration) -> Result<(), String> {
     let policy_path = "policy/non-rust-allowlist.toml";
     let allowlist = read_file_policy_allowlist(policy_path)?;
     let mut diagnostics = Vec::new();
-    let coverage = match accept_file_policy_coverage(|| {
-        validate_test_covered_by_recorded(
-            policy_path,
-            &read_file_policy_test_commands(policy_path)?,
-            &mut diagnostics,
-        )
-    }) {
+    let enumerated = coverage_for(
+        enumeration,
+        read_file_policy_test_commands(policy_path),
+        |commands| {
+            let in_source =
+                |command: &str| super::library_selector::resolve_in_source(Path::new("."), command);
+            validate_test_covered_by_recorded(
+                policy_path,
+                commands,
+                &mut diagnostics,
+                (enumeration == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource)
+                    .then_some(&in_source),
+            )
+        },
+    );
+    let coverage = match enumerated {
         Ok(coverage) => coverage,
         Err(error) => {
             return file_policy_failure_report(
@@ -184,14 +221,14 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
         &[PolicyDisclosure {
             heading: "Test-valued coverage applicability".to_string(),
             intro: "Applicable selectors must enumerate nonzero tests. Enumeration is not test execution. Host-inapplicable selectors are not enumerated and confer no coverage on this host.".to_string(),
-            items: coverage.iter().map(TestCoverageObservation::render).collect(),
+            items: coverage_disclosure_items(coverage.as_deref()),
         }, PolicyDisclosure {
             heading: "Cargo child command diagnostics".to_string(),
             intro: format!("{COMMAND_DIAGNOSTIC_DISCLOSURE} Capture scope: actual covered-by warmup/list calls only. Reused listings, skipped warmups and host-inapplicable selectors add no executed rows."),
             items: diagnostics.iter().map(CommandDiagnostic::render).collect(),
         }],
     );
-    if result.is_ok() {
+    if retains_coverage_subject(result.is_ok(), coverage.as_deref()) {
         // The sidecar only serves the Windows advisory admission step, which
         // refuses a report without it. A passing policy run must not become a
         // failure where git HEAD is unavailable (source export, no commits), so
@@ -237,6 +274,8 @@ struct TestCoverageObservation {
     host: FilePolicyHost,
     // None is explicitly inapplicable, never a successful empty enumeration.
     selected: Option<Vec<String>>,
+    // The tests were read from source, not listed from a built test target.
+    resolved_in_source: bool,
 }
 
 const PACKET_COMMON_COMMAND: &str =
@@ -251,6 +290,46 @@ const PACKET_NATIVE_SUBJECTS: [&str; 2] = [
     "native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback",
     "native_packet_pilot_consumes_the_summary_artifact",
 ];
+
+/// The coverage this run observed: `Some` after an accepted enumeration,
+/// `None` when the enumeration was skipped. The selectors are parsed in both
+/// modes, so a malformed declaration still fails a run that builds nothing.
+/// `enumerate` is the only place a Cargo build can start, and it is not called
+/// when the enumeration is skipped.
+fn coverage_for(
+    enumeration: CoverageEnumeration,
+    commands: Result<Vec<FilePolicyTestCommand>, String>,
+    enumerate: impl FnOnce(&[FilePolicyTestCommand]) -> Result<Vec<TestCoverageObservation>, String>,
+) -> Result<Option<Vec<TestCoverageObservation>>, String> {
+    let commands = commands?;
+    match enumeration {
+        CoverageEnumeration::Enumerate
+        | CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource => {
+            accept_file_policy_coverage(|| enumerate(&commands)).map(Some)
+        }
+        CoverageEnumeration::SkipUnaffectedChangeSet => Ok(None),
+    }
+}
+
+/// Whether a finished run keeps its retained coverage subject. A failed run
+/// never does. Neither does a run that skipped enumeration: the sidecar would
+/// otherwise vouch for coverage this run did not observe. The same holds for
+/// a run with a selector resolved in source instead of listed.
+fn retains_coverage_subject(passed: bool, coverage: Option<&[TestCoverageObservation]>) -> bool {
+    passed && coverage.is_some_and(|rows| rows.iter().all(|row| !row.resolved_in_source))
+}
+
+/// Report rows for the coverage disclosure: one per observation, or the
+/// single not-enumerated row when the enumeration was skipped.
+fn coverage_disclosure_items(coverage: Option<&[TestCoverageObservation]>) -> Vec<String> {
+    match coverage {
+        Some(coverage) => coverage
+            .iter()
+            .map(TestCoverageObservation::render)
+            .collect(),
+        None => vec![COVERAGE_NOT_ENUMERATED_DISCLOSURE.to_string()],
+    }
+}
 
 /// The production acceptance boundary for fresh file-policy inventories.
 /// Reuse the enumeration already paid for by this gate; never read a retained
@@ -323,6 +402,11 @@ impl TestCoverageObservation {
     fn render(&self) -> String {
         let declared = self.selector.host.map_or("all", FilePolicyHost::name);
         let status = match &self.selected {
+            Some(tests) if self.resolved_in_source => format!(
+                "applicable; resolved_in_source={}; not_listed; tests=[{}]",
+                tests.len(),
+                tests.join(", ")
+            ),
             Some(tests) => format!(
                 "applicable; selected={}; tests=[{}]",
                 tests.len(),
@@ -344,7 +428,7 @@ fn validate_test_covered_by(
     path: &str,
     commands: &[FilePolicyTestCommand],
 ) -> Result<Vec<TestCoverageObservation>, String> {
-    validate_test_covered_by_recorded(path, commands, &mut Vec::new())
+    validate_test_covered_by_recorded(path, commands, &mut Vec::new(), None)
 }
 
 /// Announce a Cargo child on stderr before and after it runs. A caller that
@@ -378,12 +462,54 @@ fn cargo_child_label(description: &str, args: &[String]) -> String {
     format!("{description}: cargo {}", args.join(" "))
 }
 
+/// Resolves one selector command to test names without a build, or `None`
+/// when the selector must be built and listed.
+type SourceResolver<'a> = &'a dyn Fn(&str) -> Option<Vec<String>>;
+
+/// Splits the selectors into those to build and list, and observations for
+/// the applicable ones `in_source` resolves. A selector for another host is
+/// never resolved here: it stays with the build path, which reports it as
+/// inapplicable without building.
+fn partition_resolved_in_source(
+    commands: &[FilePolicyTestCommand],
+    host: FilePolicyHost,
+    in_source: Option<SourceResolver<'_>>,
+) -> (Vec<FilePolicyTestCommand>, Vec<TestCoverageObservation>) {
+    let mut to_list = Vec::new();
+    let mut resolved = Vec::new();
+    for selector in commands {
+        let tests = in_source
+            .filter(|_| selector.host.is_none_or(|declared| declared == host))
+            .and_then(|resolve| resolve(&selector.command))
+            .filter(|tests| !tests.is_empty());
+        match tests {
+            Some(tests) => resolved.push(TestCoverageObservation {
+                selector: selector.clone(),
+                host,
+                selected: Some(tests),
+                resolved_in_source: true,
+            }),
+            None => to_list.push(selector.clone()),
+        }
+    }
+    (to_list, resolved)
+}
+
 fn validate_test_covered_by_recorded(
     path: &str,
     commands: &[FilePolicyTestCommand],
     diagnostics: &mut Vec<CommandDiagnostic>,
+    in_source: Option<SourceResolver<'_>>,
 ) -> Result<Vec<TestCoverageObservation>, String> {
     let host = FilePolicyHost::current()?;
+    let (commands, resolved) = partition_resolved_in_source(commands, host, in_source);
+    let commands = commands.as_slice();
+    // Only local `precommit` passes a resolver; it also caps build jobs on a
+    // memory-constrained host. Hosted and standalone runs are left alone.
+    let envs = match in_source {
+        Some(_) => crate::cargo_job_cap::local_precommit_envs(),
+        None => &[],
+    };
     // Cargo serializes builds on the target-dir lock, so the per-selector
     // preparations below compile one package at a time. One combined build
     // per package set lets Cargo schedule each set's targets together; it
@@ -395,7 +521,7 @@ fn validate_test_covered_by_recorded(
                 capture_output_with_timeout(
                     "cargo",
                     &args,
-                    &[],
+                    envs,
                     TEST_COVERED_BY_BUILD_TIMEOUT,
                     "test-valued covered_by combined build",
                 )
@@ -403,11 +529,22 @@ fn validate_test_covered_by_recorded(
         );
         diagnostics.push(CommandDiagnostic::captured("cargo", &args, &captured));
     }
-    validate_test_covered_by_recorded_with(path, commands, host, diagnostics, |spawn| {
-        announce_cargo_child(&cargo_child_label(spawn.description, &spawn.args), || {
-            capture_output_with_timeout("cargo", &spawn.args, &[], spawn.timeout, spawn.description)
-        })
-    })
+    let mut observations =
+        validate_test_covered_by_recorded_with(path, commands, host, diagnostics, |spawn| {
+            announce_cargo_child(&cargo_child_label(spawn.description, &spawn.args), || {
+                capture_output_with_timeout(
+                    "cargo",
+                    &spawn.args,
+                    envs,
+                    spawn.timeout,
+                    spawn.description,
+                )
+            })
+        })?;
+    observations.extend(resolved);
+    // Keep declaration order, as when every selector is listed.
+    observations.sort_by_key(|row| row.selector.line);
+    Ok(observations)
 }
 
 fn validate_test_covered_by_recorded_with(
@@ -774,6 +911,7 @@ fn validate_test_covered_by_with(
                 selector: selector.clone(),
                 host,
                 selected: None,
+                resolved_in_source: false,
             });
             continue;
         }
@@ -817,6 +955,7 @@ fn validate_test_covered_by_with(
             selector: selector.clone(),
             host,
             selected: Some(selected),
+            resolved_in_source: false,
         });
     }
     Ok(observations)
@@ -824,6 +963,137 @@ fn validate_test_covered_by_with(
 
 #[cfg(test)]
 mod tests {
+    /// #13705: a skipped enumeration publishes one row that cannot be read as
+    /// an enumerated selector, and an enumerated run publishes none of it.
+    #[test]
+    fn skipped_enumeration_is_disclosed_as_not_enumerated_never_as_coverage() {
+        let skipped = super::coverage_disclosure_items(None);
+        assert_eq!(skipped, [super::COVERAGE_NOT_ENUMERATED_DISCLOSURE]);
+        assert!(skipped[0].starts_with("not_enumerated;"));
+        assert!(!skipped[0].contains("applicable; selected="));
+        assert!(super::coverage_disclosure_items(Some(&[])).is_empty());
+    }
+
+    /// #13705: the skipped mode never reaches the enumerator (the only place
+    /// a Cargo build starts), still refuses a malformed declaration, and
+    /// retains no coverage subject. The enumerating mode calls it once and
+    /// keeps the packet acceptance boundary.
+    #[test]
+    fn skipped_enumeration_never_calls_the_enumerator_and_retains_no_subject() -> Result<(), String>
+    {
+        use super::CoverageEnumeration::{Enumerate, SkipUnaffectedChangeSet};
+        let commands = || Ok(packet_commands().to_vec());
+
+        let mut calls = 0;
+        let skipped = super::coverage_for(SkipUnaffectedChangeSet, commands(), |_| {
+            calls += 1;
+            Err("the enumerator must not run".to_string())
+        })?;
+        if skipped.is_some() || calls != 0 {
+            return Err(format!("skip enumerated: {skipped:?}, calls={calls}"));
+        }
+        if super::retains_coverage_subject(true, skipped.as_deref()) {
+            return Err("a skipped run retained a coverage subject".to_string());
+        }
+
+        for mode in [Enumerate, SkipUnaffectedChangeSet] {
+            let malformed =
+                super::coverage_for(mode, Err("malformed selector".to_string()), |_| {
+                    Err("the enumerator must not run".to_string())
+                });
+            if malformed.as_ref().err().map(String::as_str) != Some("malformed selector") {
+                return Err(format!("{mode:?} lost the parse error: {malformed:?}"));
+            }
+        }
+
+        let mut calls = 0;
+        let enumerated = super::coverage_for(Enumerate, commands(), |_| {
+            calls += 1;
+            packet_observations(super::FilePolicyHost::current()?)
+        })?;
+        let Some(coverage) = enumerated else {
+            return Err("enumeration produced no coverage".to_string());
+        };
+        if calls != 1 || !super::retains_coverage_subject(true, Some(&coverage)) {
+            return Err(format!("enumeration calls={calls} or subject not retained"));
+        }
+        if super::retains_coverage_subject(false, Some(&coverage)) {
+            return Err("a failed run retained a coverage subject".to_string());
+        }
+        // The acceptance boundary still applies: an enumeration that lost the
+        // packet selectors is refused, not accepted as coverage.
+        let refused = super::coverage_for(Enumerate, commands(), |_| Ok(Vec::new()));
+        if !refused
+            .as_ref()
+            .is_err_and(|error| error.contains("packet coverage selector absent"))
+        {
+            return Err(format!("empty enumeration was accepted: {refused:?}"));
+        }
+        Ok(())
+    }
+
+    /// #13705: a selector resolved in source is taken out of the set that is
+    /// built and listed, its row cannot be read as a listing, and a run that
+    /// holds one retains no coverage subject. Without a resolver, with a
+    /// resolver that declines, and for another host, every selector is listed.
+    #[test]
+    fn selectors_resolved_in_source_are_not_built_and_never_read_as_listed() -> Result<(), String> {
+        let selector = |line, command: &str, host| crate::FilePolicyTestCommand {
+            line,
+            command: command.to_string(),
+            host,
+        };
+        let host = crate::FilePolicyHost::Unix;
+        let commands = [
+            selector(1, "cargo test -p a --test t", None),
+            selector(2, "cargo test -p a --lib m::tests", None),
+            selector(
+                3,
+                "cargo test -p a --lib m::tests",
+                Some(crate::FilePolicyHost::Windows),
+            ),
+        ];
+        let resolve = |command: &str| {
+            command
+                .contains(" --lib ")
+                .then(|| vec!["m::tests::one".to_string()])
+        };
+        let (to_list, resolved) =
+            super::partition_resolved_in_source(&commands, host, Some(&resolve));
+        let listed_lines = to_list.iter().map(|row| row.line).collect::<Vec<_>>();
+        if listed_lines != [1, 3] || resolved.len() != 1 || resolved[0].selector.line != 2 {
+            return Err(format!(
+                "wrong partition: listed {listed_lines:?}, resolved {resolved:?}"
+            ));
+        }
+        let row = resolved[0].render();
+        if !row.contains("applicable; resolved_in_source=1; not_listed; tests=[m::tests::one]")
+            || row.contains("selected=")
+        {
+            return Err(format!("resolved row reads as a listing: {row}"));
+        }
+        if super::retains_coverage_subject(true, Some(&resolved)) {
+            return Err("a run with a source-resolved selector retained a subject".to_string());
+        }
+
+        let declines = |_: &str| None;
+        let empty = |_: &str| Some(Vec::new());
+        for in_source in [
+            None,
+            Some(&declines as super::SourceResolver<'_>),
+            Some(&empty),
+        ] {
+            let (to_list, resolved) =
+                super::partition_resolved_in_source(&commands, host, in_source);
+            if to_list.len() != commands.len() || !resolved.is_empty() {
+                return Err(format!(
+                    "a selector left the listed set: {to_list:?} / {resolved:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     // Literal selectors and subjects are independent of the production table.
     fn packet_commands() -> [crate::FilePolicyTestCommand; 2] {
         [

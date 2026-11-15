@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0439"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0439-manual-security-subject.md"
+status = "proposed"
+owner = "test-infra"
+standalone_reason = "#4987 requires an explicit candidate security route after event retirement; no existing spec owns its immutable manual subject and consumer contract."

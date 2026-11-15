@@ -9,6 +9,11 @@ pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     if super::classify::is_item_header(text.trim()) {
         return vec![ProbeFamily::StaticUnknown];
     }
+    // #14429: a `type` item (`type Eq: CmpEq;`) declares a type; its bound
+    // only looks like a constructed field.
+    if super::classify::is_type_item_declaration(text) {
+        return vec![ProbeFamily::StaticUnknown];
+    }
     // Masked once: comments between `pub` and `const` (`pub /* note */`)
     // must not hide a declaration, and string/comment contents must not
     // mint behavioral families downstream.

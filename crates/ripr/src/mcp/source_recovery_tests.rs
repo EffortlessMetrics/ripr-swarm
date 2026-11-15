@@ -71,6 +71,7 @@ fn captured_server(
             "inspect that request",
         )),
         desired_source,
+        desired_source_defaulted: false,
         desired_base: Some("newer-request-base".to_string()),
         ..Default::default()
     };

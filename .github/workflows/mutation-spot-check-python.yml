@@ -6,14 +6,14 @@ name: Mutation spot check (Python)
 # pinned version) over each package's module path, dumps the session, then runs
 # `cargo xtask mutation-spot-check --cosmic-ray-dump`, which synthesizes a
 # one-hunk diff per mutant, runs `ripr check --diff` on it, and compares the
-# verdict with the real outcome. Runs on demand and weekly, never on a pull
+# verdict with the real outcome. Runs on explicit demand, never on a pull
 # request. Read-only: no secrets, nothing is published or pushed.
 #
 # The `mutmut` job does the same with mutmut (#13842) on the packages of
 # benchmarks/mutation_spot_check/corpus-python-mutmut.json. mutmut has no
 # machine-readable location export, so for every mutant the job records
 # `mutmut show <name>` as one {name, status, diff} JSON line; `--mutmut-dump`
-# scores that file. Both tools run on schedule; `tool` picks one on demand.
+# scores that file. A run does both tools unless `tool` picks one.
 #
 # STATUS: both jobs have run (cosmic-ray: #13776; mutmut: #13842, see the
 # corpus notes for which packages finished). The receipt is advisory and its
@@ -36,14 +36,12 @@ on:
           - all
           - cosmic-ray
           - mutmut
-  schedule:
-    - cron: "43 5 * * 4"
 
 permissions:
   contents: read
 
 concurrency:
-  group: mutation-spot-check-python-${{ github.ref }}
+  group: mutation-spot-check-python-${{ github.ref }}-${{ inputs.packages }}
   cancel-in-progress: true
 
 jobs:

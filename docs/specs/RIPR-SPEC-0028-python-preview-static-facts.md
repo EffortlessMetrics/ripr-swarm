@@ -1374,7 +1374,11 @@ read-out: the boolean the classifier uses is derived from the surfaced
   asserts a local the same test bound once to such a call as its whole value
   (`result = utils.sign(0)`, not `result = utils.sign(0) or 1`; #4567). The
   call or local must be an asserted operand: nested in another call
-  (`always_true(utils.sign(0))`) it is not the compared value. A later import
+  (`always_true(utils.sign(0))`) it is not the compared value. An exception
+  assertion compares no operand, so for it the call is read in the code the
+  assertion runs: its `with` body or its rule 13 callable
+  (`with pytest.raises(ValueError, match="blank"): utils.sign(0)`; #14090),
+  not when a `lambda` or nested `def`/`class` in that body defers it. A later import
   of the same name inside the test replaces the earlier binding, and the
   test's own `import pkg.mod as alias` is not a rebinding of `alias`. Those calls also bind boundary activation, so the
   relational-boundary gate still applies to them.

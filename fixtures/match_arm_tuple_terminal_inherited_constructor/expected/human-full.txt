@@ -33,10 +33,10 @@ Static exposure
 Evidence
   - reach yes: Related tests appear to reach terminalize_proof: terminal_projection_0
   - infection yes: Reachable tests can plausibly activate this changed behavior
-  - propagation yes: Changed behavior appears to influence match arm result: (true, false) =>
+  - propagation yes: Changed behavior appears to influence match arm result: "request_identity_v2"
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
-  - local flow reaches match arm result: (true, false) => (line 30)
+  - local flow reaches match arm result: "request_identity_v2" (line 30)
   - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.0, "head_passed"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.1, "receipt-1=head_passed join=request_identity_v2", "request_identity_v2"); unconfirmed
   - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.2, vec!["request-1".to_string()]); unconfirmed

@@ -71,7 +71,7 @@ read-only permissions and no secrets, and uploads that crate's receipt and
 scores them together through `--mutants-out`, and uploads the scoreboard receipt
 as the `mutation-spot-check` artifact (its `cargo_mutants_args` and
 `mutant_timeout_secs` read `null`, as for any supplied `--mutants-out`; the
-per-crate `spot-<name>` receipts keep them). It runs weekly and on
+per-crate `spot-<name>` receipts keep them). It runs only on explicit
 `workflow_dispatch` (optionally limited to a comma-separated `repos` list). It is
 advisory: it never writes the default branch, and its numbers gate nothing.
 
@@ -193,8 +193,8 @@ join rule. The report is advisory and is not a suite adequacy measure.
 ## TypeScript: real Stryker mutants (synthetic-diff verdict join)
 
 The hosted run installs with `--no-package-lock`, so transitive dependencies
-resolve fresh each week; the receipt records the package revision and Stryker
-version but not resolved dependency versions, so weekly results can drift for
+resolve fresh on each run; the receipt records the package revision and Stryker
+version but not resolved dependency versions, so results can drift for
 reasons outside ripr. The lane is advisory.
 
 `ripr check --format repo-exposure-json` lists no seams for TypeScript (or
@@ -261,7 +261,7 @@ method, not the span-join agreement it is defined over). A mutated line is not a
 analysis is a syntax-first preview, so the figures say how often a diff-time
 verdict agrees with a real mutant, not suite adequacy.
 
-`.github/workflows/mutation-spot-check-typescript.yml` runs it weekly on the
+`.github/workflows/mutation-spot-check-typescript.yml` runs it on demand on the
 pinned packages of `corpus-typescript.json` (Stryker 9.6.1 with the vitest
 runner), uploads the receipt and a per-package Stryker exit-status file, and
 ends with a step that fails the job when the receipt is missing or a package
@@ -301,8 +301,8 @@ are never scored. One run scores one synthetic language: `--stryker-report` and
 receipt, exclusions and claim boundary is as for TypeScript, with
 `language: "python"` and `recall_of_missed.by_language.python`.
 
-`.github/workflows/mutation-spot-check-python.yml` runs it on demand and
-weekly on the pinned packages of `corpus-python.json` (cosmic-ray 8.8.0, local
+`.github/workflows/mutation-spot-check-python.yml` runs it on explicit demand
+on the pinned packages of `corpus-python.json` (cosmic-ray 8.8.0, local
 distributor, pytest). Third-party code (the packages and cosmic-ray) runs only
 there, never in an agent sandbox. Run 42538508465 installed python-semver,
 passed its baseline, produced a session and scored 853 mutants (#13776).
@@ -348,7 +348,7 @@ so `caught` is an upper bound on tests discriminating. One run scores one tool:
 refused.
 
 The `mutmut` job of `.github/workflows/mutation-spot-check-python.yml` runs it
-weekly beside cosmic-ray (or alone with `tool=mutmut`) on the pinned packages of
+on demand beside cosmic-ray (or alone with `tool=mutmut`) on the pinned packages of
 `corpus-python-mutmut.json` (isodate, itsdangerous, tomli, python-slugify, and
 cachetools at the cosmic-ray revision for a cross-tool comparison). Each package
 must pass its own tests before mutmut runs, and mutmut must pass them again

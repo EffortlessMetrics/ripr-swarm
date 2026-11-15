@@ -219,9 +219,21 @@ fn check_finding_as_decision(finding: &Value) -> Value {
     }
     let path =
         string_field(finding.pointer("/probe/file")).map(|path| normalize_fallback_path(&path));
+    // A `json-terse` document omits the finding-level `canonical_gap_id` and
+    // `missing_discriminators` aliases when they equal their owners
+    // (`canonical_gap.id`, `activation.missing_discriminators`), so each is
+    // read from its alias first and its owner second (#14083 B1). Without the
+    // owner read every terse gap fell to fallback identity and was refused.
+    let present = |value: Option<&Value>| value.filter(|value| !value.is_null()).cloned();
+    let canonical_gap_id = present(finding.get("canonical_gap_id"))
+        .or_else(|| present(finding.pointer("/canonical_gap/id")))
+        .unwrap_or(Value::Null);
+    let missing_discriminator = present(finding.pointer("/missing_discriminators/0/value"))
+        .or_else(|| present(finding.pointer("/activation/missing_discriminators/0/value")))
+        .unwrap_or(Value::Null);
     json!({
         "decision": "advisory",
-        "canonical_gap_id": finding.get("canonical_gap_id").cloned().unwrap_or(Value::Null),
+        "canonical_gap_id": canonical_gap_id,
         "static_class": class,
         "severity": finding.get("severity").cloned().unwrap_or(Value::Null),
         "source": "whole_repo_check",
@@ -230,10 +242,7 @@ fn check_finding_as_decision(finding: &Value) -> Value {
             "line": finding.pointer("/probe/line").cloned().unwrap_or(Value::Null),
         },
         "evidence": {
-            "missing_discriminator": finding
-                .pointer("/missing_discriminators/0/value")
-                .cloned()
-                .unwrap_or(Value::Null),
+            "missing_discriminator": missing_discriminator,
         },
     })
 }
@@ -665,6 +674,47 @@ mod tests {
             rendered["warnings"][1]
                 .as_str()
                 .is_some_and(|text| text.starts_with("source check artifact carries no"))
+        );
+        Ok(())
+    }
+
+    /// #14083 B1: `json-terse` omits the finding-level `canonical_gap_id` and
+    /// `missing_discriminators` aliases; the baseline built from that
+    /// document is the one built from the full document.
+    #[test]
+    fn whole_repo_check_reads_a_terse_document_like_the_full_one() -> Result<(), String> {
+        let mut gap = finding(
+            "weakly_exposed",
+            Some("gap:rust:src/a.rs:a:p:x"),
+            "src/a.rs",
+            3,
+        );
+        gap["canonical_gap"] = json!({"id": "gap:rust:src/a.rs:a:p:x", "owner": "a"});
+        gap["activation"] = json!({"missing_discriminators": [{"value": "n == 10"}]});
+        let full = check_artifact("complete_with_findings", true, Some(EMPTY_TREE), vec![gap]);
+        let terse = crate::output::json::render_terse(&full)?;
+        let terse_value: Value = serde_json::from_str(&terse).map_err(|err| err.to_string())?;
+        // The fixture really is the terse shape: both aliases are gone.
+        assert_eq!(terse_value["rendering"], "terse");
+        assert!(terse_value["findings"][0].get("canonical_gap_id").is_none());
+        assert!(
+            terse_value["findings"][0]
+                .get("missing_discriminators")
+                .is_none()
+        );
+        let from_full = render_baseline_create_json(&from_check(&full)?)?;
+        let from_terse = render_baseline_create_json(&from_check(&terse)?)?;
+        assert_eq!(from_terse, from_full);
+        let rendered: Value = serde_json::from_str(&from_terse).map_err(|err| err.to_string())?;
+        assert_eq!(rendered["summary"]["entries"], 1);
+        assert_eq!(rendered["summary"]["skipped"]["fallback_only"], 0);
+        assert_eq!(
+            rendered["entries"][0]["identity"]["canonical_gap_id"],
+            "gap:rust:src/a.rs:a:p:x"
+        );
+        assert_eq!(
+            rendered["entries"][0]["evidence"]["missing_discriminator"],
+            "n == 10"
         );
         Ok(())
     }
