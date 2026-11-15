@@ -1547,14 +1547,20 @@ mutant calibrates the rule; ripr reports only the static shape.
     same evidence the direct import gives. The initializer must be read and
     parse and bind `X` exactly once, through one unconditional top-level
     import statement with one alias of that name; up to three package
-    initializers are followed, each a package that contains the test file
-    (the dotted name is read from the workspace root, and in a nested
-    project another package can carry it). The import keeps its unresolved
-    reading (no link) when: the package does not contain the test file; the
+    initializers are followed, each a package of the test file's own
+    package chain (its directory and each parent while it has an
+    `__init__.py`). A dotted name is read from the workspace root, and pytest
+    imports a test package from the parent of its topmost package, so a
+    root-relative spelling is the package Python imports only when it is one
+    of those directories. The import keeps its unresolved reading (no link)
+    when: the package is outside that chain, or its first name also names
+    another directory on the test's path (`tests/project/tests/...`, where
+    another import root can carry `tests`); the
     initializer is missing, unread or unparsable; `X` is also bound by an
     assignment, `def`, `class`, loop, `with`, `del`, `try`/`if` branch or a
     second import, or only inside such a branch; the initializer has a star
-    import, a `match` or `type` statement, or names a dynamic namespace
+    import, a `match` or `type` statement at any depth the module body
+    executes (outside `def` and `class` bodies), or names a dynamic namespace
     writer anywhere, even in a comment, as an identifier token so spacing
     (`vars ()`) cannot hide it (`globals`, `locals`, `vars`, `exec`, `eval`,
     `setattr`, `__dict__`, `global`, `__getattr__`, any `modules`), or a

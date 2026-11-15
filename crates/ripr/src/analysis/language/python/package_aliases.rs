@@ -32,7 +32,7 @@ use super::owners_tests::import_source_module;
 use super::reexports::{is_star_import, stmt_binds, writes_namespace_dynamically};
 use super::source_facts::parse_module_result;
 use super::{PythonImport, PythonTest};
-use rustpython_parser::ast::{Mod, Stmt};
+use rustpython_parser::ast::{self, Mod, Stmt};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -77,9 +77,14 @@ pub(super) fn apply_package_import_aliases<'s>(
     }
 }
 
-/// Only a package containing the test file is followed: a dotted name is
-/// read from the workspace root, and in a nested project that spelling can
-/// name another package than the one Python imports for this test.
+/// Only a package of the test file's own package chain is followed: the
+/// directories from the test's directory upward while each has an
+/// `__init__.py`. A dotted name is read from the workspace root, and pytest
+/// imports a test package from the parent of its topmost package, so a
+/// root-relative spelling names the package Python imports only when it is
+/// one of those chain directories. A spelling whose first part also names
+/// another directory on the test's path (`tests/project/tests/...`) is
+/// ambiguous under another import root and refuses.
 fn resolve<'s>(
     test_file: &Path,
     import: &PythonImport,
@@ -92,7 +97,7 @@ fn resolve<'s>(
         let step = current.as_ref().unwrap_or(import);
         if step.source_module.is_empty()
             || step.imported == "*"
-            || !test_file.starts_with(package_directory(&step.source_module))
+            || !in_own_package_chain(test_file, &step.source_module, is_present)
         {
             break;
         }
@@ -112,6 +117,29 @@ fn resolve<'s>(
         current = Some(bound);
     }
     current
+}
+
+fn in_own_package_chain(
+    test_file: &Path,
+    package: &str,
+    is_present: &impl Fn(&Path) -> bool,
+) -> bool {
+    let directory = package_directory(package);
+    let Some(first) = package.split('.').next() else {
+        return false;
+    };
+    let Some(parent) = test_file.parent() else {
+        return false;
+    };
+    let repeats = parent
+        .components()
+        .filter(|component| component.as_os_str() == first)
+        .count();
+    repeats == 1
+        && parent
+            .ancestors()
+            .take_while(|dir| !dir.as_os_str().is_empty() && is_present(&dir.join("__init__.py")))
+            .any(|dir| dir == directory)
 }
 
 fn package_directory(package: &str) -> PathBuf {
@@ -144,12 +172,8 @@ fn initializer_binding<'s>(
         return None;
     };
     // A `match` capture and a `type` alias bind names the binder scan
-    // below does not read.
-    if module
-        .body
-        .iter()
-        .any(|stmt| is_star_import(stmt) || matches!(stmt, Stmt::Match(_) | Stmt::TypeAlias(_)))
-    {
+    // below does not read, at any depth the module body executes.
+    if module.body.iter().any(is_star_import) || has_unread_binder(&module.body) {
         return None;
     }
     let mut binders = module
@@ -199,4 +223,38 @@ fn initializer_binding<'s>(
         }
         _ => None,
     }
+}
+
+/// Whether a module-executed statement, at any nesting outside a `def` or
+/// `class` body, is a `match` or `type` statement. Either binds names
+/// (capture patterns, the alias) the binder scan does not read.
+fn has_unread_binder(body: &[Stmt]) -> bool {
+    let handlers = |handlers: &[ast::ExceptHandler]| {
+        handlers.iter().any(|handler| {
+            let ast::ExceptHandler::ExceptHandler(handler) = handler;
+            has_unread_binder(&handler.body)
+        })
+    };
+    body.iter().any(|stmt| match stmt {
+        Stmt::Match(_) | Stmt::TypeAlias(_) => true,
+        Stmt::If(s) => has_unread_binder(&s.body) || has_unread_binder(&s.orelse),
+        Stmt::For(s) => has_unread_binder(&s.body) || has_unread_binder(&s.orelse),
+        Stmt::AsyncFor(s) => has_unread_binder(&s.body) || has_unread_binder(&s.orelse),
+        Stmt::While(s) => has_unread_binder(&s.body) || has_unread_binder(&s.orelse),
+        Stmt::With(s) => has_unread_binder(&s.body),
+        Stmt::AsyncWith(s) => has_unread_binder(&s.body),
+        Stmt::Try(s) => {
+            has_unread_binder(&s.body)
+                || handlers(&s.handlers)
+                || has_unread_binder(&s.orelse)
+                || has_unread_binder(&s.finalbody)
+        }
+        Stmt::TryStar(s) => {
+            has_unread_binder(&s.body)
+                || handlers(&s.handlers)
+                || has_unread_binder(&s.orelse)
+                || has_unread_binder(&s.finalbody)
+        }
+        _ => false,
+    })
 }

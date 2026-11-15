@@ -276,3 +276,88 @@ fn a_name_bound_to_an_unrelated_module_stays_unlinked() -> Result<(), String> {
     )?;
     expect_unlinked("import json as tomllib", &finding)
 }
+
+/// Analyzes the changed `_parser.loads` line with `files` beside the tomli
+/// package, for workspaces whose test lives below `tests/`.
+fn nested_case(label: &str, files: &[(&str, &str)]) -> Result<Finding, String> {
+    let mut all: Vec<(&str, &str)> = vec![
+        ("src/tomli/_parser.py", PARSER_PY),
+        ("src/tomli/__init__.py", PACKAGE_INIT),
+    ];
+    all.extend_from_slice(files);
+    analyze_one_line(label, &all, "src/tomli/_parser.py", 2)
+}
+
+const NESTED_TEST: &str =
+    "from .. import tomllib\n\n\ndef test_loads():\n    assert tomllib.loads(\"\") == {}\n";
+
+#[test]
+fn a_match_or_type_rebinding_nested_in_a_block_stays_unlinked() -> Result<(), String> {
+    // CPython runs the nested `match` capture, so `tomllib` ends as `json`.
+    let cases = [
+        (
+            "nested-match",
+            "import tomli as tomllib\nimport json\nif True:\n    match json:\n        case tomllib:\n            pass\n",
+        ),
+        (
+            "nested-type",
+            "import tomli as tomllib\nif True:\n    type tomllib = int\n",
+        ),
+        (
+            "try-match",
+            "import tomli as tomllib\nimport json\ntry:\n    pass\nfinally:\n    match json:\n        case tomllib:\n            pass\n",
+        ),
+    ];
+    for (label, init) in cases {
+        let finding = nested_case(
+            label,
+            &[
+                ("tests/__init__.py", init),
+                ("tests/unit/__init__.py", ""),
+                ("tests/unit/test_misc.py", NESTED_TEST),
+            ],
+        )?;
+        expect_unlinked(label, &finding)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn an_absolute_hop_from_a_nested_project_with_a_competing_package_stays_unlinked()
+-> Result<(), String> {
+    // pytest imports `tests` from `tests/project` for this test, so
+    // `from tests import ...` reads the inner initializer, which binds `json`.
+    let inner_test =
+        "from . import toml\n\n\ndef test_loads():\n    assert toml.loads(\"\") == {}\n";
+    let relative_then_absolute = nested_case(
+        "nested-root-relative-then-absolute",
+        &[
+            ("tests/__init__.py", "import tomli as tomllib\n"),
+            (
+                "tests/project/tests/__init__.py",
+                "import json as tomllib\n",
+            ),
+            (
+                "tests/project/tests/unit/__init__.py",
+                "from tests import tomllib as toml\n",
+            ),
+            ("tests/project/tests/unit/test_probe.py", inner_test),
+        ],
+    )?;
+    expect_unlinked("relative then absolute hop", &relative_then_absolute)?;
+    let direct_test =
+        "from tests import tomllib\n\n\ndef test_loads():\n    assert tomllib.loads(\"\") == {}\n";
+    let direct_absolute = nested_case(
+        "nested-root-direct-absolute",
+        &[
+            ("tests/__init__.py", "import tomli as tomllib\n"),
+            (
+                "tests/project/tests/__init__.py",
+                "import json as tomllib\n",
+            ),
+            ("tests/project/tests/unit/__init__.py", ""),
+            ("tests/project/tests/unit/test_probe.py", direct_test),
+        ],
+    )?;
+    expect_unlinked("direct absolute import", &direct_absolute)
+}
