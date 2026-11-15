@@ -463,6 +463,20 @@ fn is_token_run(haystack: &str, masked: &[u8], start: usize, needle: &str) -> bo
     open_start && open_end
 }
 
+/// Whether `needle` occurs in `haystack` as a token run (see
+/// [`is_token_run`]): `total > limit` is not found inside the old
+/// `subtotal > limit`, and text inside a string or comment does not count.
+pub(super) fn contains_token_run(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let masked = mask_comments_and_strings(haystack);
+    let masked = masked.as_bytes();
+    haystack
+        .match_indices(needle)
+        .any(|(start, _)| is_token_run(haystack, masked, start, needle))
+}
+
 /// A record field must be a whole syntactic unit, not the head or tail of a
 /// longer expression: `flag: foo` inside the old `flag: foo && bar` is not the
 /// unchanged field. Rejecting a match only makes a shape read as changed,

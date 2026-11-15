@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Rust checks: a changed hand-written `Arbitrary` impl now reads `static_unknown` as test stimulus, not a product gap or test credit, when it is spelled through a provider import or `as` alias, uses proptest's or the `arbitrary` crate's trait, or lives in a module loaded from the crate root. Generators in `#[cfg(test)]` modules stay silent test code, and `#[derive(Arbitrary)]` keeps its type's ordinary product reading (#11545).

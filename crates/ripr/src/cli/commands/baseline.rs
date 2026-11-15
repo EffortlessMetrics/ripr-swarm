@@ -386,9 +386,7 @@ fn parse_baseline_diff_options(args: &[String]) -> Result<BaselineDiffOptions, S
 // Literal option-shaped filenames remain available as `./--name`.
 fn baseline_diff_path_arg(args: &[String], index: usize, flag: &str) -> Result<PathBuf, String> {
     if args.get(index).is_some_and(|value| value.starts_with("--")) {
-        return Err(format!(
-            "missing value for {flag}; pass a value right after it"
-        ));
+        return Err(crate::cli::parse::missing_value(flag));
     }
     non_empty_path_arg(args, index, flag, "baseline diff")
 }
