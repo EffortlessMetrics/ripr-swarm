@@ -56,7 +56,7 @@ not run (the output says why), 130 interrupted standalone check. Full
 contract: docs/EXIT_CODES.md.
 Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: languages,
 scope, phase timings and why each finding got its class (any position, except
-on `ripr help --json`; or set RIPR_VERBOSE=1).
+on `ripr help --json`; RIPR_VERBOSE=1 for stderr only).
 
 ripr reads your changed code, imagines small bugs in it, and checks whether
 your tests would likely catch them. It does not run mutants or your tests and
@@ -2595,7 +2595,7 @@ not run (the output says why), 130 interrupted standalone check. Full
 contract: docs/EXIT_CODES.md.
 Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: languages,
 scope, phase timings and why each finding got its class (any position, except
-on `ripr help --json`; or set RIPR_VERBOSE=1).
+on `ripr help --json`; RIPR_VERBOSE=1 for stderr only).
 
 ripr reads your changed code, imagines small bugs in it, and checks whether
 your tests would likely catch them. It does not run mutants or your tests and
