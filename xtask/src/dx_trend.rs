@@ -451,6 +451,10 @@ fn evaluate(history: &BTreeMap<String, Value>, current: &Value) -> Result<Value,
                 .push(json!({"id": id, "reason": format!("unknown direction `{direction}`")}));
             continue;
         };
+        // Any miss of a zero target ranks first, including one that rounding
+        // exported as exactly 0 under a `below_target` verdict.
+        let missed = short > 0.0 || status == "below_target";
+        let zero_target_miss = missed && target == 0.0;
         let series = comparable_series(history, current, metric);
         let previous = series.last().map(|(_, v)| *v);
         let week_entry = series
@@ -482,8 +486,8 @@ fn evaluate(history: &BTreeMap<String, Value>, current: &Value) -> Result<Value,
             "value": value,
             "partial": metric["partial"],
             "shortfall": short,
-            "distance": (target != 0.0 || short <= 0.0).then(|| distance(short, target)),
-            "zero_target_miss": short > 0.0 && target == 0.0,
+            "distance": (!zero_target_miss).then(|| distance(short, target)),
+            "zero_target_miss": zero_target_miss,
             "previous": previous,
             "since_previous": previous.map(|p| better(direction, p, value)),
             "week_ago": week_ago,
@@ -495,7 +499,7 @@ fn evaluate(history: &BTreeMap<String, Value>, current: &Value) -> Result<Value,
         // The scoreboard judges the target before rounding the exported
         // value, so a `below_target` verdict stays a miss even when the
         // rounded number equals the target.
-        if short > 0.0 || status == "below_target" {
+        if missed {
             off_bar.push(row);
         } else {
             if metric["partial"] == json!(true) {
@@ -1280,6 +1284,21 @@ mod tests {
                     Some(0.95),
                     "meets_target",
                 ),
+                // 0.00004 against a zero target, exported as 0.0.
+                row(
+                    "trust.false_exposed",
+                    "lower_is_better",
+                    0.0,
+                    Some(0.0),
+                    "below_target",
+                ),
+                row(
+                    "trust.false_silent",
+                    "lower_is_better",
+                    0.0,
+                    Some(0.0),
+                    "meets_target",
+                ),
             ],
         )?;
         let page = evaluate(&BTreeMap::new(), &r)?;
@@ -1289,9 +1308,17 @@ mod tests {
             .iter()
             .filter_map(|r| r["id"].as_str())
             .collect();
-        assert_eq!(off, ["trust.false_rate", "trust.recall"]);
-        assert_eq!(page["at_bar"][0]["id"], "trust.precision");
-        assert!(render_markdown(&page).contains("rounds to 0"));
+        assert_eq!(
+            off,
+            ["trust.false_exposed", "trust.false_rate", "trust.recall"]
+        );
+        assert_eq!(page["off_bar"][0]["zero_target_miss"], true);
+        assert_eq!(page["at_bar"][0]["id"], "trust.false_silent");
+        assert_eq!(page["at_bar"][1]["id"], "trust.precision");
+        let md = render_markdown(&page);
+        assert!(md.contains("| 1 | `trust.false_exposed`"));
+        assert!(md.contains("any (target 0)"));
+        assert!(md.contains("rounds to 0"));
         Ok(())
     }
 
