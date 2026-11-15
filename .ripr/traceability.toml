@@ -22197,10 +22197,17 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::tests::a_reindented_split_position_macro_keeps_its_probe",
   "crates/ripr/src/analysis/probes/diff.rs::tests::numeric_dot_split_and_join_keep_their_probes",
   "crates/ripr/src/analysis/probes/diff.rs::tests::whitespace_only_line_edits_seed_no_probe",
+  "crates/ripr/src/analysis/probes/identifier_rename_tests.rs::a_proven_rename_seeds_no_probe_but_the_real_change_does",
+  "crates/ripr/src/analysis/probes/identifier_rename_tests.rs::the_same_use_site_edit_without_a_proven_rename_is_probed",
+  "crates/ripr/src/analysis/probes/identifier_rename_tests.rs::a_use_site_that_changes_more_than_the_name_stays_probed",
+  "crates/ripr/src/analysis/probes/identifier_rename_tests.rs::a_renamed_function_and_its_callers_seed_no_probe",
+  "crates/ripr/src/analysis/probes/identifier_rename_tests.rs::renaming_an_entry_point_is_never_proven",
+  "crates/ripr/src/analysis/probes/identifier_rename_tests.rs::a_rename_that_may_not_mean_the_same_item_stays_probed",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/probes/diff.rs",
+  "crates/ripr/src/analysis/probes/identifier_rename.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0348-pure-reformats-seed-no-probes.md",
