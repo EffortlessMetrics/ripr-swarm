@@ -442,3 +442,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — split_test_boundary_oracle (37)
+
+Reason:
+RIPR-SPEC-0224 #14483: a no_assertion row ranks with assertion_not_observing in the shared observation tier, so the Related test headline names the listed row that asserts
+
+Command:
+`cargo xtask goldens bless split_test_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`

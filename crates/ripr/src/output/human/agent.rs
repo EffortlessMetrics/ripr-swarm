@@ -999,7 +999,10 @@ fn strongest_test(finding: &Finding) -> Option<&RelatedTest> {
 /// The related test a `done=` line names as the one that appears to notice
 /// the change: the strongest oracle leads, so a direct caller holding only a
 /// smoke check is never named as the noticer over a test that pins the value;
-/// relation confidence breaks ties (#13603 review).
+/// relation confidence breaks ties (#13603 review). The shared observation
+/// tier leads (#14483), so a strong oracle on a test with no established path
+/// to the change is never named as the noticer while a reaching test is
+/// listed.
 fn noticing_test(finding: &Finding) -> Option<&RelatedTest> {
     finding
         .related_tests
@@ -1007,6 +1010,7 @@ fn noticing_test(finding: &Finding) -> Option<&RelatedTest> {
         .filter(|test| test.is_contributing())
         .min_by_key(|test| {
             (
+                std::cmp::Reverse(test.observation_tier()),
                 strength_rank(&test.oracle_strength),
                 test.relation_confidence
                     .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),

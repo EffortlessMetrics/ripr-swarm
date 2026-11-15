@@ -715,9 +715,17 @@ impl RelatedTest {
     ///   [`RelatedTestMiss::NoCallPath`] miss or a proximity-only relation
     ///   (`same_test_file`, `same_module`, `weak_token_substring`), whatever
     ///   other miss the row records;
-    /// - `1`: [`RelatedTestMiss::AssertionNotObserving`], the test runs the
-    ///   change but asserts on something else;
-    /// - `2`: every other row.
+    /// - `1`: an established miss that says the test runs the change but
+    ///   cannot observe it: [`RelatedTestMiss::AssertionNotObserving`] (it
+    ///   asserts on something else) or [`RelatedTestMiss::NoAssertion`] (it
+    ///   asserts nothing ripr recognizes);
+    /// - `2`: every other row, including the assertion-strength misses
+    ///   (`weak_assertion`, `missing_input`, `missing_exact_assertion`) and
+    ///   the unknown-edge misses (`observation_unconfirmed`,
+    ///   `assertion_not_credited`, `assertion_inert`,
+    ///   `assertion_admission_unproven`), which record that ripr could not
+    ///   establish the observation, not that it is absent (#5508). Strength
+    ///   then orders them.
     ///
     /// Display row selection only: no class, gate or credit reads it.
     pub fn observation_tier(&self) -> u8 {
@@ -727,7 +735,7 @@ impl RelatedTest {
         match self.miss {
             Some(RelatedTestMiss::NoCallPath) => 0,
             _ if proximity_only => 0,
-            Some(RelatedTestMiss::AssertionNotObserving) => 1,
+            Some(RelatedTestMiss::AssertionNotObserving | RelatedTestMiss::NoAssertion) => 1,
             _ => 2,
         }
     }

@@ -769,6 +769,21 @@ mod tests {
             headline_related_test_for_finding(&located).map(|t| t.name.as_str()),
             Some("b")
         );
+        // `no_assertion` ranks with `assertion_not_observing` (the listed
+        // order decides between them), and an unknown-edge miss ranks with the
+        // observing rows.
+        let mut silent = rust.clone();
+        silent.related_tests[1].miss = Some(RelatedTestMiss::NoAssertion);
+        silent.related_tests[2].miss = Some(RelatedTestMiss::AssertionNotObserving);
+        assert_eq!(
+            headline_related_test_for_finding(&silent).map(|t| t.name.as_str()),
+            Some("b")
+        );
+        silent.related_tests[2].miss = Some(RelatedTestMiss::ObservationUnconfirmed);
+        assert_eq!(
+            headline_related_test_for_finding(&silent).map(|t| t.name.as_str()),
+            Some("c")
+        );
         rust.related_tests.truncate(2);
         assert_eq!(
             headline_related_test_for_finding(&rust).map(|t| t.name.as_str()),

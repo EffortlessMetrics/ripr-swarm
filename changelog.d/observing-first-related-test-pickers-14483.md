@@ -1,6 +1,7 @@
 <!-- section: Fixed -->
 - The human `Related test` headline, the JSON finding `oracle_kind` /
-  `oracle_strength` summary and the agent `open=` test row now follow the same
+  `oracle_strength` summary, the agent `open=` test row and the test a `done=`
+  line names as noticing the change now follow the same
   observing-first rule as the agent `tK=` row and the context fix site: a test
   whose assertion cannot observe the change, or that has no call path to it
   (including a test linked only by file, module or name proximity), is not
