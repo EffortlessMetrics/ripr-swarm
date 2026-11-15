@@ -1,5 +1,17 @@
 # Golden Output Changes
 
+## Pending — python_raises_bare_owner_outside_body_no_credit (3)
+
+Reason:
+The verify line is platform-rendered: `rooted_pytest_action` returns None on
+Windows, so the Windows-blessed text carried the unverified suggested command.
+Hosted (non-Windows) output renders the rooted Bash action, matching the other
+Python fixtures. No finding, class, or command content changed.
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`
+
 ## Pending — python_raises_bare_owner_outside_body_no_credit (1)
 
 Reason:

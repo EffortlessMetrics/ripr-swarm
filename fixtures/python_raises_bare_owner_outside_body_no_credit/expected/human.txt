@@ -28,7 +28,7 @@ Start here:
   Suggested test file: tests/test_levels.py
   Suggested test: test_blank
   Test node: tests/test_levels.py::test_blank
-  Suggested command (unverified; inspect and run from the selected root): python -m pytest tests/test_levels.py::test_blank
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_raises_bare_owner_outside_body_no_credit/input && python -m pytest tests/test_levels.py::test_blank) (high)
   Next step — Python preview: strengthen the existing related test with an exception assertion for the missing check `raises ValueError matching "blank level"`
   Evidence: reach yes · infection yes · propagation yes · observation weak · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

@@ -67,7 +67,7 @@ Python repair card (preview/advisory)
   suggested file: tests/test_levels.py
   suggested test: test_blank
   pytest node: tests/test_levels.py::test_blank
-  suggested command (unverified; inspect and run from the selected root): python -m pytest tests/test_levels.py::test_blank
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_raises_bare_owner_outside_body_no_credit/input && python -m pytest tests/test_levels.py::test_blank) (high)
   receipt: unavailable_until_python_gap_ledger
   receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
   stop conditions:
