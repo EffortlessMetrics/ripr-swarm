@@ -626,7 +626,11 @@ then the cargo_toml check passes and names the nested manifest (Cargo.toml
 found at rust/Cargo.toml via workspace root rust/);
 and a root with Rust sources but no Cargo.toml, or an empty root under the
 Rust-only default, still fails cargo_toml;
-and doctor's selected --root is not rebound to the nested workspace.
+and doctor's selected --root is not rebound to the nested workspace;
+and the bounded nested walk visits each level's entries in name order, so in a
+tree with more directories than its cap, which manifests it sees (and so which
+it names) depends on directory names, not on filesystem listing order
+(#14230).
 
 Given a git root with a TypeScript marker (`package.json` or `tsconfig.json`)
 and a nested Cargo workspace (`rust/Cargo.toml`) and no Cargo.toml or `.rs`
@@ -848,6 +852,7 @@ Current tests:
 - `crates/ripr/src/output/doctor.rs::tests::ancestor_package_from_src_passes_cargo_toml`
 - `crates/ripr/src/output/doctor.rs::tests::cargo_toml_walk_does_not_cross_the_git_top_level`
 - `crates/ripr/src/output/doctor.rs::tests::nested_cargo_toml_walk_does_not_follow_directory_symlinks`
+- `crates/ripr/src/output/doctor.rs::tests::nested_cargo_toml_walk_under_the_cap_is_name_ordered`
 - `crates/ripr/tests/cli_smoke.rs::doctor_git_root_with_nested_workspace_passes_cargo_toml`
 - `crates/ripr/src/output/doctor.rs::tests::polyglot_git_root_with_typescript_and_nested_workspace_keeps_cargo_toml_required`
 - `crates/ripr/src/output/doctor.rs::tests::nested_workspace_does_not_override_rust_disabled_in_languages`

@@ -271,6 +271,14 @@ and literal consumer controls are specified by
 - LSP diagnostics and hover content when used through the editor
 - agent context packet for a selected finding
 
+For the same workspace and diff, diff-scoped `check` output is byte-identical
+across repeated runs, a cold or warm run cache, analysis worker counts
+(`RAYON_NUM_THREADS`), and the order in which the workspace's files were
+written. Exceptions are documented, not drift: formats whose contract stamps
+a per-run time (`check-findings-json` and the `repo-*` artifacts), the
+absolute root carried in rerun commands, and the human digest's one-time
+first-run legend (#10481) (#14230).
+
 ## Classifications
 
 Static findings may use only these exposure classes:
@@ -706,6 +714,12 @@ fail-closed and every other shape keeps the ordinary reading. It requires:
   follows it.
 
 ## Test Mapping
+
+Output determinism (#14230):
+
+- `crates/ripr/tests/output_determinism.rs::rust_check_output_is_byte_identical_across_runs_workers_and_write_order`
+- `crates/ripr/tests/output_determinism.rs::python_check_output_is_byte_identical_across_runs_workers_and_write_order`
+- `crates/ripr/tests/output_determinism.rs::typescript_check_output_is_byte_identical_across_runs_workers_and_write_order`
 
 Fixture coverage:
 
