@@ -67,9 +67,7 @@ queued commit's tree must also equal the live head merged onto the group base
 (`git merge-tree --write-tree <base> <head>`, with the head fetched from the
 PR's own `refs/pull/<n>/head` and required to match the head read from the API).
 A different head, extra content, a merge conflict, a moved PR ref or missing
-history refuses. Admission is per PR, so the queue must use a group size of 1; the queued commit must be a single
-squash commit of the queued PR sitting directly on the group's `base_sha`, or
-admission refuses it, so a batch fails closed even if the ruleset is misconfigured. Batching needs per-PR admission (#8082) and is a follow-up. The
+history refuses. Admission is per constituent PR in `merge_group.base_sha..merge_group.head_sha` (#8082): every constituent commit must form a linear single-parent squash chain, bind to its live PR head (`git merge-tree --write-tree <prev> <head>`) and `mergeQueueEntry`, pass candidate/cut/review/thread admission, and belong to the base repository before self-hosted runners are selected. The
 `merge-ready` label request below still works until the label request is
 retired in a follow-up, after the repository's merge queue is enabled.
 

@@ -11,9 +11,11 @@ proof, ordinary protected squash, or separate release authority.
 Since #9106, `.github/workflows/routed-rust.yml` also subscribes to
 `merge_group` (`checks_requested`) so the required `Ripr Rust Small Result` can be
 earned once per queue entry on the exact queued merge commit (see
-[CI](CI.md#merge-queue-request-cutover)). Admission is per PR, so the queue must
-use a group size of 1 and the queued commit must be a single squash commit on the
-group's `base_sha`; batching needs per-PR admission (#8082). The workflow also
+[CI](CI.md#merge-queue-request-cutover)). Admission is per constituent PR in
+`merge_group.base_sha..merge_group.head_sha` (#8082): every constituent commit
+must form a linear single-parent squash chain, bind to its live PR head and
+queue entry, pass candidate/cut/review/thread admission, and belong to the
+base repository before self-hosted runners are selected. The workflow also
 still requests PR qualification on the explicit `merge-ready` label and runs on
 main/master push and manual dispatch. The branch summary names
 `Ripr Rust Small Result` (application 15368); a complete current enforcement
