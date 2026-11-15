@@ -23411,7 +23411,7 @@ fn framed_pull_client_queued_refresh_answers_without_answering_diagnostic_refres
             }
         })
         .await
-        .map_err(|_| "initial document pull never answered".to_string())??;
+        .map_err(|_err| "initial document pull never answered".to_string())??;
         if backend.latest_analysis_snapshot().is_some() {
             return Err("guard failed: a snapshot exists, so no refresh would be sent".to_string());
         }
@@ -23461,7 +23461,7 @@ fn framed_pull_client_queued_refresh_answers_without_answering_diagnostic_refres
             }
         })
         .await
-        .map_err(|_| format!("queued executeCommand never answered; seen={seen:?}"))??;
+        .map_err(|_err| format!("queued executeCommand never answered; seen={seen:?}"))??;
         let elapsed = started.elapsed();
         if response.get("error").is_some() {
             return Err(format!("queued executeCommand failed: {response}"));
