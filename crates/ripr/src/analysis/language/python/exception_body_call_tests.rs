@@ -228,6 +228,39 @@ fn bare_import_owner_in_a_raises_body_keeps_credit() -> Check {
 }
 
 #[test]
+fn the_exception_body_reader_reads_f_string_fields() -> Check {
+    let gate = "pytest.raises(ValueError, match=\"blank level\"):\n        f\"{levels.parse('')}\"";
+    let item = "pytest.raises(ValueError, match=\"blank level\"):";
+    assert!(
+        !super::static_limits::python_prefix_hides_code("        f\"{"),
+        "the prefix scanner must treat an open f-string field as code"
+    );
+    assert!(
+        !super::related_tests::python_text_hides_code("        f\"{levels.parse('')}\"", 11),
+        "the text scanner must not hide a call in a field"
+    );
+    assert!(
+        super::related_tests::exception_body_calls(gate, item, "levels.parse"),
+        "the exception body reader must see a call in an f-string field"
+    );
+    assert!(
+        super::related_tests::exception_body_observes_token(gate, item, "parse"),
+        "the exception token reader must see a token in an f-string field"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_def_spelled_in_a_raises_body_string_defers_nothing() -> Check {
+    // #14754 review: `def ` inside a string defines nothing, so a later
+    // executed owner call is still the call that raises.
+    expect_module_call_credit(
+        "def inside a docstring before the call",
+        "import pytest\nfrom src import levels\n\n\ndef test_blank():\n    with pytest.raises(ValueError, match=\"blank level\"):\n        note = \"\"\"\n        def parse(text):\n            return text\n        \"\"\"\n        levels.parse(\"\")\n",
+    )
+}
+
+#[test]
 fn a_pattern_matching_both_messages_still_pins_only_the_class() -> Check {
     // The #9185 message-pin gate reads the same assertion: `level` matches
     // the old and the new message alike.
