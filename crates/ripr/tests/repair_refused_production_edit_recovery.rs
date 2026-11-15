@@ -7,7 +7,10 @@ use std::path::PathBuf;
 use std::process::Command;
 
 const CARGO_TOML: &str = "[package]\nname = \"ar\"\nversion = \"0.1.0\"\nedition = \"2021\"\n";
-const OLD: &str = "pub fn shipping(weight: u32) -> u32 {\n    if weight > 20 {\n        15\n    } else {\n        5\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn positive() {\n        assert!(shipping(30) > 0);\n    }\n}\n";
+// The inline test pins both tail branch values exactly, so the boundary
+// predicate is the only eligible repair start and a bare `ripr repair` starts
+// it (branch values are their own `return_value` seams since #14385).
+const OLD: &str = "pub fn shipping(weight: u32) -> u32 {\n    if weight > 20 {\n        15\n    } else {\n        5\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn positive() {\n        assert_eq!(shipping(30), 15);\n        assert_eq!(shipping(10), 5);\n    }\n}\n";
 
 struct Repo(PathBuf);
 

@@ -74,6 +74,17 @@ of the block carries a comment delimiter (`/*`, `*/`) or an odd number of `"`.
 Only `name: value,` field lines may cross an edited line, since they may move
 within their literal. Text is compared exactly apart from a trailing `\r`.
 
+A `match` rewritten as `let ... else` (clippy `manual_let_else`) keeps its
+diverging statement: a removed single-line `None => return R,` arm and the
+added `return R;` seed no probe on either side when the `match` scrutinee and
+the `let ... else` scrutinee are the same text, the added statement is the
+first added line after its opener, and each text occurs exactly once in the
+window (#14428). A changed scrutinee, a changed return value, a multi-line
+`None => { .. }` arm, or a repeated statement keeps both probes. A pattern
+that itself holds ` = ` inside a string literal (`let Some("a = b") = s else
+{ .. }`) is not split from its scrutinee, so it fails closed and both probes
+stay; `a_pattern_with_an_equals_sign_never_pairs` pins that limit.
+
 A changed `struct`, `enum`, `union` or `trait` header that opens its body on the
 same line (`enum Operator<P, Q: Ord + Copy> {`, with any visibility or `unsafe`
 prefix) declares bounds and runs nothing, so it is one `static_unknown` probe
@@ -95,6 +106,37 @@ does not establish that every edit was represented. Uneven blocks, unrepresented
 families and ambiguous edits retain historical evidence. This rule changes
 removed-side reconciliation only; parser selection and constructor identities
 remain separate authorities.
+
+A change confined to one range expression or range pattern whose values feed an
+absorbing consumer (a method on the range's chain outside the length-preserving
+set such as `sum`, `contains`, `find` or `take`, a `for` header, or a match range
+pattern) reads infection `yes` only when an `assert_eq!`-family or bare boolean
+`assert!` holds a bare literal call of the owner (or its `.await`) whose folded
+result differs between the old and new range (#14419), compared against a
+literal equal to the current result. A helper, or a binding that is reassigned or
+read elsewhere, could move in lockstep with the owner, an `#[ignore]` test never
+runs, and a `#[should_panic]` test can pass on both versions, so none earns credit. A relational or
+`assert_ne!` check at such an input, or every asserted call agreeing on both
+versions, reads infection `weak`. The second case is not claimed for an
+equivalent rewrite or when the owner has other callers. A range handed to a call
+(`Iterator::sum(0..n)`) is gated like an absorbing method, `v.get(a..b)` and its
+unchecked or mutable forms slice like `v[a..b]`, and an assertion that
+never runs (a literal-false block, an uncalled closure, after a `return`, even
+on the same line as live code) reads nothing. Any other gated change, including an input ripr cannot fold, reads
+`unknown`, except a moved match range pattern: whenever the fold does not
+establish what the tests see (arms it cannot read such as `&str` results, or
+rebound assertion macros), it keeps the ordinary arm-routing reading (#5992).
+So `(0..n).sum()` to `(0..=n).sum()` tested only by `sum_to(0)` is not
+`exposed`. A `sum` or
+`product` folds only when the owner's return type is written as a fixed-width
+integer (`u8` to `u64`, `i8` to `i64`) and no cast follows it; an unresolved
+alias such as `type Byte = u8` or a cast could wrap to the old value, so it is
+not folded. A test whose body
+rebinds or imports the owner's name supplies no separating input. Ranges feeding
+length-preserving chains (`.iter().map(..).collect()`, slicing, `.len()`,
+`.count()`) keep the ordinary reading, since an element more shows at every
+non-empty input. A set collect or an input where both ranges are empty is the
+known limit there.
 
 A removed line that is one bare literal (a number, `true`/`false`, or one
 quoted string or char, optionally followed by `,` or `;`) adds no removed-side
@@ -790,6 +832,12 @@ Fixture coverage:
 - `an_identical_line_inside_a_replacement_block_seeds_no_probe`
 - `identical_line_suppression_is_fail_closed`
 - `identical_line_pairing_never_hides_reorders_or_block_moves`
+- `a_manual_let_else_rewrite_pairs_its_diverging_statement`
+- `manual_let_else_pairing_is_fail_closed`
+- `a_reversed_let_else_pattern_never_pairs`
+- `a_neighbouring_functions_arm_never_pairs`
+- `a_scrutinee_with_an_equals_sign_still_pairs`
+- `a_pattern_with_an_equals_sign_never_pairs`
 - `multiline_builder_chain_setup_row_is_dropped_beside_the_assertion`
 - `multiline_setup_row_stays_unless_it_is_a_bare_unwrap_chain_beside_an_assertion`
 - `keyword_probe_tokens_do_not_relate_tests_by_name`
