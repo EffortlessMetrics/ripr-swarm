@@ -252,42 +252,56 @@ fn read_text(root: &Path, rel: &str, violations: &mut Vec<String>) -> Option<Str
     }
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StaticAllowlist {
+    schema_version: u32,
+    #[serde(default)]
+    allow: Vec<StaticAllow>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StaticAllow {
+    path: Option<String>,
+    glob: Option<String>,
+    owner: String,
+    reason: String,
+}
+
 /// Whole-file exceptions from `.ripr/static-language-allowlist.toml`:
 /// exact paths plus the documentation globs the allowlist itself declares.
-/// Mirrors the canonical validation shape: every entry must declare exactly
-/// one matcher (`path` or `glob`) with a nonempty owner and reason, and the
-/// only supported globs are `docs/*.md` and `docs/**/*.md`. A missing or
-/// malformed allowlist grants nothing (fail closed to scanning).
+/// The file is parsed as TOML with the canonical validation shape: every
+/// entry must declare exactly one matcher (`path` or `glob`) with a
+/// nonempty owner and reason, and the only supported globs are `docs/*.md`
+/// and `docs/**/*.md`. A missing or malformed allowlist grants nothing
+/// (fail closed to scanning).
 fn static_language_allowed(root: &Path, rel: &str) -> bool {
     let Ok(text) = std::fs::read_to_string(root.join(".ripr/static-language-allowlist.toml"))
     else {
         return false;
     };
+    let Ok(parsed) = toml::from_str::<StaticAllowlist>(&text) else {
+        return false;
+    };
+    if parsed.schema_version != 1 {
+        return false;
+    }
     let mut allowed_paths: Vec<&str> = Vec::new();
     let mut allowed_globs: Vec<&str> = Vec::new();
-    for entry in text.split("[[allow]]").skip(1) {
-        let field = |name: &str| {
-            entry.lines().find_map(|line| {
-                line.trim()
-                    .strip_prefix(name)?
-                    .trim()
-                    .strip_prefix('=')?
-                    .trim()
-                    .strip_prefix('"')?
-                    .strip_suffix('"')
-            })
-        };
-        let (path, glob) = (field("path"), field("glob"));
-        let well_formed = matches!((path, glob), (Some(_), None) | (None, Some(_)))
-            && field("owner").is_some_and(|v| !v.trim().is_empty())
-            && field("reason").is_some_and(|v| !v.trim().is_empty());
+    for entry in &parsed.allow {
+        let well_formed = matches!(
+            (entry.path.as_deref(), entry.glob.as_deref()),
+            (Some(_), None) | (None, Some(_))
+        ) && !entry.owner.trim().is_empty()
+            && !entry.reason.trim().is_empty();
         if !well_formed {
             return false;
         }
-        if let Some(path) = path {
+        if let Some(path) = entry.path.as_deref() {
             allowed_paths.push(path);
         }
-        if let Some(glob) = glob {
+        if let Some(glob) = entry.glob.as_deref() {
             if glob != "docs/*.md" && glob != "docs/**/*.md" {
                 return false;
             }
@@ -842,12 +856,75 @@ pub fn run_docs_gate(root: &Path, changed: &[String]) -> Result<DocsGateReport, 
     Ok(DocsGateReport { plan, violations })
 }
 
+/// Revision mode: classify the `base...head` diff in `checkout`, then run
+/// the scoped gates against the committed tree of `head`, materialized
+/// from `git archive`. Working-file bytes are never read in this mode, so
+/// a dirty or mismatched working tree cannot produce a pass for the wrong
+/// content; `--changed` remains the deliberate live-worktree mode.
+pub fn run_docs_gate_at_revision(
+    checkout: &Path,
+    base: &str,
+    head: &str,
+) -> Result<DocsGateReport, String> {
+    verify_checkout_at(checkout, head)?;
+    let changed = git_diff_files(checkout, base, head)?;
+    let tree = materialize_tree(checkout, head)?;
+    let result = run_docs_gate(&tree, &changed);
+    let _ = std::fs::remove_dir_all(&tree);
+    result
+}
+
+fn materialize_tree(checkout: &Path, head: &str) -> Result<PathBuf, String> {
+    let tree = std::env::temp_dir().join(format!(
+        "ripr-docs-gate-tree-{}-{}",
+        std::process::id(),
+        head.chars().take(12).collect::<String>()
+    ));
+    if tree.exists() {
+        std::fs::remove_dir_all(&tree)
+            .map_err(|e| format!("docs-gate: cannot clear {}: {e}", tree.display()))?;
+    }
+    std::fs::create_dir_all(&tree)
+        .map_err(|e| format!("docs-gate: cannot create {}: {e}", tree.display()))?;
+    let mut archive = std::process::Command::new("git")
+        .args(["archive", "--format=tar", head])
+        .current_dir(checkout)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("docs-gate: cannot run git archive: {e}"))?;
+    let archive_out = archive
+        .stdout
+        .take()
+        .ok_or("docs-gate: git archive produced no stdout")?;
+    let extract = std::process::Command::new("tar")
+        .args(["-x", "-C"])
+        .arg(&tree)
+        .stdin(archive_out)
+        .output()
+        .map_err(|e| format!("docs-gate: cannot run tar extract: {e}"))?;
+    let archive_status = archive
+        .wait()
+        .map_err(|e| format!("docs-gate: cannot wait for git archive: {e}"))?;
+    if !archive_status.success() || !extract.status.success() {
+        let _ = std::fs::remove_dir_all(&tree);
+        return Err(format!(
+            "docs-gate: materializing {head} failed (git archive: {archive_status}, tar: {})",
+            String::from_utf8_lossy(&extract.stderr).trim()
+        ));
+    }
+    Ok(tree)
+}
+
 /// CLI entry: `cargo policy docs-gate --base <sha> --head <sha>` or
 /// `cargo policy docs-gate --changed <path>...` (repeatable / comma list
 /// via repeated flags). Exit via `Err` on widen or violations.
 pub fn command(args: &[String]) -> Result<(), String> {
-    let changed = changed_files(args)?;
-    let report = run_docs_gate(Path::new("."), &changed)?;
+    let report = match parse_mode(args)? {
+        CommandMode::Changed(changed) => run_docs_gate(Path::new("."), &changed)?,
+        CommandMode::Revision { base, head } => {
+            run_docs_gate_at_revision(Path::new("."), &base, &head)?
+        }
+    };
     println!("{}", report.render());
     if !report.plan.is_docs_eligible() {
         return Err(format!(
@@ -865,10 +942,15 @@ pub fn command(args: &[String]) -> Result<(), String> {
     }
 }
 
-fn changed_files(args: &[String]) -> Result<Vec<String>, String> {
-    // Parse every argument first: mixing the explicit-path mode with the
-    // `--base`/`--head` mode, or trailing arguments after the pair, must
-    // refuse rather than silently discarding part of the request.
+enum CommandMode {
+    Changed(Vec<String>),
+    Revision { base: String, head: String },
+}
+
+/// Parse every argument first: mixing the explicit-path mode with the
+/// `--base`/`--head` mode, or trailing arguments after the pair, must
+/// refuse rather than silently discarding part of the request.
+fn parse_mode(args: &[String]) -> Result<CommandMode, String> {
     let mut changed = Vec::new();
     let mut base: Option<String> = None;
     let mut head: Option<String> = None;
@@ -900,23 +982,36 @@ fn changed_files(args: &[String]) -> Result<Vec<String>, String> {
         }
     }
     match (base, head) {
-        (None, None) => Ok(changed),
+        (None, None) => Ok(CommandMode::Changed(changed)),
         (Some(base), Some(head)) => {
             if !changed.is_empty() {
                 return Err("docs-gate: --changed paths cannot be mixed with --base/--head".into());
             }
-            git_changed_files(&base, &head)
+            Ok(CommandMode::Revision { base, head })
         }
         _ => Err("docs-gate: --base and --head must be given together".into()),
     }
 }
 
-/// The gate reads file contents from the current checkout, so the checkout
-/// must be at `--head`; otherwise it would report on the wrong content.
-fn verify_checkout_at(head: &str) -> Result<(), String> {
+#[cfg(test)]
+fn changed_files(args: &[String]) -> Result<Vec<String>, String> {
+    match parse_mode(args)? {
+        CommandMode::Changed(changed) => Ok(changed),
+        CommandMode::Revision { base, head } => {
+            verify_checkout_at(Path::new("."), &head)?;
+            git_diff_files(Path::new("."), &base, &head)
+        }
+    }
+}
+
+/// The gate reads file contents from the committed tree of `--head`, and
+/// the checkout is the git authority for that tree, so the checkout must
+/// be at `--head`; otherwise the requested subject is ambiguous.
+fn verify_checkout_at(checkout: &Path, head: &str) -> Result<(), String> {
     let resolve = |rev: &str| -> Result<String, String> {
         let output = std::process::Command::new("git")
             .args(["rev-parse", &format!("{rev}^{{commit}}")])
+            .current_dir(checkout)
             .output()
             .map_err(|e| format!("docs-gate: cannot run git rev-parse: {e}"))?;
         if !output.status.success() {
@@ -927,18 +1022,17 @@ fn verify_checkout_at(head: &str) -> Result<(), String> {
         }
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     };
-    let checkout = resolve("HEAD")?;
+    let checkout_sha = resolve("HEAD")?;
     let target = resolve(head)?;
-    if checkout != target {
+    if checkout_sha != target {
         return Err(format!(
-            "docs-gate: checkout is at {checkout}, not --head {head} ({target}); check out the head commit first"
+            "docs-gate: checkout is at {checkout_sha}, not --head {head} ({target}); check out the head commit first"
         ));
     }
     Ok(())
 }
 
-fn git_changed_files(base: &str, head: &str) -> Result<Vec<String>, String> {
-    verify_checkout_at(head)?;
+fn git_diff_files(checkout: &Path, base: &str, head: &str) -> Result<Vec<String>, String> {
     // Fail closed on any git error: an unavailable diff widens, never passes.
     let output = std::process::Command::new("git")
         .args([
@@ -948,6 +1042,7 @@ fn git_changed_files(base: &str, head: &str) -> Result<Vec<String>, String> {
             "-z",
             &format!("{base}...{head}"),
         ])
+        .current_dir(checkout)
         .output()
         .map_err(|e| format!("docs-gate: cannot run git diff: {e}"))?;
     if !output.status.success() {
@@ -967,6 +1062,7 @@ fn git_changed_files(base: &str, head: &str) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::{changed_files, verify_checkout_at};
+    use std::path::Path;
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|v| (*v).to_string()).collect()
@@ -1005,8 +1101,8 @@ mod tests {
     #[test]
     fn checkout_at_head_is_accepted_and_unknown_rev_refused() -> Result<(), String> {
         // The test process runs inside this repository checkout.
-        verify_checkout_at("HEAD")?;
-        let refused = verify_checkout_at("refs/heads/does-not-exist-14772");
+        verify_checkout_at(Path::new("."), "HEAD")?;
+        let refused = verify_checkout_at(Path::new("."), "refs/heads/does-not-exist-14772");
         assert!(
             matches!(&refused, Err(e) if e.contains("rev-parse")),
             "{refused:?}"

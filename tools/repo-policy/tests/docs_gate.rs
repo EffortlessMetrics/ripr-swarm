@@ -3,7 +3,7 @@
 //! spec runs the spec gates, a hand-edited generated registry block is
 //! refused (retained product obligation), and manifest/lockfile input
 //! widens instead of silently passing.
-use repo_policy::docs_gate::{plan, run_docs_gate};
+use repo_policy::docs_gate::{plan, run_docs_gate, run_docs_gate_at_revision};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -311,6 +311,52 @@ fn broken_heading_links_and_fenced_examples() -> TestResult {
         report.violations[0].contains("#does-not-exist"),
         "{}",
         report.render()
+    );
+    Ok(())
+}
+
+fn git(root: &std::path::Path, args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
+    let status = std::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .env("GIT_AUTHOR_NAME", "docs-gate test")
+        .env("GIT_AUTHOR_EMAIL", "docs-gate@example.invalid")
+        .env("GIT_COMMITTER_NAME", "docs-gate test")
+        .env("GIT_COMMITTER_EMAIL", "docs-gate@example.invalid")
+        .status()?;
+    assert!(status.success(), "git {args:?} failed");
+    Ok(())
+}
+
+#[test]
+fn revision_mode_reads_committed_tree_not_working_files() -> TestResult {
+    let root = fixture(&[
+        ("docs/GUIDE.md", "# Guide\n\nClean text.\n"),
+        ("docs/OTHER.md", "# Other\n"),
+    ])?;
+    git(&root, &["init", "-q"])?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-q", "-m", "one"])?;
+    fs::write(
+        root.join("docs/GUIDE.md"),
+        "# Guide\n\nClean text, edited.\n",
+    )?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-q", "-m", "two"])?;
+    // Dirty the working file with a forbidden term after the head commit.
+    fs::write(root.join("docs/GUIDE.md"), "# Guide\n\nThis was killed.\n")?;
+    let worktree = run_docs_gate(&root, &changed(&["docs/GUIDE.md"]))?;
+    assert!(
+        worktree.violations.iter().any(|v| v.contains("killed")),
+        "worktree mode must see the dirty bytes: {}",
+        worktree.render()
+    );
+    let revision = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    assert!(revision.plan.is_docs_eligible(), "{}", revision.render());
+    assert!(
+        revision.violations.is_empty(),
+        "revision mode must read committed bytes, not the dirty file: {}",
+        revision.render()
     );
     Ok(())
 }

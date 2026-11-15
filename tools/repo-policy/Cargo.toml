@@ -9,9 +9,8 @@ rust-version.workspace = true
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "1"
 sha2 = "0.10"
-# docs-gate parses the ripr-agent disposition TOML ledger (xtask uses toml::from_str).
+# docs-gate parses TOML policy files (xtask uses toml::from_str).
 toml = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
