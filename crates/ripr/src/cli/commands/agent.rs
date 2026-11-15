@@ -3070,7 +3070,8 @@ fn run_agent_repair_phase(
                                 &manifest.seam_id,
                                 &packet_path,
                                 Some(id),
-                            )?;
+                            )
+                            .map_err(|error| error.to_string())?;
                             crate::app::python_repair_binding::reverify_for_apply(
                                 &manifest.seam_id,
                                 &policy,
@@ -3191,7 +3192,8 @@ fn run_agent_repair_phase(
                                     &manifest.seam_id,
                                     &root.join(&packet.path),
                                     Some(id),
-                                )?;
+                                )
+                                .map_err(|error| error.to_string())?;
                                 recovered_focused_after_output(&root, store_ref, &manifest, json)
                             },
                         )?;
@@ -3296,7 +3298,8 @@ fn run_agent_repair_phase(
                                     &manifest.seam_id,
                                     &packet_path,
                                     Some(id),
-                                )?;
+                                )
+                                .map_err(|error| error.to_string())?;
                                 let binding =
                                     crate::app::python_repair_binding::load_retained_binding_from(
                                         &root, store_ref, &parsed_id,
