@@ -689,7 +689,7 @@ fn handlers_bind(handlers: &[ast::ExceptHandler], name: &str) -> bool {
 }
 
 /// The name `import a.b` or `import a.b as c` binds (`a` or `c`).
-fn import_binding(alias: &ast::Alias) -> &str {
+pub(super) fn import_binding(alias: &ast::Alias) -> &str {
     match &alias.asname {
         Some(asname) => asname.as_str(),
         None => alias.name.as_str().split('.').next().unwrap_or_default(),

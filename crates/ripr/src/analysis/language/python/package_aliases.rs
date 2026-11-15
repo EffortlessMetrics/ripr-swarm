@@ -25,14 +25,15 @@
 //! must be read and parse, and bind the name exactly once, through one
 //! unconditional top-level `import` or `from ... import`. Any other binding
 //! of the name, a star import, a `match` or `type` statement at any depth
-//! the module executes, a module `__getattr__`, `global`, a walrus or a
-//! dynamic namespace write refuses, as
+//! the module executes, a module `__getattr__`, `global`, a walrus, a
+//! dynamic namespace write or the name spelled as an attribute anywhere
+//! (`tests.tomllib = other` replaces the package attribute) refuses, as
 //! does a submodule or subpackage of the same name, which another import
 //! could load over the binding. Chains through further package
 //! initializers stop after [`MAX_ALIAS_HOPS`].
 
 use super::owners_tests::import_source_module;
-use super::reexports::{is_star_import, stmt_binds, writes_namespace_dynamically};
+use super::reexports::{import_binding, is_star_import, stmt_binds, writes_namespace_dynamically};
 use super::source_facts::parse_module_result;
 use super::{PythonImport, PythonTest};
 use rustpython_parser::ast::{self, Mod, Stmt};
@@ -59,6 +60,19 @@ fn rebinds_dynamically(text: &str) -> bool {
                     "locals" | "global" | "eval" | "__getattr__" | "modules"
                 )
             })
+}
+
+/// Whether `name` appears as an attribute (`.name`, whitespace or line
+/// continuations allowed after the dot) anywhere in `text`, comments and
+/// strings included, so any attribute write of that name refuses.
+fn names_attribute(text: &str, name: &str) -> bool {
+    text.match_indices('.').any(|(dot, _)| {
+        let rest = text[dot + 1..].trim_start_matches(|c: char| c.is_whitespace() || c == '\\');
+        let end = rest
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(rest.len());
+        &rest[..end] == name
+    })
 }
 
 /// Rewrites every test import of a name its package initializer binds by
@@ -168,7 +182,9 @@ fn initializer_binding<'s>(
     }
     let init = directory.join("__init__.py");
     let text = source(&init)?;
-    if rebinds_dynamically(text) {
+    // An attribute spelled `name` (`tests.tomllib = other`, through any
+    // receiver) can replace the package attribute the test later reads.
+    if rebinds_dynamically(text) || names_attribute(text, name) {
         return None;
     }
     let Ok(Mod::Module(module)) = parse_module_result(&init, text) else {
@@ -189,14 +205,20 @@ fn initializer_binding<'s>(
     }
     match binder {
         Stmt::Import(import) => {
+            // Count by the name Python binds: `import a.b` binds `a`, so
+            // `import owner as json, json.tool` leaves `json` the stdlib
+            // package and is refused as a second binding.
             let mut aliases = import
                 .names
                 .iter()
-                .filter(|alias| alias.asname.as_ref().unwrap_or(&alias.name).as_str() == name);
+                .filter(|alias| import_binding(alias) == name);
             let alias = aliases.next()?;
-            // `import a.b` binds `a`, so a dotted name is never `name` here;
-            // a second alias of the same name keeps only the last.
             if aliases.next().is_some() {
+                return None;
+            }
+            // An unaliased dotted import binds only its root package, which
+            // is not the module the full spelling names.
+            if alias.asname.is_none() && alias.name.contains('.') {
                 return None;
             }
             Some(PythonImport {

@@ -1546,7 +1546,9 @@ mutant calibrates the rule; ripr reports only the static shape.
     under the test's local name. Every reach and oracle reader then sees the
     same evidence the direct import gives. The initializer must be read and
     parse and bind `X` exactly once, through one unconditional top-level
-    import statement with one alias of that name; up to three package
+    import statement with one alias binding that name (counted by the name
+    Python binds, so `import a as X, X.sub` binds `X` twice, and an
+    unaliased dotted `import X.sub` is refused); up to three package
     initializers are followed, each a package of the test file's own
     package chain (its directory and each parent while it has an
     `__init__.py`). A dotted name is read from the workspace root, and pytest
@@ -1565,8 +1567,10 @@ mutant calibrates the rule; ripr reports only the static shape.
     executes (outside `def` and `class` bodies), or names a dynamic namespace
     writer anywhere, even in a comment, as an identifier token so spacing
     (`vars ()`) cannot hide it (`globals`, `locals`, `vars`, `exec`, `eval`,
-    `setattr`, `__dict__`, `global`, `__getattr__`, any `modules`), or a
-    walrus `:=`; or `P`
+    `setattr`, `__dict__`, `global`, `__getattr__`, any `modules`), a
+    walrus `:=`, or `X` as an attribute anywhere (`.X`, as in
+    `tests.X = other`, which replaces the package attribute through any
+    receiver); or `P`
     has a submodule or subpackage named `X`, which an import elsewhere could
     load over the binding. A followed `from M import Y as X` is a rename
     the package re-export reading does not follow; it is followed here

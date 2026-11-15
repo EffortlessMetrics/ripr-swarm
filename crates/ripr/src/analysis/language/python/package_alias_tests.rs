@@ -180,6 +180,44 @@ fn a_rebound_or_conditional_package_name_stays_unlinked() -> Result<(), String> 
 }
 
 #[test]
+fn an_attribute_write_or_dotted_import_of_the_package_name_stays_unlinked() -> Result<(), String> {
+    // `tests.tomllib = json` replaces the package attribute the relative
+    // import reads, and `import tomllib.sub` binds `tomllib` again in the
+    // same statement as the aliased import; Python then hands the test
+    // another module than tomli.
+    let cases = [
+        (
+            "attribute-write",
+            "import tomli as tomllib\nimport tests\nimport json\ntests.tomllib = json\n",
+        ),
+        (
+            "attribute-write-spaced",
+            "import tomli as tomllib\nimport tests as t\nimport json\nt . tomllib = json\n",
+        ),
+        (
+            "attribute-write-continued",
+            "import tomli as tomllib\nimport tests\nimport json\ntests.\\\n    tomllib = json\n",
+        ),
+        (
+            "mixed-aliased-and-dotted",
+            "import tomli as tomllib, tomllib.sub\n",
+        ),
+    ];
+    for (label, init) in cases {
+        let finding = tomli_case(label, Some(init), "from . import tomllib", &[])?;
+        expect_unlinked(label, &finding)?;
+    }
+    // An attribute read through the bound name is not a write of it.
+    let read = tomli_case(
+        "attribute-read",
+        Some("import tomli as tomllib\nPARSE = tomllib.loads\n"),
+        "from . import tomllib",
+        &[],
+    )?;
+    expect_linked("attribute read through the bound name", &read)
+}
+
+#[test]
 fn a_same_named_submodule_of_the_test_package_stays_unlinked() -> Result<(), String> {
     let finding = tomli_case(
         "init-submodule-shadow",

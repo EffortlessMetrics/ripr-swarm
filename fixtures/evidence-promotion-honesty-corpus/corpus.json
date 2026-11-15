@@ -266,6 +266,33 @@
   ],
   "cases": [
     {
+      "id": "python_package_alias_attribute_write",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_package_alias_attribute_write",
+      "vector": "package_bound_alias_replaced_by_initializer_attribute_write",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:src/tomli/_parser.py::loads"
+        }
+      ]
+    },
+    {
       "id": "python_package_alias_nested_root",
       "language": "python",
       "tier": "pure",
