@@ -781,7 +781,7 @@ fn predicate_as_owner_tail(
 /// whole body, a single-line constant tail. The tail is what the owner
 /// returns, so the sink is that return even when the text carries none of
 /// the cues [`is_obvious_return_expression`] reads (`false`, `vec![]`,
-/// `[b'a', b'b']`, `-(1 << 3)` spelled without spaces). Same fail-closed
+/// `[b'a', b'b']`). Same fail-closed
 /// parser rule as the predicate tail ([`owner_single_line_tail`]).
 ///
 /// A direct sink lets an exact assertion read `exposed`, so it is admitted
