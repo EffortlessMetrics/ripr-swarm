@@ -2068,8 +2068,14 @@ pub(super) fn module_callees_named(
 
 /// Locals the test body binds exactly once to the result of an owner call
 /// through one of `callees` (`result = utils.sign(0)`), so an assertion on the
-/// local observes the owner's output (#4567).
-pub(super) fn owner_result_locals(test: &PythonTest, callees: &[String]) -> Vec<String> {
+/// local observes the owner's output (#4567). For a coroutine owner
+/// (`awaited`), `result = await sign(0)` binds the value its body returned
+/// too; awaiting any other owner's result reads a different value.
+pub(super) fn owner_result_locals(
+    test: &PythonTest,
+    callees: &[String],
+    awaited: bool,
+) -> Vec<String> {
     let body = test.body_text.as_str();
     let mut locals = Vec::new();
     let mut line_start = 0usize;
@@ -2080,8 +2086,15 @@ pub(super) fn owner_result_locals(test: &PythonTest, callees: &[String]) -> Vec<
             continue;
         };
         let (target, value) = (line[..eq].trim(), &line[eq + 1..]);
-        let value_start = start + eq + 1 + (value.len() - value.trim_start().len());
-        let value = value.trim_start();
+        let mut value_start = start + eq + 1 + (value.len() - value.trim_start().len());
+        let mut value = value.trim_start();
+        if awaited
+            && let Some(rest) = value.strip_prefix("await")
+            && rest.starts_with([' ', '\t'])
+        {
+            value_start += value.len() - rest.trim_start().len();
+            value = rest.trim_start();
+        }
         // The whole assigned value must be the owner call, so the local holds
         // its result on every path (`r = sign(0)`, not `r = sign(0) or 1`).
         // A sole-argument materializer (`r = list(gen(0))`) keeps that result.

@@ -34,6 +34,7 @@ pub(super) fn collect_fixture_defs(
 ) -> Vec<PythonFixtureDef> {
     let mut defs = Vec::new();
     let mut aliases = fixture_aliases(module_imports);
+    let asyncio_aliases = asyncio_fixture_aliases(module_imports, &aliases);
     for stmt in statements {
         // An alias stops being pytest's decorator once a statement before the
         // decorated def rebinds the name (#10473), and starts again when a
@@ -84,9 +85,27 @@ pub(super) fn collect_fixture_defs(
             file: file.to_path_buf(),
             body_text: text_for_range(source, range),
             imports: test_imports(file, module_imports, body),
-            literal_construction: literal_construction(stmt, statements, source, &aliases, false),
-            inert_tool: literal_construction(stmt, statements, source, &aliases, true)
-                .filter(|class| is_inert_tool_import(statements, class)),
+            literal_construction: literal_construction(
+                stmt,
+                statements,
+                source,
+                FixtureDecoratorNames {
+                    aliases: &aliases,
+                    asyncio_aliases: &asyncio_aliases,
+                },
+                false,
+            ),
+            inert_tool: literal_construction(
+                stmt,
+                statements,
+                source,
+                FixtureDecoratorNames {
+                    aliases: &aliases,
+                    asyncio_aliases: &asyncio_aliases,
+                },
+                true,
+            )
+            .filter(|class| is_inert_tool_import(statements, class)),
             literal_params: super::param_fixtures::literal_params(
                 stmt,
                 statements,
@@ -98,6 +117,33 @@ pub(super) fn collect_fixture_defs(
         });
     }
     defs
+}
+
+/// The [`fixture_aliases`] imported from `pytest_asyncio`
+/// (`from pytest_asyncio import fixture as afx`).
+fn asyncio_fixture_aliases(imports: &[PythonImport], aliases: &[String]) -> Vec<String> {
+    aliases
+        .iter()
+        .filter(|alias| {
+            imports
+                .iter()
+                .rev()
+                .find(|import| import.alias == **alias)
+                .is_some_and(|import| {
+                    import.imported == "fixture" && import.source_module == "pytest_asyncio"
+                })
+        })
+        .cloned()
+        .collect()
+}
+
+/// The decorator spellings in effect at one fixture definition.
+#[derive(Clone, Copy)]
+struct FixtureDecoratorNames<'a> {
+    /// Names bound to `pytest.fixture` or `pytest_asyncio.fixture`.
+    aliases: &'a [String],
+    /// The subset imported from `pytest_asyncio`.
+    asyncio_aliases: &'a [String],
 }
 
 /// Local names this file binds to pytest's fixture decorator with
@@ -232,20 +278,38 @@ fn renames_to_caplog(decorators: &[Expr], aliases: &[String]) -> bool {
 /// `params=` and no `autouse=`) on a synchronous def with no parameters whose
 /// body is an optional docstring and `return Class(<literals>)`. Such a
 /// fixture hands each test the same object `account = Account(100)` would
-/// build in its body. `None` for any other shape, and when the file binds the
+/// build in its body. A coroutine def counts only under
+/// `pytest_asyncio.fixture`, which awaits it and hands the test its returned
+/// value; plain `pytest.fixture` hands a coroutine def's test the un-awaited
+/// coroutine unless the project configures asyncio auto mode. `None` for any other shape, and when the file binds the
 /// fixture's name or the class name more than once (or star-imports), since
 /// the value pytest registers is then not the one read here.
 fn literal_construction(
     stmt: &Stmt,
     statements: &[Stmt],
     source: &str,
-    aliases: &[String],
+    names: FixtureDecoratorNames<'_>,
     allow_request_param: bool,
 ) -> Option<String> {
-    let Stmt::FunctionDef(function) = stmt else {
-        return None;
+    let aliases = names.aliases;
+    let (function_name, decorator_list, args, function_body, coroutine) = match stmt {
+        Stmt::FunctionDef(function) => (
+            function.name.as_str(),
+            &function.decorator_list,
+            &function.args,
+            &function.body,
+            false,
+        ),
+        Stmt::AsyncFunctionDef(function) => (
+            function.name.as_str(),
+            &function.decorator_list,
+            &function.args,
+            &function.body,
+            true,
+        ),
+        _ => return None,
     };
-    let [decorator] = function.decorator_list.as_slice() else {
+    let [decorator] = decorator_list.as_slice() else {
         return None;
     };
     let decorator_target = match decorator {
@@ -270,13 +334,23 @@ fn literal_construction(
         Expr::Call(_) => return None,
         other => other,
     };
-    if !decorator_names(std::slice::from_ref(decorator_target))
+    let target_names = decorator_names(std::slice::from_ref(decorator_target));
+    if !target_names
         .iter()
         .any(|name| is_fixture_decorator_name(name, aliases))
     {
         return None;
     }
-    let args = &function.args;
+    if coroutine
+        && !target_names.iter().any(|name| {
+            (name == "pytest_asyncio.fixture"
+                && module_binding_count(statements, source, "pytest_asyncio") == Some(1))
+                || (names.asyncio_aliases.iter().any(|alias| alias == name)
+                    && aliases.iter().any(|alias| alias == name))
+        })
+    {
+        return None;
+    }
     // A lone unused `request` parameter (`def runner(request): return
     // CliRunner()`): the body is only a literal-argument call, so it cannot
     // read `request.param` or `request.node`.
@@ -293,7 +367,7 @@ fn literal_construction(
     {
         return None;
     }
-    let body = match function.body.as_slice() {
+    let body = match function_body.as_slice() {
         [Stmt::Expr(docstring), rest @ ..]
             if matches!(
                 &*docstring.value,
@@ -330,7 +404,7 @@ fn literal_construction(
         return None;
     }
     let class = class.id.to_string();
-    (module_binding_count(statements, source, function.name.as_str()) == Some(1)
+    (module_binding_count(statements, source, function_name) == Some(1)
         && module_binding_count(statements, source, &class) == Some(1))
     .then_some(class)
 }

@@ -21,6 +21,10 @@ const CALC_EDIT: Edit = Edit {
     new: "        return total - 5",
 };
 
+const ASYNC_CALC: &str = "async def discount(total):\n    if total >= 100:\n        return total - 10\n    return total\n";
+
+const ASYNC_CART: &str = "class Cart:\n    def __init__(self, total):\n        self.total = total\n\n    async def discounted(self):\n        if self.total >= 100:\n            return self.total - 10\n        return self.total\n";
+
 const CART: &str = "class Cart:\n    def __init__(self, total):\n        self.total = total\n\n    def discounted(self):\n        if self.total >= 100:\n            return self.total - 10\n        return self.total\n";
 const CART_EDIT: Edit = Edit {
     owner: "src/cart.py",
@@ -85,6 +89,62 @@ const STYLES: &[Style] = &[
         weak: "from src.calc import discount\n\n\nclass TestDiscount:\n    def test_big(self):\n        assert discount(200) < 200\n",
         strong_before: "from src.calc import discount\n\n\nclass TestDiscount:\n    def test_big(self):\n        assert discount(200) == 190\n",
         strong_after: "from src.calc import discount\n\n\nclass TestDiscount:\n    def test_big(self):\n        assert discount(200) == 195\n",
+    },
+    Style {
+        name: "pytest-asyncio marked coroutine test",
+        sources: &[("src/calc.py", ASYNC_CALC)],
+        edit: CALC_EDIT,
+        weak: "import pytest\n\nfrom src.calc import discount\n\n\n@pytest.mark.asyncio\nasync def test_discount():\n    assert await discount(200) < 200\n",
+        strong_before: "import pytest\n\nfrom src.calc import discount\n\n\n@pytest.mark.asyncio\nasync def test_discount():\n    assert await discount(200) == 190\n",
+        strong_after: "import pytest\n\nfrom src.calc import discount\n\n\n@pytest.mark.asyncio\nasync def test_discount():\n    assert await discount(200) == 195\n",
+    },
+    Style {
+        name: "anyio marked coroutine test",
+        sources: &[("src/calc.py", ASYNC_CALC)],
+        edit: CALC_EDIT,
+        weak: "import pytest\n\nfrom src.calc import discount\n\n\n@pytest.mark.anyio\nasync def test_discount():\n    assert await discount(200) < 200\n",
+        strong_before: "import pytest\n\nfrom src.calc import discount\n\n\n@pytest.mark.anyio\nasync def test_discount():\n    assert await discount(200) == 190\n",
+        strong_after: "import pytest\n\nfrom src.calc import discount\n\n\n@pytest.mark.anyio\nasync def test_discount():\n    assert await discount(200) == 195\n",
+    },
+    Style {
+        name: "module pytestmark asyncio",
+        sources: &[("src/calc.py", ASYNC_CALC)],
+        edit: CALC_EDIT,
+        weak: "import pytest\n\nfrom src.calc import discount\n\n\npytestmark = pytest.mark.asyncio\n\n\nasync def test_discount():\n    assert await discount(200) < 200\n",
+        strong_before: "import pytest\n\nfrom src.calc import discount\n\n\npytestmark = pytest.mark.asyncio\n\n\nasync def test_discount():\n    assert await discount(200) == 190\n",
+        strong_after: "import pytest\n\nfrom src.calc import discount\n\n\npytestmark = pytest.mark.asyncio\n\n\nasync def test_discount():\n    assert await discount(200) == 195\n",
+    },
+    Style {
+        name: "unittest IsolatedAsyncioTestCase",
+        sources: &[("src/calc.py", ASYNC_CALC)],
+        edit: CALC_EDIT,
+        weak: "import unittest\n\nfrom src.calc import discount\n\n\nclass DiscountTests(unittest.IsolatedAsyncioTestCase):\n    async def test_big(self):\n        self.assertLess(await discount(200), 200)\n",
+        strong_before: "import unittest\n\nfrom src.calc import discount\n\n\nclass DiscountTests(unittest.IsolatedAsyncioTestCase):\n    async def test_big(self):\n        self.assertEqual(await discount(200), 190)\n",
+        strong_after: "import unittest\n\nfrom src.calc import discount\n\n\nclass DiscountTests(unittest.IsolatedAsyncioTestCase):\n    async def test_big(self):\n        self.assertEqual(await discount(200), 195)\n",
+    },
+    Style {
+        name: "unittest asyncSetUp receiver",
+        sources: &[("src/cart.py", ASYNC_CART)],
+        edit: CART_EDIT,
+        weak: "import unittest\n\nfrom src.cart import Cart\n\n\nclass CartTests(unittest.IsolatedAsyncioTestCase):\n    async def asyncSetUp(self):\n        self.cart = Cart(200)\n\n    async def test_discounted(self):\n        self.assertLess(await self.cart.discounted(), 200)\n",
+        strong_before: "import unittest\n\nfrom src.cart import Cart\n\n\nclass CartTests(unittest.IsolatedAsyncioTestCase):\n    async def asyncSetUp(self):\n        self.cart = Cart(200)\n\n    async def test_discounted(self):\n        self.assertEqual(await self.cart.discounted(), 190)\n",
+        strong_after: "import unittest\n\nfrom src.cart import Cart\n\n\nclass CartTests(unittest.IsolatedAsyncioTestCase):\n    async def asyncSetUp(self):\n        self.cart = Cart(200)\n\n    async def test_discounted(self):\n        self.assertEqual(await self.cart.discounted(), 195)\n",
+    },
+    Style {
+        name: "pytest_asyncio fixture building the owner object",
+        sources: &[("src/cart.py", ASYNC_CART)],
+        edit: CART_EDIT,
+        weak: "import pytest\nimport pytest_asyncio\n\nfrom src.cart import Cart\n\n\n@pytest_asyncio.fixture\nasync def cart():\n    return Cart(200)\n\n\n@pytest.mark.asyncio\nasync def test_discounted(cart):\n    assert await cart.discounted() < 200\n",
+        strong_before: "import pytest\nimport pytest_asyncio\n\nfrom src.cart import Cart\n\n\n@pytest_asyncio.fixture\nasync def cart():\n    return Cart(200)\n\n\n@pytest.mark.asyncio\nasync def test_discounted(cart):\n    assert await cart.discounted() == 190\n",
+        strong_after: "import pytest\nimport pytest_asyncio\n\nfrom src.cart import Cart\n\n\n@pytest_asyncio.fixture\nasync def cart():\n    return Cart(200)\n\n\n@pytest.mark.asyncio\nasync def test_discounted(cart):\n    assert await cart.discounted() == 195\n",
+    },
+    Style {
+        name: "coroutine result bound before the assertion",
+        sources: &[("src/calc.py", ASYNC_CALC)],
+        edit: CALC_EDIT,
+        weak: "import pytest\n\nfrom src.calc import discount\n\n\n@pytest.mark.asyncio\nasync def test_discount():\n    result = await discount(200)\n    assert result < 200\n",
+        strong_before: "import pytest\n\nfrom src.calc import discount\n\n\n@pytest.mark.asyncio\nasync def test_discount():\n    result = await discount(200)\n    assert result == 190\n",
+        strong_after: "import pytest\n\nfrom src.calc import discount\n\n\n@pytest.mark.asyncio\nasync def test_discount():\n    result = await discount(200)\n    assert result == 195\n",
     },
     Style {
         name: "pytest parametrize",
@@ -191,6 +251,18 @@ const WEAK_ONLY: &[WeakOnly] = &[
         sources: &[("src/calc.py", CALC)],
         edit: CALC_EDIT,
         test: "import pytest\n\nfrom src.calc import discount\n\n\n@pytest.fixture\ndef big_total():\n    return 200\n\n\ndef test_discount(big_total):\n    assert discount(big_total) < big_total\n",
+    },
+    WeakOnly {
+        name: "plain pytest.fixture on a coroutine def hands over the coroutine",
+        sources: &[("src/cart.py", CART)],
+        edit: CART_EDIT,
+        test: "import pytest\n\nfrom src.cart import Cart\n\n\n@pytest.fixture\nasync def cart():\n    return Cart(200)\n\n\n@pytest.mark.asyncio\nasync def test_discounted(cart):\n    assert cart.discounted() == 190\n",
+    },
+    WeakOnly {
+        name: "asyncSetUp on a plain TestCase never runs",
+        sources: &[("src/cart.py", CART)],
+        edit: CART_EDIT,
+        test: "import unittest\n\nfrom src.cart import Cart\n\n\nclass CartTests(unittest.TestCase):\n    async def asyncSetUp(self):\n        self.cart = Cart(200)\n\n    def test_discounted(self):\n        self.assertEqual(self.cart.discounted(), 190)\n",
     },
     WeakOnly {
         name: "pytest.raises with a base class",

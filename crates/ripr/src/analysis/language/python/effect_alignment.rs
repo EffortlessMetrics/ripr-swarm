@@ -246,7 +246,11 @@ impl EffectReads {
                 // An owner that hands the parameter back makes its result the
                 // very object the test passed: `m = on_parse('1', Mock())`.
                 if owner.term_facts.returned_parameter() == Some(receiver.as_str()) {
-                    mocks.extend(owner_result_locals(test, &owner_call_names(test, owner)));
+                    mocks.extend(owner_result_locals(
+                        test,
+                        &owner_call_names(test, owner),
+                        false,
+                    ));
                 }
                 reads.mocked_calls = mocks
                     .into_iter()
