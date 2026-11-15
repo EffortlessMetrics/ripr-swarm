@@ -35,6 +35,7 @@ pub(super) fn collect_fixture_defs(
     let mut defs = Vec::new();
     let mut aliases = fixture_aliases(module_imports);
     let mut asyncio_aliases: Vec<String> = Vec::new();
+    let binds_asyncio_module = binds_pytest_asyncio_module(statements, source);
     for stmt in statements {
         // An alias stops being pytest's decorator once a statement before the
         // decorated def rebinds the name (#10473), and starts again when a
@@ -93,6 +94,7 @@ pub(super) fn collect_fixture_defs(
                 FixtureDecoratorNames {
                     aliases: &aliases,
                     asyncio_aliases: &asyncio_aliases,
+                    binds_asyncio_module,
                 },
                 false,
             ),
@@ -103,6 +105,7 @@ pub(super) fn collect_fixture_defs(
                 FixtureDecoratorNames {
                     aliases: &aliases,
                     asyncio_aliases: &asyncio_aliases,
+                    binds_asyncio_module,
                 },
                 true,
             )
@@ -160,6 +163,8 @@ struct FixtureDecoratorNames<'a> {
     aliases: &'a [String],
     /// The subset imported from `pytest_asyncio`.
     asyncio_aliases: &'a [String],
+    /// [`binds_pytest_asyncio_module`], read once per file.
+    binds_asyncio_module: bool,
 }
 
 /// Local names this file binds to pytest's fixture decorator with
@@ -360,7 +365,7 @@ fn literal_construction(
     }
     if coroutine
         && !target_names.iter().any(|name| {
-            (name == "pytest_asyncio.fixture" && binds_pytest_asyncio_module(statements, source))
+            (name == "pytest_asyncio.fixture" && names.binds_asyncio_module)
                 || (names.asyncio_aliases.iter().any(|alias| alias == name)
                     && aliases.iter().any(|alias| alias == name))
         })

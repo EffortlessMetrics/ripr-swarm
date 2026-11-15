@@ -244,12 +244,13 @@ impl EffectReads {
             } => {
                 let mut mocks = owner_call_argument_locals(test, owner, receiver);
                 // An owner that hands the parameter back makes its result the
-                // very object the test passed: `m = on_parse('1', Mock())`.
+                // very object the test passed: `m = on_parse('1', Mock())`, or
+                // `m = await on_parse('1', Mock())` for a coroutine owner.
                 if owner.term_facts.returned_parameter() == Some(receiver.as_str()) {
                     mocks.extend(owner_result_locals(
                         test,
                         &owner_call_names(test, owner),
-                        false,
+                        owner.decorators.iter().any(|name| name == "async_def"),
                     ));
                 }
                 reads.mocked_calls = mocks
