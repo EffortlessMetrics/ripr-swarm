@@ -935,6 +935,13 @@ fn shallow_clone(root: &Path) -> TestResult<PathBuf> {
     Ok(work)
 }
 
+/// The host `git`, for stand-ins that record or fail some calls and pass the
+/// rest through.
+fn real_git() -> TestResult<String> {
+    let found = Command::new("sh").args(["-c", "command -v git"]).output()?;
+    Ok(String::from_utf8_lossy(&found.stdout).trim().to_string())
+}
+
 fn git_succeeds(dir: &Path, args: &[&str]) -> TestResult<bool> {
     Ok(Command::new("git")
         .args(args)
@@ -975,8 +982,7 @@ fn a_full_checkout_is_not_deepened() -> TestResult {
     let root = scratch("not-shallow")?;
     let bin = tool_dir(&root)?;
     stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
-    let real_git = Command::new("sh").args(["-c", "command -v git"]).output()?;
-    let real_git = String::from_utf8_lossy(&real_git.stdout).trim().to_string();
+    let real_git = real_git()?;
     stand_in(
         &bin,
         "git",
@@ -1119,8 +1125,7 @@ fn a_failed_deepen_warns_once_and_leaves_the_message_to_ripr() -> TestResult {
     let bin = tool_dir(&root)?;
     stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
     let work = shallow_clone(&root)?;
-    let real_git = Command::new("sh").args(["-c", "command -v git"]).output()?;
-    let real_git = String::from_utf8_lossy(&real_git.stdout).trim().to_string();
+    let real_git = real_git()?;
     stand_in(
         &bin,
         "git",
