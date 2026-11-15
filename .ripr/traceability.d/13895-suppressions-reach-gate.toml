@@ -29,3 +29,10 @@ tests = [
   "crates/ripr/tests/check_to_gate_chain.rs::finding_id_entry_applied_through_review_comments_policy_suppresses_one_seam",
   "crates/ripr/tests/check_to_gate_chain.rs::review_comments_never_applies_the_default_policy_implicitly_and_fails_closed",
 ]
+
+# gate check forwards --suppression-policy to its review-comments step (#13895).
+[[extend]]
+id = "RIPR-SPEC-0435"
+tests = [
+  "crates/ripr/src/cli/commands/gate.rs::gate_check_forwards_suppression_policy_to_the_producer_only",
+]

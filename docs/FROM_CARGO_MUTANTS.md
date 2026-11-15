@@ -65,8 +65,10 @@ Do not build a gate on `ripr check`'s exit code.
 
 ### Suppressing in CI
 
-`#[mutants::skip]` lives on the function, so it survives edits. A finding id
-does not (it hashes the expression), so key the entry on the owning function:
+A `#[mutants::skip]` on a changed function already withholds its findings.
+For anything else (a skip on an `impl` block or module, or debt you accept
+without the attribute), use `.ripr/suppressions.toml`. A finding id changes on
+every edit (it hashes the expression), so key the entry on the owning function:
 
 ```toml
 # .ripr/suppressions.toml
@@ -91,6 +93,9 @@ ripr review-comments --root . --base origin/main --head HEAD \
   --suppression-policy .ripr/suppressions.toml
 ripr gate evaluate --root . --pr-guidance target/ripr/review/comments.json --mode acknowledgeable
 ```
+
+`ripr gate check --base origin/main --suppression-policy .ripr/suppressions.toml`
+does the last two steps in one command.
 
 Suppressed seams stay visible in the `suppressed` array of the review-comments
 JSON (reason `suppressed_by_policy`) and do not block the gate. Expired entries
