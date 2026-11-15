@@ -3214,12 +3214,15 @@ fn stub_for_an_existing_integration_target_is_unique_within_that_file() -> Resul
         .ok_or_else(|| format!("test_name: {first}"))?
         .to_string();
 
-    // Second write: either cleanly refused or a distinct name, never a duplicate.
+    // Second write: cleanly refused, already present, or a distinct name -
+    // never a duplicate. #14810: the stub's expected value is still an
+    // unfilled `todo!()`, so the seam stays an open gap and the second write
+    // reaches the #8891 "already written" path instead of refusing.
     let second = stub_json(&root, "src/lib.rs:2")?;
     let written = std::fs::read_to_string(root.join("tests/discount.rs"))
         .map_err(|error| error.to_string())?;
     assert_eq!(count_fn(&written, &name), 1, "duplicate fn:\n{written}");
-    if second["refused"] != true {
+    if second["refused"] != true && second["already_present"] != true {
         assert_ne!(second["test_name"], first["test_name"], "{second}");
         let compile = cargo_from_run_command(
             second["run_command"]
@@ -3245,7 +3248,7 @@ fn stub_for_an_existing_integration_target_is_unique_within_that_file() -> Resul
     let written = std::fs::read_to_string(root.join("tests/discount.rs"))
         .map_err(|error| error.to_string())?;
     assert_eq!(count_fn(&written, &name), 1, "collision:\n{written}");
-    if third["refused"] != true {
+    if third["refused"] != true && third["already_present"] != true {
         assert_ne!(third["test_name"].as_str(), Some(name.as_str()), "{third}");
     }
     scratch.cleanup()?;
