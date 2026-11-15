@@ -1245,19 +1245,132 @@ fn range_bound_change(before: &str, after: &str) -> Option<RangeConsumer> {
         (Some(RangeConsumer::Preserving), _) | (_, Some(RangeConsumer::Preserving)) => None,
         (Some(_), Some(_)) => Some(RangeConsumer::Absorbing),
         _ => {
+            if let Some(kind) = several_range_change(&before, &after) {
+                return kind;
+            }
             let (short, long) = if before.len() < after.len() {
                 (&before, &after)
             } else {
                 (&after, &before)
             };
-            (long.len() == short.len() + 1
+            let one_equals = long.len() == short.len() + 1
                 && long.get(span(long)) == Some("=")
                 && long
                     .get(..prefix)
-                    .is_some_and(|head| head.ends_with("..") && !head.ends_with("...")))
+                    .is_some_and(|head| head.ends_with("..") && !head.ends_with("..."));
+            // #14538: an endpoint moved inside a macro's input
+            // (`matches!(n, 1..=5)` to `0..=5`) or on a line that does not
+            // parse: no range node is read, so the edit is gated when the
+            // changed text is one endpoint token next to a `..`.
+            (one_equals
+                || (range_adjacent(&before, span(&before)) && range_adjacent(&after, span(&after))))
             .then_some(RangeConsumer::Absorbing)
         }
     }
+}
+
+/// Whether the masked `text`'s changed `span` is one integer literal or
+/// name (or empty) written right against a `..` / `..=` operator: the start
+/// of `a..b` or the end of `a..b` / `a..=b`.
+fn range_adjacent(text: &str, span: std::ops::Range<usize>) -> bool {
+    let (Some(head), Some(changed), Some(tail)) = (
+        text.get(..span.start),
+        text.get(span.clone()),
+        text.get(span.end..),
+    ) else {
+        return false;
+    };
+    let word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    // Widen the span to the whole token it touches.
+    let head_word = head.len() - head.trim_end_matches(word).len();
+    let tail_word = tail.len() - tail.trim_start_matches(word).len();
+    let token = format!(
+        "{}{changed}{}",
+        &head[head.len() - head_word..],
+        &tail[..tail_word]
+    );
+    if token.is_empty() || !token.chars().all(word) {
+        return false;
+    }
+    let before_token = head[..head.len() - head_word].trim_end();
+    let after_token = tail[tail_word..].trim_start();
+    let after_operator = (before_token.ends_with("..") || before_token.ends_with("..="))
+        && !before_token.ends_with("...");
+    let before_operator = after_token.starts_with("..") && !after_token.starts_with("...");
+    after_operator || before_operator
+}
+
+/// #14538: a line where several range expressions changed at once
+/// (`(0..=a).sum() + (0..=b).sum()` to `(0..a).sum() + (0..b).sum()`). The
+/// two versions must have the same outermost ranges in the same places with
+/// the text between them unchanged. `Some(None)` when every changed range
+/// keeps a length-preserving reading, `Some(Some(Absorbing))` when any
+/// changed range feeds an absorbing consumer or pattern, `None` when the
+/// line is not that shape.
+fn several_range_change(before: &str, after: &str) -> Option<Option<RangeConsumer>> {
+    let ranges = |text: &str| -> Option<Vec<std::ops::Range<usize>>> {
+        const PREFIX: &str = "fn __ripr_range_probe() {\n";
+        let closing = if text.trim_end().ends_with('{') {
+            "}"
+        } else {
+            ""
+        };
+        let source = format!("{PREFIX}{text}{closing}\n}}\n");
+        let parse = crate::analysis::syntax::parse_clean_source_file(&source)?;
+        let spans: Vec<_> = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter(|node| ast::RangeExpr::can_cast(node.kind()))
+            .filter(|node| {
+                !node
+                    .ancestors()
+                    .skip(1)
+                    .any(|ancestor| ast::RangeExpr::can_cast(ancestor.kind()))
+            })
+            .map(|node| {
+                let range = node.text_range();
+                usize::from(range.start()) - PREFIX.len()..usize::from(range.end()) - PREFIX.len()
+            })
+            .collect();
+        spans
+            .iter()
+            .all(|span| span.end <= text.len())
+            .then_some(spans)
+    };
+    let (old, new) = (ranges(before)?, ranges(after)?);
+    if old.len() < 2 || old.len() != new.len() {
+        return None;
+    }
+    let skeleton = |text: &str, spans: &[std::ops::Range<usize>]| -> Option<String> {
+        let mut out = String::new();
+        let mut at = 0;
+        for span in spans {
+            out.push_str(text.get(at..span.start)?);
+            out.push('\u{0}');
+            at = span.end;
+        }
+        out.push_str(text.get(at..)?);
+        Some(out)
+    };
+    if skeleton(before, &old)? != skeleton(after, &new)? {
+        return None;
+    }
+    let mut changed = false;
+    for (old_span, new_span) in old.iter().zip(&new) {
+        if before.get(old_span.clone()) == after.get(new_span.clone()) {
+            continue;
+        }
+        changed = true;
+        match (
+            range_consumer(before, old_span.clone()),
+            range_consumer(after, new_span.clone()),
+        ) {
+            (Some(RangeConsumer::Preserving), Some(RangeConsumer::Preserving)) => {}
+            _ => return Some(Some(RangeConsumer::Absorbing)),
+        }
+    }
+    changed.then_some(None)
 }
 
 /// `before` and `after` trimmed, and cut to their arm heads when one is a
@@ -1967,6 +2080,63 @@ fn is_wildcard_discard(expression: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::{RangeConsumer, range_adjacent, range_bound_change, several_range_change};
+
+    fn span_of(text: &str, needle: &str) -> std::ops::Range<usize> {
+        let start = text.find(needle).unwrap_or(text.len());
+        start..start + needle.len()
+    }
+
+    #[test]
+    fn an_endpoint_next_to_a_range_operator_is_range_adjacent() {
+        // #14538: `matches!` input is not parsed, so the token decides.
+        let text = "matches!(n, 0..=5)";
+        assert!(range_adjacent(text, span_of(text, "0")));
+        assert!(range_adjacent(text, span_of(text, "5")));
+        assert!(
+            range_bound_change("matches!(n, 1..=5)", "matches!(n, 0..=5)")
+                .is_some_and(|kind| kind == RangeConsumer::Absorbing)
+        );
+        // Not next to a range operator, part of a longer token, or `...`.
+        assert!(!range_adjacent(
+            "helper(n, 5)",
+            span_of("helper(n, 5)", "5")
+        ));
+        assert!(!range_adjacent("a...b", span_of("a...b", "b")));
+        assert!(!range_adjacent("f(0..x + 1)", span_of("f(0..x + 1)", "1")));
+        assert!(range_bound_change("matches!(n, Some(5))", "matches!(n, Some(6))").is_none());
+    }
+
+    #[test]
+    fn several_changed_ranges_are_gated_unless_every_one_preserves_length() {
+        // #14538: two absorbing sums changed on one line.
+        assert!(matches!(
+            several_range_change(
+                "(0..=a).sum::<u32>() + (0..=b).sum::<u32>()",
+                "(0..a).sum::<u32>() + (0..b).sum::<u32>()",
+            ),
+            Some(Some(RangeConsumer::Absorbing))
+        ));
+        // Two collected ranges keep the ordinary reading.
+        assert!(matches!(
+            several_range_change(
+                "((0..=a).collect(), (0..=b).collect())",
+                "((0..a).collect(), (0..b).collect())",
+            ),
+            Some(None)
+        ));
+        // A change outside the ranges is not this shape.
+        assert!(
+            several_range_change(
+                "(0..=a).sum() + (0..=b).sum()",
+                "(0..=a).sum() * (0..=b).sum()"
+            )
+            .is_none()
+        );
+        // One range is the single-range path's job.
+        assert!(several_range_change("(0..=a).sum()", "(0..a).sum()").is_none());
+    }
+
     #[test]
     fn an_unmapped_local_operand_names_the_input_that_would_settle_it() {
         let local = unresolved_boundary_summary(

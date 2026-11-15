@@ -601,6 +601,146 @@ fn a_live_assertion_sharing_a_line_still_separates() -> Result<(), String> {
 }
 
 #[test]
+fn a_let_bound_range_is_gated() -> Result<(), String> {
+    // #14538: `let r = 0..=n; r.sum()` sums to 0 on both ranges at n = 0.
+    let findings = findings_on_changed_line(
+        "/// Sum below the bound.\npub fn sum_to(n: u32) -> u32 {\n    let r = 0..=n;\n    r.sum()\n}\n",
+        "    let r = 0..=n;",
+        "    let r = 0..n;",
+        &test_calling("assert_eq!(sum_to(0), 0);"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn two_ranges_edited_on_one_line_are_gated() -> Result<(), String> {
+    // #14538: both sums are 0 on either range at a = b = 0.
+    let findings = findings_on_changed_line(
+        "/// Sum below two bounds.\npub fn both(a: u32, b: u32) -> u32 {\n    (0..=a).sum::<u32>() + (0..=b).sum::<u32>()\n}\n",
+        "    (0..=a).sum::<u32>() + (0..=b).sum::<u32>()",
+        "    (0..a).sum::<u32>() + (0..b).sum::<u32>()",
+        &test_calling("assert_eq!(both(0, 0), 0);"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn two_collected_ranges_edited_on_one_line_keep_the_ordinary_reading() -> Result<(), String> {
+    // Control: `.collect()` preserves length, so the gate leaves both to the
+    // ordinary reading.
+    let lib = "/// The values below two bounds.\npub fn both(a: u32, b: u32) -> (Vec<u32>, Vec<u32>) {\n    ((0..=a).collect(), (0..=b).collect())\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "    ((0..=a).collect(), (0..=b).collect())",
+        "    ((0..a).collect(), (0..b).collect())",
+        &test_calling("assert_eq!(both(1, 1), (vec![0, 1], vec![0, 1]));"),
+    )?;
+    assert_eq!(classes(&findings), vec![ExposureClass::Exposed]);
+    Ok(())
+}
+
+#[test]
+fn a_moved_bound_in_a_matches_pattern_is_gated() -> Result<(), String> {
+    // #14538: 3 sits inside both `1..=5` and `0..=5`.
+    let findings = findings_on_changed_line(
+        "/// Whether the input is small.\npub fn small(n: u32) -> bool {\n    matches!(n, 0..=5)\n}\n",
+        "    matches!(n, 0..=5)",
+        "    matches!(n, 1..=5)",
+        &test_calling("assert!(small(3));"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_moved_bound_in_an_if_let_pattern_is_gated() -> Result<(), String> {
+    // #14538: 3 sits inside both `1..=5` and `0..=5`.
+    let findings = findings_on_changed_line(
+        "/// Whether the input is small.\npub fn small(n: u32) -> bool {\n    if let 0..=5 = n { true } else { false }\n}\n",
+        "    if let 0..=5 = n { true } else { false }",
+        "    if let 1..=5 = n { true } else { false }",
+        &test_calling("assert!(small(3));"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_assertion_in_an_unpolled_async_block_does_not_separate() -> Result<(), String> {
+    // #14538: the async block is never polled, so only `sum_to(0)` runs.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling(
+            "assert_eq!(sum_to(0), 0);\n    let _check = async {\n        assert_eq!(sum_to(4), 10);\n    };",
+        ),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_assertion_in_an_uncalled_nested_fn_does_not_separate() -> Result<(), String> {
+    // #14538: `check` is never called, so only `sum_to(0)` runs.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling(
+            "assert_eq!(sum_to(0), 0);\n    fn check() {\n        assert_eq!(sum_to(4), 10);\n    }",
+        ),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_assertion_in_an_empty_loop_does_not_separate() -> Result<(), String> {
+    // #14538: `0..0` never runs the body, so only `sum_to(0)` runs.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling(
+            "assert_eq!(sum_to(0), 0);\n    for _ in 0..0 {\n        assert_eq!(sum_to(4), 10);\n    }",
+        ),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_range_passed_to_an_associated_sum_is_gated() -> Result<(), String> {
     // `Iterator::sum(0..=n)` absorbs the extra element at n = 0.
     let lib =
