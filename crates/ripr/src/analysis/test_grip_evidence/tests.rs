@@ -2760,6 +2760,135 @@ fn below_case() {
 }
 
 #[test]
+fn evidence_cost_trace_collection_does_not_change_evidence_bytes() -> Result<(), String> {
+    // #9575: the per-seam cost trace is measurement only. Evidence with
+    // collection on must serialize byte-identically to evidence with it
+    // off, in the same order.
+    let prod = PathBuf::from("src/pricing.rs");
+    let prod_src = r#"
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+"#;
+    let tests = PathBuf::from("tests/pricing_tests.rs");
+    let tests_src = r#"
+#[test]
+fn boundary_case() {
+    assert_eq!(discounted_total(100, 100), 90);
+}
+#[test]
+fn below_case() {
+    assert_eq!(discounted_total(50, 100), 50);
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    if seams.is_empty() {
+        return Err("fixture produced no seams".to_string());
+    }
+    let off = EvidencePass::new(&index).evidence_for_traced(&seams, false);
+    let on = EvidencePass::new(&index).evidence_for_traced(&seams, true);
+    let off_bytes = serde_json::to_string(&off).map_err(|err| err.to_string())?;
+    let on_bytes = serde_json::to_string(&on).map_err(|err| err.to_string())?;
+    if off_bytes != on_bytes {
+        return Err("cost trace collection changed evidence bytes".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn seam_cost_trace_aggregates_occupancy_window_and_tokens() {
+    let record = |seam_id: &str, ms: u64, worker: Option<usize>| SeamCostRecord {
+        seam_id: seam_id.to_string(),
+        duration: Duration::from_millis(ms),
+        worker,
+    };
+    let records = vec![
+        record("src/a.rs::first", 10, Some(1)),
+        record("src/a.rs::second", 30, Some(0)),
+        record("src/b.rs::third seam", 20, Some(1)),
+        record("src/b.rs::fourth", 40, None),
+    ];
+    let occupancy = worker_occupancy(&records);
+    assert_eq!(occupancy.len(), 3);
+    // Busiest first; the two 30ms workers tie-break by worker index.
+    assert_eq!(occupancy[0], (None, 1, Duration::from_millis(40)));
+    assert_eq!(occupancy[1], (Some(0), 1, Duration::from_millis(30)));
+    assert_eq!(occupancy[2], (Some(1), 2, Duration::from_millis(30)));
+    assert_eq!(
+        trace_token("src/b.rs::third seam", 96),
+        "src/b.rs::third_seam"
+    );
+    assert_eq!(trace_token("abcdef", 3), "abc");
+    let trace = SeamCostTrace::default();
+    trace.record("src/a.rs::first", Duration::from_millis(5), Some(0));
+    trace.record("src/a.rs::second", Duration::from_millis(6), Some(0));
+    let stored = trace.records();
+    assert_eq!(stored.len(), 2);
+    assert_eq!(stored[1].seam_id, "src/a.rs::second");
+}
+
+#[test]
+fn seam_cost_trace_emission_names_phases_window_and_memo() {
+    // More records than the last-window cap, across two workers, so the
+    // emitted phases must prove the window boundary and worker split.
+    // Removing emit_seam_cost_trace empties the recording and fails here.
+    let records: Vec<SeamCostRecord> = (0..20)
+        .map(|index| SeamCostRecord {
+            seam_id: format!("src/w.rs::seam{index:02}"),
+            duration: Duration::from_millis(index as u64 + 1),
+            worker: Some(index % 2),
+        })
+        .collect();
+    let memo = crate::analysis::syntax::run_memo::MemoStats {
+        hits: 11,
+        misses: 3,
+    };
+    let (_, phases) = crate::analysis::resource_cost::record_latency_phases(|| {
+        emit_seam_cost_trace(&records, memo, Duration::from_millis(210));
+    });
+    let by_phase = |name: &str| {
+        phases
+            .iter()
+            .filter(|phase| phase.phase == name)
+            .map(|phase| phase.status.clone())
+            .collect::<Vec<_>>()
+    };
+    let durations = by_phase("evidence_seam_durations");
+    assert_eq!(durations.len(), 1, "{phases:?}");
+    assert!(durations[0].contains("seams_20_"), "{}", durations[0]);
+    let occupancy = by_phase("evidence_worker_occupancy");
+    assert_eq!(occupancy.len(), 3, "{phases:?}");
+    assert!(
+        occupancy
+            .iter()
+            .any(|s| s.contains("summary_workers_2_seams_20")),
+        "{occupancy:?}"
+    );
+    let worker_seams: usize = occupancy
+        .iter()
+        .filter(|s| s.starts_with("worker_"))
+        .filter_map(|s| {
+            s.split("_seams_")
+                .nth(1)?
+                .split('_')
+                .next()?
+                .parse::<usize>()
+                .ok()
+        })
+        .sum();
+    assert_eq!(worker_seams, 20);
+    let window = by_phase("evidence_last_window");
+    assert_eq!(window.len(), 1, "{phases:?}");
+    assert!(window[0].starts_with("last_16_"), "{}", window[0]);
+    assert!(window[0].contains("seam04"), "{}", window[0]);
+    assert!(window[0].contains("seam19"), "{}", window[0]);
+    assert!(!window[0].contains("seam03"), "{}", window[0]);
+    let memo_lines = by_phase("evidence_run_memo");
+    assert_eq!(memo_lines, vec!["hits_11_misses_3".to_string()]);
+}
+
+#[test]
 fn evidence_pass_scans_each_test_body_once_not_once_per_oracle_ask() -> Result<(), String> {
     // The seam pass asks the shadow check about the same test bodies again and
     // again (per seam, stage and oracle). A worker's run memo must absorb the
@@ -12400,6 +12529,54 @@ fn given_same_module_test_without_direct_call_when_related_tests_are_ranked_then
 }
 
 #[test]
+fn given_same_leaf_name_in_another_module_or_crate_when_grip_associates_then_only_the_companion_is_same_test_file()
+-> Result<(), String> {
+    // #7527: `tests_by_file_stem` keys on the leaf module name, so the
+    // root crate's `src/pricing.rs` paired with `src/billing/pricing.rs`
+    // and with a member crate's `crates/b/tests/pricing.rs`. The test
+    // bodies stay free of owner/discriminator identifiers so SameTestFile
+    // is the only relation the leaf name could produce.
+    let prod_src = "pub fn apply_discount(amount: i32, threshold: i32) -> i32 \
+                        { if amount >= threshold { amount - 10 } else { amount } }\n";
+    let files: Vec<(PathBuf, &str)> = vec![
+        (PathBuf::from("src/pricing.rs"), prod_src),
+        (
+            PathBuf::from("src/billing/pricing.rs"),
+            "#[test] fn other_module_case() { assert_eq!(1, 1); }\n",
+        ),
+        (
+            PathBuf::from("crates/b/tests/pricing.rs"),
+            "#[test] fn member_case() { assert_eq!(1, 1); }\n",
+        ),
+        (
+            PathBuf::from("tests/pricing_test.rs"),
+            "#[test] fn companion_case() { assert_eq!(1, 1); }\n",
+        ),
+    ];
+    let index = index_from_files(&files)?;
+    assert_eq!(index.tests().len(), 3, "fixture must index all three tests");
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    let evidence = evidence_for_seam(predicate, &index);
+    let same_file: Vec<&str> = evidence
+        .related_tests
+        .iter()
+        .filter(|grip| grip.relation_reason == RelationReason::SameTestFile)
+        .map(|grip| grip.test_name.as_str())
+        .collect();
+    assert_eq!(
+        same_file,
+        ["companion_case"],
+        "{:?}",
+        evidence.related_tests
+    );
+    Ok(())
+}
+
+#[test]
 fn given_foreign_separator_paths_when_grip_associates_then_same_test_file_still_matches()
 -> Result<(), String> {
     // #3469: a path carrying the other platform's separator (facts
@@ -14111,6 +14288,99 @@ fn exact_error_pin_is_not_published_as_an_oracle_on_the_ok_value_seam() -> Resul
     Ok(())
 }
 
+/// #12757: the mirror of the error-pin rule. An exact assertion on the `Ok` /
+/// `Some` payload passes only when the call took the success exit, so it is
+/// published as no oracle on the owner's `Err(..)` / `None` seam, while it
+/// keeps its strong credit on the success seam. The pin that names the failure
+/// arm keeps the failure seam, and an assertion that turns the failure into a
+/// value (`unwrap_or`) is left at its existing grade.
+#[test]
+fn exact_ok_assertion_is_not_published_as_an_oracle_on_the_failure_seam() -> Result<(), String> {
+    let prod = "#[derive(Debug, PartialEq)]\npub enum Fault {\n    Even,\n}\n\
+         pub fn parse_pinned(n: u8) -> Result<u8, Fault> {\n    if n % 2 == 0 { Err(Fault::Even) } else { Ok(n) }\n}\n\
+         #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+         #[test] fn pinned_even() { assert_eq!(parse_pinned(2).unwrap_err(), Fault::Even); }\n    \
+         #[test] fn exact_odd() { assert_eq!(parse_pinned(1).unwrap(), 1); }\n    \
+         #[test] fn ok_wrapper_odd() { assert_eq!(parse_pinned(3), Ok(3)); }\n    \
+         #[test] fn whole_err() { assert_eq!(parse_pinned(2), Err(Fault::Even)); }\n    \
+         }\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let published =
+        |owner: &str, expression: &str, test: &str| -> Result<Option<OracleStrength>, String> {
+            let seam = seams
+                .iter()
+                .find(|s| s.expression() == expression && s.owner().ends_with(owner))
+                .ok_or_else(|| format!("{owner}: {expression} seam present"))?;
+            Ok(evidence_for_seam(seam, &index)
+                .related_tests
+                .iter()
+                .find(|grip| grip.test_name == test)
+                .map(|grip| grip.oracle_strength.clone()))
+        };
+    let strong = Some(OracleStrength::Strong);
+    // Result: the failure seam, then the success seam.
+    assert_ne!(
+        published("parse_pinned", "Err(Fault::Even)", "exact_odd")?,
+        strong,
+        "unwrap on the Ok exit"
+    );
+    assert_ne!(
+        published("parse_pinned", "Err(Fault::Even)", "ok_wrapper_odd")?,
+        strong,
+        "Ok(..) wrapper"
+    );
+    assert_eq!(
+        published("parse_pinned", "Err(Fault::Even)", "pinned_even")?,
+        strong,
+        "the named pin"
+    );
+    assert_eq!(
+        published("parse_pinned", "Err(Fault::Even)", "whole_err")?,
+        strong,
+        "the whole Err pin"
+    );
+    assert_eq!(
+        published("parse_pinned", "Ok(n)", "exact_odd")?,
+        strong,
+        "the Ok value stays credited"
+    );
+    assert_eq!(
+        published("parse_pinned", "Ok(n)", "ok_wrapper_odd")?,
+        strong,
+        "the Ok wrapper stays credited"
+    );
+    Ok(())
+}
+
+/// #12757: with only success-payload assertions, the failure seam's
+/// discriminate stage agrees with the related-test record: no oracle reaches
+/// the `Err(..)` arm, so the stage is `No` rather than `Weak`, while the
+/// success seam stays `Yes`.
+#[test]
+fn success_only_assertions_leave_the_failure_seam_undiscriminated() -> Result<(), String> {
+    let prod = "#[derive(Debug, PartialEq)]\npub enum Fault {\n    Even,\n}\n\
+         pub fn parse_pinned(n: u8) -> Result<u8, Fault> {\n    if n % 2 == 0 { Err(Fault::Even) } else { Ok(n) }\n}\n\
+         #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+         #[test] fn exact_odd() { assert_eq!(parse_pinned(1).unwrap(), 1); }\n    \
+         #[test] fn ok_wrapper_odd() { assert_eq!(parse_pinned(3), Ok(3)); }\n    \
+         }\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let stage = |expression: &str| -> Result<StageState, String> {
+        let seam = seams
+            .iter()
+            .find(|s| s.expression() == expression)
+            .ok_or_else(|| format!("{expression} seam present"))?;
+        Ok(evidence_for_seam(seam, &index).discriminate.state)
+    };
+    assert_eq!(stage("Err(Fault::Even)")?, StageState::No, "failure arm");
+    assert_eq!(stage("Ok(n)")?, StageState::Yes, "success arm");
+    Ok(())
+}
+
 /// #12836: on an `error_variant` seam, an exact error-variant pin that names a
 /// sibling variant is not a discriminator for this seam. The classify stage
 /// already grades it weak (`kind-match false`); the related-test record must
@@ -14228,6 +14498,43 @@ fn sibling_variant_guarded_match_reads_weak_in_the_stage_and_the_related_test_re
         one.discriminate.summary
     );
     Ok(())
+}
+
+/// #12757: the text rules behind the failure-seam withhold, including the
+/// `Option` / `None` spelling the seam inventory does not surface here.
+#[test]
+fn success_payload_assertion_rules_read_the_failure_arm_by_text() {
+    assert!(constructs_failure_arm("Err(Fault::Even)"));
+    assert!(constructs_failure_arm("None"));
+    assert!(constructs_failure_arm("return Err(Fault::Even);"));
+    assert!(!constructs_failure_arm("Ok(n)"));
+    assert!(!constructs_failure_arm("Some(n / 2)"));
+    assert!(!constructs_failure_arm("Errand(x)"));
+    for success_only in [
+        "assert_eq!(parse_pinned(1).unwrap(), 1);",
+        "assert_eq!(parse_pinned(1).expect(\"odd\"), 1);",
+        "assert_eq!(parse_pinned(3), Ok(3));",
+        "assert_eq!(half(6), Some(3));",
+        "assert_ok_eq!(parse_pinned(1), 1);",
+        "assert_some_eq!(half(6), 3);",
+    ] {
+        assert!(pins_success_payload_only(success_only), "{success_only}");
+    }
+    for failure_or_mixed in [
+        "assert_eq!(parse_pinned(2).unwrap_err(), Fault::Even);",
+        "assert_eq!(parse_pinned(2), Err(Fault::Even));",
+        "assert_eq!(half(7), None);",
+        "assert_eq!(parse_pinned(2).unwrap_or(9), 9);",
+        "assert_eq!(parse_pinned(1).ok(), Some(1));",
+        "assert_eq!(parse_pinned(1).map_err(|e| e).unwrap(), 1);",
+        "assert_eq!(parse_pinned(1), 1); // Ok(1) in a comment",
+        "assert_eq!(parse_pinned(1).len(), 1);",
+    ] {
+        assert!(
+            !pins_success_payload_only(failure_or_mixed),
+            "{failure_or_mixed}"
+        );
+    }
 }
 
 /// #12733 / #12734: the skipped error-variant pin must read the same in every
@@ -22888,16 +23195,52 @@ fn given_integration_test_when_unreadable_or_shadowed_glob_import_then_owner_kee
             "rooted production import",
             format!("{rival}use ::lib_proptest::discounted_total;\nuse local::*;\n\n{test}"),
         ),
-        (
-            "own definition shadowing a glob",
-            format!(
-                "{rival}use local::*;\nfn discounted_total(_amount: i32, _threshold: i32) -> i32 {{ 1 }}\n\n{test}"
-            ),
-        ),
     ] {
         let related = related_test_names_for_boundary_seam(&source)?;
         assert_eq!(related, vec!["bare_real".to_string()], "{label}: {source}");
     }
+    Ok(())
+}
+
+/// #10855: a body-ful definition of the owner's name in the test's own file
+/// is what an unimported bare call reaches, with or without a glob that also
+/// offers the name (an item shadows a glob). Each case is paired with the
+/// same test calling the production function through a path, which keeps the
+/// relation, so the emptiness assertions are not vacuous.
+#[test]
+fn given_integration_test_when_bare_call_reaches_a_top_level_rival_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let rival = "fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 777 }\n";
+    let bare =
+        "#[test]\nfn bare_top_level() {\n    assert_eq!(discounted_total(100, 100), 777);\n}\n";
+    let mut failures = Vec::new();
+    for (label, source) in [
+        ("plain top-level rival", format!("{rival}\n{bare}")),
+        (
+            "rival shadowing a glob of another module",
+            format!("mod local {{\n    {LOCAL_RIVAL_FN}\n}}\nuse local::*;\n{rival}\n{bare}"),
+        ),
+        (
+            "rival shadowing a glob of the library",
+            format!("use lib_proptest::*;\n{rival}\n{bare}"),
+        ),
+    ] {
+        let related = related_test_names_for_boundary_seam(&source)?;
+        if !related.is_empty() {
+            failures.push(format!("{label}: {related:?}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "#10855: a top-level rival reached by a bare call must not relate the owner: {failures:?}"
+    );
+    // Control: the same file, but the test calls the production function by
+    // its path and the rival is never called.
+    let control = format!(
+        "{rival}\n#[test]\nfn qualified_real() {{\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}}\n"
+    );
+    let related = related_test_names_for_boundary_seam(&control)?;
+    assert_eq!(related, vec!["qualified_real".to_string()], "{control}");
     Ok(())
 }
 

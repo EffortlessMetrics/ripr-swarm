@@ -324,8 +324,36 @@ pub(in crate::analysis) fn oracle_owner_call_is_shadowed(
             unreadable,
             ..ItemBindings::default()
         },
-        OwnerItemScan::ReadTree => ItemBindings::read(source, name, import_is_other),
+        OwnerItemScan::ReadTree => {
+            // The walk depends on the body, the owner and the owner's identity
+            // against this test, not on the assertion: share it (#13868).
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            source.hash(&mut hasher);
+            let key = (
+                owner.id.0.clone(),
+                test.file.clone(),
+                test.start_line,
+                test.name.clone(),
+                hasher.finish(),
+            );
+            let shared = index.call_identity_memos.item_bindings(key, || {
+                #[cfg(test)]
+                ITEM_BINDING_READS.with(|reads| reads.set(reads.get() + 1));
+                ItemBindings::read(source, name, import_is_other)
+            });
+            return finish_shadow_scan(&shared, source, name, (at, span, partial));
+        }
     };
+    finish_shadow_scan(&items, source, name, (at, span, partial))
+}
+
+fn finish_shadow_scan(
+    items: &ItemBindings,
+    source: &str,
+    name: &str,
+    (at, span, partial): (usize, &str, bool),
+) -> Option<bool> {
     if items.unreadable {
         return None;
     }
@@ -600,6 +628,15 @@ thread_local! {
     static OWNER_ITEM_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Times the shadow check asked [`owner_item_scan`] on this thread.
     static OWNER_ITEM_ASKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Times the item-binding tree walk actually ran on this thread (#13868).
+    static ITEM_BINDING_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Times the item-binding tree walk has run on this thread (tests pin that
+/// the per-(seam, test, assertion) asks share one walk per body).
+#[cfg(test)]
+pub(in crate::analysis) fn item_binding_read_count() -> usize {
+    ITEM_BINDING_READS.with(std::cell::Cell::get)
 }
 
 /// Times the item-syntax prefilter has actually run on this thread (tests pin
@@ -669,7 +706,7 @@ fn body_has_no_owner_item_syntax(source: &str, name: &str) -> bool {
 /// blocks. Macro arguments remain text: their function values are token trees,
 /// not `PathExpr` nodes. An unreadable parse cannot prove a shadow.
 #[derive(Default)]
-struct ItemBindings {
+pub(super) struct ItemBindings {
     declarations: Vec<ra_ap_syntax::TextRange>,
     scopes: Vec<(ra_ap_syntax::TextRange, bool)>,
     /// Bodies of `macro_rules!` definitions that are inert: the macro is not

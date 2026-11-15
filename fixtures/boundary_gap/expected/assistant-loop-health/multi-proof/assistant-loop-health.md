@@ -20,7 +20,7 @@ Top warnings:
 
 Next repair queue:
 - `inspect_unchanged_attempt` - src/lib.rs:2 - unchanged movement; inspect whether the focused test observes the missing equality boundary.
-- `regenerate_proof` - regenerate proof; supply selected seam and before/after static movement context.
+- `regenerate_proof` - regenerate proof: Proof input is missing selected seam and before/after movement context.
 
 Limits:
 - Static RIPR evidence only.

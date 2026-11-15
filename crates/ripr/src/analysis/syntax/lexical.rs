@@ -100,6 +100,9 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
         if trimmed_declares_test_attribute(trimmed, "test")
             || trimmed_declares_test_attribute(trimmed, "tokio::test")
             || trimmed_declares_test_attribute(trimmed, "async_std::test")
+            || trimmed_declares_test_attribute(trimmed, "actix_rt::test")
+            || trimmed_declares_test_attribute(trimmed, "actix_web::test")
+            || trimmed_declares_test_attribute(trimmed, "test_log::test")
             || trimmed.starts_with("#[rstest")
         {
             pending_test = true;
@@ -670,6 +673,14 @@ fn checks_value() {
         assert!(!trimmed_declares_test_attribute(
             "#[async_std::test_support]",
             "async_std::test"
+        ));
+        assert!(trimmed_declares_test_attribute(
+            "#[::actix_rt::test]",
+            "actix_rt::test"
+        ));
+        assert!(!trimmed_declares_test_attribute(
+            "#[actix_web::rt::test]",
+            "actix_web::test"
         ));
     }
 

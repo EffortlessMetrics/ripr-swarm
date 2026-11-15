@@ -96,7 +96,7 @@ on:
       test-shards:
         description: >-
           1 runs the required nextest step in this job. 4 leaves it to
-          rust-test-shards.yml, which the caller must run after this job passes (#10507).
+          rust-test-shards.yml, which the caller must also run and require (#10507).
         required: false
         default: 1
         type: number
@@ -199,7 +199,7 @@ jobs:
 
       # #3841: ownership and liveness of this job's per-run scratch trees come
       # from a kernel flock lease taken before any tree exists, never from a
-      # directory age. The same action is the scheduled scratch-gc.yml authority.
+      # directory age. The same action is the scratch-gc.yml sweep authority.
       - name: Acquire scratch lease
         if: inputs.use-scratch
         uses: ./.github/actions/ci-scratch-lease
@@ -223,6 +223,7 @@ jobs:
         if: inputs.use-scratch
         env:
           CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
+          CARGO_INCREMENTAL: "0"
           RUSTC_WRAPPER: sccache
           SCCACHE_DIR: /mnt/ci-cache/sccache
           SCCACHE_CACHE_SIZE: 15G
@@ -231,6 +232,7 @@ jobs:
         run: |
           {
             echo "CARGO_HOME=$CARGO_HOME"
+            echo "CARGO_INCREMENTAL=$CARGO_INCREMENTAL"
             echo "RUSTC_WRAPPER=$RUSTC_WRAPPER"
             echo "SCCACHE_DIR=$SCCACHE_DIR"
             echo "SCCACHE_CACHE_SIZE=$SCCACHE_CACHE_SIZE"
@@ -434,6 +436,10 @@ jobs:
 
       - name: Strict workspace Clippy
         id: clippy
+        # #14589: bound simultaneous large lint units on the 16-GiB hosted route.
+        # Keep the scratch runner's configured capacity and every lint target.
+        env:
+          CARGO_BUILD_JOBS: ${{ inputs.use-scratch && inputs.cargo-build-jobs || '3' }}
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       # The gates below need only the `ripr` build, not the test run. They run before

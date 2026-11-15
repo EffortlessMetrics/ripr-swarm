@@ -126,6 +126,11 @@ pub(super) fn classify_change_with_source(
 pub(super) struct PythonNoBehaviorContext {
     pub(super) new_line_in_docstring: bool,
     pub(super) old_line_in_docstring: bool,
+    /// The changed line lies in the body of `if TYPE_CHECKING:`, which never
+    /// runs (`type_checking_block.rs`, #14156).
+    pub(super) new_line_type_checking_only: bool,
+    /// The paired old line lay in such a body of the old file.
+    pub(super) old_line_type_checking_only: bool,
     /// The changed line lies inside a string literal that crosses a line
     /// break, or the file could not be lexed to rule that out. A spacing or
     /// comment-looking change there edits the string (#10706).
@@ -265,9 +270,17 @@ fn classify_change_full<'a>(
     // tests notice a behavior change that does not exist. The change is a no-op only
     // when BOTH sides are non-behavioral: if real code was replaced by a docstring
     // (old line behavioral), keep analyzing rather than silently dropping it.
-    let new_is_noop = no_behavior.new_line_in_docstring || is_python_no_behavior_line(line_text);
-    let old_is_noop = old_line_text
-        .is_none_or(|old| no_behavior.old_line_in_docstring || is_python_no_behavior_line(old));
+    // A line in a type-checking-only block (#14156) is the same kind of fact:
+    // it never runs. Runtime code moved INTO such a block (old line
+    // behavioral) keeps its probe.
+    let new_is_noop = no_behavior.new_line_in_docstring
+        || no_behavior.new_line_type_checking_only
+        || is_python_no_behavior_line(line_text);
+    let old_is_noop = old_line_text.is_none_or(|old| {
+        no_behavior.old_line_in_docstring
+            || no_behavior.old_line_type_checking_only
+            || is_python_no_behavior_line(old)
+    });
     if new_is_noop && old_is_noop {
         return None;
     }
@@ -344,6 +357,7 @@ fn classify_change_full<'a>(
 /// Where a change is classified: its file, the line its evidence names, and
 /// the owner that holds it. A deleted line (#7587) names its own projected
 /// line while its owner is resolved from a live neighbour.
+#[derive(Clone)]
 pub(super) struct ChangeSite<'a> {
     pub(super) file: &'a Path,
     pub(super) line: usize,
@@ -356,6 +370,7 @@ pub(super) struct ChangeSite<'a> {
 /// to old-side coordinates and the old line number. The guarded-arm reader
 /// walks the guards around that line exactly as it does for a live one, so a
 /// deleted line that no observed input could enter is not credited.
+#[derive(Clone)]
 pub(super) struct OldGuardView<'a> {
     pub(super) owner: PythonOwner,
     pub(super) source: &'a str,
@@ -366,6 +381,11 @@ pub(super) struct OldGuardView<'a> {
 }
 
 /// Classify a change at a resolved owner.
+///
+/// A non-substituting related test is credited independently of mock-patched
+/// siblings (#13633): the finding is first read with the siblings set aside,
+/// and kept only when that reading is `exposed`. Any weaker reading falls back
+/// to the full read, where the siblings still keep their `mocked_module` limit.
 #[allow(
     clippy::too_many_arguments,
     reason = "resolved owner inputs plus explicit run-local origin context"
@@ -378,8 +398,66 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     all_tests: &'a [PythonTest],
     no_behavior: PythonNoBehaviorContext,
     owner_source: Option<&str>,
+    mut value_origins: Option<&mut crate::value_origins::ValueOrigins>,
+    mut related: Option<&mut RelatedCandidateMemo<'a>>,
+) -> Option<Finding> {
+    let mut dropped = false;
+    // The sibling-dropped pass is speculative: it records into a fresh scratch
+    // that is merged into the real receipts only when its result is returned.
+    let mut scratch = value_origins
+        .as_deref()
+        .map(|_| crate::value_origins::ValueOrigins::default());
+    let independent = classify_change_for_owner_inner(
+        site.clone(),
+        line_text,
+        old_line_text,
+        owners,
+        all_tests,
+        no_behavior,
+        owner_source,
+        scratch.as_mut(),
+        related.as_deref_mut(),
+        Some(&mut dropped),
+    );
+    let keep_independent = !dropped
+        || independent
+            .as_ref()
+            .is_some_and(|finding| finding.class == ExposureClass::Exposed);
+    if keep_independent {
+        if let (Some(real), Some(recorded)) = (value_origins.as_deref_mut(), scratch) {
+            real.extend(recorded);
+        }
+        return independent;
+    }
+    classify_change_for_owner_inner(
+        site,
+        line_text,
+        old_line_text,
+        owners,
+        all_tests,
+        no_behavior,
+        owner_source,
+        value_origins,
+        related,
+        None,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "resolved owner inputs plus explicit run-local origin context"
+)]
+fn classify_change_for_owner_inner<'a>(
+    site: ChangeSite<'_>,
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owners: &[PythonOwner],
+    all_tests: &'a [PythonTest],
+    no_behavior: PythonNoBehaviorContext,
+    owner_source: Option<&str>,
     value_origins: Option<&mut crate::value_origins::ValueOrigins>,
     mut related: Option<&mut RelatedCandidateMemo<'a>>,
+    set_aside_mock_siblings: Option<&mut bool>,
 ) -> Option<Finding> {
     let ChangeSite {
         file,
@@ -443,6 +521,15 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             relation: candidate.relation,
         })
         .collect();
+    if let Some(dropped) = set_aside_mock_siblings {
+        *dropped = super::callee_patch::drop_substituting_siblings(
+            &mut related_candidates,
+            owner,
+            owner_source.unwrap_or(""),
+            old_line_text,
+            line_text,
+        );
+    }
     // A module-level constant edit has no callable owner. A test whose
     // assertion provably holds under the old value and fails under the new one
     // (`module_value.rs`, #9423) is related through that value, and its
@@ -1212,6 +1299,22 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             vec![format!(
                 "No Python test references {}; add a pytest or unittest test that calls the changed owner.",
                 owner.missing_test_reference()
+            )],
+        )
+    } else if !has_oracle_eligible_relation
+        && super::callee_patch::owner_patched_by_every_test(owner, &related_candidates)
+    {
+        // Every related test replaces the changed function itself, so none
+        // runs the changed code: the tests reach its callers and reveal
+        // nothing about the edit (#13632).
+        (
+            ExposureClass::ReachableUnrevealed,
+            StageState::Weak,
+            StageState::No,
+            StageState::No,
+            vec![format!(
+                "Every related Python test replaces `{}` with a stand-in (patch or monkeypatch), so none of them runs the changed code; add a test that calls `{}` without patching it and asserts its result.",
+                owner.name, owner.name
             )],
         )
     } else if let Some(reading) = module_read {

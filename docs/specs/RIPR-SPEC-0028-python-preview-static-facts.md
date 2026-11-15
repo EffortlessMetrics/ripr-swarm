@@ -368,11 +368,30 @@ matches its project-relative dotted path, so `from core import f` in
 owner only for a test under the same project root; the repository-root `lib/`
 import root is not applied inside a project, and a name another file of the
 same project also yields (`pkg.py` beside `pkg/__init__.py`) identifies
-neither. Bare file stems and arbitrary path suffixes never count as module
+neither. Repository scans record the same project-relative names and test-local module shadows as diff checks (they do not run the src-layout ambiguity or rival-definition passes, so a rival root's module is withheld there by the project-root gate alone), except that a capped or discovery-incomplete scan records no project-relative names, and a
+package `__init__.py` of the owner's own project that re-exports the owner is
+also known by its project-relative name (`from pkg import f` for
+`svc/b/pkg/__init__.py`), under the same project-root gate (#13737). Bare file stems and arbitrary path suffixes never count as module
 identity.
 A src-layout short name that a plain module of the same project also produces
 (a repository-root `core.py`, or `<project>/core.py` beside `<project>/src/`)
 identifies neither module from any test (#13745).
+A workspace module of the same top-level name (not necessarily test-named) in a
+directory pytest's prepend import mode puts ahead on `sys.path` for that test
+means a bare import of that name is not the owner's for that test (#13706). The
+directory set is the basedir of the test's directory (the first ancestor,
+inclusive, without an `__init__.py`), the same basedir for each `conftest.py`
+at or above the test, and the repository root; package directories themselves
+are not on `sys.path` and are not included.
+Known limits of this pass: directories a pytest `pythonpath` setting
+(`pytest.ini`, `[tool.pytest.ini_options]`, `tox.ini`, `setup.cfg`) puts ahead on
+`sys.path` are not read, so a shadowing module reachable only through one is not
+detected; the model is one pytest invocation per project, so cross-project
+`sys.path` and `sys.modules` effects of a repository-wide run are not modeled,
+nor is a subproject directory used as the working directory; and the
+module-attribute credit sites (`boundary.rs`, `transitive_reach.rs`) match
+`owner_module_paths` directly and are not gated by the shadow, the same as the
+pre-existing rival-module case (#4566).
 A test that imports a free-function owner's name from a workspace module that
 defines its own function of that name, when no import reaches the owner's module,
 is not related to the owner even if its call text matches the name (#8759). The
@@ -1355,7 +1374,11 @@ read-out: the boolean the classifier uses is derived from the surfaced
   asserts a local the same test bound once to such a call as its whole value
   (`result = utils.sign(0)`, not `result = utils.sign(0) or 1`; #4567). The
   call or local must be an asserted operand: nested in another call
-  (`always_true(utils.sign(0))`) it is not the compared value. A later import
+  (`always_true(utils.sign(0))`) it is not the compared value. An exception
+  assertion compares no operand, so for it the call is read in the code the
+  assertion runs: its `with` body or its rule 13 callable
+  (`with pytest.raises(ValueError, match="blank"): utils.sign(0)`; #14090),
+  not when a `lambda` or nested `def`/`class` in that body defers it. A later import
   of the same name inside the test replaces the earlier binding, and the
   test's own `import pkg.mod as alias` is not a rebinding of `alias`. Those calls also bind boundary activation, so the
   relational-boundary gate still applies to them.

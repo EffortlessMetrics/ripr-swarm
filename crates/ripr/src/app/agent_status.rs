@@ -921,9 +921,12 @@ fn start_recipe_offset(line: &str) -> Option<usize> {
     line.find("--phase before").into_iter().chain(bare).min()
 }
 
+/// What replaces a withheld new-attempt recipe (#8766).
+pub(crate) const START_RECIPE_WITHHELD: &str =
+    "a new attempt is not offered: the repair gate does not admit a new start";
+
 fn without_start_recipe_in_line(line: &str) -> String {
-    const WITHHELD: &str =
-        "a new attempt is not offered: the repair gate does not admit a new start";
+    const WITHHELD: &str = START_RECIPE_WITHHELD;
     const MARKERS: [&str; 6] = [
         "Then start a new attempt",
         "To keep the change,",
@@ -1307,6 +1310,7 @@ fn canonical_next_action_for_inventory(
         restart_route: store.locator.to_string(),
         check_case: None,
         check_repair_route: None,
+        check_scope_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),
@@ -3434,6 +3438,7 @@ fn canonical_next_action_for_attempt(
         restart_route,
         check_case: None,
         check_repair_route: None,
+        check_scope_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),

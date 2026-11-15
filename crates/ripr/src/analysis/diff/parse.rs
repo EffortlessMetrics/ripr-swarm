@@ -16,6 +16,9 @@ use super::path::{
 
 mod stream;
 
+#[cfg(test)]
+mod differential_tests;
+
 #[cfg(kani)]
 mod hunk_kani;
 

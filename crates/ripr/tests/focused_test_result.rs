@@ -249,6 +249,23 @@ fn receipt_surface_decision_is_not_mislabeled_as_publication_failure() -> Result
             "{text}"
         );
         assert!(!text.contains("fix the publication error"), "{text}");
+        // The refusal is recorded beside the committed verdict, so `ripr agent
+        // status` can repeat why the attempt ended (#14083 T2). Exit 3 alone
+        // holds when the record is routed to the resumable authority, which
+        // refuses the write and leaves only a stderr note.
+        let recorded = manifest(root, &attempt)?;
+        let reason = recorded
+            .pointer("/last_after_refusal/reason")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            reason.contains("outside trusted edit surface"),
+            "focused={has_result}: refusal reason not recorded: {recorded:#}\n{text}"
+        );
+        assert!(
+            !text.contains("refusal narration was not persisted"),
+            "focused={has_result}: {text}"
+        );
         assert!(
             !terminal_roles(&manifest(root, &attempt)?)
                 .iter()

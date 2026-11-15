@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Adapter-substrate qualification now accepts an external-helper `required_fallback` only when it names a registered syntax-only fallback (currently `syntax_only_in_process`), so `syntax_only_anything` is rejected with `ImpossibleClaimCeiling`; RIPR-SPEC-0422 separates the absent-or-blank (`MissingField`) and unregistered (`ImpossibleClaimCeiling`) outcomes, and a corpus reject case pins the prefix (#13605).

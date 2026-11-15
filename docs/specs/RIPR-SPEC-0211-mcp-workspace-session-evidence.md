@@ -129,9 +129,22 @@ official SDK transport:
   Later refreshes remain usable. Installation is serialized and idempotent.
   Only MCP attempt tokens opt into Unix process groups; captured analysis
   workers retain that choice and other callers preserve their prepared groups.
-  Cleanup observes leader exit without reaping, signals the owned group, then
-  reaps and disarms further group signals. This also settles pipe holders when
-  a primary exits early. Targets lacking the safe non-reaping observation
+  Cleanup observes leader exit without reaping and signals the owned group
+  at most once while that leader still pins its identity. On Linux, successful
+  `try_wait`, `wait` and explicit `terminate_tree` additionally require every
+  observed member to be single-threaded and terminal (Z/X), with the retained
+  leader still present in the expected group, before reaping. This applies to
+  natural primary exit as well as explicit termination (#14503). The first
+  successful group signal starts one five-second settlement window; pending
+  polls and later explicit cleanup do not renew it. Missing or malformed
+  membership, observation failure or deadline exhaustion remains a cleanup
+  error on subsequent wait/termination observations, not a successful exit.
+  Explicit failure
+  fallback may kill/reap the direct child within its separate bounded budget
+  but reports incomplete tree cleanup and never signals the group after reap.
+  The pre-signal running-child lifetime remains caller-bounded, OS reads are
+  not a hard real-time guarantee, and `Drop` remains best-effort cleanup.
+  This also settles pipe holders when a primary exits early. Targets lacking the safe non-reaping observation
   refuse contained spawn before creating a child. On non-Unix targets the
   install is a no-op: containment there is the job-object ownership in
   `process_owner`, whose std API cannot express kill-on-job-close, so an
@@ -151,8 +164,10 @@ official SDK transport:
   discovery, configuration presence, trust, authority — all unchanged from
   #3088) plus a `ripr-mcp-session-v1` session block: current desired input
   (workspace diff against the resolved default branch or the explicit
-  refresh `base` with `base_revision` when present, draft mode, built-in
-  defaults), current attempt state (`no_snapshot`, `in_flight`,
+  refresh `base` with `base_revision` when present, the analysis mode from
+  `ripr.toml` `[analysis] mode` (`draft` when unset), and the workspace's own
+  configuration, whose `[analysis]` table the refresh applies through the same
+  owner `ripr check` uses), current attempt state (`no_snapshot`, `in_flight`,
   `completed`, `failed`), last completed snapshot identity,
   last-known-good, freshness relative to the last completed refresh
   (`current_at_last_refresh`, or `stale_after_failed_attempt` once a later
@@ -182,14 +197,14 @@ official SDK transport:
   evidence resources do not. The field is not part of the snapshot identity,
   and no existing field changes.
 - `ripr_refresh` runs one bounded static analysis through the shared
-  `app::check_workspace` authority on the committed default-branch diff
-  and commits the completed snapshot. Initialize/discover instructions,
-  the refresh tool description, and MCP help disclose before invocation
-  that staged and unstaged tracked edits and untracked files are excluded.
-  Shared authority does not mean identical input: `ripr check` defaults
-  to the working tree when staged or unstaged tracked edits exist, while
-  `ripr check --committed` selects committed input. The response scope
-  disclosure and MCP's runtime input remain unchanged. Status always emits
+  `app::check_workspace` authority on the default-branch diff and commits
+  the completed snapshot. Its input source follows `ripr check` (#13096,
+  below): committed history for a clean tree, the saved working tree when
+  staged or unstaged tracked edits exist. Initialize/discover instructions,
+  the refresh tool description, and MCP help disclose that selection, and
+  that unsaved buffers and untracked files are excluded, before invocation.
+  `ripr check --committed` and `source: "committed"` select committed
+  input. Status always emits
   `session.scope`, and refresh always emits top-level `scope`; both output
   schemas require this nullable field. It is null without a snapshot or for a
   clean committed snapshot. A dirty snapshot discloses `analyzed`,
@@ -207,8 +222,15 @@ official SDK transport:
   commits with its typed limitations so complete-zero and incomplete-zero
   remain distinct.
 - `ripr_refresh` takes one more optional argument, `source` (#7357), with
-  the closed values `committed` and `worktree`. Omission and `committed`
-  are the same request and keep every behavior and identity above. A value
+  the closed values `committed` and `worktree`. `committed` keeps every
+  committed behavior and identity above. Omission (#13096) is a third
+  request: the server asks the one live-diff selection owner
+  (`app::diff_source::select_live_diff_source`, the decision `ripr check`
+  makes without `--worktree` or `--committed`) and runs `worktree` when the
+  tree holds a staged or unstaged tracked edit, `committed` otherwise
+  (a clean or untracked-only tree, an unborn `HEAD`, or a probe that could
+  not run). The selected attempt is exactly the explicit request of that
+  source: same producer, custody, scope and identity. A value
   outside the closed set, including an empty string, a different case, a
   non-string or an explicit null, is Invalid Params (`-32602`); nothing is
   coerced. `worktree` routes the same attempt through the shared
@@ -227,10 +249,17 @@ official SDK transport:
     (`null` before any snapshot) once a worktree source is requested or
     captured, and snapshot summaries (`snapshot`, `last_completed_snapshot`,
     `last_known_good`) add `source: "worktree"` for a worktree capture.
+    For an omitted `source`, `requested_source` is `"default"` (never the
+    selected value), so `requested_source: "default"` with
+    `captured_source: "worktree"` says the default selection read the
+    working tree; `session.current_desired_input.source` names the selected
+    `worktree`. A default request that selected committed input on a session
+    with no worktree snapshot keeps the v1 shape.
     A failed attempt keeps the last-known-good snapshot with its own tag: a
     failed worktree request never relabels a retained committed snapshot,
     and a failed committed request never relabels a retained worktree one.
-    Source-less callers see the unchanged v1 shapes.
+    Callers that pass no `source` on a clean tree see the unchanged v1
+    shapes.
   - A committed zero-item empty-scope snapshot (`no_scope`,
     `no_changed_lines`, `no_behavioral_candidates`) examined no behavior, so
     its `last_completed_snapshot` summary adds `analysis_status:
@@ -238,7 +267,7 @@ official SDK transport:
     same predicate as `ripr_refresh` and `ripr_list_gaps`. Complete runs omit
     both fields.
   - `empty_scope_hint.pass_base_last_commit` (#13096) names the concrete
-    last-commit retry (`{"base": "HEAD~1"}`) beside `pass_base` and
+    last-commit retry (`{"source": "committed", "base": "HEAD~1"}`) beside `pass_base` and
     `pass_source`. It is present only when the committed zero-item snapshot
     was captured with no explicit base (`snapshot.base` is absent) and its
     kind is `no_scope` or `no_changed_lines`, where the default base most
@@ -405,6 +434,19 @@ official SDK transport:
   no match, and an unknown `file`, produce an empty disclosed page.
   `selected` remains the stored-selection count; `filtered` is the narrowed
   count. `filters` echoes all four dimensions, with null for omitted values.
+  With no `class` filter the list leaves out `exposed` items the shared seam
+  gate refused as `seam_already_gripped` (#14327): existing tests already
+  check the seam, so listing them invites per-item evidence reads that change
+  nothing. Only that positive cause omits. An `exposed` item that is
+  repair-ready, or unready for any other cause (a truncated seam inventory,
+  withheld worktree evidence, an ambiguous or unfound seam, a finding-level
+  gate), stays listed, because missing or limited evidence never becomes a
+  no-action conclusion. `filtered` counts after that exclusion (it is the set
+  the page walks), the additive `exposed_omitted` count and `exposed_route`
+  string disclose what was left out (both absent when zero or when `class`
+  was named), and `total`, `eligible`, `selected` and `outcome` still describe
+  the whole snapshot. Any explicit `class`, including `exposed`, behaves as
+  a plain exact-class filter, and `filters.class` still echoes null by default.
   Summaries carry `repair_packet_ready` and `repair_ineligibility` (null when
   ready; otherwise the typed first failing gate), matching `ripr_get_gap`.
   `continuation.next_page.arguments` pins the snapshot, filters, and explicit
@@ -458,7 +500,16 @@ official SDK transport:
   the gap-list `outcome`, which projects its kind, analysis status, clean value, and
   limitation count and up to five names. Missing values are marked absent.
   The opt-in `brief` gap list additionally carries its snapshot identity,
-  filtered count, page offset, and any next omission offset. These projections
+  filtered count, page offset, and any next omission offset. The opt-in
+  `brief` `ripr_get_gap` (#14327) projects one item's class, location, owner,
+  changed expression (plus `arm_result` when present), up to three missing
+  discriminators with their reasons (else the producer's `missing` prose),
+  up to three related tests, readiness, static limitation, source currentness
+  and the recommended next step, one line each. It discloses how many list
+  entries stay structured-only, separately from related-test matches the
+  producer counted but did not retain, marks absent values `?` or `none listed`
+  (an explicit `null` reads `none`), never clips identities, and falls back
+  to the digest when the document has no `item` object. These projections
   do not replace the full continuation arguments or evidence. The
   digest is a projection of the document and adds no fact. If a compact
   companion would make the admitted envelope exceed its cap, retain that JSON
@@ -685,6 +736,10 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   `config_identity`, `built_in_defaults` when none resolves,
   `detected_not_loaded` when the file cannot be read or parsed), and an
   unparseable config fails the attempt closed with `config_invalid`.
+  The git invocations of a refresh's check are bounded by
+  `RIPR_GIT_TIMEOUT` from the server environment when set, else the
+  `ripr check` default, through the CLI's parser (#14386); an invalid value
+  fails the attempt closed with `config_invalid` naming the variable.
 - No support-tier promotion.
 - No durable snapshot persistence; the session is in-memory and a server
   restart drops it (a fresh `ripr_refresh` rebuilds it).
@@ -730,6 +785,9 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
 - `crates/ripr/src/mcp/workspace.rs::tests::independent_omission_route_uses_filtered_end_and_respects_envelope` — a strict filtered subset binds the opposite-axis end and checks the envelope boundary.
 - `crates/ripr/tests/mcp_stdio.rs::independent_gap_pages_walk_both_axes_over_stdio` — a refreshed real workspace follows both opt-in routes in full, summary and brief modes, preserves structured output, and checks default and explicit-false compatibility.
 - `crates/ripr/src/mcp/protocol.rs::tests::compact_text_distinguishes_empty_outcomes_and_paging` — complete and no-scope empty results remain distinct in both compact modes, and brief reports snapshot and independent omission paging.
+- `crates/ripr/src/mcp/protocol.rs::tests::brief_gap_text_carries_the_test_author_facts_and_drops_bulk_evidence` — a brief `ripr_get_gap` text is exactly the owner, location, changed expression, missing discriminator, related-test, readiness and next-step lines, stays under a third of the JSON copy, leaves `structuredContent` whole, and joins an `arm_result` when present (#14327).
+- `crates/ripr/src/mcp/protocol.rs::tests::brief_gap_text_marks_absent_facts_bounds_lists_and_cannot_forge_lines` — absent facts read `?`/`none listed` and never become `repair_ready=true` or a `next:` line; long lists list three and disclose the rest; hostile strings cannot add lines; a gap document without an `item` object keeps the digest.
+- `crates/ripr/tests/mcp_stdio.rs::brief_get_gap_text_projects_the_served_document_over_stdio` — over real stdio, a `brief` session serves the same `ripr_get_gap` `structuredContent` as the default and its text names that document's class, location, owner and canonical id in under half the JSON copy's bytes.
 
 
 - `crates/ripr/src/mcp/workspace.rs::tests::omission_disclosure_pages_independently_of_items`
@@ -778,6 +836,10 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
 - `crates/ripr/src/mcp/workspace.rs::tests::gap_list_summaries_project_readiness_matching_get_gap`
   + `gap_list_filters_narrow_each_dimension_then_combine_before_paging`
   — direct stored-fact narrowing/readiness and continuation controls.
+- `crates/ripr/src/mcp/workspace.rs::tests::default_gap_list_omits_exposed_and_discloses_the_count`
+  — default list leaves out already-gripped `exposed` items and counts them
+  in `exposed_omitted`; a truncation-refused `exposed` item and a
+  repair-ready one stay listed; `class: "exposed"` lists them all.
 - `crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_filters_at_the_dispatch_edge`
   — argument admission before refresh; this is not successful narrowing proof.
 - `crates/ripr/tests/mcp_stdio.rs::list_gaps_rejects_unknown_class_tokens_with_the_vocabulary`
@@ -819,6 +881,10 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   refresh/list/get_gap with the `loaded` posture, a config-less rust
   workspace keeps the defaults posture, and an unparseable `ripr.toml`
   fails the refresh closed with `config_invalid`.
+- `crates/ripr/tests/mcp_workspace_config.rs::refresh_honors_ripr_git_timeout_from_the_server_environment`
+  — #14386: an invalid server `RIPR_GIT_TIMEOUT` fails the refresh with
+  `config_invalid` naming the variable and a restart recovery; `0` keeps
+  the analysis.
 - `crates/ripr/src/mcp/gaps.rs::tests` — canonical item projection and the
   readiness block this slice pinned (the readiness evaluation itself is
   owned with RIPR-SPEC-0214).
@@ -846,6 +912,28 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
 - `crates/ripr/src/process_owner.rs::tests` — non-reaping cleanup ordering,
   successful output/status, refusal after custody loss, repeated cleanup and
   preservation of caller process groups.
+- `crates/ripr/src/process_owner.rs::tests::linux_group_observer_requires_terminal_single_thread_members`
+  + `linux_group_observer_accepts_non_utf8_comm_and_refuses_missing_leader`
+  — terminal-state/thread-count and byte-safe membership refusal.
+- `crates/ripr/src/process_owner.rs::tests::linux_stat_unavailable_group_is_pending_even_for_terminal_state`
+  + `linux_stat_unknown_group_does_not_accept_other_malformed_groups`
+  — the kernel's teardown `pgid=-1` sentinel is unknown membership, not a
+  quiescent or unrelated process. Observation stays pending under the original
+  settlement deadline; malformed group tokens still refuse. The owned leader
+  must still have a positively observed matching group. This fixture does not
+  claim the missing raw stat bytes from a particular hosted failure.
+- `crates/ripr/src/process_owner.rs::tests::linux_settlement_deadline_survives_polls_and_explicit_cleanup`
+  + `linux_try_wait_refuses_expired_nonterminal_settlement`
+  + `linux_wait_refuses_expired_settlement_before_reaping`
+  + `linux_pending_settlement_can_complete_within_original_deadline`
+  — a real unreaped leader with a modeled nonterminal observation exercises
+  the public owner paths: one signal-bound deadline, no renewal through
+  pending polls or explicit cleanup, persistent error before reap, bounded
+  fallback and successful settlement before expiry. These controls do not
+  reproduce a kernel D-state or establish a hard wall-clock bound.
+- `crates/ripr/tests/installed_python_typescript_journeys.rs::python_runtime_deadline_reaps_primary_and_stops_descendant`
+  — unchanged installed-runtime immediate-return oracle for primary reap and
+  descendant stopped state; stopped is not equivalent to descendant reap.
 - `crates/ripr/tests/mcp_stdio.rs::catalog_list_cursors_fail_closed_over_stdio`
   — a `cursor` on `tools/list`, `prompts/list`, `resources/list`, or
   `resources/templates/list` is a `-32602` whose message explains the list
@@ -915,9 +1003,10 @@ failed request cannot relabel it. The route is a bounded current-state rerun,
 not immutable replay. The 4096-byte recovery-text budget refuses an oversized complete route
 with an explicit non-command limitation rather than truncating executable text.
 
-For failed saved-worktree refresh, MCP retry examples retain the requested
-worktree source when the operator corrects or omits a base. Discovery states
-the committed default separately from opt-in saved tracked edits. Unsaved and
+For a failed refresh, MCP retry examples retain the requested source
+(committed or worktree) when the operator corrects or omits a base. Discovery states
+the `ripr check`-parity default (saved tracked edits when any exist, committed
+otherwise) and the explicit `committed`/`worktree` overrides. Unsaved and
 untracked exclusions remain unchanged. Worktree cards and readiness follow the
 producer-custody rules above: offered only with an established agreement,
 withheld with the cause otherwise.
