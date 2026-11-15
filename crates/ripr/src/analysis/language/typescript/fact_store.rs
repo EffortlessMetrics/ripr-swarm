@@ -652,7 +652,9 @@ mod tests {
             let newer_schema = layer.join("9999");
             std::fs::create_dir_all(&newer_schema).map_err(|err| err.to_string())?;
             std::fs::write(newer_schema.join("new.json"), b"{}").map_err(|err| err.to_string())?;
-            assert_eq!(store.reclaimable().entry_count, 5);
+            // Reclaimable is what the next prune removes: the third build's entry
+            // and the older schema's file, not the newer schema.
+            assert_eq!(store.reclaimable().entry_count, 2);
 
             let relative = Path::new("src/a.ts");
             let source = "export const a = 1;\n";
@@ -683,7 +685,7 @@ mod tests {
                 newer_schema.join("new.json").is_file(),
                 "a newer schema directory is never pruned"
             );
-            assert_eq!(store.reclaimable().entry_count, 3);
+            assert_eq!(store.reclaimable().entry_count, 0);
 
             assert!(matches!(store.load(&key), CacheLoad::Hit(_)));
             let marker_dir = layer.join(".build-use");

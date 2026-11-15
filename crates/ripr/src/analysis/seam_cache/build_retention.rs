@@ -165,12 +165,21 @@ impl<'a> BuildRetention<'a> {
         self.layer_dir.join(self.current_schema)
     }
 
+    /// A read-only consumer (the status gate inventory, #13945) suppressed
+    /// mutation of this cache: neither prune nor mark it.
+    fn mutation_suppressed(&self) -> bool {
+        crate::atomic_file::cache_mutation_suppressed(&self.schema_dir())
+    }
+
     /// Records that this build served a hit, at most once per
     /// [`BUILD_USE_REFRESH`] per process and layer. The caller checks that the
     /// cache base is usable; this refuses a symlinked layer or marker
     /// directory, writes atomically (a planted symlink at the marker path is
     /// replaced by the rename, never written through) and ignores failures.
     pub(crate) fn note_use(&self) {
+        if self.mutation_suppressed() {
+            return;
+        }
         let due = {
             let mut noted = match BUILD_USE_NOTED.lock() {
                 Ok(guard) => guard,
@@ -207,7 +216,7 @@ impl<'a> BuildRetention<'a> {
     /// Once per process and layer, best-effort removal of stale schema
     /// siblings and of other builds' entries. Called after a successful store.
     pub(crate) fn prune_once(&self) {
-        if !cache_path_contained_in_base(self.base, &self.layer_dir) {
+        if self.mutation_suppressed() || !cache_path_contained_in_base(self.base, &self.layer_dir) {
             return;
         }
         let first_visit = {
@@ -223,12 +232,11 @@ impl<'a> BuildRetention<'a> {
         }
     }
 
-    /// Sibling schema directories other than the current one, each a real
-    /// directory contained under the base. With `older_only`, just those
-    /// ranked below the current schema: a newer schema belongs to a newer
+    /// Sibling schema directories ranked below the current one, each a real
+    /// directory contained under the base. A newer schema belongs to a newer
     /// ripr (an editor server, say) that still reads it and prunes for
-    /// itself, so it is reported as reclaimable but never removed here.
-    fn stale_schema_dirs(&self, older_only: bool) -> Vec<PathBuf> {
+    /// itself, so it is neither removed nor counted here.
+    fn stale_schema_dirs(&self) -> Vec<PathBuf> {
         let mut dirs = Vec::new();
         let Some(current) = (self.schema_rank)(self.current_schema) else {
             return dirs;
@@ -247,7 +255,7 @@ impl<'a> BuildRetention<'a> {
             let Some(rank) = (self.schema_rank)(name) else {
                 continue;
             };
-            if rank == current || (older_only && rank > current) {
+            if rank >= current {
                 continue;
             }
             let path = self.layer_dir.join(name);
@@ -259,7 +267,7 @@ impl<'a> BuildRetention<'a> {
     }
 
     fn prune_stale_schema_siblings(&self) {
-        for path in self.stale_schema_dirs(true) {
+        for path in self.stale_schema_dirs() {
             let _ = std::fs::remove_dir_all(&path);
         }
     }
@@ -338,12 +346,13 @@ impl<'a> BuildRetention<'a> {
         markers
     }
 
-    /// Best-effort removal of current-schema entries written by other builds.
+    /// The other-build entries and use markers the next prune removes.
     ///
     /// Kept: the current build; the [`RETAINED_OTHER_BUILDS`] most recently
     /// used other builds; any other build whose use marker is younger than
-    /// [`RECENT_BUILD_GRACE`].
-    fn prune_stale_builds(&self) {
+    /// [`RECENT_BUILD_GRACE`]. Markers of builds without entries are removed
+    /// once past the grace.
+    fn stale_builds(&self) -> StaleBuilds {
         let identity = crate::build_identity::cache_identity();
         let by_build = self.other_build_entries(identity);
         let mut markers = self.other_build_use_markers(identity);
@@ -368,6 +377,7 @@ impl<'a> BuildRetention<'a> {
                 .cmp(&left.used)
                 .then_with(|| left_id.cmp(right_id))
         });
+        let mut stale = StaleBuilds::default();
         for (rank, (build, entries)) in builds.into_iter().enumerate() {
             let marker = markers.remove(&build);
             if rank < RETAINED_OTHER_BUILDS
@@ -375,34 +385,44 @@ impl<'a> BuildRetention<'a> {
             {
                 continue;
             }
-            for path in entries.paths {
-                if cache_path_contained_in_base(self.base, &path) {
-                    let _ = std::fs::remove_file(&path);
-                }
-            }
+            stale.entries.push(entries);
             if let Some((_, marker_path)) = marker {
-                let _ = std::fs::remove_file(marker_path);
+                stale.markers.push(marker_path);
             }
         }
-        // Markers of builds that no longer have entries, once past the grace.
         for (hit, marker_path) in markers.into_values() {
-            if !hit_recently(hit) && cache_path_contained_in_base(self.base, &marker_path) {
+            if !hit_recently(hit) {
+                stale.markers.push(marker_path);
+            }
+        }
+        stale
+    }
+
+    /// Best-effort removal of the entries [`Self::stale_builds`] selects.
+    fn prune_stale_builds(&self) {
+        let stale = self.stale_builds();
+        for path in stale.entries.into_iter().flat_map(|entries| entries.paths) {
+            if cache_path_contained_in_base(self.base, &path) {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        for marker_path in stale.markers {
+            if cache_path_contained_in_base(self.base, &marker_path) {
                 let _ = std::fs::remove_file(marker_path);
             }
         }
     }
 
-    /// Entries and bytes this build never reads: everything under stale
-    /// schema siblings plus current-schema entries of other builds. Read-only.
+    /// Entries and bytes the next prune removes: everything under older
+    /// schema siblings plus other builds' current-schema entries outside the
+    /// retention window. Newer schemas and retained builds are not counted.
+    /// Read-only.
     pub(crate) fn reclaimable(&self) -> Reclaimable {
         let mut total = Reclaimable::default();
-        for dir in self.stale_schema_dirs(false) {
+        for dir in self.stale_schema_dirs() {
             total.add(regular_files_under(&dir));
         }
-        for entries in self
-            .other_build_entries(crate::build_identity::cache_identity())
-            .into_values()
-        {
+        for entries in self.stale_builds().entries {
             total.add(Reclaimable {
                 entry_count: entries.paths.len(),
                 size_bytes: entries.size_bytes,
@@ -410,6 +430,12 @@ impl<'a> BuildRetention<'a> {
         }
         total
     }
+}
+
+#[derive(Default)]
+struct StaleBuilds {
+    entries: Vec<BuildEntries>,
+    markers: Vec<PathBuf>,
 }
 
 struct BuildEntries {
@@ -521,38 +547,102 @@ mod tests {
         assert_eq!(integer_schema_rank("8a"), None);
     }
 
+    /// #13945: a read-only consumer's suppression guard stops both the
+    /// prune and the use marker, and does not spend the once-per-run latch.
     #[test]
-    fn reclaimable_counts_stale_schemas_and_other_builds_but_not_this_build() -> Result<(), String>
-    {
+    fn suppressed_cache_is_neither_pruned_nor_marked() -> Result<(), String> {
+        let base = scratch("suppressed")?;
+        let layer = base.join("typescript-file-facts");
+        let older = layer.join("7");
+        std::fs::create_dir_all(layer.join("8")).map_err(|err| err.to_string())?;
+        std::fs::create_dir_all(&older).map_err(|err| err.to_string())?;
+        std::fs::write(older.join("old.json"), b"{}").map_err(|err| err.to_string())?;
+        let read = |path: &Path| analyzer_version_from_entry_prefix(path);
+        let retention = BuildRetention::new(&base, layer.clone(), "8", integer_schema_rank, &read);
+        let guard = crate::atomic_file::CacheMutationSuppressed::under(&base);
+        retention.prune_once();
+        retention.note_use();
+        let kept_while_suppressed = older.is_dir();
+        let marked_while_suppressed = layer.join(BUILD_USE_DIR).exists();
+        drop(guard);
+        retention.prune_once();
+        let pruned_after = !older.exists();
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(kept_while_suppressed, "no prune under a suppression guard");
+        assert!(
+            !marked_while_suppressed,
+            "no use marker under a suppression guard"
+        );
+        assert!(pruned_after, "the latch was not spent while suppressed");
+        Ok(())
+    }
+
+    #[test]
+    fn reclaimable_counts_exactly_what_the_next_prune_removes() -> Result<(), String> {
         let base = scratch("reclaim")?;
         let layer = base.join("typescript-file-facts");
         let current = layer.join("8");
-        let stale = layer.join("7");
+        let older = layer.join("7");
+        let newer = layer.join("9");
         let markers = layer.join(BUILD_USE_DIR);
-        for dir in [&current, &stale, &markers] {
+        for dir in [&current, &older, &newer, &markers] {
             std::fs::create_dir_all(dir).map_err(|err| err.to_string())?;
         }
         let identity = crate::build_identity::cache_identity();
         let entry =
             |build: &str| format!(r#"{{"schema_version":"8","analyzer_version":"{build}"}}"#);
-        std::fs::write(current.join("mine.json"), entry(identity)).map_err(|e| e.to_string())?;
-        let other = entry("ripr-other-build");
-        std::fs::write(current.join("other.json"), &other).map_err(|e| e.to_string())?;
-        std::fs::write(stale.join("old.json"), b"12345").map_err(|e| e.to_string())?;
-        std::fs::write(markers.join("0000000000000000"), b"x").map_err(|e| e.to_string())?;
+        let hour = std::time::Duration::from_hours(1);
+        let age = |path: &Path, by: std::time::Duration| -> Result<(), String> {
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .and_then(|file| file.set_modified(SystemTime::now() - by))
+                .map_err(|e| e.to_string())
+        };
+        let plant = |name: &str, build: &str, by: std::time::Duration| -> Result<u64, String> {
+            let path = current.join(name);
+            let body = entry(build);
+            std::fs::write(&path, &body).map_err(|e| e.to_string())?;
+            age(&path, by)?;
+            Ok(body.len() as u64)
+        };
+        plant("mine.json", identity, hour * 9)?;
+        plant("new.json", "build-new", hour)?;
+        plant("mid.json", "build-mid", hour * 2)?;
+        let old_len = plant("old.json", "build-old", hour * 3)?;
+        // Ranked last (written 4h, hit 5h ago), but the hit is inside the
+        // 7-day grace, so it is kept.
+        plant("graced.json", "build-graced", hour * 4)?;
+        let marker = markers.join(build_use_marker_name("build-graced"));
+        std::fs::write(&marker, "build-graced").map_err(|e| e.to_string())?;
+        age(&marker, hour * 5)?;
+        std::fs::write(older.join("old.json"), b"12345").map_err(|e| e.to_string())?;
+        std::fs::write(newer.join("new.json"), b"123").map_err(|e| e.to_string())?;
         let read = |path: &Path| analyzer_version_from_entry_prefix(path);
         let retention = BuildRetention::new(&base, layer.clone(), "8", integer_schema_rank, &read);
         let reclaimable = retention.reclaimable();
         let mine_kept = current.join("mine.json").is_file();
+        retention.prune_stale_builds();
+        retention.prune_stale_schema_siblings();
+        let after = retention.reclaimable();
+        let survivors: Vec<bool> = ["mine", "new", "mid", "old", "graced"]
+            .iter()
+            .map(|name| current.join(format!("{name}.json")).is_file())
+            .collect();
+        let newer_kept = newer.join("new.json").is_file();
         let _ = std::fs::remove_dir_all(&base);
         assert_eq!(
             reclaimable,
             Reclaimable {
                 entry_count: 2,
-                size_bytes: other.len() as u64 + 5,
+                size_bytes: old_len + 5,
             },
-            "the other build's entry and the stale schema's file, not this build's entry or the marker"
+            "the third-ranked build and the older schema; not this build, the two most \
+             recent builds, the recently hit build or the newer schema"
         );
+        assert_eq!(survivors, [true, true, true, false, true]);
+        assert!(newer_kept, "a newer schema is never pruned");
+        assert_eq!(after, Reclaimable::default(), "nothing is left to reclaim");
         assert!(mine_kept, "reclaimable is read-only");
         Ok(())
     }

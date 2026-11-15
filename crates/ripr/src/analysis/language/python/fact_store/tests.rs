@@ -412,13 +412,13 @@ fn store_prunes_old_builds_and_schemas_and_a_hit_marks_this_build_used() -> Resu
             Some(crate::build_identity::cache_identity().to_string())
         );
         assert_eq!(
-            reclaimable_before.entry_count, 5,
-            "three other-build entries and the two other-schema files were reclaimable"
+            reclaimable_before.entry_count, 2,
+            "the third build's entry and the older schema's file were reclaimable"
         );
         assert_eq!(
             store.reclaimable().entry_count,
-            3,
-            "the kept builds and the newer schema stay reclaimable"
+            0,
+            "kept builds and the newer schema are not reclaimable"
         );
 
         assert!(matches!(store.load(&key), CacheLoad::Hit(_)));

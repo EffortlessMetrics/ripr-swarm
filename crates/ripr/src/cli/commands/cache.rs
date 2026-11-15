@@ -54,12 +54,12 @@ otherwise target/ripr/cache under the Cargo workspace root).
             (those carry their own version in their directory names).
 
 `reclaimable_entry_count` and `reclaimable_size_bytes` count the per-file
-fact entries (Rust, TypeScript, Python) this ripr never reads because another
-ripr build or another cache schema wrote them. They are a subset of the
-recognized-layer totals. The next run that writes facts removes them, except
-the two most recently used other builds, any build that served a cache hit
-in the last 7 days, and any newer cache schema, so an editor server on
-another ripr version keeps its entries.
+fact entries (Rust, TypeScript, Python) that the next run writing facts
+removes: entries from older cache schemas, and entries from other ripr builds
+other than the two most recently used and any that served a cache hit in the
+last 7 days. Kept entries, including any newer cache schema an editor server
+on another ripr version still reads, are not counted. They are a subset of
+the recognized-layer totals.
 
 `entry_count` and `total_size_bytes` count only the recognized ripr cache
 layer directories, the same set `ripr cache clear` removes; files anywhere
@@ -336,9 +336,8 @@ fn render_status_for_host(
         }
         if reclaimable.entry_count > 0 {
             lines.push(format!(
-                "Reclaimable: {} bytes in {} file-fact entries written by other ripr builds \
-                 or other cache schemas; this ripr never reads them, and its next cache \
-                 write prunes the ones not used recently",
+                "Reclaimable: {} bytes in {} file-fact entries from older cache schemas or \
+                 unused ripr builds; the next cache write removes them",
                 reclaimable.size_bytes, reclaimable.entry_count
             ));
         }
@@ -1191,7 +1190,7 @@ mod tests {
         Ok(())
     }
 
-    /// #7047: status reports what this ripr never reads, in both renderers,
+    /// #7047: status reports what the next prune removes, in both renderers,
     /// and stays silent in human output when nothing is reclaimable.
     #[test]
     fn render_status_reports_reclaimable_file_fact_bytes() -> Result<(), String> {
@@ -1221,7 +1220,7 @@ mod tests {
             serde_json::from_str(&json).map_err(|error| error.to_string())?;
         assert!(
             human.contains(
-                "Reclaimable: 300 bytes in 3 file-fact entries written by other ripr builds"
+                "Reclaimable: 300 bytes in 3 file-fact entries from older cache schemas or unused ripr builds"
             ),
             "{human}"
         );
@@ -1233,7 +1232,7 @@ mod tests {
     }
 
     /// The status aggregate reads the real store layout: a Rust file-fact
-    /// schema directory this build cannot read counts, the current build's
+    /// schema directory older than this build's counts, the current build's
     /// own entry and the use markers do not.
     #[test]
     fn file_fact_reclaimable_counts_stale_rust_schema_entries() -> Result<(), String> {
@@ -1256,6 +1255,160 @@ mod tests {
             }
         );
         assert_eq!(empty, Reclaimable::default());
+        Ok(())
+    }
+
+    fn cache_args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    /// `--root` needs a real path: a missing value, an empty value, and a
+    /// following flag are refused instead of being read as the root.
+    #[test]
+    fn cache_root_flag_refuses_a_missing_empty_or_flag_shaped_value() {
+        for args in [
+            cache_args(&["--root"]),
+            cache_args(&["--root", ""]),
+            cache_args(&["--root", "--json"]),
+            cache_args(&["--json", "--root"]),
+        ] {
+            assert_eq!(
+                parse_status_args(&args),
+                Err(
+                    "cache status --root requires a path; pass the path right after --root"
+                        .to_string()
+                ),
+                "status {args:?}"
+            );
+        }
+        for args in [
+            cache_args(&["--root"]),
+            cache_args(&["--root", ""]),
+            cache_args(&["--root", "--force"]),
+            cache_args(&["--force", "--root"]),
+        ] {
+            assert_eq!(
+                parse_clear_args(&args),
+                Err(
+                    "cache clear --root requires a path; pass the path right after --root"
+                        .to_string()
+                ),
+                "clear {args:?}"
+            );
+        }
+    }
+
+    /// The root and the flags parse the same in any order, and no flag is
+    /// implied: `cache clear --root PATH` alone never carries `--force`.
+    #[test]
+    fn cache_root_flag_is_order_independent_and_implies_no_other_flag() {
+        assert_eq!(parse_status_args(&[]), Ok((None, false)));
+        assert_eq!(
+            parse_status_args(&cache_args(&["--root", "ws"])),
+            Ok((Some(PathBuf::from("ws")), false))
+        );
+        for args in [
+            cache_args(&["--root", "ws", "--json"]),
+            cache_args(&["--json", "--root", "ws"]),
+        ] {
+            assert_eq!(
+                parse_status_args(&args),
+                Ok((Some(PathBuf::from("ws")), true)),
+                "status {args:?}"
+            );
+        }
+
+        assert_eq!(parse_clear_args(&[]), Ok((None, ClearOptions::default())));
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--root", "ws"])),
+            Ok((
+                Some(PathBuf::from("ws")),
+                ClearOptions {
+                    dry_run: false,
+                    force: false,
+                }
+            ))
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--root", "ws", "--dry-run"])),
+            Ok((
+                Some(PathBuf::from("ws")),
+                ClearOptions {
+                    dry_run: true,
+                    force: false,
+                }
+            ))
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--force", "--root", "ws"])),
+            Ok((
+                Some(PathBuf::from("ws")),
+                ClearOptions {
+                    dry_run: false,
+                    force: true,
+                }
+            ))
+        );
+    }
+
+    /// A repeated `--root` is absorbed only when it names the same path; two
+    /// different roots refuse and name both, so neither cache is acted on.
+    #[test]
+    fn cache_root_flag_absorbs_an_identical_repeat_and_refuses_a_conflict() {
+        assert_eq!(
+            parse_status_args(&cache_args(&["--root", "a", "--json", "--root", "a"])),
+            Ok((Some(PathBuf::from("a")), true))
+        );
+        assert_eq!(
+            parse_status_args(&cache_args(&["--root", "a", "--root", "b"])),
+            Err("cache status takes --root once (got 'a' and 'b')".to_string())
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--root", "a", "--force", "--root", "a"])),
+            Ok((
+                Some(PathBuf::from("a")),
+                ClearOptions {
+                    dry_run: false,
+                    force: true,
+                }
+            ))
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--root", "a", "--force", "--root", "b"])),
+            Err("cache clear takes --root once (got 'a' and 'b')".to_string())
+        );
+    }
+
+    /// Each subcommand accepts only its own flags, and a stray positional is
+    /// refused rather than read as a root.
+    #[test]
+    fn cache_status_and_clear_refuse_each_others_flags_and_positionals() -> Result<(), String> {
+        assert_eq!(
+            parse_status_args(&cache_args(&["ws"])),
+            Err(
+                "unknown cache status argument \"ws\". Run `ripr cache status --help`.".to_string()
+            )
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--force", "ws"])),
+            Err("unknown cache clear argument \"ws\". Run `ripr cache clear --help`.".to_string())
+        );
+        for flag in ["--force", "--dry-run"] {
+            let Err(message) = parse_status_args(&cache_args(&[flag])) else {
+                return Err(format!("cache status accepted the clear flag {flag}"));
+            };
+            assert!(
+                message.starts_with(&format!("unknown cache status argument {flag:?}.")),
+                "{message}"
+            );
+        }
+        let Err(message) = parse_clear_args(&cache_args(&["--force", "--json"])) else {
+            return Err("cache clear accepted the status flag --json".to_string());
+        };
+        assert!(
+            message.starts_with("unknown cache clear argument \"--json\"."),
+            "{message}"
+        );
         Ok(())
     }
 

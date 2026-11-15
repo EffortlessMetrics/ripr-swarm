@@ -210,3 +210,51 @@ fn predicate_inventory_still_sees_a_second_stronger_test() -> Result<(), String>
     assert!(explicit.grip_class.is_some());
     Ok(())
 }
+
+/// #11358: exercise the real advice caller, not only the cache wrapper.
+#[test]
+fn predicate_route_reuses_complete_inventory_and_refreshes_test_edits() -> Result<(), String> {
+    use crate::analysis::index_build_probe::observe;
+    let fixture = Fixture::new(
+        BOUNDARY,
+        "    if qty >= 10 { price * 2 } else { price }",
+        "    if qty > 10 { price * 2 } else { price }",
+    )?;
+    fixture.write("tests/weak.rs", WEAK_TEST)?;
+    let finding = fixture.finding("predicate")?;
+    let mut seams = None;
+    let first = stub_route_for_finding(&fixture.0, &RiprConfig::default(), &finding, &mut seams)
+        .ok_or("predicate finding did not resolve")?;
+    assert!(matches!(
+        first.decision,
+        StubRouteDecision::WeakOracle { .. }
+    ));
+    let (repeat, builds) = observe(|| {
+        stub_route_for_finding(&fixture.0, &RiprConfig::default(), &finding, &mut seams)
+    });
+    assert_eq!(
+        builds, 0,
+        "unchanged advice rebuilt the workspace inventory"
+    );
+    assert_eq!(repeat, Some(first));
+    fixture.write("tests/strong.rs", "#[test]\nfn exact_at_boundary() {\n    assert_eq!(stub_inventory::discount(10, 10), 10);\n}\n")?;
+    let (changed, builds) = observe(|| {
+        stub_route_for_finding(&fixture.0, &RiprConfig::default(), &finding, &mut seams)
+    });
+    assert!(builds > 0, "a new test must invalidate full evidence");
+    let changed = changed.ok_or("changed predicate route disappeared")?;
+    assert!(
+        matches!(
+            changed.decision,
+            StubRouteDecision::Stub {
+                kind: "predicate",
+                ..
+            }
+        ),
+        "{changed:?}"
+    );
+    let explicit = fixture.explicit("predicate")?;
+    assert!(explicit.grip_class.is_some());
+    assert!(explicit.weak_oracle_guidance.is_none());
+    Ok(())
+}

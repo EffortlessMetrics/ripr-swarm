@@ -403,7 +403,7 @@ pub(crate) fn build_agent_status_report_from(
     };
     let receipt = read_workflow_receipt(root);
     // One lazily loaded repair-admission gate per status read (#8766).
-    let gate = RepairStartGate::new(root);
+    let gate = RepairStartGate::new(root).read_only();
     let repair_attempts =
         inspect_repair_attempts(root, &command_root, &receipt, &mut warnings, store, &gate);
     let (store_flag, store_locator) = match resolve_store(
@@ -921,9 +921,12 @@ fn start_recipe_offset(line: &str) -> Option<usize> {
     line.find("--phase before").into_iter().chain(bare).min()
 }
 
+/// What replaces a withheld new-attempt recipe (#8766).
+pub(crate) const START_RECIPE_WITHHELD: &str =
+    "a new attempt is not offered: the repair gate does not admit a new start";
+
 fn without_start_recipe_in_line(line: &str) -> String {
-    const WITHHELD: &str =
-        "a new attempt is not offered: the repair gate does not admit a new start";
+    const WITHHELD: &str = START_RECIPE_WITHHELD;
     const MARKERS: [&str; 6] = [
         "Then start a new attempt",
         "To keep the change,",
@@ -1307,6 +1310,7 @@ fn canonical_next_action_for_inventory(
         restart_route: store.locator.to_string(),
         check_case: None,
         check_repair_route: None,
+        check_scope_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),
@@ -2967,7 +2971,7 @@ pub(crate) fn selected_attempt_status_reading(
     current_head: Option<&str>,
 ) -> SelectedAttemptStatusReading {
     let workflow_receipt = read_workflow_receipt(root);
-    let gate = RepairStartGate::new(root);
+    let gate = RepairStartGate::new(root).read_only();
     let view = status_repair_attempt(
         command_root,
         store_locator,
@@ -3434,6 +3438,7 @@ fn canonical_next_action_for_attempt(
         restart_route,
         check_case: None,
         check_repair_route: None,
+        check_scope_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),
@@ -5608,6 +5613,16 @@ mod tests {
         let workflow = root.join("target/ripr/workflow");
         std::fs::create_dir_all(&workflow)
             .map_err(|err| format!("create {}: {err}", workflow.display()))?;
+        // The selected external test file is pure-insertion confined (#8710),
+        // so the baseline needs it committed and clean at HEAD.
+        if !root.join("tests/target.rs").exists() {
+            write_file(&root.join("tests/target.rs"), "#[test]\nfn existing() {}\n")?;
+            run_git(root, &["add", "tests/target.rs"])?;
+            run_git(
+                root,
+                &["commit", "--no-gpg-sign", "-m", "baseline external test"],
+            )?;
+        }
         let before = workflow.join("before-status-honesty.json");
         let packet = workflow.join("packet-status-honesty.json");
         let baseline = workflow.join("baseline-status-honesty.json");

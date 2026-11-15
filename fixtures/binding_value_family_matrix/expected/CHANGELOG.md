@@ -530,3 +530,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_value_family_matrix (36)
+
+Reason:
+RIPR-SPEC-0162: the check digest states the analyzer limit once; a Why hint that the Analyzer limit line repeats word for word is dropped (#14308)
+
+Command:
+`cargo xtask goldens bless binding_value_family_matrix --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

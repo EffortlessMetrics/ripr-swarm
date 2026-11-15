@@ -1,7 +1,8 @@
 //! Shared flow-sink evidence row used by the human explain surface and the
 //! machine JSON evidence path.
 
-use crate::domain::{FlowSinkFact, FlowSinkKind};
+use crate::domain::{Finding, FlowSinkFact, FlowSinkKind, ProbeFamily};
+use std::borrow::Cow;
 
 /// Evidence-row line for one flow sink, e.g. `local flow reaches returned
 /// value: amount - 10 (line 3)`.
@@ -35,6 +36,50 @@ pub(crate) fn flow_sink_kind_meaning(kind: &FlowSinkKind) -> Option<&'static str
              propagation confidence is limited",
         ),
         _ => None,
+    }
+}
+
+/// #14420: the arm result the flow model read for a head-only match-arm
+/// finding (`Size::Medium =>` gives `450`), so a surface can name the value
+/// a test must pin. The probe must be a match arm whose expression is one
+/// head (`=>` counted on comment/string-masked text, so `"a=>b" =>` is one
+/// head), and the `MatchArm` sink must sit on the probe's line with text
+/// other than the head. Anything else is `None`.
+pub(crate) fn head_only_arm_result(finding: &Finding) -> Option<&str> {
+    let head = finding.probe.expression.trim();
+    let is_head = finding.probe.family == ProbeFamily::MatchArm
+        && head.ends_with("=>")
+        && crate::analysis::mask_comments_and_strings(head)
+            .matches("=>")
+            .count()
+            == 1;
+    if !is_head {
+        return None;
+    }
+    finding
+        .flow_sinks
+        .iter()
+        .find(|sink| {
+            sink.kind == FlowSinkKind::MatchArm
+                && sink.line == finding.probe.location.line
+                && !sink.text.trim().is_empty()
+                && sink.text.trim() != head
+        })
+        .map(|sink| sink.text.trim())
+}
+
+/// `text` joined to [`head_only_arm_result`] when `text` is the probe's own
+/// head (`Size::Medium =>` becomes `Size::Medium => 450`). The result was
+/// read for that head, so a different head (an old `before` arm) is never
+/// paired with it, and any other text is returned unchanged.
+pub(crate) fn with_arm_result<'a>(finding: &Finding, text: &'a str) -> Cow<'a, str> {
+    let head = text.trim();
+    match head_only_arm_result(finding).filter(|_| {
+        head.split_whitespace()
+            .eq(finding.probe.expression.split_whitespace())
+    }) {
+        Some(result) => Cow::Owned(format!("{head} {result}")),
+        None => Cow::Borrowed(text),
     }
 }
 

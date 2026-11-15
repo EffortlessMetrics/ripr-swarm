@@ -73,7 +73,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// `24`: the wrapper marker is recorded on every test with a non-mark
 /// decorator, not only beside its own controls, and an attribute-patched
 /// module skip root is withheld; `23` entries lack both.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "24";
+/// `25`: a function records a single direct class return for validated
+/// factory discovery; `24` entries lack that return-identity evidence.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "25";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the

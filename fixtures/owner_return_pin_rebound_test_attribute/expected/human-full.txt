@@ -38,6 +38,7 @@ Evidence
   - related test tests/weight_tests.rs:4 checks_weight uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
   - source assertion argument value 12 at line 4
   - source function argument value input = 4 at line 4
+  - assertion not credited: `assert_eq!` in checks_weight at tests/weight_tests.rs:4: an import in this file may rebind `test` (for example `use .. as test`), so `#[test]` may not be the built-in attribute and may change whether or how the test runs
 
 Weakness
   - A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim

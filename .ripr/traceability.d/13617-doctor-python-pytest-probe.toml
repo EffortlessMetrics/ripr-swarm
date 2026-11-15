@@ -1,0 +1,18 @@
+# Doctor checks the pytest the Python verify route runs (#13617).
+[[extend]]
+id = "RIPR-SPEC-0007"
+tests = [
+  "crates/ripr/src/cli/commands/doctor.rs::pytest_probe_reports_path_python_and_uses_venv_only_as_a_hint",
+  "crates/ripr/src/cli/commands/doctor.rs::pytest_probe_without_venv_routes_python_dash_m_pytest_and_stays_advisory",
+  "crates/ripr/src/cli/commands/doctor.rs::pytest_probe_is_visible_on_the_compact_screen",
+  "crates/ripr/src/output/doctor.rs::pytest_probe_command_imports_pytest_with_safe_path_in_private_dir",
+  "crates/ripr/src/output/python_env.rs::venv_with_pytest_is_present_with_version",
+  "crates/ripr/src/output/python_env.rs::venv_without_pytest_is_missing_and_pytest_cov_is_not_pytest",
+  "crates/ripr/src/output/python_env.rs::system_site_packages_and_ambiguous_layout_are_unknown",
+  "crates/ripr/src/output/python_env.rs::no_venv_keeps_path_interpreter",
+]
+code = [
+  "crates/ripr/src/cli/commands/doctor.rs",
+  "crates/ripr/src/output/doctor.rs",
+  "crates/ripr/src/output/python_env.rs",
+]
