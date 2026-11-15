@@ -573,6 +573,9 @@ fn return_value_sink(
         );
     }
     if !is_obvious_return_expression(&probe.expression) {
+        if let Some(tail) = return_value_as_owner_tail(probe, owner_fn) {
+            return flow_sink(FlowSinkKind::ReturnValue, tail.text, tail.line, owner);
+        }
         return flow_sink(
             FlowSinkKind::Unknown,
             "unknown sink",
@@ -765,6 +768,84 @@ fn predicate_as_owner_tail(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
 ) -> Option<LocalTextFact> {
+    owner_single_line_tail(probe, owner_fn, |tail| {
+        matches!(
+            tail,
+            ra_ap_syntax::ast::Expr::BinExpr(binary)
+                if matches!(binary.op_kind(), Some(ra_ap_syntax::ast::BinaryOp::CmpOp(_)))
+        )
+    })
+}
+
+/// #14797: a `return_value` probe whose changed line is exactly the owner's
+/// whole single-line tail value. The tail is what the owner returns, so the
+/// sink is that return even when the text carries none of the cues
+/// [`is_obvious_return_expression`] reads (`false`, `!ready`, `-delta`,
+/// `mask & bits`, `vec![]`). Same fail-closed parser rule as the predicate
+/// tail ([`owner_single_line_tail`]); the tail must be one operand-level
+/// expression: a literal, a path, a unary/binary operator expression, a call,
+/// a method call, a field read, an index, a cast, an array or tuple literal,
+/// or a bare `vec!` invocation. Blocks, branches, closures, loops, `?`,
+/// `.await` and other macros keep the unknown sink.
+///
+/// The changed text must also occur exactly once in the owner body. The
+/// infection stage's same-value check (#8659) locates the change by that
+/// text; when it is ambiguous (`-a` edited to `a` in `fn f(a: i32)`) the
+/// check cannot run, and a direct sink would let an exact assertion at an
+/// input where both versions agree (`f(0)`) read `exposed`. Such a tail keeps
+/// the unknown sink (fail closed).
+fn return_value_as_owner_tail(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+) -> Option<LocalTextFact> {
+    use ra_ap_syntax::{AstNode, SyntaxKind};
+    if owner_fn?.body.matches(probe.expression.as_str()).count() != 1 {
+        return None;
+    }
+    owner_single_line_tail(probe, owner_fn, |tail| {
+        tail.syntax().descendants().all(|node| {
+            matches!(
+                node.kind(),
+                SyntaxKind::LITERAL
+                    | SyntaxKind::PATH_EXPR
+                    | SyntaxKind::PATH
+                    | SyntaxKind::PATH_SEGMENT
+                    | SyntaxKind::NAME_REF
+                    | SyntaxKind::PREFIX_EXPR
+                    | SyntaxKind::BIN_EXPR
+                    | SyntaxKind::PAREN_EXPR
+                    | SyntaxKind::FIELD_EXPR
+                    | SyntaxKind::INDEX_EXPR
+                    | SyntaxKind::CALL_EXPR
+                    | SyntaxKind::METHOD_CALL_EXPR
+                    | SyntaxKind::ARG_LIST
+                    | SyntaxKind::CAST_EXPR
+                    | SyntaxKind::ARRAY_EXPR
+                    | SyntaxKind::TUPLE_EXPR
+                    | SyntaxKind::REF_EXPR
+                    | SyntaxKind::PATH_TYPE
+                    | SyntaxKind::GENERIC_ARG_LIST
+                    | SyntaxKind::TYPE_ARG
+                    | SyntaxKind::MACRO_EXPR
+                    | SyntaxKind::MACRO_CALL
+                    | SyntaxKind::TOKEN_TREE
+            )
+        }) && tail.syntax().descendants().all(|node| {
+            ra_ap_syntax::ast::MacroCall::cast(node).is_none_or(|call| {
+                call.path()
+                    .is_some_and(|path| path.syntax().text() == "vec")
+            })
+        })
+    })
+}
+
+/// The owner's tail expression when the changed line is exactly that whole
+/// single-line tail and `accept` admits its (parenthesis-peeled) shape.
+fn owner_single_line_tail(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+    accept: impl Fn(&ra_ap_syntax::ast::Expr) -> bool,
+) -> Option<LocalTextFact> {
     use crate::analysis::syntax::parse_clean_source_file;
     use ra_ap_syntax::{
         AstNode,
@@ -818,10 +899,7 @@ fn predicate_as_owner_tail(
     while let ast::Expr::ParenExpr(parenthesized) = comparison.clone() {
         comparison = parenthesized.expr()?;
     }
-    let ast::Expr::BinExpr(binary) = &comparison else {
-        return None;
-    };
-    if !matches!(binary.op_kind(), Some(ast::BinaryOp::CmpOp(_))) {
+    if !accept(&comparison) {
         return None;
     }
     let actual = comparison.syntax().text().to_string();
@@ -2379,6 +2457,100 @@ mod tests {
         probe.owner = Some(owner.id.clone());
         probe.location.file = std::path::PathBuf::from("src/other.rs");
         assert_eq!(predicate_as_owner_tail(&probe, Some(&owner)), None);
+    }
+
+    /// #14797: a tail value with none of the text cues the obvious-return
+    /// reader looks for (a literal, a unary operand, an unspaced or bitwise
+    /// binary, a bare `vec!`) is still what the owner returns.
+    #[test]
+    fn owner_tail_value_without_text_cues_reaches_return_sink() {
+        for (body, expression, line) in [
+            ("pub fn ready() -> bool {\n    false\n}", "false", 2),
+            ("pub fn flag(on: bool) -> bool {\n    !on\n}", "!on", 2),
+            (
+                "pub fn neg(delta: i32) -> i32 {\n    -delta\n}",
+                "-delta",
+                2,
+            ),
+            (
+                "pub fn mask(bits: u32, keep: u32) -> u32 {\n    bits & keep\n}",
+                "bits & keep",
+                2,
+            ),
+            (
+                "pub fn shift(bits: u32, by: u32) -> u32 {\n    bits<<by\n}",
+                "bits<<by",
+                2,
+            ),
+            ("pub fn ids() -> Vec<u32> {\n    vec![]\n}", "vec![]", 2),
+            (
+                "pub fn pair() -> [u8; 2] { [b'a', b'b'] }",
+                "[b'a', b'b']",
+                1,
+            ),
+        ] {
+            assert!(
+                !is_obvious_return_expression(expression),
+                "{expression} must exercise the parser path"
+            );
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::ReturnValue, expression, line);
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert_eq!(sinks.len(), 1, "{body}: {sinks:?}");
+            assert_eq!(
+                sinks[0].kind,
+                FlowSinkKind::ReturnValue,
+                "{body}: {sinks:?}"
+            );
+            assert_eq!(sinks[0].text, expression, "{body}");
+            assert_eq!(sinks[0].line, line, "{body}");
+        }
+    }
+
+    #[test]
+    fn owner_tail_value_refuses_ambiguous_non_tail_and_opaque_shapes() {
+        for (body, expression, line) in [
+            // Ambiguous text: the infection same-value check cannot locate it.
+            ("pub fn neg(a: i32) -> i32 {\n    -a\n}", "a", 2),
+            ("pub fn flag(on: bool) -> bool {\n    on\n}", "on", 2),
+            // Not the tail.
+            (
+                "pub fn ready() -> bool {\n    let x = false;\n    x\n}",
+                "let x = false;",
+                2,
+            ),
+            // Unit owner.
+            ("pub fn noop(on: bool) {\n    !on\n}", "!on", 2),
+            // Blocks, branches, closures and other macros stay opaque.
+            (
+                "pub fn blocky() -> bool {\n    { false }\n}",
+                "{ false }",
+                2,
+            ),
+            (
+                "pub fn lazy(on: bool) -> impl Fn() -> bool {\n    move || on\n}",
+                "move || on",
+                2,
+            ),
+            (
+                "pub fn names() -> Vec<u32> {\n    my_vec![x]\n}",
+                "my_vec![x]",
+                2,
+            ),
+            (
+                "pub fn scoped() -> Vec<u32> {\n    std::vec![]\n}",
+                "std::vec![]",
+                2,
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::ReturnValue, expression, line);
+            assert_eq!(
+                return_value_as_owner_tail(&probe, Some(&owner)),
+                None,
+                "{body}"
+            );
+        }
     }
 
     #[test]
