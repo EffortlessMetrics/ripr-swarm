@@ -414,7 +414,9 @@ selector is deterministic:
 3. Non-preview findings outrank preview-language findings.
 4. Non-exposed findings with repair routes outrank findings without repair
    routes. A static-limited finding counts as having no repair route, matching
-   the route the screen prints (#14266).
+   the route the screen prints, and all static-limited findings share one tier
+   behind every gap and ahead of `exposed`, so the keys in step 6 order them
+   among themselves (#14266).
 5. `exposed` findings do not outrank non-exposed findings merely because they
    carry generic next-step text.
 6. Gap metadata, related tests, missing evidence, confidence, exposure class,
@@ -1208,6 +1210,7 @@ report with zero records still carries its route.
 - `crates/ripr/src/output/human.rs::tests::hidden_block_window_ranks_a_group_by_its_best_member`
 - `crates/ripr/src/output/human/triage.rs::tests::check_adapter_alternates_follow_the_shared_priority_not_report_order`
 - `crates/ripr/src/output/human/triage.rs::tests::start_here_does_not_rank_an_unprintable_route_as_a_repair_route`
+- `crates/ripr/src/output/human/triage.rs::tests::start_here_orders_static_limited_findings_by_evidence_not_class`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail`
 - `crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary`

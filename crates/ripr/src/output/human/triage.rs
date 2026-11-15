@@ -2272,6 +2272,11 @@ fn decisive_shadows_unknown(decisive: &Finding, unknown: &Finding) -> bool {
         && (covers_same_changed_behavior(decisive, unknown) || has_no_distinct_change(unknown))
 }
 
+/// `repair_rank` for a non-preview static-limited finding: behind every
+/// routed or unrouted gap (`reachable_unrevealed` 2, `weakly_exposed` 3) and
+/// level with the unknown classes, ahead of `exposed`.
+const STATIC_LIMITED_REPAIR_TIER: u8 = 5;
+
 fn triage_rank<'a>(
     finding: &'a Finding,
     root: &std::path::Path,
@@ -2300,9 +2305,16 @@ fn triage_rank<'a>(
         ExposureClass::Exposed => 9,
     };
     let preview_rank = u8::from(is_preview_limited(finding));
-    let repair_rank = if finding.class != ExposureClass::Exposed && has_ranked_repair_route(finding)
-    {
+    let repair_rank = if finding.class == ExposureClass::Exposed {
+        class_rank
+    } else if has_ranked_repair_route(finding) {
         0
+    } else if !is_preview_limited(finding) && is_static_limited(finding) {
+        // #14266 item 2: static-limited findings share one tier behind every
+        // gap, so the evidence keys below (gap identity, related test,
+        // missing evidence, confidence) order them among themselves, as they
+        // did while their advisory next step counted as a route.
+        STATIC_LIMITED_REPAIR_TIER
     } else {
         class_rank
     };
@@ -4270,6 +4282,54 @@ mod tests {
         assert_eq!(
             selected(vec![predicate, literal]),
             Some("finding:literal".to_string())
+        );
+    }
+
+    /// #14266 item 2: static-limited findings share one tier, so the
+    /// evidence keys still order them among themselves. A `no_static_path`
+    /// finding sorts first by path, is listed first and has the better class
+    /// rank, but the unknown carries a gap identity and wins on that key.
+    #[test]
+    fn start_here_orders_static_limited_findings_by_evidence_not_class() {
+        let mut no_path = finding_at(
+            "finding:no-path",
+            "src/a_display.rs",
+            ExposureClass::NoStaticPath,
+        );
+        no_path.recommended_next_step = Some("Tests cannot close this limitation".to_string());
+        let mut unknown = finding_at(
+            "finding:unknown-with-gap",
+            "src/z_impls.rs",
+            ExposureClass::InfectionUnknown,
+        );
+        unknown.recommended_next_step = Some("Open the related test".to_string());
+        unknown.canonical_gap = Some(FindingCanonicalGap {
+            id: "gap:rust:src/z_impls.rs:cmp:return_value".to_string(),
+            language: "rust".to_string(),
+            file: "src/z_impls.rs".to_string(),
+            owner: "cmp".to_string(),
+            behavior_kind: "return_value".to_string(),
+            probe_kind: "return_value".to_string(),
+            normalized_discriminator: "let_some_rhs".to_string(),
+        });
+        for finding in [&mut no_path, &mut unknown] {
+            finding.confidence = 0.45;
+        }
+        let output = test_output(vec![no_path.clone(), unknown.clone()]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unknown-with-gap")
+        );
+
+        // Control: with equal evidence the class tie-break still puts the
+        // no-path finding first, so the tier does not reverse class order.
+        unknown.canonical_gap = None;
+        let output = test_output(vec![unknown, no_path]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:no-path")
         );
     }
 
