@@ -110,7 +110,9 @@ fn replaced_elsewhere(
 ///   (`__path__`, `__spec__`) that lets an import load another `name`;
 /// - the package referenced by name (any part of its dotted spelling as an
 ///   identifier, as in `import tests`), outside a `from ... import` path;
-/// - a plain string containing `name` (`".tomllib"`), or that is the
+/// - a string that is `name` or names it after a dot (`".tomllib"`, a
+///   relative import of a shadow submodule; tomli's absolute
+///   `"tomllib._re"` is not), or that is the
 ///   package or a dotted path under it (a `mock.patch("tests.tomllib")`
 ///   target), or that spells a writer (`getattr(m, "__setattr__")`);
 /// - an f-string, whose fields run, that the initializer text rule refuses.
@@ -163,8 +165,8 @@ fn module_may_replace(text: &str, name: &str, package: &str) -> bool {
                     || (!from_path && parts.contains(&ident.as_str()))
             }
             Tok::String { value, kind, .. } => {
-                (value.contains(name)
-                    && !matches!(kind, StringKind::FString | StringKind::RawFString))
+                value == name
+                    || value.split('.').skip(1).any(|part| part == name)
                     || value == first
                     || value.starts_with(&format!("{first}."))
                     || [
