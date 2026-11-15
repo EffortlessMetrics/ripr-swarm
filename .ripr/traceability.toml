@@ -5331,6 +5331,10 @@ id = "RIPR-SPEC-0038"
 name = "Generated PR CI review workflow"
 spec = "docs/specs/RIPR-SPEC-0038-generated-pr-ci-review-workflow.md"
 tests = [
+  "crates/ripr/src/cli/commands/ci_packet.rs::tests::blocked_gate_makes_the_packet_exit_3",
+  "crates/ripr/src/cli/commands/ci_packet.rs::tests::gate_config_error_keeps_the_packet_at_exit_2",
+  "crates/ripr/src/cli/commands/ci_packet.rs::tests::blocked_gate_after_a_failed_required_step_exits_2",
+  "crates/ripr/tests/check_to_gate_chain.rs::check_json_review_comments_gate_chain_blocks_and_exits_3",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_is_advisory",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_never_auto_refreshes_baseline",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_uploads_reports_and_makes_sarif_optional",
@@ -14706,6 +14710,7 @@ tests = [
   "crates/ripr/src/cli/command_metadata.rs::tests::agent_verify_row_cannot_claim_stdout_document_on_refusal",
   "crates/ripr/src/cli/command_metadata.rs::tests::receipt_check_row_cannot_claim_a_decision_exit",
   "crates/ripr/src/cli/command_metadata.rs::tests::unrelated_row_cannot_claim_gate_evaluate_exits",
+  "crates/ripr/src/cli/command_metadata.rs::tests::ci_packet_row_cannot_drop_the_blocked_gate_exit",
   "crates/ripr/src/cli/mod.rs::tests::command_error_exit_codes_are_the_typed_contract",
   "crates/ripr/src/cli/commands/gate.rs::tests::gate_evaluate_exit_mapping_matches_the_typed_contract",
   "crates/ripr/src/cli/command.rs::tests::help_json_parses_the_machine_discovery_route",
