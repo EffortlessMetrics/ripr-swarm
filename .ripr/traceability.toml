@@ -22390,3 +22390,34 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0441"
+name = "Verbose stderr diagnostics"
+spec = "docs/specs/RIPR-SPEC-0441-verbose-stderr-diagnostics.md"
+tests = [
+  "crates/ripr/src/app/verbose_trace.rs::tests::a_verdict_line_names_class_states_and_the_first_unproven_stage",
+  "crates/ripr/src/app/verbose_trace.rs::tests::a_verdict_line_appends_stop_reasons_and_skips_an_empty_reason",
+  "crates/ripr/src/app/verbose_trace.rs::tests::verdict_lines_are_bounded_and_name_the_overflow",
+  "crates/ripr/src/app/verbose_trace.rs::tests::a_long_or_hostile_reason_stays_one_bounded_terminal_safe_line",
+  "crates/ripr/src/app/progress.rs::tests::phase_timing_lines_name_the_previous_stage_duration_and_the_terminal_total",
+  "crates/ripr/src/cli/progress.rs::tests::verbose_env_value_enables_on_any_value_but_the_off_spellings",
+  "crates/ripr/tests/cli_progress.rs",
+  "crates/ripr/tests/troubleshooting_guide.rs",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/lib.rs",
+  "crates/ripr/src/cli/mod.rs",
+  "crates/ripr/src/startup.rs",
+  "crates/ripr/src/app/progress.rs",
+  "crates/ripr/src/app/verbose_trace.rs",
+  "crates/ripr/src/app/check.rs",
+  "crates/ripr/src/stderr_guard.rs",
+]
+outputs = [
+  "docs/TROUBLESHOOTING.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

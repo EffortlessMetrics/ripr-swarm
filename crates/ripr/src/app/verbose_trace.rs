@@ -20,10 +20,11 @@ const MAX_REASON_CHARS: usize = 200;
 
 /// One stderr line per finding (bounded by [`MAX_VERDICT_LINES`]), plus an
 /// overflow line when findings were left out.
-pub(crate) fn verdict_lines(findings: &[Finding]) -> Vec<String> {
+pub(crate) fn verdict_lines(findings: &[&Finding]) -> Vec<String> {
     let mut lines: Vec<String> = findings
         .iter()
         .take(MAX_VERDICT_LINES)
+        .copied()
         .map(verdict_line)
         .collect();
     if findings.len() > MAX_VERDICT_LINES {
@@ -151,9 +152,9 @@ mod tests {
             evidence(stage(StageState::Yes, ""), stage(StageState::Yes, "")),
         );
         assert!(verdict_lines(&[]).is_empty());
-        let few = vec![one.clone(); 3];
+        let few = vec![&one; 3];
         assert_eq!(verdict_lines(&few).len(), 3);
-        let many = vec![one; MAX_VERDICT_LINES + 4];
+        let many = vec![&one; MAX_VERDICT_LINES + 4];
         let lines = verdict_lines(&many);
         assert_eq!(lines.len(), MAX_VERDICT_LINES + 1);
         assert!(
