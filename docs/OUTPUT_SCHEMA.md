@@ -287,6 +287,7 @@ terse document rewrites repeated content. Exactly what differs:
 | `assertion_texts` values | assertion source lines | long values coded the same way |
 | `ripr.<stage>.summary` (#13673) | stage prose, usually repeated verbatim in `evidence` | coded the same way and sharing the `evidence` code; `state` and `confidence` stay verbatim |
 | `related_tests[].oracle` and `related_tests[].why` (#13673) | each related-test row's assertion line and miss sentence, repeated across findings that list the same test | coded the same way; an oracle line shares the code of the identical `assertion_texts` value; every other row field stays verbatim |
+| Related-test row cores (#13673) | every finding's `related_tests` rows repeat the same test's `name`, `file`, `line`, `oracle`, `oracle_kind` and `oracle_strength` | a core that appears in two or more rows is emitted once in the document-level `related_test_table`; each row that used it omits those fields and carries `table_row`, the zero-based table index, next to its per-finding `relation_reason`, `relation_confidence`, `miss` and `why`. A core seen once stays verbatim. `table_row` is a reference only when `related_test_table` is present: if any producer row already has a `table_row` key, nothing is hoisted |
 | `evidence_legend` | absent | code → full template, emitted only when useful, in first-appearance order; codes avoid literal values on coded surfaces |
 | Next-action alias | both keys emitted | `suggested_next_action` is omitted only when its value equals `recommended_next_step` and is at least 24 UTF-8 bytes; the alias is listed once in `dropped_aliases` |
 | Activation aliases (#13673) | finding-level `observed_values` and `missing_discriminators` repeat `activation` | each is omitted only when it is non-empty and equal to the same-named array in that finding's `activation`; each dropped alias is listed once in `dropped_aliases` |
@@ -304,8 +305,10 @@ Guarantees and limits, stated precisely:
   the terse document alone. Restore an omitted `suggested_next_action` from
   that finding's `recommended_next_step`, an omitted `observed_values` or
   `missing_discriminators` from that finding's `activation`, an omitted
-  `canonical_gap_id` from `canonical_gap.id`, and an omitted `evidence_stages`
-  from `ripr` as described above. All other fields remain verbatim
+  `canonical_gap_id` from `canonical_gap.id`, an omitted `evidence_stages`
+  from `ripr` as described above, and a row carrying `table_row` by merging
+  `related_test_table[table_row]` back into it and removing `table_row` (a
+  table `oracle` may itself be a legend code). All other fields remain verbatim
   even when their strings coincide. The schema permits omitting
   `suggested_next_action` only when both `rendering: "terse"` and the known
   alias declaration are present; full JSON continues to require it. The
@@ -321,7 +324,8 @@ Guarantees and limits, stated precisely:
   the coded surfaces in #13673: on a four-finding `dtolnay/semver` diff each
   long stage summary appeared in `ripr` and again in `evidence`. Related-test
   `oracle` and `why` strings followed: on the five-gap budget fixture every
-  finding lists the same five test rows.)
+  finding lists the same five test rows; their repeated row cores then moved
+  into `related_test_table`.)
 - The transform runs on the stamped `json` document (including the CLI's
   canonical next-action member when present) and fails closed: an
   unparseable producer document aborts the run instead of emitting an
