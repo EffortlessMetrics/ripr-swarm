@@ -630,13 +630,24 @@ pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
 /// (`f`, `F`, `rf`, `fR`, ...): at most two characters, and not the tail of a
 /// longer name such as `perf`.
 fn chars_end_with_f_prefix(before: &[char]) -> bool {
-    let run = before
-        .iter()
-        .rev()
-        .take_while(|ch| is_python_identifier_char(**ch))
-        .count();
+    // Stop at the third identifier character: the answer is already `false`,
+    // and the caller pays this per quote, so walking (and allocating) the whole
+    // identifier run of a long line is unbounded work for a bounded answer.
+    let mut run = 0usize;
+    for ch in before.iter().rev() {
+        if !is_python_identifier_char(*ch) {
+            break;
+        }
+        run += 1;
+        if run > 2 {
+            return false;
+        }
+    }
+    if run == 0 {
+        return false;
+    }
     let prefix: String = before[before.len() - run..].iter().collect();
-    run <= 2 && matches!(prefix.to_ascii_lowercase().as_str(), "f" | "rf" | "fr")
+    matches!(prefix.to_ascii_lowercase().as_str(), "f" | "rf" | "fr")
 }
 
 /// Whether the single-line f-string literal that starts at the first character
