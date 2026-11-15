@@ -113,8 +113,17 @@ fn strip_root_prefix_on(root: &Path, file: &Path, case_insensitive: bool) -> Pat
 }
 
 fn paths_match_on(left: &Path, right: &Path, case_insensitive: bool) -> bool {
-    path_identity_key_on(left, cfg!(windows), case_insensitive)
-        == path_identity_key_on(right, cfg!(windows), case_insensitive)
+    // The identity key compares raw text, so first restore the component
+    // normalization the former PathBuf equality applied: a recorded
+    // `tests/./a.rs` (or a repeated separator) names the same file as
+    // `tests/a.rs`.
+    let normalized = |path: &Path| -> PathBuf {
+        path.components()
+            .filter(|part| !matches!(part, std::path::Component::CurDir))
+            .collect()
+    };
+    path_identity_key_on(&normalized(left), cfg!(windows), case_insensitive)
+        == path_identity_key_on(&normalized(right), cfg!(windows), case_insensitive)
 }
 
 /// Whether any event names a committed source whose saved bytes moved.
@@ -474,6 +483,14 @@ mod tests {
             &unrelated,
             &[]
         ));
+        // A related test recorded with an internal dot segment or a repeated
+        // separator names the same file as the watch event's spelling.
+        for dotted in ["tests/./end_to_end.rs", "tests//end_to_end.rs"] {
+            assert!(
+                drifts_with_tests(&root.0, &sources, &[], &[dotted], &changed, &[]),
+                "{dotted}"
+            );
+        }
         assert!(!drifts_with_tests(
             &root.0,
             &sources,
