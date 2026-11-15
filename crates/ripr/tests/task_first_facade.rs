@@ -3843,7 +3843,7 @@ fn continue_no_movement_keeps_inline_test_module_restrictions() -> Result<(), St
     std::fs::remove_file(root.join("tests/pricing.rs")).map_err(|error| error.to_string())?;
     std::fs::write(
         root.join("src/lib.rs"),
-        format!("{FIXTURE_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::discounted_total;\n    #[test]\n    fn below() {{ assert_eq!(discounted_total(50, 100), 50); }}\n}}\n"),
+        format!("{FIXTURE_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::discounted_total;\n    #[test]\n    fn below() {{ assert_eq!(discounted_total(50, 100), 50); }}\n    #[test]\n    fn above() {{ assert_eq!(discounted_total(10_000, 100), 9_990); }}\n}}\n"),
     ).map_err(|error| error.to_string())?;
     run_git(root, &["add", "src", "tests"])?;
     git_commit(root, "inline test target")?;
@@ -6394,13 +6394,14 @@ fn member_directory_agent_artifact_commands_use_the_resolved_workspace_root() ->
     // #14385) are configured off; binding adds none.
     let warnings = brief_json["warnings"].as_array().ok_or("no warnings")?;
     assert!(
-        warnings
-            .iter()
-            .all(|warning| warning.as_str().is_some_and(|text| {
-                text.contains(" at pkg/src/lib.rs:3, ")
-                    && text.contains(" at pkg/src/lib.rs:5 ")
-                    && text.contains("configured off for strongly_gripped seams")
-            })),
+        warnings.len() == 1
+            && warnings
+                .iter()
+                .all(|warning| warning.as_str().is_some_and(|text| {
+                    text.contains(" at pkg/src/lib.rs:3, ")
+                        && text.contains(" at pkg/src/lib.rs:5 ")
+                        && text.contains("configured off for strongly_gripped seams")
+                })),
         "unexpected brief warnings: {warnings:?}"
     );
     let seams = brief_json["top_seams"].as_array().ok_or("no top_seams")?;

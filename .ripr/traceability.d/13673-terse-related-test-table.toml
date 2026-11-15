@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/output/json/terse.rs::tests::terse_hoists_repeated_related_test_cores_into_one_table",
+]

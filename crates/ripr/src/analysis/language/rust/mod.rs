@@ -2404,6 +2404,19 @@ impl<'a> GeneratedRustSources<'a> {
         self.is_convention_excluded(path) || self.has_stronger_exclusion(path)
     }
 
+    /// Whether the repository's own `[languages.rust] generated_file_patterns`
+    /// excludes this path (#13894). That is scope the operator configured, as
+    /// opposed to the built-in naming conventions, generator headers and
+    /// vendor markers the operator did not ask for.
+    pub(crate) fn is_configured_pattern_exclusion(&self, path: &Path) -> bool {
+        route(path) == Some(LanguageId::Rust)
+            && self
+                .config
+                .generated_file_patterns
+                .iter()
+                .any(|pattern| generated_pattern_matches(pattern, path))
+    }
+
     /// Whether an exact handwritten declaration can recover this skipped path.
     pub(crate) fn is_convention_only_exclusion(&self, path: &Path) -> bool {
         self.is_convention_excluded(path) && !self.has_stronger_exclusion(path)

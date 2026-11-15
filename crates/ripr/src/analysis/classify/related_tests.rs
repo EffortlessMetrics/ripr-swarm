@@ -1911,13 +1911,14 @@ fn dependency_edge_admits_owner_call(
     // seen (#3619 review). Only file-level imports count — a `use` inside a
     // nested module is invisible to tests outside it, so it must not
     // credit them (#3619 review, second round).
-    let stripped_file = context
-        .index
-        .files()
-        .get(&test.file)
-        .map(|facts| strip_comments_and_strings(&facts.source))
-        .unwrap_or_else(|| stripped_body.clone());
-    let file_level_imports = file_level_use_text(&stripped_file);
+    let file_text = match context.index.files().get(&test.file) {
+        Some(facts) => stripped_file_and_imports(&facts.source),
+        None => {
+            let imports = file_level_use_text(&stripped_body);
+            std::rc::Rc::new((stripped_body.clone(), imports))
+        }
+    };
+    let file_level_imports = file_text.1.as_str();
     // A `let` binding of the owner name cannot shadow `T::name(`, so the
     // type-path rule runs before the bare-call binding guard (#4558 review).
     if (workspace_complete || type_path_index_covers_competitors(context, &owner_manifest, owner))
@@ -1927,7 +1928,7 @@ fn dependency_edge_admits_owner_call(
             owner,
             test,
             &callable_dependency_names,
-            &stripped_file,
+            &file_text,
             same_name.definitions,
         )
     {
@@ -1978,7 +1979,7 @@ fn dependency_edge_admits_owner_call(
             return true;
         }
         bare_call_captured
-            && imports_owner_from_dependency(&file_level_imports, dependency_name, owner_name)
+            && imports_owner_from_dependency(file_level_imports, dependency_name, owner_name)
     })
 }
 
@@ -2031,11 +2032,10 @@ fn type_path_call_admits_owner(
     owner: &FunctionSummary,
     test: &TestSummary,
     callable_dependency_names: &BTreeSet<String>,
-    stripped_file: &str,
+    file_text: &(String, String),
     same_name_definitions: &[&FunctionSummary],
 ) -> bool {
-    let file_level_imports = file_level_use_text(stripped_file);
-    let file_level_imports = file_level_imports.as_str();
+    let (stripped_file, file_level_imports) = (file_text.0.as_str(), file_text.1.as_str());
     let FunctionImplContext::Impl { self_type } = &owner.impl_context else {
         return false;
     };
@@ -3166,6 +3166,24 @@ fn has_callable_forward_dependency(
                 )
             })
         })
+}
+
+/// The comment-and-string-stripped `source` and its file-level `use` text.
+/// The dependency-edge rule asks for this pair once per candidate test per
+/// probe, so a check that classifies many probes against one test file
+/// rescanned the whole file each time; the run memo keeps one pair per
+/// source text for the scope.
+fn stripped_file_and_imports(source: &str) -> std::rc::Rc<(String, String)> {
+    crate::analysis::syntax::run_memo::memoize(
+        crate::analysis::syntax::run_memo::Product::StrippedFileImports,
+        0,
+        source,
+        || {
+            let stripped = strip_comments_and_strings(source);
+            let imports = file_level_use_text(&stripped);
+            std::rc::Rc::new((stripped, imports))
+        },
+    )
 }
 
 /// Whether the stripped body imports the owner name from the declaring
@@ -7908,6 +7926,15 @@ fn owner_call_relation_reason_gated(
         {
             return RelationReason::WeakTokenSubstring;
         }
+        // #14270: a test that reaches the name only through a module its
+        // own file declares and defines the same-named function in names
+        // that test-local rival, not the production owner — the same
+        // refusal the repo-exposure grip path applies (#13999). The rival
+        // sits in another crate class, so no call identity exists above
+        // to settle it.
+        if super::call_identity::test_calls_only_through_local_rival_module(index, owner, test) {
+            return RelationReason::WeakTokenSubstring;
+        }
         return RelationReason::DirectOwnerCall;
     };
     // #6951: when the test's own module scope declares the owner's impl
@@ -8671,6 +8698,46 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn stripped_file_and_imports_is_computed_once_per_source_in_a_run_scope() {
+        let source = "// use hidden::x;\nuse dep::Owner;\nmod inner {\n    use dep::Nested;\n}\nfn f() { let s = \"use quoted::y;\"; }\n";
+        let other = "use dep::Other;\n";
+        let expected_stripped = strip_comments_and_strings(source);
+        let expected_imports = file_level_use_text(&expected_stripped);
+        // Fixture construction: only the file-level import survives.
+        assert!(
+            expected_imports.contains("dep::Owner"),
+            "{expected_imports}"
+        );
+        assert!(!expected_imports.contains("Nested"), "{expected_imports}");
+        assert!(!expected_imports.contains("hidden"), "{expected_imports}");
+        assert!(!expected_imports.contains("quoted"), "{expected_imports}");
+
+        // Outside a scope every call recomputes, with the same answer.
+        let unscoped = stripped_file_and_imports(source);
+        assert_eq!(
+            *unscoped,
+            (expected_stripped.clone(), expected_imports.clone())
+        );
+        assert!(!std::rc::Rc::ptr_eq(
+            &unscoped,
+            &stripped_file_and_imports(source)
+        ));
+
+        let _scope = crate::analysis::syntax::run_memo::enter();
+        let first = stripped_file_and_imports(source);
+        let second = stripped_file_and_imports(source);
+        assert!(
+            std::rc::Rc::ptr_eq(&first, &second),
+            "the scope must reuse the pair"
+        );
+        assert_eq!(*first, (expected_stripped, expected_imports));
+        // A different source text never shares the entry.
+        let other_pair = stripped_file_and_imports(other);
+        assert!(!std::rc::Rc::ptr_eq(&first, &other_pair));
+        assert!(other_pair.1.contains("dep::Other"), "{}", other_pair.1);
+    }
 
     #[test]
     fn a_crate_qualified_struct_literal_receiver_asks_the_crate_authority() {
@@ -14745,6 +14812,101 @@ fn crate_c_score_test() {
             ])
         );
         assert!(manifests_with_unindexed_files(&prefixes, &analyzable, &analyzable).is_empty());
+    }
+
+    /// #14270: the diff-mode relation must apply the same test-local rival
+    /// refusal as the repo-exposure grip path (#13999). A test that reaches
+    /// `discounted_total` only through a module its own file declares
+    /// (`mod local { pub fn discounted_total(..) }` reached by a bare or a
+    /// glob `use`) names the rival, never the production owner in
+    /// `src/lib.rs`, so it earns no `direct_owner_call` and establishes no
+    /// reach. The plain owner-import control on the same production source
+    /// keeps `direct_owner_call`. Sources mirror
+    /// `fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/test-local-rival-{bare,glob}-use`.
+    #[test]
+    fn test_local_rival_use_does_not_credit_the_production_owner() -> Result<(), String> {
+        const PROD: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n";
+        let relation = |test_source: &str| -> Result<Vec<(String, RelationReason)>, String> {
+            let mut index = RustIndex::default();
+            for (path, source) in [("src/lib.rs", PROD), ("tests/boundary.rs", test_source)] {
+                let facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+                    Path::new(path),
+                    source,
+                )
+                .map_err(|error| error.to_string())?;
+                index.insert_file(PathBuf::from(path), facts, true);
+            }
+            assert!(
+                index
+                    .functions()
+                    .iter()
+                    .any(|function| function.name == "discounted_total"),
+                "setup: the production owner is indexed"
+            );
+            let owner = index
+                .functions()
+                .iter()
+                .find(|function| function.file == Path::new("src/lib.rs"))
+                .cloned()
+                .ok_or("setup: production owner indexed")?;
+            let probe = probe("src/lib.rs", "amount >= threshold");
+            Ok(
+                find_related_tests(&probe, Some(&owner), &index, true, None, None)
+                    .into_iter()
+                    .map(|(test, reason)| (test.name.clone(), reason))
+                    .collect(),
+            )
+        };
+        for (test_source, rival_test) in [
+            (
+                "mod local {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 777 }\n}\nuse local::discounted_total;\n\n#[test]\nfn bare_rival() {\n    assert_eq!(discounted_total(100, 100), 777);\n}\n",
+                "bare_rival",
+            ),
+            (
+                "mod local {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 777 }\n}\nuse local::*;\n\n#[test]\nfn glob_rival() {\n    assert_eq!(discounted_total(100, 100), 777);\n}\n",
+                "glob_rival",
+            ),
+        ] {
+            let related = relation(test_source)?;
+            assert!(
+                related.iter().any(|(name, _)| name == rival_test),
+                "{rival_test}: the rival test must be present in the related set before its reason is judged, got {related:?}"
+            );
+            assert!(
+                related.iter().all(|(name, reason)| name != rival_test
+                    || *reason == RelationReason::WeakTokenSubstring),
+                "{rival_test}: a test-local rival call must demote to weak_token_substring, got {related:?}"
+            );
+            assert!(
+                !related
+                    .iter()
+                    .any(|(_, reason)| reason.establishes_reach(true)),
+                "{rival_test}: no related test may establish reach to the production owner, got {related:?}"
+            );
+        }
+        // Plain owner-import control: no rival module, the imported name is
+        // the production owner, so the direct credit stays.
+        let control = relation(
+            "use discount_lib::discounted_total;\n\n#[test]\nfn owner_import_control() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
+        )?;
+        assert!(
+            control.iter().any(|(name, reason)| {
+                name == "owner_import_control" && *reason == RelationReason::DirectOwnerCall
+            }),
+            "owner-import control must keep direct_owner_call, got {control:?}"
+        );
+        // #14744 review: a body-level production glob shadows the module-level
+        // rival import, so the production call keeps its direct credit.
+        let body_glob = relation(
+            "mod local {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 777 }\n}\nuse local::discounted_total;\n\n#[test]\nfn body_glob_owner() {\n    use discount_lib::pricing::*;\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
+        )?;
+        assert!(
+            body_glob.iter().any(|(name, reason)| {
+                name == "body_glob_owner" && *reason == RelationReason::DirectOwnerCall
+            }),
+            "a body glob of the production module shadows the rival import, got {body_glob:?}"
+        );
+        Ok(())
     }
 
     fn function(file: &str, name: &str) -> FunctionSummary {

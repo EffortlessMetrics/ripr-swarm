@@ -149,7 +149,13 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      that subject with the current binary (`ripr check --mode draft --format
      repo-exposure-json`) and fails when the committed report differs in the
      judged fields: the seam set, each seam's `grip_class` and stage states, and
-     each related test's `oracle_strength` and `relation_reason`. Producer
+     each related test's `oracle_strength` and `relation_reason`. A seam's
+     per-stage `evidence_path` summaries are judged too, but only for a capture
+     recorded at the analyzer's current `CACHE_SCHEMA_VERSION`: a pinned capture
+     is not parsed for them, so its pin keeps its tolerance whole. A present but
+     malformed `evidence_path` (a non-object value, a non-object stage entry, or
+     a non-string `state`, `confidence` or `summary`) is a violation rather than
+     an empty read that compares equal on both sides. Producer
      version, timestamps and the root are not judged. A repo-seam case without a
      regenerable subject fails (#12144).
      Every committed report under `reports/` that carries

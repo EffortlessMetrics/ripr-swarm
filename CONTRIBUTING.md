@@ -756,8 +756,10 @@ For behavior changes, update:
 For decisions, add or update an ADR.
 
 For repo knowledge, update [Learnings](docs/LEARNINGS.md).
-## Optional Linux LLD builds
+## Linkers
 
-The normal workspace build uses the platform default linker and does not
-require LLVM. In a controlled Linux environment with `clang` and `ld.lld`
+On Windows, MSVC-target builds link with `rust-lld.exe`, the LLD bundled
+with the Rust toolchain (configured in `.cargo/config.toml`); no separate
+LLVM install is needed, and other targets keep their platform default
+linker. In a controlled Linux environment with `clang` and `ld.lld`
 installed, use `cargo build-lld --release` to opt into the faster linker path.
