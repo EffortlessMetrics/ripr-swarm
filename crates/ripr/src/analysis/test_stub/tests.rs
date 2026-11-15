@@ -2183,3 +2183,65 @@ mod tests {{
     }
     Ok(())
 }
+
+/// #14825 re-review: the reused-from-a-test origin is stable on rerun, and a
+/// no-argument constructor with a non-neutral name (`connect`) is not used.
+#[test]
+fn receiver_reuse_rerun_is_already_present_and_names_stay_neutral() -> Result<(), String> {
+    let source = "pub struct Bucket { tokens: u32 }
+impl Bucket {
+    pub fn new(capacity: u32) -> Self { Bucket { tokens: capacity } }
+    pub fn allow(&self, n: u32) -> bool { self.tokens > n }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn drains() {
+        let b = Bucket::new(5);
+        assert!(b.allow(2));
+    }
+}
+";
+    let needle = "self.tokens > n";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        needle,
+        SeamKind::PredicateBoundary,
+        boundary("self.tokens == n"),
+    )?;
+    let first = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
+    assert!(first.text.contains("Bucket::new(5);"), "{}", first.text);
+    let close = source.rfind('}').ok_or("module close brace")?;
+    let (head, tail) = source.split_at(close);
+    let rewritten = format!("{head}{}{tail}", first.text.trim_start_matches('\n'));
+    let seam = seam_at(
+        "src/lib.rs",
+        &rewritten,
+        needle,
+        SeamKind::PredicateBoundary,
+        boundary("self.tokens == n"),
+    )?;
+    let second =
+        rust_test_stub(&seam, None, &rewritten, None).map_err(|r| r.reason().to_string())?;
+    assert!(second.already_present, "{}", second.text);
+
+    let connect = "pub struct Link { up: bool }
+impl Link {
+    pub fn connect() -> Self { Link { up: true } }
+    pub fn rate(&self, n: u8) -> u8 { if n > 2 && self.up { n } else { 0 } }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        connect,
+        "n > 2",
+        SeamKind::PredicateBoundary,
+        boundary("n == 2"),
+    )?;
+    let stub = rust_test_stub(&seam, None, connect, None).map_err(|r| r.reason().to_string())?;
+    assert_eq!(stub.receiver_setup, None, "{}", stub.text);
+    Ok(())
+}
