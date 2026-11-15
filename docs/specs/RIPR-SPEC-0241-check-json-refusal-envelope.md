@@ -104,8 +104,10 @@ Without a JSON request stdout stays empty.
   token `--bogus-flag`, `next` the `ripr check --help --all` route), exit 2,
   cause on stderr (#11584). The same holds for any JSON `--format`, such as
   `json-terse`. Without a JSON request stdout stays empty.
-- `ripr check --json --base` (a flag missing its value) keeps empty stdout
-  even under the JSON request, exit 2, cause on stderr.
+- `ripr check --json --base` (a flag missing its value) emits no analysis
+  envelope: stdout carries only the minimal `cli_refusal` document
+  (`missing_value`, token `--base`, `next` the `ripr check --help --all`
+  route), exit 2, cause on stderr (#11979).
 - A malformed `ripr.toml` emits `config_invalid` with the redacted summary;
   a directory with no config entry at all falls back to `analysis_failed`.
 

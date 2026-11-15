@@ -868,9 +868,37 @@ def fixture_body(
     )
 
 
-def self_test() -> None:
-    max_files = 160
-    max_lines = 3000
+def wired_cap_from_workflow(path: Path) -> int:
+    """The single `max-changed-lines` value the workflow wires, checked.
+
+    The self-test must certify the number the gate actually uses, so both
+    occurrences must agree and sit inside a sane band. A cap the workflow
+    does not wire, or two inputs that disagree, is a control that certifies
+    nothing (#14513 review).
+    """
+    values = re.findall(r"max-changed-lines:\s*'(\d+)'", path.read_text(encoding="utf-8"))
+    if len(values) != 2:
+        raise AssertionError(
+            f"expected two max-changed-lines inputs in {path}, found {len(values)}"
+        )
+    if values[0] != values[1]:
+        raise AssertionError(f"max-changed-lines inputs disagree: {values}")
+    cap = int(values[0])
+    if not 1000 <= cap <= 10000:
+        raise AssertionError(f"max-changed-lines {cap} is outside the sane band 1000..10000")
+    return cap
+
+
+def self_test(
+    max_files: int = 160,
+    max_lines: int = 3000,
+    workflow: Path | None = None,
+) -> None:
+    if workflow is not None and workflow.exists():
+        wired = wired_cap_from_workflow(workflow)
+        assert wired == max_lines, (
+            f"the self-test certifies {max_lines} but the workflow wires {wired}"
+        )
     head = "a" * 40
 
     def run(
@@ -1162,19 +1190,23 @@ def self_test() -> None:
         subprocess.run = real_run
     assert any(f"ref={'c' * 40}" in call for call in calls), "base read at the merge base"
     assert not any(f"ref={'a' * 40}" in call and "contents" in call for call in calls), "never at the base tip"
-    big = fixture(body=fixture_body(), head=head, additions=3000, deletions=100, changed_files=170)
+    # The boundary fixture is derived from the wired cap, so the self-test
+    # certifies the number the gate actually uses instead of a literal that
+    # drifts when the cap moves (#14513 review).
+    boundary = max_lines + 50
+    big = fixture(body=fixture_body(), head=head, additions=boundary, deletions=0, changed_files=170)
     assert run(big, [big])["reason"] == "qualification_scope_oversized"
-    admitted_big = decide(big, [big], head, False, max_files, max_lines, 20, 1750)
+    admitted_big = decide(big, [big], head, False, max_files, max_lines, 20, 50)
     assert admitted_big["status"] == "admitted"
-    assert admitted_big["changed_files"] == 150 and admitted_big["changed_lines"] == 1350
+    assert admitted_big["changed_files"] == 150 and admitted_big["changed_lines"] == max_lines
     assert (
         decide(big, [big], head, False, max_files, max_lines, 0, 50)["reason"]
         == "qualification_scope_oversized"
     )
-    refused_big = decide(big, [big], head, False, max_files, max_lines, 20, 50)
+    refused_big = decide(big, [big], head, False, max_files, max_lines, 20, 0)
     assert refused_big["reason"] == "qualification_scope_oversized"
-    assert refused_big["changed_files"] == 150 and refused_big["changed_lines"] == 3050
-    assert "150 files / 3050 changed lines" in refused_big["detail"]
+    assert refused_big["changed_files"] == 150 and refused_big["changed_lines"] == boundary
+    assert f"150 files / {boundary} changed lines" in refused_big["detail"]
     huge = fixture(body=fixture_body(), head=head, additions=90000, deletions=0)
     assert (
         decide(huge, [huge], head, False, max_files, max_lines, 2, 90000)["reason"]
@@ -1228,7 +1260,7 @@ def self_test() -> None:
         assert not is_generated(kept, baseline_rules), kept
     for generated_lines, counted_lines, reason in (
         (5166, 580, "candidate_current_unique_bounded"),
-        (5166, 3001, "qualification_scope_oversized"),
+        (5166, max_lines + 1, "qualification_scope_oversized"),
         (40001, 580, "generated_scope_oversized"),
     ):
         baseline_files = [
@@ -1787,10 +1819,15 @@ def main() -> int:
     parser.add_argument("--docs-only", action="store_true")
     parser.add_argument("--max-changed-files", type=int, default=160)
     parser.add_argument("--max-changed-lines", type=int, default=3000)
+    parser.add_argument(
+        "--workflow",
+        type=Path,
+        help="routed-rust.yml whose wired max-changed-lines the self-test certifies",
+    )
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
-        self_test()
+        self_test(args.max_changed_files, args.max_changed_lines, args.workflow)
         return 0
     if args.check_attributes:
         if not args.check_attributes.exists():
