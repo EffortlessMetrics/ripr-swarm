@@ -583,6 +583,55 @@ fn ripr_verbose_env_adds_stderr_diagnostics_and_keeps_json_stdout_identical() ->
     Ok(())
 }
 
+/// Suppressed findings stay in the check output with their ids recorded, so
+/// the verdict trace must filter them: with a policy that suppresses the
+/// fixture's finding, stderr names the withheld count and prints no verdict
+/// line; without the policy the same run prints the verdict line.
+#[test]
+fn ripr_verbose_env_verdict_lines_skip_suppressed_findings() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let policy = fixture.0.join("ripr-suppressions.toml");
+    std::fs::write(
+        &policy,
+        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"**\"\nreason = \"accepted for this test\"\nowner = \"repo-owner\"\n",
+    )
+    .map_err(|error| format!("write suppression policy: {error}"))?;
+    let policy_arg = policy.display().to_string();
+    let mut suppressed = ripr();
+    suppressed.env("RIPR_VERBOSE", "1");
+    let suppressed = run_check_as(
+        suppressed,
+        &fixture,
+        &[
+            "--format",
+            "json",
+            "--suppression-policy",
+            policy_arg.as_str(),
+        ],
+    )?;
+    let mut plain = ripr();
+    plain.env("RIPR_VERBOSE", "1");
+    let plain = run_check_as(plain, &fixture, &["--format", "json"])?;
+    assert!(plain.status.success(), "{}", stderr_text(&plain));
+    let plain_err = stderr_text(&plain);
+    assert!(
+        plain_err.contains("ripr: verdict "),
+        "control run traces its finding: {plain_err}"
+    );
+    let err = stderr_text(&suppressed);
+    assert!(
+        err.contains(
+            "withheld by suppressions or owner opt-outs; verdict lines cover the 0 reported"
+        ),
+        "the withheld count is named: {err}"
+    );
+    assert!(
+        !err.contains("ripr: verdict "),
+        "a suppressed finding gets no verdict line: {err}"
+    );
+    Ok(())
+}
+
 /// The machine-discovery route and version queries keep a silent stderr
 /// under an exported `RIPR_VERBOSE`.
 #[test]

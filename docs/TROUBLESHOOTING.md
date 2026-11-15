@@ -302,8 +302,9 @@ ripr: analyzing 1 language(s): rust
 ripr: mode = draft; scope = worktree
 ```
 
-A full log for a one-line boundary change looks like this; the timings and
-paths are your own:
+For a one-line boundary change the diagnostic lines look like this (the
+`ripr progress:` lines in between are left out; the timings and paths are
+your own):
 
 ```console
 ripr: verbose mode enabled

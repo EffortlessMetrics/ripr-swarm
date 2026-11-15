@@ -66,6 +66,9 @@ CI job that cannot edit argv had no way to turn it on.
   byte-identical to a plain run while stderr gains timing and verdict lines
   and no notice; `RIPR_VERBOSE=0` stays off; `help --json`, `--version` and
   `lsp --version` keep stderr empty with the variable set.
+- Built-binary test: with a suppression policy that withholds the
+  fixture's finding, stderr names the withheld count and prints no verdict
+  line, while the same run without the policy prints it.
 - The troubleshooting guide's "Attach a verbose log" quotes are reproduced
   against the built binary.
 
