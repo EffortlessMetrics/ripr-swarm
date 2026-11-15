@@ -16,7 +16,10 @@ use std::path::Path;
 /// like the unittest route's `python -m unittest`: inside a virtual
 /// environment, where pytest is normally installed, `python` names the
 /// environment's interpreter on Linux, macOS and Windows alike, while
-/// `python3` is absent from Windows virtual environments.
+/// `python3` is absent from Windows virtual environments. This is the
+/// fallback when no project virtual environment is found; on POSIX the Python
+/// producer substitutes a project `.venv/bin/python` or `venv/bin/python`
+/// (see [`PYTEST_VERIFY_INTERPRETERS`], #13801).
 pub const PYTEST_VERIFY_PROGRAM: &str = "python -m pytest";
 
 /// Whether a verify command runs pytest.

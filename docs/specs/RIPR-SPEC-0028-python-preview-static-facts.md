@@ -198,7 +198,8 @@ Test discovery:
   flat-layout package at the repository root imports without a `pythonpath`
   setting; bare `pytest path::node` fails collection there with
   `ModuleNotFoundError`. Both forms spell the interpreter `python`, which names
-  the virtual environment's interpreter on every platform
+  the virtual environment's interpreter on every platform when one is active;
+  the next item replaces it with a project venv interpreter when one exists
 - the pytest verify route's interpreter and confidence are decided once by the
   Python producer, before findings leave the adapter (#13801). When the
   selected root holds a project `.venv/bin/python` or `venv/bin/python`
