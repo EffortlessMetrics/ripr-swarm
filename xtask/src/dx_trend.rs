@@ -135,6 +135,66 @@ fn admissible(status: &str) -> bool {
     matches!(status, "meets_target" | "below_target")
 }
 
+/// Repositories whose sample counted toward a per-repository value.
+fn measured_repos(row: &Value) -> Vec<String> {
+    let mut repos: Vec<String> = row["samples"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|s| s["status"].as_str().is_some_and(admissible))
+        .filter_map(|s| s["repo"].as_str().map(str::to_string))
+        .collect();
+    repos.sort();
+    repos.dedup();
+    repos
+}
+
+/// Each corpus repository's workload identity (the fields the scoreboard's
+/// own baseline pairing compares), so a moved pin is not read as movement.
+fn workloads(report: &Value) -> Value {
+    let map: serde_json::Map<String, Value> = report["corpus"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let id = entry["id"].as_str()?;
+            Some((
+                id.to_string(),
+                json!({
+                    "url": entry["url"],
+                    "sha": entry["sha"],
+                    "base": entry["base"],
+                    "language": entry["language"],
+                    "expected_partial": entry["expected_partial"],
+                }),
+            ))
+        })
+        .collect();
+    Value::Object(map)
+}
+
+/// Whether a past per-repository value measured the same population on the
+/// same workloads as the current one.
+fn same_workload(past_receipt: &Value, past: &Value, current: &Value, metric: &Value) -> bool {
+    if metric["per_repo"] != json!(true) {
+        return true;
+    }
+    if past["repos"] != metric["repos"] {
+        return false;
+    }
+    metric["repos"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .all(|repo| {
+            let Some(repo) = repo.as_str() else {
+                return false;
+            };
+            let now = &current["workloads"][repo];
+            !now.is_null() && past_receipt["workloads"][repo] == *now
+        })
+}
+
 /// Projects a dx-scoreboard report into one dated trend receipt.
 fn receipt_from_report(report: &Value, date: &str) -> Result<Value, String> {
     if report["report"] != json!("dx-scoreboard") {
@@ -183,6 +243,8 @@ fn receipt_from_report(report: &Value, date: &str) -> Result<Value, String> {
             "target": row["target"],
             "runner_dependent": row["runner_dependent"].as_bool().unwrap_or(true),
             "partial": row["partial"].as_bool().unwrap_or(false),
+            "per_repo": row["per_repo"].as_bool().unwrap_or(false),
+            "repos": measured_repos(row),
             "status": status,
             "value": value,
             "reason": if status == "incomplete" {
@@ -199,6 +261,7 @@ fn receipt_from_report(report: &Value, date: &str) -> Result<Value, String> {
         "analyzer_version": report["analyzer_version"],
         "runner_class": report["runner_class"],
         "gate_status": report["gate"]["status"],
+        "workloads": workloads(report),
         "metrics": metrics,
     }))
 }
@@ -312,7 +375,10 @@ fn comparable_series(
         })
         .filter_map(|(day, receipt)| {
             let past = metric_in(receipt, id)?;
-            if past["target"] != metric["target"] || past["direction"] != metric["direction"] {
+            if past["target"] != metric["target"]
+                || past["direction"] != metric["direction"]
+                || !same_workload(receipt, past, current, metric)
+            {
                 return None;
             }
             Some((day.clone(), past["value"].as_f64()?))
@@ -360,6 +426,7 @@ fn evaluate(history: &BTreeMap<String, Value>, current: &Value) -> Result<Value,
     let mut unmeasured: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     let mut failed = Vec::new();
     let mut moves = BTreeMap::from([("better", 0_u64), ("worse", 0), ("same", 0)]);
+    let mut partial_count = 0_usize;
     for metric in metrics {
         let id = metric["id"].as_str().unwrap_or_default();
         let board = metric["board"].as_str().unwrap_or("unknown").to_string();
@@ -425,9 +492,15 @@ fn evaluate(history: &BTreeMap<String, Value>, current: &Value) -> Result<Value,
             "nights": series.len() + 1,
             "sparkline": sparkline(&spark),
         });
-        if short > 0.0 {
+        // The scoreboard judges the target before rounding the exported
+        // value, so a `below_target` verdict stays a miss even when the
+        // rounded number equals the target.
+        if short > 0.0 || status == "below_target" {
             off_bar.push(row);
         } else {
+            if metric["partial"] == json!(true) {
+                partial_count += 1;
+            }
             at_bar.push(row);
         }
     }
@@ -457,6 +530,7 @@ fn evaluate(history: &BTreeMap<String, Value>, current: &Value) -> Result<Value,
             "total": metrics.len(),
             "off_bar": off_bar.len(),
             "at_bar": at_bar.len(),
+            "at_bar_partial": partial_count,
             "not_measured": unmeasured_count,
             "failed": failed.len(),
         },
@@ -519,11 +593,12 @@ fn render_markdown(page: &Value) -> String {
         page["first_night"].as_str().unwrap_or("?"),
     ));
     out.push_str(&format!(
-        "**{} of {} metrics are off their bar**, {} at it, {} not measured, {} failed. \
+        "**{} of {} metrics are off their bar**, {} at it ({} of those partially measured), {} not measured, {} failed. \
          Since the previous comparable night: {} better, {} worse, {} unchanged.\n\n",
         counts["off_bar"],
         counts["total"],
         counts["at_bar"],
+        counts["at_bar_partial"],
         counts["not_measured"],
         counts["failed"],
         page["since_previous"]["better"],
@@ -541,6 +616,8 @@ fn render_markdown(page: &Value) -> String {
             let unit = row["unit"].as_str().unwrap_or_default();
             let short = if row["zero_target_miss"] == json!(true) {
                 "any (target 0)".to_string()
+            } else if row["shortfall"].as_f64().unwrap_or_default() <= 0.0 {
+                "rounds to 0".to_string()
             } else {
                 format!(
                     "{:.0}%",
@@ -571,23 +648,34 @@ fn render_markdown(page: &Value) -> String {
         out.push('\n');
     }
     out.push_str("## At the bar\n\n");
-    let at: Vec<String> = page["at_bar"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|row| {
-            format!(
-                "`{}`{}",
-                row["id"].as_str().unwrap_or_default(),
-                fmt_move(row, "since_previous")
-            )
-        })
-        .collect();
-    out.push_str(&if at.is_empty() {
-        "None.\n\n".to_string()
+    let at: Vec<&Value> = page["at_bar"].as_array().into_iter().flatten().collect();
+    if at.is_empty() {
+        out.push_str("None.\n\n");
     } else {
-        format!("{}\n\n", at.join(", "))
-    });
+        out.push_str("| Metric | Now | Target | Previous | Week ago | Trend |\n");
+        out.push_str("|---|---|---|---|---|---|\n");
+        for row in at {
+            let unit = row["unit"].as_str().unwrap_or_default();
+            let partial = if row["partial"] == json!(true) {
+                " (partial)"
+            } else {
+                ""
+            };
+            out.push_str(&format!(
+                "| `{}`{} | {} | {} | {}{} | {}{} | {} |\n",
+                row["id"].as_str().unwrap_or_default(),
+                partial,
+                fmt_opt(&row["value"], unit),
+                fmt_opt(&row["target"], unit),
+                fmt_opt(&row["previous"], unit),
+                fmt_move(row, "since_previous"),
+                fmt_opt(&row["week_ago"], unit),
+                fmt_move(row, "since_week_ago"),
+                row["sparkline"].as_str().unwrap_or_default(),
+            ));
+        }
+        out.push('\n');
+    }
     if let Some(failed) = page["failed"].as_array().filter(|f| !f.is_empty()) {
         out.push_str("## Failed instruments\n\n");
         for row in failed {
@@ -1161,6 +1249,125 @@ mod tests {
         assert_eq!(fmt_value(5.0, ""), "5");
         assert_eq!(fmt_value(5.5, "ms"), "5.50 ms");
         assert_eq!(fmt_value(0.368, "ratio"), "36.8%");
+        Ok(())
+    }
+
+    #[test]
+    fn a_producer_miss_hidden_by_rounding_stays_off_the_bar() -> Result<(), String> {
+        // 0.94999 vs 0.95 is judged below_target, then exported as 0.95.
+        let r = night(
+            "2026-11-15",
+            "linux-x64",
+            vec![
+                row(
+                    "trust.recall",
+                    "higher_is_better",
+                    0.95,
+                    Some(0.95),
+                    "below_target",
+                ),
+                row(
+                    "trust.false_rate",
+                    "lower_is_better",
+                    0.05,
+                    Some(0.05),
+                    "below_target",
+                ),
+                row(
+                    "trust.precision",
+                    "higher_is_better",
+                    0.95,
+                    Some(0.95),
+                    "meets_target",
+                ),
+            ],
+        )?;
+        let page = evaluate(&BTreeMap::new(), &r)?;
+        let off: Vec<&str> = page["off_bar"]
+            .as_array()
+            .ok_or("off")?
+            .iter()
+            .filter_map(|r| r["id"].as_str())
+            .collect();
+        assert_eq!(off, ["trust.false_rate", "trust.recall"]);
+        assert_eq!(page["at_bar"][0]["id"], "trust.precision");
+        assert!(render_markdown(&page).contains("rounds to 0"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_partial_pass_is_counted_and_marked() -> Result<(), String> {
+        let mut partial = row(
+            "speed.check",
+            "lower_is_better",
+            1000.0,
+            Some(900.0),
+            "meets_target",
+        );
+        partial["partial"] = json!(true);
+        let r = night("2026-11-15", "linux-x64", vec![partial])?;
+        let page = evaluate(&BTreeMap::new(), &r)?;
+        assert_eq!(page["counts"]["at_bar"], 1);
+        assert_eq!(page["counts"]["at_bar_partial"], 1);
+        let md = render_markdown(&page);
+        assert!(md.contains("1 at it (1 of those partially measured)"));
+        assert!(md.contains("| `speed.check` (partial) | 900 ms | 1000 ms |"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_moved_corpus_pin_or_repo_set_breaks_the_series() -> Result<(), String> {
+        let per_repo = |value: f64, repos: &[&str]| {
+            let mut m = row(
+                "speed.warm",
+                "lower_is_better",
+                1000.0,
+                Some(value),
+                "below_target",
+            );
+            m["per_repo"] = json!(true);
+            m["samples"] = json!(
+                repos
+                    .iter()
+                    .map(|r| json!({"repo": r, "status": "below_target", "value": value}))
+                    .collect::<Vec<_>>()
+            );
+            m
+        };
+        let corpus = |sha: &str| {
+            json!([
+                {"id": "serde", "url": "u1", "sha": sha, "base": "HEAD~1", "language": "rust", "expected_partial": null},
+                {"id": "regex", "url": "u2", "sha": "r1", "base": "HEAD~1", "language": "rust", "expected_partial": null},
+            ])
+        };
+        let with_corpus = |date: &str, sha: &str, metric: Value| -> Result<Value, String> {
+            let mut rep = report(vec![metric], "linux-x64");
+            rep["corpus"] = corpus(sha);
+            receipt_from_report(&rep, date)
+        };
+        let current = with_corpus("2026-11-15", "s2", per_repo(1500.0, &["serde", "regex"]))?;
+        let mut history = BTreeMap::new();
+        // Same metric metadata, but serde's pin moved: not comparable.
+        history.insert(
+            "2026-11-13".to_string(),
+            with_corpus("2026-11-13", "s1", per_repo(3000.0, &["serde", "regex"]))?,
+        );
+        // Same pins, but one repository dropped out: not comparable.
+        history.insert(
+            "2026-11-14".to_string(),
+            with_corpus("2026-11-14", "s2", per_repo(2000.0, &["serde"]))?,
+        );
+        let page = evaluate(&history, &current)?;
+        assert!(page["off_bar"][0]["previous"].is_null());
+        assert_eq!(page["off_bar"][0]["nights"], 1);
+        assert_eq!(page["since_previous"]["better"], 0);
+        // Same pins and repository set: comparable.
+        history.insert(
+            "2026-11-12".to_string(),
+            with_corpus("2026-11-12", "s2", per_repo(1800.0, &["regex", "serde"]))?,
+        );
+        let page = evaluate(&history, &current)?;
+        assert_eq!(page["off_bar"][0]["previous"], 1800.0);
         Ok(())
     }
 }
