@@ -135,7 +135,8 @@ fn succeed(label: &str, output: Output) -> Result<Output, String> {
 }
 
 /// Run one child through the shared process owner with file-backed streams
-/// (no pipe backpressure); on budget overrun the tree is terminated and reaped.
+/// (no pipe backpressure) in a fresh process group, so on budget overrun the
+/// whole tree, including nested rustc and test binaries, is terminated and reaped.
 fn spawn(mut command: Command, label: &str) -> Result<Output, String> {
     static N: AtomicU64 = AtomicU64::new(0);
     let stem = std::env::temp_dir().join(format!(
@@ -152,7 +153,7 @@ fn spawn(mut command: Command, label: &str) -> Result<Output, String> {
         .stdout(open(&out_path)?)
         .stderr(open(&err_path)?);
     let result = (|| {
-        let mut child = ripr::process_owner::OwnedProcess::spawn(command)
+        let mut child = ripr::process_owner::OwnedProcess::spawn_isolated(command)
             .map_err(|e| format!("spawn {label}: {e}"))?;
         let started = Instant::now();
         let status = loop {
