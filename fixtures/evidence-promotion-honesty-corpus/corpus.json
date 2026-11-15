@@ -19422,6 +19422,30 @@
           "class": "infection_unknown"
         }
       ]
+    },
+    {
+      "id": "rust_guarded_boundary_guard_missing_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_guarded_boundary_guard_missing",
+      "vector": "boundary_row_that_misses_its_bool_guard_cannot_credit_the_guarded_comparison",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        }
+      ]
     }
   ]
 }
