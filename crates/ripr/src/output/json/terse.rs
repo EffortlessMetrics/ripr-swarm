@@ -141,11 +141,10 @@ pub(crate) fn render_terse(rendered: &str) -> Result<String, String> {
             }
         }
     }
+    // A table core carries no `why`; its `oracle` is still a coded surface,
+    // so a literal code-shaped oracle reserves that code.
     for core in table.iter().filter_map(Value::as_object) {
-        for text in RELATED_TEST_PROSE
-            .iter()
-            .filter_map(|key| core.get(*key).and_then(Value::as_str))
-        {
+        if let Some(text) = core.get("oracle").and_then(Value::as_str) {
             coder.observe(text);
         }
     }
@@ -1235,6 +1234,28 @@ mod tests {
             super::restore_related_test_rows(&terse)?,
             literal["findings"]
         );
+
+        // A literal code-shaped oracle that now lives only in the table still
+        // reserves its code, so a coded evidence entry cannot collide with it.
+        let sentence = "evidence sentence long enough to code through the legend";
+        let coded = |id: &str| {
+            serde_json::json!({"id": id, "evidence": [sentence],
+                "related_tests": [{"name": "t", "oracle": "E0001"}]})
+        };
+        let reserved = serde_json::json!({"findings": [coded("probe:a"), coded("probe:b")]});
+        let input = serde_json::to_string(&reserved).map_err(|error| error.to_string())?;
+        let terse: Value =
+            serde_json::from_str(&super::render_terse(&input)?).map_err(|e| e.to_string())?;
+        assert_eq!(
+            terse[RELATED_TEST_TABLE_KEY][0]["oracle"], "E0001",
+            "{terse}"
+        );
+        let code = terse["findings"][0]["evidence"][0].as_str().ok_or("code")?;
+        assert_ne!(
+            code, "E0001",
+            "the table's literal oracle reserves E0001: {terse}"
+        );
+        assert_eq!(terse[LEGEND_KEY][code], sentence);
 
         // Without a repeated core, no table is emitted.
         let single =
