@@ -566,13 +566,14 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         .map(|(max, source)| output::agent_seam_packets::PacketBound { max, source });
     write_pilot_file(
         &artifacts.agent_seam_packets_json,
-        output::agent_seam_packets::render_agent_seam_packets_json_for_root(
+        output::agent_seam_packets::render_agent_seam_packets_json_for_root_with_limitations(
             &classified,
             repo_exposure_limit,
             causal_projection.as_ref(),
             &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             &declined_rust_files,
             packet_bound,
+            &inventory_evidence_limitations,
         ),
     )?;
 

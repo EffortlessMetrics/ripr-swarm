@@ -448,14 +448,19 @@ fn minify_sarif_document(pretty: &str) -> String {
 /// limitation rides in the notification's and the run's property bags.
 const SARIF_EVIDENCE_FAILED_NOTIFICATION_ID: &str = "seam_evidence_limited";
 
-fn evidence_limitation_value(limitation: &AnalysisLimitation) -> Value {
+pub(crate) fn evidence_limitation_value(limitation: &AnalysisLimitation) -> Value {
     let mut entry = Map::new();
     entry.insert("category".to_string(), json!(limitation.kind.as_str()));
     entry.insert(
         "producer_stage".to_string(),
         json!(limitation.producer_stage.as_str()),
     );
-    entry.insert("scope".to_string(), json!("pass_wide"));
+    entry.insert(
+        "scope".to_string(),
+        json!(crate::output::repo_exposure::evidence_limitation_scope(
+            limitation
+        )),
+    );
     if let Some(path) = limitation.path.as_deref() {
         entry.insert("path".to_string(), json!(path));
     }

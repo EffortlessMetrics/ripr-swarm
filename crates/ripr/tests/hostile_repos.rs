@@ -2568,6 +2568,24 @@ fn pilot_discloses_an_unreadable_unchanged_directory_instead_of_aborting() -> Re
         if !ran.stdout.contains("src/locked") {
             return Err(format!("terminal must name src/locked\n{}", ran.stdout));
         }
+        // The agent packet artifact must not offer a repair either, and must
+        // not read complete.
+        let packets = fs::read_to_string(root.join("target/ripr/pilot/agent-seam-packets.json"))
+            .map_err(|e| format!("pilot wrote no agent packets: {e}"))?;
+        let packets: serde_json::Value = serde_json::from_str(&packets)
+            .map_err(|e| format!("agent packets are not JSON: {e}"))?;
+        let offered = packets["packets"].as_array().is_some_and(|all| {
+            all.iter()
+                .any(|packet| packet["task"] == "write_targeted_test")
+        });
+        if packets["run_status"] == "complete" || offered || !packets["next"].is_null() {
+            return Err(format!(
+                "agent packets offered a repair or read complete beside a skipped path\n{packets}"
+            ));
+        }
+        if packets["limitations"][0]["path"] != "src/locked" {
+            return Err(format!("agent packets must name src/locked\n{packets}"));
+        }
         Ok(())
     })
 }

@@ -110,7 +110,10 @@ pub(crate) fn evidence_limitation_json_object(
         "{inner}\"producer_stage\": \"{}\",\n",
         limitation.producer_stage.as_str()
     ));
-    out.push_str(&format!("{inner}\"scope\": \"pass_wide\",\n"));
+    out.push_str(&format!(
+        "{inner}\"scope\": \"{}\",\n",
+        evidence_limitation_scope(limitation)
+    ));
     if let Some(path) = limitation.path.as_deref() {
         out.push_str(&format!("{inner}\"path\": \"{}\",\n", json_escape(path)));
     }
@@ -126,6 +129,16 @@ pub(crate) fn evidence_limitation_json_object(
     ));
     out.push_str(&format!("{outer}}}"));
     out
+}
+
+/// Machine-readable `scope` of an evidence limitation: `path` when it names a
+/// skipped file or directory, `pass_wide` otherwise (matches the Markdown).
+pub(crate) fn evidence_limitation_scope(limitation: &AnalysisLimitation) -> &'static str {
+    if limitation.path.is_some() {
+        "path"
+    } else {
+        "pass_wide"
+    }
 }
 
 /// `run_status` of a repo-exposure run whose seam-evidence pass failed
@@ -1871,6 +1884,18 @@ Next: point `--root` at the directory holding `Cargo.toml` (or at TypeScript or 
 sources with that language enabled in `ripr.toml`), then run `ripr doctor --root <DIR>` \
 to see what the root can analyze.\n";
 
+/// True when a skipped-path limitation already explains why the inventory is
+/// empty (every Rust path was unreadable), so "nothing to analyze, try another
+/// root" would mislead.
+fn limitations_explain_empty_inventory(evidence_limitations: &[AnalysisLimitation]) -> bool {
+    for limitation in evidence_limitations {
+        if limitation.path.is_some() {
+            return true;
+        }
+    }
+    false
+}
+
 /// Render the repo exposure Markdown report. The output uses the
 /// static seam evidence vocabulary only — no runtime-mutation outcome
 /// words per RIPR-SPEC-0005 § Static-Language Boundaries.
@@ -2040,7 +2065,11 @@ pub(crate) fn render_repo_exposure_md_with_limit(
         // An empty report must still name a next step (an empty directory
         // used to end here with nothing to do). Language guidance above
         // already names its own next step.
-        if ts_guidance.is_none() && python_guidance.is_none() && generated_skip.is_none() {
+        if ts_guidance.is_none()
+            && python_guidance.is_none()
+            && generated_skip.is_none()
+            && !limitations_explain_empty_inventory(evidence_limitations)
+        {
             out.push_str(REPO_EXPOSURE_EMPTY_NEXT_STEP);
         }
         return out;
@@ -4324,14 +4353,24 @@ pub fn surcharge(total: i32) -> Result<i32, String> {
             AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "Restore read access.")?,
         )
         .with_path("src/locked.rs")?;
-        let markdown = render_repo_exposure_md_with_limit(&[], None, None, None, None, &[limitation]);
-        assert!(markdown.contains("`src/locked.rs` was skipped"), "{markdown}");
+        let markdown =
+            render_repo_exposure_md_with_limit(&[], None, None, None, None, &[limitation]);
+        assert!(
+            markdown.contains("`src/locked.rs` was skipped"),
+            "{markdown}"
+        );
         assert!(
             markdown.contains("the remaining seams were classified normally"),
             "{markdown}"
         );
-        assert!(!markdown.contains("the shared test-evidence pass failed"), "{markdown}");
-        assert!(!markdown.contains("every seam carries opaque stand-in evidence"), "{markdown}");
+        assert!(
+            !markdown.contains("the shared test-evidence pass failed"),
+            "{markdown}"
+        );
+        assert!(
+            !markdown.contains("every seam carries opaque stand-in evidence"),
+            "{markdown}"
+        );
         Ok(())
     }
 }

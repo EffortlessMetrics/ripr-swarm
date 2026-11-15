@@ -8,6 +8,9 @@ use crate::analysis_outcome::{
 };
 use std::path::{Path, PathBuf};
 
+mod unreadable;
+pub(crate) use unreadable::refuse_unreadable_dir_over_changed_path;
+
 const DEFAULT_IGNORED_DIRS: &[&str] = &[
     ".git",
     "target",
@@ -273,6 +276,7 @@ pub(crate) fn discover_readable_rust_files(
     keep: &std::collections::BTreeSet<PathBuf>,
 ) -> Result<(Vec<PathBuf>, Vec<PathBuf>), String> {
     let (files, unreadable_dirs) = discover_rust_files_tolerating_unreadable(root)?;
+    unreadable::refuse_unreadable_dir_over_changed_path(&unreadable_dirs, keep)?;
     let (files, unreadable_files) = split_unreadable_unchanged_files(root, files, keep);
     Ok((
         files,
@@ -838,6 +842,40 @@ mod tests {
                 }
                 Ok(())
             })
+        };
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).map_err(io)?;
+        let _ = fs::remove_dir_all(&root);
+        result
+    }
+
+    /// A changed file under an unreadable directory is hidden evidence, so
+    /// the strict error stands (root can read mode-000, so it skips there).
+    #[cfg(unix)]
+    #[test]
+    fn discover_readable_rust_files_refuses_a_changed_file_under_a_locked_directory()
+    -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt;
+        let root =
+            std::env::temp_dir().join(format!("ripr-readable-changed-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let io = |error: std::io::Error| error.to_string();
+        fs::create_dir_all(root.join("src/locked")).map_err(io)?;
+        fs::write(root.join("src/lib.rs"), "pub fn a() {}\n").map_err(io)?;
+        fs::write(root.join("src/locked/inner.rs"), "pub fn b() {}\n").map_err(io)?;
+        let locked = root.join("src/locked");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).map_err(io)?;
+        let result = if fs::read_dir(&locked).is_ok() {
+            eprintln!("permission control unavailable: this user can read a mode-000 path");
+            Ok(())
+        } else {
+            let keep = std::collections::BTreeSet::from([PathBuf::from("src/locked/inner.rs")]);
+            match discover_readable_rust_files(&root, &keep) {
+                Err(message) if message.contains("failed to read") => {
+                    // Unchanged stays tolerant.
+                    discover_readable_rust_files(&root, &Default::default()).map(|_| ())
+                }
+                other => Err(format!("expected strict error, got {other:?}")),
+            }
         };
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).map_err(io)?;
         let _ = fs::remove_dir_all(&root);

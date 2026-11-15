@@ -2623,14 +2623,15 @@ impl RustAdapter {
         }
         let (rust_files, unreadable_dirs) =
             workspace::discover_rust_files_tolerating_unreadable(&options.root)?;
-        let mut unreadable_unchanged_paths = unreadable_dirs
-            .into_iter()
-            .map(|(path, _)| path)
-            .collect::<Vec<_>>();
         let changed_paths = changed_files
             .iter()
             .map(|file| file.path.clone())
             .collect::<BTreeSet<_>>();
+        workspace::refuse_unreadable_dir_over_changed_path(&unreadable_dirs, &changed_paths)?;
+        let mut unreadable_unchanged_paths = unreadable_dirs
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect::<Vec<_>>();
         let (rust_files, unreadable_files) =
             workspace::split_unreadable_unchanged_files(&options.root, rust_files, &changed_paths);
         unreadable_unchanged_paths.extend(unreadable_files);

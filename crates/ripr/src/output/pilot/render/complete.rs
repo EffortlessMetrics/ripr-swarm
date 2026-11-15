@@ -232,7 +232,9 @@ pub(crate) fn render_pilot_summary_json(
     let withheld_only = top.is_empty()
         && (withheld_static_limitations(classified) > 0 || unreadable_skips(context) > 0)
         && python_top_repair_card(context.python_first_use).is_none();
-    if unanalyzed_only(context).is_some() || rust_excluded(context).is_some() || withheld_only {
+    let loop_withheld =
+        unanalyzed_only(context).is_some() || rust_excluded(context).is_some() || withheld_only;
+    if loop_withheld {
         out.push_str("    \"after_snapshot_command\": null,\n");
         out.push_str("    \"outcome_command\": null,\n");
     } else {
@@ -245,7 +247,7 @@ pub(crate) fn render_pilot_summary_json(
             json_escape(&commands.outcome)
         ));
     }
-    if let Some(before) = &commands.before_snapshot {
+    if let Some(before) = commands.before_snapshot.as_ref().filter(|_| !loop_withheld) {
         out.push_str(&format!(
             "    \"before_snapshot_command\": \"{}\",\n",
             json_escape(before)
@@ -1284,6 +1286,10 @@ fn unranked_change_reason(context: PilotSummaryContext<'_>, code: bool) -> Optio
     let diff_only = DiffOnlyNote::of(change);
     if seams.touched == 0 && seams.unanalyzed.is_none() && diff_only.is_none() {
         return None;
+    }
+    let skipped = unreadable_skips(context);
+    if skipped > 0 {
+        return Some(super::unreadable::unreadable_unranked_reason(skipped));
     }
     let base = change.base().map(str::to_string);
     Some(CurrentChangeLabel::why_elsewhere(

@@ -48,9 +48,9 @@ pub(crate) use discover::{
     discover_python_test_files, discover_readable_rust_files, discover_routed_language_files,
     discover_rust_files_tolerating_unreadable, discover_unanalyzed_source_files,
     has_inspectable_source_file, limitations_for_absent_changed_files,
-    limitations_for_unreadable_unchanged_paths, split_unreadable_unchanged_files,
-    supplement_absent_file_limitations, unreadable_paths_partial_reason,
-    worktree_contains_regular_source_file,
+    limitations_for_unreadable_unchanged_paths, refuse_unreadable_dir_over_changed_path,
+    split_unreadable_unchanged_files, supplement_absent_file_limitations,
+    unreadable_paths_partial_reason, worktree_contains_regular_source_file,
 };
 pub(crate) use discover::{is_ignored_dir_name, path_enters_ignored_dir};
 pub(crate) use named_dependent_scope::{

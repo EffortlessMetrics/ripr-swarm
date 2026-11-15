@@ -30,6 +30,7 @@ mod native_artifacts;
 mod panic_outcome;
 mod spec_0237;
 mod timeout_retry;
+mod unreadable;
 
 fn seam(file: &str, line: usize, expression: &str) -> RepoSeam {
     RepoSeam::new(
