@@ -298,7 +298,9 @@ pub(crate) struct AgentBriefWithheldChangedGap {
     pub(crate) seam_id: String,
     pub(crate) file: PathBuf,
     pub(crate) line: usize,
-    /// The seam's static class, so consumers do not invent one.
+    /// The seam's grip class (`ungripped`, `weakly_gripped`, ...), the
+    /// vocabulary the gate's policy eligibility reads. User-facing text maps
+    /// it to exposure words through `gap_vocabulary::present_exposure_class`.
     pub(crate) class: String,
     pub(crate) message: String,
 }
@@ -344,7 +346,7 @@ impl AgentBriefWithheldChangedGap {
                 "Changed {} seam in {} is withheld from repair guidance as a static \
                  limitation ({categories}). Its absence from comments is not evidence the gap \
                  is resolved; `ripr check` can still list this changed behavior.",
-                class.as_str(),
+                crate::output::gap_vocabulary::present_exposure_class(class.as_str()),
                 entry.seam.owner()
             ),
         })
@@ -2775,6 +2777,8 @@ weakly_gripped = "off"
         assert_eq!(gap.line, 3);
         assert!(
             gap.message.contains("activation_boundary_input_unresolved")
+                && gap.class == "ungripped"
+                && gap.message.contains("Changed no_static_path seam")
                 && gap.message.contains("pricing::untested_rounding")
                 && gap.message.contains("not evidence the gap is resolved"),
             "{}",

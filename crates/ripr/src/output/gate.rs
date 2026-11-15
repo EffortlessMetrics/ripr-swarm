@@ -1561,8 +1561,9 @@ fn parser_declined_scope_warning(scope: &Value) -> Option<String> {
 
 /// The gate warning for an analysis scope that discloses reviewed-scope seams
 /// withheld as static limitations (`static_limited_omitted_seams`, present
-/// only when nonzero): ripr could not judge them, so they are not gate
-/// candidates and their absence is not a clean result. A value that is not a
+/// only when nonzero): ripr could not judge them, so they are not blocking
+/// candidates (the changed-scope gap seams among them are evaluated as
+/// `suppressed`, #13892) and their absence is not a clean result. A value that is not a
 /// non-negative integer warns too.
 fn static_limited_scope_warning(scope: &Value) -> Option<String> {
     let value = scope.get("static_limited_omitted_seams")?;
@@ -1571,7 +1572,8 @@ fn static_limited_scope_warning(scope: &Value) -> Option<String> {
         Some(count) => format!(
             "analysis_scope lists static_limited_omitted_seams: {count} seam(s) in the reviewed \
              scope were withheld because their static evidence is opaque or unknown at a \
-             stage; they are not gate candidates, so the absence of a gate candidate for \
+             stage; they are not blocking candidates (changed-scope gap seams among them are \
+             listed as suppressed decisions), so the absence of a blocking candidate for \
              them is not evidence that the changes are tested; run `ripr check` on the same diff to \
              inspect them"
         ),

@@ -271,9 +271,14 @@ fn every_check_listed_gap_on_an_uncalled_changed_fn_reaches_guidance() -> Result
     }
     let message = withheld["message"].as_str().unwrap_or_default();
     let class = withheld["class"].as_str().unwrap_or_default();
-    if class.is_empty() || !message.contains(&format!("Changed {class} seam")) {
+    // An owner no test calls is ungripped; `class` keeps the grip word the
+    // gate reads, and the message names it in exposure words.
+    if class != "ungripped"
+        || !message.contains("Changed no_static_path seam")
+        || message.contains("ungripped")
+    {
         return Err(format!(
-            "withheld seam must carry the static class its message names: {withheld}"
+            "withheld seam must carry its grip class and name it in exposure words: {withheld}"
         ));
     }
     if !message.contains("activation_boundary_input_unresolved")
@@ -335,6 +340,32 @@ fn gate_evaluates_the_withheld_uncalled_gap_with_its_named_reason() -> Result<()
     if withheld_class.is_none() || Some(decision["static_class"].clone()) != withheld_class {
         return Err(format!(
             "gate decision must carry the withheld seam's class: {decision:#}"
+        ));
+    }
+    // The count warning must not deny the suppressed decision listed above.
+    let contradicting = gate["warnings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .find(|warning| warning.contains("not gate candidates"));
+    if let Some(warning) = contradicting {
+        return Err(format!(
+            "gate warning contradicts the suppressed decision: {warning}"
+        ));
+    }
+    let names_suppressed = gate["warnings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|warning| {
+            warning.contains("static_limited_omitted_seams")
+                && warning.contains("listed as suppressed decisions")
+        });
+    if !names_suppressed {
+        return Err(format!(
+            "gate must warn about the static-limited count and point at the suppressed list: {gate:#}"
         ));
     }
     let reason = decision["gate_reason"].to_string();
