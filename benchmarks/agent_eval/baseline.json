@@ -1,6 +1,6 @@
 {
   "advisory": true,
-  "ripr_version": "ripr 0.11.0 (43e8afa844330fecbcbd5b7530879614e6a3f068-dirty)",
+  "ripr_version": "ripr 0.11.0 (355c82e8d2b209a6939ff212296cfdfcd0c4b089)",
   "routes": [
     {"answered":6,"route":"cli-agent-loop","scenarios":6,"tokens_to_answer":1487,"total_tokens":2594},
     {"answered":6,"route":"cli-agent-find","scenarios":6,"tokens_to_answer":1487,"total_tokens":1487},
