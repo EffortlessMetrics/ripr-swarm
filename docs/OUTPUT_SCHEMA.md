@@ -287,6 +287,7 @@ terse document rewrites repeated content. Exactly what differs:
 | `assertion_texts` values | assertion source lines | long values coded the same way |
 | `ripr.<stage>.summary` (#13673) | stage prose, usually repeated verbatim in `evidence` | coded the same way and sharing the `evidence` code; `state` and `confidence` stay verbatim |
 | `related_tests[].oracle` and `related_tests[].why` (#13673) | each related-test row's assertion line and miss sentence, repeated across findings that list the same test | coded the same way; an oracle line shares the code of the identical `assertion_texts` value; every other row field stays verbatim |
+| Related-test row cores (#13673) | every finding's `related_tests` rows repeat the same test's `name`, `file`, `line`, `oracle`, `oracle_kind` and `oracle_strength` | a core that appears in two or more rows is emitted once in the document-level `related_test_table`; each row that used it omits those fields and carries `table_row`, the zero-based table index, next to its per-finding `relation_reason`, `relation_confidence`, `miss` and `why`. A core seen once stays verbatim. `table_row` is a reference only when `related_test_table` is present: if any producer row already has a `table_row` key, nothing is hoisted |
 | `evidence_legend` | absent | code → full template, emitted only when useful, in first-appearance order; codes avoid literal values on coded surfaces |
 | Next-action alias | both keys emitted | `suggested_next_action` is omitted only when its value equals `recommended_next_step` and is at least 24 UTF-8 bytes; the alias is listed once in `dropped_aliases` |
 | Activation aliases (#13673) | finding-level `observed_values` and `missing_discriminators` repeat `activation` | each is omitted only when it is non-empty and equal to the same-named array in that finding's `activation`; each dropped alias is listed once in `dropped_aliases` |
@@ -304,8 +305,10 @@ Guarantees and limits, stated precisely:
   the terse document alone. Restore an omitted `suggested_next_action` from
   that finding's `recommended_next_step`, an omitted `observed_values` or
   `missing_discriminators` from that finding's `activation`, an omitted
-  `canonical_gap_id` from `canonical_gap.id`, and an omitted `evidence_stages`
-  from `ripr` as described above. All other fields remain verbatim
+  `canonical_gap_id` from `canonical_gap.id`, an omitted `evidence_stages`
+  from `ripr` as described above, and a row carrying `table_row` by merging
+  `related_test_table[table_row]` back into it and removing `table_row` (a
+  table `oracle` may itself be a legend code). All other fields remain verbatim
   even when their strings coincide. The schema permits omitting
   `suggested_next_action` only when both `rendering: "terse"` and the known
   alias declaration are present; full JSON continues to require it. The
@@ -321,7 +324,8 @@ Guarantees and limits, stated precisely:
   the coded surfaces in #13673: on a four-finding `dtolnay/semver` diff each
   long stage summary appeared in `ripr` and again in `evidence`. Related-test
   `oracle` and `why` strings followed: on the five-gap budget fixture every
-  finding lists the same five test rows.)
+  finding lists the same five test rows; their repeated row cores then moved
+  into `related_test_table`.)
 - The transform runs on the stamped `json` document (including the CLI's
   canonical next-action member when present) and fails closed: an
   unparseable producer document aborts the run instead of emitting an
@@ -1650,6 +1654,19 @@ this kind still marks the outcome incomplete — consumers gating on
 `analysis_complete` see these runs as partial; letting it ride a complete
 outcome is a separate, consumer-visible design decision (#8714 review).
 
+`requested_scope_excluded` (#13894) is the scope note for files the operator
+left out on purpose: `--path`/`--exclude` on `ripr check`, a configured
+`[languages.rust] generated_file_patterns` entry, or a configured preview
+`excluded_file_patterns` entry. The requested scope was analyzed in full, so
+this kind rides on a complete outcome (`analysis_complete: true`) like
+`eol_only_churn` and is not an incomplete-analysis limitation. It names the
+count and a bounded list of the files and the source of the exclusion, and the
+human report prints it as a `Scope note` line. The `missed-txt` and `github`
+streams do not repeat it, so a fully analyzed scoped run stays zero bytes.
+Built-in, non-configurable generated-file skips, unsupported languages, parse
+failures, budgets and refused files keep their incomplete kinds
+(`language_scope_unsupported` and the others), so they stay fail-closed.
+
 When an *unchanged* Rust test file is indexed by lexical fallback after the
 reference parser refuses it, and a classified owner consults that file for
 related-test evidence (a related test came from it, or the file source calls
@@ -1909,20 +1926,28 @@ classes are:
 - an unknown flag or stray positional argument;
 - an unrecognized enum-style value rejected by the CLI's shared unknown-value
   builder (for example `check --format yaml`), and `explain --format json`;
+- a value flag with no value or an empty one, caught by the CLI's shared
+  value reader (for example `check --json --base` with nothing after it), as
+  `missing_value` with the flag as `token` (#11979);
+- a malformed number caught by the CLI's shared numeric parsers (for example
+  `context --max-related-tests zz` or `check --timeout zz`), as
+  `invalid_value` with the typed value as `token` (#11979);
 - a `context --at`/`--finding` selector that matched no finding, matched
   more than one, or could not be decided.
 
 Every other argv usage error keeps empty stdout even under a JSON request,
-with the cause on stderr only: a flag missing its value, a malformed value
-(for example a non-numeric number), conflicting or disagreeing flags, an
-unrecognized value rejected outside the CLI's shared builder (for example a
-gate mode), and any other argv error. These are a named gap, not a clean
-result.
+with the cause on stderr only: a missing required flag (`requires --X`),
+a missing or malformed value rejected by a command's own parser rather than
+the shared readers (for example `impacted-evidence`, or most `agent`
+subcommands given an empty value), conflicting or disagreeing flags, an unrecognized value
+rejected outside the CLI's shared builder (for example a gate mode), and any
+other argv error. These are a named gap, not a clean result.
 
 The document carries `schema_version`, `tool`, `status: "refused"` and
 `error {code, message, token?, next}` with `code` one of `unknown_argument`,
-`unknown_command`, `unknown_value`, `selector_miss`. `token` is the offending
-argument, command, value or selector; `next` is a fixed help pointer
+`unknown_command`, `unknown_value`, `missing_value`, `invalid_value`,
+`selector_miss`. `token` is the offending argument, command, flag, value or
+selector (an empty malformed value has none); `next` is a fixed help pointer
 (`list_valid_arguments`, `list_valid_commands`) or `null`; `selector_miss`
 always carries `next: null`, because its message embeds the caller's selector
 and nothing is lifted from caller-controlled text. No argv echo and no
@@ -16699,7 +16724,8 @@ Field contract:
   failed.
 - `version` - requested release version from `--version`.
 - `checks[].id` - stable check identifier such as `package-list`,
-  `publish-dry-run`, `package-install`, `installed-command-surface`,
+  `publish-dry-run`, `package-upload-size`, `package-install`,
+  `installed-command-surface`,
   `pilot-boundary-fixture`, `outcome-boundary-fixture`,
   `agent-verify-boundary-fixture`, `agent-receipt-boundary-fixture`,
   `repo-exposure-latency`, `lsp-cockpit`, `github-workflow-defaults`,
@@ -21261,7 +21287,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.60",
+    "schema_version": "1.61",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,

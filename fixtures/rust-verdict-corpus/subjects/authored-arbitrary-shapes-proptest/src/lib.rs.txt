@@ -1,0 +1,20 @@
+use proptest::strategy::{BoxedStrategy, Strategy};
+
+#[derive(Clone, Debug)]
+pub struct Pair(pub u8, pub u8);
+
+pub fn gap(pair: &Pair) -> u8 {
+    pair.1.wrapping_sub(pair.0)
+}
+
+impl proptest::arbitrary::Arbitrary for Pair {
+    type Parameters = ();
+    type Strategy = BoxedStrategy<Pair>;
+
+    fn arbitrary_with(_: ()) -> Self::Strategy {
+        let pairs = proptest::num::u8::ANY.prop_map(|a| {
+            Pair(a, a.wrapping_add(2))
+        });
+        pairs.boxed()
+    }
+}

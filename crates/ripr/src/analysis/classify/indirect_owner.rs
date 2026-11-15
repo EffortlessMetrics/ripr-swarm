@@ -466,32 +466,50 @@ fn names_value(
     owner_names: &[String],
     import_is_other: impl Fn(&[String]) -> bool,
 ) -> bool {
-    if is_bound_locally(code, name) {
+    // The answer is an `any` over the masked mentions of `name`, so a body
+    // with none is `false` whatever its item bindings say. The judged-owner
+    // pass asks this of every test in the index for each withheld probe, and
+    // almost no test mentions a given owner; reading the bindings first parsed
+    // each body (through a bounded memo that the test count overflows) only to
+    // throw the tree away (#12947). Both checks below are pure, so testing for
+    // a mention first changes no answer.
+    let mut mentions = identifier_offsets(code, name).peekable();
+    if mentions.peek().is_none() || is_bound_locally(code, name) {
         return false;
     }
     let items = ItemBindings::read(source, name, import_is_other);
-    identifier_offsets(code, name).any(|at| {
-        let reference_at = code[..at].strip_suffix("r#").map_or(at, str::len);
-        let before = code[..reference_at].trim_end();
-        if items.declaration_at(at)
-            || items.inert_macro_at(at)
-            || (!before.ends_with("::") && items.shadows_at(at))
-            || (items.unreadable && use_line_mention(code, at))
-        {
-            return false;
-        }
-        let after = code[at + name.len()..].trim_start();
-        let defined = before.ends_with("fn") && ends_at_boundary(&before[..before.len() - 2]);
-        let method = before.ends_with('.');
-        let called = after.starts_with(['(', '!']) || after.starts_with("::<");
-        let field_label = after.starts_with(':') && !after.starts_with("::");
-        !(defined
-            || method
-            || called
-            || field_label
-            || typed_fn_pointer_initializer(code, reference_at)
-            || !qualifier_may_name_owner(before, owner_names))
-    })
+    mentions.any(|at| mention_is_value(code, name, owner_names, &items, at))
+}
+
+/// Whether the mention of `name` at byte `at` of `code` names it as a value,
+/// given the body's item bindings.
+fn mention_is_value(
+    code: &str,
+    name: &str,
+    owner_names: &[String],
+    items: &ItemBindings,
+    at: usize,
+) -> bool {
+    let reference_at = code[..at].strip_suffix("r#").map_or(at, str::len);
+    let before = code[..reference_at].trim_end();
+    if items.declaration_at(at)
+        || items.inert_macro_at(at)
+        || (!before.ends_with("::") && items.shadows_at(at))
+        || (items.unreadable && use_line_mention(code, at))
+    {
+        return false;
+    }
+    let after = code[at + name.len()..].trim_start();
+    let defined = before.ends_with("fn") && ends_at_boundary(&before[..before.len() - 2]);
+    let method = before.ends_with('.');
+    let called = after.starts_with(['(', '!']) || after.starts_with("::<");
+    let field_label = after.starts_with(':') && !after.starts_with("::");
+    !(defined
+        || method
+        || called
+        || field_label
+        || typed_fn_pointer_initializer(code, reference_at)
+        || !qualifier_may_name_owner(before, owner_names))
 }
 
 /// Path segments that identify where the owner lives: `self`, `super` and
@@ -628,6 +646,9 @@ thread_local! {
     static OWNER_ITEM_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Times the shadow check asked [`owner_item_scan`] on this thread.
     static OWNER_ITEM_ASKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Times [`ItemBindings::read`] itself ran on this thread, through any
+    /// caller (#12947 pins that `names_value` skips it for unmentioned bodies).
+    static BINDINGS_READ_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Times the item-binding tree walk actually ran on this thread (#13868).
     static ITEM_BINDING_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -723,8 +744,44 @@ pub(super) struct ItemBindings {
     unreadable: bool,
 }
 
-impl ItemBindings {
-    fn read(source: &str, name: &str, import_is_other: impl Fn(&[String]) -> bool) -> Self {
+/// One `scopes` entry of [`ItemBindings`], in tree order, before the
+/// caller's import resolution is applied.
+#[derive(Clone)]
+enum ScopeSyntax {
+    /// A scope whose shadow flag the tree alone decides.
+    Fixed(ra_ap_syntax::TextRange, bool),
+    /// A block holding a `use` that binds the owner's name or holds a glob. It shadows only
+    /// when `eligible` and the resolver reads every path as another
+    /// definition (`None` is an opaque binding, which never does).
+    Import {
+        block: ra_ap_syntax::TextRange,
+        eligible: bool,
+        paths: Vec<Option<Vec<String>>>,
+    },
+}
+
+/// The pure part of [`ItemBindings::read`]: everything the walk derives from
+/// `(source, name)` alone, so it is computed once per distinct pair per run
+/// scope. The shadow check reads the same test body once per (seam, naming
+/// test, oracle), and each read walked the whole tree and re-collected the
+/// body's non-whitespace text.
+#[derive(Default)]
+struct ItemSyntax {
+    declarations: Vec<ra_ap_syntax::TextRange>,
+    scopes: Vec<ScopeSyntax>,
+    inert_macros: Vec<ra_ap_syntax::TextRange>,
+    unreadable: bool,
+}
+
+impl ItemSyntax {
+    fn memoized(source: &str, name: &str) -> std::rc::Rc<Self> {
+        use crate::analysis::syntax::run_memo::{Product, memoize_with};
+        memoize_with(Product::ItemSyntax, 0, name, source, || {
+            std::rc::Rc::new(Self::scan(source, name))
+        })
+    }
+
+    fn scan(source: &str, name: &str) -> Self {
         use crate::analysis::syntax::{
             UseBinding, parse_clean_source_file_memoized, use_item_bindings,
         };
@@ -733,6 +790,8 @@ impl ItemBindings {
             ast::{self, HasAttrs, HasName},
         };
 
+        #[cfg(test)]
+        BINDINGS_READ_CALLS.with(|n| n.set(n.get() + 1));
         let mut result = Self::default();
         let Some(parse) = parse_clean_source_file_memoized(source) else {
             result.unreadable = true;
@@ -752,7 +811,9 @@ impl ItemBindings {
             // shadow. Its imports also need their own module context; leave
             // that identity unresolved instead of borrowing the test's.
             if ast::ItemList::can_cast(node.kind()) {
-                result.scopes.push((node.text_range(), false));
+                result
+                    .scopes
+                    .push(ScopeSyntax::Fixed(node.text_range(), false));
                 continue;
             }
             if let Some(definition) = ast::MacroRules::cast(node.clone()) {
@@ -773,7 +834,13 @@ impl ItemBindings {
                 }
                 continue;
             }
-            let shadow = if let Some(function) = ast::Fn::cast(node.clone()) {
+            // Items in a nested module or impl belong to its ItemList, not the
+            // surrounding test. Never climb across that boundary.
+            let block = node
+                .parent()
+                .and_then(ast::StmtList::cast)
+                .map(|block| block.syntax().text_range());
+            if let Some(function) = ast::Fn::cast(node.clone()) {
                 let Some(declared) = function.name() else {
                     continue;
                 };
@@ -781,7 +848,10 @@ impl ItemBindings {
                     continue;
                 }
                 result.declarations.push(declared.syntax().text_range());
-                function.attrs().next().is_none()
+                if let Some(block) = block {
+                    let shadow = function.attrs().next().is_none();
+                    result.scopes.push(ScopeSyntax::Fixed(block, shadow));
+                }
             } else if let Some(import) = ast::Use::cast(node.clone()) {
                 result.declarations.push(node.text_range());
                 let scope = use_item_bindings(&import);
@@ -793,29 +863,63 @@ impl ItemBindings {
                 if matching.is_empty() && scope.globs.is_empty() {
                     continue;
                 }
-                import.attrs().next().is_none()
+                let Some(block) = block else {
+                    continue;
+                };
+                let eligible = import.attrs().next().is_none()
                     && !node
                         .ancestors()
                         .any(|ancestor| ast::ItemList::can_cast(ancestor.kind()))
                     && scope.globs.is_empty()
-                    && !matching.is_empty()
-                    && matching.iter().all(|import| match &import.binding {
-                        // Absence from a lexical owner-name list is not
-                        // evidence of a different definition: reexports and
-                        // unreadable module layouts retain the limit.
-                        UseBinding::Path(path) | UseBinding::Renamed(path) => import_is_other(path),
-                        UseBinding::Opaque => false,
+                    && !matching.is_empty();
+                // Absence from a lexical owner-name list is not evidence of a
+                // different definition: reexports and unreadable module
+                // layouts retain the limit.
+                let paths = matching
+                    .iter()
+                    .map(|import| match &import.binding {
+                        UseBinding::Path(path) | UseBinding::Renamed(path) => Some(path.clone()),
+                        UseBinding::Opaque => None,
                     })
-            } else {
-                continue;
-            };
-            // Items in a nested module or impl belong to its ItemList, not the
-            // surrounding test. Never climb across that boundary.
-            if let Some(block) = node.parent().and_then(ast::StmtList::cast) {
-                result.scopes.push((block.syntax().text_range(), shadow));
+                    .collect();
+                result.scopes.push(ScopeSyntax::Import {
+                    block,
+                    eligible,
+                    paths,
+                });
             }
         }
         result
+    }
+}
+
+impl ItemBindings {
+    fn read(source: &str, name: &str, import_is_other: impl Fn(&[String]) -> bool) -> Self {
+        let syntax = ItemSyntax::memoized(source, name);
+        let scopes = syntax
+            .scopes
+            .iter()
+            .map(|scope| match scope {
+                ScopeSyntax::Fixed(range, shadow) => (*range, *shadow),
+                ScopeSyntax::Import {
+                    block,
+                    eligible,
+                    paths,
+                } => (
+                    *block,
+                    *eligible
+                        && paths
+                            .iter()
+                            .all(|path| path.as_deref().is_some_and(&import_is_other)),
+                ),
+            })
+            .collect();
+        Self {
+            declarations: syntax.declarations.clone(),
+            scopes,
+            inert_macros: syntax.inert_macros.clone(),
+            unreadable: syntax.unreadable,
+        }
     }
 
     fn declaration_at(&self, at: usize) -> bool {
@@ -986,6 +1090,47 @@ fn call_end(code: &str, open: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn item_syntax_is_shared_per_run_while_each_caller_resolves_imports() {
+        let source = "fn t() {\n    use other::inc;\n    let y = inc(1);\n    {\n        fn inc() {}\n        inc();\n    }\n}\n";
+        let import_at = source.find("inc(1)").unwrap_or(0);
+        let fn_scope_at = source.find("inc();").unwrap_or(0);
+        // Fixture construction: both mentions exist and are distinct.
+        assert!(import_at > 0 && fn_scope_at > import_at, "{source}");
+
+        let scope = crate::analysis::syntax::run_memo::enter();
+        let first = ItemSyntax::memoized(source, "inc");
+        let second = ItemSyntax::memoized(source, "inc");
+        assert!(
+            std::rc::Rc::ptr_eq(&first, &second),
+            "one walk per (source, name)"
+        );
+        assert!(!std::rc::Rc::ptr_eq(
+            &first,
+            &ItemSyntax::memoized(source, "dec")
+        ));
+        assert!(!first.unreadable);
+
+        // The same memoized walk answers differently per resolver: the import
+        // shadows only where the caller reads `other::inc` as another item.
+        let other = ItemBindings::read(source, "inc", |_| true);
+        let owner = ItemBindings::read(source, "inc", |_| false);
+        assert!(other.shadows_at(import_at));
+        assert!(!owner.shadows_at(import_at));
+        // A same-name, attribute-free fn shadows in its own block either way.
+        assert!(other.shadows_at(fn_scope_at));
+        assert!(owner.shadows_at(fn_scope_at));
+        // Declarations are tree facts and do not depend on the resolver.
+        assert_eq!(other.declarations, owner.declarations);
+        assert_eq!(other.declarations.len(), 2);
+
+        // Outside a scope the walk still gives the same answer.
+        drop(scope);
+        let unscoped = ItemBindings::read(source, "inc", |_| true);
+        assert!(unscoped.shadows_at(import_at));
+        assert_eq!(unscoped.declarations, other.declarations);
+    }
+
+    #[test]
     fn owner_item_syntax_is_detected_conservatively() {
         assert!(body_has_no_owner_item_syntax(
             "let x = inc(1); assert_eq!(x, 2);",
@@ -1078,6 +1223,67 @@ mod tests {
         // shadow, so the bare value mention beside it still counts.
         let readable = "fn test_body() {\n    use super::inc;\n    let w: Vec<_> = rows.map(inc).collect();\n}\n";
         assert!(value_raw(readable, "inc"));
+    }
+
+    /// The pre-#12947 order: read the item bindings, then scan the mentions.
+    fn value_eager(source: &str, name: &str) -> bool {
+        let code = mask_comments_and_strings(source);
+        !is_bound_locally(&code, name) && {
+            let items = ItemBindings::read(source, name, |_| false);
+            identifier_offsets(&code, name)
+                .any(|at| mention_is_value(&code, name, &owner_names(), &items, at))
+        }
+    }
+
+    /// #12947: `names_value` tests for a masked mention before it reads the
+    /// item bindings. Every body gets the answer the eager order gives, and a
+    /// body with no mention of the name never parses.
+    #[test]
+    fn mention_first_order_matches_eager_bindings_and_skips_unmentioned_parses() {
+        let bodies = [
+            "fn t() { assert_eq!([1].map(inc).len(), 1); }",
+            "fn t() { assert_eq!(inc(1), 2); }",
+            "fn t() { let inc = 3; use_it(inc); }",
+            "fn t() { fn inc(x: u8) -> u8 { x } assert_eq!([1].map(inc).len(), 1); }",
+            "fn t() { use other::inc; f(inc); }",
+            "fn t() { use super::inc; f(inc); }",
+            "fn t() {\n    let w: Vec<_> = rows.map(inc).collect();\n    let x = ;\n}\n",
+            "fn t() {\n    use super::inc;\n    let x = ;\n}\n",
+            "fn t() { assert_eq!(dec(1), 0); /* inc */ let s = \"inc\"; }",
+            "fn t() { assert_eq!(increment(1), 2); }",
+            "fn t() { let x = ; }",
+        ];
+        let answers: Vec<bool> = bodies.iter().map(|body| value_eager(body, "inc")).collect();
+        assert!(
+            answers.contains(&true) && answers.contains(&false),
+            "premise: the eager reading tells these bodies apart: {answers:?}"
+        );
+        for (body, eager) in bodies.iter().zip(&answers) {
+            assert_eq!(value_raw(body, "inc"), *eager, "{body}");
+            // The name is part of the answer, not only the body.
+            assert_eq!(value_raw(body, "dec"), value_eager(body, "dec"), "{body}");
+        }
+
+        let reads = || BINDINGS_READ_CALLS.with(std::cell::Cell::get);
+        for body in [
+            "fn t() { assert_eq!(dec(1), 0); /* inc */ let s = \"inc\"; }",
+            "fn t() { assert_eq!(increment(1), 2); }",
+            "fn t() { let x = ; }",
+        ] {
+            let before = reads();
+            assert!(!value_raw(body, "inc"), "{body}");
+            assert_eq!(reads(), before, "no mention, no binding read: {body}");
+            let before = reads();
+            assert!(!value_eager(body, "inc"), "{body}");
+            assert_eq!(
+                reads(),
+                before + 1,
+                "premise: the eager order reads it: {body}"
+            );
+        }
+        let before = reads();
+        assert!(value_raw(bodies[0], "inc"));
+        assert_eq!(reads(), before + 1, "a mention still reads the bindings");
     }
 
     #[test]
