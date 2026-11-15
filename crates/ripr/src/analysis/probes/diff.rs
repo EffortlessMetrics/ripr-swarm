@@ -2277,7 +2277,7 @@ fn inline_test_module_ranges(source: &str) -> Vec<InlineModuleRange> {
             // Out-of-line `mod name;` (no brace index) and self-closed
             // blocks contribute no scope; the composer owns cross-file
             // roles and bare syntax lines stay eligible.
-            let (opens, closes) = brace_delta(&masked_line[brace..]);
+            let (opens, closes) = brace_delta(masked_line.get(brace..).unwrap_or_default());
             if opens > closes {
                 stack.push((depth + 1, requires_test, line_number));
             }
@@ -2330,7 +2330,13 @@ fn parse_inline_module(
     index: usize,
 ) -> Option<(bool, Option<usize>)> {
     let mut attributes: Vec<String> = Vec::new();
-    let mut masked_rest = masked_lines[index].trim();
+    let masked_line = masked_lines[index];
+    // #14089: every step below only drops a prefix, so `masked_rest` stays a
+    // suffix of `masked_line` and the brace offset can be returned relative
+    // to the whole line. Trimming the end too left the offset relative to
+    // the rest after attributes and indentation, and the caller sliced the
+    // whole line there, inside a multibyte char on `#[cfg(test)] mod dक्x {`.
+    let mut masked_rest = masked_line.trim_start();
     let mut original_rest = original_lines[index].trim();
     // Same-line attributes, in lockstep: structure from masked text, text
     // from the original. Divergence fails closed (fewer attributes).
@@ -2339,7 +2345,7 @@ fn parse_inline_module(
         split_leading_attribute(original_rest),
     ) {
         attributes.push(attribute.to_string());
-        masked_rest = masked_remainder.trim();
+        masked_rest = masked_remainder.trim_start();
         original_rest = original_remainder.trim();
     }
     let masked_rest = strip_visibility(masked_rest);
@@ -2347,15 +2353,16 @@ fn parse_inline_module(
     if after_mod
         .chars()
         .next()
-        .is_some_and(|next| next.is_ascii_alphanumeric() || next == '_')
+        .is_some_and(|next| next == '_' || unicode_ident::is_xid_continue(next))
     {
         return None;
     }
     let name_start = masked_rest.len() - after_mod.trim_start().len();
     let name = after_mod.trim_start();
-    // Module name: one identifier; anything else is not an item we scope.
+    // Module name: one identifier (Unicode `XID_Continue`, #14089); anything
+    // else is not an item we scope.
     let end = name
-        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .find(|character: char| !(character == '_' || unicode_ident::is_xid_continue(character)))
         .unwrap_or(name.len());
     if end == 0 {
         return None;
@@ -2387,9 +2394,10 @@ fn parse_inline_module(
             }
         }
     }
+    let rest_start = masked_line.len() - masked_rest.len();
     Some((
         attributes_require_test(&attributes),
-        Some(name_start + end + brace_offset),
+        Some(rest_start + name_start + end + brace_offset),
     ))
 }
 
@@ -2406,7 +2414,7 @@ pub(super) fn strip_visibility(text: &str) -> &str {
     if after_pub
         .chars()
         .next()
-        .is_some_and(|next| next.is_ascii_alphanumeric() || next == '_')
+        .is_some_and(|next| next == '_' || unicode_ident::is_xid_continue(next))
     {
         return text;
     }
@@ -8232,6 +8240,31 @@ mod source_currentness_tests {
              \x20   const VALUE: u32 = 3;\n\
              }\n";
         assert!(line_in_cfg_test_module(spaced, 3));
+    }
+
+    /// #14089: the module brace offset was measured from the text after the
+    /// same-line attribute and indentation, then used to slice the whole
+    /// line, which landed inside a multibyte char of the module name.
+    #[test]
+    fn cfg_test_module_scope_reads_a_same_line_attribute_before_a_non_ascii_name() {
+        let source = "#[cfg(test)] mod dक्iscarded {\n\
+             \x20   const DEEP: u32 = 1;\n\
+             }\n\
+             const LIMIT: usize = 2;\n";
+        assert!(line_in_cfg_test_module(source, 2));
+        assert!(!line_in_cfg_test_module(source, 4));
+        // Indented, with visibility, and a same-line nested block.
+        let nested = "    #[cfg(test)] pub(crate) mod 日本 { mod inner {\n\
+             \x20       const DEEP: u32 = 1;\n\
+             \x20   }\n\
+             }\n\
+             const LIMIT: usize = 2;\n";
+        assert!(line_in_cfg_test_module(nested, 2));
+        assert!(line_in_cfg_test_module(nested, 3));
+        assert!(!line_in_cfg_test_module(nested, 5));
+        // `modé` is one identifier, not the `mod` keyword.
+        let not_a_module = "#[cfg(test)]\nmodé {\n    const X: u32 = 1;\n}\n";
+        assert!(!line_in_cfg_test_module(not_a_module, 3));
     }
     fn macro_source_index(path: &Path, source: &str) -> RustIndex {
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
