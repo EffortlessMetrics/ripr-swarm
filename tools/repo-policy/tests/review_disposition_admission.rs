@@ -1312,6 +1312,33 @@ fn table_verdict_rows_use_the_same_closed_grammar() -> Result<(), String> {
             false,
         ),
         ("SOURCE_REVIEW_READY\n| Verdict | BLOCK | approve |", false),
+        // An unrecognised value is a real verdict, not a column label.
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | Needs work |\n| --- | --- |",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | Denied |\n| --- | --- |",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | Unsafe |\n| --- | --- |",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | NO |\n| --- | --- |",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | Result |\n| --- | --- |",
+            true,
+        ),
+        // GFM permits an omitted leading pipe, so the same row without it must
+        // keep the same disposition.
+        ("SOURCE_REVIEW_READY\nVerdict | BLOCK", false),
+        ("SOURCE_REVIEW_READY\nVerdict | REPAIR_REQUIRED", false),
+        ("SOURCE_REVIEW_READY\nVerdict | CHANGES_REQUESTED", false),
+        ("SOURCE_REVIEW_READY\nVerdict | Value\n--- | ---", true),
     ];
     for (body, admit) in controls {
         let reviews = serde_json::json!([review(
@@ -1351,6 +1378,23 @@ fn table_verdict_rows_use_the_same_closed_grammar() -> Result<(), String> {
         )?,
         false,
         "table verdict without a trailing pipe is a competing PR-description field",
+    )?;
+    // GFM also permits an omitted leading pipe.
+    let described_no_leading = pull_object(
+        "MEMBER",
+        "o/r",
+        head,
+        &format!("Source review: REVIEW_READY {head}\nVerdict | BLOCK"),
+    );
+    expect_outcome(
+        &check_reviews_with_pull(
+            &serde_json::json!([]),
+            &described_no_leading,
+            head,
+            "table-verdict-no-leading-pipe",
+        )?,
+        false,
+        "table verdict without a leading pipe is a competing PR-description field",
     )
 }
 /// #14592: the review convention's verdict line. A ready marker followed by
@@ -1442,9 +1486,14 @@ fn a_blocking_verdict_line_after_a_ready_marker_refuses() -> Result<(), String> 
             "the house marker review's verdict line is neutral",
         ),
         (
-            "SOURCE_REVIEW_READY\nVERDICT: APPROVE — tests fail.",
+            "SOURCE_REVIEW_READY\nVERDICT: APPROVE - tests fail.",
             false,
             "an APPROVE-led value that names a blocker still refuses",
+        ),
+        (
+            "REVIEW_READY\n> VERDICT: APPROVE 1cc13d3d — no blocking findings on this head.",
+            true,
+            "a quoted approving verdict line is not a negative",
         ),
         (
             "SOURCE_REVIEW_READY\n| Verdict | Notes |\n| --- | --- |\n| APPROVE |",

@@ -101,7 +101,7 @@ STATE_LINE = re.compile(
 # attests either, so prose cannot carry a positive disposition; a value that also
 # names an alternative disposition still refuses. An APPROVE field constrains a
 # separate ready marker; it never becomes an attestation carrier itself.
-VERDICT_TABLE_LABEL = r"^[ \t]*\|[ \t*_`]*verdict[ \t*_`]*\|"
+VERDICT_TABLE_LABEL = r"^[ \t]*\|?[ \t*_`]*verdict[ \t*_`]*\|"
 VERDICT_TABLE_HEADER = re.compile(VERDICT_TABLE_LABEL, re.IGNORECASE)
 # #14592: a GFM table row may omit its trailing pipe, so the value part is the
 # whole remainder of the row and is split into cells by ``verdict_table_value``.
@@ -129,9 +129,12 @@ GFM_DELIMITER_ROW = re.compile(
 # #14603 review repair: a `| Verdict | BLOCK |` row above a delimiter row is a
 # real verdict, not a column header; dropping it reopened the fail-open carrier
 # this grammar closes. A value cell that names a disposition keeps the row.
-VERDICT_TABLE_CELL_DISPOSITION = re.compile(
-    r"[\s*_`~>\-]*(?:approve(?:d|s)?|block(?:ed|s|ing)?|abstain(?:ed|s)?|"
-    r"ready|not[\s_-]*ready|reject(?:ed|s)?|hold|maybe|incomplete)\b",
+# #14603 review repair: a Verdict row above a delimiter is a header only when its
+# value cell is a known non-disposition column label. An unrecognised value is a
+# real verdict and refuses; the closed grammar must not fail open.
+VERDICT_TABLE_CELL_LABEL = re.compile(
+    r"[\s*_`~>\-]*(?:value|notes?|result|detail|state|status|check|field|"
+    r"description|comment)\b",
     re.IGNORECASE,
 )
 # Retraction and blocker phrases for body prose after the marker (and for fenced text,
@@ -366,11 +369,16 @@ def verdict_disposition(line: str) -> bool | None:
     return None
 
 
-def verdict_row_states_disposition(line: str) -> bool:
-    """Whether a value cell of a ``| Verdict | ... |`` row names a disposition."""
-    cells = line.strip().strip("|").split("|")
-    return any(
-        VERDICT_TABLE_CELL_DISPOSITION.match(cell) is not None for cell in cells[1:]
+def verdict_row_is_label(line: str) -> bool:
+    """Whether a ``| Verdict | ... |`` row's value cell is a known column label."""
+    cells = [
+        cell.strip(VERDICT_ROW_CELL_MARKUP)
+        for cell in line.strip().strip("|").split("|")
+    ]
+    values = [cell for cell in cells[1:] if cell]
+    return (
+        len(values) == 1
+        and VERDICT_TABLE_CELL_LABEL.fullmatch(values[0]) is not None
     )
 
 
@@ -378,14 +386,13 @@ def verdict_table_header(lines: list[str], index: int) -> bool:
     """Whether ``lines[index]`` is a table header row, not a verdict.
 
     #14603 review repair: ``| Verdict | Notes |`` above a GFM delimiter row names a
-    column. Reading it as a value refused a well-formed review table. A row whose
-    value cells hold a disposition (``| Verdict | BLOCK |``) is a real verdict even
-    above a delimiter row, so it is kept and refused rather than dropped.
+    column. Only a known non-disposition label is a header; an unrecognised value
+    (``Needs work``, ``Denied``, ``NO``) is a real verdict and refuses.
     """
     normalized = normalize_body(lines[index])
     if VERDICT_TABLE_HEADER.match(normalized) is None:
         return False
-    if verdict_row_states_disposition(normalized):
+    if not verdict_row_is_label(normalized):
         return False
     return index + 1 < len(lines) and GFM_DELIMITER_ROW.match(lines[index + 1]) is not None
 
@@ -1005,6 +1012,9 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\nVERDICT: APPROVE, but the docs need work.", False),
         ("SOURCE_REVIEW_READY\nVERDICT: APPROVE — tests fail.", False),
         ("SOURCE_REVIEW_READY\nVERDICT: APPROVE — no code change needed.", True),
+        # Narration that quotes an approving verdict line is not a negative.
+        ("REVIEW_READY\n> VERDICT: APPROVE 1cc13d3d — no blocking findings on this head.", True),
+        ("REVIEW_READY\nrestores the bare carrier and quotes \"VERDICT: APPROVE 1cc13d3d — no blocking findings on this head.\"", True),
         # A table header row names a column, not a disposition.
         ("SOURCE_REVIEW_READY\n| Verdict | Notes |\n| --- | --- |\n| APPROVE |", True),
         ("SOURCE_REVIEW_READY\n| Verdict | Notes |\n| --- | --- |", True),
@@ -1013,6 +1023,26 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\n| Verdict | BLOCK |\n| --- | --- |", False),
         ("SOURCE_REVIEW_READY\n| Verdict | ABSTAIN |\n| --- | --- |", False),
         ("SOURCE_REVIEW_READY\n| Verdict | not ready |\n| --- | --- |", False),
+        # A row whose value cell is not a disposition is a header and states
+        # nothing; REPAIR_REQUIRED is a disposition and must refuse.
+        ("SOURCE_REVIEW_READY\n| Verdict | Value |\n| --- | --- |", True),
+        ("SOURCE_REVIEW_READY\n| Verdict | Notes |\n| --- | --- |", True),
+        ("SOURCE_REVIEW_READY\n| Verdict | Result |\n| --- | --- |", True),
+        ("SOURCE_REVIEW_READY\n| Verdict | REPAIR_REQUIRED |\n| --- | --- |", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | CHANGES_REQUESTED |\n| --- | --- |", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | REVIEW_INCOMPLETE |\n| --- | --- |", False),
+        # An unrecognised value is a real verdict, not a column label.
+        ("SOURCE_REVIEW_READY\n| Verdict | Needs work |\n| --- | --- |", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | Denied |\n| --- | --- |", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | Unsafe |\n| --- | --- |", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | NO |\n| --- | --- |", False),
+        # GFM permits an omitted leading pipe, so the same row without it must
+        # keep the same disposition.
+        ("SOURCE_REVIEW_READY\nField | Value\n--- | ---\nVerdict | BLOCK", False),
+        ("SOURCE_REVIEW_READY\nVerdict | REPAIR_REQUIRED", False),
+        ("SOURCE_REVIEW_READY\nVerdict | CHANGES_REQUESTED", False),
+        ("SOURCE_REVIEW_READY\nVerdict | Value\n--- | ---", True),
+        ("SOURCE_REVIEW_READY\nVerdict | Notes\n--- | ---", True),
         ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d\nNo blocking findings on this head.", True),
         ("SOURCE_REVIEW_READY\n- **Verdict:** ABSTAIN", False),
         ("SOURCE_REVIEW_READY\n```\nVERDICT: BLOCK\n```", False),
@@ -1182,6 +1212,14 @@ def self_test() -> None:
         (f"{line}\nVERDICT: APPROVE", False),
         # #14603 review repair: a Verdict column header is not a competing field.
         (f"{line}\n| Verdict | Notes |\n| --- | --- |\n| APPROVE |", True),
+        # A Verdict row whose value cell is a disposition is not a header, so it
+        # competes with the description carrier and attests nothing.
+        (f"{line}\n| Verdict | REPAIR_REQUIRED |\n| --- | --- |", False),
+        (f"{line}\n| Verdict | Value |\n| --- | --- |", True),
+        # The same rows without the optional leading pipe.
+        (f"{line}\nVerdict | BLOCK", False),
+        (f"{line}\nVerdict | REPAIR_REQUIRED", False),
+        (f"{line}\nVerdict | Value\n--- | ---", True),
         (f"{line}\n| Check | Result |\n| --- | --- |\n| fmt | pass |", True),
         (f"{line}\nAccepted winner and losing candidate disposition (when decided): none", True),
         ("", False),
