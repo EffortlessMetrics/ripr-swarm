@@ -1220,7 +1220,12 @@ fn range_bound_change(before: &str, after: &str) -> Option<RangeConsumer> {
     let before = mask_rust_comments_and_strings(&raw_before);
     let after = mask_rust_comments_and_strings(&raw_after);
     if before == after {
-        // A char endpoint (`'a'..='z'`) is masked like a string literal.
+        // A char endpoint (`'a'..='z'`) is masked like a string literal. A
+        // line with a string or comment is left alone: its `..` may be text.
+        let has_text = |raw: &str| raw.contains('"') || raw.contains("//") || raw.contains("/*");
+        if has_text(&raw_before) || has_text(&raw_after) {
+            return None;
+        }
         return range_endpoints_moved(&raw_before, &raw_after).then(|| {
             if raw_after.contains("=>") {
                 RangeConsumer::Pattern
@@ -1293,17 +1298,49 @@ fn range_signatures(text: &str) -> Vec<(String, bool, String)> {
         let inclusive = rest.starts_with('=');
         let after = at + 2 + usize::from(inclusive);
         let head = &text[..at];
-        let start = head
-            .rfind(|ch: char| ",([{|;=".contains(ch))
-            .map_or(head, |cut| &head[cut + 1..]);
         let tail = &text[after..];
-        let end = tail
-            .find(|ch: char| ",)]}|;={".contains(ch))
-            .map_or(tail, |cut| &tail[..cut]);
+        let start = &head[operand_start(head)..];
+        let end = &tail[..operand_end(tail)];
         signatures.push((start.trim().to_string(), inclusive, end.trim().to_string()));
         from = after;
     }
     signatures
+}
+
+/// The byte offset in `head` where a range's start operand begins: after
+/// the nearest unbalanced opener or a top-level `,`, `|`, `;` or `=`, so a
+/// call or index inside the operand (`f(a, b)..`) stays whole.
+fn operand_start(head: &str) -> usize {
+    let mut depth = 0usize;
+    for (at, ch) in head.char_indices().rev() {
+        match ch {
+            ')' | ']' | '}' => depth += 1,
+            '(' | '[' | '{' if depth == 0 => return at + 1,
+            '(' | '[' | '{' => depth -= 1,
+            ',' | '|' | ';' | '=' if depth == 0 => return at + 1,
+            _ => {}
+        }
+    }
+    0
+}
+
+/// The byte offset in `tail` where a range's end operand stops: at the
+/// nearest unbalanced closer, a block `{`, or a top-level `,`, `|`, `;` or
+/// `=`, so `..=v.len() - 1` and `..=f(a, b)` stay whole.
+fn operand_end(tail: &str) -> usize {
+    let mut depth = 0usize;
+    for (at, ch) in tail.char_indices() {
+        match ch {
+            '(' | '[' => depth += 1,
+            ')' | ']' | '}' if depth == 0 => return at,
+            ')' | ']' | '}' => depth -= 1,
+            '{' if depth == 0 => return at,
+            '{' => depth += 1,
+            ',' | '|' | ';' | '=' if depth == 0 => return at,
+            _ => {}
+        }
+    }
+    tail.len()
 }
 
 /// Whether `before` and `after` hold the same number of ranges and at least
@@ -2161,6 +2198,19 @@ mod tests {
             "b'0'..=b'9' | b'a'..=b'z' => true,"
         ));
         assert!(!range_endpoints_moved("f(a...b)", "f(a...c)"));
+        // A call or index inside an operand stays whole.
+        assert!(absorbing(
+            "println!(\"{}\", (0..=v.len() - 1).sum::<usize>())",
+            "println!(\"{}\", (0..=v.len() - 2).sum::<usize>())"
+        ));
+        assert!(range_endpoints_moved(
+            "m!((f(a, b)..=n))",
+            "m!((f(c, b)..=n))"
+        ));
+        assert!(range_endpoints_moved("m!(0..=f(a, b))", "m!(0..=f(a, c))"));
+        // A string or comment holding `..` is not a char endpoint.
+        assert!(range_bound_change("say(\"Done..\")", "say(\"Finished..\")").is_none());
+        assert!(range_bound_change("x // 0..5", "x // 0..6").is_none());
     }
 
     #[test]

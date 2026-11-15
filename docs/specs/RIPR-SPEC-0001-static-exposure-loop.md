@@ -130,7 +130,8 @@ ranges change at once is gated unless every changed range keeps a
 length-preserving reading with no range nested inside it. An edit inside a
 macro input (`matches!(n, 1..=5)`) or on a line that does not parse is gated
 when a range's written endpoints or operator differ between the versions
-(an edit beside the ranges, or a range added or removed, is not gated), and a
+(an edit beside the ranges, or a change in how many ranges the line holds, is
+not gated), and a
 moved char endpoint
 (`'a'..='z'` to `'b'..='y'`) is gated like an integer one (#14538). Any other gated change, including an input ripr cannot fold, reads
 `unknown`, except a moved match range pattern: whenever the fold does not
