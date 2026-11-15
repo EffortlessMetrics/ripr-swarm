@@ -998,7 +998,7 @@ fn retrying_only_the_second_pr_read_exposes_the_stale_review_false_green() -> Re
     assert_eq!(source.matches(refusal).count(), 1);
     let only_pr_retry = source.replace(
         refusal,
-        "                if [ \"$retry_pr_read\" = true ]; then retry_pr_read=false; sleep 1; read_pr; return; fi\n                pr=; return \"$native\"\n",
+        "                if [ \"$retry_pr_read\" = true ]; then retry_pr_read=false; sleep 1; read_pr \"$target_pr\" \"$target_head\"; return; fi\n                pr=; return \"$native\"\n",
     );
     let blocked = LIVE_GRAPHQL.replace("APPROVED", "CHANGES_REQUESTED");
     let prs = [

@@ -261,6 +261,9 @@ fn run_resolve(world: &World, shell: &str, run: &Run) -> Result<Outcome, String>
         "headRefOid": run.api_head,
         "mergeQueueEntry": {"id": "entry-42"},
     }}}});
+    // The entry step classifies each constituent from its changed paths. A
+    // non-docs path keeps the constituent out of the docs-only branch.
+    let files = json!([{"filename": "src/lib.rs"}]);
 
     let bin = scratch.join("bin");
     fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
@@ -268,8 +271,10 @@ fn run_resolve(world: &World, shell: &str, run: &Run) -> Result<Outcome, String>
     fs::write(
         &gh,
         r#"#!/bin/sh
+if [ "$2" = "--paginate" ]; then shift; fi
 case "$2" in
   graphql) printf '%s\n' "$MOCK_GRAPHQL" ;;
+  repos/*/pulls/*/files*) printf '%s\n' "$MOCK_FILES" ;;
   repos/*/pulls/42) printf '%s\n' "$MOCK_PR" ;;
   repos/*/commits/*) printf '%s\n' "$MOCK_COMMIT" ;;
   *) exit 97 ;;
@@ -317,6 +322,7 @@ esac
         .env("MOCK_PR", pr.to_string())
         .env("MOCK_COMMIT", commit.to_string())
         .env("MOCK_GRAPHQL", graphql.to_string())
+        .env("MOCK_FILES", files.to_string())
         .output()
         .map_err(|e| e.to_string())?;
     let outputs = fs::read_to_string(&github_output)
@@ -516,12 +522,14 @@ fn batch_wrong_parent_and_wrong_subject_still_refuse_before_the_tree_is_read() -
     let world = World::new()?;
     let shell = resolve_shell(&workflow()?)?;
 
-    // Subject does not name the PR.
+    // Subject names a different PR (#43), so the entry step derives PR 43 and
+    // refuses when refs/pull/43/head is not the live head. The refusal still
+    // happens before the tree is read.
     let mut run = honest(&world, &world.head, &world.base)?;
     run.queued = world.squash(&world.head, "feature (#43)")?;
     assert_refused(
         &run_resolve(&world, &shell, &run)?,
-        "not a single squash commit",
+        "is not the live head",
     );
 
     // Parent is not the group base (a batch built on an earlier entry).
@@ -530,7 +538,7 @@ fn batch_wrong_parent_and_wrong_subject_still_refuse_before_the_tree_is_read() -
     run.ref_sha = world.head.clone();
     assert_refused(
         &run_resolve(&world, &shell, &run)?,
-        "not a single squash commit",
+        "is not a single-parent commit directly on",
     );
 
     // The ref sha is neither the live head nor the base.
