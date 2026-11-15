@@ -412,7 +412,7 @@ fn queued_squash_of_a_different_head_is_refused_even_when_it_predates_the_queue_
     // Control: the same inputs are admitted when the one binding is removed,
     // so the refusal above is caused by the tree comparison alone.
     let weakened = shell.replace(
-        "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${GROUP_HEAD_SHA}^{tree}\")\" ]",
+        "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${c_sha}^{tree}\")\" ]",
         "true",
     );
     assert_ne!(
