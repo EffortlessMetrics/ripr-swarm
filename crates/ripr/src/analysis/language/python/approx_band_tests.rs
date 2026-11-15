@@ -341,7 +341,7 @@ fn a_body_that_cannot_be_rebuilt_keeps_abstaining() -> Result<(), String> {
     assert_eq!(body_edit(repeated, 2, "    y = x * 3", true)?, UNREAD);
     // A statement other than a plain assignment, and a call the evaluation
     // does not model.
-    let guarded = "def band(x):\n    y = x * 3 + 0.5\n    if x:\n        y = 0\n    return y\n";
+    let guarded = "def band(x):\n    y = x * 3 + 0.5\n    if y > 9:\n        y = 0\n    return y\n";
     assert_eq!(body_edit(guarded, 2, "    y = x * 3", true)?, UNREAD);
     let called = "def band(x):\n    y = abs(x) * 3 + 0.5\n    return y\n";
     assert_eq!(body_edit(called, 2, "    y = abs(x) * 3", true)?, UNREAD);
