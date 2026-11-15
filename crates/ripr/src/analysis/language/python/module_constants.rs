@@ -609,6 +609,21 @@ impl PythonTestRebinding {
             .chain(self.foreign_attributes.iter())
             .any(|attribute| attribute == name || attribute == "*")
     }
+
+    /// Whether the test file, or a workspace write on its module, may assign
+    /// a dunder attribute (`Rates.__getattribute__ = ...`), which can change
+    /// what a class builds or looks up.
+    pub(super) fn assigns_dunder_attribute(&self) -> bool {
+        self.attributes
+            .iter()
+            .chain(self.foreign_attributes.iter())
+            .any(|attribute| {
+                attribute == "*"
+                    || (attribute.len() > 4
+                        && attribute.starts_with("__")
+                        && attribute.ends_with("__"))
+            })
+    }
 }
 
 /// Rebinding facts from one test function's own scope: its parameters and
