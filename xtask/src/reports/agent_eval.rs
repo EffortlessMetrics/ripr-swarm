@@ -1205,35 +1205,27 @@ fn find_runs_disagree(scenario: &Value) -> Option<String> {
             .iter()
             .find(|row| row["route"] == route)?["steps"]
             .get(0)
-            .cloned()
     };
     let (looped, found) = (first_step("cli-agent-loop")?, first_step("cli-agent-find")?);
-    let size = |step: &Value| {
-        (
-            step["exit"].clone(),
-            step["bytes"].as_u64(),
-            step["tokens"].as_u64(),
-        )
-    };
-    if size(&looped) == size(&found) {
+    if looped["exit"] == found["exit"]
+        && looped["bytes"].as_u64() == found["bytes"].as_u64()
+        && looped["tokens"].as_u64() == found["tokens"].as_u64()
+    {
         return None;
     }
+    let count = |value: &Value| value.as_u64().map_or("?".to_string(), |n| n.to_string());
     let show = |step: &Value| {
         format!(
             "exit {}, {} bytes/{} tokens",
             step["exit"],
-            step["bytes"]
-                .as_u64()
-                .map_or("?".to_string(), |n| n.to_string()),
-            step["tokens"]
-                .as_u64()
-                .map_or("?".to_string(), |n| n.to_string()),
+            count(&step["bytes"]),
+            count(&step["tokens"])
         )
     };
     Some(format!(
         "identical FIND runs disagree (cli-agent-loop {}, cli-agent-find {}); the run measured host noise",
-        show(&looped),
-        show(&found)
+        show(looped),
+        show(found)
     ))
 }
 
