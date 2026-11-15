@@ -294,6 +294,12 @@ def positive_line(line: str) -> bool:
     return not STATE_TOKEN.search(tail) and tail_allowed(tail)
 
 
+MARKER_NEUTRAL_TAIL = re.compile(
+    r"[\s*_`~>\-]*(?:head[\s*_`~>\-]+)?[0-9a-f]{7,40}[\s*_`~>\-]*",
+    re.IGNORECASE,
+)
+
+
 def marker_line_neutral(line: str) -> bool:
     """Whether ``line`` is a mis-formatted positive marker: no attestation, no refusal.
 
@@ -311,13 +317,11 @@ def marker_line_neutral(line: str) -> bool:
     tail = normalized[match.end() :]
     if STATE_TOKEN.search(tail) or negation_hit(line):
         return False
-    # #14728 review: the tail must be nothing but a commit reference. A word
-    # scan would drop an emoji or other non-ASCII character and read the rest as
-    # a bare commit, so the whole tail is matched instead.
-    stripped = tail.strip(" \t,.;:-`'()/")
-    if stripped.lower().startswith("head "):
-        stripped = stripped[len("head ") :].strip()
-    return SHA_TOKEN.fullmatch(stripped) is not None
+    # The tail must be nothing but a commit reference. Extracting ASCII words
+    # dropped an emoji, so `REVIEW_READY <sha> ❌` read as neutral and
+    # neither attested nor refused. Any character outside the separator set
+    # now fails the match, so the body falls through to the negative scan.
+    return MARKER_NEUTRAL_TAIL.fullmatch(tail) is not None
 
 
 # #8157 VERDICT carrier: only a column-zero first line in the observed verdict
@@ -385,15 +389,21 @@ def comment_body_verdict_ready(body: str, head: str) -> bool:
     substantive = [line for line in visible if line.strip()]
     if any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced):
         return False
+    # The verdict statement is the first blank-line-delimited block. A hedge
+    # anywhere in that block defers the disposition, so a marker whose
+    # qualification sits on a following line attests nothing.
+    statement: list[str] = []
+    for line in visible:
+        if not line.strip():
+            if statement:
+                break
+            continue
+        statement.append(line)
+    if any(VERDICT_TAIL_HEDGE.search(line) for line in statement[1:]):
+        return False
     return all(
         positive_line(line)
-        or not (
-            STATE_LINE.match(line)
-            or negation_hit(line)
-            # #14728 review: a later line that defers the approval makes the
-            # carrier conditional, so it attests nothing.
-            or VERDICT_TAIL_HEDGE.search(line)
-        )
+        or not (STATE_LINE.match(line) or negation_hit(line))
         for line in substantive[1:]
     )
 
