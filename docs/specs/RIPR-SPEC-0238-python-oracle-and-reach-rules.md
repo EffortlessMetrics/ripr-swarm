@@ -32,6 +32,9 @@ Linked issues:
   messages; rule 2)
 - #7586 (a mock passed for a called parameter, and the wrapped-argument
   gate; rule 17, example 9)
+- #14803 (async test styles: `IsolatedAsyncioTestCase`, `asyncSetUp`,
+  awaited result locals and `pytest_asyncio` literal fixtures; L8 and
+  sink alignment)
 
 Linked PRs:
 
@@ -587,9 +590,15 @@ This order is the existing behavior and is normative:
   of a method owner's class (#9619, `py-fixtures-deposit`). The fixture
   is a single argument-free fixture decorator (`@pytest.fixture`,
   `@fixture`, an imported alias or `@pytest_asyncio.fixture`: function
-  scope, no `params=`, no `autouse=`) on a synchronous def with no
+  scope, no `params=`, no `autouse=`) on a def with no
   parameters whose body is an optional docstring and
-  `return C(<literals>)`. `C` is the owner's class imported under its own
+  `return C(<literals>)`. A coroutine def counts only under
+  `@pytest_asyncio.fixture` (with a plain `import pytest_asyncio` as the
+  file's only binding of that name) or a `fixture` alias imported from
+  `pytest_asyncio` and not rebound before the def: that plugin awaits it
+  and hands the test its returned value, while plain `pytest.fixture`
+  hands a strict-mode test the un-awaited coroutine (#14803).
+  `C` is the owner's class imported under its own
   name from the owner's module, and the fixture's file binds neither the
   fixture name nor `C` a second time. The test takes the fixture as a
   parameter without a default, does not rebind it, and carries no
@@ -722,7 +731,8 @@ This order is the existing behavior and is normative:
 The credit branches are, in order: `direct` by owner identity token;
 `direct` by a method call on a bound receiver; `alias`; `direct` through a
 module-qualified call or a result local that is an asserted operand
-(RIPR-SPEC-0028, #4567); `changed_sink_token` from the changed-line token
+(RIPR-SPEC-0028, #4567; for a coroutine owner the local may bind
+`await f(..)`, which hands back the value its body returned, #14803); `changed_sink_token` from the changed-line token
 delta; `direct` through the channel a changed write reaches (rule 17);
 else `orthogonal`. A free-function owner's identity, delta-token and
 effect-channel credit need module identity. An empty owner or changed-sink token
@@ -2260,6 +2270,13 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `crates/ripr/src/analysis/language/python/literal_fixture_tests.rs`
   pins the inlined control, the conftest and same-module fixture, and
   every negative shape and interference route of example 41.
+- Async test styles (#14803):
+  `crates/ripr/src/app/tests/python_test_style_matrix.rs` pins the
+  `pytest_asyncio` literal fixture, the awaited result local, the
+  `IsolatedAsyncioTestCase` and `asyncSetUp` rows (weak, strong before and
+  strong after the diff) and their negatives: a plain `pytest.fixture`
+  coroutine, an alias that becomes `pytest_asyncio`'s only after the def,
+  and `asyncSetUp` on a plain `TestCase`.
 - L8's literal-params fixture and the parametrize-mark scope (#9619):
   `crates/ripr/src/analysis/language/python/param_fixture_tests.rs` pins
   the decorated control, the conftest, same-module and single-name forms,
