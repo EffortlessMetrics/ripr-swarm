@@ -3774,8 +3774,15 @@ name = "TypeScript preview static facts"
 spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::spec_0027_ambiguous_fallback_is_never_exposed_and_punctuation_is_ignored",
-  "crates/ripr/src/analysis/language/typescript/tests_extract_finder_tests.rs::vitest_test_for_registration_is_a_partial_extraction_gap",
-  "crates/ripr/src/analysis/language/typescript/tests_extract_finder_tests.rs::vitest_it_for_registration_is_a_partial_extraction_gap",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_finder_tests.rs::vitest_test_for_literal_table_is_indexed_not_a_partial_gap",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_finder_tests.rs::vitest_test_for_unread_row_binding_is_a_partial_extraction_gap",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_finder_tests.rs::vitest_it_for_registration_is_indexed",
+  "crates/ripr/src/analysis/language/typescript/tests/vitest_for_tests.rs::destructured_rows_read_one_boundary_case_per_row",
+  "crates/ripr/src/analysis/language/typescript/tests/vitest_for_tests.rs::direct_each_and_for_tests_earn_equivalent_evidence",
+  "crates/ripr/src/analysis/language/typescript/tests/vitest_for_tests.rs::each_style_parameters_are_not_spread_rows",
+  "crates/ripr/src/analysis/language/typescript/tests/vitest_for_tests.rs::context_skip_withdraws_the_registration",
+  "crates/ripr/src/analysis/language/typescript/tests/vitest_for_tests.rs::unsupported_row_bindings_stay_disclosed",
+  "crates/ripr/src/analysis/language/typescript/tests/vitest_for_tests.rs::dormant_or_deleting_callbacks_stay_disclosed",
   "crates/ripr/src/analysis/language/typescript/tests_extract_finder_tests.rs::vitest_test_for_empty_table_is_not_a_dropped_active_registration",
   "crates/ripr/src/analysis/language/typescript/tests_extract_finder_tests.rs::vitest_test_for_skip_option_is_not_a_dropped_active_registration",
   "crates/ripr/src/analysis/language/typescript/tests_extract_finder_tests.rs::unrelated_for_method_is_not_a_partial_extraction_gap",
