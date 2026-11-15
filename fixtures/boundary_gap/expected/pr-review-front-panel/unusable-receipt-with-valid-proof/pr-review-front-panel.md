@@ -4,7 +4,7 @@ Status: incomplete
 
 Start here:
 - State: missing required evidence
-- Safe next action: regenerate the missing assistant proof artifact before acting on this panel.
+- Safe next action: regenerate the missing required artifact before acting on this panel.
 - Missing input: fixtures/boundary_gap/input/malformed-agent-receipt.json
 - Boundary: advisory static evidence only; no gate, runtime, coverage, or mutation proof is implied.
 

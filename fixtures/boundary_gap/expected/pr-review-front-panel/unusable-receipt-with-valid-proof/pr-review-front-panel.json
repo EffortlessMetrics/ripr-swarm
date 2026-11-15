@@ -21,7 +21,7 @@
   },
   "summary": {
     "status": "incomplete",
-    "headline": "Regenerate missing assistant proof before acting.",
+    "headline": "Regenerate the missing required artifact before acting.",
     "top_issue_state": "missing_required_input",
     "policy_state": "none",
     "placement": "not_available",
@@ -100,8 +100,8 @@
     },
     {
       "kind": "missing_required_input",
-      "message": "Assistant proof artifact is missing.",
-      "source_artifact": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/assistant-proof.json"
+      "message": "First-action report names a missing required artifact.",
+      "source_artifact": null
     }
   ],
   "limits": [

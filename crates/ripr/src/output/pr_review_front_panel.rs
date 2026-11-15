@@ -314,7 +314,6 @@ pub(crate) fn build_pr_review_front_panel_report(
         movement_state = "unknown".to_string();
         movement.state = "unknown".to_string();
         coverage_state = "not_available".to_string();
-        headline = "Regenerate missing assistant proof before acting.".to_string();
         let before_retain = warnings.len();
         warnings.retain(|warning| {
             warning.kind != "missing_optional_input"
@@ -347,15 +346,35 @@ pub(crate) fn build_pr_review_front_panel_report(
             .iter()
             .any(|warning| warning.kind == "missing_required_input")
         {
+            // Only a removed or promoted proof warning means the proof itself
+            // is missing. When first-action names some other artifact the proof
+            // may be present and valid, so the synthesized warning must not
+            // claim it is missing or name it as the missing input (#14628).
+            let proof_is_missing = removed_proof_warning;
             warnings.push(PanelWarning {
                 kind: "missing_required_input".to_string(),
-                message: "Assistant proof artifact is missing.".to_string(),
-                source_artifact: input.assistant_proof_path.clone(),
+                message: if proof_is_missing {
+                    "Assistant proof artifact is missing.".to_string()
+                } else {
+                    "First-action report names a missing required artifact.".to_string()
+                },
+                source_artifact: if proof_is_missing {
+                    input.assistant_proof_path.clone()
+                } else {
+                    None
+                },
             });
             missing_required_input_from_read_failure = removed_proof_warning;
         } else {
             missing_required_input_from_read_failure = true;
         }
+        // The proof is only the thing to regenerate when it is the cause; a
+        // first-action fallback names a different artifact (#14628).
+        headline = if missing_required_input_from_read_failure {
+            "Regenerate missing assistant proof before acting.".to_string()
+        } else {
+            "Regenerate the missing required artifact before acting.".to_string()
+        };
     } else if candidate.placement == "summary_only" {
         warnings.push(PanelWarning {
             kind: "summary_only_guidance".to_string(),
@@ -513,7 +532,11 @@ pub(crate) fn render_pr_review_front_panel_markdown(report: &PrReviewFrontPanelR
     out.push_str("Start here:\n");
     if report.summary.top_issue_state == "missing_required_input" {
         out.push_str("- State: missing required evidence\n");
-        out.push_str("- Safe next action: regenerate the missing assistant proof artifact before acting on this panel.\n");
+        if report.missing_required_input_from_read_failure {
+            out.push_str("- Safe next action: regenerate the missing assistant proof artifact before acting on this panel.\n");
+        } else {
+            out.push_str("- Safe next action: regenerate the missing required artifact before acting on this panel.\n");
+        }
         // Name the input whose warning promoted the panel to
         // `missing_required_input`, but only when that warning came from a read
         // failure on the proof: a synthesized warning can name a proof that is
@@ -526,7 +549,12 @@ pub(crate) fn render_pr_review_front_panel_markdown(report: &PrReviewFrontPanelR
         } else {
             None
         }
-        .or_else(|| report.warnings.first());
+        .or_else(|| {
+            report
+                .warnings
+                .iter()
+                .find(|warning| warning.source_artifact.is_some())
+        });
         if let Some(warning) = missing_input {
             out.push_str(&format!(
                 "- Missing input: {}\n",
@@ -2905,6 +2933,72 @@ mod tests {
         assert!(
             !markdown.contains("- Missing input: test-oracle-assistant-proof.json"),
             "{markdown}"
+        );
+        Ok(())
+    }
+
+    /// #14628 round 5: a first-action fallback that names a different artifact
+    /// must not make the panel name a present, parsing proof as the missing
+    /// input, and the synthesized warning must not claim the proof is missing.
+    #[test]
+    fn synthesized_required_warning_does_not_name_a_present_proof() -> Result<(), String> {
+        let input = PrReviewFrontPanelInput {
+            root: ".".to_string(),
+            generated_at: "2026-05-09T12:00:00Z".to_string(),
+            out_md_path: "target/ripr/reports/pr-review-front-panel.md".to_string(),
+            pr_guidance_path: None,
+            first_action_path: Some("first-useful-action.json".to_string()),
+            assistant_proof_path: Some("test-oracle-assistant-proof.json".to_string()),
+            assistant_health_path: None,
+            ledger_path: None,
+            baseline_delta_path: None,
+            zero_status_path: None,
+            gate_decision_path: None,
+            recommendation_calibration_path: None,
+            mutation_calibration_path: None,
+            coverage_frontier_path: None,
+            receipt_path: None,
+            pr_guidance_json: None,
+            first_action_json: Some(Ok(
+                r#"{"status":"missing_required_artifact","fallback":{"kind":"missing_required_artifact","missing":"receipt verify/artifact evidence"}}"#
+                    .to_string(),
+            )),
+            assistant_proof_json: Some(Ok("{}".to_string())),
+            assistant_health_json: None,
+            ledger_json: None,
+            baseline_delta_json: None,
+            zero_status_json: None,
+            gate_decision_json: None,
+            recommendation_calibration_json: None,
+            mutation_calibration_json: None,
+            coverage_frontier_json: None,
+            receipt_json: None,
+        };
+        let report = build_pr_review_front_panel_report(input);
+        assert_eq!(report.summary.top_issue_state, "missing_required_input");
+        assert!(
+            !report.missing_required_input_from_read_failure,
+            "the proof parsed, so the panel is not incomplete because of it"
+        );
+        let markdown = render_pr_review_front_panel_markdown(&report);
+        assert!(
+            !markdown.contains("- Missing input:"),
+            "a present, parsing proof must not be named as the missing input: {markdown}"
+        );
+        assert!(
+            !report.warnings.iter().any(|warning| warning
+                .source_artifact
+                .as_deref()
+                .is_some_and(|path| path.ends_with("test-oracle-assistant-proof.json"))),
+            "no warning may name the present proof: {:?}",
+            report.warnings
+        );
+        assert!(
+            !report.warnings.iter().any(|warning| warning
+                .message
+                .contains("Assistant proof artifact is missing")),
+            "the synthesized warning must not claim the proof is missing: {:?}",
+            report.warnings
         );
         Ok(())
     }
