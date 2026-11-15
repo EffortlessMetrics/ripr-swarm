@@ -187,3 +187,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_scope_escape (16)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_scope_escape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

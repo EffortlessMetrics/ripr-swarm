@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Machine-readable config errors (`--json`, SARIF, GitHub, editor, and the MCP `ripr_refresh` detail) now carry the parser's reason, such as `unknown key, expected one of ...` or `unclosed table, expected `]``, not just the line and column; file content still never enters them, and `ripr_refresh` no longer returns the raw TOML excerpt and a CLI-only trailer cut mid-word (#14441, #14451).

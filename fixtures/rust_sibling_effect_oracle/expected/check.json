@@ -41,6 +41,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach module_limit_evidence: module_evidence_retains_single_pass_duplicates_benign_and_unavailable, module_note_line_byte_boundary_excludes_line_terminators", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence call effect: .or_insert_with(BTreeSet::new)", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches call effect: .or_insert_with(BTreeSet::new) (line 137)", "related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable uses no oracle", "related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators uses no oracle", "related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes uses no oracle", "related test src/sensors/ripr_limits.rs:283 module_note_contract_rejects_malformed_counts_reasons_and_paths uses no oracle", "related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses no oracle", "source table row value \"disclosed\" at line 220", "source table row value 0 at line 220", "source table row value 1 at line 220", "source table row value 8 at line 220", "source table row value \"invalid_disclosure\" at line 221", "source table row value 0 at line 221", "source table row value 1 at line 221", "source function argument value detail_status = \"detail_unavailable\" at line 225"],
       "flow_sinks": [
         {"kind":"call_effect","text":".or_insert_with(BTreeSet::new)","line":137}
@@ -525,6 +532,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach module_limit_evidence: module_evidence_retains_single_pass_duplicates_benign_and_unavailable, module_note_line_byte_boundary_excludes_line_terminators", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence call effect: .or_default()", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches call effect: .or_default() (line 137)", "related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable uses no oracle", "related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators uses no oracle", "related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes uses no oracle", "related test src/sensors/ripr_limits.rs:283 module_note_contract_rejects_malformed_counts_reasons_and_paths uses no oracle", "related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses no oracle", "source table row value \"disclosed\" at line 220", "source table row value 0 at line 220", "source table row value 1 at line 220", "source table row value 8 at line 220", "source table row value \"invalid_disclosure\" at line 221", "source table row value 0 at line 221", "source table row value 1 at line 221", "source function argument value detail_status = \"detail_unavailable\" at line 225"],
       "flow_sinks": [
         {"kind":"call_effect","text":".or_default()","line":137}

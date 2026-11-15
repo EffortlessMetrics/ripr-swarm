@@ -255,11 +255,18 @@ impl<'a> BoundedAgentBrief<'a> {
                 .map(|item| AgentBriefSelectedSeam {
                     seam: &item.entry,
                     why_now: item.why_now.clone(),
+                    arm_result: None,
                 })
                 .collect(),
             warnings,
             omitted_by_cap: omitted,
             omitted_by_policy: self.omission_counts.iter().map(|item| item.count).sum(),
+            omitted_static_limited: self
+                .omission_counts
+                .iter()
+                .filter(|item| item.kind.is_static_limited())
+                .map(|item| item.count)
+                .sum(),
         })
     }
 }
@@ -466,6 +473,7 @@ mod tests {
         )?;
         let selection = sink.selection()?;
         assert_eq!(selection.omitted_by_policy, total);
+        assert_eq!(selection.omitted_static_limited, 0);
         assert_eq!(selection.returned, 1);
         assert_eq!(
             selection.top_seams[0].why_now.reason,

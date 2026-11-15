@@ -77,7 +77,7 @@ pub(super) const HELP_ALL: &str = r#"ripr — complete command reference.
 
 Task-oriented overview: ripr --help
 Options for one command: ripr help <command>
-Machine catalog: ripr help --json  (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands
+Machine catalog: ripr help --json  (this route accepts no other arguments)
 
 Global flags (accepted in any position, before or after the command, except on ripr help --json):
   -v, --verbose   Extra pipeline diagnostics on stderr: analyzed languages,
@@ -85,6 +85,10 @@ Global flags (accepted in any position, before or after the command, except on r
                   per-stage timing table after a complete run. A -v/--verbose
                   token is always this global flag, never another flag's
                   value.
+
+Flag values: `--name value` and `--name=value` are the same on every command;
+tokens after a literal `--` are left as written. Switches take no value, so
+`--quiet=false` is refused: leave the switch out instead.
 
 Task map:
   Diagnose setup        ripr doctor
@@ -163,6 +167,8 @@ PR & Review:
   ripr assistant-loop health --proof target/ripr/reports/test-oracle-assistant-proof.json [--out target/ripr/reports/assistant-loop-health.json]
 
 Policy & Gate:
+  ripr gate check --base REV [--head HEAD] [--mode acknowledgeable|visible-only|baseline-check|calibrated-gate] [--label LABEL] [--labels-json PATH] [--out target/ripr/reports/gate-decision.json]
+  # one-command CI gate: review-comments then gate evaluate; exit 3 blocked, 2 could not complete
   ripr gate evaluate --pr-guidance PATH [--mode visible-only|acknowledgeable|baseline-check|calibrated-gate] [--baseline PATH] [--labels-json PATH] [--out target/ripr/reports/gate-decision.json]
   # acknowledgeable mode blocks eligible gaps unless the PR carries the configured waiver label (default: ripr-waive)
   # baseline-check and calibrated-gate modes require --baseline PATH (otherwise exit 2, config_error)

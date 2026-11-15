@@ -67,11 +67,15 @@ fn render() -> Result<String, String> {
     out.push_str("\n```\n\n");
 
     // Commands that share one help body (a group and its subcommands) are
-    // documented once, under the first command that prints it. Compatibility
+    // documented once, under the first command that prints it. A family leaf
+    // swaps only the body's lead summary line for its own catalog summary,
+    // which the Commands table already shows, so bodies are compared without
+    // that line; the section prints the first command's full text. Compatibility
     // spellings are visited last so a shared section is titled by the
     // canonical command.
     let mut section_of: BTreeMap<String, String> = BTreeMap::new();
     let mut by_body: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut full_body: BTreeMap<String, String> = BTreeMap::new();
     let mut order: Vec<String> = Vec::new();
     let (canonical, compatibility): (Vec<_>, Vec<_>) = commands
         .iter()
@@ -80,9 +84,14 @@ fn render() -> Result<String, String> {
         let path = text(command, "path");
         let mut args = vec!["help"];
         args.extend(path.split(' '));
-        let body = run(&args)?.trim_end().to_string();
+        let text_out = run(&args)?.trim_end().to_string();
+        let body = text_out
+            .split_once('\n')
+            .map_or(text_out.as_str(), |(_, rest)| rest)
+            .to_string();
         if !by_body.contains_key(&body) {
             order.push(body.clone());
+            full_body.insert(body.clone(), text_out);
         }
         let paths = by_body.entry(body).or_default();
         paths.push(path.to_string());
@@ -103,8 +112,9 @@ fn render() -> Result<String, String> {
     out.push('\n');
 
     out.push_str("## Help text by command\n");
-    for body in order {
-        let paths = &by_body[&body];
+    for key in order {
+        let paths = &by_body[&key];
+        let body = &full_body[&key];
         out.push_str(&format!("\n### {}\n\n", paths[0].replace(' ', "-")));
         if paths.len() > 1 {
             let shared: Vec<String> = paths.iter().map(|p| format!("`ripr {p}`")).collect();
@@ -113,9 +123,9 @@ fn render() -> Result<String, String> {
             out.push_str(&format!("`ripr help {}`\n\n", paths[0]));
         }
         out.push_str("```text\n");
-        out.push_str(&body);
+        out.push_str(body);
         out.push_str("\n```\n");
-        if let Some(extended) = extended_help(&paths[0]).filter(|extended| *extended != body) {
+        if let Some(extended) = extended_help(&paths[0]).filter(|extended| extended != body) {
             out.push_str(&format!(
                 "\nEvery option: `ripr help {} --all`\n\n```text\n",
                 paths[0]

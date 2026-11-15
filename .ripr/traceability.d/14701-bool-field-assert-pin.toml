@@ -1,0 +1,8 @@
+# Registers the bare `assert!` bool-field pin (#14701) under RIPR-SPEC-0094.
+[[extend]]
+id = "RIPR-SPEC-0094"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_value_sink.rs::tests::a_bare_assert_on_the_kept_field_is_a_field_pin",
+  "crates/ripr/tests/predicate_record_field_masked.rs::a_bare_assert_on_the_changed_bool_field_is_exposed",
+  "crates/ripr/tests/predicate_record_field_masked.rs::a_bare_assert_on_anything_else_stays_weak",
+]

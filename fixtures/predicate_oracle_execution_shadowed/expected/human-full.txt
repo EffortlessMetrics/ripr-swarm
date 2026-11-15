@@ -41,6 +41,7 @@ Evidence
   - source function argument value amount = 100 at line 15
   - source function argument value amount == discount_threshold at line 15
   - source function argument value discount_threshold = 100 at line 15
+  - assertion not credited: `assert_eq!` in equality_threshold_discounts at src/lib.rs:15: src/lib.rs:14 defines a macro named `assert_eq`
 
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)

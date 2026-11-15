@@ -52,6 +52,7 @@ Evidence
   - source table row value "disclosed" at line 220
   - source table row value 0 at line 220
   - source values (showing 8 of 131 read from related tests; --format json keeps a ranked 32)
+  - assertion not credited: `assert_eq!` in module_evidence_retains_single_pass_duplicates_benign_and_unavailable at src/sensors/ripr_limits.rs:374: `json!` at src/sensors/ripr_limits.rs:101 mentions `format` in its arguments, so its expansion may define it
 
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
@@ -103,6 +104,7 @@ Evidence
   - source table row value "disclosed" at line 220
   - source table row value 0 at line 220
   - source values (showing 8 of 131 read from related tests; --format json keeps a ranked 32)
+  - assertion not credited: `assert_eq!` in module_evidence_retains_single_pass_duplicates_benign_and_unavailable at src/sensors/ripr_limits.rs:374: `json!` at src/sensors/ripr_limits.rs:101 mentions `format` in its arguments, so its expansion may define it
 
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)

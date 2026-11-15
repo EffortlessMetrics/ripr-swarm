@@ -278,15 +278,14 @@ fn extract_tests_expanding_suite_factories(
             test.imports_in_file = shared_imports.clone();
         }
         let code = blank_ranges(source, &masked);
-        let enum_code = enum_member_guard::enum_member_use_code(&ret.program.body, source);
+        let enum_use = (!imports.is_empty())
+            .then(|| enum_member_guard::EnumMemberUse::new(&ret.program.body, source));
         let unstable_member_roots: Vec<String> = imports
             .iter()
             .filter(|import| {
-                !enum_member_guard::enum_member_root_is_read_only(
-                    &enum_code,
-                    &import.local,
-                    import.namespace,
-                )
+                enum_use.as_ref().is_some_and(|enum_use| {
+                    !enum_use.root_is_read_only(&import.local, import.namespace)
+                })
             })
             .map(|import| import.local.clone())
             .collect();
@@ -320,6 +319,13 @@ fn extract_tests_expanding_suite_factories(
             let replacements: Shared<_> = replacements.into();
             for test in &mut tests {
                 test.member_replacements_in_file = replacements.clone();
+            }
+        }
+        let loads = dynamic_load_specifiers(source);
+        if !loads.is_empty() {
+            let loads: Shared<_> = loads.into();
+            for test in &mut tests {
+                test.dynamic_load_specifiers_in_file = loads.clone();
             }
         }
         let factories = mock_factories(&ret.program.body, &code);
@@ -2006,10 +2012,44 @@ fn identity_helpers(statements: &[Statement<'_>], code: &str) -> Vec<String> {
         .collect()
 }
 
+/// Literal specifiers of dynamic `import(`, `require(`, `requireActual(` and
+/// `importActual(` calls anywhere in the file (#13750), with optional ASCII
+/// whitespace between the callee and `(`. Textual and whole-file, so it
+/// over-collects (comments, strings, the literal prefix of a concatenation)
+/// and never misses a literal load; non-literal arguments are not recorded.
+fn dynamic_load_specifiers(source: &str) -> Vec<String> {
+    let mut specifiers: Vec<String> = Vec::new();
+    for callee in ["import", "require", "requireActual", "importActual"] {
+        for (at, _) in source.match_indices(callee) {
+            if source[..at]
+                .chars()
+                .next_back()
+                .is_some_and(is_javascript_identifier_char)
+            {
+                continue;
+            }
+            let after = at + callee.len();
+            let rest = &source[after..];
+            let trimmed = rest.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
+            if !trimmed.starts_with('(') {
+                continue;
+            }
+            let open = after + (rest.len() - trimmed.len()) + 1;
+            if let Some(specifier) = quoted_literal_after(source, open)
+                && !specifiers.contains(&specifier)
+            {
+                specifiers.push(specifier);
+            }
+        }
+    }
+    specifiers
+}
+
 /// `(local, member)` for each default import whose local is used, across the
-/// whole file, only as its own `import local` binding and as calls
-/// `local.member(` of one member. Any other use (assignment, `spyOn`,
-/// alias, argument) withholds the pair, wherever it sits in the file.
+/// whole file, only as its own `import local` binding and as direct calls
+/// `local.member(` (one pair per distinct called member; axios `utils.merge`
+/// beside `utils.extend`, #6653). Any other use (assignment, `spyOn`, alias,
+/// argument) withholds every pair of that local, wherever it sits in the file.
 fn default_member_only_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(String, String)> {
     if file_is_opaque(code) {
         return Vec::new();
@@ -2020,7 +2060,7 @@ fn default_member_only_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(
         .iter()
         .filter(|import| !import.namespace && import.imported.as_deref() == Some("default"))
     {
-        let mut member: Option<String> = None;
+        let mut members: Vec<String> = Vec::new();
         let mut clean = true;
         for at in word_occurrences(code, &import.local) {
             let before = code[..at].trim_end();
@@ -2044,17 +2084,21 @@ fn default_member_only_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(
                 clean = false;
                 break;
             }
-            match (&member, name) {
-                (None, Some(name)) => member = Some(name),
-                (Some(seen), Some(name)) if *seen == name => {}
-                _ => {
+            match name {
+                Some(name) if !members.contains(&name) => members.push(name),
+                Some(_) => {}
+                None => {
                     clean = false;
                     break;
                 }
             }
         }
-        if let (true, Some(member)) = (clean, member) {
-            pairs.push((import.local.clone(), member));
+        if clean {
+            pairs.extend(
+                members
+                    .into_iter()
+                    .map(|member| (import.local.clone(), member)),
+            );
         }
     }
     pairs
@@ -3444,6 +3488,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         // Replaced by `collect_tests_from_statements`, which has the file's
