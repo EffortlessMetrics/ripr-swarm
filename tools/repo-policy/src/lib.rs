@@ -1333,6 +1333,22 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             "[ -n \"${p1:-}\" ] && [ -z \"${p2_extra:-}\" ] && [ \"$p1\" = \"$expected_parent\" ]",
         ),
         (
+            "preserve the queue ref PR capture before the SHA format checks",
+            "[[ \"$GROUP_HEAD_REF\" =~ /pr-([0-9]+)-[0-9a-f]{40}$ ]] && ref_pr=\"${BASH_REMATCH[1]}\"",
+        ),
+        (
+            "bind every inline constituent admission to its repository and PR number",
+            "ADMISSION_REPOSITORY=\"$REPOSITORY\" ADMISSION_PR_NUMBER=\"$c_pr\" python3",
+        ),
+        (
+            "use the local hard-cut template only on a verified 404",
+            "elif grep -q 'HTTP 404' \"$packet_err\"; then",
+        ),
+        (
+            "refuse non-404 generated-path declaration read failures",
+            "elif ! grep -q 'HTTP 404' \"$packet_err\"; then",
+        ),
+        (
             "bind the queue ref sha to the live head or group base",
             "[ \"$ref_sha\" = \"$head\" ] || [ \"$ref_sha\" = \"$GROUP_BASE_SHA\" ]",
         ),

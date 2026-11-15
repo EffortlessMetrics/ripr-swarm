@@ -105,8 +105,8 @@ jobs:
             # fork-authored PR is only visible through the PR itself. In a batched
             # merge group (#8082), every constituent PR in base..head must belong
             # to the base repository before self-hosted runners can be selected.
+            [[ "$GROUP_HEAD_REF" =~ /pr-([0-9]+)-[0-9a-f]{40}$ ]] && ref_pr="${BASH_REMATCH[1]}"
             if [[ "$GROUP_HEAD_REF" =~ /pr-([0-9]+)-[0-9a-f]{40}$ ]] && [[ "$GROUP_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$GROUP_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-              ref_pr="${BASH_REMATCH[1]}"
               compare="$(GH_TOKEN="$PR_READ_TOKEN" gh api "repos/${REPOSITORY}/compare/${GROUP_BASE_SHA}...${GROUP_HEAD_SHA}" 2>/dev/null || true)"
               constituent_prs="$(jq -r --arg base "$GROUP_BASE_SHA" --arg head "$GROUP_HEAD_SHA" --arg ref_pr "$ref_pr" '
                 select(.status == "ahead" and .merge_base_commit.sha == $base and (.commits | type == "array") and .total_commits == (.commits | length) and .total_commits >= 1)
@@ -432,10 +432,14 @@ jobs:
             base_sha="$(gh api "repos/${REPOSITORY}/git/ref/heads/${base_ref}" --jq '.object.sha // empty')"
             [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::constituent PR #${c_pr} base sha unresolved"; exit 1; }
             gh api "repos/${REPOSITORY}/git/commits/${base_sha}" > "$base_commit"
-            if gh api "repos/${REPOSITORY}/contents/${packet_path}?ref=${base_sha}" > "$packet_meta" 2>/dev/null; then
+            packet_err="$tmp/packet-err-${c_pr}"
+            if gh api "repos/${REPOSITORY}/contents/${packet_path}?ref=${base_sha}" > "$packet_meta" 2>"$packet_err"; then
               jq -r '.content' "$packet_meta" | tr -d '\r\n' | base64 --decode > "$packet"
-            else
+            elif grep -q 'HTTP 404' "$packet_err"; then
               cp "${GITHUB_WORKSPACE}/${packet_path}" "$packet"
+            else
+              echo "::error::constituent PR #${c_pr} hard-cut packet read from the live base failed for a reason other than absence"
+              exit 1
             fi
             cut_args=()
             cut_sha="$(jq -r 'if .state == "active" then .observed_main.sha // "" else "" end' "$packet" 2>/dev/null || true)"
@@ -447,10 +451,14 @@ jobs:
               jq -r '.content' "$packet_meta" | tr -d '\r\n' | base64 --decode > "$proposed_packet" && proposed_args=(--proposed-packet "$proposed_packet") || rm -f "$proposed_packet"
             fi
             attrs_args=()
-            if gh api -H "Accept: application/vnd.github.raw" "repos/${REPOSITORY}/contents/.gitattributes?ref=${base_sha}" > "$attrs" 2>/dev/null; then
+            if gh api -H "Accept: application/vnd.github.raw" "repos/${REPOSITORY}/contents/.gitattributes?ref=${base_sha}" > "$attrs" 2>"$packet_err"; then
               attrs_args=(--generated-attributes "$attrs")
+            elif ! grep -q 'HTTP 404' "$packet_err"; then
+              echo "::error::constituent PR #${c_pr} generated-path declaration read from the live base failed for a reason other than absence"
+              exit 1
             fi
-            python3 "$action_root/candidate_admission.py" \
+            set +e
+            ADMISSION_REPOSITORY="$REPOSITORY" ADMISSION_PR_NUMBER="$c_pr" python3 "$action_root/candidate_admission.py" \
               --current "$current" \
               --open-prs "$open_prs" \
               --expected-head "$c_head" \
@@ -461,7 +469,7 @@ jobs:
               --comments "$pr_comments" \
               "${attrs_args[@]}" \
               "${docs_flag[@]}" > "$result"
-            [ "$(jq -r '.status' "$result")" = "admitted" ] || { echo "::error::constituent PR #${c_pr} candidate admission refused: $(jq -r '.reason + ": " + .detail' "$result")"; exit 1; }
+            rc_candidate=$?
             python3 "$action_root/release_cut_admission.py" \
               --packet "$packet" \
               --current "$current" \
@@ -470,6 +478,11 @@ jobs:
               --expected-head "$c_head" \
               "${proposed_args[@]}" \
               "${cut_args[@]}" > "$cut_result"
+            rc_cut=$?
+            set -e
+            [ "$rc_candidate" -eq 0 ] || { echo "::error::constituent PR #${c_pr} candidate admission refused: $(jq -r '.reason + ": " + .detail' "$result")"; exit 1; }
+            [ "$(jq -r '.status' "$result")" = "admitted" ] || { echo "::error::constituent PR #${c_pr} candidate admission refused: $(jq -r '.reason + ": " + .detail' "$result")"; exit 1; }
+            [ "$rc_cut" -eq 0 ] || { echo "::error::constituent PR #${c_pr} hard-cut admission refused: $(jq -r '.reason + ": " + .detail' "$cut_result")"; exit 1; }
             [ "$(jq -r '.status' "$cut_result")" = "admitted" ] || { echo "::error::constituent PR #${c_pr} hard-cut admission refused: $(jq -r '.reason + ": " + .detail' "$cut_result")"; exit 1; }
           done < <(jq -r '.[] | "\(.pr)\t\(.head)"' <<<"$CONSTITUENTS")
       - name: Select admitted qualification scope
