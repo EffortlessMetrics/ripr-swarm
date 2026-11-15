@@ -2358,15 +2358,14 @@ fn binding_free_local_wrapper(
     // but which shadows the first at the call. Even a trusted name may be
     // a local or imported macro there (`macro_rules! vec`), so only inert
     // calls of this same wrapper may sit between them. A call inside a
-    // block (a function body) is the exception: what it defines is scoped
-    // to that block, and a `#[macro_export]` copy only reaches path scope,
-    // which the textual definition takes precedence over.
+    // block (a function body) that does not also hold this call is the
+    // exception: what it defines is scoped to that block, and a
+    // `#[macro_export]` copy only reaches path scope, which the textual
+    // definition takes precedence over.
     let in_block = |other: &ast::MacroCall| {
-        other
-            .syntax()
-            .ancestors()
-            .skip(1)
-            .any(|node| ast::BlockExpr::can_cast(node.kind()))
+        other.syntax().ancestors().skip(1).any(|node| {
+            ast::BlockExpr::can_cast(node.kind()) && !node.text_range().contains(call_start)
+        })
     };
     facts
         .calls

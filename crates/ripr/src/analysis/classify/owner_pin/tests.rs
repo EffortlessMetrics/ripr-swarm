@@ -6452,6 +6452,9 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         // `impl` block is no block expression: it does not confine one.
         format!("{definition}vec! {{ 1 }}\n{call}"),
         format!("{definition}impl S {{ generate!(); }}\n{call}"),
+        // A block confines what it defines only from calls outside it: a
+        // call later in the same block may see a shadowing `case`.
+        format!("{definition}fn setup() {{ generate!(); {call}}}\n"),
         // A module between them may carry a shadowing definition, even
         // without an outer attribute (`#![macro_use]` in its own file).
         format!("{definition}#[macro_use]\nmod shadow;\n{call}"),

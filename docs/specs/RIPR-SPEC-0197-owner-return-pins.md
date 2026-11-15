@@ -2608,7 +2608,8 @@ not themselves a static propagation proof.
   fails closed. No module item sits between the definition and the call,
   and every macro call there outside a block is another such call of the
   same wrapper (even a trusted name may be a local macro there), so nothing
-  can bring in a shadowing definition. A call inside a block, such as a
+  can bring in a shadowing definition. A call inside a block that does not
+  also hold the wrapper call, such as a
   plain test function's `assert_eq!`, defines nothing outside that block,
   and the textual definition takes precedence over a `#[macro_export]`
   copy it might emit. Attribute proc
