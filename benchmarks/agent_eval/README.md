@@ -77,6 +77,11 @@ copy of the scenario repository, so first-run state cannot leak between routes.
 - A cargo key check that cannot build or report a test result is an
   instrument failure: shown as `not established`, never NO. It fails every
   run mode and blocks `--write-baseline`.
+- `cli-agent-loop` opens with the same FIND command that `cli-agent-find`
+  runs, on an identical fresh workspace. When the two captures differ in
+  bytes or tokens, the run measured host noise (a stray stderr note, an
+  unnormalized path), not ripr: that is an instrument failure too, and
+  `--compare` refuses a baseline that recorded one.
 - A silent control counts only when `check --format agent` exited 0, its
   header says `gaps=0` and it printed no `stop=`. The weak and reference
   checks also need exit 0. `--write-baseline` refuses `--compare`.

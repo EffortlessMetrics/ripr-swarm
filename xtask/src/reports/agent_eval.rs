@@ -403,13 +403,21 @@ fn validate_baseline(baseline: &Value) -> Result<(), String> {
     let valid = baseline["scenarios"]
         .as_array()
         .is_some_and(|rows| !rows.is_empty() && rows.iter().all(scenario_ok));
-    if baseline["schema_version"] == SCHEMA_VERSION && valid {
-        Ok(())
-    } else {
-        Err(format!(
+    if baseline["schema_version"] != SCHEMA_VERSION || !valid {
+        return Err(format!(
             "is not a complete {SCHEMA_VERSION} baseline; rerun with --write-baseline"
-        ))
+        ));
     }
+    // A baseline recorded from a noisy run would loosen every later compare.
+    for row in baseline["scenarios"].as_array().into_iter().flatten() {
+        if let Some(detail) = find_runs_disagree(row) {
+            let id = row["id"].as_str().unwrap_or_default();
+            return Err(format!(
+                "recorded {id}: {detail}; rerun with --write-baseline"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The `init --agents` loop: FIND, then follow each printed `next=` command
@@ -1174,16 +1182,51 @@ fn render_json(value: &Value, depth: usize) -> Result<String, String> {
 
 /// Every scenario whose cargo key checks could not run.
 fn instrument_failures(report: &Value) -> Vec<String> {
-    report["scenarios"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|scenario| {
-            let reason = scenario["loop"]["cargo_not_established"].as_str()?;
-            let id = scenario["id"].as_str().unwrap_or_default();
-            Some(format!("{id}: cargo key check not established: {reason}"))
-        })
-        .collect()
+    let mut failures = Vec::new();
+    for scenario in report["scenarios"].as_array().into_iter().flatten() {
+        let id = scenario["id"].as_str().unwrap_or_default();
+        if let Some(reason) = scenario["loop"]["cargo_not_established"].as_str() {
+            failures.push(format!("{id}: cargo key check not established: {reason}"));
+        }
+        failures.extend(find_runs_disagree(scenario).map(|detail| format!("{id}: {detail}")));
+    }
+    failures
+}
+
+/// `cli-agent-loop` opens with the same FIND command that `cli-agent-find`
+/// runs, on an identical fresh workspace, so the two captures must match.
+/// When they do not, the run measured host noise (a stray stderr note, an
+/// unnormalized path), not ripr's output, and must not become a baseline.
+fn find_runs_disagree(scenario: &Value) -> Option<String> {
+    let first_step = |route: &str| {
+        scenario["routes"]
+            .as_array()?
+            .iter()
+            .find(|row| row["route"] == route)?["steps"]
+            .get(0)
+            .cloned()
+    };
+    let (looped, found) = (first_step("cli-agent-loop")?, first_step("cli-agent-find")?);
+    let size = |step: &Value| (step["bytes"].as_u64(), step["tokens"].as_u64());
+    if size(&looped) == size(&found) {
+        return None;
+    }
+    let show = |step: &Value| {
+        format!(
+            "{} bytes/{} tokens",
+            step["bytes"]
+                .as_u64()
+                .map_or("?".to_string(), |n| n.to_string()),
+            step["tokens"]
+                .as_u64()
+                .map_or("?".to_string(), |n| n.to_string()),
+        )
+    };
+    Some(format!(
+        "identical FIND runs disagree (cli-agent-loop {}, cli-agent-find {}); the run measured host noise",
+        show(&looped),
+        show(&found)
+    ))
 }
 
 fn flag(value: &Value) -> &'static str {
@@ -1580,6 +1623,39 @@ verify=refused|outcome=complete_with_findings\n";
                 scenario.id
             );
         }
+    }
+
+    #[test]
+    fn disagreeing_identical_find_runs_are_an_instrument_failure() {
+        let route = |name: &str, bytes: u64, tokens: u64| {
+            json!({"route": name, "answer_reached": true, "failed_steps": 0, "total_tokens": tokens,
+                "tokens_to_answer": tokens, "steps": [{"step": "find", "exit": 0, "bytes": bytes, "tokens": tokens}]})
+        };
+        let checks = json!({"missed_gaps": 0, "extra_gaps": 0, "silent_on_control": null, "weak_test_still_flagged": true,
+            "reference_test_closes_loop": true, "reference_key_valid": true, "weak_key_valid": null});
+        let run = |loop_bytes: u64, loop_tokens: u64| {
+            json!({"schema_version": SCHEMA_VERSION, "scenarios": [{"id": "s", "loop": checks.clone(), "routes": [
+                route("cli-agent-loop", loop_bytes, loop_tokens), route("cli-agent-find", 232, 75)]}]})
+        };
+        let agreeing = run(232, 75);
+        assert!(instrument_failures(&agreeing).is_empty());
+        assert_eq!(validate_baseline(&agreeing), Ok(()));
+        let noisy = run(776, 243);
+        let expected = "s: identical FIND runs disagree (cli-agent-loop 776 bytes/243 tokens, cli-agent-find 232 bytes/75 tokens); the run measured host noise";
+        assert_eq!(instrument_failures(&noisy), vec![expected.to_string()]);
+        assert!(
+            validate_baseline(&noisy)
+                .is_err_and(|error| error.contains(expected.trim_start_matches("s: ")))
+        );
+        // Same size is all the record keeps; a byte or a token difference alone fails.
+        assert_eq!(instrument_failures(&run(233, 75)).len(), 1);
+        assert_eq!(instrument_failures(&run(232, 76)).len(), 1);
+        // A report without one of the two routes has nothing to compare.
+        let mut lone = noisy.clone();
+        if let Some(routes) = lone["scenarios"][0]["routes"].as_array_mut() {
+            routes.truncate(1);
+        }
+        assert!(instrument_failures(&lone).is_empty());
     }
 
     #[test]
