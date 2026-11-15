@@ -14663,6 +14663,10 @@ fn crate_c_score_test() {
         ] {
             let related = relation(test_source)?;
             assert!(
+                related.iter().any(|(name, _)| name == rival_test),
+                "{rival_test}: the rival test must be present in the related set before its reason is judged, got {related:?}"
+            );
+            assert!(
                 related.iter().all(|(name, reason)| name != rival_test
                     || *reason == RelationReason::WeakTokenSubstring),
                 "{rival_test}: a test-local rival call must demote to weak_token_substring, got {related:?}"
@@ -14684,6 +14688,17 @@ fn crate_c_score_test() {
                 name == "owner_import_control" && *reason == RelationReason::DirectOwnerCall
             }),
             "owner-import control must keep direct_owner_call, got {control:?}"
+        );
+        // #14744 review: a body-level production glob shadows the module-level
+        // rival import, so the production call keeps its direct credit.
+        let body_glob = relation(
+            "mod local {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 777 }\n}\nuse local::discounted_total;\n\n#[test]\nfn body_glob_owner() {\n    use discount_lib::pricing::*;\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
+        )?;
+        assert!(
+            body_glob.iter().any(|(name, reason)| {
+                name == "body_glob_owner" && *reason == RelationReason::DirectOwnerCall
+            }),
+            "a body glob of the production module shadows the rival import, got {body_glob:?}"
         );
         Ok(())
     }
