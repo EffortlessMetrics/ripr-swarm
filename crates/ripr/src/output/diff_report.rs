@@ -4,6 +4,12 @@ use std::path::{Component, Path};
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::CheckOutput;
 
+/// `schema_version` of the `ripr_diff` report, published as
+/// `schemas/ripr/diff.schema.json`. The refusal envelope `ripr diff --json`
+/// writes when it cannot produce a report is a separate document with its
+/// own version constant in `cli::commands`.
+pub(crate) const DIFF_REPORT_SCHEMA_VERSION: &str = "0.1";
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct DiffChangedFile {
     pub(crate) path: String,
@@ -263,7 +269,7 @@ pub(crate) fn build_diff_report(
         + output.summary.propagation_unknown;
 
     DiffReport {
-        schema_version: "0.1".to_string(),
+        schema_version: DIFF_REPORT_SCHEMA_VERSION.to_string(),
         kind: "ripr_diff".to_string(),
         tool: output.tool.clone(),
         run_status: run_status.to_string(),
@@ -539,6 +545,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -667,6 +675,8 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                file_fact_cache: None,
+
                 analyzed_revisions: None,
             },
             "origin/main",
@@ -742,6 +752,8 @@ mod tests {
                 suppression: None,
                 analysis_outcome: Some(outcome),
                 partial_scope: None,
+                file_fact_cache: None,
+
                 analyzed_revisions: None,
             },
             "origin/main",
@@ -829,6 +841,8 @@ mod tests {
                 suppression: None,
                 analysis_outcome: Some(outcome),
                 partial_scope: None,
+                file_fact_cache: None,
+
                 analyzed_revisions: None,
             },
             "origin/main",
@@ -957,6 +971,8 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                file_fact_cache: None,
+
                 analyzed_revisions: None,
             },
             "origin/main",
@@ -1013,6 +1029,8 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                file_fact_cache: None,
+
                 analyzed_revisions: None,
             },
             "origin/main",

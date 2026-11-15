@@ -1,0 +1,702 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effortlessmetrics.dev/ripr/diff.schema.json",
+  "title": "RIPR Diff Report",
+  "description": "The `ripr_diff` report `ripr diff --json` writes to stdout when it analyzed the diff: the changed files, the changed seams with their static evidence, the completion state of the changed-surface diff, and an explicit statement that full-repository context was not run. Static evidence only: a classification is not a runtime mutation outcome, and zero `changed_seams` is not a clean result when `analysis_outcome` is present and incomplete or `preview_languages` is non-empty. When the command cannot produce a report after argument parsing it exits 2 and writes the refusal envelope described by `diff-refusal.schema.json` instead. The `analysis_outcome`, `analysis_identity`, `analysis_counts`, `analysis_limitation`, `recovery`, `nullable_string` and `preview_language` definitions are copies of the same definitions in `check.schema.json` and are held equal to them by test.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "tool",
+    "run_status",
+    "root",
+    "base",
+    "head",
+    "mode",
+    "runtime_status",
+    "receipt",
+    "summary",
+    "changed_files",
+    "changed_seams"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "kind": {
+      "const": "ripr_diff"
+    },
+    "tool": {
+      "const": "ripr"
+    },
+    "run_status": {
+      "$ref": "#/$defs/run_status"
+    },
+    "root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "base": {
+      "description": "The resolved base revision.",
+      "type": "string",
+      "minLength": 1
+    },
+    "head": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mode": {
+      "enum": [
+        "instant",
+        "draft",
+        "fast",
+        "deep",
+        "ready"
+      ]
+    },
+    "analysis_outcome": {
+      "description": "Omitted when the run produced no typed outcome; never `null`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "analysis_complete",
+        "outcome"
+      ],
+      "properties": {
+        "analysis_complete": {
+          "type": "boolean"
+        },
+        "outcome": {
+          "$ref": "#/$defs/analysis_outcome"
+        }
+      }
+    },
+    "runtime_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "diff",
+        "full_repo_context"
+      ],
+      "properties": {
+        "state": {
+          "description": "The same value as the top-level `run_status`.",
+          "$ref": "#/$defs/run_status"
+        },
+        "diff": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "phase",
+            "changed_files",
+            "changed_seams",
+            "downstream_consumable"
+          ],
+          "properties": {
+            "state": {
+              "enum": [
+                "diff_complete",
+                "diff_incomplete"
+              ]
+            },
+            "phase": {
+              "const": "changed_surface_diff"
+            },
+            "changed_files": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "changed_seams": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "downstream_consumable": {
+              "description": "`true` only for a complete changed-surface diff.",
+              "type": "boolean"
+            }
+          }
+        },
+        "full_repo_context": {
+          "description": "Always the limitation: `ripr diff` does not run full-repository context.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "phase",
+            "limitation_category",
+            "downstream_consumable",
+            "repair_route"
+          ],
+          "properties": {
+            "state": {
+              "const": "full_repo_limited"
+            },
+            "phase": {
+              "const": "full_repo_context"
+            },
+            "limitation_category": {
+              "const": "full_repo_context_not_run"
+            },
+            "downstream_consumable": {
+              "const": false
+            },
+            "repair_route": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "path",
+        "outcome_hint"
+      ],
+      "properties": {
+        "state": {
+          "const": "not_written"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome_hint": {
+          "enum": [
+            "diff_complete/full_repo_limited",
+            "diff_incomplete/full_repo_limited"
+          ]
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "changed_files",
+        "changed_seams",
+        "probes",
+        "exposed",
+        "weakly_exposed",
+        "reachable_unrevealed",
+        "no_static_path",
+        "unknown"
+      ],
+      "properties": {
+        "changed_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed_seams": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "probes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exposed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "weakly_exposed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reachable_unrevealed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "no_static_path": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unknown": {
+          "description": "Infection, propagation and static unknown findings together.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "changed_files": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/changed_file"
+      }
+    },
+    "changed_seams": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/changed_seam"
+      }
+    },
+    "preview_languages": {
+      "description": "Omitted when empty; never `null` and never an empty array.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/preview_language"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "run_status": {
+            "const": "diff_complete_full_repo_limited"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "analysis_outcome": {
+            "properties": {
+              "analysis_complete": {
+                "const": true
+              },
+              "outcome": {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "no_scope",
+                      "no_changed_lines",
+                      "no_behavioral_candidates",
+                      "complete_no_findings",
+                      "complete_with_findings"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "runtime_status": {
+            "properties": {
+              "state": {
+                "const": "diff_complete_full_repo_limited"
+              },
+              "diff": {
+                "properties": {
+                  "state": {
+                    "const": "diff_complete"
+                  },
+                  "downstream_consumable": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          },
+          "receipt": {
+            "properties": {
+              "outcome_hint": {
+                "const": "diff_complete/full_repo_limited"
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "required": [
+          "analysis_outcome"
+        ],
+        "properties": {
+          "analysis_outcome": {
+            "properties": {
+              "analysis_complete": {
+                "const": false
+              },
+              "outcome": {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "partial_with_limitations",
+                      "unsupported_input",
+                      "analysis_failed"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "runtime_status": {
+            "properties": {
+              "state": {
+                "const": "diff_incomplete_full_repo_limited"
+              },
+              "diff": {
+                "properties": {
+                  "state": {
+                    "const": "diff_incomplete"
+                  },
+                  "downstream_consumable": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          },
+          "receipt": {
+            "properties": {
+              "outcome_hint": {
+                "const": "diff_incomplete/full_repo_limited"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "run_status": {
+      "enum": [
+        "diff_complete_full_repo_limited",
+        "diff_incomplete_full_repo_limited"
+      ]
+    },
+    "changed_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "added_lines",
+        "removed_lines",
+        "added_count",
+        "removed_count"
+      ],
+      "properties": {
+        "path": {
+          "description": "Workspace-relative, forward slashes on every host.",
+          "type": "string",
+          "minLength": 1
+        },
+        "added_lines": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "removed_lines": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "added_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "removed_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "changed_seam": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seam_id",
+        "file",
+        "line",
+        "classification",
+        "evidence",
+        "missing_discriminators"
+      ],
+      "properties": {
+        "seam_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "canonical_gap_id": {
+          "description": "Omitted when the finding has no canonical gap.",
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "classification": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "missing_discriminators": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "recommended_next_step": {
+          "description": "Omitted when there is none.",
+          "type": "string"
+        }
+      }
+    },
+    "analysis_outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "identity",
+        "counts",
+        "limitations",
+        "claim_boundary"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "0.1"
+        },
+        "kind": {
+          "enum": [
+            "no_scope",
+            "no_changed_lines",
+            "no_behavioral_candidates",
+            "complete_no_findings",
+            "complete_with_findings",
+            "partial_with_limitations",
+            "unsupported_input",
+            "analysis_failed"
+          ]
+        },
+        "identity": {
+          "$ref": "#/$defs/analysis_identity"
+        },
+        "counts": {
+          "$ref": "#/$defs/analysis_counts"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/analysis_limitation"
+          }
+        },
+        "claim_boundary": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "analysis_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository_identity",
+        "root_identity",
+        "config_identity",
+        "base_revision",
+        "input_identity",
+        "snapshot_identity",
+        "git_candidate_subject"
+      ],
+      "properties": {
+        "repository_identity": {
+          "$ref": "#/$defs/nullable_string"
+        },
+        "root_identity": {
+          "$ref": "#/$defs/nullable_string"
+        },
+        "config_identity": {
+          "$ref": "#/$defs/nullable_string"
+        },
+        "base_revision": {
+          "$ref": "#/$defs/nullable_string"
+        },
+        "input_identity": {
+          "$ref": "#/$defs/nullable_string"
+        },
+        "snapshot_identity": {
+          "$ref": "#/$defs/nullable_string"
+        },
+        "git_candidate_subject": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "subject_kind",
+                "base_tree",
+                "candidate_tree",
+                "diff_identity"
+              ],
+              "properties": {
+                "subject_kind": {
+                  "type": "string"
+                },
+                "base_tree": {
+                  "type": "string"
+                },
+                "candidate_tree": {
+                  "type": "string"
+                },
+                "diff_identity": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "analysis_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "changed_file_count",
+        "changed_line_count",
+        "candidate_line_count",
+        "probe_count",
+        "finding_count"
+      ],
+      "properties": {
+        "changed_file_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed_line_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "candidate_line_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "probe_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "finding_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "analysis_limitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "producer_stage",
+        "path",
+        "affected_items",
+        "bounded_detail",
+        "recovery"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "producer_stage": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "$ref": "#/$defs/nullable_string"
+        },
+        "affected_items": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "bounded_detail": {
+          "$ref": "#/$defs/nullable_string"
+        },
+        "recovery": {
+          "$ref": "#/$defs/recovery"
+        }
+      }
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "detail"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "nullable_string": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "preview_language": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "language",
+        "file_count",
+        "sample_paths",
+        "enabled",
+        "analyzed",
+        "category",
+        "why"
+      ],
+      "properties": {
+        "language": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sample_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "analyzed": {
+          "type": "boolean"
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1
+        },
+        "why": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

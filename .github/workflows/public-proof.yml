@@ -17,16 +17,6 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "41 7 * * *"
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
-    paths:
-      - "metrics/dx-scoreboard/baseline.json"
-      - "benchmarks/rust_corpus/manifest.json"
-      - "metrics/public-proof/**"
-      - "docs/PUBLIC_PROOF.md"
-      - "xtask/src/public_proof.rs"
-      - ".github/workflows/public-proof.yml"
-
 permissions:
   contents: read
 

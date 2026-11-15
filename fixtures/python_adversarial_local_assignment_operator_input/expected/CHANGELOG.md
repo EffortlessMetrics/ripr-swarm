@@ -513,3 +513,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (41)
+
+Reason:
+RIPR-SPEC-0147: human verify-command wording (Verify command (Bash)) now rendered by main; fixture goldens predate it, main-health recovery
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
