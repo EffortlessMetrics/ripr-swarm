@@ -43,10 +43,10 @@ pub(crate) fn render_verdict_explanation(
         // appear more than once; print each test once with every assertion
         // it was judged by.
         let groups = group_rows_by_test(&finding.related_tests);
-        out.push_str(&format!(
-            "  Tests examined: {} listed ({} assertion row(s) of {total})\n",
+        out.push_str(&tests_examined_line(
             groups.len(),
-            finding.related_tests.len()
+            finding.related_tests.len(),
+            total,
         ));
         for rows in groups {
             // The test is judged by its strongest assertion; a weaker row's
@@ -114,15 +114,7 @@ pub(crate) fn render_verdict_explanation(
                 }
             }
         }
-        if total > finding.related_tests.len() {
-            out.push_str(&format!(
-                "  ({} more row(s) examined; ripr keeps the {} most closely related)\n",
-                total - finding.related_tests.len(),
-                finding.related_tests.len()
-            ));
-        }
     }
-    let mut investigation_step_printed = false;
     let needs = verdict_changers(finding, owner_signature);
     if !needs.is_empty() {
         out.push_str("  To change the verdict, a test needs to:\n");
@@ -138,27 +130,47 @@ pub(crate) fn render_verdict_explanation(
     ) || crate::output::next_step::unresolved_edge_guidance(finding).is_some()
     {
         let step = crate::output::next_step::reconcile_next_step(finding);
-        investigation_step_printed = !step.is_empty();
-        if !step.is_empty() {
+        if finding.recommended_next_step.is_some() {
+            // The `Next step` section above prints this same step
+            // (`reconcile_next_step`); repeating a paragraph-long step here
+            // doubled the longest text in the drill-in. Say what kind of
+            // result this is and point at the step instead.
+            out.push_str(
+                "  ripr could not settle this statically; Next step above says how to check it.\n",
+            );
+        } else if !step.is_empty() {
             out.push_str("  To investigate this uncertainty:\n");
             out.push_str(&format!("  - {step}\n"));
         }
     }
-    if !finding.stop_reasons.is_empty() {
-        out.push_str("  Stop reasons:\n");
-        for reason in &finding.stop_reasons {
-            out.push_str(&format!(
-                "  - {}: {}\n",
-                reason.as_str(),
-                stop_reason_meaning(reason)
-            ));
-            // The unknown classes already print one investigation step above.
-            if !investigation_step_printed {
-                out.push_str(&format!("    Next: {}\n", reason.next_step()));
-            }
-        }
-    }
+    // Stop reasons are not repeated here: the `Stop reasons:` section above
+    // renders `effective_stop_reasons()`, which equals `finding.stop_reasons`
+    // whenever that list is non-empty, each with its sentence and Next line.
     out
+}
+
+/// `Tests examined: N (M assertions)`, with the retention window disclosed
+/// in the same line when ripr kept fewer assertion rows than it examined.
+fn tests_examined_line(tests: usize, kept_rows: usize, total_rows: usize) -> String {
+    let noun = |count: usize| {
+        if count == 1 {
+            "assertion"
+        } else {
+            "assertions"
+        }
+    };
+    if total_rows > kept_rows {
+        format!(
+            "  Tests examined: {tests} listed ({kept_rows} of {total_rows} {} shown; \
+             ripr keeps the most closely related)\n",
+            noun(total_rows)
+        )
+    } else {
+        format!(
+            "  Tests examined: {tests} ({kept_rows} {})\n",
+            noun(kept_rows)
+        )
+    }
 }
 
 /// What ripr concluded about one assertion row.
@@ -384,40 +396,6 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
     needs
 }
 
-fn stop_reason_meaning(reason: &StopReason) -> &'static str {
-    match reason {
-        StopReason::MaxDepthReached => "the call walk hit its depth limit before reaching a test",
-        StopReason::ExternalCrateBoundary => {
-            "the path leaves this workspace; ripr does not follow it"
-        }
-        StopReason::DynamicDispatchUnresolved => {
-            "the path goes through a trait object or generic call ripr cannot resolve"
-        }
-        StopReason::ProcMacroOpaque | StopReason::FixtureOpaque => reason.describe(),
-        StopReason::FeatureUnknown => "a cfg or feature gate may change whether the code runs",
-        StopReason::AsyncBoundaryOpaque | StopReason::NoChangedRustLine => reason.describe(),
-        StopReason::InfectionEvidenceUnknown => {
-            "ripr could not tell whether a test input changes this value"
-        }
-        StopReason::PropagationEvidenceUnknown => {
-            "ripr could not trace the changed value to anything a test observes"
-        }
-        StopReason::StaticProbeUnknown => "ripr has no probe shape for this kind of change",
-        StopReason::TransitiveReachUnresolved => reason.describe(),
-        StopReason::MacroReachUnresolved => {
-            "a test may reach this through a macro ripr does not expand"
-        }
-        StopReason::GapEvidenceUnresolved => {
-            "a related test asserts, but ripr could not tie that assertion to this change"
-        }
-        // ADR 0019: the domain gloss is the stop-reason owner. Do not invent
-        // a second identity-unknown sentence here.
-        StopReason::HelperIdentityUnresolved
-        | StopReason::CompileTimeInvariant
-        | StopReason::UnsafeObligation => reason.describe(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -441,11 +419,22 @@ mod tests {
             !text.contains("To change the verdict, a test needs to:"),
             "{text}"
         );
+        // The boundary is named once, by the `Next step` section
+        // (`reconcile_next_step`); the verdict block points there.
+        let step = crate::output::next_step::reconcile_next_step(&finding);
         assert!(
-            text.contains("Tests cannot close this static-analysis limitation"),
+            step.contains("Tests cannot close this static-analysis limitation"),
+            "{step}"
+        );
+        assert!(step.contains("entry `outer` -> owner `inner`"), "{step}");
+        assert!(
+            text.contains("Next step above says how to check it"),
             "{text}"
         );
-        assert!(text.contains("entry `outer` -> owner `inner`"), "{text}");
+        assert!(
+            !text.contains("Tests cannot close this static-analysis limitation"),
+            "{text}"
+        );
     }
 
     fn row(oracle: &str, strength: OracleStrength, miss: RelatedTestMiss) -> RelatedTest {
@@ -533,18 +522,19 @@ mod tests {
         assert!(!plain.contains("if tests can name it"), "{plain}");
     }
 
+    /// The finding block's `Stop reasons:` section already renders each
+    /// stop reason with its sentence and Next line; the verdict block must
+    /// not print the list a second time.
     #[test]
-    fn explain_renders_a_next_line_under_each_stop_reason() {
+    fn verdict_block_does_not_repeat_stop_reasons() {
         let mut finding = sample_perl_finding();
         finding.class = ExposureClass::NoStaticPath;
         finding.stop_reasons = vec![StopReason::HelperIdentityUnresolved];
 
         let text = render_verdict_explanation(&finding, None);
+        assert!(!text.contains("Stop reasons"), "{text}");
         assert!(
-            text.contains(&format!(
-                "    Next: {}\n",
-                StopReason::HelperIdentityUnresolved.next_step()
-            )),
+            !text.contains(StopReason::HelperIdentityUnresolved.next_step()),
             "{text}"
         );
     }
@@ -709,7 +699,6 @@ mod tests {
     #[test]
     fn helper_identity_unresolved_explain_uses_domain_describe() {
         let reason = StopReason::HelperIdentityUnresolved;
-        assert_eq!(stop_reason_meaning(&reason), reason.describe());
         assert!(
             reason.describe().contains("workspace function")
                 && reason.describe().contains("not unique"),
@@ -719,10 +708,6 @@ mod tests {
         assert!(
             !reason.describe().contains("probe"),
             "{}",
-            reason.describe()
-        );
-        assert_ne!(
-            stop_reason_meaning(&StopReason::StaticProbeUnknown),
             reason.describe()
         );
     }

@@ -110,8 +110,10 @@ witnesses, selection and identity algorithms.
 ### Unknown finding guidance (#7477)
 
 For `infection_unknown`, `propagation_unknown`, and `static_unknown`, explain
-renders `To investigate this uncertainty:` using the same reconciled next step
-as JSON findings and context. This is an evidence-resolution experiment, not a
+renders the same reconciled next step as JSON findings and context, once, in its
+`Next step` section; the verdict block points there instead of repeating it. A
+finding with no recommended step keeps the step under `To investigate this
+uncertainty:` in the verdict block. This is an evidence-resolution experiment, not a
 promise that a test changes the static verdict or proof that a test is missing.
 Existing producer-specific limitation advice remains authoritative.
 

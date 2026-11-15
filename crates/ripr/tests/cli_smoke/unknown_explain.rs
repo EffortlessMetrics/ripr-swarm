@@ -150,24 +150,33 @@ fn unknown_explain_real_reasons_have_supported_actions_in_every_mode() -> TestRe
                 )?;
                 assert!(explain.status.success(), "{explain:?}");
                 let text = String::from_utf8(explain.stdout)?;
-                assert!(text.contains("To investigate this uncertainty:"), "{text}");
+                // The unknown verdict points at the Next step section instead
+                // of repeating the same paragraph-long step.
+                assert!(
+                    text.contains(
+                        "ripr could not settle this statically; Next step above says how to check it."
+                    ),
+                    "{text}"
+                );
+                assert!(!text.contains("To investigate this uncertainty:"), "{text}");
                 assert!(
                     !text.contains("To change the verdict, a test needs to:"),
                     "{text}"
                 );
-                let section = text
-                    .split_once("To investigate this uncertainty:\n")
-                    .ok_or("no uncertainty section")?
-                    .1;
-                let body = section
-                    .split("  Stop reasons:\n")
+                let body = text
+                    .split_once("\nNext step\n")
+                    .ok_or("no Next step section")?
+                    .1
+                    .lines()
                     .next()
-                    .ok_or("no section body")?
+                    .ok_or("no Next step body")?
                     .trim();
+                let advice = step.trim_end_matches('.');
+                assert_eq!(body, advice, "Next step/JSON advice differs: {text}");
                 assert_eq!(
-                    body,
-                    format!("- {step}"),
-                    "uncertainty-section/JSON advice differs: {text}"
+                    text.matches(advice).count(),
+                    1,
+                    "explain repeats the next step: {text}"
                 );
                 assert!(
                     !text.contains("deep static analysis") && !text.contains("use deep mode"),
