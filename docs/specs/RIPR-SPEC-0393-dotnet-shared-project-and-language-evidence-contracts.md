@@ -393,7 +393,9 @@ Cross-project and cross-language behavior uses
 
 - A C# call into an F# module, or VB `Imports` of a C# namespace, requires a
   **registered edge** with producer basis and strength ceiling.
-- Project reference alone records `project_reference` fact only.
+- Project reference alone records `project_reference` fact only. A cross-language
+  call without a registered edge emits the typed limit
+  `cross_language_edge_unregistered`.
 - P/Invoke, COM, reflection-only loads, DI-resolved interfaces, and runtime proxies
   default to `reflection_route` or `di_proxy_opaque` unless exported facts name a
   resolved target with evidence refs.

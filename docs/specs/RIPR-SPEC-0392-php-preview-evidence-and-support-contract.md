@@ -177,7 +177,8 @@ PHPUnit recognition (non-exhaustive; producer-owned syntax):
   donates `exposed`.
 - Imperative `markTestSkipped()` / `markTestIncomplete()` calls and
   `@requires` / `#[RequiresPhp]` / `#[RequiresPhpExtension]` map to
-  `conditional_activation_unknown` unless the guard is statically unconditional.
+  `conditional_activation_unknown` unless the guard is statically unconditional
+  (then `inactive_skip`).
 - Attribute forms (`#[Test]`, `#[DataProvider]`) need PHP 8 and are the
   PHPUnit 10+ form; docblock annotations are the legacy form. Both are
   recognized per PHPUnit version band, recorded as static metadata.
@@ -304,7 +305,7 @@ Map or add typed limits (fail-closed; no silent `no_static_path` promotion):
 | `generated_proxy` | Generated proxies where source is not stable |
 | `dependency_injection_container` | Service locators, container `get`, facades without static binding |
 | `unresolved_composer_autoload` | Unresolved PSR/classmap/files autoload target |
-| `runtime_include` | `include`, `require`, `require_once`, conditional definitions, `spl_autoload_register` and other custom autoloaders |
+| `runtime_include` | `include`, `require`, `require_once`, conditional definitions, `spl_autoload_register` and other custom autoloaders (Composer-declared autoload rules that fail to resolve use `unresolved_composer_autoload` instead) |
 | `opaque_custom_assertion_helper` | User-defined assertion wrappers, PHPUnit `Constraint` subclasses, `assertThat` with custom or `callback()` constraints, Pest `expect()->extend()` custom expectations |
 | `framework_bootstrap` | Kernel boot, global state mutation outside test body |
 | `extension_native_boundary` | Extension or native calls without static model |
@@ -355,8 +356,9 @@ Until a capability cell above has its own implementation and eval evidence,
 ripr makes none of these claims for PHP:
 
 - **Diff mode:** no PHP finding, classification, or related-test pointer is
-  produced. When `php` is configured without a shipped adapter, changed `.php`
-  files must be reported as unanalyzed by a missing adapter, not as clean.
+  produced, and changed `.php` files are never reported as clean. (The contract
+  requires a future adapter slice to report them as unanalyzed when `php` is
+  configured without a shipped adapter; this spec does not provide that.)
 - **Repo mode:** no PHP seam inventory, repository-wide exposure summary, or
   badge input. Diff-mode proof for a framework does not imply repo-mode support.
 - **Frameworks:** PHPUnit evidence does not establish Pest support, and the

@@ -119,7 +119,9 @@ schemas. Findings project into the shared RIPR finding model
 `language`, `language_status`, `static_limit_kind`) and the shared
 classification vocabulary. There is no JVM-specific JSON, SARIF, or PR output
 schema; a JVM field that cannot be expressed in the shared model stays in the
-fact document and does not reach output.
+fact document and does not reach output. The `jvm_*` limit kinds enter the
+shared `static_limit_kind` vocabulary only through a RIPR-SPEC-0026 amendment
+(output projection, #5658); until then they remain fact-document-only.
 
 #### Shared substrate (`jvm_project_substrate.v1`)
 

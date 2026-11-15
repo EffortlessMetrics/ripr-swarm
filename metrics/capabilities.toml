@@ -1809,7 +1809,7 @@ status = "planned"
 spec = "RIPR-SPEC-0404"
 evidence = [
   "RIPR-SPEC-0404 (accepted, #5736) defines the SQL project and migration substrate, PostgreSQL semantic contract, pgTAP test/oracle contract, and database-state disposition.",
-  "The spec's planned capability-cell index keeps PostgreSQL/pgTAP cells, with SQLite, MySQL, and ANSI-generic rows explicitly not admitted separate at not_proven; no runtime CAPABILITY_CELLS entry exists yet.",
+  "The spec's planned capability-cell index keeps PostgreSQL, pgTAP, PL/pgSQL, Flyway, Sqitch, and Liquibase cells separate at not_proven, with SQLite, MySQL, and ANSI-generic cells not_admitted; no runtime CAPABILITY_CELLS entry exists yet.",
   "Typed limits cover dynamic SQL, procedural bodies, triggers, RLS, planner/runtime behavior, and live database state. Gates, badges, RIPR Zero, and stable claims stay false until implementation and eval evidence land."
 ]
 fixtures = []
