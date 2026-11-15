@@ -102,7 +102,7 @@ fn explain_format_help_names_the_existing_text_alias() {
 }
 
 #[test]
-fn pilot_format_help_agrees_with_accepted_values() {
+fn pilot_format_help_agrees_with_accepted_values() -> Result<(), String> {
     let output = run_ripr(&["pilot", "--help"]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
@@ -118,16 +118,29 @@ fn pilot_format_help_agrees_with_accepted_values() {
         }),
         "{help}"
     );
-    for value in ["human", "json"] {
-        assert_usage_error(
-            run_ripr(&["pilot", "--format", value, "--max-seams", "0"]),
-            "--max-seams requires a positive integer; pass a whole number of 1 or more, got \"0\"",
-        );
-    }
+    let max_seams =
+        "--max-seams requires a positive integer; pass a whole number of 1 or more, got \"0\"";
+    assert_usage_error(
+        run_ripr(&["pilot", "--format", "human", "--max-seams", "0"]),
+        max_seams,
+    );
+    // #11979: the JSON format is accepted and reaches the numeric parser,
+    // whose refusal then writes the typed `cli_refusal` document.
+    let json = run_ripr(&["pilot", "--format", "json", "--max-seams", "0"]);
+    assert_eq!(json.status.code(), Some(2), "{json:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&json.stderr),
+        format!("ripr: {max_seams}\n")
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&json.stdout).map_err(|err| format!("{err}: {json:?}"))?;
+    assert_eq!(document["error"]["code"], "invalid_value", "{document}");
+    assert_eq!(document["error"]["token"], "0", "{document}");
     assert_usage_error(
         run_ripr(&["pilot", "--format", "jsonn"]),
         "unknown format \"jsonn\". Did you mean `json`? Accepted: human, json.",
     );
+    Ok(())
 }
 
 #[test]
