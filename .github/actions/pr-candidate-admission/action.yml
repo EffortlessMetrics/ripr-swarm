@@ -152,7 +152,7 @@ runs:
           exit 1
         }
 
-        python3 "$action_root/candidate_admission.py" --self-test
+        python3 "$action_root/candidate_admission.py" --self-test --max-changed-files "${ADMISSION_MAX_CHANGED_FILES}" --max-changed-lines "${ADMISSION_MAX_CHANGED_LINES}" --workflow "${GITHUB_WORKSPACE}/.github/workflows/routed-rust.yml"
         python3 "$action_root/release_cut_admission.py" --self-test
         # Generated declarations must name data files only (see docs/CI.md).
         python3 "$action_root/candidate_admission.py" --check-attributes "${GITHUB_WORKSPACE}/.gitattributes" \
@@ -207,10 +207,10 @@ runs:
         }
 
         if [ "${ADMISSION_MODE:-admit}" != "admit" ]; then
-          printf '%s\n' '{"status":"self_test_pass","reason":"candidate_and_cut_controls_passed","detail":"","claim":"","acceptance_delta":"","competing_prs":[],"concurrent_claims":[],"changed_files":0,"changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
+          printf '{"status":"self_test_pass","reason":"candidate_and_cut_controls_passed","detail":"","claim":"","acceptance_delta":"","competing_prs":[],"concurrent_claims":[],"changed_files":0,"changed_lines":0,"max_changed_files":%s,"max_changed_lines":%s}\n' "${ADMISSION_MAX_CHANGED_FILES}" "${ADMISSION_MAX_CHANGED_LINES}" > "$result"
           printf '%s\n' '{"status":"admitted","reason":"cut_self_test_pass","detail":""}' > "$cut_result"
         elif [ -z "${ADMISSION_PR_NUMBER:-}" ]; then
-          printf '%s\n' '{"status":"not_applicable","reason":"non_pull_request_invocation","detail":"","claim":"","acceptance_delta":"","competing_prs":[],"concurrent_claims":[],"changed_files":0,"changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
+          printf '{"status":"not_applicable","reason":"non_pull_request_invocation","detail":"","claim":"","acceptance_delta":"","competing_prs":[],"concurrent_claims":[],"changed_files":0,"changed_lines":0,"max_changed_files":%s,"max_changed_lines":%s}\n' "${ADMISSION_MAX_CHANGED_FILES}" "${ADMISSION_MAX_CHANGED_LINES}" > "$result"
           printf '%s\n' '{"status":"admitted","reason":"cut_non_pull_request_invocation","detail":""}' > "$cut_result"
         else
           [ -n "${GH_TOKEN:-}" ] || refuse_early "token_missing" "candidate admission requires a read-only GitHub token"
