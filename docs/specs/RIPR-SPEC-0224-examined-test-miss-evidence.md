@@ -406,8 +406,11 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
   `tK=` row (`strongest_test`), the fix site
   (`DiagnosticWitness::best_related_test`, which the code lens and hover
   read), the human `Related test` headline (the first row of the best tier,
-  then the Python changed-file rule within that tier) and the JSON
-  `oracle_kind`/`oracle_strength` summary (the tier, then strength). The
+  then the Python changed-file rule within that tier), the JSON
+  `oracle_kind`/`oracle_strength` summary (the tier, then strength, so a
+  strong oracle held only by a `no_call_path` row no longer speaks for the
+  finding) and the agent `open=` row (`triage::weak_assertion_row`, the first
+  bound weak row of the best tier). The
   TypeScript/JavaScript preview row and the per-test lead row of `ripr
   explain` keep their own rules, and editor seam actions read seam grips,
   which carry no miss. The fix site keeps reach as its leading key

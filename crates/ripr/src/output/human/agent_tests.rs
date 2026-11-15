@@ -655,6 +655,35 @@ fn reach_limit_with_weak_assertion_row_does_not_stop() {
     );
 }
 
+/// #14483: the `open=` row names the first bound weak row of the best shared
+/// observation tier, so a listed-first owner-named weak row with no call path
+/// gives way to a weak row that reaches the change; without the miss the
+/// listed-first row is named again.
+#[test]
+fn the_open_row_names_a_weak_row_that_can_observe_the_change() {
+    let mut open = reach_limited_weak("probe:fortnight", 264);
+    open.related_tests[0].name = "reaches_the_change".to_string();
+    open.related_tests[0].line = 9;
+    let mut unreached = open.related_tests[0].clone();
+    unreached.name = "named_after_the_owner".to_string();
+    unreached.line = 3;
+    unreached.relation_reason = Some(crate::domain::RelationReason::OwnerNamedTest);
+    unreached.miss = Some(RelatedTestMiss::NoCallPath);
+    open.related_tests.insert(0, unreached);
+    let text = rendered(&output(vec![open.clone()]));
+    assert!(text.contains("\nopen="), "{text}");
+    assert!(
+        text.contains("\nt1=tests/t.rs:9 reaches_the_change "),
+        "{text}"
+    );
+    open.related_tests[0].miss = Some(RelatedTestMiss::WeakAssertion);
+    let text = rendered(&output(vec![open]));
+    assert!(
+        text.contains("\nt1=tests/t.rs:3 named_after_the_owner "),
+        "{text}"
+    );
+}
+
 /// #11825: more open findings than `MAX_GAP_LINES` print the cap and an
 /// exact omitted count; `reachable_unrevealed` opens the same way.
 #[test]
@@ -1041,11 +1070,6 @@ fn every_test_picker_agrees_with_the_test_row_on_the_error_variant_repro() {
     let picks = |gap: &Finding| {
         let check = output(vec![gap.clone()]);
         let agent = rendered(&check);
-        let tk = agent
-            .lines()
-            .find_map(|line| line.strip_prefix("t1="))
-            .map(str::to_string)
-            .unwrap_or_default();
         let human = crate::output::human::render(&check);
         let headline = human
             .lines()
@@ -1061,12 +1085,12 @@ fn every_test_picker_agrees_with_the_test_row_on_the_error_variant_repro() {
         let fix_site = crate::domain::DiagnosticWitness::selected_related_test(gap)
             .map(|test| test.name.clone())
             .unwrap_or_default();
-        (tk, headline, summary, fix_site, agent, human)
+        (headline, summary, fix_site, agent, human)
     };
 
-    let (tk, headline, summary, fix_site, agent, human) = picks(&gap);
+    let (headline, summary, fix_site, agent, human) = picks(&gap);
     assert!(
-        tk.starts_with("tests/t.rs:3 rejects_long_names "),
+        agent.contains("\nt1=tests/t.rs:3 rejects_long_names "),
         "{agent}"
     );
     assert!(headline.contains("rejects_long_names"), "{human}");
@@ -1080,9 +1104,9 @@ fn every_test_picker_agrees_with_the_test_row_on_the_error_variant_repro() {
     // Discriminating control: with no recorded miss on the Ok pin, every
     // surface names the stronger, listed-first row again.
     gap.related_tests[0].miss = Some(RelatedTestMiss::MissingExactAssertion);
-    let (tk, headline, summary, fix_site, agent, human) = picks(&gap);
+    let (headline, summary, fix_site, agent, human) = picks(&gap);
     assert!(
-        tk.starts_with("tests/t.rs:8 accepts_short_names "),
+        agent.contains("\nt1=tests/t.rs:8 accepts_short_names "),
         "{agent}"
     );
     assert!(headline.contains("accepts_short_names"), "{human}");
