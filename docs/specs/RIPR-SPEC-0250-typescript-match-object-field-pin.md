@@ -151,7 +151,9 @@ identifier string of a two-argument `toHaveProperty` whose value is a scalar
 literal). Computed or quoted-computed keys, spreads,
 nested objects or dotted paths, non-literal values, asymmetric matchers, a
 different subject and any spy, mock or member replacement naming the getter
-earn no relation. The row stays `relational_check` / weak, so the verdict is
+earn no relation. The matcher call is found only in code: matcher text inside a
+comment, a string or template literal, or the test-name string is not a call and
+earns no relation. The row stays `relational_check` / weak, so the verdict is
 at most `weakly_exposed`; rule 1 does not apply (the subject is not an owner
 call result) and no repair start is offered.
 
@@ -263,7 +265,9 @@ documented decisions and proceed"). Recorded on #6654.
    `get origin()` body: the finding reads `weakly_exposed` (not
    `no_static_path`, never `exposed`); a computed key, spread, nested key,
    dotted path, non-literal value, asymmetric matcher, `.not`, a plain-object
-   subject or a shadowed receiver keeps `no_static_path`.
+   subject or a shadowed receiver keeps `no_static_path`, and so does the
+   same matcher text in a comment, a string or template literal, or the
+   test-name string beside a real matcher that does not name the getter.
 
 ## Test Mapping
 
@@ -280,7 +284,9 @@ documented decisions and proceed"). Recorded on #6654.
   (`literal_key_of_to_match_object_on_the_receiver_credits_the_getter`,
   `keys_that_do_not_name_the_getter_literally_earn_no_credit`,
   `a_key_of_a_different_object_earns_no_credit`,
-  `a_shadowed_or_rebound_receiver_earns_no_credit`) pin example 8;
+  `a_shadowed_or_rebound_receiver_earns_no_credit`,
+  `matcher_text_in_a_comment_or_string_earns_no_credit`,
+  `a_non_ascii_comment_before_a_real_matcher_keeps_the_credit`) pin example 8;
   `a_getter_read_through_the_receiver_stays_exposed_beside_the_matcher_key`
   pins that a plain getter read keeps `exposed`.
 - `fixtures/typescript-verdict-corpus` pins example 1:

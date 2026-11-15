@@ -19105,6 +19105,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/getter_matcher_key_tests.rs::keys_that_do_not_name_the_getter_literally_earn_no_credit",
   "crates/ripr/src/analysis/language/typescript/tests/getter_matcher_key_tests.rs::a_key_of_a_different_object_earns_no_credit",
   "crates/ripr/src/analysis/language/typescript/tests/getter_matcher_key_tests.rs::a_shadowed_or_rebound_receiver_earns_no_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/getter_matcher_key_tests.rs::matcher_text_in_a_comment_or_string_earns_no_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/getter_matcher_key_tests.rs::a_non_ascii_comment_before_a_real_matcher_keeps_the_credit",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::match_object_scalar_limitation_withholds_the_start_with_its_own_wording",
 ]
 fixtures = [

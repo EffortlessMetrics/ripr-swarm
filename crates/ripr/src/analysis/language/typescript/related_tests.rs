@@ -2827,15 +2827,28 @@ fn receiver_matcher_key_getter_read(
 /// whose matcher is chained directly on the `expect(...)` call: a `.not`,
 /// `.resolves` or `.rejects` modifier between them leaves the call out, since
 /// each changes what the matcher is applied to or what it asserts.
+///
+/// The call is located on a copy of `body` whose comments and string/template
+/// contents are blanked byte for byte, so matcher text inside a comment, a
+/// string literal or the test-name string is never a call. The arguments are
+/// then cut from the raw `body` at the same byte offsets, keeping quoted keys
+/// and literal values readable. A body the masker cannot reproduce yields no
+/// call.
 fn direct_matcher_call_args(body: &str, subject: &str, matcher: &str) -> Vec<Vec<String>> {
+    let masked = super::tests_extract::mask_comments_and_strings_text(body);
+    if masked.len() != body.len() {
+        return Vec::new();
+    }
     let needle = format!("expect({subject})");
     let call = format!(".{matcher}");
     let mut found = Vec::new();
-    for (idx, _) in body.match_indices(&call) {
-        let Some(open) = body[idx + call.len()..].trim_start().strip_prefix('(') else {
+    for (idx, _) in masked.match_indices(&call) {
+        let after = &masked[idx + call.len()..];
+        let Some(open) = after.trim_start().strip_prefix('(') else {
             continue;
         };
-        let Some(head) = body[..idx].trim_end().strip_suffix(&needle) else {
+        let open_start = masked.len() - open.len();
+        let Some(head) = masked[..idx].trim_end().strip_suffix(&needle) else {
             continue;
         };
         if head
@@ -2848,7 +2861,10 @@ fn direct_matcher_call_args(body: &str, subject: &str, matcher: &str) -> Vec<Vec
         let Some(end) = super::classifier::balanced_close_offset(open) else {
             continue;
         };
-        found.push(split_top_level_arguments(&open[..end]));
+        let Some(raw_args) = body.get(open_start..open_start + end) else {
+            continue;
+        };
+        found.push(split_top_level_arguments(raw_args));
     }
     found
 }

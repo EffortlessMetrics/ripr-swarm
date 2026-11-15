@@ -334,3 +334,68 @@ fn a_key_and_a_value_must_come_from_the_same_call() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn matcher_text_in_a_comment_or_string_earns_no_credit() -> Result<(), String> {
+    // Each body holds a real matcher call on the receiver that does not name
+    // the getter, plus inert text that does: only the code call may count.
+    let real = "    const url = new Url('https://x');\n    expect(url).toMatchObject({ hasProtocol: 5 });\n";
+    for (label, inert) in [
+        (
+            "line-comment",
+            "    // expect(url).toMatchObject({ origin: 'https://host' })",
+        ),
+        (
+            "block-comment",
+            "    /* expect(url).toMatchObject({ origin: 'https://host' }) */",
+        ),
+        (
+            "line-comment-has-property",
+            "    // expect(url).toHaveProperty('origin', 'https://host')",
+        ),
+        (
+            "string-literal",
+            "    const note = \"expect(url).toMatchObject({ origin: 'https://host' })\";",
+        ),
+        (
+            "template-literal",
+            "    const note = `expect(url).toHaveProperty('origin', 'https://host')`;",
+        ),
+    ] {
+        assert_body_uncredited(&format!("getter-inert-{label}"), &format!("{real}{inert}"))?;
+    }
+    // The test-name string is part of the body text.
+    assert_uncredited(
+        "getter-inert-test-name",
+        "import { describe, expect, test } from 'vitest';\nimport { Url } from '../src/u';\n\ndescribe('Url', () => {\n  test(\"expect(url).toMatchObject({ origin: 'https://host' })\", () => {\n    const url = new Url('https://x');\n    expect(url).toMatchObject({ hasProtocol: 5 });\n  });\n});\n",
+    )?;
+    // Control: the same bodies with the call as code stay credited.
+    assert_credited(
+        "getter-inert-control",
+        &format!("{real}    expect(url).toMatchObject({{ origin: 'https://host' }});"),
+    )
+}
+
+#[test]
+fn a_non_ascii_comment_before_a_real_matcher_keeps_the_credit() -> Result<(), String> {
+    // Multi-byte comment and string text must not shift the masked offsets
+    // away from the raw argument text.
+    for (label, matcher) in [
+        (
+            "match-object",
+            "expect(url).toMatchObject({ \"origin\": 'https://host' });",
+        ),
+        (
+            "has-property",
+            "expect(url).toHaveProperty('origin', 'https://host');",
+        ),
+    ] {
+        assert_credited(
+            &format!("getter-non-ascii-{label}"),
+            &format!(
+                "    // URL の origin — ünïcödé ✓\n    const url = new Url('https://x');\n    const label = 'Grüße ✓';\n    {matcher}"
+            ),
+        )?;
+    }
+    Ok(())
+}

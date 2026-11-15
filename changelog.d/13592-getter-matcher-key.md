@@ -5,4 +5,4 @@
   exactly `new Class(...)` now reads `weakly_exposed` instead of
   `no_static_path`, never `exposed` and with no repair start; `.not`,
   `.resolves`, `.rejects`, non-literal values and rebound or shadowed receivers
-  earn no credit (#13592).
+  earn no credit, nor does matcher text in a comment or string (#13592).
