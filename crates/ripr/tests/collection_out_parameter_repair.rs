@@ -680,7 +680,8 @@ fn repair_brief_names_the_contents_check_for_a_pinned_push() -> Result<(), Strin
 #[test]
 fn repair_brief_for_other_gaps_is_unchanged() -> Result<(), String> {
     // #12711: a started boundary gap keeps its own suggested assertion and
-    // test name.
+    // test name. The start summary prints the assertion once as
+    // `assertion shape:`; the card after it does not repeat it (#14002).
     let repo = Repo::create(
         "pub fn discounted(total: u32) -> u32 {\n    if total >= 100 { total - 10 } else { total }\n}\n",
         "pub fn discounted(total: u32) -> u32 {\n    if total > 100 { total - 10 } else { total }\n}\n",
@@ -688,12 +689,17 @@ fn repair_brief_for_other_gaps_is_unchanged() -> Result<(), String> {
     )?;
     let brief = started_brief(&repo)?;
     for wanted in [
-        "Suggested assertion: assert_eq!(discounted(",
+        "assertion shape: assert_eq!(discounted(",
         "(suggested test `discounted_boundary_discriminator`)",
     ] {
         if !brief.contains(wanted) {
             return Err(format!("boundary brief must contain {wanted:?}:\n{brief}"));
         }
+    }
+    if brief.contains("Suggested assertion: assert_eq!(discounted(") {
+        return Err(format!(
+            "the card must not repeat the start summary's assertion:\n{brief}"
+        ));
     }
     if brief.contains("an exact check of the full contents") || brief.contains("full_contents") {
         return Err(format!(

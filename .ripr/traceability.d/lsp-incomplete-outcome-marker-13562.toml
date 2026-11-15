@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0127"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::incomplete_outcome_with_no_rows_serves_a_passive_marker_and_nothing_else_does",
+  "crates/ripr/src/lsp/tests.rs::file_mode_only_change_serves_the_incomplete_marker_through_the_real_producer",
+  "crates/ripr/src/lsp/tests.rs::incomplete_marker_limitations_match_the_human_check_output",
+  "crates/ripr/src/lsp/tests.rs::workspace_result_id_folds_the_complete_incomplete_marker",
+  "crates/ripr/src/lsp/tests.rs::framed_push_client_late_open_and_close_follow_the_incomplete_snapshot_marker",
+  "crates/ripr/src/lsp/tests.rs::framed_push_client_shutdown_retracts_the_served_incomplete_marker",
+  "crates/ripr/src/lsp/tests.rs::framed_push_client_root_change_retracts_the_served_incomplete_marker",
+]
+code = ["crates/ripr/src/analysis_outcome.rs", "crates/ripr/src/lsp/diagnostics.rs", "crates/ripr/src/lsp/backend.rs"]

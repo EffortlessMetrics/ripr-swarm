@@ -41,6 +41,8 @@ authority for #1999 (implementation) and for any future partition continuation.
 - A diff above the partial-selection budget but within the hard analysis-cost
   guards returns `limited_partial_scope` with a non-empty, deterministic
   partition instead of `diff_scope_oversized` and zero findings (decisions 1-3).
+  Since #13641 this includes a diff above the changed-line guards whose first
+  selected file fits them (decision 3).
 - Every partial result names its selected files, the lower-bound uninspected
   file and changed-line counts, and the stop reason (decision 4).
 - No partial result is accepted as a gate, baseline, badge, or RIPR Zero input
@@ -73,7 +75,7 @@ authority for #1999 (implementation) and for any future partition continuation.
 - A partial budget set above a hard guard could mask the guard. Mitigation:
   overrides are clamped to the guard and the clamp is disclosed (decision 3).
 - Selection drift between releases could make runs look comparable. Mitigation:
-  `partial-diff-v1` and `lang-tier-v1` are part of the partition identity
+  `partial-diff-v2` and `lang-tier-v1` are part of the partition identity
   (decision 7).
 
 ## Required decisions
@@ -111,9 +113,21 @@ same partition.
 Three distinct limits, never conflated:
 
 - **Hard analysis-cost guards** (existing): `DIFF_INDEX_FILE_LIMIT` and
-  `DIFF_CHANGED_RUST_LINE_LIMIT`, with their env overrides. Above these the
-  run still fails closed with `diff_scope_oversized`. They protect runner
-  memory; partial selection never exceeds them.
+  `DIFF_CHANGED_RUST_LINE_LIMIT`, with their env overrides. Above the index
+  guard the run still fails closed with `diff_scope_oversized`. They protect
+  runner memory; partial selection never exceeds them. Revision (#13641): the
+  changed-line guards — `DIFF_CHANGED_RUST_LINE_LIMIT` and the preview
+  Python/TypeScript limits of RIPR-SPEC-0361 — measure the files the run
+  analyzes, so a diff over them degrades into the partition below (whose line
+  budget is clamped to the smallest enabled language limit) instead of
+  refusing. They remain a
+  backstop: since files are never split, a file that alone exceeds its own
+  language's changed-line limit is left out of the partition (named on the scope
+  record as `over_limit_files`, counted as uninspected, stop reason
+  `file_exceeds_analysis_limit` when nothing else stopped selection) and
+  selection continues with the files that fit; only a diff in which no file
+  fits still fails closed with `diff_scope_oversized`. The language-neutral streaming parse guards are
+  unchanged.
 - **Partial-selection budget** (new): a smaller, separately named budget
   (`RIPR_PARTIAL_DIFF_FILE_BUDGET`, `RIPR_PARTIAL_DIFF_LINE_BUDGET`) spent in
   the priority order of decision 2. When the diff exceeds this budget, the run
@@ -136,6 +150,12 @@ Budget validity and stop precedence are defined, never implicit:
 - If the first selected file alone exceeds the line budget, that single file
   is analyzed anyway and the result is `limited_partial_scope` with stop
   reason `line_budget_exceeded_on_first_file` — never an empty partition.
+  Revision (#13641): a file that also exceeds its own language's
+  changed-line limit is never selected, even first: selection skips it and
+  continues, and with no selectable file there is no partition and the run
+  refuses. The line budget is clamped to the smallest enabled language limit,
+  so a widen instruction that asks for a line budget above that limit also
+  names the limit to raise with it.
 - A later whole file that would exceed the remaining line budget is
   **excluded** (never included with overshoot); selection stops there with
   stop reason `line_budget`. The overshoot exception applies to the first
@@ -158,7 +178,9 @@ selected files: exact paths, in selection order
 selected changed-line count
 uninspected files: lower-bound count (files with changed lines not selected)
 uninspected changed-line lower-bound
-stop reason: which budget bound was reached (file or line budget)
+stop reason: which bound stopped selection (file budget, line budget, or
+  file_exceeds_analysis_limit when only over-limit files were left out)
+over-limit files: files each over their own language limit, left out (#13641)
 gate eligibility: ineligible
 ```
 
@@ -190,7 +212,7 @@ key order is not guaranteed):
 
 ```text
 canonical form, one field per line, LF-separated, UTF-8:
-  "selection_version="  "partial-diff-v1"
+  "selection_version="  "partial-diff-v2"
   "language_tier_version="  "lang-tier-v1"
   "diff_identity="      <existing diff identity string, exactly as the
                          full-scope run computes it>
@@ -205,8 +227,14 @@ partition_identity = lowercase hex sha256 of the canonical form
 Two runs with the same partition identity selected the same scope; a run with
 a different budget, diff, or selection or language-tier version has a
 different identity and may not be diffed, baselined, or compared against it.
-`partial-diff-v1` bumps only on a contract revision of the selection
+The selection version bumps only on a contract revision of the selection
 algorithm; `lang-tier-v1` bumps if language tiers are added or reordered.
+`partial-diff-v2` (#13641) is the revision in which a file over its own
+language's changed-line limit is left out of the partition instead of
+refusing the run, and a preview file its adapter's generated-name or
+excluded-directory authority refuses is no partition candidate (as generated
+Rust already was not); `partial-diff-v1` identities are not comparable with
+it.
 
 ## Safety posture (normative shape)
 

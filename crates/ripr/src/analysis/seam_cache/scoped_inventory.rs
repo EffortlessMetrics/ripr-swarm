@@ -276,7 +276,11 @@ impl RepoScopedInventoryCache {
         }
         let path = self.entry_path(key, identity);
         crate::atomic_file::write_cache(&path, &bytes, "scoped inventory cache")?;
-        self.prune(&path);
+        // A suppressed write stored nothing, so pruning after it would only
+        // delete reusable entries (#13945).
+        if !crate::atomic_file::cache_mutation_suppressed(&path) {
+            self.prune(&path);
+        }
         Ok(())
     }
 
