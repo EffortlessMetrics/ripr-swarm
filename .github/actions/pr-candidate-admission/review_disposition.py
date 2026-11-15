@@ -126,6 +126,14 @@ VERDICT_ALTERNATIVE = re.compile(
 GFM_DELIMITER_ROW = re.compile(
     r"^[ \t]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$"
 )
+# #14603 review repair: a `| Verdict | BLOCK |` row above a delimiter row is a
+# real verdict, not a column header; dropping it reopened the fail-open carrier
+# this grammar closes. A value cell that names a disposition keeps the row.
+VERDICT_TABLE_CELL_DISPOSITION = re.compile(
+    r"[\s*_`~>\-]*(?:approve(?:d|s)?|block(?:ed|s|ing)?|abstain(?:ed|s)?|"
+    r"ready|not[\s_-]*ready|reject(?:ed|s)?|hold|maybe|incomplete)\b",
+    re.IGNORECASE,
+)
 # Retraction and blocker phrases for body prose after the marker (and for fenced text,
 # which must not be able to hide one). Best effort: free prose cannot be enumerated, so
 # the closed control is the marker line plus later native reviews superseding this one.
@@ -358,13 +366,26 @@ def verdict_disposition(line: str) -> bool | None:
     return None
 
 
+def verdict_row_states_disposition(line: str) -> bool:
+    """Whether a value cell of a ``| Verdict | ... |`` row names a disposition."""
+    cells = line.strip().strip("|").split("|")
+    return any(
+        VERDICT_TABLE_CELL_DISPOSITION.match(cell) is not None for cell in cells[1:]
+    )
+
+
 def verdict_table_header(lines: list[str], index: int) -> bool:
     """Whether ``lines[index]`` is a table header row, not a verdict.
 
     #14603 review repair: ``| Verdict | Notes |`` above a GFM delimiter row names a
-    column. Reading it as a value refused a well-formed review table.
+    column. Reading it as a value refused a well-formed review table. A row whose
+    value cells hold a disposition (``| Verdict | BLOCK |``) is a real verdict even
+    above a delimiter row, so it is kept and refused rather than dropped.
     """
-    if VERDICT_TABLE_HEADER.match(normalize_body(lines[index])) is None:
+    normalized = normalize_body(lines[index])
+    if VERDICT_TABLE_HEADER.match(normalized) is None:
+        return False
+    if verdict_row_states_disposition(normalized):
         return False
     return index + 1 < len(lines) and GFM_DELIMITER_ROW.match(lines[index + 1]) is not None
 
@@ -987,6 +1008,11 @@ def self_test() -> None:
         # A table header row names a column, not a disposition.
         ("SOURCE_REVIEW_READY\n| Verdict | Notes |\n| --- | --- |\n| APPROVE |", True),
         ("SOURCE_REVIEW_READY\n| Verdict | Notes |\n| --- | --- |", True),
+        # #14603 review repair: a row whose value cell states a disposition is a
+        # real verdict even above a delimiter row, so it must be kept and refused.
+        ("SOURCE_REVIEW_READY\n| Verdict | BLOCK |\n| --- | --- |", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | ABSTAIN |\n| --- | --- |", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | not ready |\n| --- | --- |", False),
         ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d\nNo blocking findings on this head.", True),
         ("SOURCE_REVIEW_READY\n- **Verdict:** ABSTAIN", False),
         ("SOURCE_REVIEW_READY\n```\nVERDICT: BLOCK\n```", False),
