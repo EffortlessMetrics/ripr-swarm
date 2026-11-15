@@ -292,7 +292,8 @@ When you cannot edit the command (the editor extension, an MCP host, a Git
 hook or CI), set `RIPR_VERBOSE=1` in its environment instead. The variable
 adds stderr lines only: stdout, JSON, SARIF and the exit code stay as they
 are. The `-v` flag itself also widens a few screens on stdout (`ripr doctor`,
-`ripr agent card`, and the file-cache fields of `ripr check --format json`),
+`ripr agent card`, `ripr agent status`, the file-cache fields of
+`ripr check --format json`) and writes the `ripr pilot` timings file,
 so use the variable when another tool reads stdout.
 
 ```text

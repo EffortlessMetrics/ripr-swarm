@@ -554,6 +554,7 @@ fn check_with_progress_and_origins_run(
     let consumed_sources = std::mem::take(&mut analysis.rust_consumed_sources);
     let language_view = analysis.language_view.take();
     let human_output = matches!(input.format, OutputFormat::Human | OutputFormat::HumanFull);
+    let analyzed_finding_count = analysis.findings.len();
     let mut output = output_builder::check_output_from_analysis(input, analysis);
     output.file_fact_cache = consumed_sources.file_fact_cache.clone();
     // #6340: only a human-rendered run pays for the Python test walk; JSON, LSP
@@ -574,6 +575,13 @@ fn check_with_progress_and_origins_run(
     // owner opt-outs so the trace names exactly the findings the output
     // reports (stderr diagnostics only; bounded per run).
     if crate::stderr_diagnostics() {
+        let reported = output.findings.len();
+        if reported < analyzed_finding_count {
+            eprintln!(
+                "ripr: {} finding(s) left out by suppressions or owner opt-outs; verdict lines cover the {reported} reported",
+                analyzed_finding_count - reported
+            );
+        }
         for line in super::verbose_trace::verdict_lines(&output.findings) {
             eprintln!("{line}");
         }

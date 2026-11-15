@@ -156,7 +156,7 @@ pub fn ripr::process_owner::bind_process_lifetime
 pub fn ripr::set_verbose
 # Stderr-only verbose level for RIPR_VERBOSE: owner lib; reason: the binary
 # MCP route turns on stderr diagnostics without the stdout-widening `-v`
-# contract; covered_by: cargo test -p ripr --test verbose_env,
+# contract; covered_by: cargo test -p ripr --test cli_progress,
 # cargo xtask check-public-api.
 pub fn ripr::set_stderr_diagnostics
 pub mod ripr::analysis

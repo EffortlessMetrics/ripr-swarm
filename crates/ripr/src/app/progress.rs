@@ -4,7 +4,6 @@
 //! observational and never becomes part of analysis identity or output.
 //! Unknown work totals stay unknown: this layer does not invent percentages.
 
-use std::io::Write as _;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::time::Instant;
@@ -183,12 +182,12 @@ impl<'a> ProgressRun<'a> {
     fn emit_now(&mut self, stage: AnalysisProgressStage) {
         if crate::stderr_diagnostics() {
             let now = elapsed_ms(self.started);
-            // A best-effort write, never `eprintln!`: this also runs from
-            // `Drop` during an unwind, where a closed stderr pipe must not
-            // turn into a second panic and an abort.
-            let mut stderr = std::io::stderr().lock();
+            // Best effort, never `eprintln!`: this also runs from `Drop`
+            // during an unwind, where a closed stderr pipe must not turn
+            // into a second panic and an abort. The macro still closes an
+            // open in-place progress row before the line.
             for line in phase_timing_lines(self.scope, self.phase_mark, stage, now) {
-                let _ = writeln!(stderr, "{line}");
+                eprintln_best_effort!("{line}");
             }
             self.phase_mark = Some((stage, now));
         }
