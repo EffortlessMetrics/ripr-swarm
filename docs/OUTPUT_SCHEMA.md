@@ -167,7 +167,7 @@ records that distinction.
 
 | Published schema | Current version | Version owner and rationale |
 | --- | --- | --- |
-| `schemas/ripr/cache-status.schema.json` | `0.2` | `crates/ripr/src/cli/commands/cache.rs`; cache status report (`ripr cache status --json`) |
+| `schemas/ripr/cache-status.schema.json` | `0.3` | `crates/ripr/src/cli/commands/cache.rs`; cache status report (`ripr cache status --json`) |
 | `schemas/ripr/capabilities.schema.json` | `0.1` | `crates/ripr-contract/src/domain/language_capability.rs`; language capability registry (`ripr capabilities --json`, #5531, #14067) |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
 | `schemas/ripr/check-timeout-refusal.schema.json` | `0.3` | `crates/ripr/src/app.rs`; analysis-timeout refusal envelope with input context (RIPR-SPEC-0241 amendment #10796) |
