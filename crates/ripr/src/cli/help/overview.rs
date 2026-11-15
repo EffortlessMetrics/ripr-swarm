@@ -58,8 +58,8 @@ Exit codes: 0 completed, 2 could not complete (usage, configuration, or
 operational error), 3 ripr declined: a blocking result, or a request it will
 not run (the output says why), 130 interrupted standalone check. Full
 contract: docs/EXIT_CODES.md.
-Global flags: -v, --verbose   Stderr diagnostics: scope, phase timings, why each
-finding got its class (any position, not `ripr help --json`; or RIPR_VERBOSE=1).
+Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: timings and
+verdict reasons (any position but `help --json`). RIPR_VERBOSE=1 is stderr-only.
 
 ripr reads your changed code, imagines small bugs in it, and checks whether
 your tests would likely catch them. It does not run mutants or your tests and
