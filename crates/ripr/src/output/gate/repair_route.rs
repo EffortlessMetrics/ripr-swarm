@@ -869,8 +869,7 @@ mod tests {
             .pointer("/llm_guidance/command")
             .and_then(Value::as_str)
             .ok_or_else(|| "current review fixture lacks llm_guidance.command".to_string())?;
-        let candidate =
-            crate::output::gate::candidate_from_guidance_item("comments", &item, false, false);
+        let candidate = crate::output::gate::candidate_from_guidance_item("comments", &item, false);
         let route = build_gate_repair_route(&candidate);
         let rendered = crate::output::gate::presentation::repair_route_json(&route);
 
@@ -1085,7 +1084,7 @@ mod tests {
     fn incomplete_route_is_advisory_only_and_renders_named_limitation() -> Result<(), String> {
         let item = current_review_item()?;
         let mut candidate =
-            crate::output::gate::candidate_from_guidance_item("comments", &item, false, false);
+            crate::output::gate::candidate_from_guidance_item("comments", &item, false);
         candidate.route_facts.verify_command = None;
 
         let route = build_gate_repair_route(&candidate);
