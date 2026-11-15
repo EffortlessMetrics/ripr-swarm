@@ -2499,7 +2499,14 @@ that one line and change no other line of the owner, and the diff's old text
 must match the line the gate rebuilds. Only that guard's returned value moves,
 so every condition and every other exit are the same in both versions. A diff
 that also moves a guard condition (`t > 500` to `t > 200`) refuses, because
-the old owner is then not the new one with the return line swapped back.
+the old owner is then not the new one with the return line swapped back
+(`fixtures/rust_guard_return_changed_guard`, an evidence-promotion honesty
+case).
+
+The subset reads integer types and the prelude variants by spelling, so the
+owner's file must bind none of `Ok`, `Err`, `Some`, `None` as a value, declare
+or import no integer type name (`type u32 = u8;` would narrow the range), and
+glob-import nothing beyond `use super::*;`.
 
 The pin holds per call:
 - the pinned call is a bare owner call with plain decimal literal arguments;

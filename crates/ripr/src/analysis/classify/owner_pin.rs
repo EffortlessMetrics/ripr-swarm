@@ -5463,6 +5463,11 @@ impl OwnerReturnPin {
         }) {
             return None;
         }
+        if matches!(path, ReturnPathGate::ClosedGuardReturn { .. })
+            && !owner_file_keeps_integer_names(owner, index)
+        {
+            return None;
+        }
         let call = pin_call(owner, index)?;
         // #6544: a bare call's same-package module-level rivals are settled
         // per test by the import or path that spells the call; every other
@@ -14594,29 +14599,57 @@ fn returns_primitive_scalar(owner: &FunctionSummary, index: &RustIndex) -> bool 
     if !SCALARS.contains(&returned.as_str()) {
         return false;
     }
+    index
+        .files()
+        .get(&owner.file)
+        .is_some_and(|facts| !source_binds_type_name(&facts.source, &returned))
+}
+
+/// Whether `source` declares a type named `name` (`type u32 = u8;`,
+/// `struct u32`) or imports one under that name (`use a::Gauge as u32;`,
+/// `use a::{u32};`).
+fn source_binds_type_name(source: &str, name: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    let declared = whole_word_offsets(&masked, name).into_iter().any(|offset| {
+        // #7835 review: `type r#u32` declares the same name.
+        let before = masked[..offset]
+            .strip_suffix("r#")
+            .unwrap_or(&masked[..offset]);
+        let before = before.trim_end();
+        ["struct", "enum", "union", "type", "trait"]
+            .iter()
+            .any(|keyword| before.ends_with(keyword))
+    });
+    let imported = whole_word_offsets(&masked, "use")
+        .into_iter()
+        .any(|offset| {
+            let rest = &masked[offset..];
+            let end = rest.find(';').unwrap_or(rest.len());
+            contains_as_whole_word(&rest[..end], name)
+        });
+    declared || imported
+}
+
+/// #14387 (#14786 review): the closed subset checks arithmetic in the
+/// built-in range of each integer type it reads by spelling, so a guard-return
+/// credit needs the owner's file to leave every integer type name unbound
+/// (`type u32 = u8;` would narrow it) and to glob-import nothing beyond its
+/// parent module (`use crate::narrow::*;` could bind one).
+fn owner_file_keeps_integer_names(owner: &FunctionSummary, index: &RustIndex) -> bool {
     index.files().get(&owner.file).is_some_and(|facts| {
         let masked = mask_comments_and_strings(&facts.source);
-        let declared = whole_word_offsets(&masked, &returned)
-            .into_iter()
-            .any(|offset| {
-                // #7835 review: `type r#u32` declares the same name.
-                let before = masked[..offset]
-                    .strip_suffix("r#")
-                    .unwrap_or(&masked[..offset]);
-                let before = before.trim_end();
-                ["struct", "enum", "union", "type", "trait"]
-                    .iter()
-                    .any(|keyword| before.ends_with(keyword))
-            });
-        // `use a::Gauge as u32;` or `use a::{u32};` binds the name.
-        let imported = whole_word_offsets(&masked, "use")
+        let foreign_glob = whole_word_offsets(&masked, "use")
             .into_iter()
             .any(|offset| {
                 let rest = &masked[offset..];
                 let end = rest.find(';').unwrap_or(rest.len());
-                contains_as_whole_word(&rest[..end], &returned)
+                let item: String = rest[..end].split_whitespace().collect();
+                item.contains('*') && item != "usesuper::*"
             });
-        !declared && !imported
+        !foreign_glob
+            && !INTEGER_TYPES
+                .iter()
+                .any(|name| source_binds_type_name(&facts.source, name))
     })
 }
 

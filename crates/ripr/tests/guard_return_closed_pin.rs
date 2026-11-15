@@ -285,3 +285,42 @@ fn a_file_that_rebinds_a_prelude_variant_keeps_the_pin_unproven() -> Result<(), 
     }
     Ok(())
 }
+
+/// The subset checks arithmetic in each integer type's built-in range, so a
+/// file that may rebind an integer type name keeps the pin unproven (#14786
+/// review). Under `type u32 = u8;` both real versions overflow at `n * 4`, so
+/// the pin passes on neither. The same owner without the alias is the control.
+#[test]
+fn a_file_that_may_rebind_an_integer_type_keeps_the_pin_unproven() -> Result<(), String> {
+    let owner = |rival: &str, factor: &str| {
+        format!(
+            "pub fn f(n: u32) -> u32 {{
+    if n >= 100 {{
+        return n * {factor} / 10;
+    }}
+    0
+}}
+{rival}"
+        )
+    };
+    for (rival, expected_exposed) in [
+        ("", true),
+        ("#[allow(non_camel_case_types)]\ntype u32 = u8;", false),
+        ("pub use std::num::*;", false),
+    ] {
+        let after = owner(rival, "4");
+        let before = owner(rival, "3");
+        let findings = TempRepo::create(
+            &lib(&after, "assert_eq!(f(100), 40);"),
+            &fn_diff(&before, &after),
+        )?
+        .findings()?;
+        let changed = finding_on_line(&findings, 3, "n * 4 / 10")?;
+        assert_eq!(
+            changed.class == ExposureClass::Exposed,
+            expected_exposed,
+            "rival {rival:?}: {changed:?}"
+        );
+    }
+    Ok(())
+}

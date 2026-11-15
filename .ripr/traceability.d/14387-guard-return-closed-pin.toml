@@ -6,4 +6,7 @@ tests = [
   "crates/ripr/tests/guard_return_closed_pin.rs::an_exact_pin_whose_literal_takes_the_changed_guard_is_exposed",
   "crates/ripr/tests/guard_return_closed_pin.rs::a_pin_that_cannot_tell_the_versions_apart_stays_below_exposed",
   "crates/ripr/tests/guard_return_closed_pin.rs::a_diff_that_also_changes_the_guard_keeps_the_pin_unproven",
+  "crates/ripr/tests/guard_return_closed_pin.rs::a_file_that_rebinds_a_prelude_variant_keeps_the_pin_unproven",
+  "crates/ripr/tests/guard_return_closed_pin.rs::a_file_that_may_rebind_an_integer_type_keeps_the_pin_unproven",
 ]
+fixtures = ["fixtures/rust_guard_return_changed_guard"]
