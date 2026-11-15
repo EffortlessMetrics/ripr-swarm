@@ -3,10 +3,12 @@
 use super::owner_pin::{AssertionRefusal, OwnerPinSyntax};
 use crate::analysis::classify::{ProbeContext, direct_call_name};
 use crate::analysis::facts::{SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind};
+use crate::analysis::resource_cost::trace_latency_phase;
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::{RelatedTest, RelatedTestMiss};
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::time::Instant;
 
 pub(in crate::analysis) fn assertion_refusal_counts_as_analyzer_limit(
     context: &ProbeContext<'_>,
@@ -174,6 +176,7 @@ pub(in crate::analysis) fn split_assertion_not_credited_misses(
     pin_syntax: &OwnerPinSyntax,
     related_tests: &mut [RelatedTest],
 ) {
+    let started = Instant::now();
     for row in related_tests.iter_mut() {
         if row.miss != Some(RelatedTestMiss::AssertionNotCredited) {
             continue;
@@ -201,6 +204,7 @@ pub(in crate::analysis) fn split_assertion_not_credited_misses(
         }
         row.miss = Some(split.unwrap_or(RelatedTestMiss::AssertionAdmissionUnproven));
     }
+    trace_latency_phase("classify_assertion_not_credited_misses", "ok", started.elapsed());
 }
 
 #[cfg(test)]
