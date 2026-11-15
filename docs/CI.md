@@ -116,6 +116,13 @@ it is a state token alone; it carries a `disposition` field label anywhere (such
 cell that holds only a state token. Fenced text is still scanned for any state token. A
 PR description that carries any of these field shapes besides its `Source review:` line
 is ambiguous and attests nothing.
+A COMMENT whose first line is `VERDICT: APPROVE <full 40-character head SHA>` at
+column zero, with the SHA equal to that review's head and only a blocker-free tail
+after it, is the same attestation in verdict form, and `VERDICT: BLOCK` /
+`VERDICT: BLOCKED <sha>` on that first line is a negative statement; every other
+`VERDICT:` prose is neutral (#8157). This keeps an
+automated verdict review from superseding an earlier marker from the same login as
+neutral chatter.
 A state word inside prose, such as a backticked quotation of a marker or "the earlier
 review is superseded", is narration and is not read, because that scan ejected fully
 green queue entries after the whole run (#11566). The PR author can still

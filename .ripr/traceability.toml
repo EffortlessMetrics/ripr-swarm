@@ -5712,6 +5712,8 @@ tests = [
   "crates/ripr/src/output/policy_preview_promotion.rs::tests::preview_promotion_default_paths_use_dash_class_label",
   "crates/ripr/src/cli/commands.rs::tests::policy_preview_promotion_parses_option_surface",
   "crates/ripr/src/cli/commands.rs::tests::policy_preview_promotion_command_writes_reports",
+  "crates/ripr/tests/cli_smoke.rs::mistyped_root_is_refused_and_not_created",
+  "crates/ripr/tests/cli_smoke.rs::policy_preview_promote_accepts_a_valid_root",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
 ]
 fixtures = [
@@ -5720,6 +5722,7 @@ fixtures = [
 code = [
   "crates/ripr/src/output/policy_preview_promotion.rs",
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/policy/reports.rs",
   "crates/ripr/src/cli/help.rs",
 ]
 outputs = [
