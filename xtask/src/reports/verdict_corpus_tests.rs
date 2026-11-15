@@ -2245,6 +2245,15 @@ fn check_affected_classification_matrix() {
         ("badges/coverage.svg", Ignored),
         ("metrics/report.json", Ignored),
         ("examples/demo.rs", Ignored),
+        // The ignored allowlist is root-anchored: a nested segment in a
+        // source tree still selects its language.
+        ("xtask/src/metrics/foo.rs", lang("rust")),
+        ("crates/x/examples/y.rs", lang("rust")),
+        ("tools/metrics/x.py", lang("python")),
+        // Crate-root and cross-language helpers feed every corpus.
+        ("crates/ripr/src/bounded_input.rs", All),
+        ("crates/ripr/src/lsp/backend.rs", All),
+        ("crates/ripr/src/lib.rs", All),
         ("fixtures/some-fixture/input.rs", Ignored),
     ] {
         assert_eq!(classify_affected_path(path), expected, "{path}");

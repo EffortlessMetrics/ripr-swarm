@@ -3648,8 +3648,11 @@ pub(crate) fn classify_affected_path(path: &str) -> AffectedPath {
     {
         return AffectedPath::All;
     }
-    // Shared surfaces widen to every corpus.
-    if path.starts_with("crates/ripr-contract/")
+    // Shared surfaces widen to every corpus. The analyzer crate itself is
+    // shared outside its language subtrees (handled above): a crate-root or
+    // cross-language helper such as bounded_input feeds every corpus.
+    if path.starts_with("crates/ripr/src/")
+        || path.starts_with("crates/ripr-contract/")
         || [
             "crates/ripr/src/domain",
             "crates/ripr/src/analysis",
@@ -3673,14 +3676,16 @@ pub(crate) fn classify_affected_path(path: &str) -> AffectedPath {
     {
         return AffectedPath::All;
     }
-    // The explicit ignored allowlist; everything else defaults to All.
+    // The explicit ignored allowlist, anchored at the repository root so a
+    // nested examples/badges/metrics segment in a source tree still selects
+    // its language below; everything else defaults to All.
     if path.starts_with("docs/")
         || path.starts_with("editors/")
         || path.starts_with("plugins/")
         || path.starts_with("fixtures/")
-        || segments
-            .iter()
-            .any(|segment| matches!(*segment, "examples" | "badges" | "metrics"))
+        || path.starts_with("examples/")
+        || path.starts_with("badges/")
+        || path.starts_with("metrics/")
         || basename.starts_with("README")
         || basename.starts_with("CHANGELOG")
     {
@@ -3834,15 +3839,24 @@ fn check_affected(paths: &[String]) -> Result<(), String> {
             })
             .collect(),
     };
-    let planned = selected.iter().filter(|entry| entry.is_ok()).count();
-    let lines = affected_lines(&selection, &discovered_languages, planned);
+    let lines = affected_lines(&selection, &discovered_languages, 0);
     println!("{}", lines[0]);
-    let checked = check_each(selected, |dir| score_corpus(dir, true, None, None))?;
-    for line in &lines[1..] {
-        println!("{line}");
+    let checked = check_each(selected, |dir| score_corpus(dir, true, None, None));
+    // The selection footer (checked count, not-run disclosure) must print
+    // even when a selected corpus fails; the error then still propagates.
+    match &checked {
+        Ok(count) => {
+            for line in &affected_lines(&selection, &discovered_languages, *count)[1..] {
+                println!("{line}");
+            }
+        }
+        Err(_) => {
+            if let Some(not_run) = lines.iter().find(|line| line.contains("not run")) {
+                println!("{not_run}");
+            }
+        }
     }
-    let _ = checked;
-    Ok(())
+    checked.map(|_| ())
 }
 
 /// Parse `verdict-corpus` arguments without touching the filesystem. The
