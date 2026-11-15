@@ -32,7 +32,8 @@ use super::triage::{self, HumanTriage};
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
 use crate::domain::{
-    ExposureClass, Finding, NextActionCheckCase, OracleStrength, RelatedTest, RelationConfidence,
+    ExposureClass, Finding, NextActionCheckCase, OracleStrength, RelatedTest, RelatedTestMiss,
+    RelationConfidence,
 };
 use crate::output::next_action::render_next_action_plain_at_root;
 use crate::output::path::repository_display_path;
@@ -987,6 +988,10 @@ fn strongest_test(finding: &Finding) -> Option<&RelatedTest> {
             (
                 test.relation_confidence
                     .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
+                // #14454: within a confidence tier, a row whose assertion
+                // cannot observe the change is never the test to edit while
+                // another row can.
+                test.miss == Some(RelatedTestMiss::AssertionNotObserving),
                 strength_rank(&test.oracle_strength),
             )
         })
@@ -1148,7 +1153,7 @@ fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missin
         "{}|{}|{}|missing={}|test={}|id={}",
         finding.class.as_str(),
         field(&location),
-        field(&clip(&super::sections::with_arm_result(
+        field(&clip(&crate::output::flow_sink_line::with_arm_result(
             finding,
             &finding.probe.expression
         ))),

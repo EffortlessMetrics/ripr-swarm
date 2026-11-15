@@ -12,6 +12,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[path = "common/advisory_write_safety.rs"]
 mod advisory_write_safety;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/agent_journey_budget.rs"]
+mod agent_journey_budget;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/agent_output_budget.rs"]
 mod agent_output_budget;
 #[cfg(feature = "lang-rust")]
@@ -2589,6 +2592,7 @@ fn check_from_a_member_crate_warns_when_it_skips_the_closer_ripr_toml() -> Resul
 fn check_from_a_package_source_dir_analyzes_the_crate_root() -> Result<(), String> {
     let bin = env!("CARGO_BIN_EXE_ripr");
     let root = unique_external_workspace("check-package-subdir")?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
     std::fs::create_dir_all(&root).map_err(|error| format!("create fixture: {error}"))?;
     let outcome = check_package_subdir_runs(bin, &root);
     std::fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
@@ -2665,6 +2669,7 @@ fn check_package_subdir_runs(
 fn check_from_a_directory_without_a_workspace_does_not_disclose_resolution() -> Result<(), String> {
     let bin = env!("CARGO_BIN_EXE_ripr");
     let root = unique_external_workspace("check-no-workspace")?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
     std::fs::create_dir_all(root.join("src"))
         .map_err(|error| format!("create fixture source: {error}"))?;
     std::fs::write(
@@ -2710,6 +2715,7 @@ fn check_from_a_directory_without_a_workspace_does_not_disclose_resolution() -> 
 #[test]
 fn config_validate_hints_follow_the_parser_reason_not_source_text() -> Result<(), String> {
     let root = unique_external_workspace("config-validate-hint-source")?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
     std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     let result = (|| {
         for (source, expected_hint) in [
@@ -2765,6 +2771,7 @@ fn config_validate_hints_follow_the_parser_reason_not_source_text() -> Result<()
 fn config_validate_discovers_parent_config_from_nested_directory() -> Result<(), String> {
     let bin = env!("CARGO_BIN_EXE_ripr");
     let root = unique_external_workspace("config-validate-parent")?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
     let nested = root.join("crates/member");
     std::fs::create_dir_all(&nested)
         .map_err(|error| format!("create nested config directory: {error}"))?;
@@ -4827,6 +4834,7 @@ fn check_json_unusable_root_emits_repository_root_unusable() -> Result<(), Strin
     // Outside the repository: the temp dir sits under target/, where git
     // discovery would walk up into the checkout and resolve the base.
     let plain = unique_external_workspace("check-json-plain-dir")?;
+    let _cleanup = DeclaredHunkScratch(plain.clone());
     std::fs::create_dir_all(&plain).map_err(|e| format!("create plain dir: {e}"))?;
     let plain_arg = plain.display().to_string();
     let output = run_ripr(&["check", "--json", "--root", &plain_arg, "--base", "main"]);
@@ -5104,6 +5112,7 @@ fn diff_json_unresolvable_base_emits_refusal_envelope() -> Result<(), String> {
 #[test]
 fn diff_json_outside_work_tree_emits_refusal_envelope() -> Result<(), String> {
     let plain = unique_external_workspace("diff-json-plain-dir")?;
+    let _cleanup = DeclaredHunkScratch(plain.clone());
     std::fs::create_dir_all(&plain).map_err(|e| format!("create plain dir: {e}"))?;
     // A valid config keeps the failure at base resolution, not config load,
     // so the identity is the typed root refusal.
@@ -5217,6 +5226,7 @@ fn context_json_fresh_analysis_preserves_base_failures() -> Result<(), String> {
 #[test]
 fn context_json_fresh_analysis_preserves_repository_root_failure() -> Result<(), String> {
     let root = unique_external_workspace("context-json-typed-root")?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
     let result = (|| {
         std::fs::create_dir_all(&root).map_err(|err| format!("create plain dir: {err}"))?;
         std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"ready\"\n")
@@ -16414,6 +16424,7 @@ fn doctor_invalid_config_on_a_committed_repo_does_not_recommend_check() -> Resul
 #[test]
 fn doctor_newline_bearing_root_still_fits_one_screen() -> Result<(), Box<dyn std::error::Error>> {
     let parent = unique_external_workspace("newline-root")?;
+    let _cleanup = DeclaredHunkScratch(parent.clone());
     let root = parent.join(format!("{}界", "line\n".repeat(8)));
     init_producer_fixture_repo(&root)?;
     let root_str = root
@@ -17315,6 +17326,7 @@ fn doctor_missing_root_recommends_recovery_and_outside_git_recommends_runnable_c
     // (which cannot run there) after a raw `git status` failure on stderr.
     // A missing root also blamed cargo and rustc for the failed spawn.
     let outside = unique_external_workspace("doctor-outside-git")?;
+    let _cleanup = DeclaredHunkScratch(outside.clone());
     std::fs::create_dir_all(outside.join("src")).map_err(|err| err.to_string())?;
     std::fs::write(
         outside.join("Cargo.toml"),
@@ -21083,7 +21095,10 @@ fn rerun_changed_test_check_parity_matches_full_pipeline_for_boundary_gap() -> R
         || report["parity"]["selected_seam_count"] != report["parity"]["matched_seam_count"]
         || report["parity"]["mismatches"] != serde_json::json!([])
         || report["parity"]["input_mismatches"] != serde_json::json!([])
-        || report["parity"]["selected_seam_count"] != serde_json::json!(1)
+        // The predicate seam plus the two `return_value` branch seams the
+        // changed test grips (#14385); the predicate seam stays first.
+        || report["parity"]["selected_seam_count"] != serde_json::json!(3)
+        || report["seams"][0]["seam_id"] != "67fc764ba37d77bd"
         || !report["cache"]["input_fingerprint"].is_object()
         || report["cache"]["input_fingerprint"]["workspace_manifests_hash"]
             .as_str()
@@ -36194,6 +36209,7 @@ fn repo_config_perl_executable_runs_only_with_user_opt_in() -> Result<(), Box<dy
     // Outside the ripr workspace: cargo points TMPDIR at target/, where root
     // discovery would climb to this repository's Cargo.toml.
     let root = unique_external_workspace("perl-executable-opt-in")?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
     init_producer_fixture_repo(&root)?;
     std::fs::write(
         root.join("ripr.toml"),
@@ -36249,6 +36265,7 @@ fn repo_config_perl_executable_runs_only_with_user_opt_in() -> Result<(), Box<dy
 fn check_rejects_invalid_ripr_git_timeout_env() -> Result<(), String> {
     // Outside the repository, so the precedence run below cannot analyze it.
     let workspace = unique_external_workspace("git-timeout-env")?;
+    let _cleanup = DeclaredHunkScratch(workspace.clone());
     std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
     let root = workspace
         .to_str()
@@ -36310,6 +36327,7 @@ fn check_rejects_invalid_ripr_git_timeout_env() -> Result<(), String> {
 #[test]
 fn check_rejects_invalid_check_timeout_flag_and_env() -> Result<(), String> {
     let workspace = unique_external_workspace("check-timeout-env")?;
+    let _cleanup = DeclaredHunkScratch(workspace.clone());
     std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
     let root = workspace
         .to_str()
@@ -36698,6 +36716,8 @@ fn feedback_export_out_refuses_to_replace_a_special_node() -> Result<(), std::io
 /// `--root` as a new directory tree and exit 0, and `feedback record` shared
 /// the same unvalidated root. A missing path and a file path must both be
 /// refused by the shared root validator, and nothing may be created.
+/// #14624 adds `policy preview-promote`, which wrote its default reports
+/// under the CWD instead of refusing.
 #[test]
 fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
     let scratch = unique_temp_workspace("mistyped-root");
@@ -36705,7 +36725,7 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
     let missing = scratch.join("nope").join("deep");
     let file = scratch.join("a-file");
     std::fs::write(&file, "not a directory\n")?;
-    let commands: [(&str, &[&str]); 8] = [
+    let commands: [(&str, &[&str]); 9] = [
         ("reports ci-packet", &["reports", "ci-packet"]),
         ("feedback export", &["feedback", "export"]),
         (
@@ -36721,6 +36741,17 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
         ),
         ("policy readiness", &["policy", "readiness"]),
         ("policy waiver-aging", &["policy", "waiver-aging"]),
+        (
+            "policy preview-promote",
+            &[
+                "policy",
+                "preview-promote",
+                "--language",
+                "python",
+                "--class",
+                "behavioral",
+            ],
+        ),
         ("pr-comments plan", &["pr-comments", "plan"]),
         ("reports index", &["reports", "index"]),
         ("reports ci-summary", &["reports", "ci-summary"]),
@@ -36753,6 +36784,46 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
     );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert_eq!(file_kept, "not a directory\n");
+    Ok(())
+}
+
+/// #14624: the refusal matrix cannot catch a gate that refuses every root.
+/// With a valid `--root` and no `--out`/`--out-md`, `policy preview-promote`
+/// must still succeed and write its default reports.
+#[test]
+fn policy_preview_promote_accepts_a_valid_root() -> Result<(), std::io::Error> {
+    let root = unique_temp_workspace("preview-promote-valid-root");
+    std::fs::create_dir_all(&root)?;
+    let root_text = root.display().to_string();
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &[
+            "policy",
+            "preview-promote",
+            "--root",
+            root_text.as_str(),
+            "--language",
+            "python",
+            "--class",
+            "behavioral",
+        ],
+    )?;
+    let wrote = root
+        .join("target/ripr/reports/preview-promotion-python-behavioral.json")
+        .is_file()
+        && root
+            .join("target/ripr/reports/preview-promotion-python-behavioral.md")
+            .is_file();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(wrote, "default reports not written:\n{stdout}\n{stderr}");
     Ok(())
 }
 
@@ -37610,6 +37681,7 @@ fn init_warns_when_the_root_is_not_a_git_work_tree() -> Result<(), String> {
     // The ceiling must be the parent, not the fixture: git still examines
     // the starting directory when it equals a ceiling.
     let bare = unique_external_workspace("init-nonrepo-warning")?;
+    let _cleanup = DeclaredHunkScratch(bare.clone());
     std::fs::create_dir_all(&bare).map_err(|e| format!("create bare root: {e}"))?;
     let ceiling = bare
         .parent()

@@ -12,8 +12,8 @@ use crate::domain::ProbeFamily;
 use crate::domain::{
     CanonicalNextActionV1, ExposureClass, Finding, LanguageId, NextActionAlternative,
     NextActionCheckCase, NextActionCurrentness, NextActionDiffSource, NextActionInput,
-    NextActionProducer, NextActionStop, StaticLimitKind, current_command_platform,
-    select_canonical_next_action,
+    NextActionProducer, NextActionStop, RelationConfidence, StaticLimitKind,
+    current_command_platform, select_canonical_next_action,
 };
 use crate::output::count_noun::count_noun;
 use crate::output::path::display_path;
@@ -1128,8 +1128,13 @@ fn offers_test_stub(finding: &Finding) -> bool {
 }
 
 pub(super) fn hidden_stub_route_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'a Finding> {
-    hidden_window(&triage.omitted)
-        .into_iter()
+    // Hidden routing consumes the omitted set in report order, independently of
+    // the priority-ranked Hidden: display window (#14687).
+    triage
+        .omitted
+        .iter()
+        .copied()
+        .take(HIDDEN_FINDINGS_LISTED)
         .filter(|finding| offers_test_stub(finding))
         .collect()
 }
@@ -1458,7 +1463,21 @@ pub(crate) fn canonical_next_action_for_triage(
         (None, _) => String::new(),
     };
     let mut alternatives: Vec<NextActionAlternative> = Vec::new();
-    for omitted in triage.omitted.iter().take(2).filter(|_| !routes_withheld) {
+    // #14266: the two alternates are the best-ranked omitted findings under
+    // the shared render priority (`findings_priority::priority_order`, the
+    // same order the `Hidden:` window uses), not the first two in report
+    // order, so an `exposed` row early in the file list never displaces a
+    // gap. Equal keys keep report order. Withheld routes skip the ranking.
+    let ranked_alternates = (!routes_withheld)
+        .then(|| {
+            crate::output::json::findings_priority::priority_order(&triage.omitted)
+                .into_iter()
+                .filter_map(|index| triage.omitted.get(index))
+                .take(2)
+        })
+        .into_iter()
+        .flatten();
+    for omitted in ranked_alternates {
         let route = match drill_in {
             Some(FindingDrillIn::Commands(navigation)) => navigation.explain_command(&omitted.id),
             None => omitted.id.clone(),
@@ -2317,7 +2336,7 @@ fn triage_rank<'a>(
         preview_rank,
         repair_rank,
         u8::from(finding.canonical_gap.is_none()),
-        u8::from(finding.oracle_related_tests().next().is_none()),
+        u8::from(!has_linked_oracle_test(finding)),
         u8::from(finding.missing.is_empty()),
         -(finding.confidence * 100.0) as i32,
         // #14266: a repair route zeroes `repair_rank` for every routed
@@ -2330,6 +2349,20 @@ fn triage_rank<'a>(
         finding.probe.location.file.as_path(),
         finding.probe.location.line,
     )
+}
+
+/// Whether `finding` has a decision-set related test linked by more than a
+/// shared name token or fixture-helper affinity. A `Low` relation confidence
+/// (`weak_token_substring`, `fixture_owner_affinity`) is advisory only
+/// (`RelationReason::WeakTokenSubstring`), so such a row does not lift a
+/// finding over a higher-confidence one in the Start here order: on semver
+/// `ce1fef1` a format-string literal linked to `test_digit_after_wildcard`
+/// by a shared word led the new `self.0 == '\0'` predicate (#14734).
+/// A row from an older artifact (no relation confidence) keeps counting.
+fn has_linked_oracle_test(finding: &Finding) -> bool {
+    finding
+        .oracle_related_tests()
+        .any(|test| test.relation_confidence != Some(RelationConfidence::Low))
 }
 
 /// A stable finding ranks by its repair route; a preview finding only by the
@@ -3030,15 +3063,23 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         // #14233: the one candidate-current row sorts last in report order,
-        // and the window keeps it ahead of the non-candidate rows.
-        assert_eq!(
-            candidates(&rows),
-            vec!["hidden:20"],
-            "the window keeps the candidate-current row"
+        // and the display window keeps it ahead of the non-candidate rows.
+        assert!(
+            hidden_window(&rows.iter().collect::<Vec<_>>())
+                .iter()
+                .any(|finding| finding.id == "hidden:20"),
+            "the displayed Hidden: window keeps the candidate-current row"
         );
-        // Eligibility is still decided inside the displayed window: with 21
-        // candidate-current rows, the one that ranks last (no recommended next
-        // step) falls outside the window and offers no stub route.
+        // #14687: stub selection is decoupled from that priority window and
+        // reads the first 20 rows in report order instead.
+        assert!(
+            candidates(&rows).is_empty(),
+            "the candidate-current row at index 20 is outside the first 20 rows"
+        );
+        // Eligibility is separately filtered inside the first 20 report-order
+        // rows: with 21 candidate-current rows, the one that ranks last (no
+        // recommended next step) still offers a stub route despite being
+        // excluded from the displayed Hidden: window.
         let mut all_current = rows.clone();
         for (index, row) in all_current.iter_mut().enumerate() {
             row.source_currentness = SourceCurrentness::CandidateCurrent;
@@ -3049,8 +3090,8 @@ mod tests {
         let windowed = candidates(&all_current);
         assert_eq!(windowed.len(), 20, "{windowed:?}");
         assert!(
-            !windowed.contains(&"hidden:7".to_string()),
-            "take the displayed window before eligibility filtering: {windowed:?}"
+            windowed.contains(&"hidden:7".to_string()),
+            "stub eligibility filters within the first 20 rows, independently of the display window: {windowed:?}"
         );
         rows[20].source_currentness = SourceCurrentness::BaseDeleted;
         assert!(candidates(&rows).is_empty());
@@ -3197,6 +3238,54 @@ mod tests {
                 }
             }
             other => return Err(format!("top gap stop is wrong: {other:?}")),
+        }
+        Ok(())
+    }
+
+    /// #14266: the considered-finding alternates are chosen by the shared
+    /// render priority, not report order. Report order puts two `exposed`
+    /// findings first; the gap after them must lead the alternates, and the
+    /// control with every row `exposed` keeps report order.
+    #[test]
+    fn check_adapter_alternates_follow_the_shared_priority_not_report_order() -> Result<(), String>
+    {
+        let top = test_finding("finding:top");
+        let mut noticed_a = test_finding("finding:noticed-a");
+        noticed_a.class = ExposureClass::Exposed;
+        let mut noticed_b = test_finding("finding:noticed-b");
+        noticed_b.class = ExposureClass::Exposed;
+        let mut gap = test_finding("finding:gap");
+        gap.class = ExposureClass::ReachableUnrevealed;
+        let output = test_output(vec![top.clone()]);
+        let alternate_ids = |omitted: Vec<&Finding>| -> Result<Vec<String>, String> {
+            let triage = HumanTriage {
+                state: HumanTriageState::TopGap,
+                selected: Some(&top),
+                omitted,
+            };
+            let action = canonical_next_action_for_triage(
+                &triage,
+                &output,
+                None,
+                CheckDiffProvenance::CommittedHistory,
+            )?;
+            Ok(action
+                .alternatives()
+                .iter()
+                .map(|alternative| alternative.route.clone())
+                .collect())
+        };
+        let ranked = alternate_ids(vec![&noticed_a, &noticed_b, &gap])?;
+        if ranked != ["finding:gap", "finding:noticed-a"] {
+            return Err(format!("alternates must lead with the gap, got {ranked:?}"));
+        }
+        let mut late = test_finding("finding:late");
+        late.class = ExposureClass::Exposed;
+        let control = alternate_ids(vec![&noticed_a, &noticed_b, &late])?;
+        if control != ["finding:noticed-a", "finding:noticed-b"] {
+            return Err(format!(
+                "equal priority must keep report order, got {control:?}"
+            ));
         }
         Ok(())
     }
@@ -4026,6 +4115,113 @@ mod tests {
         assert_eq!(
             triage.selected.map(|finding| finding.id.as_str()),
             Some("finding:unknown")
+        );
+    }
+
+    /// A related test with the given relation, in the decision set.
+    fn related_by(
+        name: &str,
+        reason: crate::domain::RelationReason,
+        confidence: Option<crate::domain::RelationConfidence>,
+    ) -> crate::domain::RelatedTest {
+        crate::domain::RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("tests/version.rs"),
+            line: 10,
+            oracle: None,
+            oracle_kind: crate::domain::OracleKind::Unknown,
+            oracle_strength: crate::domain::OracleStrength::Unknown,
+            relation_reason: Some(reason),
+            relation_confidence: confidence,
+            miss: Some(crate::domain::RelatedTestMiss::NoCallPath),
+            role: crate::domain::RelatedTestRole::Contributing,
+            miss_support: None,
+        }
+    }
+
+    /// #14734 (semver `ce1fef1`): a related test linked only by a shared
+    /// name token is advisory, so it does not lift a lower-confidence
+    /// unknown over the diff's higher-confidence one. The weakly linked
+    /// finding is listed first so insertion order cannot pass for ranking.
+    #[test]
+    fn start_here_does_not_rank_a_name_token_link_as_a_related_test() {
+        use crate::domain::{RelationConfidence, RelationReason};
+        let mut literal = finding_at(
+            "finding:literal",
+            "src/error.rs",
+            ExposureClass::StaticUnknown,
+        );
+        literal.confidence = 0.3;
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::WeakTokenSubstring,
+            Some(RelationConfidence::Low),
+        )];
+        let mut predicate = finding_at(
+            "finding:predicate",
+            "src/error.rs",
+            ExposureClass::InfectionUnknown,
+        );
+        predicate.confidence = 0.43;
+        for finding in [&mut literal, &mut predicate] {
+            finding.recommended_next_step = Some("inspect the change".to_string());
+        }
+        let selected = |findings: Vec<Finding>| {
+            let output = test_output(findings);
+            select_human_triage(&output, &RiprConfig::default())
+                .selected
+                .map(|finding| finding.id.clone())
+        };
+        assert_eq!(
+            selected(vec![literal.clone(), predicate.clone()]),
+            Some("finding:predicate".to_string())
+        );
+
+        // Fixture-helper affinity is the other `Low` relation and is advisory
+        // too.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::FixtureOwnerAffinity,
+            Some(RelationConfidence::Low),
+        )];
+        assert_eq!(
+            selected(vec![literal.clone(), predicate.clone()]),
+            Some("finding:predicate".to_string())
+        );
+
+        // A `Medium` relation (same test file) still counts as a related test.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::SameTestFile,
+            Some(RelationConfidence::Medium),
+        )];
+        assert_eq!(
+            selected(vec![predicate.clone(), literal.clone()]),
+            Some("finding:literal".to_string())
+        );
+
+        // Discriminating control: a test the analyzer links through a call
+        // keeps its lead over a higher-confidence finding with no test.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::HelperOwnerCall,
+            Some(RelationConfidence::High),
+        )];
+        assert_eq!(
+            selected(vec![predicate.clone(), literal.clone()]),
+            Some("finding:literal".to_string())
+        );
+
+        // A row from an older artifact carries no relation confidence and
+        // still counts, as before.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::WeakTokenSubstring,
+            None,
+        )];
+        assert_eq!(
+            selected(vec![predicate, literal]),
+            Some("finding:literal".to_string())
         );
     }
 

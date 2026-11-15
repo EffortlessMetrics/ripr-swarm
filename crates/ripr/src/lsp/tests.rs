@@ -16746,10 +16746,13 @@ fn lsp_fixture_render(
         &fixture_root,
         &crate::config::RiprConfig::default(),
     )?;
+    // The owner's tail `if`/`else` branch values are `return_value` seams too
+    // (#14385); the fixture's golden pins the predicate-boundary seam.
+    seams.retain(|seam| seam.seam.kind().as_str() == "predicate_boundary");
     seams.sort_by(|left, right| left.seam.id().as_str().cmp(right.seam.id().as_str()));
     if seams.len() != 1 {
         return Err(format!(
-            "expected one {fixture} classified seam, got {}",
+            "expected one {fixture} predicate_boundary classified seam, got {}",
             seams.len()
         ));
     }
@@ -23321,6 +23324,163 @@ fn explicit_refresh_returns_once_the_scheduler_accepts_a_queued_request() -> Res
         if backend.refresh_scheduler_for_test().is_idle() {
             return Err("queued refresh returned only after the scheduler went idle".to_string());
         }
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_pull_client_queued_refresh_answers_without_answering_diagnostic_refresh()
+-> Result<(), String> {
+    // #14526: a queued `ripr.refresh` must answer once queued, not inline-await
+    // a pull-marker `workspace/diagnostic/refresh` that a silent client never
+    // answers (bounded only by the 500ms test client-request timeout here).
+    work_done_progress_runtime()?.block_on(async {
+        let root = unique_lsp_test_root("queued-pull-refresh")?;
+        fs::create_dir_all(root.path().join("src")).map_err(|err| err.to_string())?;
+        let lib_path = root.path().join("src/lib.rs");
+        fs::write(&lib_path, "pub fn gate() -> bool { true }\n").map_err(|err| err.to_string())?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let backend_root = root.path().to_path_buf();
+        let cell = std::sync::Arc::new(std::sync::Mutex::new(None::<std::sync::Arc<Backend>>));
+        let closure_cell = cell.clone();
+        let (service, socket) = LspService::new(move |client| {
+            let backend = std::sync::Arc::new(
+                Backend::new(client, backend_root.clone())
+                    .with_client_request_timeout(Duration::from_millis(500)),
+            );
+            if let Ok(mut slot) = closure_cell.lock() {
+                *slot = Some(backend.clone());
+            }
+            SharedBackend(backend)
+        });
+        let server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket).serve(service).await;
+        });
+        let root_uri = file_uri_for_path(root.path())?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "processId": null, "rootUri": root_uri.as_str(),
+                    // gitTimeoutMs 0 fails the one HEAD probe before spawning
+                    // git (host git spawns take ~2s here), so the measured
+                    // window isolates the queued branch, not git resolution.
+                    "initializationOptions": {"baseRef": "HEAD", "gitTimeoutMs": 0},
+                    "capabilities": {
+                        "textDocument": {"diagnostic": {"dynamicRegistration": false}},
+                        "workspace": {"diagnostics": {"refreshSupport": true}}
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_response(&mut client_read, 1).await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        let backend = cell
+            .lock()
+            .map_err(|err| err.to_string())?
+            .clone()
+            .ok_or("backend was never constructed")?;
+        // Serve the pending marker before any attempt: this records the
+        // save_or_refresh route as served, so a later running attempt changes
+        // the route to analysis_running. Without both guards below, the
+        // queued branch would send no refresh request and this test would
+        // pass vacuously on the old inline await.
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 2, "method": "textDocument/diagnostic",
+                "params": {"textDocument": {"uri": text_uri}}
+            }),
+        )
+        .await?;
+        let pull = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let message = read_lsp_message(&mut client_read).await?;
+                if message.get("method").is_none()
+                    && message.get("id").and_then(serde_json::Value::as_u64) == Some(2)
+                {
+                    return Ok::<_, String>(message);
+                }
+            }
+        })
+        .await
+        .map_err(|_err| "initial document pull never answered".to_string())??;
+        if backend.latest_analysis_snapshot().is_some() {
+            return Err("guard failed: a snapshot exists, so no refresh would be sent".to_string());
+        }
+        if pull["result"]["resultId"] != "ripr:analysis-pending:save_or_refresh" {
+            return Err(format!("guard failed: initial pull must serve save_or_refresh: {pull}"));
+        }
+        // Start an attempt and hold it running (scheduler-only, as in
+        // explicit_refresh_returns_once_the_scheduler_accepts_a_queued_request).
+        let first = work_done_progress_request(&backend, 1)?;
+        let first_request = started_request(&first)?;
+        backend.mark_attempt_running_for_test(&first_request);
+        if backend.analysis_attempt_state_for_test() != AnalysisAttemptState::Running {
+            return Err("guard failed: first attempt must be running".to_string());
+        }
+        // Queue a refresh while it runs; never answer workspace/diagnostic/refresh.
+        let started = std::time::Instant::now();
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 3, "method": "workspace/executeCommand",
+                "params": {"command": REFRESH_COMMAND, "arguments": []}
+            }),
+        )
+        .await?;
+        let mut saw_diagnostic_refresh = false;
+        let mut seen = Vec::new();
+        let response = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let message = read_lsp_message(&mut client_read).await?;
+                seen.push(format!(
+                    "{:?} method={:?} id={:?}",
+                    started.elapsed(),
+                    message.get("method"),
+                    message.get("id")
+                ));
+                if message.get("method").and_then(serde_json::Value::as_str)
+                    == Some("workspace/diagnostic/refresh")
+                {
+                    saw_diagnostic_refresh = true;
+                    continue;
+                }
+                if message.get("method").is_none()
+                    && message.get("id").and_then(serde_json::Value::as_u64) == Some(3)
+                {
+                    return Ok::<_, String>(message);
+                }
+            }
+        })
+        .await
+        .map_err(|_err| format!("queued executeCommand never answered; seen={seen:?}"))??;
+        let elapsed = started.elapsed();
+        if response.get("error").is_some() {
+            return Err(format!("queued executeCommand failed: {response}"));
+        }
+        if saw_diagnostic_refresh {
+            return Err("queued branch must not send workspace/diagnostic/refresh inline".to_string());
+        }
+        if elapsed >= Duration::from_millis(500) {
+            return Err(format!(
+                "queued executeCommand must answer promptly under the 500ms client-request seam, took {elapsed:?}; seen={seen:?}"
+            ));
+        }
+        if backend.refresh_scheduler_for_test().is_idle() {
+            return Err("queued refresh must remain queued while the first attempt runs".to_string());
+        }
+        server_task.abort();
         Ok(())
     })
 }
@@ -33931,6 +34091,14 @@ impl LanguageServer for SharedBackend {
     ) -> tower_lsp_server::jsonrpc::Result<Option<serde_json::Value>> {
         self.0.execute_command(params).await
     }
+
+    async fn diagnostic(
+        &self,
+        params: DocumentDiagnosticParams,
+    ) -> tower_lsp_server::jsonrpc::Result<tower_lsp_server::ls_types::DocumentDiagnosticReportResult>
+    {
+        self.0.diagnostic(params).await
+    }
 }
 
 /// Drives `workspace/executeCommand ripr.showRelatedTest` over a real framed
@@ -35683,6 +35851,56 @@ fn file_mode_only_change_serves_the_incomplete_marker_through_the_real_producer(
         || super::diagnostics::empty_scope_marker_payload(&edited.snapshot).is_some()
     {
         return Err("a text edit must serve rows and no scope marker".to_string());
+    }
+    Ok(())
+}
+
+/// #14420: a head-only match arm's hover names the result the flow model
+/// read on its line, in the witness's changed expression and the line
+/// hover heading, while the diagnostic's own message and data keep the head.
+#[test]
+fn hover_names_a_head_only_arm_result() -> Result<(), String> {
+    let markup_text = |hover: tower_lsp_server::ls_types::Hover| match hover.contents {
+        HoverContents::Markup(markup) => Ok(markup.value),
+        _ => Err("expected markup hover".to_string()),
+    };
+    let mut finding = sample_finding();
+    finding.probe.family = ProbeFamily::MatchArm;
+    finding.probe.expression = "Size::Medium =>".to_string();
+    finding.flow_sinks = vec![crate::domain::FlowSinkFact {
+        kind: crate::domain::FlowSinkKind::MatchArm,
+        text: "450".to_string(),
+        line: finding.probe.location.line,
+        owner: None,
+    }];
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    let hover = markup_text(super::hover::finding_hover_response(&finding, &diagnostic))?;
+    if !hover.contains("- changed expression: `Size::Medium => 450`") {
+        return Err(format!("finding hover lost the arm result:\n{hover}"));
+    }
+    let line_hover = markup_text(super::hover::line_findings_hover_response(
+        &[&finding],
+        crate::config::LspDiagnosticProfile::Full,
+        &ClientFeatureProfile::unsupported(),
+    ))?;
+    if !line_hover.contains(" match_arm `Size::Medium => 450`") {
+        return Err(format!("line hover lost the arm result:\n{line_hover}"));
+    }
+    let data = diagnostic.data.as_ref().ok_or("diagnostic data missing")?;
+    if data.to_string().contains("=> 450") {
+        return Err(format!("diagnostic data must keep the head: {data}"));
+    }
+
+    // A sink read on another line is not this head's result.
+    let mut elsewhere = finding;
+    elsewhere.flow_sinks[0].line += 1;
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &elsewhere);
+    let hover = markup_text(super::hover::finding_hover_response(
+        &elsewhere,
+        &diagnostic,
+    ))?;
+    if !hover.contains("- changed expression: `Size::Medium =>`\n") {
+        return Err(format!("off-line sink was joined:\n{hover}"));
     }
     Ok(())
 }

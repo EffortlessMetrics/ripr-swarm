@@ -7149,6 +7149,7 @@ fn a_macro_binding_refusal_points_at_its_site() {
         Some(AssertionRefusal::MacroBinding {
             name,
             site: Some((path, site)),
+            ..
         }) => Some((name, path, site)),
         _ => None,
     };
@@ -7420,7 +7421,7 @@ fn refusal_site_lookups_pay_at_most_two_full_index_passes() {
         assert!(
             matches!(
                 &refusal,
-                Some(AssertionRefusal::MacroBinding { name, site: Some((path, _)) })
+                Some(AssertionRefusal::MacroBinding { name, site: Some((path, _)), .. })
                     if name == "assert_eq" && path.as_path() == Path::new(CONVERGENCE_GLOB)
             ),
             "{tests_path}: {refusal:?}"
@@ -8912,6 +8913,7 @@ fn binding_refusal(kind: Option<MacroBindingKind>) -> AssertionRefusal {
                 },
             )
         }),
+        placement_include: None,
     }
 }
 
@@ -9339,6 +9341,111 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
             false,
         ),
         ("mod global;\nitems!();\npub use global::*;\n", false),
+        // #14116: std's `thread_local!` and `compile_error!` emit no module,
+        // so they do not stop the file's own module glob being local.
+        (
+            "mod global;\nuse global::*;\nthread_local! { static COUNT: u8 = 0; }\n",
+            true,
+        ),
+        (
+            "mod global;\nstd::thread_local! { static COUNT: u8 = 0; }\nuse global::*;\n",
+            true,
+        ),
+        (
+            "mod global;\ncompile_error!(\"unsupported\");\nuse global::*;\n",
+            true,
+        ),
+        (
+            "mod global;\nuse global::*;\nmod tests { use super::*; }\nthread_local! { static C: u8 = 0; }\n",
+            true,
+        ),
+        // A call that spells the root, a non-std path, or a file that may
+        // rebind the macro's name keeps the refusal.
+        (
+            "mod global;\nthread_local! { static global: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\ndep::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\n::std::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "macro_rules! thread_local { ($($t:tt)*) => {}; }\nmod global;\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod helpers {\n    #[macro_export]\n    macro_rules! thread_local { () => { extern crate dep as global; }; }\n}\n#[cfg(any())]\nmod global;\nuse global::*;\nthread_local!();\n",
+            false,
+        ),
+        (
+            "fn helper() {\n    #[macro_export]\n    macro_rules! compile_error { ($($t:tt)*) => {}; }\n}\nmod global;\nuse global::*;\ncompile_error!(\"no\");\n",
+            false,
+        ),
+        (
+            "mod global;\nuse dep::cells as thread_local;\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "#[macro_use]\nextern crate dep;\nmod global;\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nmod other;\nuse other::*;\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        // `core` exports neither macro, and a `std::` call needs `std` unbound.
+        (
+            "mod global;\ncore::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nuse dep as std;\nstd::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nmod std;\nstd::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nuse dep as std;\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            true,
+        ),
+        (
+            "mod global;\nmacro thread_local($($t:tt)*) {}\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\n#[macro_use]\nmod macros;\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\ncompile_error!(global);\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nstd::compile_error!(\"unsupported\");\nuse global::*;\n",
+            true,
+        ),
+        (
+            "mod global;\nextern crate dep as std;\nstd::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nuse dep::{self as std};\nstd::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nuse dep::r#std;\nstd::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nextern crate dep as thread_local;\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
         // Another item or import may bind the root under a `cfg` the scan
         // does not evaluate, or the module may hold files it cannot see.
         (

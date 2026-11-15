@@ -6389,7 +6389,20 @@ fn member_directory_agent_artifact_commands_use_the_resolved_workspace_root() ->
     let brief_json = json_stdout("agent brief --files", &brief)?;
     assert_eq!(brief_json["root"], outer.to_string_lossy().as_ref());
     assert_eq!(brief_json["scope"], "working_set");
-    assert_eq!(brief_json["warnings"], serde_json::json!([]));
+    // The only warning is the disclosure that the tail `if`/`else` branch values
+    // (`pkg/src/lib.rs:3` and `:5`, strongly gripped `return_value` seams,
+    // #14385) are configured off; binding adds none.
+    let warnings = brief_json["warnings"].as_array().ok_or("no warnings")?;
+    assert!(
+        warnings
+            .iter()
+            .all(|warning| warning.as_str().is_some_and(|text| {
+                text.contains(" at pkg/src/lib.rs:3, ")
+                    && text.contains(" at pkg/src/lib.rs:5 ")
+                    && text.contains("configured off for strongly_gripped seams")
+            })),
+        "unexpected brief warnings: {warnings:?}"
+    );
     let seams = brief_json["top_seams"].as_array().ok_or("no top_seams")?;
     assert!(
         !seams.is_empty() && seams.iter().all(|seam| seam["file"] == "pkg/src/lib.rs"),

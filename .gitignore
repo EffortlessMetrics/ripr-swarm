@@ -38,3 +38,6 @@ editors/vscode/target/
 __pycache__/
 *.pyc
 .github/ovsx/node_modules/
+
+# Tier 2 evals workspace build output (#14643)
+/evals/target/
