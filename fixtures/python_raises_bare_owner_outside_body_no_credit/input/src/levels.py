@@ -6,4 +6,3 @@ def parse(text):
 
 def other(text):
     raise ValueError("blank level")
-

@@ -7,7 +7,7 @@
   "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:99fda87f3f3a8006","base_revision":null,"input_identity":"sha256:9adef3eaf016537998153d059febbdcad2c25e68c9ffd84a2fe8abb50cdb9ef9","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:ba82f6a08c0eaa27c637bf03948780025fec8dd6b021ac3bbab1391f92d398e3","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
@@ -159,5 +159,5 @@
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
   ],
-  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/levels.py","digest":"sha256:273af6c2b494801d1e5a2916fdc68afff4b9c4b49a9b22ee01e2c7d37c5196d5"},{"path":"tests/test_levels.py","digest":"sha256:5272752228322df096faaa5d49a8395290adb295f124fe13d03bde3c56304868"}]}
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/levels.py","digest":"sha256:a9799b218f67132814dd2fcc0337bb6eb862b920508a856ff7dcd821135eb958"},{"path":"tests/test_levels.py","digest":"sha256:ae1e4ddb55100fc83925f0b841f7ca4e7e5f0dadef0d2e8ab7dde5d93e2e3249"}]}
 }
