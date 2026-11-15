@@ -503,6 +503,14 @@ pub(crate) fn create_tar_gz_archive(package_dir: &Path, asset_path: &Path) -> Re
         .map_err(|err| format!("failed to create {}: {err}", asset_path.display()))?;
     let encoder = flate2::write::GzEncoder::new(file, gzip_compression());
     let mut builder = tar::Builder::new(encoder);
+    // `tar` 0.4.46 defaults `sparse` to true and, on Linux/FreeBSD/Android,
+    // emits `GNUSparse` entries for payload files with filesystem holes.
+    // Both in-repo consumers accept only regular files
+    // (`packages::extract_flat_archive` and `first_run::extract_executable`
+    // check `entry_type().is_file()`, which is `Regular` only), so a holed
+    // executable would be rejected downstream. Store the full bytes as a
+    // regular entry instead; gzip removes the zeros anyway.
+    builder.sparse(false);
     builder
         .append_dir_all(".", package_dir)
         .map_err(|err| format!("failed to write {}: {err}", asset_path.display()))?;
@@ -698,6 +706,110 @@ mod archive_compression_tests {
             }
             names.sort();
             assert_eq!(names, ["README-server.txt", "ripr"]);
+            Ok(())
+        })();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_file(&asset);
+        result
+    }
+
+    #[test]
+    fn tar_gz_payload_entries_are_regular_and_preserve_executable_mode() -> Result<(), String> {
+        let dir = fixture_dir("tar-regular")?;
+        let asset = dir.with_extension("tar.gz");
+        let result = (|| {
+            // Give the payload a filesystem hole (data, a seek gap, data).
+            // Whether the filesystem stores that gap as a real hole depends
+            // on the platform/filesystem, so on a non-hole filesystem this
+            // also passes before the fix; where holes are stored (Linux
+            // ext4/tmpfs), `tar`'s default sparse detection would emit a
+            // `GNUSparse` entry and this test fails without `sparse(false)`.
+            {
+                use std::io::{Seek, SeekFrom, Write as _};
+                let mut payload = fs::File::create(dir.join("ripr")).map_err(|e| e.to_string())?;
+                payload.write_all(b"ripr").map_err(|e| e.to_string())?;
+                payload
+                    .seek(SeekFrom::Start(128 * 1024))
+                    .map_err(|e| e.to_string())?;
+                payload.write_all(b"end!").map_err(|e| e.to_string())?;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(dir.join("ripr"), fs::Permissions::from_mode(0o755))
+                    .map_err(|e| e.to_string())?;
+                fs::set_permissions(
+                    dir.join("README-server.txt"),
+                    fs::Permissions::from_mode(0o644),
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            create_tar_gz_archive(&dir, &asset)?;
+            let bytes = fs::read(&asset).map_err(|e| e.to_string())?;
+            let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(&bytes[..]));
+            let mut modes: Vec<(String, u32)> = Vec::new();
+            for entry in archive.entries().map_err(|e| e.to_string())? {
+                let mut entry = entry.map_err(|e| e.to_string())?;
+                assert_ne!(
+                    entry.header().entry_type(),
+                    tar::EntryType::GNUSparse,
+                    "payload must not be stored as a GNU sparse entry"
+                );
+                let name = entry
+                    .path()
+                    .map_err(|e| e.to_string())?
+                    .to_string_lossy()
+                    .replace("./", "");
+                if name.is_empty() || name.ends_with('/') {
+                    continue;
+                }
+                // The consumers that read release archives
+                // (`extract_flat_archive`, `extract_executable`) accept
+                // only `entry_type().is_file()`, i.e. `Regular`.
+                assert_eq!(
+                    entry.header().entry_type(),
+                    tar::EntryType::Regular,
+                    "payload entry `{name}` must be a regular file"
+                );
+                let mode = entry.header().mode().map_err(|e| e.to_string())?;
+                let mut body = Vec::new();
+                entry.read_to_end(&mut body).map_err(|e| e.to_string())?;
+                assert_eq!(body, fs::read(dir.join(&name)).map_err(|e| e.to_string())?);
+                modes.push((name, mode));
+            }
+            modes.sort();
+            assert_eq!(modes.len(), 2, "expected both payload files: {modes:?}");
+            let ripr_mode = modes
+                .iter()
+                .find(|(name, _)| name == "ripr")
+                .map(|(_, mode)| *mode)
+                .ok_or_else(|| "archive has no `ripr` entry".to_string())?;
+            #[cfg(unix)]
+            {
+                // `HeaderMode::Complete` copies the Unix mode verbatim, so
+                // the executable bit the release build set must survive.
+                assert_eq!(ripr_mode & 0o777, 0o755, "ripr header mode: {ripr_mode:o}");
+                let readme_mode = modes
+                    .iter()
+                    .find(|(name, _)| name == "README-server.txt")
+                    .map(|(_, mode)| *mode)
+                    .ok_or_else(|| "archive has no `README-server.txt` entry".to_string())?;
+                assert_eq!(
+                    readme_mode & 0o777,
+                    0o644,
+                    "README header mode: {readme_mode:o}"
+                );
+            }
+            #[cfg(windows)]
+            {
+                // Windows has no file mode: the `tar` crate approximates a
+                // writable regular file as 0o644 (0o444 when read-only).
+                // That is all `create_tar_gz_archive` guarantees there; the
+                // executable bit is a Unix-only guarantee, restored for
+                // Unix consumers by the mode above and, on the first-run
+                // path, by explicitly chmodding the extracted file.
+                assert_eq!(ripr_mode, 0o644, "ripr header mode: {ripr_mode:o}");
+            }
             Ok(())
         })();
         let _ = fs::remove_dir_all(&dir);
