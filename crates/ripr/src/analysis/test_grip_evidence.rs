@@ -33,8 +33,8 @@ use value_contradiction::{
     exact_value_assertion_verdict_for_test,
 };
 pub(in crate::analysis) use value_contradiction::{
-    InvisibilityReason, PointerReturnChange, change_is_invisible_to_every_assertion,
-    fold_owner_body_at,
+    InvisibilityReason, PointerReturnChange, RangeChangeVisibility,
+    change_is_invisible_to_every_assertion, fold_owner_body_at, range_change_visibility,
 };
 
 pub(crate) use related_tests::CompactGripContext;

@@ -1,0 +1,6 @@
+# A range-bound edit is not credited by an input where both bounds agree (#14419).
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/rust_range_bound_agreeing_input",
+]
