@@ -3124,9 +3124,15 @@ mod tests {
         analysis::evaluation_probe::reset();
         let facts = inventory_entry_facts(&root, &config, "src/lib.rs", &target_id);
         let evaluated = analysis::evaluation_probe::evaluated();
+        // An unchanged repeat lookup of the same seam reuses that result.
+        analysis::evaluation_probe::reset();
+        let repeat = inventory_entry_facts(&root, &config, "src/lib.rs", &target_id);
+        let repeat_evaluated = analysis::evaluation_probe::evaluated();
         let _ = std::fs::remove_dir_all(&root);
 
         assert_eq!(evaluated, 1);
+        assert_eq!(repeat_evaluated, 0);
+        assert_eq!(repeat, facts);
         let (class, guidance) = facts.ok_or("selected seam must be found")?;
         assert_eq!(class, target.class);
         assert_eq!(

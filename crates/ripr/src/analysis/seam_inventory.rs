@@ -2222,14 +2222,34 @@ pub(crate) fn inventory_diff_scoped_seam_at_with_config(
         sufficient: &|_| true,
         reuse: None,
     };
+    // Repeated lookups of one seam reuse the result under the same exact-path
+    // rule and content key as the whole-file guidance (#11358), with an
+    // identity that also binds the seam id.
+    let identity = file_seam_guidance_reuse_identity(changed_files, seam_id);
+    let mut inputs = DiffScopeInputs::canonical(changed_files, &[]);
+    inputs.complete_scope_reuse = Some(&identity);
     inventory_diff_scoped_classified_seams_inner(
         root,
         config,
-        DiffScopeInputs::canonical(changed_files, &[]),
+        inputs,
         !no_impact_fast_path_disabled(),
         Some(&stages),
         None,
     )
+}
+
+/// Disjoint from the whole-file guidance and staged/bound identities: binds
+/// the native bytes of every scoped file (as `file_guidance_reuse_identity`
+/// does) and the selected seam id.
+fn file_seam_guidance_reuse_identity(files: &[PathBuf], seam_id: &str) -> Vec<u8> {
+    let mut identity = b"file-seam-guidance-v1-lossless-key\0".to_vec();
+    for file in files {
+        identity.extend_from_slice(file.as_os_str().as_encoded_bytes());
+        identity.push(0);
+    }
+    identity.push(1);
+    identity.extend_from_slice(seam_id.as_bytes());
+    identity
 }
 
 /// Complete canonical inventory for one file's stub guidance (#11358).
@@ -2875,8 +2895,9 @@ struct DiffScopeInputs<'a> {
     generated_context: Option<&'a [PathBuf]>,
     /// Also derive the repo-wide seam-limit fact from the built index.
     with_repo_seam_limit: bool,
-    /// Explicit opt-in for a complete canonical scope, independently of the
-    /// two-stage consumer. Its identity must bind the exact scope selection.
+    /// Explicit opt-in for exact-path reuse of a canonical file scope (whole,
+    /// or one selected seam of it), independently of the two-stage consumer.
+    /// Its identity must bind the exact scope and seam selection.
     complete_scope_reuse: Option<&'a [u8]>,
 }
 
@@ -3106,9 +3127,14 @@ fn inventory_diff_scoped_classified_seams_inner<'a>(
         );
     }
     // Complete-scope reuse never changes the staged/streamed consumers or
-    // borrows their identity. Its sole caller asks for the canonical file scope.
-    let complete_scope_reuse = complete_scope_reuse
-        .filter(|_| stages.is_none() && generated_context.is_none() && !with_repo_seam_limit);
+    // borrows their identity. Its callers ask for the canonical file scope,
+    // whole or with one selected seam (#13884); a staged caller that carries
+    // its own reuse identity never takes this route.
+    let complete_scope_reuse = complete_scope_reuse.filter(|_| {
+        stages.is_none_or(|stages| stages.reuse.is_none())
+            && generated_context.is_none()
+            && !with_repo_seam_limit
+    });
     let reuse_candidate = stages
         .and_then(|stages| stages.reuse)
         .or(complete_scope_reuse);
