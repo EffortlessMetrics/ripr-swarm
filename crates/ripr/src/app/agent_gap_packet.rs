@@ -8,7 +8,7 @@ use std::path::Path;
 /// diagnostic (#9851): plain `not found` — never a raw OS errno — plus the
 /// producer command, in the sibling `reports gap-ledger` vocabulary.
 fn read_gap_ledger(path: &Path) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
         let mut message = format!(
             "agent packet --gap-ledger {} is invalid: {}",
             output::outcome::display_path(path),

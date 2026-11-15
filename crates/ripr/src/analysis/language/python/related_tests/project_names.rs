@@ -54,7 +54,13 @@ fn project_relative_module_names(file: &Path, root: &Path) -> Vec<String> {
     let Ok(relative) = file.strip_prefix(root) else {
         return Vec::new();
     };
-    let Some(full) = owner_module_paths(relative).into_iter().next() else {
+    let Some(full) = owner_module_paths(relative)
+        .into_iter()
+        .next()
+        .filter(|full| !full.is_empty())
+    else {
+        // A project-root `__init__.py` is the project itself, not a module
+        // named by a bare import (#13737).
         return Vec::new();
     };
     let parts = full.split('.').collect::<Vec<_>>();
@@ -84,28 +90,74 @@ pub(in crate::analysis::language::python) fn apply_project_module_names<'a>(
     source_files: impl Iterator<Item = &'a PathBuf>,
     mut is_present: impl FnMut(&Path) -> bool,
 ) {
-    let mut marker_cache: BTreeMap<PathBuf, bool> = BTreeMap::new();
-    let mut has_marker = |dir: &Path| {
-        *marker_cache.entry(dir.to_path_buf()).or_insert_with(|| {
-            PYTHON_PROJECT_MARKERS
-                .iter()
-                .any(|marker| is_present(&dir.join(marker)))
-        })
-    };
-    let mut files_by_module: BTreeMap<String, Vec<(PathBuf, PathBuf)>> = BTreeMap::new();
-    for file in source_files {
-        let Some(root) = nearest_project_root(file, &mut has_marker) else {
-            continue;
+    let mut index = ProjectNameIndex::build(source_files, &mut is_present);
+    apply_project_module_names_with(owners, &mut index, is_present);
+}
+
+/// The workspace-wide lookups [`apply_project_module_names_with`] reads, built
+/// once so a caller applying names file by file does not rebuild them per file.
+pub(in crate::analysis::language::python) struct ProjectNameIndex {
+    marker_cache: BTreeMap<PathBuf, bool>,
+    files_by_module: BTreeMap<String, Vec<(PathBuf, PathBuf)>>,
+    /// Package initializers by their repository-relative module path, to find
+    /// the file behind each recorded re-exporting package.
+    init_files: BTreeMap<String, Vec<PathBuf>>,
+}
+
+impl ProjectNameIndex {
+    pub(in crate::analysis::language::python) fn build<'a>(
+        source_files: impl Iterator<Item = &'a PathBuf>,
+        mut is_present: impl FnMut(&Path) -> bool,
+    ) -> Self {
+        let mut index = Self {
+            marker_cache: BTreeMap::new(),
+            files_by_module: BTreeMap::new(),
+            init_files: BTreeMap::new(),
         };
-        for module in project_relative_module_names(file, &root) {
-            files_by_module
-                .entry(module)
-                .or_default()
-                .push((file.clone(), root.clone()));
+        for file in source_files {
+            if file.file_name().and_then(|name| name.to_str()) == Some("__init__.py")
+                && let Some(full) = owner_module_paths(file).into_iter().next()
+            {
+                index.init_files.entry(full).or_default().push(file.clone());
+            }
+            let Some(root) = index.project_root(file, &mut is_present) else {
+                continue;
+            };
+            for module in project_relative_module_names(file, &root) {
+                index
+                    .files_by_module
+                    .entry(module)
+                    .or_default()
+                    .push((file.clone(), root.clone()));
+            }
         }
+        index
     }
+
+    fn project_root(
+        &mut self,
+        file: &Path,
+        is_present: &mut impl FnMut(&Path) -> bool,
+    ) -> Option<PathBuf> {
+        let cache = &mut self.marker_cache;
+        nearest_project_root(file, &mut |dir: &Path| {
+            *cache.entry(dir.to_path_buf()).or_insert_with(|| {
+                PYTHON_PROJECT_MARKERS
+                    .iter()
+                    .any(|marker| is_present(&dir.join(marker)))
+            })
+        })
+    }
+}
+
+/// Applies project-relative names to `owners` from a prebuilt index.
+pub(in crate::analysis::language::python) fn apply_project_module_names_with(
+    owners: &mut [PythonOwner],
+    index: &mut ProjectNameIndex,
+    mut is_present: impl FnMut(&Path) -> bool,
+) {
     for owner in owners.iter_mut() {
-        let Some(owner_root) = nearest_project_root(&owner.file, &mut has_marker) else {
+        let Some(owner_root) = index.project_root(&owner.file, &mut is_present) else {
             continue;
         };
         let owner_file = normalized_path(&owner.file);
@@ -119,7 +171,7 @@ pub(in crate::analysis::language::python) fn apply_project_module_names<'a>(
             {
                 continue;
             }
-            let rival_roots = rival_roots_for(&files_by_module, &module, |file, _| {
+            let rival_roots = rival_roots_for(&index.files_by_module, &module, |file, _| {
                 normalized_path(file) == owner_file
             });
             // Another file of the same project yields the same name
@@ -134,6 +186,64 @@ pub(in crate::analysis::language::python) fn apply_project_module_names<'a>(
                 rival_roots,
                 shadowed: false,
             });
+        }
+        record_project_reexport_names(owner, &owner_root, index, &mut is_present);
+    }
+}
+
+/// Gives the package that re-exports `owner` its project-relative name
+/// (`svc/b/pkg/__init__.py` in the project `svc/b` imports as `pkg`), so
+/// `from pkg import limit` in a test of that project resolves (#13737).
+/// [`apply_package_reexports`](super::super::reexports) only knows the
+/// repository-relative paths (`svc.b.pkg`). The same closed gate applies as for
+/// the owner's own names: the package must sit in the owner's project root, the
+/// name goes through the ambiguity record (so only a test under that root may
+/// use it) and a same-project twin (`pkg.py` beside `pkg/__init__.py`) leaves
+/// the name identifying neither. Runs after the reexport pass.
+fn record_project_reexport_names(
+    owner: &mut PythonOwner,
+    owner_root: &Path,
+    index: &mut ProjectNameIndex,
+    is_present: &mut impl FnMut(&Path) -> bool,
+) {
+    let exporters = owner
+        .reexport_modules
+        .iter()
+        .filter_map(|module| index.init_files.get(module))
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
+    for init in exporters {
+        // A package of another project (or of none) is not importable by a
+        // project-relative name from this owner's project.
+        if index.project_root(&init, is_present).as_deref() != Some(owner_root) {
+            continue;
+        }
+        let known = owner_module_paths(&init);
+        for module in project_relative_module_names(&init, owner_root) {
+            if known.contains(&module)
+                || owner.reexport_modules.contains(&module)
+                || owner
+                    .ambiguous_src_modules
+                    .iter()
+                    .any(|ambiguous| ambiguous.module == module)
+            {
+                continue;
+            }
+            let init_file = normalized_path(&init);
+            let rival_roots = rival_roots_for(&index.files_by_module, &module, |file, _| {
+                normalized_path(file) == init_file
+            });
+            if rival_roots.iter().any(|root| root == owner_root) {
+                continue;
+            }
+            owner.ambiguous_src_modules.push(AmbiguousSrcModule {
+                module: module.clone(),
+                owner_root: owner_root.to_path_buf(),
+                rival_roots,
+                shadowed: false,
+            });
+            owner.reexport_modules.push(module);
         }
     }
 }

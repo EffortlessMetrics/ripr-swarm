@@ -41,6 +41,7 @@ Evidence
   - source assertion argument value 12 at line 3
   - source function argument value input = 4 at line 3
   - source function argument value input = 4 at line 3
+  - assertion not credited: `assert_eq!` in inner at tests/weight_tests.rs:3: the test is declared inside a function body, which ripr does not model
 
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
