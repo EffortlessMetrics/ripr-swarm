@@ -503,6 +503,15 @@ Next: regenerate the missing first-useful-action or PR guidance artifact before
 acting on this panel.
 ```
 
+When the panel is incomplete because a required input is missing, the
+`Missing input:` line names the input whose warning promoted the panel to
+`missing_required_input` when that warning came from a read failure on the
+assistant proof; a warning synthesized from a first-action fallback does not
+outrank a real unusable input, and with no such warning the line falls back to
+the first warning that names an artifact. When the assistant proof is present
+and parses, the synthesized warning names the first-action fallback rather than
+the proof, and the panel does not claim the proof is missing.
+
 ## Generated CI Projection
 
 Generated GitHub CI may run the front-panel producer only when the configured

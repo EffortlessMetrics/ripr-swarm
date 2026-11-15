@@ -7903,6 +7903,15 @@ fn owner_call_relation_reason_gated(
         {
             return RelationReason::WeakTokenSubstring;
         }
+        // #14270: a test that reaches the name only through a module its
+        // own file declares and defines the same-named function in names
+        // that test-local rival, not the production owner — the same
+        // refusal the repo-exposure grip path applies (#13999). The rival
+        // sits in another crate class, so no call identity exists above
+        // to settle it.
+        if super::call_identity::test_calls_only_through_local_rival_module(index, owner, test) {
+            return RelationReason::WeakTokenSubstring;
+        }
         return RelationReason::DirectOwnerCall;
     };
     // #6951: when the test's own module scope declares the owner's impl
@@ -14726,6 +14735,101 @@ fn crate_c_score_test() {
             ])
         );
         assert!(manifests_with_unindexed_files(&prefixes, &analyzable, &analyzable).is_empty());
+    }
+
+    /// #14270: the diff-mode relation must apply the same test-local rival
+    /// refusal as the repo-exposure grip path (#13999). A test that reaches
+    /// `discounted_total` only through a module its own file declares
+    /// (`mod local { pub fn discounted_total(..) }` reached by a bare or a
+    /// glob `use`) names the rival, never the production owner in
+    /// `src/lib.rs`, so it earns no `direct_owner_call` and establishes no
+    /// reach. The plain owner-import control on the same production source
+    /// keeps `direct_owner_call`. Sources mirror
+    /// `fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/test-local-rival-{bare,glob}-use`.
+    #[test]
+    fn test_local_rival_use_does_not_credit_the_production_owner() -> Result<(), String> {
+        const PROD: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n";
+        let relation = |test_source: &str| -> Result<Vec<(String, RelationReason)>, String> {
+            let mut index = RustIndex::default();
+            for (path, source) in [("src/lib.rs", PROD), ("tests/boundary.rs", test_source)] {
+                let facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+                    Path::new(path),
+                    source,
+                )
+                .map_err(|error| error.to_string())?;
+                index.insert_file(PathBuf::from(path), facts, true);
+            }
+            assert!(
+                index
+                    .functions()
+                    .iter()
+                    .any(|function| function.name == "discounted_total"),
+                "setup: the production owner is indexed"
+            );
+            let owner = index
+                .functions()
+                .iter()
+                .find(|function| function.file == Path::new("src/lib.rs"))
+                .cloned()
+                .ok_or("setup: production owner indexed")?;
+            let probe = probe("src/lib.rs", "amount >= threshold");
+            Ok(
+                find_related_tests(&probe, Some(&owner), &index, true, None, None)
+                    .into_iter()
+                    .map(|(test, reason)| (test.name.clone(), reason))
+                    .collect(),
+            )
+        };
+        for (test_source, rival_test) in [
+            (
+                "mod local {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 777 }\n}\nuse local::discounted_total;\n\n#[test]\nfn bare_rival() {\n    assert_eq!(discounted_total(100, 100), 777);\n}\n",
+                "bare_rival",
+            ),
+            (
+                "mod local {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 777 }\n}\nuse local::*;\n\n#[test]\nfn glob_rival() {\n    assert_eq!(discounted_total(100, 100), 777);\n}\n",
+                "glob_rival",
+            ),
+        ] {
+            let related = relation(test_source)?;
+            assert!(
+                related.iter().any(|(name, _)| name == rival_test),
+                "{rival_test}: the rival test must be present in the related set before its reason is judged, got {related:?}"
+            );
+            assert!(
+                related.iter().all(|(name, reason)| name != rival_test
+                    || *reason == RelationReason::WeakTokenSubstring),
+                "{rival_test}: a test-local rival call must demote to weak_token_substring, got {related:?}"
+            );
+            assert!(
+                !related
+                    .iter()
+                    .any(|(_, reason)| reason.establishes_reach(true)),
+                "{rival_test}: no related test may establish reach to the production owner, got {related:?}"
+            );
+        }
+        // Plain owner-import control: no rival module, the imported name is
+        // the production owner, so the direct credit stays.
+        let control = relation(
+            "use discount_lib::discounted_total;\n\n#[test]\nfn owner_import_control() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
+        )?;
+        assert!(
+            control.iter().any(|(name, reason)| {
+                name == "owner_import_control" && *reason == RelationReason::DirectOwnerCall
+            }),
+            "owner-import control must keep direct_owner_call, got {control:?}"
+        );
+        // #14744 review: a body-level production glob shadows the module-level
+        // rival import, so the production call keeps its direct credit.
+        let body_glob = relation(
+            "mod local {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 777 }\n}\nuse local::discounted_total;\n\n#[test]\nfn body_glob_owner() {\n    use discount_lib::pricing::*;\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
+        )?;
+        assert!(
+            body_glob.iter().any(|(name, reason)| {
+                name == "body_glob_owner" && *reason == RelationReason::DirectOwnerCall
+            }),
+            "a body glob of the production module shadows the rival import, got {body_glob:?}"
+        );
+        Ok(())
     }
 
     fn function(file: &str, name: &str) -> FunctionSummary {

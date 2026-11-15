@@ -20,7 +20,7 @@
       "worktree": "dirty"
     },
     "canonicalization": "raw_json_placeholder_v1",
-    "content_sha256": "sha256:6ca62ca2b7d70f7624c8628aa593261ee82abe0524076febf4f6b7aaaeb449aa",
+    "content_sha256": "sha256:34b289c9ed39e47b387333014b803a1e376be4e4c3b039392e4a39107991cc41",
     "kind": "repo_exposure",
     "producer": {
       "tool": "ripr",
@@ -487,8 +487,8 @@
           "recommended_repair": "No new RIPR action; current static evidence already observes this seam.",
           "related_test": {
             "file": "tests/pricing.rs",
-            "line": 4,
-            "name": "below_threshold_has_no_discount",
+            "line": 9,
+            "name": "far_above_threshold_discounts",
             "reason": "direct_owner_call"
           },
           "repair_command": null,
@@ -521,7 +521,7 @@
           "reach": {
             "confidence": "medium",
             "state": "yes",
-            "summary": "Related tests appear to reach `src/lib.rs::discounted_total`: below_threshold_has_no_discount, far_above_threshold_discounts"
+            "summary": "Related tests appear to reach `src/lib.rs::discounted_total`: far_above_threshold_discounts, below_threshold_has_no_discount"
           }
         },
         "grip_class": "strongly_gripped",
@@ -592,8 +592,8 @@
           "nearest_test_to_imitate": {
             "evidence_summary": "exact value assertion",
             "file": "tests/pricing.rs",
-            "line": 4,
-            "name": "below_threshold_has_no_discount",
+            "line": 9,
+            "name": "far_above_threshold_discounts",
             "oracle_kind": "exact_value",
             "oracle_semantics": {
               "missing": "no obvious value-shape discriminator gap under static scope",
@@ -612,8 +612,8 @@
           {
             "evidence_summary": "exact value assertion",
             "file": "tests/pricing.rs",
-            "line": 4,
-            "name": "below_threshold_has_no_discount",
+            "line": 9,
+            "name": "far_above_threshold_discounts",
             "oracle_kind": "exact_value",
             "oracle_semantics": {
               "missing": "no obvious value-shape discriminator gap under static scope",
@@ -627,15 +627,15 @@
           {
             "evidence_summary": "exact value assertion",
             "file": "tests/pricing.rs",
-            "line": 9,
-            "name": "far_above_threshold_discounts",
+            "line": 4,
+            "name": "below_threshold_has_no_discount",
             "oracle_kind": "exact_value",
             "oracle_semantics": {
               "missing": "no obvious value-shape discriminator gap under static scope",
               "observes": "the exact value or value pattern asserted by the test",
               "upgrade_suggestion": null
             },
-            "oracle_strength": "strong",
+            "oracle_strength": "weak",
             "relation_confidence": "high",
             "relation_reason": "direct_owner_call"
           }
@@ -664,8 +664,8 @@
         {
           "evidence_summary": "exact value assertion",
           "file": "tests/pricing.rs",
-          "line": 4,
-          "name": "below_threshold_has_no_discount",
+          "line": 9,
+          "name": "far_above_threshold_discounts",
           "oracle_kind": "exact_value",
           "oracle_strength": "strong",
           "relation_confidence": "high",
@@ -674,10 +674,10 @@
         {
           "evidence_summary": "exact value assertion",
           "file": "tests/pricing.rs",
-          "line": 9,
-          "name": "far_above_threshold_discounts",
+          "line": 4,
+          "name": "below_threshold_has_no_discount",
           "oracle_kind": "exact_value",
-          "oracle_strength": "strong",
+          "oracle_strength": "weak",
           "relation_confidence": "high",
           "relation_reason": "direct_owner_call"
         }
@@ -904,7 +904,7 @@
               "observes": "the exact value or value pattern asserted by the test",
               "upgrade_suggestion": null
             },
-            "oracle_strength": "strong",
+            "oracle_strength": "weak",
             "relation_confidence": "high",
             "relation_reason": "direct_owner_call"
           }
@@ -946,7 +946,7 @@
           "line": 9,
           "name": "far_above_threshold_discounts",
           "oracle_kind": "exact_value",
-          "oracle_strength": "strong",
+          "oracle_strength": "weak",
           "relation_confidence": "high",
           "relation_reason": "direct_owner_call"
         }

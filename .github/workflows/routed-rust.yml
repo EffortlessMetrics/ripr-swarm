@@ -281,7 +281,7 @@ jobs:
         with:
           mode: self-test
           max-changed-files: '160'
-          max-changed-lines: '3000'
+          max-changed-lines: '3700'
       - name: Resolve queued PR
         id: entry
         env:
@@ -341,7 +341,7 @@ jobs:
           expected-head: ${{ steps.entry.outputs.head }}
           docs-only: ${{ needs.detect-docs-only.outputs.docs_only || 'false' }}
           max-changed-files: '160'
-          max-changed-lines: '3000'
+          max-changed-lines: '3700'
       - name: Select admitted qualification scope
         id: scope
         shell: bash
