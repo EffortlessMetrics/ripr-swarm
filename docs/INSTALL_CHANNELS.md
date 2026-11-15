@@ -181,6 +181,30 @@ workflow's report. `cargo xtask first-run --install-archive VERSION` times the
 prebuilt route (download, checksum, extract) and walks the extracted
 executable; its sample is kept apart from the source-install metric.
 
+### Slim single-language source build (opt-in)
+
+The default build enables Rust, TypeScript and Python (`default =
+["lang-rust", "lang-typescript", "lang-python"]` in
+`crates/ripr/Cargo.toml`). A source builder who only analyzes one language
+can omit the other languages' parsers:
+
+```bash
+cargo build --release -p ripr --no-default-features --features lang-rust
+cargo build --release -p ripr --no-default-features --features lang-rust,lang-python
+cargo build --release -p ripr --no-default-features --features lang-rust,lang-typescript
+```
+
+`lang-rust` is required (the crate refuses to build without it), so every
+slim recipe keeps it and adds the extra languages wanted; `lang-perl` is
+available the same way (`--features lang-rust,lang-perl`). Counted as distinct crate
+names in `cargo tree -p ripr -e normal` on 2026-11-14, the Rust-only graph
+has 131 crates against 206 for the default graph (about 36% fewer), so the
+slim build compiles and links less; the exact binary saving varies by
+platform and profile and was not measured for this note. This is opt-in
+only: a slim binary has no parser for the languages it omits, and the
+default multi-language behavior, the workspace release profile and the
+shipped release archives are unchanged.
+
 ## What blocks a developer who is not us
 
 1. **Every fast path hangs on one event:** the 0.11.0 GitHub Release with its
