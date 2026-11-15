@@ -1017,6 +1017,79 @@ fn the_test_row_skips_a_strong_row_that_cannot_observe_the_change() {
     );
 }
 
+/// #14483 on the #14454 repro: the human `Related test` headline, the JSON
+/// oracle summary, the context fix site and the agent `tK=` row all name
+/// the observing `rejects_long_names` row over the listed-first, stronger
+/// `accepts_short_names` Ok pin that cannot observe the changed error
+/// variant. Without the miss, every surface names the Ok pin again.
+#[test]
+fn every_test_picker_agrees_with_the_test_row_on_the_error_variant_repro() {
+    let mut gap = weak_gap("probe:error_variant", 11);
+    gap.probe.family = ProbeFamily::ErrorPath;
+    gap.related_tests[0].name = "rejects_long_names".to_string();
+    gap.related_tests[0].oracle = Some("assert!(parse_name(\"abcdefghij\").is_err());".to_string());
+    gap.related_tests[0].miss = Some(RelatedTestMiss::MissingExactAssertion);
+    let mut ok_pin = gap.related_tests[0].clone();
+    ok_pin.name = "accepts_short_names".to_string();
+    ok_pin.line = 8;
+    ok_pin.oracle = Some("assert_eq!(parse_name(\"ada\"), Ok(\"ada\".to_string()));".to_string());
+    ok_pin.oracle_kind = OracleKind::ExactValue;
+    ok_pin.oracle_strength = OracleStrength::Strong;
+    ok_pin.miss = Some(RelatedTestMiss::AssertionNotObserving);
+    gap.related_tests.insert(0, ok_pin);
+
+    let picks = |gap: &Finding| {
+        let check = output(vec![gap.clone()]);
+        let agent = rendered(&check);
+        let tk = agent
+            .lines()
+            .find_map(|line| line.strip_prefix("t1="))
+            .map(str::to_string)
+            .unwrap_or_default();
+        let human = crate::output::human::render(&check);
+        let headline = human
+            .lines()
+            .find(|line| line.trim_start().starts_with("Related test"))
+            .map(str::to_string)
+            .unwrap_or_default();
+        let json: serde_json::Value =
+            serde_json::from_str(&crate::output::json::render(&check)).unwrap_or_default();
+        let summary = json["findings"][0]["oracle_strength"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let fix_site = crate::domain::DiagnosticWitness::selected_related_test(gap)
+            .map(|test| test.name.clone())
+            .unwrap_or_default();
+        (tk, headline, summary, fix_site, agent, human)
+    };
+
+    let (tk, headline, summary, fix_site, agent, human) = picks(&gap);
+    assert!(
+        tk.starts_with("tests/t.rs:3 rejects_long_names "),
+        "{agent}"
+    );
+    assert!(headline.contains("rejects_long_names"), "{human}");
+    assert!(!headline.contains("accepts_short_names"), "{human}");
+    assert_eq!(
+        summary, "weak",
+        "the JSON summary describes the observing row"
+    );
+    assert_eq!(fix_site, "rejects_long_names");
+
+    // Discriminating control: with no recorded miss on the Ok pin, every
+    // surface names the stronger, listed-first row again.
+    gap.related_tests[0].miss = Some(RelatedTestMiss::MissingExactAssertion);
+    let (tk, headline, summary, fix_site, agent, human) = picks(&gap);
+    assert!(
+        tk.starts_with("tests/t.rs:8 accepts_short_names "),
+        "{agent}"
+    );
+    assert!(headline.contains("accepts_short_names"), "{human}");
+    assert_eq!(summary, "strong");
+    assert_eq!(fix_site, "accepts_short_names");
+}
+
 /// #14338: an `error_path` and a `return_value` probe on one changed line
 /// with the same class, expression, missing value, test and stages print as
 /// one row; `gaps=` counts the row and `folded_gaps=` the extra finding. Any

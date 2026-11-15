@@ -17144,6 +17144,8 @@ tests = [
   "crates/ripr/src/analysis/classifier/finding.rs::tests::an_ok_only_pin_does_not_observe_a_changed_error_variant",
   "crates/ripr/src/domain/diagnostic_witness.rs::tests::fix_site_skips_a_strong_row_that_cannot_observe_the_change",
   "crates/ripr/src/output/human/agent_tests.rs::the_test_row_skips_a_strong_row_that_cannot_observe_the_change",
+  "crates/ripr/src/output/human/agent_tests.rs::every_test_picker_agrees_with_the_test_row_on_the_error_variant_repro",
+  "crates/ripr/src/output/related_test_miss.rs::tests::headline_anchors_on_the_first_row_that_can_observe_the_change",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::reveal_evidence_lists_a_test_whose_assertions_do_not_match_as_a_miss",
   "crates/ripr/src/output/human/explain.rs::tests::unrecorded_assertion_row_names_the_retention_limit",
   "crates/ripr/src/output/human/explain.rs::tests::bare_fallback_suppressed_when_sibling_row_printed_an_assertion",

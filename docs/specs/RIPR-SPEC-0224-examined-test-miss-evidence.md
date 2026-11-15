@@ -399,10 +399,18 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
   and are tracked separately: `exact_oracle_gap_next_step` on
   `missing_exact_assertion`, and the Rust oracle pass on
   `assertion_not_credited` when choosing the macro-wrapped-assertion limit
-  and its next step. Two ranking reads (#14454) order rows, never admit or
-  drop them: the agent `tK=` row (`strongest_test`) and the fix site
-  (`DiagnosticWitness::best_related_test`) demote a row whose miss is
-  `assertion_not_observing`. The fix site keeps reach as its leading key
+  and its next step. One ranking read orders rows, never admits or drops
+  them: `RelatedTest::observation_tier` (#14454, #14483) ranks a row whose
+  miss is `no_call_path` lowest, then `assertion_not_observing`, then every
+  other row. Every picker that names one row of a finding uses it: the agent
+  `tK=` row (`strongest_test`), the fix site
+  (`DiagnosticWitness::best_related_test`, which the code lens and hover
+  read), the human `Related test` headline (the first row of the best tier,
+  then the Python changed-file rule within that tier) and the JSON
+  `oracle_kind`/`oracle_strength` summary (the tier, then strength). The
+  TypeScript/JavaScript preview row and the per-test lead row of `ripr
+  explain` keep their own rules, and editor seam actions read seam grips,
+  which carry no miss. The fix site keeps reach as its leading key
   (#5335), so among rows of equal reach it places the row after every row
   that can observe the change, and places a `no_call_path` row after it,
   because a test with no call to the changed code reaches it least of all; a
@@ -488,7 +496,7 @@ written and must not copy these gaps.
   not a swap, because an `Ok` pin can fail on the new code there. The row
   keeps its role and oracle, so no class or gate changes, and the
   exact-oracle next step never runs for a literal `Err` variant probe. The
-  `tK=` row and the fix site prefer a row that can observe the change (see
+  pickers that name one row prefer a row that can observe the change (see
   Current Rust conformance gaps). A changed struct field, an `assert_ne!`
   and an `Err`-naming side keep `missing_exact_assertion`. Limits: the base
   line comes from line pairing in the replacement block, so a guard rewritten
