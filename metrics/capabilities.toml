@@ -1742,6 +1742,81 @@ next = "dotnet-project-facts-and-adapters"
 metric = "boundary_disclosure"
 
 [[capability]]
+id = "jvm_evidence_contract"
+cells = []
+name = "JVM shared build and Java/Kotlin/Scala evidence contract"
+status = "planned"
+spec = "RIPR-SPEC-0394"
+evidence = [
+  "RIPR-SPEC-0394 (accepted, #5646) defines the shared Maven/Gradle/sbt build and classpath substrate as context only, plus separate Java, Kotlin, and Scala semantic and test/oracle contracts.",
+  "The spec's planned capability-cell index keeps JUnit 4/5, TestNG, Kotest, ScalaTest, and MUnit diff cells plus per-language repo and repair-routing cells separate at not_proven; no runtime CAPABILITY_CELLS entry exists yet.",
+  "Findings project into the shared RIPR finding model with no JVM output schema. Gates, badges, RIPR Zero, and stable claims stay false until implementation and eval evidence land."
+]
+fixtures = []
+next = "jvm-substrate-and-adapters"
+metric = "jvm_evidence_contract_registered"
+
+[[capability]]
+id = "apple_evidence_contract"
+cells = []
+name = "Apple shared project and Swift/Objective-C evidence contract"
+status = "planned"
+spec = "RIPR-SPEC-0395"
+evidence = [
+  "RIPR-SPEC-0395 (accepted, #5682) defines the shared SwiftPM/Xcode project, target, configuration, and platform substrate as context only, plus separate Swift and Objective-C evidence contracts.",
+  "The spec's planned capability-cell index keeps XCTest (Swift and Objective-C) and Swift Testing cells with platform-scoped rows and explicit unpromoted modes separate at not_proven; no runtime CAPABILITY_CELLS entry exists yet.",
+  "Appendix A registers typed Apple limits for macros, result builders, actors, selectors, swizzling, and bridging. Gates, badges, RIPR Zero, and stable claims stay false until implementation and eval evidence land."
+]
+fixtures = []
+next = "apple-substrate-and-adapters"
+metric = "spec_contract_registered"
+
+[[capability]]
+id = "native_evidence_contract"
+cells = []
+name = "Native C/C++ translation-unit and evidence contract"
+status = "planned"
+spec = "RIPR-SPEC-0399"
+evidence = [
+  "RIPR-SPEC-0399 (accepted, #5696) defines the shared translation-unit, compile-database, and configuration substrate as context only, plus separate C and C++ evidence contracts.",
+  "The spec's planned capability-cell index keeps Unity, CMocka, GoogleTest, GoogleMock, Catch2, and doctest cells separate at not_proven; no runtime CAPABILITY_CELLS entry exists yet.",
+  "Typed limits cover preprocessing, templates, dispatch, undefined behavior, FFI, and test selectors; `no_static_path` is forbidden for unresolved compile context. Gates, badges, RIPR Zero, and stable claims stay false until implementation and eval evidence land."
+]
+fixtures = []
+next = "native-substrate-and-adapters"
+metric = "traceability_behavior_registered"
+
+[[capability]]
+id = "powershell_evidence_contract"
+cells = []
+name = "PowerShell edition, pipeline, Pester, and system-effect evidence contract"
+status = "planned"
+spec = "RIPR-SPEC-0403"
+evidence = [
+  "RIPR-SPEC-0403 (accepted, #5710) defines the edition, platform, module, scope, pipeline, and stream contracts with Pester discovery/run activation kept distinct.",
+  "The spec's planned capability-cell index keeps Pester 5/4, pwsh 7 and Windows PowerShell 5.1, stream-typing, native-process, and system-effect cells separate at not_proven; no runtime CAPABILITY_CELLS entry exists yet.",
+  "Typed limits cover dynamic invocation and dot-sourcing, remoting, providers, native processes, and .NET/COM edges. Gates, badges, RIPR Zero, and stable claims stay false until implementation and eval evidence land."
+]
+fixtures = []
+next = "powershell-adapter-and-corpus"
+metric = "powershell_evidence_contract_registered"
+
+[[capability]]
+id = "sql_evidence_contract"
+cells = []
+name = "PostgreSQL/pgTAP schema, migration, and database-state evidence contract"
+status = "planned"
+spec = "RIPR-SPEC-0404"
+evidence = [
+  "RIPR-SPEC-0404 (accepted, #5736) defines the SQL project and migration substrate, PostgreSQL semantic contract, pgTAP test/oracle contract, and database-state disposition.",
+  "The spec's planned capability-cell index keeps PostgreSQL/pgTAP cells, with SQLite, MySQL, and ANSI-generic rows explicitly not admitted separate at not_proven; no runtime CAPABILITY_CELLS entry exists yet.",
+  "Typed limits cover dynamic SQL, procedural bodies, triggers, RLS, planner/runtime behavior, and live database state. Gates, badges, RIPR Zero, and stable claims stay false until implementation and eval evidence land."
+]
+fixtures = []
+next = "sql-substrate-and-adapters"
+metric = "sql_evidence_contract_registered"
+
+[[capability]]
 id = "python_repair_routing_loop"
 cells = [
   "python/pytest/diff/repair_routing",

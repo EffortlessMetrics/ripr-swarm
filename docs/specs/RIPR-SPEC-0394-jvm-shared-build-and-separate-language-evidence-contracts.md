@@ -1,6 +1,6 @@
 # RIPR-SPEC-0394: JVM shared build/classpath facts and separate Java, Kotlin, and Scala evidence contracts
 
-Status: proposed
+Status: accepted
 
 Owner: language-adapter / ecosystem (#5586)
 
@@ -110,6 +110,16 @@ can go stale (classpath snapshot, selected build variant, compiler plugin set).
 Substrate facts MUST NOT appear inside language semantic documents except by
 reference (`substrate_ref` id + digest). Language documents MUST NOT claim
 reach, exposure, or oracle strength from substrate fields alone.
+
+#### Output projection
+
+The three contracts above are producer-side fact documents, not output
+schemas. Findings project into the shared RIPR finding model
+([RIPR-SPEC-0026](RIPR-SPEC-0026-language-adapter-contract.md) additive fields:
+`language`, `language_status`, `static_limit_kind`) and the shared
+classification vocabulary. There is no JVM-specific JSON, SARIF, or PR output
+schema; a JVM field that cannot be expressed in the shared model stays in the
+fact document and does not reach output.
 
 #### Shared substrate (`jvm_project_substrate.v1`)
 
@@ -256,6 +266,10 @@ Typed stops (non-exhaustive; implementations extend only via spec amendment):
 | `jvm_macro_or_inline_unresolved` | Scala macro/inline/quotes or Kotlin inline/reified expansion unknown |
 | `jvm_cross_language_edge_missing` | Cross-language call without #5559 edge |
 | `jvm_test_activation_unknown` | Registered test with unknown activation/selection state |
+| `jvm_opaque_assertion_helper` | Custom assertion helpers, Hamcrest/AssertJ/Kotest custom matchers, or `assertThat` wrappers whose comparison is not statically visible |
+| `jvm_test_selector_unavailable` | No exact focused selector (dynamic or generated test names, `@TestFactory`, parameterized rows, tags/filters set outside static config) |
+| `jvm_target_divergence_unresolved` | Behavior differs by JDK release, `--release`/`jvmTarget`, Scala version, or multi-release JAR and the selected target is unknown |
+| `jvm_default_method_or_delegation_unresolved` | Java interface default method, Kotlin `by` delegation, or Scala trait linearization whose concrete target is not fixed |
 
 Unresolved build/compiler/classpath context MUST NOT become a universal
 exposure claim across languages.

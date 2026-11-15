@@ -171,7 +171,16 @@ PHPUnit recognition (non-exhaustive; producer-owned syntax):
 - Lifecycle: `setUp`, `tearDown`, `setUpBeforeClass` as context only
 - Skip/incomplete/risky/depends/group annotations and attributes map to closed
   activation vocabulary (`inactive_skip`, `todo_or_pending`,
-  `conditional_activation_unknown`, `filtered_or_not_selected`, etc.)
+  `conditional_activation_unknown`, `filtered_or_not_selected`, etc.).
+  Risky tests (no assertions, or output/global-state violations) are
+  `conditional_activation_unknown` for oracle purposes: a risky marker never
+  donates `exposed`.
+- Imperative `markTestSkipped()` / `markTestIncomplete()` calls and
+  `@requires` / `#[RequiresPhp]` / `#[RequiresPhpExtension]` map to
+  `conditional_activation_unknown` unless the guard is statically unconditional.
+- Attribute forms (`#[Test]`, `#[DataProvider]`) need PHP 8 and are the
+  PHPUnit 10+ form; docblock annotations are the legacy form. Both are
+  recognized per PHPUnit version band, recorded as static metadata.
 
 Pest recognition:
 
@@ -288,18 +297,18 @@ Map or add typed limits (fail-closed; no silent `no_static_path` promotion):
 | Limit kind | Trigger |
 | --- | --- |
 | `magic_method_dispatch` | `__call`, `__callStatic`, `__get`, `__set`, other magic routing |
-| `dynamic_dispatch` | Variable functions `$fn()`, variable methods `$this->$m()`, `new $class` |
+| `dynamic_dispatch` | Variable functions `$fn()`, variable methods `$this->$m()`, variable class calls `$class::method()`, `new $class` |
 | `dynamic_property` | Variable property access |
 | `unresolved_inheritance_target` | Trait, parent class, or interface whose concrete declaration is not statically resolved |
 | `reflection_runtime` | `ReflectionClass`, attributes interpreted only at runtime |
 | `generated_proxy` | Generated proxies where source is not stable |
 | `dependency_injection_container` | Service locators, container `get`, facades without static binding |
 | `unresolved_composer_autoload` | Unresolved PSR/classmap/files autoload target |
-| `runtime_include` | `include`, `require`, `require_once`, conditional definitions |
-| `opaque_custom_assertion_helper` | User-defined assertion wrappers |
+| `runtime_include` | `include`, `require`, `require_once`, conditional definitions, `spl_autoload_register` and other custom autoloaders |
+| `opaque_custom_assertion_helper` | User-defined assertion wrappers, PHPUnit `Constraint` subclasses, `assertThat` with custom or `callback()` constraints, Pest `expect()->extend()` custom expectations |
 | `framework_bootstrap` | Kernel boot, global state mutation outside test body |
 | `extension_native_boundary` | Extension or native calls without static model |
-| `eval_or_string_code` | `eval`, `create_function`, and code assembled from strings at runtime |
+| `eval_or_string_code` | `eval`, legacy `create_function` (removed in PHP 8), and code assembled from strings at runtime |
 | `unsupported_syntax` | Parser gap |
 
 Each limit emits explicit `static_limit_kind` (or successor shared vocabulary),
@@ -325,7 +334,7 @@ below. Implementation slices must add, before support promotion:
 - PHPUnit and Pest cases proving shared activation/eligibility projection
   without PHP-specific JSON schema forks
 - parser span invariants checked by corpus diff (exact start/end required)
-- registration in traceability, capability matrix, and doc-artifacts (this PR)
+- registration in traceability, capability matrix, and doc-artifacts
 - `cargo xtask check-spec-format` and `cargo xtask check-spec-numbering` pass
 
 Until those fixtures exist, required evidence for *behavior* remains planned;
@@ -346,8 +355,8 @@ Until a capability cell above has its own implementation and eval evidence,
 ripr makes none of these claims for PHP:
 
 - **Diff mode:** no PHP finding, classification, or related-test pointer is
-  produced. Changed `.php` files are reported as unanalyzed by a missing
-  adapter, not as clean.
+  produced. When `php` is configured without a shipped adapter, changed `.php`
+  files must be reported as unanalyzed by a missing adapter, not as clean.
 - **Repo mode:** no PHP seam inventory, repository-wide exposure summary, or
   badge input. Diff-mode proof for a framework does not imply repo-mode support.
 - **Frameworks:** PHPUnit evidence does not establish Pest support, and the
