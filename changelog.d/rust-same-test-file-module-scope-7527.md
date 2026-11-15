@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Rust related tests no longer list a same-named module's tests as `same_test_file`: `src/foo.rs` no longer pairs with `src/bar/foo.rs`, and a root crate's `src/serialize.rs` no longer pairs with a member crate's `crates/b/tests/serialize.rs`. Companions beside the module, in the crate's `tests/`, and in a `tests` directory still pair. A finding that had borrowed a weak reach or a boundary literal from such a test now reads without it (#7527).

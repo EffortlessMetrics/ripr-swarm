@@ -1397,12 +1397,28 @@ owner = "product-analysis"
 standalone_reason = "Registers each runnable fenced example in a Rust library's function docs as a test of its file, read from its own synthetic source: its exact assertion on the owner, called through the library's import name, pins the owner's return; ignored and non-running fences, crate-relative paths and method calls are refused."
 
 [[artifact]]
+id = "RIPR-SPEC-0438"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0438-long-flag-equals-value.md"
+status = "accepted"
+owner = "product-cli"
+standalone_reason = "Pins the CLI-wide `--name=value` spelling owned by one argv rewrite before dispatch and the MCP route, including which tokens stay as typed: documented and global switches, value-position tokens, top-level flags before the command and tokens after a literal `--` (#14292)."
+
+[[artifact]]
 id = "RIPR-SPEC-0437"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0437-managed-server-archive-inspection.md"
 status = "accepted"
 owner = "product-swarm"
 standalone_reason = "Pins the managed server download's pre-extraction contract for the VS Code extension: the tar and Windows zip archive members are listed independently of the extractor and the whole archive is refused before extraction when any member is a symlink, a reparse point or escapes the target (#13640, #13904)."
+
+[[artifact]]
+id = "RIPR-SPEC-0440"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0440-output-never-replaces-own-input.md"
+status = "accepted"
+owner = "product-swarm"
+standalone_reason = "Pins the cross-command rule that an artifact report's --out/--out-md never replaces one of that command's own inputs: refusal by filesystem identity before any write, with the documented in-place, rolling and dry-run flows named as the only exceptions (#14312)."
 
 [[artifact]]
 id = "RIPR-SPEC-0429"

@@ -512,6 +512,19 @@ pub(in crate::analysis) fn drop_is_plain_in_closed_sources(
         .is_plain_in_closed_sources(type_name)
 }
 
+/// #14407: whether any indexed source holds a `Drop` impl with a non-empty
+/// `drop` body, or does not parse cleanly so its impls are unread. Unlike
+/// [`drop_is_plain_in_closed_sources`] this does not also ask that no
+/// dependency `use` or macro appears anywhere, so it can withhold a credit
+/// in an ordinary workspace without withholding every credit there; a
+/// macro-generated `Drop` impl stays unread.
+pub(in crate::analysis) fn workspace_has_visible_non_plain_drop(index: &RustIndex) -> bool {
+    let drops = index
+        .call_identity_memos
+        .workspace_drop_impls(|| DropImplIndex::build(index));
+    drops.any_unparseable || !drops.non_plain.is_empty()
+}
+
 /// The workspace's non-plain `Drop` impls, read once per index (#9209).
 #[derive(Debug, Default)]
 pub(in crate::analysis) struct DropImplIndex {

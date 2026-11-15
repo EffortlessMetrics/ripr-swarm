@@ -1,0 +1,26 @@
+{
+  "report": {
+    "schema": "ripr.kani-observation.v1",
+    "run_id": "synthetic-no-execution",
+    "phase": "started",
+    "requested": null,
+    "tool_available": null,
+    "lane_success": false,
+    "lane_error": "run has not completed",
+    "selected": [],
+    "selected_source_files": [],
+    "selected_files_unchanged_after_run": null,
+    "source_observation_digest": null,
+    "source_recheck_errors": [],
+    "invocations": [],
+    "results": [],
+    "registered_claims": 0,
+    "claim_assurance": "not_established",
+    "limitations": [
+      "Synthetic schema stimulus; no Rust producer or verifier execution."
+    ]
+  },
+  "markdown_path": "kani-runs/synthetic-no-execution/checkpoint-0.md",
+  "markdown": "# Synthetic observation shape only\n\nNo verifier was run.\n",
+  "markdown_sha256": "sha256:09a10ea8786d4483435cbeaa7a86e3ea57c27ea3bc22a468a3cc8f3100a75942"
+}

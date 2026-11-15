@@ -469,6 +469,11 @@ Each brief entry must include enough information for an agent to select a
 focused next action without reading the full repo report:
 
 - seam ID, file, line, owner, kind, expression, grip class, and severity;
+- for a match-arm seam whose expression is only the arm head
+  (`Size::Medium =>`), an `arm_result` naming the arm's result when it sits
+  on the head's own line (`450`), read under the flow model's fail-closed
+  same-line rule (#14683). It is omitted when not read; `expression` stays
+  the head;
 - `why_now` reason and confidence;
 - RIPR stage evidence summary;
 - recommended test placement when available;
@@ -602,6 +607,9 @@ Planned tests:
 - `agent_brief_json_shape_is_stable`
 - `agent_receipt_selects_one_verify_seam`
 - `agent_receipt_rejects_verify_json_outside_root`
+- `match_arm_seam_result_reads_the_heads_line` (#14683 head-only arm result)
+- `brief_names_a_head_only_arm_seam_result` (#14683)
+- `agent_brief_renders_arm_result_only_when_read` (#14683)
 
 ## Implementation Mapping
 

@@ -135,12 +135,12 @@ impl AnalysisOutcomeKind {
     /// #12416: the MCP `ripr_refresh` base-widening retry route, verbatim.
     /// MCP-owned surface phrasing housed in the single wording owner so the
     /// hint cannot drift from the shared cause sentence above.
-    pub(crate) const EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE: &str = "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}";
+    pub(crate) const EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE: &str = "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"source\": \"committed\", \"base\": \"origin/main\"}";
 
     /// #13096: concrete retry when the default base resolved to the analyzed
     /// commit and the change under review is the last commit. Named, never
     /// inferred: the server does not silently widen the base.
-    pub(crate) const EMPTY_SCOPE_MCP_LAST_COMMIT_RETRY_ROUTE: &str = "if the change under review is the last commit, retry ripr_refresh with {\"base\": \"HEAD~1\"}; the server does not infer this base";
+    pub(crate) const EMPTY_SCOPE_MCP_LAST_COMMIT_RETRY_ROUTE: &str = "if the change under review is the last commit, retry ripr_refresh with {\"source\": \"committed\", \"base\": \"HEAD~1\"}; the server does not infer this base";
 
     /// #13096: the default-base-resolved-to-analyzed-commit causes exclude
     /// `no_behavioral_candidates`, whose diff was non-empty.
@@ -900,7 +900,7 @@ mod tests {
         assert!(!AnalysisOutcomeKind::CompleteWithFindings.is_empty_scope());
         assert_eq!(
             AnalysisOutcomeKind::EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE,
-            "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}"
+            "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"source\": \"committed\", \"base\": \"origin/main\"}"
         );
         assert_eq!(
             AnalysisOutcomeKind::EMPTY_SCOPE_MCP_SOURCE_RETRY_ROUTE,

@@ -620,6 +620,312 @@ mod tests {
         Ok(())
     }
 
+    type Refusal = CommandSpecValidationError;
+
+    /// The verify fixture with one edit applied, validated.
+    fn validated(edit: impl FnOnce(&mut CommandSpec)) -> Result<(), Refusal> {
+        let mut spec = verify_spec();
+        edit(&mut spec);
+        spec.validate()
+    }
+
+    #[test]
+    fn the_unedited_fixture_is_a_valid_route() {
+        assert_eq!(validated(|_| {}), Ok(()));
+    }
+
+    #[test]
+    fn only_the_current_schema_version_is_a_route() {
+        assert_eq!(
+            validated(|spec| spec.schema_version = "2".to_string()),
+            Err(Refusal::InvalidSchemaVersion("2".to_string()))
+        );
+        // The version is read first: a consumer cannot interpret the other
+        // fields of a schema it does not know.
+        assert_eq!(
+            validated(|spec| {
+                spec.schema_version = String::new();
+                spec.program = String::new();
+            }),
+            Err(Refusal::InvalidSchemaVersion(String::new()))
+        );
+    }
+
+    #[test]
+    fn a_blank_identity_program_or_display_is_refused_by_name() {
+        assert_eq!(
+            validated(|spec| spec.command_id = "\t".to_string()),
+            Err(Refusal::EmptyField("command_id"))
+        );
+        assert_eq!(
+            validated(|spec| spec.program = String::new()),
+            Err(Refusal::EmptyField("program"))
+        );
+        assert_eq!(
+            validated(|spec| spec.display = "  ".to_string()),
+            Err(Refusal::EmptyField("display"))
+        );
+        // Arguments are data: an empty argument is a legitimate argv entry.
+        assert_eq!(validated(|spec| spec.args.push(String::new())), Ok(()));
+    }
+
+    #[test]
+    fn a_nul_is_refused_in_every_text_field_that_reaches_a_process() {
+        let nul = |text: &str| format!("{text}\0tail");
+        assert_eq!(
+            validated(|spec| spec.command_id = nul("cmd")),
+            Err(Refusal::EmbeddedNul("command_id"))
+        );
+        assert_eq!(
+            validated(|spec| spec.program = nul("cargo")),
+            Err(Refusal::EmbeddedNul("program"))
+        );
+        assert_eq!(
+            validated(|spec| spec.display = nul("cargo test")),
+            Err(Refusal::EmbeddedNul("display"))
+        );
+        assert_eq!(
+            validated(|spec| spec.args.push(nul("--exact"))),
+            Err(Refusal::EmbeddedNul("args"))
+        );
+        assert_eq!(
+            validated(|spec| spec.cwd = nul("crates")),
+            Err(Refusal::EmbeddedNul("cwd"))
+        );
+        assert_eq!(
+            validated(|spec| spec.expected_writes.push(nul("target"))),
+            Err(Refusal::EmbeddedNul("expected_writes"))
+        );
+        assert_eq!(
+            validated(|spec| spec.env_set[0].value = nul("value")),
+            Err(Refusal::EmbeddedNul("environment value"))
+        );
+    }
+
+    #[test]
+    fn the_display_limit_counts_characters_and_admits_exactly_the_maximum() {
+        // Two-byte characters: a byte count would refuse the admitted length.
+        assert_eq!(
+            validated(|spec| spec.display = "é".repeat(MAX_DISPLAY_LENGTH)),
+            Ok(())
+        );
+        assert_eq!(
+            validated(|spec| spec.display = "é".repeat(MAX_DISPLAY_LENGTH + 1)),
+            Err(Refusal::DisplayTooLong)
+        );
+    }
+
+    #[test]
+    fn a_path_that_can_leave_the_root_is_refused_with_its_field_and_value() {
+        // Drive-letter paths are assembled here because the local-context
+        // gate refuses a literal absolute Windows path in source.
+        let upper = char::from(b'C');
+        let lower = char::from(b'c');
+        let escapes = [
+            "..".to_string(),
+            "../outside".to_string(),
+            "crates/../../outside".to_string(),
+            "crates\\..\\outside".to_string(),
+            "/etc".to_string(),
+            "\\\\server\\share".to_string(),
+            "\\outside".to_string(),
+            format!("{upper}:/outside"),
+            format!("{upper}:outside"),
+            format!("{lower}:\\outside"),
+        ];
+        for escape in &escapes {
+            assert_eq!(
+                validated(|spec| spec.cwd = escape.to_string()),
+                Err(Refusal::InvalidRelativePath {
+                    field: "cwd",
+                    value: escape.to_string(),
+                }),
+                "cwd {escape:?}"
+            );
+            // A later write is held to the same rule as the first.
+            assert_eq!(
+                validated(|spec| spec.expected_writes.push(escape.to_string())),
+                Err(Refusal::InvalidRelativePath {
+                    field: "expected_writes",
+                    value: escape.to_string(),
+                }),
+                "expected_writes {escape:?}"
+            );
+        }
+        assert_eq!(
+            validated(|spec| spec.cwd = " ".to_string()),
+            Err(Refusal::EmptyField("cwd"))
+        );
+        assert_eq!(
+            validated(|spec| spec.expected_writes.push(String::new())),
+            Err(Refusal::EmptyField("expected_writes"))
+        );
+    }
+
+    #[test]
+    fn a_root_relative_path_is_admitted_even_when_it_only_looks_like_an_escape() {
+        for inside in [
+            ".",
+            "crates/ripr",
+            "crates\\ripr",
+            "./target/ripr",
+            "target/**",
+            "notes..md",
+            "..hidden/file",
+            "a/b..c/d",
+        ] {
+            assert_eq!(
+                validated(|spec| spec.cwd = inside.to_string()),
+                Ok(()),
+                "cwd {inside:?}"
+            );
+            assert_eq!(
+                validated(|spec| spec.expected_writes = vec![inside.to_string()]),
+                Ok(()),
+                "expected_writes {inside:?}"
+            );
+        }
+        assert_eq!(validated(|spec| spec.expected_writes.clear()), Ok(()));
+    }
+
+    #[test]
+    fn the_timeout_is_bounded_on_both_sides() {
+        assert_eq!(
+            validated(|spec| spec.timeout_ms = 0),
+            Err(Refusal::InvalidTimeout(0))
+        );
+        assert_eq!(validated(|spec| spec.timeout_ms = 1), Ok(()));
+        assert_eq!(validated(|spec| spec.timeout_ms = MAX_TIMEOUT_MS), Ok(()));
+        assert_eq!(
+            validated(|spec| spec.timeout_ms = MAX_TIMEOUT_MS + 1),
+            Err(Refusal::InvalidTimeout(MAX_TIMEOUT_MS + 1))
+        );
+    }
+
+    #[test]
+    fn a_route_names_at_least_one_expected_exit_code_and_platform() {
+        assert_eq!(
+            validated(|spec| spec.expected_exit_codes.clear()),
+            Err(Refusal::EmptyExpectedExitCodes)
+        );
+        assert_eq!(
+            validated(|spec| spec.platforms.clear()),
+            Err(Refusal::EmptyPlatforms)
+        );
+    }
+
+    #[test]
+    fn an_environment_name_that_cannot_be_one_variable_is_refused() {
+        for name in [
+            "",
+            "A=B",
+            "=",
+            "WITH SPACE",
+            "TAB\tBED",
+            "NUL\0NAME",
+            "LINE\n",
+        ] {
+            assert_eq!(
+                validated(|spec| spec.env_set[0].name = name.to_string()),
+                Err(Refusal::InvalidEnvironmentName(name.to_string())),
+                "env_set {name:?}"
+            );
+            assert_eq!(
+                validated(|spec| spec.env_passthrough.push(name.to_string())),
+                Err(Refusal::InvalidEnvironmentName(name.to_string())),
+                "env_passthrough {name:?}"
+            );
+        }
+        // An assigned value is data and may be empty or hold `=`.
+        assert_eq!(
+            validated(|spec| spec.env_set[0].value = "a=b c".to_string()),
+            Ok(())
+        );
+        assert_eq!(validated(|spec| spec.env_set[0].value.clear()), Ok(()));
+    }
+
+    #[test]
+    fn each_role_is_admitted_with_its_own_authority_and_no_other() {
+        let roles = [
+            CommandRole::Verify,
+            CommandRole::Receipt,
+            CommandRole::Regeneration,
+            CommandRole::Inspection,
+            CommandRole::TargetedRerun,
+            CommandRole::RepairStart,
+        ];
+        let boundaries = [
+            CommandAuthorityBoundary::VerificationRouteOnly,
+            CommandAuthorityBoundary::ReceiptRouteOnly,
+            CommandAuthorityBoundary::RegenerationRouteOnly,
+            CommandAuthorityBoundary::InspectionRouteOnly,
+            CommandAuthorityBoundary::TargetedRerunRouteOnly,
+            CommandAuthorityBoundary::RepairStartRouteOnly,
+        ];
+        // The two lists are in matching order: the diagonal is the whole
+        // admitted set.
+        for (role_at, role) in roles.into_iter().enumerate() {
+            for (boundary_at, boundary) in boundaries.into_iter().enumerate() {
+                let expected = if role_at == boundary_at {
+                    Ok(())
+                } else {
+                    Err(Refusal::AuthorityRoleMismatch)
+                };
+                assert_eq!(
+                    validated(|spec| {
+                        spec.role = role;
+                        spec.authority_boundary = boundary;
+                    }),
+                    expected,
+                    "{role:?} with {boundary:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn refusal_messages_name_the_field_the_value_and_the_bound() {
+        let cases = [
+            (Refusal::EmptyField("program"), "program must not be empty"),
+            (Refusal::EmbeddedNul("args"), "args must not contain NUL"),
+            (
+                Refusal::InvalidSchemaVersion("2".to_string()),
+                "unsupported command schema version \"2\"",
+            ),
+            (
+                Refusal::InvalidRelativePath {
+                    field: "cwd",
+                    value: "../outside".to_string(),
+                },
+                "cwd must be a root-relative path: \"../outside\"",
+            ),
+            (
+                Refusal::DisplayTooLong,
+                "display must be at most 512 characters",
+            ),
+            (
+                Refusal::InvalidTimeout(0),
+                "timeout must be between 1 and 3600000 ms, got 0",
+            ),
+            (
+                Refusal::EmptyExpectedExitCodes,
+                "expected_exit_codes must not be empty",
+            ),
+            (Refusal::EmptyPlatforms, "platforms must not be empty"),
+            (
+                Refusal::InvalidEnvironmentName("A=B".to_string()),
+                "invalid environment variable name \"A=B\"",
+            ),
+            (
+                Refusal::AuthorityRoleMismatch,
+                "authority boundary does not match command role",
+            ),
+        ];
+        for (refusal, message) in cases {
+            assert_eq!(refusal.to_string(), message);
+        }
+    }
+
     #[test]
     fn broad_snapshot_recognition_preserves_permitted_command_word_spellings() {
         // Literal policy cases, not a second tokenizer or general cost oracle.

@@ -4,8 +4,10 @@
 //! document is byte-value identical to `json`. `json-terse` goes one layer
 //! further for LLM/agent consumers that pay per token on findings:
 //!
-//! 1. Repeated prose templates in `evidence_path`, `evidence`, `missing` and
-//!    `assertion_texts` are replaced by stable short codes (`E0001`, ...), and
+//! 1. Repeated prose templates in `evidence_path`, `evidence`, `missing`,
+//!    `assertion_texts`, the `ripr.<stage>.summary` strings and the
+//!    `related_tests[].oracle` / `related_tests[].why` strings (#13673) are
+//!    replaced by stable short codes (`E0001`, ...), and
 //!    the full templates are emitted once in an `evidence_legend` block at the
 //!    document head. Expanding the codes through the legend reconstructs the
 //!    exact original strings, in order.
@@ -19,9 +21,9 @@
 //!    when values match.
 //!
 //! What terse does *not* do: it never drops a finding, never changes a
-//! verdict/classification/severity/confidence, and never touches nested
-//! prose outside the four coded surfaces (ripr stage summaries,
-//! related-test oracle lines, repair cards stay inline). See
+//! verdict/classification/severity/confidence or `ripr` stage state and
+//! confidence, and never touches nested prose outside the coded surfaces
+//! (repair cards and flow-sink text stay inline). See
 //! `docs/OUTPUT_SCHEMA.md` "json-terse" for the consumer-facing contract.
 
 use serde_json::Value;
@@ -37,6 +39,16 @@ const PROSE_ARRAYS: [&str; 3] = ["evidence_path", "evidence", "missing"];
 
 /// Map field whose values (assertion source lines) are coded the same way.
 const ASSERTION_TEXTS: &str = "assertion_texts";
+
+/// Key of the prose summary inside each `ripr` stage object, coded like the
+/// prose arrays (#13673).
+const RIPR_SUMMARY_KEY: &str = "summary";
+
+/// Related-test rows whose prose fields are coded (#13673): the oracle line
+/// repeats the finding's `assertion_texts` value and the same test row in
+/// every other finding, and the `why` sentence repeats across rows.
+const RELATED_TESTS: &str = "related_tests";
+const RELATED_TEST_PROSE: [&str; 2] = ["oracle", "why"];
 
 /// Marker stamped at the document head so consumers can key on the rendering
 /// profile without sniffing for the legend.
@@ -86,6 +98,11 @@ pub(crate) fn render_terse(rendered: &str) -> Result<String, String> {
     let mut coder = LegendCoder::default();
     if let Some(Value::Array(findings)) = root.get("findings") {
         for finding in findings.iter().filter_map(Value::as_object) {
+            // The full renderer writes `ripr` before the prose arrays, so its
+            // stage summaries are observed first to keep first-appearance order.
+            for text in ripr_stage_summaries(finding) {
+                coder.observe(text);
+            }
             for key in PROSE_ARRAYS {
                 if let Some(Value::Array(entries)) = finding.get(key) {
                     for text in entries.iter().filter_map(Value::as_str) {
@@ -97,6 +114,9 @@ pub(crate) fn render_terse(rendered: &str) -> Result<String, String> {
                 for text in assertions.values().filter_map(Value::as_str) {
                     coder.observe(text);
                 }
+            }
+            for text in related_test_prose(finding) {
+                coder.observe(text);
             }
         }
     }
@@ -228,7 +248,58 @@ fn compact_finding(finding: &mut serde_json::Map<String, Value>, coder: &mut Leg
             }
         }
     }
+    // #13673: a stage summary usually repeats an `evidence` entry verbatim,
+    // so the two share one legend code.
+    if let Some(Value::Object(ripr)) = finding.get_mut("ripr") {
+        for stage in STAGE_ORDER {
+            if let Some(Value::Object(stage)) = ripr.get_mut(stage)
+                && let Some(summary) = stage.get_mut(RIPR_SUMMARY_KEY)
+                && let Some(code) = summary.as_str().and_then(|text| coder.code_for(text))
+            {
+                *summary = Value::String(code);
+            }
+        }
+    }
+    if let Some(Value::Array(rows)) = finding.get_mut(RELATED_TESTS) {
+        for row in rows.iter_mut().filter_map(Value::as_object_mut) {
+            for key in RELATED_TEST_PROSE {
+                if let Some(value) = row.get_mut(key)
+                    && let Some(code) = value.as_str().and_then(|text| coder.code_for(text))
+                {
+                    *value = Value::String(code);
+                }
+            }
+        }
+    }
     drop_same_value_aliases(finding, coder);
+}
+
+/// The `related_tests[].oracle` and `.why` strings, in row order.
+fn related_test_prose(finding: &serde_json::Map<String, Value>) -> Vec<&str> {
+    let Some(Value::Array(rows)) = finding.get(RELATED_TESTS) else {
+        return Vec::new();
+    };
+    rows.iter()
+        .filter_map(Value::as_object)
+        .flat_map(|row| {
+            RELATED_TEST_PROSE
+                .iter()
+                .filter_map(|key| row.get(*key).and_then(Value::as_str))
+        })
+        .collect()
+}
+
+/// The five `ripr.<stage>.summary` strings, a coded surface since #13673.
+fn ripr_stage_summaries(finding: &serde_json::Map<String, Value>) -> Vec<&str> {
+    let Some(Value::Object(ripr)) = finding.get("ripr") else {
+        return Vec::new();
+    };
+    STAGE_ORDER
+        .iter()
+        .filter_map(|stage| ripr.get(*stage))
+        .filter_map(|stage| stage.get(RIPR_SUMMARY_KEY))
+        .filter_map(Value::as_str)
+        .collect()
 }
 
 /// Omit only the documented aliases: equal values in unrelated fields do not
@@ -512,6 +583,68 @@ mod tests {
         for kept in 1..=4 {
             assert_eq!(terse["findings"][kept], full["findings"][kept]);
         }
+        Ok(())
+    }
+
+    /// #14083 T4: an alias is dropped only when it is present. Two absent
+    /// values compare equal, so without the presence guards a finding with no
+    /// gap id, or a stage row lacking `state` or `confidence` beside an owner
+    /// that lacks it too, would be recorded as a dropped alias and the row
+    /// content (which the legend cannot rebuild) would be lost.
+    #[test]
+    fn terse_never_records_an_absent_alias_as_dropped() -> Result<(), String> {
+        let stage_rows = |missing: &str| -> (Value, Value) {
+            let mut ripr = serde_json::Map::new();
+            let mut rows = Vec::new();
+            for stage in STAGE_ORDER {
+                let mut owner = serde_json::json!({"state": "yes", "confidence": "high"});
+                let mut row =
+                    serde_json::json!({"stage": stage, "state": "yes", "confidence": "high"});
+                for value in [&mut owner, &mut row] {
+                    if let Some(object) = value.as_object_mut() {
+                        object.remove(missing);
+                    }
+                }
+                // Keep the row at three keys so only the presence guard, not
+                // the key count, decides.
+                row["note"] = serde_json::json!("kept");
+                ripr.insert(stage.to_string(), owner);
+                rows.push(row);
+            }
+            (Value::Object(ripr), Value::Array(rows))
+        };
+        let (ripr_no_state, rows_no_state) = stage_rows("state");
+        let (ripr_no_confidence, rows_no_confidence) = stage_rows("confidence");
+        // Each case renders alone, so one failing guard cannot hide another.
+        let cases = [
+            ("no gap fields", serde_json::json!({"id": "probe:a"})),
+            (
+                "gap without an id",
+                serde_json::json!({"id": "probe:b", "canonical_gap": {"owner": "f"}}),
+            ),
+            (
+                "rows and owner without state",
+                serde_json::json!({"ripr": ripr_no_state, "evidence_stages": rows_no_state}),
+            ),
+            (
+                "rows and owner without confidence",
+                serde_json::json!({"ripr": ripr_no_confidence, "evidence_stages": rows_no_confidence}),
+            ),
+        ];
+        assert_eq!(cases[2].1["evidence_stages"][0]["note"], "kept");
+        assert!(cases[2].1["evidence_stages"][0].get("state").is_none());
+        assert!(cases[3].1["ripr"]["reach"].get("confidence").is_none());
+        let mut failures = Vec::new();
+        for (label, finding) in cases {
+            let full = serde_json::json!({"findings": [finding]});
+            let input = serde_json::to_string(&full).map_err(|error| error.to_string())?;
+            let terse: Value = serde_json::from_str(&super::render_terse(&input)?)
+                .map_err(|error| error.to_string())?;
+            if terse.get("dropped_aliases").is_some() || terse["findings"] != full["findings"] {
+                failures.push(format!("{label}: {terse}"));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
         Ok(())
     }
 
@@ -806,6 +939,161 @@ mod tests {
             Some("Reachable tests can plausibly activate this changed behavior")
         );
         assert_eq!(finding["note"], finding["language"]);
+        Ok(())
+    }
+
+    #[test]
+    fn terse_codes_follow_document_order_with_summaries_first() -> Result<(), String> {
+        // The full renderer writes `ripr` before `evidence`, so a repeated
+        // stage summary takes an earlier code than a distinct repeated
+        // evidence sentence in the same finding.
+        let summary = "A stage summary sentence long enough to be worth coding here";
+        let evidence = "A different evidence sentence long enough to be worth coding";
+        let full = serde_json::json!({"findings": [{
+            "id": "probe:a",
+            "ripr": {
+                "reach": {"state": "yes", "confidence": "high", "summary": summary},
+                "infect": {"state": "yes", "confidence": "high", "summary": summary}
+            },
+            "evidence": [evidence, evidence]
+        }]});
+        let input = serde_json::to_string(&full).map_err(|error| error.to_string())?;
+        let terse: Value =
+            serde_json::from_str(&super::render_terse(&input)?).map_err(|e| e.to_string())?;
+        let finding = &terse["findings"][0];
+        let summary_code = finding["ripr"]["reach"]["summary"]
+            .as_str()
+            .ok_or("reach summary")?;
+        let evidence_code = finding["evidence"][0].as_str().ok_or("evidence")?;
+        assert_ne!(summary_code, summary, "{terse}");
+        assert_ne!(evidence_code, evidence, "{terse}");
+        assert!(summary_code < evidence_code, "{terse}");
+        Ok(())
+    }
+
+    #[test]
+    fn terse_codes_related_test_oracle_and_why_and_round_trips() -> Result<(), String> {
+        // #13673: every finding lists the same test rows, so the oracle line
+        // and the `why` sentence repeat across findings; the oracle also
+        // repeats the finding's `assertion_texts` value and shares its code.
+        let oracle = "assert_eq!(clamp(5, 0, 10), 5);";
+        let why = "no established call path to the changed code; linked by file location only";
+        let row = serde_json::json!({
+            "file": "src/lib.rs", "line": 10, "name": "clamp_ok",
+            "oracle": oracle, "why": why, "relation_reason": "same_test_file"
+        });
+        let finding = |id: &str| {
+            serde_json::json!({
+                "id": id,
+                "assertion_texts": {"10": oracle},
+                "related_tests": [row.clone(), {"name": "short", "oracle": "assert!(x);", "why": why}]
+            })
+        };
+        let full = serde_json::json!({"findings": [finding("probe:a"), finding("probe:b")]});
+        let input = serde_json::to_string(&full).map_err(|error| error.to_string())?;
+        let terse: Value =
+            serde_json::from_str(&super::render_terse(&input)?).map_err(|e| e.to_string())?;
+        let legend = terse[LEGEND_KEY].as_object().ok_or("legend")?;
+        let rows = terse["findings"][0]["related_tests"]
+            .as_array()
+            .ok_or("rows")?;
+        let oracle_code = rows[0]["oracle"].as_str().ok_or("oracle")?;
+        let why_code = rows[0]["why"].as_str().ok_or("why")?;
+        assert_eq!(
+            legend.get(oracle_code).and_then(Value::as_str),
+            Some(oracle)
+        );
+        assert_eq!(legend.get(why_code).and_then(Value::as_str), Some(why));
+        assert_eq!(
+            terse["findings"][0]["assertion_texts"]["10"].as_str(),
+            Some(oracle_code),
+            "the assertion text and the oracle line share one code: {terse}"
+        );
+        // Short oracle lines stay inline; non-prose row fields never move.
+        assert_eq!(rows[1]["oracle"].as_str(), Some("assert!(x);"));
+        assert_eq!(rows[1]["why"].as_str(), Some(why_code));
+        assert_eq!(rows[0]["name"], row["name"]);
+        assert_eq!(rows[0]["relation_reason"], row["relation_reason"]);
+        // Expanding every code restores the full document's rows exactly.
+        let mut restored = terse["findings"].clone();
+        for finding in restored.as_array_mut().ok_or("findings")? {
+            for row in finding["related_tests"].as_array_mut().ok_or("rows")? {
+                for key in RELATED_TEST_PROSE {
+                    if let Some(text) = row[key].as_str()
+                        && let Some(original) = legend.get(text)
+                    {
+                        row[key] = original.clone();
+                    }
+                }
+            }
+            if let Some(text) = finding["assertion_texts"]["10"].as_str()
+                && let Some(original) = legend.get(text)
+            {
+                finding["assertion_texts"]["10"] = original.clone();
+            }
+        }
+        assert_eq!(restored, full["findings"]);
+        Ok(())
+    }
+
+    #[test]
+    fn terse_codes_a_stage_summary_that_repeats_an_evidence_entry() -> Result<(), String> {
+        // #13673: the infect summary appears once in `ripr` and once in
+        // `evidence`; both copies share one code and expand back exactly.
+        let long = "Predicate compares `a` with `b`, and ripr can read no literal for either, so it cannot tell which side of the boundary a test reaches";
+        let short = "Short stage summary";
+        let full = serde_json::json!({"findings": [{
+            "id": "probe:a",
+            "ripr": {
+                "reach": {"state": "yes", "confidence": "high", "summary": short},
+                "observe": {"state": "yes", "confidence": "high", "summary": "E0001"},
+                "infect": {"state": "unknown", "confidence": "low", "summary": long},
+                "discriminate": {"state": "no", "confidence": "medium", "summary": long}
+            },
+            "evidence": [long, short]
+        }]});
+        let input = serde_json::to_string(&full).map_err(|error| error.to_string())?;
+        let terse: Value =
+            serde_json::from_str(&super::render_terse(&input)?).map_err(|e| e.to_string())?;
+        let legend = legend_of(&terse);
+        let finding = &terse["findings"][0];
+        let code = finding["ripr"]["infect"]["summary"]
+            .as_str()
+            .ok_or("infect summary")?;
+        assert_ne!(code, long, "the repeated summary must be coded: {terse}");
+        assert_eq!(finding["evidence"][0], Value::String(code.to_string()));
+        assert_eq!(
+            finding["ripr"]["discriminate"]["summary"],
+            Value::String(code.to_string())
+        );
+        for stage in ["reach", "infect", "discriminate"] {
+            let expanded = expand_terse_string(
+                finding["ripr"][stage]["summary"]
+                    .as_str()
+                    .unwrap_or_default(),
+                &legend,
+            );
+            assert_eq!(
+                Value::String(expanded),
+                full["findings"][0]["ripr"][stage]["summary"]
+            );
+            assert_eq!(
+                finding["ripr"][stage]["state"],
+                full["findings"][0]["ripr"][stage]["state"]
+            );
+            assert_eq!(
+                finding["ripr"][stage]["confidence"],
+                full["findings"][0]["ripr"][stage]["confidence"]
+            );
+        }
+        // A literal summary spelled like a code reserves that code.
+        assert!(!legend.contains_key("E0001"), "{terse}");
+        assert_eq!(finding["ripr"]["observe"]["summary"], "E0001");
+        // Control: a short summary below the admission threshold stays inline.
+        assert_eq!(
+            finding["ripr"]["reach"]["summary"],
+            Value::String(short.to_string())
+        );
         Ok(())
     }
 }

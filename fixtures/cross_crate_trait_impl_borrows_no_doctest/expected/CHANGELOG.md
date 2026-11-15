@@ -218,3 +218,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_borrows_no_doctest (17)
+
+Reason:
+RIPR-SPEC-0108: a doctest in io/take.rs shares only the leaf file name with the changed stream/take.rs, so it is no longer related as same_test_file (#7527)
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_borrows_no_doctest --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -634,6 +634,7 @@ fn owner_from_function(
         term_facts,
         class_facts: super::related_tests::PythonClassFacts {
             direct_statements: direct_expression_statements(context.source, body),
+            direct_class_return: direct_class_return(body),
             bound_names: super::module_constants::function_bound_names(
                 args,
                 body,
@@ -647,6 +648,30 @@ fn owner_from_function(
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+    }
+}
+
+/// The bare class constructed by a function with no statements beyond an
+/// optional docstring and `return Class(...)`. Any other body or return shape
+/// is unknown rather than evidence that the function returns that class.
+fn direct_class_return(body: &[Stmt]) -> Option<String> {
+    let body = match body {
+        [Stmt::Expr(docstring), rest @ ..]
+            if matches!(docstring.value.as_ref(), Expr::Constant(_)) && !rest.is_empty() =>
+        {
+            rest
+        }
+        all => all,
+    };
+    let [Stmt::Return(returned)] = body else {
+        return None;
+    };
+    let Some(Expr::Call(call)) = returned.value.as_deref() else {
+        return None;
+    };
+    match call.func.as_ref() {
+        Expr::Name(name) => Some(name.id.to_string()),
+        _ => None,
     }
 }
 
