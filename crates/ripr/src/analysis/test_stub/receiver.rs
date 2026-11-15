@@ -267,7 +267,11 @@ fn reused_call(
                 .syntax()
                 .ancestors()
                 .take_while(|node| !ast::Fn::can_cast(node.kind()))
-                .any(|node| ast::ClosureExpr::can_cast(node.kind()))
+                .any(|node| {
+                    ast::ClosureExpr::can_cast(node.kind())
+                        || ast::BlockExpr::cast(node)
+                            .is_some_and(|block| block.async_token().is_some())
+                })
             {
                 return None;
             }
@@ -370,18 +374,10 @@ fn declares_default_namesake(parse: &ra_ap_syntax::Parse<ast::SourceFile>) -> bo
                     .and_then(|path| path.segment())
                     .and_then(|segment| segment.name_ref())
                     .is_some_and(|name| name.text() == "Default")
-                && !tree.path().is_some_and(|path| {
-                    let text: String = path
-                        .syntax()
-                        .text()
-                        .to_string()
-                        .split_whitespace()
-                        .collect();
-                    matches!(
-                        text.trim_start_matches("::"),
-                        "std::default::Default" | "core::default::Default"
-                    )
-                });
+                && !matches!(
+                    full_use_path(&tree).trim_start_matches("::"),
+                    "std::default::Default" | "core::default::Default"
+                );
         }
         ast::Item::cast(node).is_some_and(|item| {
             let name = match &item {
@@ -397,6 +393,26 @@ fn declares_default_namesake(parse: &ra_ap_syntax::Parse<ast::SourceFile>) -> bo
             name.is_some_and(|name| name.text() == "Default")
         })
     })
+}
+
+/// The whole path a use tree imports, joining the prefixes of the trees it
+/// is nested in (`use std::{default::Default}` gives `std::default::Default`).
+fn full_use_path(tree: &ast::UseTree) -> String {
+    let mut segments = Vec::new();
+    let mut current = Some(tree.clone());
+    while let Some(node) = current {
+        if let Some(path) = node.path() {
+            segments.push(normalized(&path.syntax().text().to_string()));
+        }
+        current = node
+            .syntax()
+            .parent()
+            .and_then(ast::UseTreeList::cast)
+            .and_then(|list| list.syntax().parent())
+            .and_then(ast::UseTree::cast);
+    }
+    segments.reverse();
+    segments.join("::")
 }
 
 /// Whether the attribute's single-segment path is one of `names`.

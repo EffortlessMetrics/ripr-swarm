@@ -2297,3 +2297,67 @@ mod tests {
     assert_eq!(stub.receiver_setup, None, "{}", stub.text);
     Ok(())
 }
+
+/// #14825 re-review: a nested `use std::{default::Default}` is the standard
+/// trait, not a namesake; an `async` block and a literal holding a raw
+/// control character are not copied.
+#[test]
+fn receiver_reads_nested_std_imports_and_skips_async_and_control_literals() -> Result<(), String> {
+    let nested = "use std::{default::Default, fmt};
+#[derive(Default)]
+pub struct Pool { n: u8 }
+impl Pool {
+    pub fn size(&self, k: u8) -> u8 {
+        if k > 2 { self.n } else { k }
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        nested,
+        "k > 2",
+        SeamKind::PredicateBoundary,
+        boundary("k == 2"),
+    )?;
+    let stub = rust_test_stub(&seam, None, nested, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text
+            .contains("<Pool as ::core::default::Default>::default()"),
+        "{}",
+        stub.text
+    );
+
+    for body in [
+        "let _f = async { Label::new(\"a\") };",
+        "let _l = Label::new(\"a\u{1b}[2J\");",
+    ] {
+        let source = format!(
+            "pub struct Label {{ text: &'static str }}
+impl Label {{
+    pub fn new(text: &'static str) -> Self {{ Label {{ text }} }}
+    pub fn long(&self, n: usize) -> bool {{ self.text.len() > n }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+    #[test]
+    fn t() {{
+        {body}
+    }}
+}}
+"
+        );
+        let seam = seam_at(
+            "src/lib.rs",
+            &source,
+            "self.text.len() > n",
+            SeamKind::PredicateBoundary,
+            boundary("self.text.len() == n"),
+        )?;
+        let stub =
+            rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
+        assert_eq!(stub.receiver_setup, None, "{}", stub.text);
+    }
+    Ok(())
+}
