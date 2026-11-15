@@ -281,8 +281,21 @@ pub(crate) fn root_has_no_inspectable_workspace(root: &Path) -> bool {
 
 /// Re-export workspace Rust file discovery for the output layer so it can
 /// check whether a workspace has any Rust source.
+///
+/// An unreadable subdirectory or file is skipped, not turned into an empty
+/// set: use [`workspace_has_rust_source`] for a "no Rust here" verdict.
 pub(crate) fn workspace_rust_files(root: &Path) -> Vec<PathBuf> {
-    workspace::discover_rust_files(root).unwrap_or_default()
+    workspace::discover_readable_rust_files(root, &Default::default())
+        .map(|(files, _)| files)
+        .unwrap_or_default()
+}
+
+/// Whether the root holds any Rust source, counting a path the walk could not
+/// read: an unreadable directory may hold Rust, so it never reads as "no Rust
+/// files" (an unreadable root still does, as before).
+pub(crate) fn workspace_has_rust_source(root: &Path) -> bool {
+    workspace::discover_readable_rust_files(root, &Default::default())
+        .is_ok_and(|(files, unreadable)| !files.is_empty() || !unreadable.is_empty())
 }
 
 /// Why a ledger-supplied rerun anchor is not strictly root-relative, or `None`
