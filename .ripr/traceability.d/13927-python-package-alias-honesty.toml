@@ -1,0 +1,12 @@
+# Independent no-promotion witness for the package-bound alias rule 33 (#13927).
+[[extend]]
+id = "RIPR-SPEC-0238"
+fixtures = [
+  "fixtures/python_package_alias_nested_root",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/python_package_alias_nested_root",
+]
