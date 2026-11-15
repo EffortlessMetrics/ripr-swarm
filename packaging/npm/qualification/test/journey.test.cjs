@@ -15,7 +15,7 @@ const { spawnSync } = require("node:child_process");
 const test = require("node:test");
 
 const { RegistryError, readTarball, startRegistry } = require("../lib/registry.cjs");
-const { buildReceipt, main, npmCliPath, parseArgs, stagedIdentities } = require("../lib/journey.cjs");
+const { Journey, buildReceipt, main, npmCliPath, parseArgs, splitCommand, stagedIdentities } = require("../lib/journey.cjs");
 
 // Test-only staging: packs the launcher with real `npm pack` and wraps an
 // executable in a native package tarball with the same manifest shape the
@@ -97,9 +97,17 @@ function packNative(destination, platform, version, executableBytes, overrides =
   return file;
 }
 
+const createdDirs = [];
 function tempDir(label) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `ripr-npm-${label}-`));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `ripr-npm-${label}-`));
+  createdDirs.push(dir);
+  return dir;
 }
+// Staged tarballs (including a packaged candidate executable) and receipts
+// are test-owned; remove them when the suite ends.
+test.after(() => {
+  for (const dir of createdDirs) fs.rmSync(dir, { recursive: true, force: true });
+});
 
 
 const VERSION = launcherManifest().version;
@@ -305,4 +313,72 @@ test("tarball reader refuses duplicate entry names", () => {
     { name: "package/bin/ripr", bytes: Buffer.from("two"), mode: 0o755 },
   ]);
   assert.throws(() => readTarball(fs.readFileSync(file)), /appears more than once/);
+});
+
+test("continuation commands split exactly as ripr quotes them on both hosts", () => {
+  assert.deepEqual(splitCommand("ripr explain --root '/tmp/a b ü' --worktree probe:x"),
+    ["ripr", "explain", "--root", "/tmp/a b ü", "--worktree", "probe:x"]);
+  assert.deepEqual(splitCommand("ripr x 'it'\\''s'"), ["ripr", "x", "it's"]);
+  assert.deepEqual(splitCommand('ripr explain --root "C:\\Users\\a b\\\\" --worktree p'),
+    ["ripr", "explain", "--root", "C:\\Users\\a b\\", "--worktree", "p"]);
+  assert.deepEqual(splitCommand('ripr x "say ""hi"""'), ["ripr", "x", 'say "hi"']);
+  assert.throws(() => splitCommand("ripr x \"$(printf a)\""), /shell expansion/);
+  assert.throws(() => splitCommand("ripr x 'open"), /unterminated/);
+});
+
+test("a step timeout takes down the whole process group", (t) => {
+  if (!POSIX) {
+    t.skip("process-group teardown is POSIX");
+    return;
+  }
+  const journey = new Journey({ stepTimeoutMs: 500 });
+  try {
+    journey.childPath = "/usr/bin:/bin";
+    const result = journey.run("hang", "/bin/sh", ["-c", "sleep 30 & echo $!; wait"], journey.root);
+    assert.equal(result.error && result.error.code, "ETIMEDOUT");
+    const grandchild = Number.parseInt(String(result.stdout).trim(), 10);
+    assert.ok(grandchild > 0, `expected a grandchild pid, got ${JSON.stringify(result.stdout)}`);
+    let alive = true;
+    for (let attempt = 0; attempt < 50 && alive; attempt += 1) {
+      try {
+        process.kill(grandchild, 0);
+        spawnSync("/bin/sleep", ["0.1"]);
+      } catch {
+        alive = false;
+      }
+    }
+    assert.equal(alive, false, "the timed-out step left a descendant running");
+  } finally {
+    journey.cleanup();
+  }
+});
+
+test("journey fails closed when the emitted continuation is unusable", async (t) => {
+  if (!POSIX || !currentPlatform()) {
+    t.skip("continuation control uses a POSIX shell payload");
+    return;
+  }
+  // Behaves like ripr for --version and check, but prints a continuation
+  // with a flag its own explain refuses. Replaying a reconstructed command
+  // would hide that; replaying the emitted one must not.
+  const report = JSON.stringify({
+    summary: { changed_files_by_language: [{ language: "typescript", files: 1 }] },
+    findings: [{ id: "probe:x", classification: "weakly_exposed", probe: { file: "src/pricing.ts" } }],
+    finding_routes: [{ finding_id: "probe:x", explain_command: "ripr explain --invalid-option probe:x" }],
+  });
+  const script = [
+    "#!/bin/sh",
+    `case "$1" in`,
+    `  --version) echo 'ripr ${VERSION} (impostor)' ;;`,
+    `  check) printf '%s\\n' '${report}' ;;`,
+    `  explain) case "$2" in --invalid-option) echo 'unknown option' >&2; exit 2 ;; *) echo 'src/pricing.ts' ;; esac ;;`,
+    "esac",
+    "",
+  ].join("\n");
+  const { dir } = stageFamily("bad-continuation", Buffer.from(script));
+  const { code, receipt, log } = await runJourney(dir);
+  assert.equal(code, 1);
+  assert.equal(receipt.rows[0].status, "failed");
+  const failures = failedChecks(log);
+  assert.deepEqual(failures, ["continuation_new_process_foreign_cwd_offline"], JSON.stringify(failures));
 });

@@ -111,10 +111,81 @@ function npmCli() {
     process.env.npm_execpath,
     path.join(nodeDir, "node_modules", "npm", "bin", "npm-cli.js"),
     path.join(nodeDir, "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"),
-  ].filter((item) => typeof item === "string" && item.endsWith("npm-cli.js"));
-  const found = candidates.find((item) => fs.existsSync(item));
-  if (!found) fail(`cannot locate npm-cli.js next to ${process.execPath}`);
+  ];
+  // Distribution layouts (for example /usr/share/nodejs/npm) expose npm only
+  // as a PATH entry that links to the CLI script; follow that link on POSIX.
+  if (process.platform !== "win32") {
+    const onPath = which("npm", process.env.PATH);
+    if (onPath) {
+      try {
+        candidates.push(fs.realpathSync(onPath));
+      } catch {
+        // an unresolvable link is not a candidate
+      }
+    }
+  }
+  const found = candidates
+    .filter((item) => typeof item === "string" && item.endsWith("npm-cli.js"))
+    .find((item) => fs.existsSync(item));
+  if (!found) fail(`cannot locate npm-cli.js next to ${process.execPath} or through npm on PATH`);
   return found;
+}
+
+// Splits a continuation command printed by ripr into argv. Accepts the two
+// quoting forms ripr emits (agent/loop_commands.rs shell_arg_for): POSIX
+// single quotes with the '\'' escape, and Windows console double quotes with
+// "" doubling and a doubled trailing backslash run. Anything else (such as the
+// $(printf ...) escape form) is refused rather than guessed.
+function splitCommand(command) {
+  const tokens = [];
+  let current = null;
+  let index = 0;
+  const text = String(command);
+  while (index < text.length) {
+    const char = text[index];
+    if (char === " " || char === "\t") {
+      if (current !== null) tokens.push(current);
+      current = null;
+      index += 1;
+    } else if (char === "'") {
+      const end = text.indexOf("'", index + 1);
+      if (end === -1) fail(`unterminated single quote in ${JSON.stringify(text)}`);
+      current = (current || "") + text.slice(index + 1, end);
+      index = end + 1;
+    } else if (char === "\\" && text[index + 1] === "'") {
+      current = (current || "") + "'";
+      index += 2;
+    } else if (char === "\"") {
+      let body = "";
+      index += 1;
+      for (;;) {
+        if (index >= text.length) fail(`unterminated double quote in ${JSON.stringify(text)}`);
+        if (text[index] === "$" || text[index] === "`") {
+          fail(`continuation ${JSON.stringify(text)} uses shell expansion this journey does not replay`);
+        }
+        if (text[index] === "\"" && text[index + 1] === "\"") {
+          body += "\"";
+          index += 2;
+        } else if (text[index] === "\"") {
+          index += 1;
+          break;
+        } else {
+          body += text[index];
+          index += 1;
+        }
+      }
+      const run = /\\+$/.exec(body);
+      if (run && run[0].length % 2 === 0) body = body.slice(0, body.length - run[0].length / 2);
+      current = (current || "") + body;
+    } else if (char === "$" || char === "`") {
+      fail(`continuation ${JSON.stringify(text)} uses shell expansion this journey does not replay`);
+    } else {
+      current = (current || "") + char;
+      index += 1;
+    }
+  }
+  if (current !== null) tokens.push(current);
+  return tokens;
 }
 
 function parseArgs(argv) {
@@ -358,11 +429,21 @@ class Journey {
       cwd,
       env: this.env(extraEnv),
       encoding: "utf8",
-      timeout: STEP_TIMEOUT_MS,
+      timeout: this.options.stepTimeoutMs || STEP_TIMEOUT_MS,
       shell: false,
       windowsHide: true,
       maxBuffer: 64 * 1024 * 1024,
+      // Own a process group on POSIX so a timeout can take down every
+      // descendant (npm -> launcher -> native), not just the direct child.
+      detached: !isWindows(this.platform),
     });
+    if (result.error && result.error.code === "ETIMEDOUT" && result.pid && !isWindows(this.platform)) {
+      try {
+        process.kill(-result.pid, "SIGKILL");
+      } catch {
+        // the group already exited
+      }
+    }
     const entry = {
       label,
       argv: [path.basename(program), ...args],
@@ -622,12 +703,15 @@ class Journey {
         this.check("continuation_new_process_foreign_cwd_offline", () => {
           // A fresh process tree from an unrelated directory with the registry
           // gone: npm exec must reuse the installed package, never a network.
-          const result = this.require(this.npmRun("npm exec ripr explain", [
-            "exec", "--offline", "--prefix", this.project, "--", "ripr", "explain", "--root", this.project, "--worktree", finding.id,
-          ], this.foreign), "npm exec -- ripr explain");
+          // Replays the exact continuation ripr printed, argument for argument.
+          const argv = splitCommand(finding.continuation);
+          if (argv[0] !== "ripr" || argv[1] !== "explain") fail(`continuation ${JSON.stringify(finding.continuation)} is not a ripr explain command`);
+          const result = this.require(this.npmRun("npm exec <emitted continuation>", [
+            "exec", "--offline", "--prefix", this.project, "--", ...argv,
+          ], this.foreign), "npm exec -- <emitted continuation>");
           this.requireDecoyIdle();
           if (!result.stdout.includes("pricing.ts")) fail("ripr explain output does not name the TypeScript subject");
-          return "explain continuation ran via npm exec from a foreign CWD";
+          return { replayed: argv };
         });
       }
 
@@ -812,4 +896,4 @@ async function main(argv) {
   return receipt.rows[0].status === "passed" && cleanupStatus === "passed" ? 0 : 1;
 }
 
-module.exports = { Journey, JourneyFailure, buildReceipt, main, npmCliPath: npmCli, parseArgs, stagedIdentities, which };
+module.exports = { Journey, JourneyFailure, buildReceipt, main, npmCliPath: npmCli, parseArgs, splitCommand, stagedIdentities, which };

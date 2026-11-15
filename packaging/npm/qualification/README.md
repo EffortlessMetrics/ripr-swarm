@@ -52,8 +52,9 @@ receipt.
    its port refuses connections.
 6. With no registry, runs everything offline: `npm run ripr:version` and
    `npm run ripr:check` (`ripr check --format json` must report a finding on
-   the changed TypeScript file and an explain continuation), the continuation
-   through `npm exec --prefix` from a foreign CWD, and the public
+   the changed TypeScript file and an explain continuation), the exact
+   continuation ripr printed, replayed argument for argument through
+   `npm exec --prefix` from a foreign CWD, and the public
    `node_modules/.bin/ripr` (POSIX).
 7. Controls: after an `--omit=optional` install, launching must fail with the
    exact package name, version and reinstall advice. A tampered native version
@@ -64,7 +65,9 @@ receipt.
 
 The receipt is a typed `package_qualification_receipt`. Any failed step fails
 the row, and a row without an executed payload hash can't pass. The log keeps
-bounded stdout and stderr tails for each command.
+bounded stdout and stderr tails for each command. On POSIX each command runs in
+its own process group, so a step that times out takes its descendants down
+with it.
 
 Limits: only the recorded Node and npm versions and package manager are
 exercised. On Windows the `.bin/ripr.cmd` shim runs only through `npm run` and
