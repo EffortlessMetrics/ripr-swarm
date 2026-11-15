@@ -741,6 +741,57 @@ fn an_assertion_in_an_empty_loop_does_not_separate() -> Result<(), String> {
 }
 
 #[test]
+fn a_live_assertion_beside_a_nested_fn_still_separates() -> Result<(), String> {
+    // Control: the nested `fn` holds nothing; `sum_to(4)` runs and separates.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("fn unused() {}\n    assert_eq!(sum_to(4), 10);"),
+    )?;
+    // Infection only: the nested item changes how other stages read the test.
+    assert_eq!(infection_states(&findings), vec!["Yes".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn an_assertion_under_a_runtime_condition_does_not_separate() -> Result<(), String> {
+    // #14538: the `if` may not run, so only `sum_to(0)` is shown to run.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling(
+            "assert_eq!(sum_to(0), 0);\n    if std::env::var(\"RIPR_NEVER\").is_ok() {\n        assert_eq!(sum_to(4), 10);\n    }",
+        ),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn two_moved_bounds_in_matches_patterns_are_gated() -> Result<(), String> {
+    // #14538: 3 sits inside every old and new pattern.
+    let lib = "/// Whether both inputs are small.\npub fn small(a: u32, b: u32) -> bool {\n    matches!(a, 0..=5) && matches!(b, 0..=5)\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "    matches!(a, 0..=5) && matches!(b, 0..=5)",
+        "    matches!(a, 1..=5) && matches!(b, 1..=5)",
+        &test_calling("assert!(small(3, 3));"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_range_passed_to_an_associated_sum_is_gated() -> Result<(), String> {
     // `Iterator::sum(0..=n)` absorbs the extra element at n = 0.
     let lib =

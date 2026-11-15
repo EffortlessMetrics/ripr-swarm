@@ -123,12 +123,14 @@ equivalent rewrite or when the owner has other callers. A range handed to a call
 unchecked or mutable forms slice like `v[a..b]`, and an assertion that
 never runs (a literal-false block, an uncalled closure, after a `return`, even
 on the same line as live code) reads nothing. An assertion inside code that may
-run zero times or not at all (a nested `fn`, a closure, an `async` block, or a
-`for`, `while` or `loop` body) reads nothing too (#14538). A line where several
+run zero times or not at all (a nested `fn` or `macro_rules!`, a closure, an
+`async` block, an `if` or `match`, a `for`, `while` or `loop` body, or a
+`#[cfg]`-gated statement) reads nothing too (#14538). A line where several
 ranges change at once is gated unless every changed range keeps a
-length-preserving reading, and an endpoint moved inside a macro input
-(`matches!(n, 1..=5)`) or on a line that does not parse is gated when the
-changed token sits against a `..` (#14538). Any other gated change, including an input ripr cannot fold, reads
+length-preserving reading with no range nested inside it. An edit inside a
+macro input (`matches!(n, 1..=5)`) or on a line that does not parse is gated
+whenever a `..` sits in or right beside the changed text, and a moved char
+endpoint (`'a'..='z'` to `'b'..='z'`) is gated like an integer one (#14538). Any other gated change, including an input ripr cannot fold, reads
 `unknown`, except a moved match range pattern: whenever the fold does not
 establish what the tests see (arms it cannot read such as `&str` results, or
 rebound assertion macros), it keeps the ordinary arm-routing reading (#5992).

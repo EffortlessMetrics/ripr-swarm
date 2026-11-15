@@ -1184,12 +1184,10 @@ pub(super) fn bare_owner_call_is_shadowed(
     oracle_owner_call_is_shadowed(test.body.as_str(), oracle_text, owner, test, index) == Some(true)
 }
 
-/// Whether the test body itself declares a same-name `fn` item: by definition
-/// another item, wherever its block sits. Read through the shared parser this
-/// crate already trusts for item scope (#10162).
 /// #14538: zero-based line offsets of `test.body` inside code that may run
-/// zero times or not at all: a nested `fn`, a closure, an `async` block, or a
-/// `for`, `while` or `loop` body (`for _ in 0..0 { .. }`, an unpolled
+/// zero times or not at all: a nested `fn` or `macro_rules!`, a closure, an
+/// `async` block, an `if` or `match`, a `for`, `while` or `loop` body, or a
+/// `#[cfg]`-gated statement (`for _ in 0..0 { .. }`, an unpolled
 /// `async { .. }`, an uncalled `fn check() { .. }`). An assertion there does
 /// not show that its input ran, so it supplies no separating input. `None`
 /// when the body does not parse.
@@ -1213,7 +1211,15 @@ fn deferred_lines(test: &TestSummary) -> Option<std::collections::BTreeSet<usize
                 .is_some_and(|block| block.async_token().is_some())
             || ast::ForExpr::can_cast(node.kind())
             || ast::WhileExpr::can_cast(node.kind())
-            || ast::LoopExpr::can_cast(node.kind());
+            || ast::LoopExpr::can_cast(node.kind())
+            || ast::IfExpr::can_cast(node.kind())
+            || ast::MatchExpr::can_cast(node.kind())
+            || ast::MacroRules::can_cast(node.kind())
+            || (node != *root.syntax()
+                && node.children().any(|child| {
+                    ast::Attr::cast(child)
+                        .is_some_and(|attr| attr.syntax().text().to_string().contains("cfg"))
+                }));
         if deferred {
             let range = node.text_range();
             lines.extend(line_of(usize::from(range.start()))..=line_of(usize::from(range.end())));
@@ -1222,6 +1228,9 @@ fn deferred_lines(test: &TestSummary) -> Option<std::collections::BTreeSet<usize
     Some(lines)
 }
 
+/// Whether the test body itself declares a same-name `fn` item: by definition
+/// another item, wherever its block sits. Read through the shared parser this
+/// crate already trusts for item scope (#10162).
 fn body_declares_same_name_fn(test: &TestSummary, owner_name: &str) -> bool {
     use ra_ap_syntax::{ast, ast::HasName};
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file_memoized(test.body.as_str())

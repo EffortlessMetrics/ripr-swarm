@@ -1216,10 +1216,18 @@ fn range_bound_infection(
 fn range_bound_change(before: &str, after: &str) -> Option<RangeConsumer> {
     use crate::analysis::language::mask_rust_comments_and_strings;
     let (before, after) = aligned_range_texts(before, after);
-    let before = mask_rust_comments_and_strings(&before);
-    let after = mask_rust_comments_and_strings(&after);
+    let (raw_before, raw_after) = (before, after);
+    let before = mask_rust_comments_and_strings(&raw_before);
+    let after = mask_rust_comments_and_strings(&raw_after);
     if before == after {
-        return None;
+        // A char endpoint (`'a'..='z'`) is masked like a string literal.
+        return char_endpoint_change(&raw_before, &raw_after).then(|| {
+            if raw_after.contains("=>") {
+                RangeConsumer::Pattern
+            } else {
+                RangeConsumer::Absorbing
+            }
+        });
     }
     let prefix = before
         .bytes()
@@ -1259,45 +1267,66 @@ fn range_bound_change(before: &str, after: &str) -> Option<RangeConsumer> {
                     .get(..prefix)
                     .is_some_and(|head| head.ends_with("..") && !head.ends_with("..."));
             // #14538: an endpoint moved inside a macro's input
-            // (`matches!(n, 1..=5)` to `0..=5`) or on a line that does not
-            // parse: no range node is read, so the edit is gated when the
-            // changed text is one endpoint token next to a `..`.
+            // (`matches!(n, 1..=5)` to `0..=5`), several ranges edited inside
+            // macro inputs, or a line that does not parse: no range node is
+            // read, so any edit touching a range operator is gated.
             (one_equals
-                || (range_adjacent(&before, span(&before)) && range_adjacent(&after, span(&after))))
+                || range_touched(&before, span(&before))
+                || range_touched(&after, span(&after)))
             .then_some(RangeConsumer::Absorbing)
         }
     }
 }
 
-/// Whether the masked `text`'s changed `span` is one integer literal or
-/// name (or empty) written right against a `..` / `..=` operator: the start
-/// of `a..b` or the end of `a..b` / `a..=b`.
-fn range_adjacent(text: &str, span: std::ops::Range<usize>) -> bool {
-    let (Some(head), Some(changed), Some(tail)) = (
-        text.get(..span.start),
-        text.get(span.clone()),
-        text.get(span.end..),
-    ) else {
-        return false;
+/// Whether a range operator (`..`, `..=`) sits inside the masked `text`'s
+/// changed `span` or within two bytes of either edge: an endpoint written
+/// against the operator (`1..=5` to `0..=5`, `-1..` to `0..`), or an edit
+/// spanning several ranges (`matches!(a, 1..=5) || matches!(b, 1..=5)`).
+fn range_touched(text: &str, span: std::ops::Range<usize>) -> bool {
+    let bytes = text.as_bytes();
+    let start = span.start.saturating_sub(2);
+    let end = (span.end + 2).min(bytes.len());
+    bytes
+        .get(start..end)
+        .is_some_and(|window| window.windows(2).any(|pair| pair == b".."))
+}
+
+/// #14538: whether `before` and `after` differ only in one char literal
+/// written against a range operator (`'a'..='z'` to `'b'..='z'`), which
+/// the masked comparison cannot see.
+fn char_endpoint_change(before: &str, after: &str) -> bool {
+    let prefix = before
+        .bytes()
+        .zip(after.bytes())
+        .take_while(|(left, right)| left == right)
+        .count();
+    let limit = before.len().min(after.len()) - prefix;
+    let suffix = before
+        .bytes()
+        .rev()
+        .zip(after.bytes().rev())
+        .take(limit)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let literal_at = |text: &str| -> bool {
+        let (Some(head), Some(tail)) = (text.get(..prefix), text.get(text.len() - suffix..)) else {
+            return false;
+        };
+        let Some(open) = head.rfind('\'') else {
+            return false;
+        };
+        let Some(close) = tail.find('\'') else {
+            return false;
+        };
+        let literal_len = head.len() - open + (text.len() - suffix - prefix) + close + 1;
+        let outside_head = head[..open].trim_end();
+        let outside_tail = tail[close + 1..].trim_start();
+        literal_len <= 12
+            && (outside_head.ends_with("..")
+                || outside_head.ends_with("..=")
+                || outside_tail.starts_with(".."))
     };
-    let word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
-    // Widen the span to the whole token it touches.
-    let head_word = head.len() - head.trim_end_matches(word).len();
-    let tail_word = tail.len() - tail.trim_start_matches(word).len();
-    let token = format!(
-        "{}{changed}{}",
-        &head[head.len() - head_word..],
-        &tail[..tail_word]
-    );
-    if token.is_empty() || !token.chars().all(word) {
-        return false;
-    }
-    let before_token = head[..head.len() - head_word].trim_end();
-    let after_token = tail[tail_word..].trim_start();
-    let after_operator = (before_token.ends_with("..") || before_token.ends_with("..="))
-        && !before_token.ends_with("...");
-    let before_operator = after_token.starts_with("..") && !after_token.starts_with("...");
-    after_operator || before_operator
+    before != after && literal_at(before) && literal_at(after)
 }
 
 /// #14538: a line where several range expressions changed at once
@@ -1362,6 +1391,17 @@ fn several_range_change(before: &str, after: &str) -> Option<Option<RangeConsume
             continue;
         }
         changed = true;
+        // A range nested in a changed range (`(0..(0..=a).sum())`) is not
+        // read on its own here.
+        if before
+            .get(old_span.clone())
+            .is_none_or(|text| text.matches("..").count() > 1)
+            || after
+                .get(new_span.clone())
+                .is_none_or(|text| text.matches("..").count() > 1)
+        {
+            return Some(Some(RangeConsumer::Absorbing));
+        }
         match (
             range_consumer(before, old_span.clone()),
             range_consumer(after, new_span.clone()),
@@ -2080,7 +2120,10 @@ fn is_wildcard_discard(expression: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{RangeConsumer, range_adjacent, range_bound_change, several_range_change};
+    use super::{
+        RangeConsumer, char_endpoint_change, range_bound_change, range_touched,
+        several_range_change,
+    };
 
     fn span_of(text: &str, needle: &str) -> std::ops::Range<usize> {
         let start = text.find(needle).unwrap_or(text.len());
@@ -2088,23 +2131,30 @@ mod tests {
     }
 
     #[test]
-    fn an_endpoint_next_to_a_range_operator_is_range_adjacent() {
-        // #14538: `matches!` input is not parsed, so the token decides.
+    fn an_edit_touching_a_range_operator_in_a_macro_input_is_gated() {
+        // #14538: `matches!` input is not parsed, so the operator decides.
         let text = "matches!(n, 0..=5)";
-        assert!(range_adjacent(text, span_of(text, "0")));
-        assert!(range_adjacent(text, span_of(text, "5")));
-        assert!(
-            range_bound_change("matches!(n, 1..=5)", "matches!(n, 0..=5)")
-                .is_some_and(|kind| kind == RangeConsumer::Absorbing)
-        );
-        // Not next to a range operator, part of a longer token, or `...`.
-        assert!(!range_adjacent(
-            "helper(n, 5)",
-            span_of("helper(n, 5)", "5")
+        assert!(range_touched(text, span_of(text, "0")));
+        assert!(range_touched(text, span_of(text, "5")));
+        let absorbing = |before: &str, after: &str| {
+            range_bound_change(before, after).is_some_and(|kind| kind == RangeConsumer::Absorbing)
+        };
+        assert!(absorbing("matches!(n, 1..=5)", "matches!(n, 0..=5)"));
+        assert!(absorbing("matches!(n, -1..=5)", "matches!(n, 0..=5)"));
+        assert!(absorbing("matches!(n, 0..=5)", "matches!(n, 1..5)"));
+        assert!(absorbing(
+            "matches!(a, 1..=5) || matches!(b, 1..=5)",
+            "matches!(a, 0..=5) || matches!(b, 0..=5)"
         ));
-        assert!(!range_adjacent("a...b", span_of("a...b", "b")));
-        assert!(!range_adjacent("f(0..x + 1)", span_of("f(0..x + 1)", "1")));
+        assert!(absorbing(
+            "matches!(c, 'a'..='z')",
+            "matches!(c, 'b'..='z')"
+        ));
+        // An edit away from any range operator is not gated.
+        assert!(!range_touched("helper(n, 5)", span_of("helper(n, 5)", "5")));
         assert!(range_bound_change("matches!(n, Some(5))", "matches!(n, Some(6))").is_none());
+        assert!(!char_endpoint_change("f('a')", "f('b')"));
+        assert!(!char_endpoint_change("s == \"a..b\"", "s == \"a..c\""));
     }
 
     #[test]
@@ -2133,6 +2183,14 @@ mod tests {
             )
             .is_none()
         );
+        // A changed range nested inside a length-preserving one.
+        assert!(matches!(
+            several_range_change(
+                "((0..(0..=a).sum()).collect(), (0..b).collect())",
+                "((0..(0..a).sum()).collect(), (0..=b).collect())",
+            ),
+            Some(Some(RangeConsumer::Absorbing))
+        ));
         // One range is the single-range path's job.
         assert!(several_range_change("(0..=a).sum()", "(0..a).sum()").is_none());
     }
