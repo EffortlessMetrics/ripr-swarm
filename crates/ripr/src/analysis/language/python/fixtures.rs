@@ -34,12 +34,13 @@ pub(super) fn collect_fixture_defs(
 ) -> Vec<PythonFixtureDef> {
     let mut defs = Vec::new();
     let mut aliases = fixture_aliases(module_imports);
-    let asyncio_aliases = asyncio_fixture_aliases(module_imports, &aliases);
+    let mut asyncio_aliases: Vec<String> = Vec::new();
     for stmt in statements {
         // An alias stops being pytest's decorator once a statement before the
         // decorated def rebinds the name (#10473), and starts again when a
         // later pytest import binds it.
         update_aliases_for_binding(stmt, &mut aliases);
+        update_asyncio_aliases(stmt, &aliases, &mut asyncio_aliases);
         let (name, decorators, body, range) = match stmt {
             Stmt::FunctionDef(function) => (
                 function.name.as_str(),
@@ -119,22 +120,37 @@ pub(super) fn collect_fixture_defs(
     defs
 }
 
-/// The [`fixture_aliases`] imported from `pytest_asyncio`
-/// (`from pytest_asyncio import fixture as afx`).
-fn asyncio_fixture_aliases(imports: &[PythonImport], aliases: &[String]) -> Vec<String> {
-    aliases
-        .iter()
-        .filter(|alias| {
-            imports
-                .iter()
-                .rev()
-                .find(|import| import.alias == **alias)
-                .is_some_and(|import| {
-                    import.imported == "fixture" && import.source_module == "pytest_asyncio"
-                })
-        })
-        .cloned()
-        .collect()
+/// Track, statement by statement, which [`fixture_aliases`] are bound to
+/// `pytest_asyncio.fixture` at this point of the module
+/// (`from pytest_asyncio import fixture as afx`). Any other binding of the
+/// name, including `from pytest import fixture as afx`, ends it.
+fn update_asyncio_aliases(stmt: &Stmt, aliases: &[String], asyncio_aliases: &mut Vec<String>) {
+    if let Stmt::ImportFrom(import) = stmt {
+        let from_asyncio = import.level.is_none_or(|level| level.to_u32() == 0)
+            && import
+                .module
+                .as_ref()
+                .is_some_and(|module| module.as_str() == "pytest_asyncio");
+        for name in &import.names {
+            let local = name.asname.as_ref().unwrap_or(&name.name).to_string();
+            asyncio_aliases.retain(|alias| *alias != local);
+            if from_asyncio && name.name.as_str() == "fixture" {
+                asyncio_aliases.push(local);
+            }
+        }
+    }
+    asyncio_aliases.retain(|alias| aliases.contains(alias));
+}
+
+/// `import pytest_asyncio` (no `as`) is the module's only binding of the
+/// name, so `@pytest_asyncio.fixture` is that plugin's decorator.
+fn binds_pytest_asyncio_module(statements: &[Stmt], source: &str) -> bool {
+    let imports_module = statements.iter().any(|stmt| {
+        matches!(stmt, Stmt::Import(import) if import.names.iter().any(|name| {
+            name.name.as_str() == "pytest_asyncio" && name.asname.is_none()
+        }))
+    });
+    imports_module && module_binding_count(statements, source, "pytest_asyncio") == Some(1)
 }
 
 /// The decorator spellings in effect at one fixture definition.
@@ -281,9 +297,10 @@ fn renames_to_caplog(decorators: &[Expr], aliases: &[String]) -> bool {
 /// build in its body. A coroutine def counts only under
 /// `pytest_asyncio.fixture`, which awaits it and hands the test its returned
 /// value; plain `pytest.fixture` hands a coroutine def's test the un-awaited
-/// coroutine unless the project configures asyncio auto mode. `None` for any other shape, and when the file binds the
-/// fixture's name or the class name more than once (or star-imports), since
-/// the value pytest registers is then not the one read here.
+/// coroutine unless the project configures asyncio auto mode. `None` for any
+/// other shape, and when the file binds the fixture's name or the class name
+/// more than once (or star-imports), since the value pytest registers is then
+/// not the one read here.
 fn literal_construction(
     stmt: &Stmt,
     statements: &[Stmt],
@@ -343,8 +360,7 @@ fn literal_construction(
     }
     if coroutine
         && !target_names.iter().any(|name| {
-            (name == "pytest_asyncio.fixture"
-                && module_binding_count(statements, source, "pytest_asyncio") == Some(1))
+            (name == "pytest_asyncio.fixture" && binds_pytest_asyncio_module(statements, source))
                 || (names.asyncio_aliases.iter().any(|alias| alias == name)
                     && aliases.iter().any(|alias| alias == name))
         })

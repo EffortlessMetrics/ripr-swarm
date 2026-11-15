@@ -259,6 +259,12 @@ const WEAK_ONLY: &[WeakOnly] = &[
         test: "import pytest\n\nfrom src.cart import Cart\n\n\n@pytest.fixture\nasync def cart():\n    return Cart(200)\n\n\n@pytest.mark.asyncio\nasync def test_discounted(cart):\n    assert cart.discounted() == 190\n",
     },
     WeakOnly {
+        name: "a coroutine fixture decorated before its alias becomes pytest_asyncio's",
+        sources: &[("src/cart.py", CART)],
+        edit: CART_EDIT,
+        test: "import pytest\nfrom pytest import fixture as fx\n\nfrom src.cart import Cart\n\n\n@fx\nasync def cart():\n    return Cart(200)\n\n\nfrom pytest_asyncio import fixture as fx\n\n\n@pytest.mark.asyncio\nasync def test_discounted(cart):\n    assert cart.discounted() == 190\n",
+    },
+    WeakOnly {
         name: "asyncSetUp on a plain TestCase never runs",
         sources: &[("src/cart.py", CART)],
         edit: CART_EDIT,

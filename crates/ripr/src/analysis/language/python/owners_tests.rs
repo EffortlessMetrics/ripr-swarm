@@ -1697,7 +1697,8 @@ fn names_isolated_async_case(class: &ast::StmtClassDef) -> bool {
     })
 }
 
-/// Unittest case bases that define no `test*` member of their own.
+/// The standard unittest case bases a collected class names directly; neither
+/// defines a `test*` member of its own.
 const UNITTEST_CASE_BASES: [&str; 2] = ["TestCase", "IsolatedAsyncioTestCase"];
 
 /// Which same-scope classes pytest or unittest collects (#4562).
@@ -1952,8 +1953,8 @@ impl<'a> ScopeClasses<'a> {
     }
 
     /// The bases of `name` in order, local when the scope defines the base
-    /// exactly once and before `name`. `object` and `TestCase` define no
-    /// `test*` member and are left out.
+    /// exactly once and before `name`. `object` and the
+    /// [`UNITTEST_CASE_BASES`] define no `test*` member and are left out.
     fn bases(&self, name: &str) -> Vec<MroEntry<'a>> {
         let Some((index, class)) = self.defs.get(name) else {
             return Vec::new();
@@ -1963,14 +1964,10 @@ impl<'a> ScopeClasses<'a> {
             .iter()
             .filter_map(expr_full_name)
             .filter(|base| {
-                !matches!(
-                    base.as_str(),
-                    "object"
-                        | "TestCase"
-                        | "unittest.TestCase"
-                        | "IsolatedAsyncioTestCase"
-                        | "unittest.IsolatedAsyncioTestCase"
-                )
+                base != "object"
+                    && !UNITTEST_CASE_BASES
+                        .iter()
+                        .any(|case| base == *case || base.strip_prefix("unittest.") == Some(*case))
             })
             .map(|base| match self.defs.get_key_value(base.as_str()) {
                 Some((&key, (base_index, _)))
