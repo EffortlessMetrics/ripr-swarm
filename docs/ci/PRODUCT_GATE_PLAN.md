@@ -21,7 +21,7 @@ product meaning.
 | `product.rust.clippy` | `cargo clippy --workspace --all-targets -- -D warnings` | required | Rust |
 | `product.rust.workspace_tests` | `cargo nextest run --workspace --profile ci` | required | Rust |
 | `product.rust.workspace_doc_tests` | `cargo test --workspace --doc` | required | Rust |
-| `product.rust.scip_admission_tests` | `cargo test -p ripr --features scip-admission --lib analysis::scip::` | required | Rust |
+| `product.rust.scip_admission_tests` | `cargo test -p ripr --features scip-admission --lib analysis::scip` | required | Rust |
 | `product.repository.precommit` | `cargo xtask ci-policy` | required | repository policy |
 | `product.evidence.promotion_honesty` | `cargo xtask check-evidence-promotion-honesty` | required | evidence |
 | `product.repository.agent_skills` | `cargo policy preflight` | required | repository policy |
@@ -46,7 +46,7 @@ intentionally dual:
 | --- | --- | --- | --- |
 | lib, bin, integration, and example test binaries | `cargo nextest run --workspace --profile ci` | default | fresh `junit.xml` naming at least one test, plus `run-context.txt` with checkout SHA, tool versions, and blob identities of `Cargo.lock`, `.config/nextest.toml`, and `rust-gates.yml` |
 | Rust doctests | `cargo test --workspace --doc` | default | job log only |
-| SCIP admission tests (#8115) | `cargo test -p ripr --features scip-admission --lib analysis::scip::` | `scip-admission` | job log only |
+| SCIP admission tests (#8115) | `cargo test -p ripr --features scip-admission --lib analysis::scip` | `scip-admission` | job log only |
 | `lang-perl` and other non-default-feature tests | compiled and linted (not run) by `cargo clippy -p ripr --all-targets --all-features -- -D warnings`; not executed in the required lane | all / perl / no-default | advisory Test Analytics, the `Perl and release proof` job, and the Windows advisory feature matrix |
 
 Nextest cannot execute doctests, so a green nextest row never stands in for the

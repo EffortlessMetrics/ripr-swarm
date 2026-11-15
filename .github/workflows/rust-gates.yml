@@ -437,7 +437,7 @@ jobs:
       # tests are required here, in the lane routed-rust.yml's Result needs.
       - name: Test SCIP admission
         id: scip_admission
-        run: "cargo test -p ripr --features scip-admission --lib analysis::scip::"
+        run: cargo test -p ripr --features scip-admission --lib analysis::scip
 
       - name: Strict workspace Clippy
         id: clippy

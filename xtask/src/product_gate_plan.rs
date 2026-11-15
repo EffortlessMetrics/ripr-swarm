@@ -257,7 +257,7 @@ pub(crate) fn product_gate_definitions() -> Vec<ProductGateDefinition> {
             ProductGateId::ScipAdmissionTests,
             ProductGateRole::Required,
             rust.clone(),
-            "cargo test -p ripr --features scip-admission --lib analysis::scip::",
+            "cargo test -p ripr --features scip-admission --lib analysis::scip",
             "the non-default `scip-admission` feature's admission tests and vendored-proto drift test pass",
             "does not prove SCIP producer behavior beyond the admitted-index fixtures",
         ),
