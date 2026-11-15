@@ -139,7 +139,7 @@ fn the_same_use_site_edit_without_a_proven_rename_is_probed() -> Result<(), Stri
 }
 
 /// A use site that renames and also changes another token is a real edit
-/// even when the rename itself is proven.
+/// even when the rename itself is established.
 #[test]
 fn a_use_site_that_changes_more_than_the_name_stays_probed() -> Result<(), String> {
     let after = AFTER.replace("TOKEN_MAP[b as usize]", "TOKEN_MAP[b as usize + 1]");
@@ -169,7 +169,7 @@ pub fn start() -> u8 {
     Ok(())
 }
 
-/// `main` is bound by its spelling, so renaming it is never proven; the
+/// `main` is bound by its spelling, so renaming it is never established; the
 /// same rename of an ordinary function is.
 #[test]
 fn renaming_an_entry_point_is_never_proven() -> Result<(), String> {

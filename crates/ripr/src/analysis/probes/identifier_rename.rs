@@ -35,7 +35,7 @@ const NAME_BLIND_ATTRIBUTES: [&str; 10] = [
 
 /// Identifier prefixes whose presence anywhere in a file means identifier
 /// spelling can reach runtime output (`type_name_of_val` too), so no rename
-/// in that file is proven.
+/// in that file is established.
 const NAME_OBSERVERS: [&str; 5] = [
     "stringify",
     "concat_idents",
@@ -83,14 +83,14 @@ pub(super) fn rename_only_lines(
             Some((new_line, removed.line, renames))
         })
         .collect::<Vec<_>>();
-    let proven = proven_renames(&pairs, &new, &old);
-    if proven.is_empty() {
+    let established = established_renames(&pairs, &new, &old);
+    if established.is_empty() {
         return result;
     }
     for (new_line, old_line, renames) in &pairs {
         if renames
             .iter()
-            .all(|(from, to)| proven.get(from.as_str()) == Some(&to.as_str()))
+            .all(|(from, to)| established.get(from.as_str()) == Some(&to.as_str()))
         {
             result.added.insert(*new_line);
             result.removed.insert(*old_line);
@@ -280,8 +280,8 @@ fn identifier_substitutions(
 
 /// Old name -> new name for every rename the diff proves (see the module
 /// docs). A name declared by more than one changed declaration line is not
-/// proven: which item it means is ambiguous.
-fn proven_renames<'a>(
+/// established: which item it means is ambiguous.
+fn established_renames<'a>(
     pairs: &'a [ReplacementRenames],
     new: &SourceView<'_>,
     old: &SourceView<'_>,
@@ -305,7 +305,7 @@ fn proven_renames<'a>(
             let [(to, new_line, old_line)] = found.as_slice() else {
                 return None;
             };
-            let proven = !ENTRY_POINTS.contains(&from)
+            let established = !ENTRY_POINTS.contains(&from)
                 && !ENTRY_POINTS.contains(to)
                 && !new.mentions(from)
                 && !old.mentions(to)
@@ -314,7 +314,7 @@ fn proven_renames<'a>(
                 && name_blind_attributes(new, *new_line)
                 && name_blind_attributes(old, *old_line)
                 && same_item_after_rename(new, *new_line, old, *old_line, from, to);
-            proven.then_some((from, *to))
+            established.then_some((from, *to))
         })
         .collect()
 }
