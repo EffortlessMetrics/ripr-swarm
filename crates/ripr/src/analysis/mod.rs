@@ -1369,11 +1369,7 @@ const MAX_ATTRIBUTE_PREFIX_LINES: usize = 256;
 /// than [`MAX_ATTRIBUTE_PREFIX_LINES`]), every test header in the file is
 /// returned, so an unattributable edit reads as "possibly edited" rather
 /// than "not edited" and second-stage pruning stays conservative.
-fn attribute_edited_headers(
-    index: &rust_index::RustIndex,
-    file: &Path,
-    line: usize,
-) -> Vec<(PathBuf, usize)> {
+fn attribute_edited_headers(index: &RustIndex, file: &Path, line: usize) -> Vec<(PathBuf, usize)> {
     let Some(facts) = rust_index::find_file_facts(index, file) else {
         return Vec::new();
     };
