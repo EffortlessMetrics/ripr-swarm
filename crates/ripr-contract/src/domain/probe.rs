@@ -717,9 +717,12 @@ impl RelatedTest {
     ///   change;
     /// - `1`: [`RelatedTestMiss::AssertionNotObserving`], the test runs the
     ///   change but its assertion pins something the change cannot move;
-    /// - `2`: every other row. That includes `no_assertion` (the test reaches
-    ///   the change and is the place to add the missing assertion; its `none`
-    ///   strength already ranks it last where strength decides), the strength
+    /// - `2`: every other row. That includes `no_assertion`, whose contract
+    ///   (RIPR-SPEC-0224) requires an established path, so the row is where
+    ///   the missing assertion goes; its `none` strength already ranks it
+    ///   last where strength decides. A producer that sets it on a row with
+    ///   no established path (#14808) lets that row lead first-row pickers.
+    ///   Also in `2` are the strength
     ///   misses (`weak_assertion`, `missing_input`, `missing_exact_assertion`)
     ///   and the unknown-edge misses (`observation_unconfirmed`,
     ///   `assertion_not_credited`, `assertion_inert`,

@@ -403,7 +403,10 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
   them: `RelatedTest::observation_tier` (#14454, #14483) reads only the
   recorded miss and ranks a `no_call_path` row lowest, then
   `assertion_not_observing`, then every other row, including `no_assertion`
-  (a reaching test is where the missing assertion goes) and the unknown-edge
+  (its minimum evidence is an established path, so the row is where the
+  missing assertion goes; the Rust reveal pass also sets it on oracle-free
+  proximity rows whose path is not established, tracked as #14808) and the
+  unknown-edge
   misses such as `observation_unconfirmed`, which record an unestablished
   observation, not an absent one. It does not read the relation: a
   proximity-only row can still reach the owner through a helper, and the
@@ -419,8 +422,10 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
   finding, last of equal rows as before), the agent `open=` row
   (`triage::weak_assertion_row`, the first bound weak row of the best tier)
   and the agent `done=` noticer (`noticing_test`, the tier, then strength).
-  The headline therefore can name a weaker row than the JSON summary
-  describes within one tier; the tier itself never disagrees. The
+  The headline and the JSON summary always come from the same tier, though
+  the headline can name a weaker row of that tier than the summary
+  describes; `tK=` and the fix site lead with relation confidence and reach,
+  so they can name a row of another tier. The
   TypeScript/JavaScript preview row and the per-test lead row of `ripr
   explain` keep their own rules, and editor seam actions read seam grips,
   which carry no miss. The fix site keeps reach as its leading key

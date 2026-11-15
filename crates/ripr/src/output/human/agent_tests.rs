@@ -1101,8 +1101,9 @@ fn every_test_picker_agrees_with_the_test_row_on_the_error_variant_repro() {
     );
     assert_eq!(fix_site, "rejects_long_names");
 
-    // Discriminating control: with no recorded miss on the Ok pin, every
-    // surface names the stronger, listed-first row again.
+    // Discriminating control: when the Ok pin records an observing miss
+    // (`missing_exact_assertion`) instead, every surface names the stronger,
+    // listed-first row again.
     gap.related_tests[0].miss = Some(RelatedTestMiss::MissingExactAssertion);
     let (headline, summary, fix_site, agent, human) = picks(&gap);
     assert!(
@@ -2092,9 +2093,9 @@ fn a_done_line_names_the_pinning_test_over_a_smoke_only_direct_caller() {
     assert!(!text.contains("caller_smoke"), "{text}");
 
     // #14483: a strong pin the producer marked `no_call_path` is never the
-    // noticer while a reaching test is listed. The relation alone decides
-    // nothing: the file-location pin above can reach the owner through a
-    // helper and credit the exposure, so it stays the noticer.
+    // noticer while a reaching test is listed. Only the recorded miss moves
+    // the noticer: the relation alone (the file-location pin above, which
+    // records no miss) decides nothing.
     let mut unreached = done.clone();
     unreached.related_tests[1].relation_reason = Some(RelationReason::OwnerNamedTest);
     unreached.related_tests[1].miss = Some(RelatedTestMiss::NoCallPath);
