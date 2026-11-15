@@ -102,23 +102,18 @@ fn module_may_replace(text: &str, name: &str) -> bool {
     let mut after_dot = false;
     for (token, _) in tokens {
         let dot = matches!(token, Tok::Dot);
-        match token {
+        let replaces = match token {
             Tok::Name { name: ident } => {
-                if after_dot && (ident == name || !ident.is_ascii()) {
-                    return true;
-                }
-                if replaces_by_reference(&ident) {
-                    return true;
-                }
+                (after_dot && (ident == name || !ident.is_ascii())) || replaces_by_reference(&ident)
             }
             Tok::String { value, kind, .. } => {
-                if matches!(kind, StringKind::FString | StringKind::RawFString)
+                matches!(kind, StringKind::FString | StringKind::RawFString)
                     && (rebinds_dynamically(&value) || names_attribute(&value, name))
-                {
-                    return true;
-                }
             }
-            _ => {}
+            _ => false,
+        };
+        if replaces {
+            return true;
         }
         after_dot = dot;
     }
