@@ -662,7 +662,7 @@ fn artifact_matches_gap_diagnostic(artifact: &ValidatedGapArtifact, data: &Value
     let canonical_gap_id = string_at(data, &["canonical_gap_id"]);
     let seam_id = string_at(data, &["seam_id"]);
     let finding_id = string_at(data, &["finding_id"]);
-    artifact.identities.iter().any(|identity| {
+    artifact.identities().iter().any(|identity| {
         canonical_gap_id.is_some_and(|value| identity.canonical_gap_id.as_deref() == Some(value))
             || seam_id.is_some_and(|value| identity.seam_id.as_deref() == Some(value))
             || finding_id.is_some_and(|value| identity.finding_id.as_deref() == Some(value))
@@ -2693,7 +2693,7 @@ mod tests {
     use crate::agent::command_specs::{agent_receipt_command_spec, agent_verify_command_spec};
     use crate::app::Mode;
     use crate::domain::{LanguageId, LanguageStatus};
-    use crate::lsp::gap_artifacts::{GapArtifactIdentity, GapArtifactKind};
+    use crate::lsp::gap_artifacts::GapArtifactIdentity;
     use crate::lsp::state::RefreshMetadata;
     use std::collections::BTreeMap;
     use tower_lsp_server::ls_types::{
@@ -3198,17 +3198,23 @@ mod tests {
 
         let mut multiple = artifact.clone();
         let verify_spec = multiple
-            .verify_command_specs
+            .verify_command_specs()
             .first()
             .cloned()
             .ok_or_else(|| "artifact omitted verify command spec".to_string())?;
         let receipt_spec = multiple
-            .receipt_command_specs
+            .receipt_command_specs()
             .first()
             .cloned()
             .ok_or_else(|| "artifact omitted receipt command spec".to_string())?;
-        multiple.verify_command_specs.push(verify_spec);
-        multiple.receipt_command_specs.push(receipt_spec);
+        multiple
+            .verify_command_specs_mut()
+            .ok_or_else(|| "artifact omitted verify command specs".to_string())?
+            .push(verify_spec);
+        multiple
+            .receipt_command_specs_mut()
+            .ok_or_else(|| "artifact omitted receipt command specs".to_string())?
+            .push(receipt_spec);
         let multiple_target = gap_repair_packet_target(&params, &snapshot, &diagnostic, &multiple)
             .ok_or_else(|| "multi-route gap repair target was omitted".to_string())?;
         if !multiple_target
@@ -3221,13 +3227,20 @@ mod tests {
         }
 
         let mut empty = artifact.clone();
-        empty.verify_command_specs.clear();
-        empty.receipt_command_specs.clear();
+        empty
+            .verify_command_specs_mut()
+            .ok_or_else(|| "artifact omitted verify command specs".to_string())?
+            .clear();
+        empty
+            .receipt_command_specs_mut()
+            .ok_or_else(|| "artifact omitted receipt command specs".to_string())?
+            .clear();
         assert_command_specs_omitted(&params, &snapshot, &diagnostic, &empty)?;
 
         let mut invalid = artifact.clone();
         invalid
-            .verify_command_specs
+            .verify_command_specs_mut()
+            .ok_or_else(|| "artifact omitted verify command specs".to_string())?
             .first_mut()
             .ok_or_else(|| "artifact omitted verify command spec".to_string())?
             .program
@@ -3236,7 +3249,8 @@ mod tests {
 
         let mut mismatched = artifact;
         mismatched
-            .receipt_command_specs
+            .receipt_command_specs_mut()
+            .ok_or_else(|| "artifact omitted receipt command specs".to_string())?
             .first_mut()
             .ok_or_else(|| "artifact omitted receipt command spec".to_string())?
             .role = crate::domain::CommandRole::Verify;
@@ -3335,19 +3349,26 @@ mod tests {
     }
 
     fn action_artifact() -> ValidatedGapArtifact {
-        ValidatedGapArtifact {
-            kind: GapArtifactKind::GapDecisionLedger,
-            corpus_currentness: None,
-            root: Some(".".to_string()),
+        use super::super::gap_artifacts::{
+            GapArtifactCorpusCurrentness, ValidatedGapArtifactCommon,
+            ValidatedGapDecisionLedgerArtifact,
+        };
+        ValidatedGapArtifact::GapDecisionLedger(ValidatedGapDecisionLedgerArtifact {
+            common: ValidatedGapArtifactCommon {
+                root: Some(".".to_string()),
+                language: Some(LanguageId::Python),
+                language_status: Some(LanguageStatus::Preview),
+                gap_state: Some("actionable".to_string()),
+                related_paths: vec!["tests/test_pricing.py".to_string()],
+                static_limit_kinds: Vec::new(),
+                has_text_static_limit: false,
+            },
+            corpus_currentness: GapArtifactCorpusCurrentness::PreviewOrMixedUnavailable,
             identities: vec![GapArtifactIdentity {
                 canonical_gap_id: Some("gap:py:pricing".to_string()),
                 seam_id: Some("seam-a".to_string()),
                 finding_id: None,
             }],
-            language: Some(LanguageId::Python),
-            language_status: Some(LanguageStatus::Preview),
-            gap_state: Some("actionable".to_string()),
-            related_paths: vec!["tests/test_pricing.py".to_string()],
             verify_commands: vec!["ripr agent verify --root . --json".to_string()],
             receipt_commands: vec![
                 "ripr agent receipt --root . --verify-json verify.json --seam-id seam-a --json"
@@ -3365,9 +3386,7 @@ mod tests {
                 "seam-a",
                 Some("receipt.json"),
             )],
-            static_limit_kinds: Vec::new(),
-            has_text_static_limit: false,
-        }
+        })
     }
 
     fn assert_command_specs_omitted(
