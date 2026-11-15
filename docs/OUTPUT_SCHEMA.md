@@ -285,6 +285,7 @@ terse document rewrites repeated content. Exactly what differs:
 | `evidence_path`, `evidence`, `missing` entries | full prose sentences | repeated strings of 24+ bytes are coded only when their JSON byte savings exceed legend cost; other prose stays verbatim |
 | `assertion_texts` values | assertion source lines | long values coded the same way |
 | `ripr.<stage>.summary` (#13673) | stage prose, usually repeated verbatim in `evidence` | coded the same way and sharing the `evidence` code; `state` and `confidence` stay verbatim |
+| `related_tests[].oracle` and `related_tests[].why` (#13673) | each related-test row's assertion line and miss sentence, repeated across findings that list the same test | coded the same way; an oracle line shares the code of the identical `assertion_texts` value; every other row field stays verbatim |
 | `evidence_legend` | absent | code → full template, emitted only when useful, in first-appearance order; codes avoid literal values on coded surfaces |
 | Next-action alias | both keys emitted | `suggested_next_action` is omitted only when its value equals `recommended_next_step` and is at least 24 UTF-8 bytes; the alias is listed once in `dropped_aliases` |
 | Activation aliases (#13673) | finding-level `observed_values` and `missing_discriminators` repeat `activation` | each is omitted only when it is non-empty and equal to the same-named array in that finding's `activation`; each dropped alias is listed once in `dropped_aliases` |
@@ -313,12 +314,13 @@ Guarantees and limits, stated precisely:
   property tests, not the schema, hold that guarantee. Tying their omission
   to the alias declaration in the schema needs a narrowing change and a
   schema version bump, which is deferred.
-- What terse does *not* code: related-test oracle lines, flow-sink text and
-  repair cards stay inline. Those are the remaining cross-finding
-  duplication; coding them is follow-up work if measurements justify it.
-  (`ripr` stage summaries joined the coded surfaces in #13673: on a
-  four-finding `dtolnay/semver` diff each long stage summary appeared in
-  `ripr` and again in `evidence`.)
+- What terse does *not* code: flow-sink text and repair cards stay inline.
+  Those are the remaining cross-finding duplication; coding them is
+  follow-up work if measurements justify it. (`ripr` stage summaries joined
+  the coded surfaces in #13673: on a four-finding `dtolnay/semver` diff each
+  long stage summary appeared in `ripr` and again in `evidence`. Related-test
+  `oracle` and `why` strings followed: on the five-gap budget fixture every
+  finding lists the same five test rows.)
 - The transform runs on the stamped `json` document (including the CLI's
   canonical next-action member when present) and fails closed: an
   unparseable producer document aborts the run instead of emitting an

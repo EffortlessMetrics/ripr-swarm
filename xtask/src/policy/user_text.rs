@@ -1736,21 +1736,24 @@ fn tree_root(path: &Path) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+#[cfg(test)]
 fn repo_root() -> Result<PathBuf, String> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir.parent().map(Path::to_path_buf).ok_or_else(|| {
-        format!(
-            "failed to resolve repo root from {}",
-            manifest_dir.display()
-        )
-    })
+    crate::test_support::workspace_root()
 }
 
-/// Paths changed against the base or the working tree, or an error.
-fn changed_paths() -> Result<Vec<String>, String> {
-    let mut changed = crate::changed_files_vs_base(Path::new("."))?;
-    changed.extend(crate::git_changed_files(Path::new("."), "HEAD")?);
-    Ok(changed)
+#[cfg(not(test))]
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            format!(
+                "failed to resolve repo root from {}",
+                manifest_dir.display()
+            )
+        })
 }
 
 /// Run the live half when forced, when a changed path can alter what the built
@@ -1769,20 +1772,27 @@ pub(crate) fn live_trigger_path(path: &str) -> bool {
         || path == "Cargo.lock"
         || path.starts_with("rust-toolchain")
         || path.starts_with(".cargo/")
-        || path == "xtask/src/policy/user_text.rs"
+        || path == MATCHER_SOURCE
+        || path == "xtask/src/policy/user_text_frontdoor.rs"
         || path == BASELINE_PATH
 }
 
-/// Always scans the live output too (check-pr and CI).
-pub(crate) fn check_user_text_full() -> Result<(), String> {
-    check_user_text_with_args(&["--full".to_string()])
+/// Lightweight foreign-tree command. Live output remains owned by the xtask facade.
+pub fn check_foreign_tree(args: &[String]) -> Result<(), String> {
+    if !matches!(args, [flag, _] if flag == TREE_FLAG) {
+        return Err("usage: cargo policy check-user-text --tree <path>; live, full and ratchet modes require cargo xtask".into());
+    }
+    check_user_text_with_args(args, || {
+        Err("foreign-tree mode does not select live output".into())
+    })
 }
 
-pub(crate) fn check_user_text() -> Result<(), String> {
-    check_user_text_with_args(&[])
-}
-
-pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
+/// Shared matcher and orchestration. The xtask facade supplies its existing local
+/// change selector; foreign-tree execution never calls that product-side helper.
+pub fn check_user_text_with_args(
+    args: &[String],
+    changed_paths: impl FnOnce() -> Result<Vec<String>, String>,
+) -> Result<(), String> {
     let mut ripr: Option<String> = None;
     let mut ratchet = false;
     let mut full = false;
@@ -2275,7 +2285,7 @@ mod tests {
             matches!(missing, Err(ref e) if e.contains(TREE_FLAG)),
             "{missing:?}"
         );
-        let no_path = check_user_text_with_args(&[TREE_FLAG.to_string()]);
+        let no_path = check_user_text_with_args(&[TREE_FLAG.to_string()], || Ok(Vec::new()));
         assert!(
             matches!(no_path, Err(ref e) if e.contains("needs a path")),
             "{no_path:?}"
@@ -2286,8 +2296,10 @@ mod tests {
     #[test]
     fn tree_judges_goldens_only_and_rejects_the_modes_that_need_a_local_binary() {
         for other in ["--ratchet", "--full"] {
-            let outcome =
-                check_user_text_with_args(&[TREE_FLAG.to_string(), ".".into(), other.to_string()]);
+            let outcome = check_user_text_with_args(
+                &[TREE_FLAG.to_string(), ".".into(), other.to_string()],
+                || Ok(Vec::new()),
+            );
             assert!(
                 matches!(outcome, Err(ref e) if e.contains("goldens only")),
                 "{other}: {outcome:?}"
@@ -2377,10 +2389,10 @@ mod tests {
     /// and must not gate goldens with the absolute `evaluate` directly.
     #[test]
     fn the_command_calls_the_gate_with_origin_main_and_the_ci_flag() -> Result<(), String> {
-        let source = fs::read_to_string(repo_root()?.join("xtask/src/policy/user_text.rs"))
+        let source = fs::read_to_string(repo_root()?.join(MATCHER_SOURCE))
             .map_err(|err| format!("read user_text.rs: {err}"))?;
         let start = source
-            .find("pub(crate) fn check_user_text_with_args(")
+            .find("pub fn check_user_text_with_args(")
             .ok_or("command not found")?;
         let end = source[start..]
             .find("\n}\n")
@@ -3582,10 +3594,10 @@ mod tests {
     /// golden half runs, and list the surface in the report.
     #[test]
     fn the_command_wires_the_lsp_scan() -> Result<(), String> {
-        let source = fs::read_to_string(repo_root()?.join("xtask/src/policy/user_text.rs"))
+        let source = fs::read_to_string(repo_root()?.join(MATCHER_SOURCE))
             .map_err(|err| format!("read user_text.rs: {err}"))?;
         let start = source
-            .find("pub(crate) fn check_user_text_with_args(")
+            .find("pub fn check_user_text_with_args(")
             .ok_or("command not found")?;
         let end = source[start..].find("\n}\n").ok_or("command end")? + start;
         let command = &source[start..end];
@@ -3599,7 +3611,7 @@ mod tests {
     /// editor-visible strings, and the scan sees a real corpus.
     #[test]
     fn lsp_sources_use_plain_words_for_seam_and_discriminator() -> Result<(), String> {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let root = repo_root()?;
         let mut counts = Counts::new();
         let (files, strings) = scan_lsp_prose(&root, &mut counts)?;
         if files < 20 || strings < 200 {
@@ -3622,7 +3634,7 @@ mod tests {
         // are scanned (identifiers, comments and JSON keys such as
         // `seam_diagnostics` or `seamId` are not prose), and only the two
         // words #12213 audited; the rest of the glossary has its own rows.
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let root = repo_root()?;
         let dir = root.join("editors/vscode/src");
         let mut scanned_strings = 0usize;
         let mut hits = Vec::new();
@@ -3659,6 +3671,84 @@ mod tests {
         if !flagged.contains(&"discriminator") {
             return Err("matcher no longer flags a retired word".to_string());
         }
+        Ok(())
+    }
+    #[test]
+    fn lightweight_command_rejects_local_modes() {
+        for args in [
+            vec![],
+            vec!["--full".into()],
+            vec!["--tree".into()],
+            vec!["--tree".into(), ".".into(), "--ratchet".into()],
+            vec![
+                "--tree".into(),
+                ".".into(),
+                "--ripr".into(),
+                "binary".into(),
+            ],
+        ] {
+            let result = check_foreign_tree(&args);
+            assert!(
+                matches!(result, Err(ref e) if e.contains("usage: cargo policy")),
+                "{args:?}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn foreign_tree_never_asks_for_local_changed_paths() -> Result<(), String> {
+        let root = repo_root()?;
+        let mut requested = false;
+        check_user_text_with_args(
+            &[TREE_FLAG.into(), root.to_string_lossy().into_owned()],
+            || {
+                requested = true;
+                Err("local selector must not run for a foreign tree".into())
+            },
+        )?;
+        assert!(!requested);
+        Ok(())
+    }
+
+    #[test]
+    fn stable_matcher_source_preserves_historical_pins_and_refuses_malformed_owner()
+    -> Result<(), String> {
+        let legacy = matcher_source("\"seam\", \"frobnicate\"");
+        let root = golden_repo(
+            "legacy-matcher-owner",
+            &[(A, "plain\n"), (MATCHER_SOURCE, &legacy)],
+            &[],
+        )?;
+        let base = resolve_sha(&root, &["rev-parse", "main"])?;
+        let historical = base_needles(&root, &base)?;
+        assert_eq!(historical, vec!["seam", "frobnicate"]);
+        write_file(&root.join(MATCHER_SOURCE), "malformed semantic owner\n")?;
+        run_git(&root, &["add", "-A"])?;
+        run_git(&root, &["commit", "-q", "-m", "malformed current owner"])?;
+        let head = resolve_sha(&root, &["rev-parse", "HEAD"])?;
+        let malformed = base_needles(&root, &head);
+        assert!(
+            matches!(malformed, Err(ref e) if e.contains("BANNED")),
+            "{malformed:?}"
+        );
+        fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn shared_owner_and_facade_are_live_triggers_and_keep_tree_capability() -> Result<(), String> {
+        assert!(live_trigger_path(MATCHER_SOURCE));
+        assert!(live_trigger_path("xtask/src/policy/user_text_frontdoor.rs"));
+        let matcher =
+            fs::read_to_string(repo_root()?.join(MATCHER_SOURCE)).map_err(|e| e.to_string())?;
+        assert!(matcher.contains("\"--tree\""));
+        let facade =
+            fs::read_to_string(repo_root()?.join("xtask/src/policy/user_text_frontdoor.rs"))
+                .map_err(|e| e.to_string())?;
+        assert!(
+            facade
+                .contains("repo_policy::user_text::check_user_text_with_args(args, changed_paths)")
+        );
         Ok(())
     }
 }

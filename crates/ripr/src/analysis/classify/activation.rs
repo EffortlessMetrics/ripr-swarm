@@ -434,6 +434,7 @@ fn observed_discriminator_values(
         owner_source,
         &parameters,
         &probe.expression,
+        probe.before.as_deref(),
         probe.location.line,
         index,
     ) else {
@@ -2862,6 +2863,7 @@ fn missing_boundary_discriminator(
         owner_source,
         &parameters,
         &probe.expression,
+        probe.before.as_deref(),
         probe.location.line,
         index,
     )?;
@@ -8213,10 +8215,11 @@ fn oriented_comparison_operands(
     owner_source: Option<&str>,
     parameters: &[String],
     expression: &str,
+    before: Option<&str>,
     predicate_line: usize,
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<(String, String)> {
-    let (left, right) = comparison_operands(expression)?;
+    let (left, right) = comparison_operands(changed_comparison_conjunct(expression, before)?)?;
     let owner_bound = |operand: &str| {
         boundary_operand_parameter(owner, owner_source, parameters, operand, predicate_line).is_some()
             || live_local_initializer(owner, operand, predicate_line).is_some()
@@ -8229,6 +8232,194 @@ fn oriented_comparison_operands(
         return Some((right, left));
     }
     Some((left, right))
+}
+
+/// The one comparison a `&&`/`||` predicate's boundary reading may use.
+/// Comparison binds tighter than `&&` and `||`, so `a && b > 1` is
+/// `a && (b > 1)`; splitting the whole text at `>` would read `a && b` as
+/// the compared operand and name a boundary no input can sit on
+/// (`a && b == 1`, #9637). A predicate without a top-level connective is
+/// read whole, as before. Otherwise exactly one top-level operand may be a
+/// comparison, and when the pre-edit text is known it must not already
+/// hold that same operand: an edit to another operand (`x > 1 && a` to
+/// `x > 1 && b`) does not move `x`'s boundary. Anything else, including
+/// text the bounded scanner cannot balance (with or without a connective)
+/// and a continuation line that starts with `&&` or `||`, has no single
+/// boundary here.
+fn changed_comparison_conjunct<'a>(expression: &'a str, before: Option<&str>) -> Option<&'a str> {
+    let operands = top_level_connective_operands(expression)?;
+    if operands.len() == 1 {
+        return Some(expression);
+    }
+    let mut comparisons = operands
+        .iter()
+        .copied()
+        .filter(|operand| comparison_operands(&mask_literal_bodies(operand)).is_some());
+    let comparison = comparisons.next()?;
+    if comparisons.next().is_some() {
+        return None;
+    }
+    let normalized = |text: &str| {
+        let cleaned = clean_operand(text);
+        let in_literal = literal_body_bytes(&cleaned);
+        cleaned
+            .char_indices()
+            .filter(|(at, character)| {
+                !character.is_whitespace() || in_literal.get(*at).copied().unwrap_or(false)
+            })
+            .map(|(_, character)| character)
+            .collect::<String>()
+    };
+    let changed = normalized(comparison);
+    if let Some(before) = before {
+        let before_operands = top_level_connective_operands(before)?;
+        if before_operands
+            .iter()
+            .any(|operand| normalized(operand) == changed)
+        {
+            return None;
+        }
+    }
+    Some(comparison)
+}
+
+/// `text` with every string and char literal body byte replaced by `x`, so a
+/// quoted operator (`s.starts_with('>')`, `s.contains("<")`) never reads as
+/// a comparison.
+fn mask_literal_bodies(text: &str) -> String {
+    let in_literal = literal_body_bytes(text);
+    let mut masked = String::with_capacity(text.len());
+    for (at, character) in text.char_indices() {
+        if in_literal.get(at).copied().unwrap_or(false) {
+            masked.push('x');
+        } else {
+            masked.push(character);
+        }
+    }
+    masked
+}
+
+/// Per byte of `text`, whether it sits inside a string or char literal's
+/// body (between, not on, the quotes). Uses the same bounded char-literal
+/// rule as [`top_level_connective_operands`]; an unterminated string marks
+/// the rest of the text.
+fn literal_body_bytes(text: &str) -> Vec<bool> {
+    let bytes = text.as_bytes();
+    let mut in_literal = vec![false; bytes.len()];
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'"' => {
+                let open = index;
+                index += 1;
+                while index < bytes.len() && bytes[index] != b'"' {
+                    if bytes[index] == b'\\' {
+                        index += 1;
+                    }
+                    index += 1;
+                }
+                let close = index.min(bytes.len());
+                for flag in &mut in_literal[open + 1..close] {
+                    *flag = true;
+                }
+            }
+            b'\'' => {
+                let body = if bytes.get(index + 1) == Some(&b'\\') {
+                    index + 3
+                } else {
+                    index + 2
+                };
+                if let Some(close) = bytes
+                    .get(body..)
+                    .and_then(|rest| rest.iter().take(10).position(|byte| *byte == b'\''))
+                    .filter(|close| bytes[index + 1] == b'\\' || *close < 4)
+                {
+                    let close = body + close;
+                    for flag in &mut in_literal[index + 1..close] {
+                        *flag = true;
+                    }
+                    index = close;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    in_literal
+}
+
+/// The operands of `expression` split at top-level `&&` and `||`, outside
+/// brackets and string or char literals. `None` when the text has an
+/// unbalanced closing bracket, an unterminated string, a block comment, or
+/// an empty operand (text after a `//` line comment is not read),
+/// so a shape the scanner cannot read is never split by guess.
+fn top_level_connective_operands(expression: &str) -> Option<Vec<&str>> {
+    let bytes = expression.as_bytes();
+    let mut operands = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    let mut index = 0;
+    let mut end = bytes.len();
+    while index < bytes.len() {
+        match bytes[index] {
+            // A line comment ends the predicate text; a block comment is a
+            // shape this bounded scan does not read.
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                end = index;
+                break;
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => return None,
+            b'"' => {
+                index += 1;
+                while index < bytes.len() && bytes[index] != b'"' {
+                    if bytes[index] == b'\\' {
+                        index += 1;
+                    }
+                    index += 1;
+                }
+                if index >= bytes.len() {
+                    return None;
+                }
+            }
+            b'\'' => {
+                // A char literal (`'-'`, `'é'`, `'\\''`) closes within a few
+                // bytes; a lifetime (`'a`) has no close and is one byte.
+                let body = if bytes.get(index + 1) == Some(&b'\\') {
+                    index + 3
+                } else {
+                    index + 2
+                };
+                if let Some(close) = bytes
+                    .get(body..)
+                    .and_then(|rest| rest.iter().take(10).position(|byte| *byte == b'\''))
+                    .filter(|close| bytes[index + 1] == b'\\' || *close < 4)
+                {
+                    index = body + close;
+                }
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.checked_sub(1)?,
+            b'&' if depth == 0 && bytes.get(index + 1) == Some(&b'&') => {
+                operands.push(expression[start..index].trim());
+                index += 2;
+                start = index;
+                continue;
+            }
+            b'|' if bytes.get(index + 1) == Some(&b'|') && depth == 0 => {
+                operands.push(expression[start..index].trim());
+                index += 2;
+                start = index;
+                continue;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    operands.push(expression[start..end].trim());
+    if operands.len() > 1 && operands.iter().any(|operand| operand.is_empty()) {
+        return None;
+    }
+    Some(operands)
 }
 
 fn clean_operand(operand: &str) -> String {
@@ -9536,6 +9727,98 @@ mod rebinding_scan;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_compound_predicate_reads_only_its_one_changed_comparison() {
+        use super::changed_comparison_conjunct as conjunct;
+        // #9637: the added conjunct, not `s.starts_with('-') && s.len()`.
+        assert_eq!(
+            conjunct(
+                "s.starts_with('-') && s.len() > 1",
+                Some("s.starts_with('-')")
+            ),
+            Some("s.len() > 1")
+        );
+        assert_eq!(
+            conjunct(
+                "if label == \"beta\" && on {",
+                Some("if label == \"alpha\" && on {")
+            ),
+            Some("if label == \"beta\"")
+        );
+        assert_eq!(conjunct("ready || n >= 10", None), Some("n >= 10"));
+        // No connective: read whole, exactly as before.
+        assert_eq!(
+            conjunct("amount >= 100", Some("amount > 100")),
+            Some("amount >= 100")
+        );
+        assert_eq!(conjunct("x | y > 1", None), Some("x | y > 1"));
+        // Connectives inside calls, strings and chars do not split.
+        assert_eq!(
+            conjunct("f(a && b) > 1", Some("f(a && b) >= 1")),
+            Some("f(a && b) > 1")
+        );
+        assert_eq!(conjunct("s == \"a && b\"", None), Some("s == \"a && b\""));
+        assert_eq!(
+            conjunct("s.ends_with('&') && n > 1", Some("s.ends_with('&')")),
+            Some("n > 1")
+        );
+        assert_eq!(
+            conjunct("s.ends_with('\\'') && n > 1", Some("s.ends_with('\\'')")),
+            Some("n > 1")
+        );
+        assert_eq!(
+            conjunct("s.ends_with('é') && n > 1", Some("s.ends_with('é')")),
+            Some("n > 1")
+        );
+        assert_eq!(
+            conjunct(
+                "s.ends_with('\\u{41}') && n > 1",
+                Some("s.ends_with('\\u{41}')")
+            ),
+            Some("n > 1")
+        );
+        assert_eq!(
+            conjunct("f(&&x) > 1", Some("f(&&x) >= 1")),
+            Some("f(&&x) > 1")
+        );
+        // Two comparisons, an unchanged comparison, or an unreadable shape:
+        // no single boundary.
+        assert_eq!(conjunct("x > 1 && y < 5", None), None);
+        assert_eq!(conjunct("x > 1 && b", Some("x > 1 && a")), None);
+        assert_eq!(conjunct("x > 1 && b", Some("x  >  1 || a")), None);
+        assert_eq!(conjunct("a && b", None), None);
+        assert_eq!(conjunct("a && ) > 1", None), None);
+        assert_eq!(conjunct("a && s == \"open", None), None);
+        assert_eq!(conjunct("&& n > 1", None), None);
+        assert_eq!(conjunct("    || n >= 10", None), None);
+        assert_eq!(conjunct("x > 1)", None), None);
+        // A line comment's connective never splits; a block comment is not read.
+        assert_eq!(conjunct("a && n > 1 // b || c", Some("a")), Some("n > 1"));
+        assert_eq!(conjunct("n > 1 // a && b", None), Some("n > 1 // a && b"));
+        assert_eq!(conjunct("a /* x || y */ && n > 1", None), None);
+        // A quoted operator is not a comparison, and whitespace inside a
+        // literal is part of its value.
+        assert_eq!(
+            conjunct(
+                "s.starts_with('>') && s.len() > 1",
+                Some("s.starts_with('>')")
+            ),
+            Some("s.len() > 1")
+        );
+        assert_eq!(
+            conjunct("s.contains(\"<\") && n > 1", Some("s.contains(\"<\")")),
+            Some("n > 1")
+        );
+        assert_eq!(
+            conjunct("label == \"ab\" && on", Some("label == \"a b\" && on")),
+            Some("label == \"ab\"")
+        );
+        assert_eq!(
+            conjunct("label  ==  \"a b\" && on", Some("label == \"a b\" && off")),
+            None
+        );
+    }
+
     #[test]
     fn observed_value_listing_bounds_count_and_bytes_with_explicit_elision() {
         let values: Vec<String> = (0..100).map(|i| format!("value_{i:03}")).collect();
