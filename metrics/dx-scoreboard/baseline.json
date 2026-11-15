@@ -9378,7 +9378,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/rust-verdict-corpus avoidable_abstention_rate: 304/856; committed expected records, not fresh analyzer execution",
+          "detail": "fixtures/rust-verdict-corpus avoidable_abstention_rate: 309/862; committed expected records, not fresh analyzer execution",
           "population": {
             "cases": [
               {
@@ -9406,8 +9406,44 @@
                 "numerator": 0
               },
               {
+                "case_id": "arbitrary_aliased_module_generator_stimulus_not_product",
+                "definition_sha256": "336a6e6ad6ebca89ee2a656823eac14b9fe5328a88c3d85074cf3b983a8edcd8",
+                "denominator": 1,
+                "numerator": 1
+              },
+              {
+                "case_id": "arbitrary_cfg_test_generator_stays_test_code",
+                "definition_sha256": "c92c14d92ca54bf4270b5cfa92def6f7256c3f3c2908e7b55e469188791e6f63",
+                "denominator": 1,
+                "numerator": 1
+              },
+              {
+                "case_id": "arbitrary_crate_generator_stimulus_not_product",
+                "definition_sha256": "fd9ed6d1c98e7a9a75c87f4d63e491d3ec8c8823c3ccf26beabba66359eddfc8",
+                "denominator": 1,
+                "numerator": 1
+              },
+              {
+                "case_id": "arbitrary_derived_type_change_stays_product",
+                "definition_sha256": "524dcda6ff8580ec131c720ab39711e30ef4e6ded47b8aafc7e40f3726baedbd",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
                 "case_id": "arbitrary_impl_change_stimulus_not_product",
                 "definition_sha256": "002cdb110197c9e6392b6c5885606bcb51cac179318106e2078849b9f17ac634",
+                "denominator": 1,
+                "numerator": 1
+              },
+              {
+                "case_id": "arbitrary_imported_trait_change_stimulus_not_product",
+                "definition_sha256": "5d7803f8bbc8b5cb2f0055a477461574567490f2ffea24df7120353a8b8f085b",
+                "denominator": 1,
+                "numerator": 1
+              },
+              {
+                "case_id": "arbitrary_proptest_generator_stimulus_not_product",
+                "definition_sha256": "55b8cbe4d121d4dbfff34ff0fd9d63b68d32d4dab7c432e85917c7e93aa22683",
                 "denominator": 1,
                 "numerator": 1
               },
@@ -14523,7 +14559,7 @@
           },
           "repo": null,
           "status": "below_target",
-          "value": 0.3551
+          "value": 0.3585
         }
       ],
       "source": "verdict-corpus:fixtures/rust-verdict-corpus#avoidable_abstention_rate",
@@ -14531,7 +14567,7 @@
       "target": 0.2,
       "title": "Hand-checked edits where ripr gives no specific verdict and no spec asks it to abstain",
       "unit": "ratio",
-      "value": 0.3551
+      "value": 0.3585
     },
     {
       "baseline": {

@@ -13,7 +13,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | `metrics/public-proof/dx-scoreboard.json` | Speed, memory, CI adoption, pasted-command safety, self-contradictions | ripr 0.11.0 (10e5637) | runner `github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor` |
 | `metrics/dx-scoreboard/corpus-full-baseline.json` | Corpus lane, used when the scoreboard receipt did not ingest corpus | 10e5637 | runner `github-hosted-linux-x86_64-4cpu-intel-r-xeon-r-platinum-8370c-cpu-2-80ghz` |
 | `metrics/dx-scoreboard/pilot-ranking-baseline.json` | Pilot ranking lane, used when the scoreboard receipt did not ingest ranking | d971210 | runner `local-linux-x86_64-4cpu-intel-r-xeon-r-processor-2-10ghz` |
-| `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | 856 cases | RIPR-SPEC-0219 |
+| `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | 862 cases | RIPR-SPEC-0219 |
 | `metrics/public-proof/mutation-spot-check.json` | Agreement with real mutation runs | 5 repositories at pinned revisions | cargo-mutants 27.1.0 |
 | `metrics/public-proof/first-run-previous.json` | New-developer walk, earlier release | ripr 0.10.0 | 3 crates |
 | `metrics/public-proof/first-run-current.json` | New-developer walk, later build | ripr 0.11.0 (a7a089e) | 3 crates |
@@ -49,10 +49,10 @@ By board, so the weak areas show before the full table:
 | Trust | Commands that exit 0 when pointed at a missing repository | 0 commands | <= 0 commands | meets the bar | -2 commands since c6ccf9d (was 2 commands) |
 | Trust | Hostile-repository journeys (odd file names, symlink loops, shallow clones, submodules) where ripr neither finds nor refuses cleanly | 0 journeys | <= 0 journeys | meets the bar | no earlier measurement |
 | Trust | Findings or seams whose own evidence contradicts itself | 0 findings | <= 0 findings | meets the bar | -1 finding since c6ccf9d (was 1 finding) |
-| Trust | Wrong verdicts on hand-checked changes from real repositories | 0.0% | <= 5.0% | meets the bar | first receipt (verdict corpus, upstream cases only; all 856 cases: 0.0%) |
+| Trust | Wrong verdicts on hand-checked changes from real repositories | 0.0% | <= 5.0% | meets the bar | first receipt (verdict corpus, upstream cases only; all 862 cases: 0.0%) |
 | Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **11.0%** | <= 5.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for) | **37.1%** | <= 21.0% | below the bar | no earlier measurement (observed at 2af3f38) |
-| Trust | Hand-checked edits where ripr gives no specific verdict and no spec asks it to abstain | **35.5%** | <= 20.0% | below the bar | no earlier measurement |
+| Trust | Hand-checked edits where ripr gives no specific verdict and no spec asks it to abstain | **35.9%** | <= 20.0% | below the bar | no earlier measurement |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits the crate's tests miss that ripr credits as caught (false confidence; few credited cases so far, so read with its denominator) | **1.2%** | <= 0.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | In-scope numbered spec acceptance examples (minus waived) that a runtime-labeled verdict-corpus case cites | 100.0% | >= 100.0% | meets the bar | no earlier measurement |
@@ -108,8 +108,8 @@ Not measured, and why:
 
 Each line below is computed from the receipts above. Detail sections follow.
 
-- **Wrong gaps.** On changes from real repositories ripr reported a gap on 0 of 22 whose tests caught every listed mutant (0.0%): no case recorded. On the authored cases, which were written to fill empty corpus cells, it did so on 0 of 414 (0.0%).
-- **Mostly unsure.** On real-repository changes it abstained on 30 of 41 cases (73.2%); on the authored cases, 285 of 815 (35.0%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Wrong gaps.** On changes from real repositories ripr reported a gap on 0 of 22 whose tests caught every listed mutant (0.0%): no case recorded. On the authored cases, which were written to fill empty corpus cells, it did so on 0 of 416 (0.0%).
+- **Mostly unsure.** On real-repository changes it abstained on 30 of 41 cases (73.2%); on the authored cases, 290 of 821 (35.3%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 12 mutants on seams ripr called ungripped, real mutation testing caught 0 that ripr said nothing would catch; ripr agreed on 12. No false-gap examples are recorded.
 - **Thin ground truth.** Only 75 of 1745 mutants (4.3%) enter an agreement rate. 493 join a ripr seam precisely, and 418 of those still do not enter a rate.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 77.6 s; the bar is at most 30.0 s.
@@ -156,7 +156,7 @@ Overclaim examples, as recorded:
 
 ## Verdict corpus
 
-856 hand-labeled changes (RIPR-SPEC-0219). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.
+862 hand-labeled changes (RIPR-SPEC-0219). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.
 
 This receipt does not record which ripr build produced the observed verdicts, only the corpus state. The rates below cannot be tied to a specific analyzer revision, and they may not describe the current build.
 
@@ -164,13 +164,13 @@ Only the upstream cases come from real repositories. The authored cases were wri
 
 | Rate | All cases | Upstream (real repositories) | Authored |
 | --- | --- | --- | --- |
-| False verdicts (all cases) | 0/856 (0.0%) | 0/41 (0.0%) | 0/815 (0.0%) |
-| False actionable (of discriminated) | 0/436 (0.0%) | 0/22 (0.0%) | 0/414 (0.0%) |
-| False exposed (of not fully discriminated) | 0/420 (0.0%) | 0/19 (0.0%) | 0/401 (0.0%) |
-| False silent (of not fully discriminated) | 0/420 (0.0%) | 0/19 (0.0%) | 0/401 (0.0%) |
-| Ideal verdict | 541/856 (63.2%) | 11/41 (26.8%) | 530/815 (65.0%) |
-| Abstained (limited or silent where acceptable) | 315/856 (36.8%) | 30/41 (73.2%) | 285/815 (35.0%) |
-| Findings with a contradiction | 0/1045 (0.0%) | not split by origin | not split by origin |
+| False verdicts (all cases) | 0/862 (0.0%) | 0/41 (0.0%) | 0/821 (0.0%) |
+| False actionable (of discriminated) | 0/438 (0.0%) | 0/22 (0.0%) | 0/416 (0.0%) |
+| False exposed (of not fully discriminated) | 0/424 (0.0%) | 0/19 (0.0%) | 0/405 (0.0%) |
+| False silent (of not fully discriminated) | 0/424 (0.0%) | 0/19 (0.0%) | 0/405 (0.0%) |
+| Ideal verdict | 542/862 (62.9%) | 11/41 (26.8%) | 531/821 (64.7%) |
+| Abstained (limited or silent where acceptable) | 320/862 (37.1%) | 30/41 (73.2%) | 290/821 (35.3%) |
+| Findings with a contradiction | 0/1050 (0.0%) | not split by origin | not split by origin |
 
 | Case | Origin | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -178,7 +178,13 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `accounts-last-byte-unchecked` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
 | `accounts-parse-too-long-variant` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `accounts-trailer-crc` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `arbitrary_aliased_module_generator_stimulus_not_product` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
+| `arbitrary_cfg_test_generator_stays_test_code` | authored | discriminated | credited | silent |  | abstained | none |
+| `arbitrary_crate_generator_stimulus_not_product` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
+| `arbitrary_derived_type_change_stays_product` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `arbitrary_impl_change_stimulus_not_product` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
+| `arbitrary_imported_trait_change_stimulus_not_product` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
+| `arbitrary_proptest_generator_stimulus_not_product` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
 | `assoc-expected-is-the-constant` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
 | `assoc-generic-caller` | authored | discriminated | credited | limited | static_unknown | abstained | none |
 | `assoc-generic-impl` | authored | discriminated | credited | limited | static_unknown | abstained | none |

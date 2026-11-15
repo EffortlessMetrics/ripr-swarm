@@ -317,7 +317,7 @@ The dx scoreboard puts the abstention bar on the avoidable rate
 (`trust.verdict_corpus_avoidable_abstention`, target 0.2). It keeps the total
 (`trust.verdict_corpus_abstention`) visible and ratcheted, and its target is
 the avoidable bar plus the abstention-expected share when the split landed
-(0.0129, so 0.21).
+(0.0128, so 0.21).
 
 The contradiction rate counts candidate-current findings across each case's
 whole `ripr check` run, not only the anchor line, because a

@@ -659,7 +659,7 @@ source = "verdict-corpus:fixtures/rust-verdict-corpus#false_actionable_rate"
 pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 # The bar sits on the avoidable rate below (RIPR-SPEC-0219, #12766). This
-# total also counts abstentions a spec's `Reject` example asks for (0.0129 of
+# total also counts abstentions a spec's `Reject` example asks for (0.0128 of
 # the corpus when the split landed), so its target is the avoidable bar plus
 # that share; it stays here so the total remains visible and ratcheted.
 [[metric]]
