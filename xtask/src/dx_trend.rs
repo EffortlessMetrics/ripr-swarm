@@ -1,0 +1,953 @@
+//! `cargo xtask dx-trend` (#14795): keeps one compact dated receipt per
+//! nightly dx-scoreboard run and renders one trend page that ranks every
+//! measured metric by its distance from its declared target, with the previous
+//! value, the change over the last week and a short sparkline.
+//!
+//! Scope and non-claims: the page reads only the dx-scoreboard report it is
+//! given and the receipts in `--history`. It adds no gate and never turns a
+//! missing, failed or not-measured value into a pass or a zero. A
+//! runner-dependent metric (wall time, memory) trends only against receipts
+//! from the same runner class. Targets come from
+//! `benchmarks/dx_scoreboard/scoreboards.toml` through the report; this page
+//! does not set or move them.
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde_json::{Value, json};
+
+const RECEIPT_SCHEMA: &str = "ripr-dx-trend-receipt-v1";
+const PAGE_SCHEMA: &str = "ripr-dx-trend-page-v1";
+const DEFAULT_KEEP: usize = 120;
+const SPARK_NIGHTS: usize = 14;
+const WEEK_DAYS: i64 = 7;
+const USAGE: &str = "usage: cargo xtask dx-trend --report <dx-scoreboard.json> --history <dir> [--date <YYYY-MM-DD>] [--keep <n>]";
+
+struct Options {
+    report: PathBuf,
+    history: PathBuf,
+    date: Option<String>,
+    keep: usize,
+}
+
+fn parse_options(args: &[String]) -> Result<Options, String> {
+    let mut report = None;
+    let mut history = None;
+    let mut date = None;
+    let mut keep = DEFAULT_KEEP;
+    let mut iter = args.iter();
+    while let Some(flag) = iter.next() {
+        let mut value = || {
+            iter.next()
+                .cloned()
+                .ok_or_else(|| format!("{flag} needs a value\n{USAGE}"))
+        };
+        match flag.as_str() {
+            "--report" => report = Some(PathBuf::from(value()?)),
+            "--history" => history = Some(PathBuf::from(value()?)),
+            "--date" => {
+                let raw = value()?;
+                if days_from_civil(&raw).is_none() {
+                    return Err(format!("--date {raw} is not YYYY-MM-DD"));
+                }
+                date = Some(raw);
+            }
+            "--keep" => {
+                let raw = value()?;
+                keep = raw
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .ok_or_else(|| format!("--keep {raw} is not a positive integer"))?;
+            }
+            other => return Err(format!("unknown argument {other}\n{USAGE}")),
+        }
+    }
+    Ok(Options {
+        report: report.ok_or_else(|| format!("--report is required\n{USAGE}"))?,
+        history: history.ok_or_else(|| format!("--history is required\n{USAGE}"))?,
+        date,
+        keep,
+    })
+}
+
+/// Unix day count for a `YYYY-MM-DD` date (Howard Hinnant's algorithm).
+fn days_from_civil(date: &str) -> Option<i64> {
+    let parts: Vec<&str> = date.split('-').collect();
+    let [y, m, d] = parts.as_slice() else {
+        return None;
+    };
+    if y.len() != 4 || m.len() != 2 || d.len() != 2 {
+        return None;
+    }
+    let (year, month, day): (i64, i64, i64) = (y.parse().ok()?, m.parse().ok()?, d.parse().ok()?);
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let yoe = year.rem_euclid(400);
+    let mp = if month > 2 { month - 3 } else { month + 9 };
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(era * 146_097 + doe - 719_468)
+}
+
+fn civil_from_days(unix_days: i64) -> String {
+    let z = unix_days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+fn today_utc() -> Result<String, String> {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock before 1970: {error}"))?
+        .as_secs();
+    let days = i64::try_from(secs / 86_400).map_err(|error| format!("clock overflow: {error}"))?;
+    Ok(civil_from_days(days))
+}
+
+fn read_json(path: &Path) -> Result<Value, String> {
+    let text =
+        fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    serde_json::from_str(&text).map_err(|error| format!("parse {}: {error}", path.display()))
+}
+
+/// A value is evidence only when its row completed against its target. A
+/// `failed` row can still carry its worst numeric sample, which must not
+/// trend as a result.
+fn admissible(status: &str) -> bool {
+    matches!(status, "meets_target" | "below_target")
+}
+
+/// Projects a dx-scoreboard report into one dated trend receipt.
+fn receipt_from_report(report: &Value, date: &str) -> Result<Value, String> {
+    if report["report"] != json!("dx-scoreboard") {
+        return Err(
+            "--report is not a dx-scoreboard report (`report` != \"dx-scoreboard\")".into(),
+        );
+    }
+    let rows = report["metrics"]
+        .as_array()
+        .ok_or("dx-scoreboard report has no `metrics` array")?;
+    let mut metrics = Vec::with_capacity(rows.len());
+    for row in rows {
+        let id = row["id"]
+            .as_str()
+            .ok_or("dx-scoreboard metric row has no string `id`")?;
+        let status = row["status"].as_str().unwrap_or("not_measured");
+        let value = if admissible(status) {
+            row["value"].as_f64().map_or(Value::Null, |v| json!(v))
+        } else {
+            Value::Null
+        };
+        // An admissible status without a number is an instrument gap, not a pass.
+        let status = if admissible(status) && value.is_null() {
+            "not_measured"
+        } else {
+            status
+        };
+        metrics.push(json!({
+            "id": id,
+            "board": row["board"],
+            "title": row["title"],
+            "unit": row["unit"],
+            "direction": row["direction"],
+            "target": row["target"],
+            "runner_dependent": row["runner_dependent"].as_bool().unwrap_or(true),
+            "partial": row["partial"].as_bool().unwrap_or(false),
+            "status": status,
+            "value": value,
+            "reason": row["reason"],
+        }));
+    }
+    Ok(json!({
+        "schema_version": RECEIPT_SCHEMA,
+        "date": date,
+        "revision": report["revision"],
+        "analyzer_version": report["analyzer_version"],
+        "runner_class": report["runner_class"],
+        "gate_status": report["gate"]["status"],
+        "metrics": metrics,
+    }))
+}
+
+/// Receipts by date. Files of another schema are ignored; a receipt without
+/// a valid date is an error. The current receipt owns its date.
+fn load_history(dir: &Path, current: &Value) -> Result<BTreeMap<String, Value>, String> {
+    let mut by_date = BTreeMap::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        let mut paths: Vec<PathBuf> = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+            .collect();
+        paths.sort();
+        for path in paths {
+            let receipt = read_json(&path)?;
+            if receipt["schema_version"] != json!(RECEIPT_SCHEMA) {
+                continue;
+            }
+            let date = receipt["date"]
+                .as_str()
+                .filter(|d| days_from_civil(d).is_some())
+                .ok_or_else(|| format!("{} has no valid `date`", path.display()))?
+                .to_string();
+            by_date.insert(date, receipt);
+        }
+    }
+    let date = current["date"]
+        .as_str()
+        .ok_or("current receipt has no date")?;
+    by_date.insert(date.to_string(), current.clone());
+    Ok(by_date)
+}
+
+/// Shortfall from the target in the metric's own unit (0 at or past it).
+fn shortfall(direction: &str, value: f64, target: f64) -> Option<f64> {
+    match direction {
+        "lower_is_better" => Some((value - target).max(0.0)),
+        "higher_is_better" => Some((target - value).max(0.0)),
+        _ => None,
+    }
+}
+
+/// Sort key for "how far from the bar": relative shortfall, with any miss of
+/// a zero target (false confidence, wrong verdicts) ranked above every
+/// relative miss because no ratio can express it.
+fn distance(shortfall: f64, target: f64) -> f64 {
+    if shortfall <= 0.0 {
+        0.0
+    } else if target == 0.0 {
+        f64::INFINITY
+    } else {
+        shortfall / target.abs()
+    }
+}
+
+fn better(direction: &str, from: f64, to: f64) -> &'static str {
+    let delta = to - from;
+    if delta.abs() <= f64::EPSILON * from.abs().max(1.0) {
+        return "same";
+    }
+    let improved = match direction {
+        "lower_is_better" => delta < 0.0,
+        _ => delta > 0.0,
+    };
+    if improved { "better" } else { "worse" }
+}
+
+fn metric_in<'a>(receipt: &'a Value, id: &str) -> Option<&'a Value> {
+    receipt["metrics"]
+        .as_array()?
+        .iter()
+        .find(|m| m["id"].as_str() == Some(id))
+}
+
+/// Earlier (date, value) pairs for one metric that are comparable with the
+/// current receipt, oldest first.
+fn comparable_series(
+    history: &BTreeMap<String, Value>,
+    current: &Value,
+    metric: &Value,
+) -> Vec<(String, f64)> {
+    let id = metric["id"].as_str().unwrap_or_default();
+    let date = current["date"].as_str().unwrap_or_default();
+    let runner_dependent = metric["runner_dependent"].as_bool().unwrap_or(true);
+    history
+        .iter()
+        .filter(|(day, _)| day.as_str() < date)
+        .filter(|(_, receipt)| {
+            !runner_dependent || receipt["runner_class"] == current["runner_class"]
+        })
+        .filter_map(|(day, receipt)| {
+            let past = metric_in(receipt, id)?;
+            if past["target"] != metric["target"] || past["direction"] != metric["direction"] {
+                return None;
+            }
+            Some((day.clone(), past["value"].as_f64()?))
+        })
+        .collect()
+}
+
+fn sparkline(values: &[f64]) -> String {
+    const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let (lo, hi) = values
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
+            (lo.min(*v), hi.max(*v))
+        });
+    values
+        .iter()
+        .map(|v| {
+            if hi - lo <= f64::EPSILON {
+                BARS[3]
+            } else {
+                let step = ((v - lo) / (hi - lo) * 7.0).round();
+                BARS[(step.clamp(0.0, 7.0)) as usize]
+            }
+        })
+        .collect()
+}
+
+/// Builds the trend page from the accumulated receipts.
+fn evaluate(history: &BTreeMap<String, Value>, current: &Value) -> Result<Value, String> {
+    let date = current["date"]
+        .as_str()
+        .ok_or("current receipt has no date")?;
+    let today = days_from_civil(date).ok_or("current receipt has an invalid date")?;
+    let week_cut = civil_from_days(today - WEEK_DAYS);
+    let metrics = current["metrics"]
+        .as_array()
+        .ok_or("current receipt has no metrics")?;
+    let mut off_bar = Vec::new();
+    let mut at_bar = Vec::new();
+    let mut unmeasured: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    let mut failed = Vec::new();
+    let mut moves = BTreeMap::from([("better", 0_u64), ("worse", 0), ("same", 0)]);
+    for metric in metrics {
+        let id = metric["id"].as_str().unwrap_or_default();
+        let board = metric["board"].as_str().unwrap_or("unknown").to_string();
+        let status = metric["status"].as_str().unwrap_or("not_measured");
+        if status == "failed" {
+            failed.push(json!({"id": id, "board": board, "reason": metric["reason"]}));
+            continue;
+        }
+        let (Some(value), Some(target)) = (metric["value"].as_f64(), metric["target"].as_f64())
+        else {
+            unmeasured
+                .entry(board)
+                .or_default()
+                .push(json!({"id": id, "reason": metric["reason"]}));
+            continue;
+        };
+        let direction = metric["direction"].as_str().unwrap_or_default();
+        let Some(short) = shortfall(direction, value, target) else {
+            unmeasured
+                .entry(board)
+                .or_default()
+                .push(json!({"id": id, "reason": format!("unknown direction `{direction}`")}));
+            continue;
+        };
+        let series = comparable_series(history, current, metric);
+        let previous = series.last().map(|(_, v)| *v);
+        let week_ago = series
+            .iter()
+            .rev()
+            .find(|(day, _)| day.as_str() <= week_cut.as_str())
+            .map(|(_, v)| *v);
+        if let Some(prev) = previous
+            && let Some(slot) = moves.get_mut(better(direction, prev, value))
+        {
+            *slot += 1;
+        }
+        let mut spark: Vec<f64> = series
+            .iter()
+            .rev()
+            .take(SPARK_NIGHTS - 1)
+            .map(|(_, v)| *v)
+            .collect();
+        spark.reverse();
+        spark.push(value);
+        let row = json!({
+            "id": id,
+            "board": board,
+            "title": metric["title"],
+            "unit": metric["unit"],
+            "direction": direction,
+            "target": target,
+            "value": value,
+            "partial": metric["partial"],
+            "shortfall": short,
+            "distance": distance(short, target),
+            "zero_target_miss": short > 0.0 && target == 0.0,
+            "previous": previous,
+            "since_previous": previous.map(|p| better(direction, p, value)),
+            "week_ago": week_ago,
+            "since_week_ago": week_ago.map(|w| better(direction, w, value)),
+            "nights": series.len() + 1,
+            "sparkline": sparkline(&spark),
+        });
+        if short > 0.0 {
+            off_bar.push(row);
+        } else {
+            at_bar.push(row);
+        }
+    }
+    off_bar.sort_by(|a, b| {
+        let key = |row: &Value| row["distance"].as_f64().unwrap_or(f64::INFINITY);
+        key(b)
+            .total_cmp(&key(a))
+            .then_with(|| a["id"].as_str().cmp(&b["id"].as_str()))
+    });
+    // JSON has no infinity; the flag above carries that rank.
+    for row in &mut off_bar {
+        if row["zero_target_miss"] == json!(true) {
+            row["distance"] = Value::Null;
+        }
+    }
+    at_bar.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+    let unmeasured_count: usize = unmeasured.values().map(Vec::len).sum();
+    Ok(json!({
+        "schema_version": PAGE_SCHEMA,
+        "date": date,
+        "revision": current["revision"],
+        "runner_class": current["runner_class"],
+        "gate_status": current["gate_status"],
+        "nights": history.len(),
+        "first_night": history.keys().next(),
+        "counts": {
+            "total": metrics.len(),
+            "off_bar": off_bar.len(),
+            "at_bar": at_bar.len(),
+            "not_measured": unmeasured_count,
+            "failed": failed.len(),
+        },
+        "since_previous": moves,
+        "off_bar": off_bar,
+        "at_bar": at_bar,
+        "not_measured": unmeasured,
+        "failed": failed,
+    }))
+}
+
+fn fmt_value(value: f64, unit: &str) -> String {
+    if unit == "ratio" {
+        return format!("{:.1}%", value * 100.0);
+    }
+    if value.fract() == 0.0 && value.abs() < 1e15 {
+        format!("{value:.0} {unit}")
+    } else {
+        format!("{value:.2} {unit}")
+    }
+}
+
+fn fmt_opt(value: &Value, unit: &str) -> String {
+    value
+        .as_f64()
+        .map_or_else(|| "—".to_string(), |v| fmt_value(v, unit))
+}
+
+fn fmt_move(row: &Value, key: &str) -> &'static str {
+    match row[key].as_str() {
+        Some("better") => " ↑",
+        Some("worse") => " ↓",
+        Some("same") => " =",
+        _ => "",
+    }
+}
+
+fn cell(text: &str) -> String {
+    text.replace('|', "\\|").replace('\n', " ")
+}
+
+fn render_markdown(page: &Value) -> String {
+    let counts = &page["counts"];
+    let mut out = String::new();
+    out.push_str(&format!(
+        "# DX scoreboard trend — {}\n\n",
+        page["date"].as_str().unwrap_or("?")
+    ));
+    out.push_str(&format!(
+        "Revision `{}` on `{}`; gate `{}`; {} night(s) of receipts since {}.\n\n",
+        page["revision"].as_str().unwrap_or("?"),
+        page["runner_class"].as_str().unwrap_or("?"),
+        page["gate_status"].as_str().unwrap_or("not_run"),
+        page["nights"],
+        page["first_night"].as_str().unwrap_or("?"),
+    ));
+    out.push_str(&format!(
+        "**{} of {} metrics are off their bar**, {} at it, {} not measured, {} failed. \
+         Since the previous comparable night: {} better, {} worse, {} unchanged.\n\n",
+        counts["off_bar"],
+        counts["total"],
+        counts["at_bar"],
+        counts["not_measured"],
+        counts["failed"],
+        page["since_previous"]["better"],
+        page["since_previous"]["worse"],
+        page["since_previous"]["same"],
+    ));
+    out.push_str("Arrows read against each metric's direction (↑ better, ↓ worse). Wall time and memory compare only with the same runner class.\n\n");
+    out.push_str("## Off the bar, farthest first\n\n");
+    if page["off_bar"].as_array().is_none_or(Vec::is_empty) {
+        out.push_str("Every measured metric is at its bar.\n\n");
+    } else {
+        out.push_str("| # | Metric | Now | Target | Short by | Previous | Week ago | Trend |\n");
+        out.push_str("|---|---|---|---|---|---|---|---|\n");
+        for (rank, row) in page["off_bar"].as_array().into_iter().flatten().enumerate() {
+            let unit = row["unit"].as_str().unwrap_or_default();
+            let short = if row["zero_target_miss"] == json!(true) {
+                "any (target 0)".to_string()
+            } else {
+                format!(
+                    "{:.0}%",
+                    row["distance"].as_f64().unwrap_or_default() * 100.0
+                )
+            };
+            let partial = if row["partial"] == json!(true) {
+                " (partial)"
+            } else {
+                ""
+            };
+            out.push_str(&format!(
+                "| {} | `{}` {}{} | {} | {} | {} | {}{} | {}{} | {} |\n",
+                rank + 1,
+                row["id"].as_str().unwrap_or_default(),
+                cell(row["title"].as_str().unwrap_or_default()),
+                partial,
+                fmt_opt(&row["value"], unit),
+                fmt_opt(&row["target"], unit),
+                short,
+                fmt_opt(&row["previous"], unit),
+                fmt_move(row, "since_previous"),
+                fmt_opt(&row["week_ago"], unit),
+                fmt_move(row, "since_week_ago"),
+                row["sparkline"].as_str().unwrap_or_default(),
+            ));
+        }
+        out.push('\n');
+    }
+    out.push_str("## At the bar\n\n");
+    let at: Vec<String> = page["at_bar"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|row| {
+            format!(
+                "`{}`{}",
+                row["id"].as_str().unwrap_or_default(),
+                fmt_move(row, "since_previous")
+            )
+        })
+        .collect();
+    out.push_str(&if at.is_empty() {
+        "None.\n\n".to_string()
+    } else {
+        format!("{}\n\n", at.join(", "))
+    });
+    if let Some(failed) = page["failed"].as_array().filter(|f| !f.is_empty()) {
+        out.push_str("## Failed instruments\n\n");
+        for row in failed {
+            out.push_str(&format!(
+                "- `{}`: {}\n",
+                row["id"].as_str().unwrap_or_default(),
+                cell(row["reason"].as_str().unwrap_or("no reason recorded"))
+            ));
+        }
+        out.push('\n');
+    }
+    out.push_str("## Not measured this night\n\n");
+    let boards = page["not_measured"].as_object();
+    if boards.is_none_or(serde_json::Map::is_empty) {
+        out.push_str("None.\n");
+    } else {
+        out.push_str("| Board | Count | Metrics |\n|---|---|---|\n");
+        for (board, rows) in boards.into_iter().flatten() {
+            let rows = rows.as_array().map(Vec::as_slice).unwrap_or_default();
+            let ids: Vec<String> = rows
+                .iter()
+                .map(|r| format!("`{}`", r["id"].as_str().unwrap_or_default()))
+                .collect();
+            out.push_str(&format!(
+                "| {board} | {} | {} |\n",
+                rows.len(),
+                ids.join(", ")
+            ));
+        }
+    }
+    out
+}
+
+/// Keeps the newest `keep` receipts in the history directory.
+fn prune(dir: &Path, keep: usize) -> Result<(), String> {
+    let mut receipts: Vec<PathBuf> = fs::read_dir(dir)
+        .map_err(|error| format!("read {}: {error}", dir.display()))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("dx-trend-") && n.ends_with(".json"))
+        })
+        .collect();
+    receipts.sort();
+    let excess = receipts.len().saturating_sub(keep);
+    for path in receipts.into_iter().take(excess) {
+        fs::remove_file(&path).map_err(|error| format!("remove {}: {error}", path.display()))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn run(args: &[String]) -> Result<(), String> {
+    let options = parse_options(args)?;
+    let date = match options.date {
+        Some(date) => date,
+        None => today_utc()?,
+    };
+    let report = read_json(&options.report)?;
+    let receipt = receipt_from_report(&report, &date)?;
+    let history = load_history(&options.history, &receipt)?;
+    let page = evaluate(&history, &receipt)?;
+    fs::create_dir_all(&options.history)
+        .map_err(|error| format!("create {}: {error}", options.history.display()))?;
+    let body = serde_json::to_string_pretty(&receipt)
+        .map_err(|error| format!("serialize receipt: {error}"))?;
+    let name = format!("dx-trend-{date}.json");
+    fs::write(options.history.join(&name), format!("{body}\n"))
+        .map_err(|error| format!("write receipt: {error}"))?;
+    prune(&options.history, options.keep)?;
+    let page_body =
+        serde_json::to_string_pretty(&page).map_err(|error| format!("serialize page: {error}"))?;
+    crate::write_report("dx-trend.json", &format!("{page_body}\n"))?;
+    let markdown = render_markdown(&page);
+    crate::write_report("dx-trend.md", &markdown)?;
+    println!("{markdown}");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(id: &str, direction: &str, target: f64, value: Option<f64>, status: &str) -> Value {
+        json!({
+            "id": id, "board": id.split('.').next().unwrap_or("x"), "title": id,
+            "unit": if id.starts_with("speed") { "ms" } else { "ratio" },
+            "direction": direction, "target": target, "value": value, "status": status,
+            "runner_dependent": id.starts_with("speed"), "reason": "why",
+        })
+    }
+
+    fn report(rows: Vec<Value>, runner: &str) -> Value {
+        json!({"report": "dx-scoreboard", "revision": "abc", "runner_class": runner,
+               "gate": {"status": "pass"}, "metrics": rows})
+    }
+
+    fn night(date: &str, runner: &str, rows: Vec<Value>) -> Result<Value, String> {
+        receipt_from_report(&report(rows, runner), date)
+    }
+
+    #[test]
+    fn dates_round_trip_and_reject_garbage() {
+        for date in [
+            "1970-01-01",
+            "2026-02-28",
+            "2026-03-01",
+            "2026-11-15",
+            "2000-02-29",
+        ] {
+            let days = days_from_civil(date);
+            assert!(days.is_some(), "{date}");
+            assert_eq!(civil_from_days(days.unwrap_or_default()), date);
+        }
+        assert_eq!(
+            days_from_civil("2026-11-15")
+                .map(|d| d - 7)
+                .map(civil_from_days)
+                .as_deref(),
+            Some("2026-11-08")
+        );
+        for bad in ["2026-13-01", "26-11-15", "2026-11-1x", "2026/11/15", ""] {
+            assert!(days_from_civil(bad).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_failed_or_valueless_row_never_trends_as_a_value() -> Result<(), String> {
+        let r = night(
+            "2026-11-15",
+            "linux-x64",
+            vec![
+                row("trust.a", "lower_is_better", 0.2, Some(0.9), "failed"),
+                row("trust.b", "lower_is_better", 0.2, None, "below_target"),
+                row("trust.c", "lower_is_better", 0.2, Some(0.1), "not_measured"),
+            ],
+        )?;
+        let metrics = r["metrics"].as_array().ok_or("metrics")?;
+        assert!(metrics.iter().all(|m| m["value"].is_null()));
+        assert_eq!(metrics[0]["status"], "failed");
+        assert_eq!(metrics[1]["status"], "not_measured");
+        let page = evaluate(&load_history(Path::new("/nonexistent"), &r)?, &r)?;
+        assert_eq!(page["counts"]["failed"], 1);
+        assert_eq!(page["counts"]["not_measured"], 2);
+        assert_eq!(page["counts"]["off_bar"], 0);
+        assert_eq!(page["counts"]["at_bar"], 0);
+        Ok(())
+    }
+
+    #[test]
+    fn a_report_of_another_kind_is_refused() {
+        let result = receipt_from_report(
+            &json!({"report": "outcome-page", "metrics": []}),
+            "2026-11-15",
+        );
+        assert!(matches!(result, Err(m) if m.contains("not a dx-scoreboard report")));
+    }
+
+    #[test]
+    fn off_bar_ranks_zero_target_misses_first_then_relative_distance() -> Result<(), String> {
+        let r = night(
+            "2026-11-15",
+            "linux-x64",
+            vec![
+                row(
+                    "speed.warm",
+                    "lower_is_better",
+                    1000.0,
+                    Some(1500.0),
+                    "below_target",
+                ),
+                row(
+                    "trust.abstention",
+                    "lower_is_better",
+                    0.2,
+                    Some(0.38),
+                    "below_target",
+                ),
+                row(
+                    "trust.false_exposed",
+                    "lower_is_better",
+                    0.0,
+                    Some(0.01),
+                    "below_target",
+                ),
+                row(
+                    "trust.recall",
+                    "higher_is_better",
+                    0.8,
+                    Some(0.6),
+                    "below_target",
+                ),
+                row(
+                    "trust.precision",
+                    "higher_is_better",
+                    0.95,
+                    Some(1.0),
+                    "meets_target",
+                ),
+            ],
+        )?;
+        let page = evaluate(&load_history(Path::new("/nonexistent"), &r)?, &r)?;
+        let ids: Vec<&str> = page["off_bar"]
+            .as_array()
+            .ok_or("off")?
+            .iter()
+            .filter_map(|r| r["id"].as_str())
+            .collect();
+        // 0.38 vs 0.2 is 90% short, 1500 vs 1000 is 50%, 0.6 vs 0.8 is 25%.
+        assert_eq!(
+            ids,
+            [
+                "trust.false_exposed",
+                "trust.abstention",
+                "speed.warm",
+                "trust.recall"
+            ]
+        );
+        assert!(page["off_bar"][0]["distance"].is_null());
+        assert_eq!(page["off_bar"][0]["zero_target_miss"], true);
+        assert_eq!(page["at_bar"][0]["id"], "trust.precision");
+        let md = render_markdown(&page);
+        assert!(md.contains("**4 of 5 metrics are off their bar**"));
+        assert!(md.contains("any (target 0)"));
+        assert!(md.contains("| 2 | `trust.abstention`"));
+        assert!(md.contains("90%"));
+        Ok(())
+    }
+
+    #[test]
+    fn trend_uses_previous_and_week_old_nights_and_skips_other_runners() -> Result<(), String> {
+        let mut history = BTreeMap::new();
+        for (date, runner, ms, ratio) in [
+            ("2026-11-06", "linux-x64", 3000.0, 0.40),
+            ("2026-11-08", "linux-x64", 2500.0, 0.39),
+            ("2026-11-14", "macos-arm64", 100.0, 0.30),
+        ] {
+            history.insert(
+                date.to_string(),
+                night(
+                    date,
+                    runner,
+                    vec![
+                        row(
+                            "speed.warm",
+                            "lower_is_better",
+                            1000.0,
+                            Some(ms),
+                            "below_target",
+                        ),
+                        row(
+                            "trust.abstention",
+                            "lower_is_better",
+                            0.2,
+                            Some(ratio),
+                            "below_target",
+                        ),
+                    ],
+                )?,
+            );
+        }
+        let current = night(
+            "2026-11-15",
+            "linux-x64",
+            vec![
+                row(
+                    "speed.warm",
+                    "lower_is_better",
+                    1000.0,
+                    Some(2000.0),
+                    "below_target",
+                ),
+                row(
+                    "trust.abstention",
+                    "lower_is_better",
+                    0.2,
+                    Some(0.35),
+                    "below_target",
+                ),
+            ],
+        )?;
+        history.insert("2026-11-15".to_string(), current.clone());
+        let page = evaluate(&history, &current)?;
+        let find = |id: &str| {
+            page["off_bar"]
+                .as_array()
+                .and_then(|rows| rows.iter().find(|r| r["id"] == id))
+                .cloned()
+                .unwrap_or_default()
+        };
+        let speed = find("speed.warm");
+        // The macOS night is not comparable wall time; the previous is 11-08.
+        assert_eq!(speed["previous"], 2500.0);
+        assert_eq!(speed["since_previous"], "better");
+        assert_eq!(speed["week_ago"], 2500.0);
+        assert_eq!(speed["nights"], 3);
+        let ratio = find("trust.abstention");
+        // Runner-independent: the macOS night counts and is worse than 0.35.
+        assert_eq!(ratio["previous"], 0.30);
+        assert_eq!(ratio["since_previous"], "worse");
+        assert_eq!(ratio["week_ago"], 0.39);
+        assert_eq!(ratio["since_week_ago"], "better");
+        assert_eq!(page["since_previous"]["better"], 1);
+        assert_eq!(page["since_previous"]["worse"], 1);
+        Ok(())
+    }
+
+    #[test]
+    fn a_moved_target_starts_a_new_series() -> Result<(), String> {
+        let mut history = BTreeMap::new();
+        history.insert(
+            "2026-11-14".to_string(),
+            night(
+                "2026-11-14",
+                "linux-x64",
+                vec![row(
+                    "trust.abstention",
+                    "lower_is_better",
+                    0.3,
+                    Some(0.25),
+                    "meets_target",
+                )],
+            )?,
+        );
+        let current = night(
+            "2026-11-15",
+            "linux-x64",
+            vec![row(
+                "trust.abstention",
+                "lower_is_better",
+                0.2,
+                Some(0.25),
+                "below_target",
+            )],
+        )?;
+        let page = evaluate(&history, &current)?;
+        assert!(page["off_bar"][0]["previous"].is_null());
+        Ok(())
+    }
+
+    #[test]
+    fn run_writes_a_receipt_reads_it_back_and_prunes_the_oldest() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-dx-trend-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let report_path = dir.join("dx-scoreboard.json");
+        let history = dir.join("history");
+        fs::create_dir_all(&history).map_err(|e| e.to_string())?;
+        fs::write(
+            history.join("unrelated.json"),
+            "{\"schema_version\": \"other\"}",
+        )
+        .map_err(|e| e.to_string())?;
+        for (date, value) in [
+            ("2026-11-13", 0.40),
+            ("2026-11-14", 0.38),
+            ("2026-11-15", 0.36),
+        ] {
+            let body = report(
+                vec![row(
+                    "trust.abstention",
+                    "lower_is_better",
+                    0.2,
+                    Some(value),
+                    "below_target",
+                )],
+                "linux-x64",
+            );
+            fs::write(&report_path, body.to_string()).map_err(|e| e.to_string())?;
+            let args: Vec<String> = [
+                "--report",
+                report_path.to_str().unwrap_or_default(),
+                "--history",
+                history.to_str().unwrap_or_default(),
+                "--date",
+                date,
+                "--keep",
+                "2",
+            ]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+            run(&args)?;
+        }
+        let mut names: Vec<String> = fs::read_dir(&history)
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "dx-trend-2026-11-14.json",
+                "dx-trend-2026-11-15.json",
+                "unrelated.json"
+            ]
+        );
+        let saved = read_json(&history.join("dx-trend-2026-11-15.json"))?;
+        assert_eq!(saved["metrics"][0]["value"], 0.36);
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn options_need_report_and_history() {
+        assert!(matches!(parse_options(&[]), Err(m) if m.contains("--report is required")));
+        let args: Vec<String> = ["--report", "r.json", "--history", "h", "--date", "2026-1-1"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        assert!(matches!(parse_options(&args), Err(m) if m.contains("is not YYYY-MM-DD")));
+    }
+}

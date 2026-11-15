@@ -169,6 +169,17 @@ the regression gate, and runs nightly. See
 for boards, instruments, and the ingest format, and
 `metrics/dx-scoreboard/baseline.json` for the committed baseline.
 
+Each nightly run also keeps one dated receipt and renders one trend page
+(`cargo xtask dx-trend`, [#14795](https://github.com/EffortlessMetrics/ripr-swarm/issues/14795)).
+The page ranks every measured metric by its distance from the target declared
+in `scoreboards.toml`, farthest first, with the previous comparable night, the
+value a week earlier and a sparkline over the last 14 nights. Wall time and
+memory compare only with receipts from the same runner class. Failed and
+not-measured metrics are listed by board and never count as at the bar. The
+page is in the run's job summary and the `dx-trend` artifact; receipts
+accumulate in the `dx-trend-receipts` artifact (newest 120 kept). It adds no
+gate.
+
 ## Current Baseline
 
 Release-ladder numbers live in [Position on 2026-11-04](#position-on-2026-11-04).

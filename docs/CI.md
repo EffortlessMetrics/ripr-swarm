@@ -393,7 +393,7 @@ remain in their producing workflows.
 No workflow downloads these four artifacts. Their retrieval window is not a
 retention rule for release or qualification evidence, failure reproducer inputs,
 or reports consumed by later runs. In particular, `dx-scoreboard` feeds the
-outcome page, `outcome-receipts` carries historical trend inputs, and Windows
+outcome page, `outcome-receipts` and `dx-trend-receipts` carry historical trend inputs, and Windows
 Advisory artifacts support retained native dependency receipts. Those artifacts
 keep their existing retention. A diagnostic needed for a longer-lived proof or
 incident must receive its own retention treatment before its copy expires;
