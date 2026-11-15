@@ -705,9 +705,61 @@ fail-closed and every other shape keeps the ordinary reading. It requires:
   `&&`, macro, call, index, `/` or `%` precedes it, and `,`, `;` or `}`
   follows it.
 
+Guarded boundary rule (#13037): a changed comparison joined by top-level
+`&&` to guards that are each a bare owner parameter or its negation
+(`order_cents >= FREE_OVER_CENTS && !express`) compares the parameter with
+the boundary; the guards are not part of either operand. The boundary must
+be a literal or a constant the rules above resolve, the compared parameter
+and every guard must be parameters the owner never rebinds, nothing
+before the changed line may divert a row, and the edit must leave the
+guards as they were (same names and polarity): an edit that adds, removes
+or flips a guard is not read this way, since rows that hold the new guards
+may behave the same on both sides, and keeps the general reading. Every
+related row must spell each guard as a literal. A shape with unchanged bare
+parameter guards that misses another condition is declined, as listed
+below. Then:
+
+- only a test call that holds every guard as a literal (`express = false`)
+  and sits on the boundary value activates the boundary, and same-test
+  pairing reads each observed call (and each bound result) on its own, so a
+  boundary call that misses a guard never pairs with an exact assertion;
+- a boundary row tells the versions apart only when the edit changed just
+  the operator and the old and new operators disagree at equality (`>` to
+  `>=`, not `>=` to `<=`), or when an equality test (`==` or `!=`) kept its
+  operator and changed only the compared value (`x == 4000` to
+  `x == 5000`), whose new-value row takes the other branch in each version;
+  a moved ordering threshold (`x >= 5` to `x >= 6`) is not read this way;
+- a pure insertion is read only for a non-strict operator (`>=`, `<=`,
+  `==`), whose boundary row enters the inserted branch, as for a lone
+  inserted guard (#12414);
+- when readable rows exist but none holding the guards sits on the
+  boundary, the boundary is unresolved (`infection unknown`) with the guard
+  and boundary value named. It is never reported as an actionable missing
+  discriminator, because this narrow reading cannot tell a fixture or
+  builder input it does not see from a missing one;
+- a guarded shape this rule declines is unresolved (`infection unknown`)
+  with the guards named, never an actionable gap. That covers a `mut` or
+  rebound guard, a compared side that is not a plain owner parameter (a
+  field, a local, a call or arithmetic), a boundary whose value the owner's
+  file does not show, an earlier branch or early return before the changed
+  line, a moved ordering threshold, operators that agree at the boundary, a
+  strict inserted comparison, and rows that do not spell each guard as a
+  literal. It does not fall
+  through to the compound-predicate reading (#9637, RIPR-SPEC-0158), which
+  reads the comparison without its guards and would credit a boundary row
+  with `express = true`, a row neither version tells apart;
+- any other compound shape (`||`, a guard that is a call or a comparison,
+  two comparisons) keeps the previous reading unchanged.
+
 ## Test Mapping
 
 Fixture coverage:
+
+- `crates/ripr/tests/guarded_boundary_13037.rs` (guarded boundary rule: a
+  guard-holding boundary pin is exposed; guard-missing rows, no boundary
+  row, split tests, a guard-missing bound result (also beside a same-line
+  sibling), an added guard, a moved threshold, operators that agree at the
+  boundary, a strict insertion and a rebound guard are not credited)
 
 - `unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim`
 - `weak_direct_owner_assertion_keeps_exact_value_advice`
