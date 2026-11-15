@@ -855,7 +855,8 @@ fn stash_timeout_refusal(site: &TimeoutRefusalSite<'_>) {
 }
 
 pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
-    check_inner(args, None)
+    // #14700: one run, so each index-level analysis-limit family prints once.
+    crate::analysis::IndexDisclosureRun::default().scope(|| check_inner(args, None))
 }
 
 #[cfg(unix)]
@@ -863,7 +864,7 @@ pub(in crate::cli) fn check_with_interrupt_flags(
     args: &[String],
     flags: crate::cli::interrupt::InterruptFlags,
 ) -> Result<(), String> {
-    check_inner(args, Some(flags))
+    crate::analysis::IndexDisclosureRun::default().scope(|| check_inner(args, Some(flags)))
 }
 
 fn check_inner(

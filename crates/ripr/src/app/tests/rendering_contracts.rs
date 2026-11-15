@@ -158,6 +158,22 @@ fn json_terse_round_trips_fixture_prose_and_beats_compact_in_size() -> Result<()
                 .collect();
             assert_eq!(expanded, original, "{key} did not round-trip");
         }
+        // Related-test oracle lines and `why` sentences expand back (#13673).
+        let mut restored_rows = terse_finding["related_tests"].clone();
+        if let Some(rows) = restored_rows.as_array_mut() {
+            for row in rows {
+                for key in ["oracle", "why"] {
+                    if let Some(text) = row.get(key).and_then(serde_json::Value::as_str) {
+                        let text = expand(text);
+                        row[key] = serde_json::Value::String(text);
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            full_finding["related_tests"], restored_rows,
+            "related_tests did not round-trip"
+        );
     }
     // Head identity fields are untouched.
     for key in [

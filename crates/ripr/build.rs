@@ -41,8 +41,11 @@ fn main() {
     let (commit, dirty) = identity.unwrap_or_default();
     // A commit identifies a clean build's code. A dirty or commit-less build
     // is identified by its sources instead, so persisted analysis caches
-    // never serve one such build's results to another.
-    let source_digest = if commit.is_empty() || dirty {
+    // never serve one such build's results to another. Skip the 58+ MB source
+    // digest on non-release profiles (dev/test), where `build_identity` falls
+    // back to a per-process identity.
+    let is_release = std::env::var("PROFILE").as_deref() == Ok("release");
+    let source_digest = if is_release && (commit.is_empty() || dirty) {
         manifest_dir
             .as_deref()
             .map(Path::new)
