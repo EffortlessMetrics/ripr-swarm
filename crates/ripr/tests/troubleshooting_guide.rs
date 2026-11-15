@@ -387,6 +387,15 @@ const SITUATIONS: &[Situation] = &[
             repo.ripr(&["explain", "tests/t.rs:4"]).map(Some)
         },
     },
+    Situation {
+        section: "Attach a verbose log",
+        exit: 0,
+        reproduce: || {
+            let repo = Scratch::repo()?;
+            repo.write("src/lib.rs", CHANGED_SRC)?;
+            repo.ripr(&["-v", "check"]).map(Some)
+        },
+    },
 ];
 
 fn guide() -> Result<String, String> {

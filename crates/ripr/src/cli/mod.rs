@@ -143,6 +143,20 @@ fn run_with_policy(args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
     outcome
 }
 
+/// `ripr help --json`: the strict one-flag machine-discovery route (#4825).
+fn machine_discovery_route(args: &[String]) -> bool {
+    // `args` still carries argv[0]; the command body starts at index 1.
+    args.get(1).is_some_and(|arg| arg == "help") && args.get(2).is_some_and(|arg| arg == "--json")
+}
+
+/// Whether `RIPR_VERBOSE` asks for the global verbose diagnostics. Shared by
+/// the CLI dispatch and the binary's MCP route so both read one switch.
+#[doc(hidden)]
+pub fn verbose_requested_by_env() -> bool {
+    let value = std::env::var(progress::VERBOSE_ENV).ok();
+    progress::verbose_env_value(value.as_deref())
+}
+
 fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), CommandError> {
     let version_requested = parse::top_level_version_requested(&args);
     // #2610: the global --verbose/-v spelling is extracted before command
@@ -153,7 +167,8 @@ fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
     // `ripr -v -v mcp` routed. Version is a side-effect-free identity
     // query, so it must not emit the verbose diagnostic even when callers
     // append or prepend the flag.
-    if !version_requested && parse::extract_global_verbose(&mut args) {
+    let verbose_flag = !version_requested && parse::extract_global_verbose(&mut args);
+    if verbose_flag {
         crate::set_verbose(true);
         // #4825: the machine-discovery route has a strict one-flag grammar and
         // a silent-stderr contract. Combining it with the global verbosity
@@ -168,6 +183,12 @@ fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
             ));
         }
         eprintln!("ripr: verbose mode enabled");
+    } else if !version_requested && !machine_discovery_route(&args) && verbose_requested_by_env() {
+        // `RIPR_VERBOSE` is the flag's environment twin. Unlike the flag it
+        // never turns the machine-discovery route into a usage error: an
+        // ambient variable leaves that route's silent-stderr contract alone.
+        crate::set_verbose(true);
+        eprintln!("ripr: verbose mode enabled (RIPR_VERBOSE)");
     }
     // Selection is side-effect-free parsing; the lock is acquired before the
     // first side-effecting step (workflow execution and attempt publication),

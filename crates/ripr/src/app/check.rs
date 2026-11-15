@@ -528,6 +528,11 @@ fn check_with_progress_and_origins_run(
             probes = crate::output::count_noun::count_noun(probe_count, "probe", "probes"),
             findings = crate::output::count_noun::count_noun(finding_count, "finding", "findings"),
         );
+        // Why each finding landed in its class: the stage states and the
+        // first stage that is not `yes`, bounded per run (verbose only).
+        for line in super::verbose_trace::verdict_lines(&analysis.findings) {
+            eprintln!("{line}");
+        }
         // #10725: persistent per-file fact-cache admissions, one line per
         // language that did cache work. A zero-work run stays silent — the
         // renderer returns None instead of borrowing counts.

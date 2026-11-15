@@ -25,6 +25,25 @@ pub(crate) enum AnalysisProgressStage {
     Failed,
 }
 
+impl AnalysisProgressStage {
+    /// Stable lowercase token: the `analyzing` in a `ripr progress:` line and
+    /// the `ripr: timing:` phase lines printed under `-v`/`RIPR_VERBOSE`.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::LoadingInput => "loading_input",
+            Self::Analyzing => "analyzing",
+            Self::BuildingOutput => "building_output",
+            Self::Completed => "completed",
+            Self::Cancelled => "cancelled",
+            Self::Failed => "failed",
+        }
+    }
+
+    const fn is_terminal_stage(self) -> bool {
+        matches!(self, Self::Completed | Self::Cancelled | Self::Failed)
+    }
+}
+
 /// Mode identity without a checkout path or source text.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AnalysisProgressScope {
@@ -108,6 +127,10 @@ pub(crate) struct ProgressRun<'a> {
     scope: AnalysisProgressScope,
     started: Instant,
     terminal: bool,
+    /// The last stage boundary and its elapsed time, recorded only under
+    /// `-v`/`RIPR_VERBOSE` so the phase-timing lines can name how long each
+    /// stage took. Off, it stays `None` and costs nothing.
+    phase_mark: Option<(AnalysisProgressStage, u64)>,
 }
 
 impl<'a> ProgressRun<'a> {
@@ -120,6 +143,7 @@ impl<'a> ProgressRun<'a> {
             scope,
             started: Instant::now(),
             terminal: false,
+            phase_mark: None,
         }
     }
 
@@ -154,7 +178,14 @@ impl<'a> ProgressRun<'a> {
         self.emit_now(stage);
     }
 
-    fn emit_now(&self, stage: AnalysisProgressStage) {
+    fn emit_now(&mut self, stage: AnalysisProgressStage) {
+        if crate::is_verbose() {
+            let now = elapsed_ms(self.started);
+            for line in phase_timing_lines(self.scope, self.phase_mark, stage, now) {
+                eprintln!("{line}");
+            }
+            self.phase_mark = Some((stage, now));
+        }
         let Some(sink) = self.sink else {
             return;
         };
@@ -175,6 +206,35 @@ impl Drop for ProgressRun<'_> {
         };
         self.finish(stage);
     }
+}
+
+/// The `-v`/`RIPR_VERBOSE` phase-timing lines for one stage boundary: the
+/// previous stage's duration, and the run total when `stage` is terminal.
+/// Pure so the wording is testable without a clock or stderr capture.
+fn phase_timing_lines(
+    scope: AnalysisProgressScope,
+    previous: Option<(AnalysisProgressStage, u64)>,
+    stage: AnalysisProgressStage,
+    now_ms: u64,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some((previous_stage, started_ms)) = previous {
+        lines.push(format!(
+            "ripr: timing [{}] {} took {} ms",
+            scope.as_str(),
+            previous_stage.as_str(),
+            now_ms.saturating_sub(started_ms)
+        ));
+    }
+    if stage.is_terminal_stage() {
+        lines.push(format!(
+            "ripr: timing [{}] {} after {} ms total",
+            scope.as_str(),
+            stage.as_str(),
+            now_ms
+        ));
+    }
+    lines
 }
 
 fn elapsed_ms(started: Instant) -> u64 {
@@ -830,5 +890,48 @@ mod tests {
                 "{name} failure must never project completed"
             );
         }
+    }
+
+    #[test]
+    fn phase_timing_lines_name_the_previous_stage_duration_and_the_terminal_total() {
+        let scope = AnalysisProgressScope::Diff;
+        assert!(
+            phase_timing_lines(scope, None, AnalysisProgressStage::LoadingInput, 0).is_empty(),
+            "the first boundary has no previous stage to time"
+        );
+        assert_eq!(
+            phase_timing_lines(
+                scope,
+                Some((AnalysisProgressStage::LoadingInput, 5)),
+                AnalysisProgressStage::Analyzing,
+                17,
+            ),
+            vec!["ripr: timing [diff] loading_input took 12 ms".to_string()]
+        );
+        assert_eq!(
+            phase_timing_lines(
+                AnalysisProgressScope::Repo,
+                Some((AnalysisProgressStage::BuildingOutput, 40)),
+                AnalysisProgressStage::Completed,
+                43,
+            ),
+            vec![
+                "ripr: timing [repo] building_output took 3 ms".to_string(),
+                "ripr: timing [repo] completed after 43 ms total".to_string(),
+            ]
+        );
+        // A clock that reads earlier than the mark never underflows.
+        assert_eq!(
+            phase_timing_lines(
+                scope,
+                Some((AnalysisProgressStage::Analyzing, 9)),
+                AnalysisProgressStage::Failed,
+                4,
+            ),
+            vec![
+                "ripr: timing [diff] analyzing took 0 ms".to_string(),
+                "ripr: timing [diff] failed after 4 ms total".to_string(),
+            ]
+        );
     }
 }
