@@ -331,6 +331,7 @@ class Journey {
     this.platform = process.platform;
     this.checks = [];
     this.log = [];
+    this.unownedDescendants = false;
     this.npm = npmCli();
     // An explicit --work must be new or empty: the run deletes it afterwards
     // and its cold-cache and decoy claims assume no earlier state.
@@ -444,11 +445,18 @@ class Journey {
       // descendant (npm -> launcher -> native), not just the direct child.
       detached: !isWindows(this.platform),
     });
-    if (result.error && result.error.code === "ETIMEDOUT" && result.pid && !isWindows(this.platform)) {
-      try {
-        process.kill(-result.pid, "SIGKILL");
-      } catch {
-        // the group already exited
+    if (result.error && result.error.code === "ETIMEDOUT") {
+      if (isWindows(this.platform)) {
+        // Node stops only the direct child on Windows, so descendants of a
+        // timed-out step may outlive it. Owned teardown is not implemented
+        // there; fail cleanup closed so the gate refuses the receipt.
+        this.unownedDescendants = true;
+      } else if (result.pid) {
+        try {
+          process.kill(-result.pid, "SIGKILL");
+        } catch {
+          // the group already exited
+        }
       }
     }
     const entry = {
@@ -807,6 +815,15 @@ class Journey {
 
   cleanup() {
     if (this.options.keep) return "not_run";
+    if (this.unownedDescendants) {
+      this.log.push({ label: "cleanup", error: "a step timed out on Windows, where descendant teardown is not owned; cleanup fails closed" });
+      try {
+        fs.rmSync(this.root, { recursive: true, force: true, maxRetries: 3 });
+      } catch {
+        // still failed closed below
+      }
+      return "failed";
+    }
     try {
       fs.rmSync(this.root, { recursive: true, force: true, maxRetries: 3 });
       return fs.existsSync(this.root) ? "failed" : "passed";

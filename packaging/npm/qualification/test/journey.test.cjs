@@ -362,6 +362,18 @@ test("a step timeout takes down the whole process group", (t) => {
   }
 });
 
+test("a Windows step timeout fails cleanup closed because descendant teardown is not owned there", () => {
+  const journey = new Journey({ stepTimeoutMs: 300 });
+  journey.platform = "win32";
+  const result = journey.run("hang", process.execPath, ["-e", "setTimeout(() => {}, 30000)"], journey.root);
+  assert.equal(result.error && result.error.code, "ETIMEDOUT");
+  assert.equal(journey.cleanup(), "failed");
+  const quick = new Journey({ stepTimeoutMs: 30000 });
+  quick.platform = "win32";
+  assert.equal(quick.run("quick", process.execPath, ["-e", "0"], quick.root).status, 0);
+  assert.equal(quick.cleanup(), "passed");
+});
+
 test("journey fails closed when the emitted continuation is unusable", async (t) => {
   if (!POSIX || !currentPlatform()) {
     t.skip("continuation control uses a POSIX shell payload");

@@ -69,7 +69,8 @@ The receipt is a typed `package_qualification_receipt`. Any failed step fails
 the row, and a row without an executed payload hash can't pass. The log keeps
 bounded stdout and stderr tails for each command. On POSIX each command runs in
 its own process group, so a step that times out takes its descendants down
-with it.
+with it. Windows has no owned descendant teardown yet: a step that times out
+there fails cleanup, so the gate refuses the receipt.
 
 Limits: only the recorded Node and npm versions and package manager are
 exercised. On Windows the `.bin/ripr.cmd` shim runs only through `npm run` and
