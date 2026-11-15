@@ -436,8 +436,12 @@ fn bare_chain() {
         let source = GOOD.replace("bolero::check!()", "check!()");
         let function = named_test_function(&source, "increment_matches_model")?;
         assert!(!bolero_macro_escape_allowed(&function, &source, "check"));
+        // A complete qualified profile without a `use bolero::check` binding:
+        // only the file-binding conjunct refuses an opaque bare `check`.
+        let good_function = named_test_function(GOOD, "increment_matches_model")?;
+        assert!(!bolero_macro_escape_allowed(&good_function, GOOD, "check"));
         assert!(bolero_macro_escape_allowed(
-            &function,
+            &good_function,
             GOOD,
             "bolero::check"
         ));
