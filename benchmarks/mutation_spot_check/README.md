@@ -68,7 +68,9 @@ runs `cargo xtask mutation-spot-check --run-mutants` on a hosted runner with
 read-only permissions and no secrets, and uploads that crate's receipt and
 `mutants.out` as `spot-<name>`; a lost or timed-out runner costs one crate
 (#13650). A final `score` job re-pins the crates whose `mutants.out` remained,
-scores them together through `--mutants-out`, and uploads the scoreboard receipt
+scores them together through `--mutants-out` (with `--rust-diff-mode --max-mutants
+300`, so the receipt also carries the product-path `rust_diff_mode` recall; the
+score step is bounded at 150 minutes so the upload still runs), and uploads the scoreboard receipt
 as the `mutation-spot-check` artifact (its `cargo_mutants_args` and
 `mutant_timeout_secs` read `null`, as for any supplied `--mutants-out`; the
 per-crate `spot-<name>` receipts keep them). It runs only on explicit
