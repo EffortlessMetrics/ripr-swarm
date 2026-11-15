@@ -315,6 +315,14 @@ const CATALOG: &[CommandCatalogEntry] = &[
         GATE,
         DiscoveryPosture::OrdinaryPublic,
     ),
+    nested(
+        "cmd:gate.check",
+        "gate check",
+        CommandClass::Public,
+        CommandDispatch::Gate,
+        GATE,
+        DiscoveryPosture::OrdinaryPublic,
+    ),
     public_top("cmd:baseline", "baseline", CommandDispatch::Baseline),
     nested(
         "cmd:baseline.create",

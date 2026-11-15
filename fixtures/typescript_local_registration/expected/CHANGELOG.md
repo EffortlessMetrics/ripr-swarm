@@ -233,3 +233,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_local_registration (19)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless typescript_local_registration --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_local_registration (20)
+
+Reason:
+RIPR-SPEC-0147: human limitation lines carry the producer's bounded detail (#14398)
+
+Command:
+`cargo xtask goldens bless typescript_local_registration --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

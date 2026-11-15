@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python checks: credit `assert f(x) is True`/`is False` and unittest `assertTrue`/`assertFalse`/`assertIs` as exact pins when the callee is a provably bool-returning function called with literal arguments in a stock `unittest.TestCase`; `is not None`, bare truthiness on non-bool owners, `isinstance` and vacuous asserts stay uncredited, and a still-open Python gap now names the credited assertion forms (#13620).

@@ -163,7 +163,8 @@ and unbounded `pr-evidence` path omit the object.
   start the selected preview finding (#13599; the class stays non-executable).
 - `crates/ripr/src/output/human/agent.rs`: compact agent adapter; `repairable=1`
   and `next=` read the same gap-bound start, and the token is set only when
-  that start can run now (#13599).
+  that start can run now (#13599); `unconfirmed_gaps=` counts the listed
+  preview-only or reach-limited gap records beside `gaps=` (#13803).
 - `crates/ripr/src/output/render.rs`: navigation-aware check JSON adapter
   embeds the same producer decision; generic JSON omits it.
 - `crates/ripr/src/app/navigation.rs`: `CheckDiffProvenance::from_effective_source`
