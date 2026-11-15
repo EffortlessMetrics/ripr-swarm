@@ -106,12 +106,13 @@ fn replaced_elsewhere(
 ///   `patch` or `monkeypatch`, which replace what an import returns, and
 ///   the object-graph and frame routes to a module's dict (`gc`,
 ///   `get_referents`, `get_referrers`, `get_objects`, `ctypes`,
-///   `__globals__`, `f_back`, `tb_frame`);
+///   `__globals__`, `f_back`, `tb_frame`), and a package search-path edit
+///   (`__path__`, `__spec__`) that lets an import load another `name`;
 /// - the package referenced by name (any part of its dotted spelling as an
 ///   identifier, as in `import tests`), outside a `from ... import` path;
-/// - a string that is `name`, the package or a dotted path under it (a
-///   `mock.patch("tests.tomllib")` target), or that spells a writer
-///   (`getattr(m, "__setattr__")`);
+/// - a plain string containing `name` (`".tomllib"`), or that is the
+///   package or a dotted path under it (a `mock.patch("tests.tomllib")`
+///   target), or that spells a writer (`getattr(m, "__setattr__")`);
 /// - an f-string, whose fields run, that the initializer text rule refuses.
 ///
 /// A module that does not lex refuses.
@@ -155,16 +156,27 @@ fn module_may_replace(text: &str, name: &str, package: &str) -> bool {
                             | "__globals__"
                             | "f_back"
                             | "tb_frame"
+                            | "__path__"
+                            | "__spec__"
+                            | "submodule_search_locations"
                     )
                     || (!from_path && parts.contains(&ident.as_str()))
             }
             Tok::String { value, kind, .. } => {
-                value == name
+                (value.contains(name)
+                    && !matches!(kind, StringKind::FString | StringKind::RawFString))
                     || value == first
                     || value.starts_with(&format!("{first}."))
-                    || ["setattr", "delattr", "__dict__", "__class__", "__import__"]
-                        .iter()
-                        .any(|part| value.contains(part))
+                    || [
+                        "setattr",
+                        "delattr",
+                        "__dict__",
+                        "__class__",
+                        "__import__",
+                        "__path__",
+                    ]
+                    .iter()
+                    .any(|part| value.contains(part))
                     || (matches!(kind, StringKind::FString | StringKind::RawFString)
                         && (rebinds_dynamically(&value) || names_attribute(&value, name)))
             }
