@@ -990,7 +990,7 @@ fn render_owner_opt_out_block(out: &mut String, output: &CheckOutput) {
                 finding.probe.location.line,
                 finding.class.as_str(),
                 opt_out.owner,
-                opt_out.scope_phrase(),
+                owner_opt_out_scope_phrase(opt_out),
                 opt_out.reason.as_str()
             ));
         }
@@ -1005,7 +1005,38 @@ fn render_owner_opt_out_block(out: &mut String, output: &CheckOutput) {
 pub(crate) fn render_owner_opt_out_explain_line(
     opt_out: &crate::analysis::owner_opt_out::OwnerOptOut,
 ) -> String {
-    terminal_safe(format!("{}\n\n", opt_out.explain_line()))
+    terminal_safe(format!("{}\n\n", owner_opt_out_explain_text(opt_out)))
+}
+
+/// `fn`, `fn outer`, `impl Cart`, `module a`, `file`: an opt-out's scope as
+/// one phrase.
+fn owner_opt_out_scope_phrase(opt_out: &crate::analysis::owner_opt_out::OwnerOptOut) -> String {
+    if opt_out.scope_label.is_empty() {
+        opt_out.scope.as_str().to_string()
+    } else {
+        format!("{} {}", opt_out.scope.as_str(), opt_out.scope_label)
+    }
+}
+
+/// The one-line statement `ripr explain` prints for a withheld finding.
+fn owner_opt_out_explain_text(opt_out: &crate::analysis::owner_opt_out::OwnerOptOut) -> String {
+    use crate::analysis::owner_opt_out::OwnerOptOutScope;
+    let marked = "marked #[mutants::skip]";
+    let reason = opt_out.reason.as_str();
+    let owner = &opt_out.owner;
+    match opt_out.scope {
+        OwnerOptOutScope::Fn if opt_out.scope_label.is_empty() => {
+            format!("Withheld: owner `{owner}` is {marked} ({reason})")
+        }
+        OwnerOptOutScope::File => {
+            format!("Withheld: owner `{owner}` is in a file {marked} ({reason})")
+        }
+        scope => format!(
+            "Withheld: owner `{owner}` is inside {} `{}` {marked} ({reason})",
+            scope.as_str(),
+            opt_out.scope_label
+        ),
+    }
 }
 
 /// Emit the `--suppression-policy` application block (#1441): which policy

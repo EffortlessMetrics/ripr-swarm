@@ -101,38 +101,6 @@ pub(crate) struct OwnerOptOut {
     pub(crate) scope_label: String,
 }
 
-impl OwnerOptOut {
-    /// `fn`, `fn outer`, `impl Cart`, `module a`, `file`: the scope as one
-    /// phrase.
-    pub(crate) fn scope_phrase(&self) -> String {
-        if self.scope_label.is_empty() {
-            self.scope.as_str().to_string()
-        } else {
-            format!("{} {}", self.scope.as_str(), self.scope_label)
-        }
-    }
-
-    /// The one-line statement `ripr explain` prints for a withheld finding.
-    pub(crate) fn explain_line(&self) -> String {
-        let marked = "marked #[mutants::skip]";
-        let reason = self.reason.as_str();
-        let owner = &self.owner;
-        match self.scope {
-            OwnerOptOutScope::Fn if self.scope_label.is_empty() => {
-                format!("Withheld: owner `{owner}` is {marked} ({reason})")
-            }
-            OwnerOptOutScope::File => {
-                format!("Withheld: owner `{owner}` is in a file {marked} ({reason})")
-            }
-            scope => format!(
-                "Withheld: owner `{owner}` is inside {} `{}` {marked} ({reason})",
-                scope.as_str(),
-                self.scope_label
-            ),
-        }
-    }
-}
-
 /// The opt-out decided for one owner function: its scope and that scope's
 /// label, or `None` when nothing opts it out.
 type Decision = Option<(OwnerOptOutScope, String)>;

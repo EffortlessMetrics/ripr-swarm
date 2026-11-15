@@ -1978,3 +1978,11 @@ path = "docs/specs/RIPR-SPEC-0352-inherent-receiver-unestablished-limit.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Records the inherent-receiver unestablished contract: a gap whose only refusal is an assertion macro binding that cannot be verified because target-root placement is unavailable reads static_unknown under rust_inherent_receiver_unestablished, credits nothing, and keeps every real receiver mismatch and every available-placement rebinding as a gap."
+
+[[artifact]]
+id = "RIPR-SPEC-0450"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0450-owner-opt-out-enclosing-scopes.md"
+status = "accepted"
+owner = "product-swarm"
+standalone_reason = "Pins which enclosing #[mutants::skip] scopes (fn, impl, trait, inline module, file) withhold a finding the way cargo-mutants skips it, the fail-closed parser rules, and the scope disclosure and explain line (#14135, #14133)."
