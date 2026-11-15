@@ -14,10 +14,10 @@ Linked issues:
 - Extends [RIPR-SPEC-0203](RIPR-SPEC-0203-global-verbose-flag-contract.md),
   whose non-goals excluded new diagnostics.
 
-Support-tier impact:
+Support-tier impact: None
 
-- None. Diagnostics go to stderr only; no stdout, JSON, SARIF or exit-code
-  contract changes.
+Diagnostics go to stderr only; no stdout, JSON, SARIF or exit-code contract
+changes.
 
 Policy impact:
 
