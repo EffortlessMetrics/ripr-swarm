@@ -209,8 +209,6 @@ fn digest_missing_entry(finding: &Finding) -> Option<(String, String)> {
     Some((label, value))
 }
 
-/// Two digest values state the same fact: equal after collapsing whitespace,
-/// dropping one terminal period and ignoring ASCII case.
 /// The plain-language `Why <class>: <reason>` line for a finding, shared by
 /// the check digest and the `ripr explain` verdict so both give the same
 /// reason in the same words. `None` when no hint applies or the digest's own
@@ -248,6 +246,8 @@ pub(super) fn why_class_line(finding: &Finding) -> Option<String> {
         .map(|hint| format!("Why {}: {hint}", finding.class.plain_label()))
 }
 
+/// Two digest values state the same fact: equal after collapsing whitespace,
+/// dropping one terminal period and ignoring ASCII case.
 fn restates_digest_fact(left: &str, right: &str) -> bool {
     let normalize = |value: &str| {
         trim_field_period(&value.split_whitespace().collect::<Vec<_>>().join(" "))

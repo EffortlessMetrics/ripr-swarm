@@ -154,7 +154,7 @@ fn unknown_explain_real_reasons_have_supported_actions_in_every_mode() -> TestRe
                 // of repeating the same paragraph-long step.
                 assert!(
                     text.contains(
-                        "ripr could not settle this statically; Next step above says how to check it."
+                        "ripr could not settle this statically; Next step above says what to do about it."
                     ),
                     "{text}"
                 );
@@ -256,6 +256,34 @@ fn unknown_explain_repair_preserves_decidable_recipes() -> TestResult {
             );
             assert!(text.contains(need), "{text}");
             assert!(!text.contains("To investigate this uncertainty:"), "{text}");
+            if name == "boundary_gap" {
+                // #14811: explain gives the digest's plain verdict reason
+                // next to the internal token; human-full stays unchanged.
+                let why = "  Why weak: a related test reaches this change, but no assertion tells the old and new behavior apart\n";
+                assert!(
+                    text.contains(&format!(
+                        "Static exposure\n  weakly_exposed (warning, confidence 0.92)\n{why}"
+                    )),
+                    "{text}"
+                );
+                let full = run_command(
+                    env!("CARGO_BIN_EXE_ripr"),
+                    Some(&scratch),
+                    &[
+                        "check",
+                        "--root",
+                        &root_arg,
+                        "--diff",
+                        &diff_arg,
+                        "--format",
+                        "human-full",
+                    ],
+                )?;
+                assert!(full.status.success(), "{full:?}");
+                let full = String::from_utf8(full.stdout)?;
+                assert!(full.contains("Static exposure\n  weakly_exposed"), "{full}");
+                assert!(!full.contains(why), "{full}");
+            }
         }
         Ok(())
     })();

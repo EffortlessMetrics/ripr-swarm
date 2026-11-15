@@ -136,7 +136,7 @@ pub(crate) fn render_verdict_explanation(
             // doubled the longest text in the drill-in. Say what kind of
             // result this is and point at the step instead.
             out.push_str(
-                "  ripr could not settle this statically; Next step above says how to check it.\n",
+                "  ripr could not settle this statically; Next step above says what to do about it.\n",
             );
         } else if !step.is_empty() {
             out.push_str("  To investigate this uncertainty:\n");
@@ -428,7 +428,7 @@ mod tests {
         );
         assert!(step.contains("entry `outer` -> owner `inner`"), "{step}");
         assert!(
-            text.contains("Next step above says how to check it"),
+            text.contains("Next step above says what to do about it"),
             "{text}"
         );
         assert!(
@@ -520,6 +520,22 @@ mod tests {
         let plain = render_verdict_explanation(&finding, None);
         assert!(plain.contains("directly or through a helper"), "{plain}");
         assert!(!plain.contains("if tests can name it"), "{plain}");
+    }
+
+    #[test]
+    fn tests_examined_line_counts_assertions_and_discloses_the_window() {
+        assert_eq!(
+            tests_examined_line(1, 1, 1),
+            "  Tests examined: 1 (1 assertion)\n"
+        );
+        assert_eq!(
+            tests_examined_line(1, 3, 3),
+            "  Tests examined: 1 (3 assertions)\n"
+        );
+        assert_eq!(
+            tests_examined_line(2, 3, 9),
+            "  Tests examined: 2 listed (3 of 9 assertions shown; ripr keeps the most closely related)\n"
+        );
     }
 
     /// The finding block's `Stop reasons:` section already renders each
