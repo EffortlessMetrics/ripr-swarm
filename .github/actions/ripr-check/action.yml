@@ -177,12 +177,13 @@ runs:
         status=0; ripr check "$@" >"$report" 2>"$errors" || status=$?
         # Replayed text could quote a `::command::` line from source; only the
         # github format's report is meant to emit workflow commands. Both files
-        # go to stdout, one stream, so nothing lands outside the guard.
+        # go to stdout, one stream, so nothing lands outside the guard; each
+        # marker starts its own line even after text with no final newline.
         token="ripr-$RANDOM$RANDOM$RANDOM"
         [ "$RIPR_INPUT_FORMAT" != github ] || cat "$report"
-        echo "::stop-commands::$token"
+        printf '\n::stop-commands::%s\n' "$token"
         [ "$RIPR_INPUT_FORMAT" = github ] || cat "$report"
-        cat "$errors"; echo "::$token::"
+        cat "$errors"; printf '\n::%s::\n' "$token"
         [ -z "${GITHUB_OUTPUT:-}" ] || printf 'exit-code=%s\nreport=%s\n' "$status" "$report" >> "$GITHUB_OUTPUT"
         case "$status" in
           0) meaning="" ;; 2) meaning="ripr could not complete the analysis (usage, configuration or operational error)" ;;

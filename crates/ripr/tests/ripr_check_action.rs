@@ -1155,7 +1155,7 @@ fn replayed_report_text_cannot_issue_workflow_commands() -> TestResult {
     stand_in(
         &bin,
         "ripr",
-        "echo '::add-mask::quoted source'\necho '::add-mask::quoted stderr' >&2",
+        "echo '::add-mask::quoted source'\nprintf '::add-mask::quoted stderr' >&2",
     )?;
     let work = single_branch_clone(&root)?;
     let (run, _, _) = check_with_files(&work, &bin)?;
@@ -1180,12 +1180,14 @@ fn replayed_report_text_cannot_issue_workflow_commands() -> TestResult {
         .ok_or_else(|| out.clone())?;
     assert!(stop < quoted && quoted < resume, "{out}");
     assert!(stop < quoted_stderr && quoted_stderr < resume, "{out}");
+    // stderr ended without a newline; the resume marker still starts a line.
+    assert!(out.contains(&format!("\n::{token}::\n")), "{out}");
 
     // Discriminating alternate: the github format is meant to annotate.
     stand_in(
         &bin,
         "ripr",
-        "echo '::warning file=src/lib.rs,line=3::gap'\necho '::add-mask::quoted stderr' >&2",
+        "printf '::warning file=src/lib.rs,line=3::gap'\necho '::add-mask::quoted stderr' >&2",
     )?;
     let run = bash(
         &run_block("Run ripr check")?,
@@ -1210,5 +1212,7 @@ fn replayed_report_text_cannot_issue_workflow_commands() -> TestResult {
         .find("::add-mask::quoted stderr")
         .ok_or_else(|| out.clone())?;
     assert!(annotation < stop && stop < quoted_stderr, "{out}");
+    // The report ended without a newline; the stop marker still starts a line.
+    assert!(out.contains("\n::stop-commands::ripr-"), "{out}");
     Ok(())
 }
