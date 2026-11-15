@@ -6374,6 +6374,9 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
     );
     let recursive = "macro_rules! case {\n    ($name:ident, |$v:ident| $body:block) => {\n        case! { $name, 1, |$v| $body }\n    };\n    ($name:ident, $want:expr, |$v:ident| $body:block) => {\n        #[test]\n        fn $name() { assert_eq!(1, $want); let check = |$v: u32| $body; check(1); }\n    };\n}\n";
     assert_eq!(refusal(&format!("{recursive}{call}")), None);
+    // The body may call a trusted name that nothing rebinds.
+    let forwards = "macro_rules! case { ($n:ident) => { vec!($n); }; }\ncase!(assert_eq);\n";
+    assert_eq!(refusal(forwards), None);
     // A macro called inside a function body between them defines nothing
     // outside that body, so ordinary tests may sit between calls.
     assert_eq!(
@@ -6412,6 +6415,11 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         format!("{bang}{call}"),
         format!("{fragment_bang}case!(one, generate, |v| {{ assert_eq!(v, 1); }});\n"),
         format!("{path_bang}{call}"),
+        // A body call of a trusted name that this file rebinds receives the
+        // arguments through a fragment, so its own scan never sees them:
+        // an imported `vec!` may define `assert_eq` from `$n`.
+        format!("use ext::vec;\n{forwards}"),
+        format!("{forwards}use ext::vec;\n"),
         format!("{defines}{call}"),
         format!("{imports}{call}"),
         // An attribute on the definition may change it.

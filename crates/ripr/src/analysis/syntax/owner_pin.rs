@@ -1634,18 +1634,31 @@ fn macro_binding_sites_in_tree(
     loop {
         let before = bound.len();
         for (path, tree, node, call) in &sites {
-            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(path, known) {
+            let tokens = || -> Vec<_> {
+                tree.syntax()
+                    .descendants_with_tokens()
+                    .filter_map(|element| element.into_token())
+                    .filter(|token| !token.kind().is_trivia())
+                    .collect()
+            };
+            // A wrapper exempted because its body calls only trusted names
+            // loses the exemption once one of those names is bound: its body
+            // call receives the arguments through fragments (`vec!($n)`), so
+            // the scan of that call never sees the name it may define.
+            let body_bound = call.as_ref().is_some_and(|call| {
+                wrapper_body_calls_bound(binding_free, call, &bound)
+                    && binding_free_local_wrapper(binding_free, call, &tokens(), known)
+            });
+            if !body_bound
+                && (!bound.contains(path.trim_start_matches("r#"))
+                    || !is_trusted_macro(path, known))
+            {
                 continue;
             }
-            let tokens: Vec<_> = tree
-                .syntax()
-                .descendants_with_tokens()
-                .filter_map(|element| element.into_token())
-                .filter(|token| !token.kind().is_trivia())
-                .collect();
+            let tokens = tokens();
             // As for an untrusted wrapper: an attribute in the arguments may
             // be applied by the expansion to an item.
-            if let Some(attribute) = tokens.iter().find_map(|token| {
+            if let Some(attribute) = tokens.iter().filter(|_| !body_bound).find_map(|token| {
                 let word = token.text().trim_start_matches("r#");
                 matches!(word, "macro_use" | "no_implicit_prelude").then_some(word)
             }) {
@@ -1662,9 +1675,10 @@ fn macro_binding_sites_in_tree(
             // shows an expansion that cannot bind a name stays transparent.
             // A nested call has no node to locate that definition from, so
             // it never takes the exemption.
-            if call
-                .as_ref()
-                .is_some_and(|call| binding_free_local_wrapper(binding_free, call, &tokens, known))
+            if !body_bound
+                && call.as_ref().is_some_and(|call| {
+                    binding_free_local_wrapper(binding_free, call, &tokens, known)
+                })
             {
                 continue;
             }
@@ -2364,6 +2378,36 @@ fn binding_free_local_wrapper(
                     .token_tree()
                     .is_some_and(|tree| inert_tokens(&non_trivia_tokens(tree.syntax()), trusted))
         })
+}
+
+/// Whether the one local definition `call` names invokes, in its body, a
+/// name other than its own that `bound` now holds. Reads the cached
+/// definition facts; a call with no single definition answers `false`, as
+/// [`binding_free_local_wrapper`] never exempts it.
+fn wrapper_body_calls_bound(
+    facts: &BindingFreeFileIndex,
+    call: &ast::MacroCall,
+    bound: &BTreeSet<String>,
+) -> bool {
+    let Some(name) = bare_macro_name(call) else {
+        return false;
+    };
+    let mut definitions = facts.rules.iter().filter(|rules| {
+        rules
+            .name()
+            .is_some_and(|candidate| candidate.text().trim_start_matches("r#") == name)
+    });
+    let (Some(definition), None) = (definitions.next(), definitions.next()) else {
+        return false;
+    };
+    facts
+        .wrapper_definitions
+        .borrow_mut()
+        .entry(definition.syntax().text_range().start())
+        .or_insert_with(|| WrapperDefinition::of(definition))
+        .body_bangs
+        .iter()
+        .any(|bang| *bang != name && bound.contains(bang))
 }
 
 /// The name of a macro call reached by a bare, unqualified path.
