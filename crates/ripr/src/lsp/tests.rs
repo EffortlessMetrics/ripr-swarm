@@ -24,7 +24,9 @@ use super::diagnostics::{
     workspace_diagnostics_with_config,
 };
 use super::gap_artifacts::{
-    GapArtifactIdentity, GapArtifactKind, GapArtifactRejection, ValidatedGapArtifact,
+    GapArtifactCorpusCurrentness, GapArtifactIdentity, GapArtifactRejection,
+    ValidatedActionableGapsArtifact, ValidatedGapArtifact, ValidatedGapArtifactCommon,
+    ValidatedGapDecisionLedgerArtifact,
 };
 use super::hover::{
     NoEvidenceState, classified_seam_hover_response, diagnostic_covers_position,
@@ -3977,26 +3979,31 @@ fn refresh_completion_log_message_counts_gap_artifact_state() -> Result<(), Stri
         vec![diagnostic],
         Vec::new(),
     );
-    snapshot.gap_artifacts.push(ValidatedGapArtifact {
-        kind: GapArtifactKind::GapDecisionLedger,
-        corpus_currentness: None,
-        root: Some(".".to_string()),
-        identities: vec![GapArtifactIdentity {
-            canonical_gap_id: Some("gap:py:pricing".to_string()),
-            seam_id: None,
-            finding_id: None,
-        }],
-        language: Some(LanguageId::Python),
-        language_status: Some(LanguageStatus::Preview),
-        gap_state: Some("actionable".to_string()),
-        related_paths: vec!["tests/test_pricing.py".to_string()],
-        verify_commands: vec!["ripr agent verify --root . --json".to_string()],
-        receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
-        verify_command_specs: Vec::new(),
-        receipt_command_specs: Vec::new(),
-        static_limit_kinds: vec!["missing_import_graph".to_string()],
-        has_text_static_limit: false,
-    });
+    snapshot
+        .gap_artifacts
+        .push(ValidatedGapArtifact::GapDecisionLedger(
+            ValidatedGapDecisionLedgerArtifact {
+                common: ValidatedGapArtifactCommon {
+                    root: Some(".".to_string()),
+                    language: Some(LanguageId::Python),
+                    language_status: Some(LanguageStatus::Preview),
+                    gap_state: Some("actionable".to_string()),
+                    related_paths: vec!["tests/test_pricing.py".to_string()],
+                    static_limit_kinds: vec!["missing_import_graph".to_string()],
+                    has_text_static_limit: false,
+                },
+                corpus_currentness: GapArtifactCorpusCurrentness::PreviewOrMixedUnavailable,
+                identities: vec![GapArtifactIdentity {
+                    canonical_gap_id: Some("gap:py:pricing".to_string()),
+                    seam_id: None,
+                    finding_id: None,
+                }],
+                verify_commands: vec!["ripr agent verify --root . --json".to_string()],
+                receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
+                verify_command_specs: Vec::new(),
+                receipt_command_specs: Vec::new(),
+            },
+        ));
     snapshot
         .gap_artifact_rejections
         .push(GapArtifactRejection::WrongRoot(
@@ -4790,16 +4797,23 @@ fn gap_code_actions_project_python_pytest_skeleton_and_target_file() -> Result<(
 #[cfg(feature = "lang-python")]
 fn gap_code_actions_omit_partial_or_invalid_typed_specs() -> Result<(), String> {
     let mut missing_verify = validated_gap_artifact();
-    missing_verify.verify_command_specs.clear();
+    missing_verify
+        .verify_command_specs_mut()
+        .ok_or_else(|| "validated fixture omitted verify specs".to_string())?
+        .clear();
     assert_gap_action_specs_omitted(missing_verify, "missing verify")?;
 
     let mut missing_receipt = validated_gap_artifact();
-    missing_receipt.receipt_command_specs.clear();
+    missing_receipt
+        .receipt_command_specs_mut()
+        .ok_or_else(|| "validated fixture omitted receipt specs".to_string())?
+        .clear();
     assert_gap_action_specs_omitted(missing_receipt, "missing receipt")?;
 
     let mut malformed = validated_gap_artifact();
     malformed
-        .verify_command_specs
+        .verify_command_specs_mut()
+        .ok_or_else(|| "validated fixture omitted verify specs".to_string())?
         .first_mut()
         .ok_or_else(|| "validated fixture omitted verify spec".to_string())?
         .program
@@ -4808,7 +4822,8 @@ fn gap_code_actions_omit_partial_or_invalid_typed_specs() -> Result<(), String> 
 
     let mut role_mismatch = validated_gap_artifact();
     role_mismatch
-        .verify_command_specs
+        .verify_command_specs_mut()
+        .ok_or_else(|| "validated fixture omitted verify specs".to_string())?
         .first_mut()
         .ok_or_else(|| "validated fixture omitted verify spec".to_string())?
         .role = crate::domain::CommandRole::Receipt;
@@ -16273,19 +16288,22 @@ fn gap_action_diagnostic() -> tower_lsp_server::ls_types::Diagnostic {
 }
 
 fn validated_gap_artifact() -> ValidatedGapArtifact {
-    ValidatedGapArtifact {
-        kind: GapArtifactKind::GapDecisionLedger,
-        corpus_currentness: None,
-        root: Some(".".to_string()),
+    ValidatedGapArtifact::GapDecisionLedger(ValidatedGapDecisionLedgerArtifact {
+        common: ValidatedGapArtifactCommon {
+            root: Some(".".to_string()),
+            language: Some(LanguageId::Python),
+            language_status: Some(LanguageStatus::Preview),
+            gap_state: Some("actionable".to_string()),
+            related_paths: vec!["tests/test_pricing.py".to_string()],
+            static_limit_kinds: vec!["missing_import_graph".to_string()],
+            has_text_static_limit: false,
+        },
+        corpus_currentness: GapArtifactCorpusCurrentness::PreviewOrMixedUnavailable,
         identities: vec![GapArtifactIdentity {
             canonical_gap_id: Some("gap:py:pricing".to_string()),
             seam_id: None,
             finding_id: None,
         }],
-        language: Some(LanguageId::Python),
-        language_status: Some(LanguageStatus::Preview),
-        gap_state: Some("actionable".to_string()),
-        related_paths: vec!["tests/test_pricing.py".to_string()],
         verify_commands: vec!["ripr agent verify --root . --json".to_string()],
         receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
         verify_command_specs: vec![crate::agent::command_specs::agent_verify_command_spec(
@@ -16300,9 +16318,7 @@ fn validated_gap_artifact() -> ValidatedGapArtifact {
             "seam-a",
             Some("receipt.json"),
         )],
-        static_limit_kinds: vec!["missing_import_graph".to_string()],
-        has_text_static_limit: false,
-    }
+    })
 }
 
 fn sample_analysis_snapshot(
@@ -16730,10 +16746,13 @@ fn lsp_fixture_render(
         &fixture_root,
         &crate::config::RiprConfig::default(),
     )?;
+    // The owner's tail `if`/`else` branch values are `return_value` seams too
+    // (#14385); the fixture's golden pins the predicate-boundary seam.
+    seams.retain(|seam| seam.seam.kind().as_str() == "predicate_boundary");
     seams.sort_by(|left, right| left.seam.id().as_str().cmp(right.seam.id().as_str()));
     if seams.len() != 1 {
         return Err(format!(
-            "expected one {fixture} classified seam, got {}",
+            "expected one {fixture} predicate_boundary classified seam, got {}",
             seams.len()
         ));
     }
@@ -20448,26 +20467,29 @@ fn execute_command_collect_workspace_status_with_actionable_gap_and_rejection_re
         diagnostics
             .snapshot
             .gap_artifacts
-            .push(ValidatedGapArtifact {
-                kind: GapArtifactKind::ActionableGaps,
-                corpus_currentness: None,
-                root: Some(".".to_string()),
-                identities: vec![GapArtifactIdentity {
-                    canonical_gap_id: Some("gap:rust:pricing:threshold-boundary".to_string()),
-                    seam_id: None,
-                    finding_id: None,
-                }],
-                language: Some(LanguageId::Rust),
-                language_status: Some(LanguageStatus::Stable),
-                gap_state: Some("actionable".to_string()),
-                related_paths: vec!["src/pricing.rs".to_string()],
-                verify_commands: vec!["ripr agent verify --root . --json".to_string()],
-                receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
-                verify_command_specs: Vec::new(),
-                receipt_command_specs: Vec::new(),
-                static_limit_kinds: Vec::new(),
-                has_text_static_limit: false,
-            });
+            .push(ValidatedGapArtifact::ActionableGaps(
+                ValidatedActionableGapsArtifact {
+                    common: ValidatedGapArtifactCommon {
+                        root: Some(".".to_string()),
+                        language: Some(LanguageId::Rust),
+                        language_status: Some(LanguageStatus::Stable),
+                        gap_state: Some("actionable".to_string()),
+                        related_paths: vec!["src/pricing.rs".to_string()],
+                        static_limit_kinds: Vec::new(),
+                        has_text_static_limit: false,
+                    },
+                    corpus_currentness: GapArtifactCorpusCurrentness::CurrentRustWorkspace,
+                    identities: vec![GapArtifactIdentity {
+                        canonical_gap_id: Some("gap:rust:pricing:threshold-boundary".to_string()),
+                        seam_id: None,
+                        finding_id: None,
+                    }],
+                    verify_commands: vec!["ripr agent verify --root . --json".to_string()],
+                    receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
+                    verify_command_specs: Vec::new(),
+                    receipt_command_specs: Vec::new(),
+                },
+            ));
         diagnostics
             .snapshot
             .gap_artifact_rejections
@@ -35664,6 +35686,56 @@ fn file_mode_only_change_serves_the_incomplete_marker_through_the_real_producer(
         || super::diagnostics::empty_scope_marker_payload(&edited.snapshot).is_some()
     {
         return Err("a text edit must serve rows and no scope marker".to_string());
+    }
+    Ok(())
+}
+
+/// #14420: a head-only match arm's hover names the result the flow model
+/// read on its line, in the witness's changed expression and the line
+/// hover heading, while the diagnostic's own message and data keep the head.
+#[test]
+fn hover_names_a_head_only_arm_result() -> Result<(), String> {
+    let markup_text = |hover: tower_lsp_server::ls_types::Hover| match hover.contents {
+        HoverContents::Markup(markup) => Ok(markup.value),
+        _ => Err("expected markup hover".to_string()),
+    };
+    let mut finding = sample_finding();
+    finding.probe.family = ProbeFamily::MatchArm;
+    finding.probe.expression = "Size::Medium =>".to_string();
+    finding.flow_sinks = vec![crate::domain::FlowSinkFact {
+        kind: crate::domain::FlowSinkKind::MatchArm,
+        text: "450".to_string(),
+        line: finding.probe.location.line,
+        owner: None,
+    }];
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    let hover = markup_text(super::hover::finding_hover_response(&finding, &diagnostic))?;
+    if !hover.contains("- changed expression: `Size::Medium => 450`") {
+        return Err(format!("finding hover lost the arm result:\n{hover}"));
+    }
+    let line_hover = markup_text(super::hover::line_findings_hover_response(
+        &[&finding],
+        crate::config::LspDiagnosticProfile::Full,
+        &ClientFeatureProfile::unsupported(),
+    ))?;
+    if !line_hover.contains(" match_arm `Size::Medium => 450`") {
+        return Err(format!("line hover lost the arm result:\n{line_hover}"));
+    }
+    let data = diagnostic.data.as_ref().ok_or("diagnostic data missing")?;
+    if data.to_string().contains("=> 450") {
+        return Err(format!("diagnostic data must keep the head: {data}"));
+    }
+
+    // A sink read on another line is not this head's result.
+    let mut elsewhere = finding;
+    elsewhere.flow_sinks[0].line += 1;
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &elsewhere);
+    let hover = markup_text(super::hover::finding_hover_response(
+        &elsewhere,
+        &diagnostic,
+    ))?;
+    if !hover.contains("- changed expression: `Size::Medium =>`\n") {
+        return Err(format!("off-line sink was joined:\n{hover}"));
     }
     Ok(())
 }

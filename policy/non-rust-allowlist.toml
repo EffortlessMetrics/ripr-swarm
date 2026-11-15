@@ -177,6 +177,33 @@ reason = "Product-independent workflow and agent policy package manifest."
 covered_by = ["cargo check -p repo-policy --locked"]
 
 [[allow]]
+glob = "evals/Cargo.toml"
+kind = "rust_manifest"
+owner = "evals"
+surface = "rust"
+classification = "config"
+reason = "Tier 2 excluded evals workspace manifest (#14643)."
+covered_by = ["cargo check --manifest-path evals/Cargo.toml --locked"]
+
+[[allow]]
+glob = "evals/Cargo.lock"
+kind = "rust_lockfile"
+owner = "evals"
+surface = "rust"
+classification = "metadata"
+reason = "Pinned Cargo lockfile for the Tier 2 excluded evals workspace (#14643)."
+covered_by = ["cargo check --manifest-path evals/Cargo.toml --locked"]
+
+[[allow]]
+glob = "evals/**/Cargo.toml"
+kind = "rust_manifest"
+owner = "evals"
+surface = "rust"
+classification = "config"
+reason = "Tier 2 excluded evals workspace member manifests (#14643)."
+covered_by = ["cargo test --manifest-path evals/Cargo.toml --locked"]
+
+[[allow]]
 glob = "tools/activate-rust.sh"
 kind = "shell_activation"
 owner = "rust"

@@ -111,9 +111,21 @@ fn genuine_rust_capture(root: &Path) -> ProofResult<Value> {
     let seams = value["seams"]
         .as_array()
         .ok_or("real capture omitted seams")?;
-    require(seams.len() == 1, || {
-        format!("producer must retain one actual pricing subject: {value}")
-    })?;
+    // The pricing subject is the predicate boundary. Its own-line branch
+    // values (`amount - 10`, `amount`) are also return-value seams (#14385);
+    // the exact-value tests grip them strongly, so they add no gap or packet.
+    require(
+        seams
+            .first()
+            .is_some_and(|seam| seam["kind"] == "predicate_boundary")
+            && seams.iter().skip(1).all(|seam| {
+                seam["kind"] == "return_value"
+                    && seam["grip_class"] == "strongly_gripped"
+                    && seam["owner"] == seams[0]["owner"]
+            })
+            && seams.len() <= 3,
+        || format!("producer must retain one actual pricing subject: {value}"),
+    )?;
     let producer_root = value
         .pointer("/artifact/repository/root")
         .and_then(Value::as_str)
@@ -282,7 +294,11 @@ fn genuine_completed_no_action_corpus_produces_an_empty_queue_without_invented_l
     require(
         actionable["packets"] == json!([])
             && actionable["summary"]["packets_emitted"] == 0
-            && actionable["summary"]["already_observed"] == 1
+            // Every captured seam (the predicate and its two strongly gripped
+            // branch values, #14385) is already observed.
+            && actionable["summary"]["already_observed"]
+                == json!(captured["seams"].as_array().map_or(0, Vec::len))
+            && actionable["summary"]["already_observed"] == 3
             && actionable["source_subject"]["files"] == json!([])
             && actionable.get("language").is_none(),
         || {
