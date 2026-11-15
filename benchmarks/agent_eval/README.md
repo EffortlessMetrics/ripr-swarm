@@ -112,8 +112,10 @@ Route totals are the `routes` rows at the top of `baseline.json`. What they show
   the second gap stays hidden.
 - MCP costs about 35 times the agent CLI to reach the same answer. The tool
   list alone is about 4,300 estimated tokens per session.
-- Loop: after the reference test, two of the five gap scenarios
-  (`changed_constant_return`, `struct_field`) still end with
-  `verify=refused`, so an agent following the block cannot finish.
-- `error_variant` gets two identical gap rows for its one changed line
-  (`extra_gaps: 1`), so the header asks for two tests where one is needed.
+- Loop: after the reference test, one of the five gap scenarios
+  (`struct_field`, above) still ends with `verify=refused`, so an agent
+  following the block cannot finish there. `changed_constant_return` closed
+  once #14380 (#14325) landed.
+- `error_variant` once got two identical gap rows for its one changed line;
+  #14453 folded them, so it now reads `extra_gaps: 0`. `struct_field` has one
+  extra gap row (`extra_gaps: 1`).
