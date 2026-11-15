@@ -295,6 +295,14 @@ VERDICT_BLOCK_LINE = re.compile(
     r"(?:[ \t]+([0-9a-f]{7,40}))?(?:[ \t]*[,\u2014\u2013-].*)?[ \t]*$",
     re.IGNORECASE,
 )
+# A verdict tail that conditions the approval attests nothing: the observed
+# benign tail states a present fact ("no blocking findings on this head"),
+# while a hedge defers the disposition to a future event or review.
+VERDICT_TAIL_HEDGE = re.compile(
+    r"\b(?:pending|awaiting|subject[ \t]+to|conditional(?:ly)?|provisional(?:ly)?"
+    r"|if|once|until|after|before|when|provided|tbd|wip)\b",
+    re.IGNORECASE,
+)
 
 
 def _verdict_first_line(body: str) -> tuple[str, str | None] | None:
@@ -313,7 +321,7 @@ def _verdict_first_line(body: str) -> tuple[str, str | None] | None:
         # A 41st hex character or glued prose is not the observed form.
         if tail and tail[0] not in " \t,.;:\u2014\u2013-":
             return None
-        if STATE_TOKEN.search(tail) or negation_hit(line):
+        if STATE_TOKEN.search(tail) or negation_hit(line) or VERDICT_TAIL_HEDGE.search(tail):
             return None
         return ("approve", approve.group(1))
     block = VERDICT_BLOCK_LINE.match(line)
@@ -583,8 +591,15 @@ def reviews_allow_source_attestation(
     if any(
         str(r.get("state") or "") == "COMMENTED"
         and (
-            comment_body_negative(str(r.get("body") or ""))
-            or comment_body_verdict_negative(str(r.get("body") or ""))
+            comment_body_verdict_negative(str(r.get("body") or ""))
+            or (
+                comment_body_negative(str(r.get("body") or ""))
+                # A verdict-carrier body already screens its own later lines
+                # for disposition statements and blockers, so the marker
+                # screening must not veto it for also naming a positive
+                # marker later in the same body.
+                and not comment_body_verdict_ready(str(r.get("body") or ""), head)
+            )
         )
         for r in _latest_by_login(stated + approvals)
     ):
@@ -1183,6 +1198,17 @@ def self_test() -> None:
     assert not comment_body_verdict_ready(
         f"VERDICT: APPROVE {head} \u2014 repairs required", head
     )
+    # A conditional tail defers the disposition, so it attests nothing.
+    assert not comment_body_verdict_ready(
+        f"VERDICT: APPROVE {head} \u2014 pending security review", head
+    )
+    assert not comment_body_verdict_ready(
+        f"VERDICT: APPROVE {head} \u2014 subject to CI", head
+    )
+    # A carrier body that also names a positive marker later is still a
+    # carrier: its own later-line screening, not the marker veto, decides.
+    assert comment_body_verdict_ready(f"{verdict_approve}\n\nSOURCE_REVIEW_READY", head)
+    assert not comment_body_verdict_ready(f"{verdict_approve}\n\nREPAIR_REQUIRED", head)
     assert comment_body_verdict_negative(
         f"VERDICT: BLOCK {head} \u2014 one finding remains open"
     )
@@ -1285,6 +1311,27 @@ def self_test() -> None:
         # A carrier contradicted later in its own body attests nothing.
         (
             [vreview(id=1, submitted_at=vstamp(1), body=f"{verdict_approve}\nREPAIR_REQUIRED")],
+            False,
+        ),
+        # A carrier body naming a positive marker later still attests: the
+        # marker screening must not veto the verdict carrier in its own body.
+        (
+            [vreview(id=1, submitted_at=vstamp(1), body=f"{verdict_approve}\n\nSOURCE_REVIEW_READY")],
+            True,
+        ),
+        (
+            [
+                vreview(
+                    id=1,
+                    submitted_at=vstamp(1),
+                    body=f"{verdict_approve}\n\ndisposition: REVIEW_READY",
+                )
+            ],
+            True,
+        ),
+        # A conditional verdict tail attests nothing on its own.
+        (
+            [vreview(id=1, submitted_at=vstamp(1), body=f"{verdict_approve} \u2014 pending security review")],
             False,
         ),
     ):
