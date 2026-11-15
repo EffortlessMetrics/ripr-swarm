@@ -106,8 +106,9 @@ fn replaced_elsewhere(
 ///   `patch` or `monkeypatch`, which replace what an import returns, and
 ///   the object-graph and frame routes to a module's dict (`gc`,
 ///   `get_referents`, `get_referrers`, `get_objects`, `ctypes`,
-///   `__globals__`, `f_back`, `tb_frame`), and a package search-path edit
-///   (`__path__`, `__spec__`) that lets an import load another `name`;
+///   `__globals__`, `f_back`, `tb_frame`), and a package search-path or
+///   finder edit (`__path__`, `__spec__`, `path_importer_cache`,
+///   `FileFinder`) that lets an import load another `name`;
 /// - the package referenced by name (any part of its dotted spelling as an
 ///   identifier, as in `import tests`), outside a `from ... import` path;
 /// - a string that is `name` or names it after a dot (`".tomllib"`, a
@@ -161,6 +162,8 @@ fn module_may_replace(text: &str, name: &str, package: &str) -> bool {
                             | "__path__"
                             | "__spec__"
                             | "submodule_search_locations"
+                            | "path_importer_cache"
+                            | "FileFinder"
                     )
                     || (!from_path && parts.contains(&ident.as_str()))
             }

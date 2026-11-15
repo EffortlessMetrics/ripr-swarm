@@ -231,7 +231,15 @@ fn a_package_name_replaceable_by_attribute_write_or_other_code_stays_unlinked() 
     // Code outside the initializer that runs before the test can replace the
     // attribute too: a submodule the initializer imports, a conftest, or
     // another test module.
-    let elsewhere: [ElsewhereCase; 16] = [
+    let elsewhere: [ElsewhereCase; 17] = [
+        (
+            "conftest-swaps-path-finder",
+            "import tomli as tomllib\n",
+            &[(
+                "tests/conftest.py",
+                "import importlib\nimport importlib.machinery as m\nimport os\nimport sys\nsys.path_importer_cache[os.path.abspath(__package__)] = m.FileFinder(\"extra\")\nimportlib.import_module(\".\" + \"toml\" + \"lib\", __package__)\n",
+            )],
+        ),
         (
             "conftest-extends-package-path",
             "import tomli as tomllib\n",

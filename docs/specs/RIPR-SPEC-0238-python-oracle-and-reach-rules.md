@@ -1588,9 +1588,10 @@ mutant calibrates the rule; ripr reports only the static shape.
     `path_hooks`, `reload`, `patch`, `monkeypatch`, `gc`,
     `get_referents`, `get_referrers`, `get_objects`, `ctypes`,
     `__globals__`, `f_back`, `tb_frame`, `__path__`, `__spec__` or
-    `submodule_search_locations` (a search-path edit lets an import load
-    another `X`), or has a string that is `X` or names it after a dot
-    (`".X"`), a string equal to
+    `submodule_search_locations`, `path_importer_cache` or `FileFinder`
+    (a search-path or finder edit lets an import load another `X`), or
+    has a string that is `X` or has it as a dotted component after the
+    first (`".X"`, `"pkg.X.sub"`), a string equal to
     the package or a dotted path under it, or one containing `setattr`,
     `delattr`, `__dict__`, `__class__`, `__import__` or `__path__`. Not modelled, as for every
     directly imported module: modules the bounded read skipped, code inside
