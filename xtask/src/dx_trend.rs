@@ -190,10 +190,12 @@ fn same_workload(past_receipt: &Value, past: &Value, current: &Value, metric: &V
             let Some(repo) = repo.as_str() else {
                 return false;
             };
-            // A corpus repository must keep its workload. An ingested
-            // sample (a first-run case name) has no corpus entry on either
-            // night, so only its name in the repository set identifies it.
-            past_receipt["workloads"][repo] == current["workloads"][repo]
+            // A measured sample ran on a corpus repository, which must keep
+            // its workload. An ingested sample (a first-run case name, which
+            // may even share a corpus id) is identified by its name in the
+            // repository set alone.
+            metric["source"] != json!("measured")
+                || past_receipt["workloads"][repo] == current["workloads"][repo]
         })
 }
 
@@ -246,6 +248,7 @@ fn receipt_from_report(report: &Value, date: &str) -> Result<Value, String> {
             "runner_dependent": row["runner_dependent"].as_bool().unwrap_or(true),
             "partial": row["partial"].as_bool().unwrap_or(false),
             "per_repo": row["per_repo"].as_bool().unwrap_or(false),
+            "source": row["source"],
             "repos": measured_repos(row),
             "status": status,
             "value": value,
@@ -1355,6 +1358,7 @@ mod tests {
                 "below_target",
             );
             m["per_repo"] = json!(true);
+            m["source"] = json!("measured");
             m["samples"] = json!(
                 repos
                     .iter()
@@ -1424,6 +1428,48 @@ mod tests {
         let page = evaluate(&history, &current)?;
         assert_eq!(page["off_bar"][0]["previous"], 90.0);
         assert_eq!(page["off_bar"][0]["since_previous"], "better");
+        Ok(())
+    }
+
+    #[test]
+    fn an_ingested_case_sharing_a_corpus_id_ignores_that_corpus_pin() -> Result<(), String> {
+        let walk = |value: f64, source: &str| {
+            let mut m = row(
+                "first_run.walk_secs",
+                "lower_is_better",
+                60.0,
+                Some(value),
+                "below_target",
+            );
+            m["per_repo"] = json!(true);
+            m["source"] = json!(source);
+            m["samples"] = json!([{"repo": "serde", "status": "below_target", "value": value}]);
+            m
+        };
+        let with_pin = |date: &str, sha: &str, metric: Value| -> Result<Value, String> {
+            let mut rep = report(vec![metric], "linux-x64");
+            rep["corpus"] = json!([{"id": "serde", "url": "u", "sha": sha, "base": "HEAD~1", "language": "rust", "expected_partial": null}]);
+            receipt_from_report(&rep, date)
+        };
+        // Ingested: the serde corpus pin moving says nothing about the case.
+        let mut history = BTreeMap::new();
+        history.insert(
+            "2026-11-14".to_string(),
+            with_pin("2026-11-14", "s1", walk(90.0, "ingest:first-run"))?,
+        );
+        let current = with_pin("2026-11-15", "s2", walk(80.0, "ingest:first-run"))?;
+        assert_eq!(
+            evaluate(&history, &current)?["off_bar"][0]["previous"],
+            90.0
+        );
+        // Measured: the same moved pin breaks the series.
+        let mut history = BTreeMap::new();
+        history.insert(
+            "2026-11-14".to_string(),
+            with_pin("2026-11-14", "s1", walk(90.0, "measured"))?,
+        );
+        let current = with_pin("2026-11-15", "s2", walk(80.0, "measured"))?;
+        assert!(evaluate(&history, &current)?["off_bar"][0]["previous"].is_null());
         Ok(())
     }
 }
