@@ -12423,6 +12423,73 @@ fn ts_fieldconstruction_bracket_sibling_field_read_downgrades() -> Result<(), St
     Ok(())
 }
 
+/// #14814 round 2: an operator glues onto the changed field's segment.
+/// `f().retries || f().verbose` reads `retries`, so it witnesses the change
+/// and must stay `exposed`; a dot-segment comparison sees `retries || f()`
+/// and wrongly downgrades it.
+#[test]
+fn ts_fieldconstruction_mixed_expression_read_through_changed_field_stays_exposed()
+-> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"retries\", () => { expect(f().retries || f().verbose).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a mixed expression that reads the changed field must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 round 2: optional chaining glues onto the changed field's segment.
+/// `f().retries?.n` reads through `retries`, so it stays `exposed`; a
+/// dot-segment comparison sees `retries?` and wrongly downgrades it.
+#[test]
+fn ts_fieldconstruction_optional_chain_read_through_changed_field_stays_exposed()
+-> Result<(), String> {
+    let owner_src = "export interface C { retries?: { n: number }; verbose: boolean }\nexport function f(): C {\n  return { retries: { n: 3 }, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"retries\", () => { expect(f().retries?.n).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: { n: 5 }, verbose: false };",
+        Some("  return { retries: { n: 3 }, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "an optional-chain read through the changed field must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
 /// LIVE-pipeline guard test (RIPR-SPEC-0098 §fixture-5, #1235): exercises the
 /// REAL oracle extractor end-to-end. Source and test text are parsed by
 /// `extract_owners` / `extract_tests`, so the assertions carry whatever

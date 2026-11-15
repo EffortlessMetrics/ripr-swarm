@@ -784,9 +784,15 @@ fn ts_value_observed_reads_sibling_field(
     // reads THROUGH `retries`, so the outermost `n` is a projection of the
     // changed field, not a sibling. Only a path that never names it is a
     // sibling read (#14814 F3).
+    //
+    // Compare identifier tokens, not dot-segments: an operator or optional
+    // chain glues onto the segment (`f().retries || f().verbose` splits to
+    // `retries || f()`, `f().retries?.n` to `retries?`), so a segment
+    // comparison misses a changed field the expression really reads and
+    // downgrades a genuine exposure (#14814 round 2).
     if masked
-        .split('.')
-        .any(|segment| segment.trim() == changed.key.as_str())
+        .split(|ch: char| !is_ident_char(ch))
+        .any(|token| token == changed.key.as_str())
     {
         return false;
     }
