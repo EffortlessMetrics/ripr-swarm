@@ -124,15 +124,15 @@ runs:
 
     # ripr's analysis cache lives in the runner's temp directory, outside the
     # checkout. Entries are keyed on file contents, configuration and the ripr
-    # version, so a restored entry that no longer matches is a miss, never
-    # stale evidence. Pinned to a commit SHA like the generated workflow's.
+    # version by ripr itself, so a restored entry that no longer matches is a
+    # miss, never stale evidence. Pinned to a commit SHA like the generated workflow's.
     - name: Restore ripr analysis cache
       if: inputs.cache == 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/ripr-cache
-        key: ripr-check-${{ inputs.version }}-${{ runner.os }}-${{ github.event.pull_request.head.sha || github.sha }}
-        restore-keys: ripr-check-${{ inputs.version }}-${{ runner.os }}-
+        key: ripr-check-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}-${{ github.event.pull_request.head.sha || github.sha }}
+        restore-keys: ripr-check-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}-
 
     # A pull_request checkout often lacks the base branch, and actions/checkout's
     # default `fetch-depth: 1` has no merge base with it. Fetch just that branch
@@ -176,7 +176,12 @@ runs:
         [ -z "$base" ] || set -- "$@" --base "$base"
         status=0
         ripr check "$@" >"$report" 2>"$errors" || status=$?
+        # Replayed text could quote a `::command::` line from source; only the
+        # github format is meant to emit workflow commands.
+        token="ripr-$RANDOM$RANDOM$RANDOM"
+        [ "$RIPR_INPUT_FORMAT" = github ] || echo "::stop-commands::$token"
         cat "$report"; cat "$errors" >&2
+        [ "$RIPR_INPUT_FORMAT" = github ] || echo "::$token::"
         [ -z "${GITHUB_OUTPUT:-}" ] || printf 'exit-code=%s\nreport=%s\n' "$status" "$report" >> "$GITHUB_OUTPUT"
         case "$status" in
           0) meaning="" ;;

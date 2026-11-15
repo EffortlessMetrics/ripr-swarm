@@ -1082,3 +1082,104 @@ fn a_check_that_could_not_complete_fails_with_its_reason() -> TestResult {
     assert!(output.contains("exit-code=2\n"), "{output}");
     Ok(())
 }
+
+#[test]
+fn a_shallow_checkout_that_already_has_the_base_is_still_deepened() -> TestResult {
+    let root = scratch("shallow-base")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let work = shallow_clone(&root)?;
+    git(
+        &work,
+        &[
+            "fetch",
+            "-q",
+            "--depth=1",
+            "origin",
+            "+refs/heads/main:refs/remotes/origin/main",
+        ],
+    )?;
+    assert!(
+        !git_succeeds(&work, &["merge-base", "HEAD", "origin/main"])?,
+        "fixture must start with the base but no merge base"
+    );
+    let run = check(&work, &bin, "", Some("main"))?;
+    assert!(run.ok(), "{}", run.text());
+    assert!(
+        git_succeeds(&work, &["merge-base", "HEAD", "origin/main"])?,
+        "{}",
+        run.text()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_failed_deepen_warns_once_and_leaves_the_message_to_ripr() -> TestResult {
+    let root = scratch("deepen-fails")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let work = shallow_clone(&root)?;
+    let real_git = Command::new("sh").args(["-c", "command -v git"]).output()?;
+    let real_git = String::from_utf8_lossy(&real_git.stdout).trim().to_string();
+    stand_in(
+        &bin,
+        "git",
+        &format!(
+            "for a in \"$@\"; do case \"$a\" in --deepen=*) echo deepen >> \"$PWD/deepen.calls\"; exit 1 ;; esac; done; exec {real_git} \"$@\""
+        ),
+    )?;
+    let run = check(&work, &bin, "", Some("main"))?;
+    assert!(run.ok(), "{}", run.text());
+    assert!(
+        run.text().contains("could not deepen the shallow checkout"),
+        "{}",
+        run.text()
+    );
+    assert_eq!(fs::read_to_string(work.join("deepen.calls"))?, "deepen\n");
+    assert_eq!(
+        recorded_argv(&work)?,
+        "check --root . --mode draft --format human --base origin/main"
+    );
+    Ok(())
+}
+
+#[test]
+fn replayed_report_text_cannot_issue_workflow_commands() -> TestResult {
+    let root = scratch("stop-commands")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo '::add-mask::quoted source'")?;
+    let work = single_branch_clone(&root)?;
+    let (run, _, _) = check_with_files(&work, &bin)?;
+    assert!(run.ok(), "{}", run.text());
+    let out = String::from_utf8_lossy(&run.output.stdout).to_string();
+    let stop = out.find("::stop-commands::ripr-").ok_or(out.clone())?;
+    let token = out[stop + "::stop-commands::".len()..]
+        .lines()
+        .next()
+        .ok_or("token")?
+        .to_string();
+    let quoted = out.find("::add-mask::quoted source").ok_or(out.clone())?;
+    let resume = out.find(&format!("::{token}::")).ok_or(out.clone())?;
+    assert!(stop < quoted && quoted < resume, "{out}");
+
+    // Discriminating alternate: the github format is meant to annotate.
+    stand_in(&bin, "ripr", "echo '::warning file=src/lib.rs,line=3::gap'")?;
+    let run = bash(
+        &run_block("Run ripr check")?,
+        &work,
+        &bin,
+        &[
+            ("RIPR_INPUT_BASE", "origin/feature~1"),
+            ("RIPR_INPUT_MODE", "draft"),
+            ("RIPR_INPUT_FORMAT", "github"),
+        ],
+    )?;
+    assert!(run.ok(), "{}", run.text());
+    assert!(!run.text().contains("::stop-commands::"), "{}", run.text());
+    assert!(
+        run.text().contains("::warning file=src/lib.rs"),
+        "{}",
+        run.text()
+    );
+    Ok(())
+}
