@@ -1694,6 +1694,31 @@ fn issue_14728_stated_marker_selection_and_neutral_tail() -> Result<(), String> 
             false,
         ),
         (
+            "a hedge on a later line of an approve carrier",
+            serde_json::json!([review(
+                "author",
+                "COMMENTED",
+                &head,
+                &at(1),
+                &format!("VERDICT: APPROVE {head}\nApproval is conditional on CI passing.")
+            )]),
+            false,
+        ),
+        (
+            "an emoji tail is negative and vetoes another login",
+            serde_json::json!([
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(1),
+                    &format!("REVIEW_READY {head} \u{274c}")
+                ),
+                review("other", "COMMENTED", &head, &at(2), "SOURCE_REVIEW_READY"),
+            ]),
+            false,
+        ),
+        (
             "mis-formatted positive marker alone attests nothing",
             serde_json::json!([review(
                 "author",

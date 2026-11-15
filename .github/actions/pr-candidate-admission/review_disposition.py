@@ -311,10 +311,13 @@ def marker_line_neutral(line: str) -> bool:
     tail = normalized[match.end() :]
     if STATE_TOKEN.search(tail) or negation_hit(line):
         return False
-    words = re.findall(r"[A-Za-z0-9]+", tail)
-    if words and words[0].lower() == "head":
-        words = words[1:]
-    return len(words) == 1 and SHA_TOKEN.fullmatch(words[0]) is not None
+    # #14728 review: the tail must be nothing but a commit reference. A word
+    # scan would drop an emoji or other non-ASCII character and read the rest as
+    # a bare commit, so the whole tail is matched instead.
+    stripped = tail.strip(" \t,.;:-`'()/")
+    if stripped.lower().startswith("head "):
+        stripped = stripped[len("head ") :].strip()
+    return SHA_TOKEN.fullmatch(stripped) is not None
 
 
 # #8157 VERDICT carrier: only a column-zero first line in the observed verdict
@@ -384,7 +387,13 @@ def comment_body_verdict_ready(body: str, head: str) -> bool:
         return False
     return all(
         positive_line(line)
-        or not (STATE_LINE.match(line) or negation_hit(line))
+        or not (
+            STATE_LINE.match(line)
+            or negation_hit(line)
+            # #14728 review: a later line that defers the approval makes the
+            # carrier conditional, so it attests nothing.
+            or VERDICT_TAIL_HEDGE.search(line)
+        )
         for line in substantive[1:]
     )
 
@@ -1255,6 +1264,30 @@ def self_test() -> None:
             ],
             head=head,
         ), body
+    # #14728 review: a hedge on a later line of an APPROVE carrier makes it
+    # conditional, so it attests nothing.
+    for tail in ("pending the fix", "after the rebase", "Approval is conditional on CI passing."):
+        body = f"VERDICT: APPROVE {head}\n{tail}"
+        assert not reviews_allow_source_attestation(
+            [
+                review(state="COMMENTED", commit_id=head, id=1, body=body,
+                       submitted_at="2026-10-15T01:00:01Z"),
+            ],
+            head=head,
+        ), body
+    # #14728 review: a tail with a character outside the commit-reference
+    # grammar is negative, not neutral, so it vetoes another login's marker.
+    emoji = f"REVIEW_READY {sha} \u274c"
+    assert comment_body_negative(emoji)
+    assert not reviews_allow_source_attestation(
+        [
+            review(state="COMMENTED", commit_id=head, id=1, body=emoji,
+                   submitted_at="2026-10-15T01:00:01Z"),
+            review(state="COMMENTED", commit_id=head, id=2, body="SOURCE_REVIEW_READY",
+                   submitted_at="2026-10-15T01:00:02Z", user={"login": "other"}),
+        ],
+        head=head,
+    )
     # #14728 review: a later native withdrawal supersedes the marker.
     approval = review(state="APPROVED", commit_id=head, id=2,
                       submitted_at="2026-10-15T01:01:00Z")
