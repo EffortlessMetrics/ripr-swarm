@@ -6576,6 +6576,48 @@ fn non_rust_programming_policy_requires_retention_rule() {
         non_rust_programming_retention_reason("tools/python/portable-ripr-consumer/run.py")
             .is_some()
     );
+    assert!(
+        non_rust_programming_retention_reason(
+            "examples/python-bulk-discount/project/pricing/core.py"
+        )
+        .is_some()
+    );
+    assert!(
+        non_rust_programming_retention_reason(
+            "examples/typescript-discount-threshold/strengthened/pricing.test.ts"
+        )
+        .is_some()
+    );
+    assert!(non_rust_programming_retention_reason("examples/tools/run.py").is_none());
+    assert!(non_rust_programming_retention_reason("examples/project/build.sh").is_none());
+}
+
+#[test]
+fn shard_verifier_bootstrap_retention_is_exact() -> Result<(), String> {
+    for path in [
+        "tools/ci/shard-verifier-artifact.py",
+        "tools/ci/test_shard_verifier_artifact.py",
+    ] {
+        assert!(is_non_rust_programming_candidate(path), "{path}");
+        let reason = non_rust_programming_retention_reason(path).ok_or_else(|| {
+            format!("the pre-execution verifier needs explicit retention: {path}")
+        })?;
+        assert!(reason.contains("#14580"), "{path}: {reason}");
+    }
+    for path in [
+        "tools/ci/other.py",
+        "tools/ci/shard-verifier-artifact-extra.py",
+        "tools/ci/test_shard_verifier_artifact_extra.py",
+        "tools/ci/nested/shard-verifier-artifact.py",
+        "tools/ci/shard-verifier-artifact.py.extra.py",
+    ] {
+        assert!(is_non_rust_programming_candidate(path), "{path}");
+        assert!(
+            non_rust_programming_retention_reason(path).is_none(),
+            "{path}"
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -6775,6 +6817,8 @@ fn rust_conversion_candidates_derive_retention_from_the_enforced_owner() -> Resu
         ".github/actions/pr-candidate-admission/release_cut_admission.py",
         "tools/activate-rust.sh",
         "tools/test-activate-rust.sh",
+        "tools/ci/shard-verifier-artifact.py",
+        "tools/ci/test_shard_verifier_artifact.py",
     ] {
         let enforced_reason = non_rust_programming_retention_reason(path)
             .ok_or_else(|| format!("approved boundary must be enforced-retained: {path}"))?;
@@ -7890,6 +7934,35 @@ fn windows_absolute_path_tokens_find_tokens_without_trailing_punctuation() {
 }
 
 #[test]
+fn windows_absolute_path_tokens_preserve_separator_boundaries_and_unicode() {
+    let first = concat!("C:", "/café:stream/雪");
+    let second = concat!("d:", "\\資料");
+    let line = format!(":: Type::member é:/ignored αC:/ignored `{first}`; '{second}' :z");
+    assert_eq!(
+        windows_absolute_path_tokens(&line),
+        vec![first.to_string(), second.to_string()]
+    );
+    for line in ["", ":", "::", "x:", "α:", "Type::member", "wordC:/ignored"] {
+        assert!(windows_absolute_path_tokens(line).is_empty(), "{line}");
+    }
+}
+
+#[test]
+fn windows_absolute_path_tokens_keep_empty_roots_and_distinct_paths() {
+    let first = concat!("C:", "/");
+    let second = concat!("Z:", "\\");
+    let line = format!("`{first}`,\"{second}\" {first}{second}");
+    assert_eq!(
+        windows_absolute_path_tokens(&line),
+        vec![
+            first.to_string(),
+            second.to_string(),
+            format!("{first}{second}")
+        ]
+    );
+}
+
+#[test]
 fn workflow_run_extraction_handles_step_shorthand_and_blocks() {
     let workflow = r#"
 jobs:
@@ -8352,7 +8425,7 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         if candidate
             .matches("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
             .count()
-            != 5
+            != 6
             || candidate
                 .matches("actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333")
                 .count()
@@ -28094,6 +28167,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   droid-security-scan:
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
@@ -28120,6 +28194,7 @@ jobs:
           ANTHROPIC_AUTH_TOKEN: ""
           ANTHROPIC_BASE_URL: ""
         with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           upload_debug_artifacts: false
           security_scan_schedule: true
           security_scan_days: 7
@@ -28303,6 +28378,34 @@ fn check_droid_security_scan_flags_missing_contents_read() {
         violations
             .iter()
             .any(|v| v.contains("must set contents: read"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_self_hosted_runner() {
+    let yaml =
+        valid_droid_security_scan_yaml().replace("runs-on: ubuntu-latest", "runs-on: self-hosted");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("GitHub-hosted runner")),
+        "{violations:?}"
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_missing_github_token() {
+    let yaml = valid_droid_security_scan_yaml()
+        .replace("          github_token: ${{ secrets.GITHUB_TOKEN }}\n", "");
+    assert!(
+        !yaml.contains("github_token:"),
+        "token mutation must engage"
+    );
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations.iter().any(|v| v.contains("GITHUB_TOKEN")),
+        "{violations:?}"
     );
 }
 
@@ -52695,7 +52798,7 @@ fn mutation_calibration_reports_are_advisory_and_structured() -> Result<(), Stri
 }
 
 #[test]
-fn parse_workspace_lints_section_extracts_clippy_levels() {
+fn parse_workspace_lints_section_extracts_clippy_levels() -> Result<(), String> {
     let cargo = r#"
 [workspace]
 members = ["crates/ripr"]
@@ -52712,7 +52815,7 @@ allow_attributes_without_reason = "deny" # trailing comment
 [profile.release]
 lto = true
 "#;
-    let clippy = super::parse_workspace_lints_section(cargo, "clippy");
+    let clippy = super::parse_workspace_lints_section(cargo, "clippy")?;
     assert_eq!(clippy.get("panic").map(String::as_str), Some("deny"));
     assert_eq!(clippy.get("todo").map(String::as_str), Some("deny"));
     assert_eq!(
@@ -52723,9 +52826,10 @@ lto = true
     );
     assert!(!clippy.contains_key("unsafe_code"));
 
-    let rust = super::parse_workspace_lints_section(cargo, "rust");
+    let rust = super::parse_workspace_lints_section(cargo, "rust")?;
     assert_eq!(rust.get("unsafe_code").map(String::as_str), Some("forbid"));
     assert!(!rust.contains_key("panic"));
+    Ok(())
 }
 
 #[test]
@@ -53257,7 +53361,7 @@ fn proof_pack_command_known_set_accepts_xtask_roots_and_repo_commands() {
 }
 
 #[test]
-fn check_lint_policy_detects_active_entry_missing_in_cargo_toml() {
+fn check_lint_policy_detects_active_entry_missing_in_cargo_toml() -> Result<(), String> {
     let cargo = r#"
 [workspace.lints.clippy]
 panic = "deny"
@@ -53271,7 +53375,7 @@ level = "deny"
 name = "clippy::map_err_ignore"
 level = "deny"
 "#;
-    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy");
+    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy")?;
     let (entries, parse_violations) = super::parse_clippy_lints_ledger(ledger);
     assert!(parse_violations.is_empty());
     let mut violations = Vec::new();
@@ -53282,10 +53386,11 @@ level = "deny"
         }
     }
     assert_eq!(violations, vec!["clippy::map_err_ignore".to_string()]);
+    Ok(())
 }
 
 #[test]
-fn check_lint_policy_detects_planned_entry_already_active_in_cargo_toml() {
+fn check_lint_policy_detects_planned_entry_already_active_in_cargo_toml() -> Result<(), String> {
     let cargo = r#"
 [workspace.lints.clippy]
 indexing_slicing = "deny"
@@ -53296,7 +53401,7 @@ name = "clippy::indexing_slicing"
 level = "deny"
 activate_when_msrv = "1.93"
 "#;
-    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy");
+    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy")?;
     let (entries, _violations) = super::parse_clippy_lints_ledger(ledger);
     let mut leaks = Vec::new();
     for entry in entries.iter().filter(|entry| entry.is_planned) {
@@ -53306,6 +53411,7 @@ activate_when_msrv = "1.93"
         }
     }
     assert_eq!(leaks, vec!["clippy::indexing_slicing".to_string()]);
+    Ok(())
 }
 
 #[test]
@@ -53521,7 +53627,7 @@ rust-version = '1.95'
 }
 
 #[test]
-fn check_lint_policy_detects_level_drift() {
+fn check_lint_policy_detects_level_drift() -> Result<(), String> {
     let cargo = r#"
 [workspace.lints.clippy]
 panic = "warn"
@@ -53531,7 +53637,7 @@ panic = "warn"
 name = "clippy::panic"
 level = "deny"
 "#;
-    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy");
+    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy")?;
     let (entries, _violations) = super::parse_clippy_lints_ledger(ledger);
     let mut drift = Vec::new();
     for entry in entries.iter().filter(|entry| !entry.is_planned) {
@@ -53549,6 +53655,7 @@ level = "deny"
             "warn".to_string()
         )]
     );
+    Ok(())
 }
 
 #[test]

@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effortlessmetrics.dev/ripr/capabilities.schema.json",
+  "title": "RIPR Language Capabilities",
+  "description": "The document `ripr capabilities --json` writes to stdout (#5531): a read-only, static registry of what this ripr build can establish per language, framework and analysis mode, and where it must widen or stop. It runs nothing and reads no repository. A document matching this schema has the published shape; that does not make any cell's state correct, does not report whether a language is enabled for a repository (see `ripr doctor --json`), and does not promote a support tier.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "semantic_digest",
+    "availability_note",
+    "filtered_by",
+    "digest_scope",
+    "languages",
+    "support_state_vocabulary",
+    "absent_cell_meaning",
+    "cells",
+    "non_claims",
+    "claim_boundary"
+  ],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "kind": { "const": "ripr_language_capabilities" },
+    "semantic_digest": {
+      "description": "Digest over the whole capability table, independent of row order. It does not change when `--language` narrows `languages` and `cells`.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "availability_note": { "type": "string", "minLength": 1 },
+    "filtered_by": {
+      "description": "`null` for the whole table, or the `--language` value that narrowed `languages` and `cells`.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["language"],
+      "properties": {
+        "language": { "$ref": "#/$defs/language" }
+      }
+    },
+    "digest_scope": { "const": "whole_table" },
+    "languages": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/language_entry" }
+    },
+    "support_state_vocabulary": {
+      "description": "The complete closed state vocabulary, whether or not a cell currently uses each state. Unique members of a seven-value enum with at least seven items: exactly the whole vocabulary.",
+      "type": "array",
+      "minItems": 7,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/support_state" }
+    },
+    "absent_cell_meaning": { "const": "not_proven" },
+    "cells": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/cell" }
+    },
+    "non_claims": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "claim_boundary": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "language": {
+      "enum": ["rust", "typescript", "javascript", "python", "perl"]
+    },
+    "support_state": {
+      "enum": [
+        "exact_supported",
+        "conservative_overapproximation",
+        "supported_with_required_fallback",
+        "unsupported_with_typed_limit",
+        "not_applicable_with_evidence",
+        "stale",
+        "not_proven"
+      ]
+    },
+    "language_entry": {
+      "description": "Build availability for one language. It neither implies nor limits any cell.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "language",
+        "language_status",
+        "adapter_compiled",
+        "required_feature"
+      ],
+      "properties": {
+        "language": { "$ref": "#/$defs/language" },
+        "language_status": { "enum": ["stable", "preview"] },
+        "adapter_compiled": { "type": "boolean" },
+        "required_feature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "language",
+        "framework",
+        "mode",
+        "family",
+        "state",
+        "tier_ceiling",
+        "limit",
+        "proof_refs"
+      ],
+      "properties": {
+        "id": {
+          "description": "`language/framework/mode/family`.",
+          "type": "string",
+          "minLength": 1
+        },
+        "language": { "$ref": "#/$defs/language" },
+        "framework": {
+          "description": "`any`, or a named framework. A framework-specific cell never widens to `any`.",
+          "type": "string",
+          "minLength": 1
+        },
+        "mode": { "enum": ["diff", "repo"] },
+        "family": { "enum": ["static_facts", "repair_routing"] },
+        "state": { "$ref": "#/$defs/support_state" },
+        "tier_ceiling": { "enum": ["usable_alpha", "preview"] },
+        "limit": {
+          "description": "The typed fallback or limitation a reader must honor; `null` only when the state carries none.",
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "proof_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

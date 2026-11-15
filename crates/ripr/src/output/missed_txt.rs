@@ -355,6 +355,7 @@ mod tests {
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             owner_opt_outs: Vec::new(),
+            file_fact_cache: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
