@@ -751,6 +751,10 @@ below. Then:
 - any other compound shape (`||`, a guard that is a call or a comparison,
   two comparisons) keeps the previous reading unchanged.
 
+Fixture `fixtures/rust_guarded_boundary_guard_missing` and honesty-corpus
+case `rust_guarded_boundary_guard_missing_not_promoted` pin the guard-missing
+boundary row as `infection_unknown`.
+
 ## Test Mapping
 
 Fixture coverage:
