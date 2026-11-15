@@ -450,6 +450,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+Also records the current repair-start spot count (3 -> 5) that the analyzer already produces at base d71a057f (this PR changes only next-step text); the golden was stale.
 
 Command:
 `cargo xtask goldens bless helper_chain_multi_hop --reason "..."`
