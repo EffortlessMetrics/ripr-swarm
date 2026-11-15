@@ -1221,7 +1221,7 @@ fn range_bound_change(before: &str, after: &str) -> Option<RangeConsumer> {
     let after = mask_rust_comments_and_strings(&raw_after);
     if before == after {
         // A char endpoint (`'a'..='z'`) is masked like a string literal.
-        return char_endpoint_change(&raw_before, &raw_after, &before).then(|| {
+        return range_endpoints_moved(&raw_before, &raw_after).then(|| {
             if raw_after.contains("=>") {
                 RangeConsumer::Pattern
             } else {
@@ -1268,27 +1268,51 @@ fn range_bound_change(before: &str, after: &str) -> Option<RangeConsumer> {
                     .is_some_and(|head| head.ends_with("..") && !head.ends_with("..."));
             // #14538: an edit inside a macro's input (`matches!(n, 1..=5)`
             // to `0..=6`) or on a line that does not parse: no range node is
-            // read, so a line holding any range operator is gated.
-            (one_equals || before.contains("..") || after.contains(".."))
+            // read, so the line is gated when a range's written endpoints
+            // or operator differ between the versions.
+            (one_equals || range_endpoints_moved(&before, &after))
                 .then_some(RangeConsumer::Absorbing)
         }
     }
 }
 
-/// #14538: whether `before` and `after` differ only inside strings, chars
-/// or comments on a line holding a char literal written against a range
-/// operator (`'a'..='z'` to `'b'..='y'`), which the masked comparison cannot
-/// see. Checked by whole-line content, not by byte position, so multibyte
-/// chars and both endpoints changing are covered.
-fn char_endpoint_change(raw_before: &str, raw_after: &str, masked: &str) -> bool {
-    let char_against_range = |raw: &str| {
-        let compact: String = raw.chars().filter(|ch| !ch.is_whitespace()).collect();
-        compact.contains("'..") || compact.contains("..'") || compact.contains("..='")
-    };
-    raw_before != raw_after
-        && masked.contains("..")
-        && char_against_range(raw_before)
-        && char_against_range(raw_after)
+/// #14538: each `..` / `..=` operator of `text` (not `...`) with its
+/// written start and end operand texts, read lexically up to the nearest
+/// delimiter. A macro input or a line that does not parse has no range node,
+/// so its ranges are compared this way.
+fn range_signatures(text: &str) -> Vec<(String, bool, String)> {
+    let mut signatures = Vec::new();
+    let mut from = 0;
+    while let Some(found) = text.get(from..).and_then(|rest| rest.find("..")) {
+        let at = from + found;
+        let rest = &text[at + 2..];
+        if rest.starts_with('.') {
+            from = at + 2 + rest.len() - rest.trim_start_matches('.').len();
+            continue;
+        }
+        let inclusive = rest.starts_with('=');
+        let after = at + 2 + usize::from(inclusive);
+        let head = &text[..at];
+        let start = head
+            .rfind(|ch: char| ",([{|;=".contains(ch))
+            .map_or(head, |cut| &head[cut + 1..]);
+        let tail = &text[after..];
+        let end = tail
+            .find(|ch: char| ",)]}|;={".contains(ch))
+            .map_or(tail, |cut| &tail[..cut]);
+        signatures.push((start.trim().to_string(), inclusive, end.trim().to_string()));
+        from = after;
+    }
+    signatures
+}
+
+/// Whether `before` and `after` hold the same number of ranges and at least
+/// one range's endpoints or operator differ: a moved bound (`0..=5` to
+/// `0..=6`, `'a'..='z'` to `'b'..='y'`), not an edit beside the ranges
+/// (`[1, len, ..] => len + 2` to `2 + len`) or a range added or removed.
+fn range_endpoints_moved(before: &str, after: &str) -> bool {
+    let (old, new) = (range_signatures(before), range_signatures(after));
+    !old.is_empty() && old.len() == new.len() && old != new
 }
 
 /// #14538: a line where several range expressions changed at once
@@ -2082,7 +2106,7 @@ fn is_wildcard_discard(expression: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{RangeConsumer, char_endpoint_change, range_bound_change, several_range_change};
+    use super::{RangeConsumer, range_bound_change, range_endpoints_moved, several_range_change};
 
     #[test]
     fn an_edit_on_a_range_line_inside_a_macro_input_is_gated() {
@@ -2121,14 +2145,22 @@ mod tests {
             "matches!(c, 'é'..='z')",
             "matches!(c, 'è'..='z')"
         ));
-        // A line with no range operator is not gated.
+        // An edit beside the ranges, a range added or removed, or a line
+        // with no range operator is not gated here.
         assert!(range_bound_change("matches!(n, Some(5))", "matches!(n, Some(6))").is_none());
-        assert!(!char_endpoint_change("f('a')", "f('b')", "f(   )"));
-        assert!(!char_endpoint_change(
-            "s == \"a..b\"",
-            "s == \"a..c\"",
-            "s ==       "
+        assert!(!range_endpoints_moved(
+            "[1, len, ..] => Status::Complete(*len as usize + 2),",
+            "[1, len, ..] => Status::Complete(2 + *len as usize),"
         ));
+        assert!(!range_endpoints_moved(
+            "crc: crc(body),",
+            "crc: crc(&body[..]),"
+        ));
+        assert!(!range_endpoints_moved(
+            "b'0'..=b'9' | b'a'..=b'z' | b'_' => true,",
+            "b'0'..=b'9' | b'a'..=b'z' => true,"
+        ));
+        assert!(!range_endpoints_moved("f(a...b)", "f(a...c)"));
     }
 
     #[test]
