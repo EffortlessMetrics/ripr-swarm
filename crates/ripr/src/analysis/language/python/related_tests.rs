@@ -2316,11 +2316,16 @@ fn exception_body<'a>(gate_text: &'a str, item_text: &str) -> Option<&'a str> {
 /// so nothing in it runs as the body runs.
 fn exception_body_defers(body: &str) -> bool {
     let visible = |idx: usize| !python_text_hides_code(body, idx);
-    let defers_by_keyword = body.lines().any(|line| {
-        let line = line.trim_start();
+    let mut line_start = 0;
+    let defers_by_keyword = body.split_inclusive('\n').any(|line| {
+        let start = line_start;
+        line_start += line.len();
+        let trimmed = line.trim_start();
+        let keyword_at = start + (line.len() - trimmed.len());
         ["def ", "async def ", "class "]
             .iter()
-            .any(|keyword| line.starts_with(keyword))
+            .any(|keyword| trimmed.starts_with(keyword))
+            && visible(keyword_at)
     });
     let defers_by_lambda = body.match_indices("lambda").any(|(idx, word)| {
         let before = body[..idx].chars().next_back();
