@@ -1401,7 +1401,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// shapes that still read as `ExactErrorVariant` under the denylist (#12474).
 /// `1.59`: file-fact keys carry the normalized path spelling (#13887); `1.58`
 /// entries may name the same file under another spelling.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.59";
+/// `1.60`: each branch value of an owner's tail `if`/`else` is probed as
+/// `return_value` (#14385); `1.59` facts lack those probe shapes.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.60";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -2549,7 +2551,7 @@ impl RepoModuleTreeScanCache {
             analyzer_version: crate::build_identity::cache_identity().to_string(),
             scans: scans.clone(),
         };
-        let bytes = encode_integrity_body(&envelope, envelope.expected_digest()?)?;
+        let bytes = encode_integrity_body_compact(&envelope, envelope.expected_digest()?)?;
         crate::atomic_file::write_cache(&self.entry_path(), &bytes, "module tree scan cache")
     }
 }
@@ -4716,6 +4718,7 @@ pub(crate) fn semantic_digest_for_bytes(domain: &str, bytes: &[u8]) -> String {
     format!("sha256:{:x}", hasher.finalize())
 }
 
+#[cfg(test)]
 pub(crate) fn encode_integrity_body<T: serde::Serialize>(
     body: &T,
     payload_digest: String,
@@ -4726,7 +4729,7 @@ pub(crate) fn encode_integrity_body<T: serde::Serialize>(
     record_integrity_vec_len(bytes.len());
     Ok(bytes)
 }
-/// [`encode_integrity_body`] without pretty-printing, for envelopes large
+/// Compact integrity-body encoder without pretty-printing, for envelopes large
 /// enough that indentation would dominate their size (the Python per-file
 /// fact store, #10914, and Rust file facts, #9216). Decoding and the digest
 /// are unchanged.
@@ -4869,7 +4872,7 @@ mod codec {
 
     #[cfg(test)]
     pub(super) fn encode_counts(envelope: &CountCacheEnvelope) -> Result<Vec<u8>, String> {
-        serde_json::to_vec_pretty(envelope).map_err(|err| format!("encode counts failed: {err}"))
+        serde_json::to_vec(envelope).map_err(|err| format!("encode counts failed: {err}"))
     }
 
     #[cfg(test)]
@@ -4895,7 +4898,7 @@ mod codec {
     pub(super) fn encode_corpus_fingerprint(
         envelope: &CorpusFingerprintEnvelope,
     ) -> Result<Vec<u8>, String> {
-        super::encode_integrity_body(envelope, envelope.expected_digest()?)
+        super::encode_integrity_body_compact(envelope, envelope.expected_digest()?)
     }
 
     pub(super) fn decode_corpus_fingerprint(
@@ -5629,7 +5632,8 @@ mod tests {
         // 1.56 -> 1.57: Verus guard facts on file facts (#10747).
         // 1.57 -> 1.58: positive Err-enclosing allowlist (#12474).
         // 1.58 -> 1.59: file-fact keys carry the normalized path spelling (#13887).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.59");
+        // 1.59 -> 1.60: tail if/else branch values probed as return_value (#14385).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.60");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -6072,7 +6076,11 @@ mod tests {
             }
             let key = RepoFileFactCacheKey::new(file, source.as_bytes());
             let envelope = FileFactCacheEnvelope::new(key.clone(), facts.clone());
-            let legacy = encode_integrity_body(&envelope, envelope.expected_digest()?)?;
+            let legacy = serde_json::to_vec_pretty(&ChecksummedBody {
+                body: &envelope,
+                payload_digest: envelope.expected_digest()?,
+            })
+            .map_err(|err| err.to_string())?;
             cache.store_file_facts(&key, &facts)?;
             let entry = cache.entry_path(&key);
             let stored = std::fs::read(&entry).map_err(|err| err.to_string())?;
@@ -6122,7 +6130,11 @@ mod tests {
                     let bytes = if compact {
                         encode_integrity_body_compact(&envelope, digest)?
                     } else {
-                        encode_integrity_body(&envelope, digest)?
+                        serde_json::to_vec_pretty(&ChecksummedBody {
+                            body: &envelope,
+                            payload_digest: digest,
+                        })
+                        .map_err(|err| err.to_string())?
                     };
                     std::hint::black_box(bytes);
                 }
@@ -6664,7 +6676,7 @@ mod tests {
         entry["file_facts"]["used_lexical_fallback"] = serde_json::Value::Bool(true);
         std::fs::write(
             &path,
-            serde_json::to_vec_pretty(&entry).map_err(|err| err.to_string())?,
+            serde_json::to_vec(&entry).map_err(|err| err.to_string())?,
         )
         .map_err(|err| err.to_string())?;
         let known = cache.known_file_paths();
@@ -9305,7 +9317,7 @@ mod tests {
         let path = cache.entry_path();
         let original = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
 
-        let edited = original.replace("\"name\": \"a\"", "\"name\": \"forged\"");
+        let edited = original.replace("\"name\":\"a\"", "\"name\":\"forged\"");
         assert_ne!(edited, original, "control: the edit applied");
         std::fs::write(&path, &edited).map_err(|error| error.to_string())?;
         assert!(cache.load().is_empty(), "edited body fails its digest");

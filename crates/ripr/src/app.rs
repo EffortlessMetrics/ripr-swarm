@@ -233,6 +233,51 @@ pub(crate) fn default_cli_git_timeout() -> std::time::Duration {
     std::time::Duration::from_secs(DEFAULT_CLI_GIT_TIMEOUT_SECS)
 }
 
+/// Parse one git-deadline value in whole seconds, `0` disabling the
+/// deadline (#2613). `source` names the flag or env var in the refusal, so a
+/// typo never runs with a silently different bound. Shared by the CLI
+/// `--git-timeout` flag and every `RIPR_GIT_TIMEOUT` reader (#14386).
+pub(crate) fn parse_git_timeout_seconds(
+    source: &str,
+    value: &str,
+) -> Result<Option<std::time::Duration>, String> {
+    let secs: u64 = value.parse().map_err(|_parse_err| {
+        format!("{source} requires a non-negative integer (seconds); got {value:?}")
+    })?;
+    let timeout = std::time::Duration::from_secs(secs);
+    if std::time::Instant::now().checked_add(timeout).is_none() {
+        return Err(format!(
+            "{source} is too large for the platform deadline; got {secs} seconds; pass a smaller number of seconds"
+        ));
+    }
+    Ok((secs > 0).then_some(timeout))
+}
+
+/// Read one `RIPR_GIT_TIMEOUT` value (#2613, #14386). `Ok(None)` means the
+/// variable is unset, so the caller keeps its own default; `Ok(Some(None))`
+/// disables the deadline. A present but unreadable or invalid value is a
+/// misconfiguration and refuses (#4374).
+pub(crate) fn git_timeout_from_env_value(
+    env_value: Result<String, std::env::VarError>,
+) -> Result<Option<Option<std::time::Duration>>, String> {
+    match env_value {
+        Ok(value) => parse_git_timeout_seconds("RIPR_GIT_TIMEOUT", &value).map(Some),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err("RIPR_GIT_TIMEOUT must be valid UTF-8".to_string())
+        }
+    }
+}
+
+/// The git deadline a long-lived adapter without a `--git-timeout` flag
+/// (`ripr mcp`) runs with: `RIPR_GIT_TIMEOUT` when set, else the CLI default
+/// (#14386). Same parser and default as `ripr check`.
+pub(crate) fn env_or_default_git_timeout(
+    env_value: Result<String, std::env::VarError>,
+) -> Result<Option<std::time::Duration>, String> {
+    Ok(git_timeout_from_env_value(env_value)?.unwrap_or(Some(default_cli_git_timeout())))
+}
+
 /// Public analysis effort profile used by both CLI flags and library
 /// integrations.
 ///

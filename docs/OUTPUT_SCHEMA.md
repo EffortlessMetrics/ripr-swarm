@@ -397,7 +397,9 @@ not edit authorization. No field shape or schema version changes.
 finds the offered route executable, so the reference and the decision cannot
 disagree. The canonical DTO carries the closed action class (see the
 `next_action_class` values list), the exact subject/currentness binding, the
-referenced command or a typed stop, and bounded subordinate alternatives.
+referenced command or a typed stop, and bounded subordinate alternatives
+(for `ripr check`, the two best-ranked unselected findings by the shared
+findings priority, #14266).
 The semantic digest pins the decision's portable parts (schema, producer,
 class, command identity, stop kind, transition labels); displays, stop
 details, and alternative routes stay out like `next_action.display`. The
@@ -1195,7 +1197,12 @@ verify=complete|outcome=O|findings=N|exposed=N
   holds two arms, or when the line's head is not the probe's head. The
   match-arm `flow_sinks[].text` in JSON and the human `Changed behavior`,
   propagation and local-flow evidence lines carry the same result; the probe
-  expression, finding ids and classes do not change.
+  expression, finding ids and classes do not change. The same rule names the
+  result in MCP `ripr_get_gap` as `changed_behavior.arm_result` (present
+  only when read; `expression` stays the head, and `ripr_prepare_repair`
+  carries the same `changed_behavior`) and in the editor hover's
+  changed expression and line-findings heading; LSP diagnostic data keeps the
+  head (#14683).
 - 5 gap lines are printed, plus one more per 8 gaps, up to 10 (#13081): top
   triage gap first, then the remaining gaps in finding order; `+M more gaps not
   shown` states the exact remainder. The `open=` form (unconfirmed findings)
@@ -3929,7 +3936,11 @@ diagnostic, hover repair text, code action or code lens for a finding id in
 withheld count and the `owner_mutants_skip` reason under
 `diagnostics.owner_opt_out_findings` and `diagnostics.owner_opt_out_reason`
 (the reason is `null` when nothing is withheld). The set is recomputed on every
-refresh, so removing the attribute brings the findings back.
+refresh, so removing the attribute brings the findings back. The count is the
+owner opt-out count, which equals the withheld set because withheld findings are
+removed before the out-of-scope test-file partition; the partition therefore
+cannot reduce it. The fixed `owner_mutants_skip` reason holds while
+the editor supplies no suppression policy (#14610).
 
 Surfaces that still report withheld findings (not yet wired to the opt-out):
 MCP gaps and repair cards; `ripr explain`; and the repo-scope formats
@@ -21225,7 +21236,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.59",
+    "schema_version": "1.60",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,

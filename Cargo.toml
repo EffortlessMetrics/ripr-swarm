@@ -2,6 +2,7 @@
 members = ["crates/ripr", "crates/ripr-contract", "xtask", "tools/repo-policy"]
 default-members = ["crates/ripr"]
 resolver = "2"
+exclude = ["evals"]
 
 [workspace.package]
 # Single source of truth for the released version. `crates/ripr` inherits this

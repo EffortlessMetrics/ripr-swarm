@@ -145,11 +145,14 @@ Exit code `2`. The message names the ref. Check its spelling with
 `git branch --list`, fetch it, or pass `--base <ref>` for a ref the
 repository has.
 
-In CI the usual cause is a shallow clone:
+In CI the usual cause is a shallow clone. A `--depth` clone also tracks only
+the branch it cloned, so ripr asks you to widen `origin` before fetching:
 
 ```text
-This is a shallow clone: fetch the missing history with `git fetch --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout)
+This is a shallow clone that tracks a single branch: widen it with `git remote set-branches origin "*"`, then fetch the missing history with `git fetch --unshallow origin`
 ```
+
+In GitHub Actions, set `fetch-depth: 0` on actions/checkout instead.
 
 ### The directory is not a Git repository
 

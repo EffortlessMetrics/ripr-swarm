@@ -20,7 +20,7 @@
       "worktree": "dirty"
     },
     "canonicalization": "raw_json_placeholder_v1",
-    "content_sha256": "sha256:93c0bc2d5b545176a49fba9feebdcb0dba9866a0671413f7e368c0926d93bcff",
+    "content_sha256": "sha256:1bf3ccd0976b4cd58f7aec71483df521b7e7388347aaeb36579d8035fd4208c5",
     "kind": "repo_exposure",
     "producer": {
       "tool": "ripr",
@@ -42,8 +42,8 @@
     "opaque": 0,
     "propagation_unknown": 0,
     "reachable_unrevealed": 0,
-    "seams_total": 1,
-    "strongly_gripped": 0,
+    "seams_total": 3,
+    "strongly_gripped": 2,
     "suppressed": 0,
     "ungripped": 0,
     "weakly_gripped": 1
@@ -415,6 +415,544 @@
       ],
       "related_tests_total": 2,
       "seam_id": "67fc764ba37d77bd"
+    },
+    {
+      "column": 9,
+      "end_column": 20,
+      "end_line": 3,
+      "evidence": {
+        "activate": "yes",
+        "discriminate": "yes",
+        "observe": "yes",
+        "propagate": "yes",
+        "reach": "yes"
+      },
+      "evidence_record": {
+        "actionability": {
+          "class": "not_policy_relevant",
+          "has_concrete_guidance": false,
+          "reason": "seam is already gripped or intentionally non-actionable under current policy",
+          "signals": {
+            "assertion_shape": false,
+            "candidate_value": true,
+            "missing_discriminator": false,
+            "recommended_test_target": true,
+            "related_test": true,
+            "verification_command": false
+          }
+        },
+        "calibration": {
+          "agreement": "no_runtime_data",
+          "availability": "not_imported",
+          "confidence": "unknown"
+        },
+        "canonical_gap_group_size": null,
+        "canonical_gap_id": null,
+        "canonical_gap_reason": null,
+        "canonical_item": {
+          "actionability": "already_observed",
+          "canonical_gap_id": null,
+          "canonical_item_kind": "observed",
+          "command_specs": {
+            "receipt": null,
+            "verify": null
+          },
+          "confidence": {
+            "basis": "static_only",
+            "notes": [
+              "no imported runtime calibration data"
+            ]
+          },
+          "evidence_class": "return_value",
+          "gap_state": "already_observed",
+          "group_reason": null,
+          "primary_anchor": {
+            "file": "src/lib.rs",
+            "kind": "strongly_gripped",
+            "line": 3,
+            "reason": "record_location",
+            "source_id": "87947eedfbf6f795"
+          },
+          "raw_group_size": 1,
+          "raw_spans": [
+            {
+              "end_line": 3,
+              "file": "src/lib.rs",
+              "kind": "strongly_gripped",
+              "source_id": "87947eedfbf6f795",
+              "start_line": 3
+            }
+          ],
+          "receipt_command": null,
+          "recommended_repair": "No new RIPR action; current static evidence already observes this seam.",
+          "related_test": {
+            "file": "tests/pricing.rs",
+            "line": 4,
+            "name": "below_threshold_has_no_discount",
+            "reason": "direct_owner_call"
+          },
+          "repair_command": null,
+          "repair_route": null,
+          "static_limitations": [],
+          "verify_command": null,
+          "why": "seam is already gripped or intentionally non-actionable under current policy"
+        },
+        "evidence_path": {
+          "activate": {
+            "confidence": "medium",
+            "state": "yes",
+            "summary": "Observed 4 concrete activation value(s) for seam `amount - 10`"
+          },
+          "discriminate": {
+            "confidence": "medium",
+            "state": "yes",
+            "summary": "Strongest oracle for seam kind `return_value` is `strong` (kind-match true)"
+          },
+          "observe": {
+            "confidence": "medium",
+            "state": "yes",
+            "summary": "Observation evidence is `yes`"
+          },
+          "propagate": {
+            "confidence": "low",
+            "state": "yes",
+            "summary": "Static propagation to `return_value` sink is yes"
+          },
+          "reach": {
+            "confidence": "medium",
+            "state": "yes",
+            "summary": "Related tests appear to reach `src/lib.rs::discounted_total`: below_threshold_has_no_discount, far_above_threshold_discounts"
+          }
+        },
+        "grip_class": "strongly_gripped",
+        "headline_eligible": false,
+        "location": {
+          "file": "src/lib.rs",
+          "line": 3
+        },
+        "missing_discriminators": [],
+        "observed_values": [
+          {
+            "context": "function_argument",
+            "line": 5,
+            "text": "assert_eq!(discounted_total(50, 100), 50);",
+            "value": "100"
+          },
+          {
+            "context": "function_argument",
+            "line": 5,
+            "text": "assert_eq!(discounted_total(50, 100), 50);",
+            "value": "50"
+          },
+          {
+            "context": "function_argument",
+            "line": 10,
+            "text": "assert_eq!(discounted_total(10_000, 100), 9_990);",
+            "value": "100"
+          },
+          {
+            "context": "function_argument",
+            "line": 10,
+            "text": "assert_eq!(discounted_total(10_000, 100), 9_990);",
+            "value": "10_000"
+          }
+        ],
+        "owner": "src/lib.rs::discounted_total",
+        "presentation_text": null,
+        "raw_findings": [
+          {
+            "evidence_record_ref": "87947eedfbf6f795",
+            "expression": "amount - 10",
+            "file": "src/lib.rs",
+            "kind": "strongly_gripped",
+            "language": "rust",
+            "language_status": "stable",
+            "line": 3,
+            "probe_kind": "return_value",
+            "source_id": "87947eedfbf6f795"
+          }
+        ],
+        "recommendation": {
+          "action": "no_action",
+          "assertion_shape": null,
+          "candidate_values": [
+            {
+              "reason": "observed function_argument value from existing tests",
+              "value": "100"
+            },
+            {
+              "reason": "observed function_argument value from existing tests",
+              "value": "50"
+            },
+            {
+              "reason": "observed function_argument value from existing tests",
+              "value": "10_000"
+            }
+          ],
+          "nearest_test_to_imitate": {
+            "evidence_summary": "exact value assertion",
+            "file": "tests/pricing.rs",
+            "line": 4,
+            "name": "below_threshold_has_no_discount",
+            "oracle_kind": "exact_value",
+            "oracle_semantics": {
+              "missing": "no obvious value-shape discriminator gap under static scope",
+              "observes": "the exact value or value pattern asserted by the test",
+              "upgrade_suggestion": null
+            },
+            "oracle_strength": "strong",
+            "relation_confidence": "high",
+            "relation_reason": "direct_owner_call"
+          },
+          "reason": "seam is already gripped or intentionally non-actionable under current policy",
+          "recommended_test": null,
+          "verify_command": null
+        },
+        "related_tests": [
+          {
+            "evidence_summary": "exact value assertion",
+            "file": "tests/pricing.rs",
+            "line": 4,
+            "name": "below_threshold_has_no_discount",
+            "oracle_kind": "exact_value",
+            "oracle_semantics": {
+              "missing": "no obvious value-shape discriminator gap under static scope",
+              "observes": "the exact value or value pattern asserted by the test",
+              "upgrade_suggestion": null
+            },
+            "oracle_strength": "strong",
+            "relation_confidence": "high",
+            "relation_reason": "direct_owner_call"
+          },
+          {
+            "evidence_summary": "exact value assertion",
+            "file": "tests/pricing.rs",
+            "line": 9,
+            "name": "far_above_threshold_discounts",
+            "oracle_kind": "exact_value",
+            "oracle_semantics": {
+              "missing": "no obvious value-shape discriminator gap under static scope",
+              "observes": "the exact value or value pattern asserted by the test",
+              "upgrade_suggestion": null
+            },
+            "oracle_strength": "strong",
+            "relation_confidence": "high",
+            "relation_reason": "direct_owner_call"
+          }
+        ],
+        "related_tests_total": 2,
+        "schema_version": "0.1",
+        "seam_id": "87947eedfbf6f795",
+        "seam_kind": "return_value",
+        "static_limitations": []
+      },
+      "expression": "amount - 10",
+      "file": "src/lib.rs",
+      "grip_class": "strongly_gripped",
+      "headline_eligible": false,
+      "kind": "return_value",
+      "line": 3,
+      "missing_discriminators": [],
+      "observed_values": [
+        "100",
+        "50",
+        "100",
+        "10_000"
+      ],
+      "owner": "src/lib.rs::discounted_total",
+      "related_tests": [
+        {
+          "evidence_summary": "exact value assertion",
+          "file": "tests/pricing.rs",
+          "line": 4,
+          "name": "below_threshold_has_no_discount",
+          "oracle_kind": "exact_value",
+          "oracle_strength": "strong",
+          "relation_confidence": "high",
+          "relation_reason": "direct_owner_call"
+        },
+        {
+          "evidence_summary": "exact value assertion",
+          "file": "tests/pricing.rs",
+          "line": 9,
+          "name": "far_above_threshold_discounts",
+          "oracle_kind": "exact_value",
+          "oracle_strength": "strong",
+          "relation_confidence": "high",
+          "relation_reason": "direct_owner_call"
+        }
+      ],
+      "related_tests_total": 2,
+      "seam_id": "87947eedfbf6f795"
+    },
+    {
+      "column": 9,
+      "end_column": 15,
+      "end_line": 5,
+      "evidence": {
+        "activate": "yes",
+        "discriminate": "yes",
+        "observe": "yes",
+        "propagate": "yes",
+        "reach": "yes"
+      },
+      "evidence_record": {
+        "actionability": {
+          "class": "not_policy_relevant",
+          "has_concrete_guidance": false,
+          "reason": "seam is already gripped or intentionally non-actionable under current policy",
+          "signals": {
+            "assertion_shape": false,
+            "candidate_value": true,
+            "missing_discriminator": false,
+            "recommended_test_target": true,
+            "related_test": true,
+            "verification_command": false
+          }
+        },
+        "calibration": {
+          "agreement": "no_runtime_data",
+          "availability": "not_imported",
+          "confidence": "unknown"
+        },
+        "canonical_gap_group_size": null,
+        "canonical_gap_id": null,
+        "canonical_gap_reason": null,
+        "canonical_item": {
+          "actionability": "already_observed",
+          "canonical_gap_id": null,
+          "canonical_item_kind": "observed",
+          "command_specs": {
+            "receipt": null,
+            "verify": null
+          },
+          "confidence": {
+            "basis": "static_only",
+            "notes": [
+              "no imported runtime calibration data"
+            ]
+          },
+          "evidence_class": "return_value",
+          "gap_state": "already_observed",
+          "group_reason": null,
+          "primary_anchor": {
+            "file": "src/lib.rs",
+            "kind": "strongly_gripped",
+            "line": 5,
+            "reason": "record_location",
+            "source_id": "87a20fedfc027854"
+          },
+          "raw_group_size": 1,
+          "raw_spans": [
+            {
+              "end_line": 5,
+              "file": "src/lib.rs",
+              "kind": "strongly_gripped",
+              "source_id": "87a20fedfc027854",
+              "start_line": 5
+            }
+          ],
+          "receipt_command": null,
+          "recommended_repair": "No new RIPR action; current static evidence already observes this seam.",
+          "related_test": {
+            "file": "tests/pricing.rs",
+            "line": 4,
+            "name": "below_threshold_has_no_discount",
+            "reason": "direct_owner_call"
+          },
+          "repair_command": null,
+          "repair_route": null,
+          "static_limitations": [],
+          "verify_command": null,
+          "why": "seam is already gripped or intentionally non-actionable under current policy"
+        },
+        "evidence_path": {
+          "activate": {
+            "confidence": "medium",
+            "state": "yes",
+            "summary": "Observed 4 concrete activation value(s) for seam `amount`"
+          },
+          "discriminate": {
+            "confidence": "medium",
+            "state": "yes",
+            "summary": "Strongest oracle for seam kind `return_value` is `strong` (kind-match true)"
+          },
+          "observe": {
+            "confidence": "medium",
+            "state": "yes",
+            "summary": "Observation evidence is `yes`"
+          },
+          "propagate": {
+            "confidence": "low",
+            "state": "yes",
+            "summary": "Static propagation to `return_value` sink is yes"
+          },
+          "reach": {
+            "confidence": "medium",
+            "state": "yes",
+            "summary": "Related tests appear to reach `src/lib.rs::discounted_total`: below_threshold_has_no_discount, far_above_threshold_discounts"
+          }
+        },
+        "grip_class": "strongly_gripped",
+        "headline_eligible": false,
+        "location": {
+          "file": "src/lib.rs",
+          "line": 5
+        },
+        "missing_discriminators": [],
+        "observed_values": [
+          {
+            "context": "function_argument",
+            "line": 5,
+            "text": "assert_eq!(discounted_total(50, 100), 50);",
+            "value": "100"
+          },
+          {
+            "context": "function_argument",
+            "line": 5,
+            "text": "assert_eq!(discounted_total(50, 100), 50);",
+            "value": "50"
+          },
+          {
+            "context": "function_argument",
+            "line": 10,
+            "text": "assert_eq!(discounted_total(10_000, 100), 9_990);",
+            "value": "100"
+          },
+          {
+            "context": "function_argument",
+            "line": 10,
+            "text": "assert_eq!(discounted_total(10_000, 100), 9_990);",
+            "value": "10_000"
+          }
+        ],
+        "owner": "src/lib.rs::discounted_total",
+        "presentation_text": null,
+        "raw_findings": [
+          {
+            "evidence_record_ref": "87a20fedfc027854",
+            "expression": "amount",
+            "file": "src/lib.rs",
+            "kind": "strongly_gripped",
+            "language": "rust",
+            "language_status": "stable",
+            "line": 5,
+            "probe_kind": "return_value",
+            "source_id": "87a20fedfc027854"
+          }
+        ],
+        "recommendation": {
+          "action": "no_action",
+          "assertion_shape": null,
+          "candidate_values": [
+            {
+              "reason": "observed function_argument value from existing tests",
+              "value": "100"
+            },
+            {
+              "reason": "observed function_argument value from existing tests",
+              "value": "50"
+            },
+            {
+              "reason": "observed function_argument value from existing tests",
+              "value": "10_000"
+            }
+          ],
+          "nearest_test_to_imitate": {
+            "evidence_summary": "exact value assertion",
+            "file": "tests/pricing.rs",
+            "line": 4,
+            "name": "below_threshold_has_no_discount",
+            "oracle_kind": "exact_value",
+            "oracle_semantics": {
+              "missing": "no obvious value-shape discriminator gap under static scope",
+              "observes": "the exact value or value pattern asserted by the test",
+              "upgrade_suggestion": null
+            },
+            "oracle_strength": "strong",
+            "relation_confidence": "high",
+            "relation_reason": "direct_owner_call"
+          },
+          "reason": "seam is already gripped or intentionally non-actionable under current policy",
+          "recommended_test": null,
+          "verify_command": null
+        },
+        "related_tests": [
+          {
+            "evidence_summary": "exact value assertion",
+            "file": "tests/pricing.rs",
+            "line": 4,
+            "name": "below_threshold_has_no_discount",
+            "oracle_kind": "exact_value",
+            "oracle_semantics": {
+              "missing": "no obvious value-shape discriminator gap under static scope",
+              "observes": "the exact value or value pattern asserted by the test",
+              "upgrade_suggestion": null
+            },
+            "oracle_strength": "strong",
+            "relation_confidence": "high",
+            "relation_reason": "direct_owner_call"
+          },
+          {
+            "evidence_summary": "exact value assertion",
+            "file": "tests/pricing.rs",
+            "line": 9,
+            "name": "far_above_threshold_discounts",
+            "oracle_kind": "exact_value",
+            "oracle_semantics": {
+              "missing": "no obvious value-shape discriminator gap under static scope",
+              "observes": "the exact value or value pattern asserted by the test",
+              "upgrade_suggestion": null
+            },
+            "oracle_strength": "strong",
+            "relation_confidence": "high",
+            "relation_reason": "direct_owner_call"
+          }
+        ],
+        "related_tests_total": 2,
+        "schema_version": "0.1",
+        "seam_id": "87a20fedfc027854",
+        "seam_kind": "return_value",
+        "static_limitations": []
+      },
+      "expression": "amount",
+      "file": "src/lib.rs",
+      "grip_class": "strongly_gripped",
+      "headline_eligible": false,
+      "kind": "return_value",
+      "line": 5,
+      "missing_discriminators": [],
+      "observed_values": [
+        "100",
+        "50",
+        "100",
+        "10_000"
+      ],
+      "owner": "src/lib.rs::discounted_total",
+      "related_tests": [
+        {
+          "evidence_summary": "exact value assertion",
+          "file": "tests/pricing.rs",
+          "line": 4,
+          "name": "below_threshold_has_no_discount",
+          "oracle_kind": "exact_value",
+          "oracle_strength": "strong",
+          "relation_confidence": "high",
+          "relation_reason": "direct_owner_call"
+        },
+        {
+          "evidence_summary": "exact value assertion",
+          "file": "tests/pricing.rs",
+          "line": 9,
+          "name": "far_above_threshold_discounts",
+          "oracle_kind": "exact_value",
+          "oracle_strength": "strong",
+          "relation_confidence": "high",
+          "relation_reason": "direct_owner_call"
+        }
+      ],
+      "related_tests_total": 2,
+      "seam_id": "87a20fedfc027854"
     }
   ],
   "source_subject": {

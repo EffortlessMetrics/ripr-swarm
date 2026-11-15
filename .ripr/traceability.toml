@@ -2297,6 +2297,7 @@ tests = [
   "crates/ripr/src/analysis/facts/index_tests.rs::finalization_observes_deadline_at_return_after_compaction_and_membership_refresh",
   "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs::tests::unqualified_helper_calls_have_no_module_candidates",
   "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs::tests::qualified_helper_filter_matches_unbounded_relations",
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs::tests::qualified_helper_skips_cleaning_for_names_without_candidates",
   "crates/ripr-contract/src/analysis/cancellation.rs::tests::optional_worker_context_clears_and_restores_an_outer_request",
   "crates/ripr-contract/src/analysis/cancellation.rs::tests::optional_worker_context_restores_after_unwind",
   "crates/ripr/src/analysis/facts/build.rs::tests::cached_parse_workers_observe_request_cancellation_before_cache_store",
@@ -3291,6 +3292,8 @@ tests = [
   "crates/ripr/src/output/pr_review_front_panel.rs::pr_review_front_panel_matches_fixture_corpus",
   "crates/ripr/src/output/pr_review_front_panel.rs::pr_review_front_panel_reports_malformed_optional_input",
   "crates/ripr/tests/cli_smoke.rs::pr_review_front_panel_names_unusable_inputs_on_stderr",
+  "crates/ripr/tests/cli_smoke.rs::pr_review_front_panel_names_an_unreadable_assistant_proof",
+  "crates/ripr/tests/cli_smoke.rs::pr_review_front_panel_names_an_unreadable_non_canonical_assistant_proof",
   "crates/ripr/src/cli/commands.rs::init_generated_github_workflow_is_advisory",
   "crates/ripr/src/cli/commands.rs::init_generated_github_workflow_uploads_reports_and_makes_sarif_optional",
   "crates/ripr/src/cli/commands.rs::init_generated_github_workflow_matches_smoke_fixture",
@@ -8199,6 +8202,7 @@ tests = [
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_every_configured_remote",
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_nested_branch_names",
   "crates/ripr/tests/cli_smoke.rs::check_missing_base_advice_names_the_resolvable_remote_tracking_ref",
+  "crates/ripr/src/analysis/diff/load.rs::tests::single_branch_shallow_clone_advice_widens_before_unshallow",
   "crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_names_the_end_the_flag_wants",
   "crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_quotes_no_missing_or_unsafe_end",
   "crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_leaves_single_revisions_alone",
@@ -11244,6 +11248,7 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::hidden_block_list_discloses_remainder_beyond_its_window",
   "crates/ripr/src/output/human.rs::tests::hidden_block_window_names_gap_findings_before_already_noticed_ones",
   "crates/ripr/src/output/human.rs::tests::hidden_block_remainder_names_each_unlisted_class_by_position",
+  "crates/ripr/src/output/human/triage.rs::tests::check_adapter_alternates_follow_the_shared_priority_not_report_order",
   "crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary",
   "crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family",
   "crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub",
@@ -16473,6 +16478,7 @@ tests = [
   "crates/ripr/src/mcp/writer.rs::tests::request_id_escaping_is_charged_exactly_by_the_outer_budget",
   "crates/ripr/src/mcp/workspace.rs::tests::gap_list_summaries_project_readiness_matching_get_gap",
   "crates/ripr/src/mcp/workspace.rs::tests::gap_list_filters_narrow_each_dimension_then_combine_before_paging",
+  "crates/ripr/src/mcp/workspace.rs::tests::default_gap_list_omits_exposed_and_discloses_the_count",
   "crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_filters_at_the_dispatch_edge",
   "crates/ripr/tests/mcp_stdio.rs::pre_call_contract_discloses_committed_scope_on_wire_and_help",
   "crates/ripr/tests/mcp_stdio.rs::dirty_tree_cli_and_mcp_share_the_default_input",
@@ -20294,6 +20300,12 @@ tests = [
   "crates/ripr/tests/pinned_shape_limit.rs::a_single_line_let_else_initializer_keeps_the_gap",
   "crates/ripr/tests/pinned_shape_limit.rs::an_equality_that_may_not_run_does_not_withhold",
   "crates/ripr/src/analysis/classify/pinned_shape.rs::tests::a_closure_bound_by_let_in_the_tail_block_is_not_a_closure_tail",
+  "crates/ripr/tests/default_feature_test_gate.rs::a_test_behind_a_default_enabled_feature_gate_pins_like_an_ungated_one",
+  "crates/ripr/tests/default_feature_test_gate.rs::a_gate_the_default_features_do_not_settle_keeps_the_assertion_uncredited",
+  "crates/ripr/tests/default_feature_test_gate.rs::the_default_features_are_read_from_the_gated_files_own_package",
+  "crates/ripr/src/analysis/syntax/owner_pin.rs::default_feature_gate_tests::a_default_enabled_feature_gate_does_not_refuse_the_test",
+  "crates/ripr/src/analysis/syntax/owner_pin.rs::default_feature_gate_tests::a_gate_default_features_do_not_settle_still_refuses",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::a_test_gate_resolves_with_test_as_the_build_flag",
 ]
 fixtures = [
   "fixtures/rust_async_future_unpolled",
@@ -20500,6 +20512,8 @@ id = "RIPR-SPEC-0253"
 name = "local collect-all policy scans"
 spec = "docs/specs/RIPR-SPEC-0253-local-collect-all-policy.md"
 tests = [
+  "xtask/src/tests.rs::windows_absolute_path_tokens_preserve_separator_boundaries_and_unicode",
+  "xtask/src/tests.rs::windows_absolute_path_tokens_keep_empty_roots_and_distinct_paths",
   "xtask/src/precommit_v2.rs::tests::composition_discloses_external_formatting_only_for_ci_policy",
   "xtask/src/tests.rs::ci_policy_publication_preserves_local_report_and_local_io_failures",
   "xtask/tests/policy_all.rs::ci_policy_collects_real_cheap_failures_before_expensive_work",
@@ -20514,6 +20528,7 @@ tests = [
 ]
 fixtures = []
 code = [
+  "xtask/src/main.rs::windows_absolute_path_tokens",
   "xtask/src/main.rs::publish_precommit_policy_report",
   "xtask/src/precommit_v2.rs",
   "xtask/src/policy/all.rs::check_policy_all",

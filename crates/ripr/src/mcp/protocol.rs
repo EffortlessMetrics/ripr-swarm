@@ -71,7 +71,7 @@ const STATUS_TOOL_DESCRIPTION: &str = "Call this first. Reports repository-root 
 
 const REFRESH_TOOL_DESCRIPTION: &str = "Analyze the diff against the default branch (or `base`) through shared check authority and store the completed snapshot. By default, like `ripr check`: saved tracked edits if any, else committed; `source: \"committed\"`/`source: \"worktree\"` forces one (see INSTRUCTIONS). Cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. Call before reading evidence and again after edits. Blocks until completed (snapshot identity), failed (isError with code and recovery; last-known-good kept), in_flight (retry later), workspace_unavailable (restart with `--root <repository>`) or unsupported_profile. An unresolvable default branch fails with analysis_failed naming candidate branches: retry with `base`. A `base` starting with `-` or naming no commit fails closed; omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes; a superseded attempt is never committed. It never edits source, executes verification or mutation commands, or prepares a repair.";
 
-const LIST_GAPS_TOOL_DESCRIPTION: &str = "After ripr_refresh, return the deterministic bounded working set of items for the snapshot: counts, omitted identities with reasons, and one summary per item. Same selection as the CLI and editor; it never truncates silently and infers no business risk. Filters (file, class, language, repair_ready) narrow before offset/limit paging; follow page.next_offset. Failures: no_snapshot, stale_snapshot, workspace_unavailable, invalid_argument, result_too_large. Detail: ripr_get_gap, or ripr_get_repair_card to repair.";
+const LIST_GAPS_TOOL_DESCRIPTION: &str = "After ripr_refresh, return the deterministic bounded working set: counts, omitted identities with reasons, one summary per item. Same selection as the CLI and editor; never truncates silently, infers no business risk. Without class, already-gripped exposed items are omitted and counted in exposed_omitted. Filters narrow before paging; follow page.next_offset. Failures: no_snapshot, stale_snapshot, workspace_unavailable, invalid_argument, result_too_large. Detail: ripr_get_gap, or ripr_get_repair_card to repair.";
 
 const GET_GAP_TOOL_DESCRIPTION: &str = "Return one item's complete bounded analysis evidence from the snapshot. Prefer ripr_get_repair_card when the intent is to repair; this evidence never authorizes an edit. result_too_large means the item exceeds the response bound: follow the failure's CLI recovery (a bounded summary, not snapshot replay), because retrying ripr_get_gap cannot shrink the item. Failures: item_not_found, stale_snapshot, no_snapshot, workspace_unavailable. Same document: ripr://gap/{canonical_id}.";
 
@@ -535,6 +535,11 @@ fn brief_text(document: &Value) -> String {
             line,
             text(item, "canonical_id"),
             readiness
+        ));
+    }
+    if let Some(hidden) = document.get("exposed_omitted").and_then(Value::as_u64) {
+        lines.push(format!(
+            "exposed_omitted: {hidden} (seam already gripped by existing tests); call ripr_list_gaps with class: \"exposed\" to list them"
         ));
     }
     if let Some(next) = document
@@ -1688,6 +1693,11 @@ fn gap_list_output_schema() -> Value {
                     "eligible": { "type": "integer", "minimum": 0 },
                     "selected": { "type": "integer", "minimum": 0 },
                     "filtered": { "type": "integer", "minimum": 0 },
+                    "exposed_omitted": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    "exposed_route": { "type": "string" },
                     "proof_harness_only": {
                         "type": "integer",
                         "minimum": 1,
@@ -2737,7 +2747,7 @@ mod tests {
         // status field.
         // Intentional metadata changes need to reconcile this byte count as
         // well as the ceilings.
-        assert_eq!(total, 11169);
+        assert_eq!(total, 11171);
         Ok(())
     }
 
@@ -3170,7 +3180,11 @@ mod tests {
         // #13803 made the slim listing the default and cut the descriptions:
         // the default budget is what every session pays; the full budget is
         // the opt-in a validating host pays.
-        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 41_000)] {
+        // #14327 budget decision: the full listing's `ripr_list_gaps`
+        // output schema gains the additive `exposed_omitted`/`exposed_route`
+        // disclosure (+83 bytes, measured 41,065); the slim default every
+        // session pays is unchanged, so only the opt-in full budget moves.
+        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 41_200)] {
             let payload = tools_list_result_for(mode);
             let bytes = serde_json::to_vec(&payload)
                 .map_err(|error| format!("measure tools/list payload: {error}"))?

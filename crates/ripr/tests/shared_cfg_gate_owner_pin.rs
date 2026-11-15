@@ -370,6 +370,22 @@ fn an_out_of_line_module_gate_shared_with_the_owner_is_unknown_not_a_gap() -> Re
         &found,
         "owner and test in sibling files of the gated module",
     );
+
+    // A sibling `mod` on the gated declaration's line: the edge's own
+    // declaration text names which module carries the gate.
+    let found = finding_in_files(
+        &[
+            (
+                "src/lib.rs",
+                "#[cfg(feature = \"v4\")] mod v4; mod helpers;\n",
+            ),
+            ("src/helpers.rs", "pub fn help() {}\n"),
+            ("src/v4.rs", &same_file),
+        ],
+        "src/v4.rs",
+        2,
+    )?;
+    assert_withheld(&found, "a sibling `mod` on the gated declaration's line");
     Ok(())
 }
 

@@ -1148,7 +1148,7 @@ fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missin
         "{}|{}|{}|missing={}|test={}|id={}",
         finding.class.as_str(),
         field(&location),
-        field(&clip(&super::sections::with_arm_result(
+        field(&clip(&crate::output::flow_sink_line::with_arm_result(
             finding,
             &finding.probe.expression
         ))),
