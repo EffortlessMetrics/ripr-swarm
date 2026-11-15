@@ -2071,3 +2071,115 @@ impl Pool {
     );
     Ok(())
 }
+
+/// #14825 review: a second run must not reuse the first stub's own
+/// receiver call (which would change its comment and write a `_2` copy).
+#[test]
+fn receiver_stub_rerun_is_already_present() -> Result<(), String> {
+    let source = "pub struct Ledger { entries: Vec<i64> }
+impl Ledger {
+    pub fn empty() -> Ledger { Ledger { entries: Vec::new() } }
+}
+impl Ledger {
+    pub fn total(&self, cap: i64) -> i64 {
+        let sum: i64 = self.entries.iter().sum();
+        if sum > cap { cap } else { sum }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+}
+";
+    let needle = "sum > cap";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        needle,
+        SeamKind::PredicateBoundary,
+        boundary("sum == cap"),
+    )?;
+    let first = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        first
+            .text
+            .contains("let subject: Ledger = Ledger::empty();")
+    );
+    assert!(
+        first
+            .text
+            .contains("built with its no-argument constructor")
+    );
+    let close = source.rfind('}').ok_or("module close brace")?;
+    let (head, tail) = source.split_at(close);
+    let rewritten = format!("{head}{}{tail}", first.text.trim_start_matches('\n'));
+    let seam = seam_at(
+        "src/lib.rs",
+        &rewritten,
+        needle,
+        SeamKind::PredicateBoundary,
+        boundary("sum == cap"),
+    )?;
+    let second =
+        rust_test_stub(&seam, None, &rewritten, None).map_err(|r| r.reason().to_string())?;
+    assert!(second.already_present, "{}", second.text);
+    assert_eq!(second.test_name, first.test_name);
+    Ok(())
+}
+
+#[test]
+fn receiver_skips_generic_default_helpers_and_shadowed_names() -> Result<(), String> {
+    // A derived `Default` on a generic type bounds its argument. Such an
+    // owner is refused before any receiver is built; the receiver's own
+    // no-arguments guard on `Default` stays as defence in depth.
+    let generic = "#[derive(Default)]
+pub struct W<T>(Option<T>);
+pub struct NoDef;
+impl W<NoDef> {
+    pub fn f(&self, n: u8) -> u8 { if n > 3 { 1 } else { 0 } }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        generic,
+        "n > 3",
+        SeamKind::PredicateBoundary,
+        boundary("n == 3"),
+    )?;
+    assert_eq!(
+        rust_test_stub(&seam, None, generic, None).err(),
+        Some(TestStubRefusal::OwnerGenericImpl)
+    );
+
+    // A literal call in a non-test helper, and one under a module that
+    // imports its own `Bucket`, are not reused.
+    for tests in [
+        "    use super::*;\n    fn make() -> Bucket { Bucket::new(5) }\n",
+        "    use super::*;\n    use crate::other::Bucket;\n    #[test]\n    fn t() { let _b = Bucket::new(5); }\n",
+    ] {
+        let source = format!(
+            "pub struct Bucket {{ tokens: u32 }}
+impl Bucket {{
+    pub fn new(capacity: u32) -> Self {{ Bucket {{ tokens: capacity }} }}
+    pub fn allow(&self, n: u32) -> bool {{ self.tokens > n }}
+}}
+
+#[cfg(test)]
+mod tests {{
+{tests}}}
+"
+        );
+        let seam = seam_at(
+            "src/lib.rs",
+            &source,
+            "self.tokens > n",
+            SeamKind::PredicateBoundary,
+            boundary("self.tokens == n"),
+        )?;
+        let stub =
+            rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
+        assert_eq!(stub.receiver_setup, None, "{}", stub.text);
+    }
+    Ok(())
+}

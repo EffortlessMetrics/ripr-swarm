@@ -312,7 +312,7 @@ trait-impl method is called as `<Type as Trait>::method`, and an impl with
 only lifetime generics binds its receiver as `Type<'_>`. A method's receiver
 is built from a constructor of its type when one is established: the first
 call with all-literal arguments that an existing test in the target module
-makes (copied as written), else a no-argument constructor (`new` first), else
+makes (copied as written), else a no-argument `new`, `empty` or `default` constructor, else
 `Type::default()`; otherwise it stays a labelled `todo!()`. Human output
 names the source on a `Receiver:` line (#8361). When the owner file
 has several inline test modules enabled under plain `cfg(test)`, the stub goes

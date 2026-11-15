@@ -6,10 +6,13 @@
 //!
 //! 1. the first call in the stub's uniqueness scope (the inline test module
 //!    the stub is written into) to a constructor of `T` whose arguments are
-//!    all literals, copied with the same arguments — an existing test has
-//!    already shown that this exact call compiles and runs there;
-//! 2. a constructor of `T` that takes no arguments (`new` first);
-//! 3. `T::default()` when `T` derives or implements `Default`.
+//!    all literals, copied with the same arguments — an existing `#[test]`
+//!    (not `should_panic`, not a ripr stub) has already shown that this exact
+//!    call compiles and runs there;
+//! 2. a no-argument constructor named `new`, `empty` or `default`, in that
+//!    order;
+//! 3. `T::default()` when `T`, spelled without type arguments, derives or
+//!    implements `Default`.
 //!
 //! A constructor is an associated function of an inherent impl of `T`
 //! (sibling of the owner's impl, same module) that takes no `self`, has no
@@ -22,7 +25,7 @@
 
 use super::StubScope;
 use crate::analysis::syntax::fn_signature::local_type_traits;
-use crate::analysis::syntax::parse_clean_source_file;
+use crate::analysis::syntax::{has_test_attribute, parse_clean_source_file};
 use ra_ap_syntax::ast::{self, HasArgList, HasAttrs, HasGenericParams, HasName};
 use ra_ap_syntax::{AstNode, TextSize};
 
@@ -128,21 +131,34 @@ pub(super) fn receiver_construction(
     }
     let no_argument = constructors
         .iter()
-        .filter(|candidate| candidate.params == 0)
-        .min_by_key(|candidate| candidate.name != "new");
+        .filter(|candidate| {
+            candidate.params == 0 && NEUTRAL_CONSTRUCTORS.contains(&candidate.name.as_str())
+        })
+        .min_by_key(|candidate| {
+            NEUTRAL_CONSTRUCTORS
+                .iter()
+                .position(|name| *name == candidate.name)
+        });
     if let Some(candidate) = no_argument {
         return Some(ReceiverConstruction {
             expression: format!("{type_path}::{}()", candidate.name),
             origin: ReceiverOrigin::NoArgumentConstructor,
         });
     }
-    let has_default = local_type_traits(source, &base_name)
-        .is_some_and(|traits| traits.iter().any(|name| name == "Default"));
+    // A generic type's derived `Default` carries bounds on its arguments the
+    // stub cannot check, so only a type spelled without arguments qualifies.
+    let has_default = self_ty == base_name
+        && local_type_traits(source, &base_name)
+            .is_some_and(|traits| traits.iter().any(|name| name == "Default"));
     has_default.then(|| ReceiverConstruction {
         expression: format!("{type_path}::default()"),
         origin: ReceiverOrigin::Default,
     })
 }
+
+/// No-argument constructors whose names promise a neutral value, in
+/// preference order. `connect()` or `from_env()` are not neutral setup.
+const NEUTRAL_CONSTRUCTORS: [&str; 3] = ["new", "empty", "default"];
 
 struct Reused {
     constructor: String,
@@ -164,7 +180,11 @@ impl Reused {
 }
 
 /// The first call in the scope to `Type::ctor(literal, ...)` with the
-/// constructor's arity, inside a named function that is not `should_panic`.
+/// constructor's arity, inside a `#[test]` function that is not
+/// `should_panic` and is not a ripr stub (#14825 review: reusing a stub's own
+/// receiver would change its comment on the next run and break the
+/// already-written check). `None` when the scope declares or imports its own
+/// item named `Type`, which could shadow the owner's type.
 fn reused_call(
     scope: &StubScope<'_>,
     base_name: &str,
@@ -176,6 +196,35 @@ fn reused_call(
     let parse = parse_clean_source_file(scope.parse_unit)?;
     let start = TextSize::try_from(scope.range.start).ok()?;
     let end = TextSize::try_from(scope.range.end).ok()?;
+    let in_scope = |node: &ra_ap_syntax::SyntaxNode| {
+        let range = node.text_range();
+        range.start() >= start && range.end() <= end
+    };
+    let shadowed = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter(|node| in_scope(node))
+        .any(|node| {
+            if let Some(item) = ast::Use::cast(node.clone()) {
+                return item.syntax().descendants().any(|token_node| {
+                    ast::Name::cast(token_node.clone()).is_some_and(|name| name.text() == base_name)
+                        || ast::NameRef::cast(token_node)
+                            .is_some_and(|name| name.text() == base_name)
+                });
+            }
+            ast::Item::cast(node).is_some_and(|item| match item {
+                ast::Item::Struct(it) => it.name().is_some_and(|n| n.text() == base_name),
+                ast::Item::Enum(it) => it.name().is_some_and(|n| n.text() == base_name),
+                ast::Item::Union(it) => it.name().is_some_and(|n| n.text() == base_name),
+                ast::Item::TypeAlias(it) => it.name().is_some_and(|n| n.text() == base_name),
+                ast::Item::Trait(it) => it.name().is_some_and(|n| n.text() == base_name),
+                _ => false,
+            })
+        });
+    if shadowed {
+        return None;
+    }
     parse
         .tree()
         .syntax()
@@ -206,9 +255,11 @@ fn reused_call(
                 .iter()
                 .find(|candidate| candidate.name == name && candidate.params == arguments.len())?;
             let function = call.syntax().ancestors().find_map(ast::Fn::cast)?;
-            if function
-                .attrs()
-                .any(|attr| attr.syntax().text().to_string().contains("should_panic"))
+            if !has_test_attribute(&function)
+                || function
+                    .attrs()
+                    .any(|attr| attr_named(&attr, &["should_panic"]))
+                || is_ripr_stub(&function)
             {
                 return None;
             }
@@ -218,6 +269,13 @@ fn reused_call(
                 test: function.name()?.text().to_string(),
             })
         })
+}
+
+/// A function ripr wrote: its body still holds a `ripr:` fill-in or the
+/// receiver comment ripr writes.
+fn is_ripr_stub(function: &ast::Fn) -> bool {
+    let text = function.syntax().text().to_string();
+    text.contains("todo!(\"ripr:") || text.contains("// ripr: built ")
 }
 
 /// A literal argument (`5`, `"w"`, `true`, `-3`, `1.5`) as written.
@@ -265,15 +323,14 @@ fn lifetime_generics_only(item: &ast::Impl) -> bool {
 }
 
 fn has_cfg(mut attrs: ast::AstChildren<ast::Attr>) -> bool {
-    attrs.any(|attr| {
-        let text: String = attr
-            .syntax()
-            .text()
-            .to_string()
-            .split_whitespace()
-            .collect();
-        text.starts_with("#[cfg(") || text.starts_with("#[cfg_attr(")
-    })
+    attrs.any(|attr| attr_named(&attr, &["cfg", "cfg_attr"]))
+}
+
+/// Whether the attribute's single-segment path is one of `names`.
+fn attr_named(attr: &ast::Attr, names: &[&str]) -> bool {
+    attr.meta()
+        .and_then(|meta| meta.simple_name())
+        .is_some_and(|name| names.contains(&name.as_str()))
 }
 
 fn normalized(text: &str) -> String {
