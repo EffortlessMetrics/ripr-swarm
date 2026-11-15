@@ -527,18 +527,17 @@ fn batch_wrong_parent_and_wrong_subject_still_refuse_before_the_tree_is_read() -
     // happens before the tree is read.
     let mut run = honest(&world, &world.head, &world.base)?;
     run.queued = world.squash(&world.head, "feature (#43)")?;
-    assert_refused(
-        &run_resolve(&world, &shell, &run)?,
-        "is not the live head",
-    );
+    assert_refused(&run_resolve(&world, &shell, &run)?, "is not the live head");
 
-    // Parent is not the group base (a batch built on an earlier entry).
+    // The group base is a commit the queued squash does not descend from (a
+    // batch built on an earlier entry), so the ancestry guard refuses before
+    // the single-parent shape check below it is reached.
     let mut run = honest(&world, &world.head, &world.base)?;
     run.group_base = world.head.clone();
     run.ref_sha = world.head.clone();
     assert_refused(
         &run_resolve(&world, &shell, &run)?,
-        "is not a single-parent commit directly on",
+        "is not an ancestor of group head",
     );
 
     // The ref sha is neither the live head nor the base.
