@@ -3099,6 +3099,8 @@ suite('Extension Smoke', () => {
     };
     for (const verify of [
       'python -m pytest tests/test_pricing.py::test_calculate_discount_smoke',
+      '.venv/bin/python -m pytest tests/test_pricing.py::test_calculate_discount_smoke',
+      'venv/bin/python -m pytest tests/test_pricing.py::test_calculate_discount_smoke',
       'npx --no-install jest tests/discount.test.ts',
       'pnpm exec vitest run src/util.test.ts',
       'yarn ava tests/math.test.ts',
@@ -3119,6 +3121,11 @@ suite('Extension Smoke', () => {
       'npm test -- --watch tests/math.test.ts',
       'node --test /tmp/outside.test.js',
       'python -m pytest ..',
+      '.venv/bin/python -m pip install requests',
+      '.venv/bin/python -m pytest -p plugin tests/test_pricing.py',
+      '.venv/bin/python -m pytest ../outside/test_pricing.py',
+      '/opt/venv/bin/python -m pytest tests/test_pricing.py',
+      'venv/bin/python3 -m pytest tests/test_pricing.py',
       // Built at runtime so the local-context policy does not read the
       // fixture as a machine path.
       `npx --no-install jest ${'C'}:/outside/discount.test.ts`
@@ -3304,6 +3311,9 @@ suite('Extension Smoke', () => {
     };
     assert.notStrictEqual(await queueVerifyState('npx --no-install jest tests/discount.test.ts'), 'unsafeCommand');
     assert.notStrictEqual(await queueVerifyState('python -m pytest tests/test_pricing.py::test_smoke'), 'unsafeCommand');
+    assert.notStrictEqual(await queueVerifyState('.venv/bin/python -m pytest tests/test_pricing.py::test_smoke'), 'unsafeCommand');
+    assert.strictEqual(await queueVerifyState('.venv/bin/python -m pip install requests'), 'unsafeCommand');
+    assert.strictEqual(await queueVerifyState('.venv/bin/python -m pytest -p plugin tests/test_pricing.py'), 'unsafeCommand');
     assert.strictEqual(await queueVerifyState('npx jest tests/discount.test.ts'), 'unsafeCommand');
     assert.strictEqual(await queueVerifyState('bunx vitest run src/util.test.ts'), 'unsafeCommand');
     assert.strictEqual(await queueVerifyState('npx --no-install jest ../outside/discount.test.ts'), 'unsafeCommand');
