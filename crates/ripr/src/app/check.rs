@@ -994,11 +994,11 @@ impl PerlProducerStaging {
 /// Managed producer mode (Campaign 31 Phase D #1407; hardened in item 4).
 /// Invokes the producer with the SPEC-0064-canonical arg surface, enforcing a
 /// real timeout with process kill and writing atomically. The packet path is
-/// keyed on root/base/head/schema/producer/timeout; that key omits diff
-/// content, so no cached packet is ever reused and every run regenerates
-/// (item 4b). Returns the final packet path on success. The canonical
-/// producer is `perl-ripr-facts`; `perllsp` and `perl-lsp` are compatibility
-/// wrappers.
+/// keyed on root/base/the literal `HEAD`/schema/producer/timeout; that key
+/// omits diff content and the resolved head commit, so no cached packet is
+/// ever reused and every run regenerates (item 4b). Returns the final packet
+/// path on success. The canonical producer is `perl-ripr-facts`; `perllsp`
+/// and `perl-lsp` are compatibility wrappers.
 ///
 /// Capability handshake: DEFERRED. Requires a defined exporter probe surface
 /// (`--version`/`--capabilities`); do not fabricate a capability taxonomy.
@@ -1048,10 +1048,10 @@ fn invoke_perl_lsp_producer(
     let timeout_ms = perl_config.timeout_ms();
     let executable_str = executable.display().to_string();
 
-    // Packet path key: root/base/HEAD/schema/producer/timeout. It only names
-    // the final packet and its staging; it omits diff content, so it is never
-    // used to reuse a packet (item 4b below). FNV-1a, non-crypto, naming only
-    // (see `simple_hash` doc).
+    // Packet path key: root/base/literal "HEAD"/schema/producer (executable
+    // path)/timeout. It only names the final packet and its staging; it omits
+    // diff content, so it is never used to reuse a packet (item 4b below).
+    // FNV-1a, non-crypto, naming only (see `simple_hash` doc).
     let cache_key = format!(
         "{}|{}|{}|{}|{}|{}",
         root_str,
