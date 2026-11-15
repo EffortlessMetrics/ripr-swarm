@@ -57,3 +57,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — manual_let_else_pairing (6)
+
+Reason:
+RIPR-SPEC-0122: a grouped Hidden row names its members' line runs (#14682) instead of a covering range
+
+Command:
+`cargo xtask goldens bless manual_let_else_pairing --reason "..."`
+
+Updated:
+- `expected/human.txt`
