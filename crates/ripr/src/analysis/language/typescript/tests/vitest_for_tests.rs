@@ -255,6 +255,16 @@ fn unsupported_row_bindings_stay_disclosed() {
             "expect(loyaltyTier(row[0])).toBe(row[2]);",
         ),
         (
+            "spread whole row",
+            "row",
+            "expect(loyaltyTier(...(row as [number]))).toBe(row[1]);",
+        ),
+        (
+            "bare spread whole row",
+            "row",
+            "expect(String(...row)).toBe(row[1]);",
+        ),
+        (
             "computed index",
             "row",
             "const i = 0;\n  expect(loyaltyTier(row[i])).toBe(row[1]);",
@@ -333,4 +343,54 @@ fn skipped_for_registrations_activate_no_test() {
             "{callee} must not activate a test"
         );
     }
+}
+
+/// A member named like the row parameter is not the row: only the bare
+/// `row[<i>]` reads are rewritten.
+#[test]
+fn member_named_like_the_row_is_not_rewritten() {
+    let source = "import { expect, test } from \"vitest\";\nimport { loyaltyTier } from \"../src/tier\";\n\nconst box = { row: [5] };\ntest.for([\n  [999, \"silver\"],\n  [1000, \"gold\"],\n])(\"%i\", (row) => {\n  expect(loyaltyTier(row[0] + box.row[0])).toBe(row[1]);\n});\n";
+    let observed: Vec<_> = observed_and_expected(source)
+        .into_iter()
+        .map(|(observed, expected, _, _)| (observed, expected))
+        .collect();
+    assert_eq!(
+        observed,
+        vec![
+            (
+                Some("loyaltyTier(999 + box.row[0])".to_string()),
+                Some("\"silver\"".to_string())
+            ),
+            (
+                Some("loyaltyTier(1000 + box.row[0])".to_string()),
+                Some("\"gold\"".to_string())
+            ),
+        ]
+    );
+}
+
+/// An options object between the title and the callback is honored: a
+/// running one keeps the rows, a skip option activates no test.
+#[test]
+fn options_object_on_the_for_registration_is_honored() {
+    let running = "import { expect, test } from \"vitest\";\nimport { loyaltyTier } from \"../src/tier\";\n\ntest.for([\n  [999, \"silver\"],\n  [1000, \"gold\"],\n])(\"%i\", { timeout: 50 }, ([points, tier]) => {\n  expect(loyaltyTier(points)).toBe(tier);\n});\n";
+    assert_eq!(observed_and_expected(running), boundary_rows(8));
+    let skipped = running.replace("{ timeout: 50 }", "{ skip: true }");
+    assert!(extract_tests(Path::new(FILE), &skipped).is_empty());
+}
+
+/// A `test` shadowed inside a suite is not the Vitest import, and a renamed
+/// import (`test as t`) is not read through `t.for`; both stay disclosed.
+#[test]
+fn shadowed_or_renamed_roots_are_not_read() {
+    let shadowed = "import { describe, expect, test } from \"vitest\";\nimport { loyaltyTier } from \"../src/tier\";\n\ndescribe(\"tiers\", () => {\n  const test = { for: (_rows: unknown) => (_t: string, fn: (row: [number, string]) => void) => fn([1, \"x\"]) };\n  test.for([\n    [999, \"silver\"],\n  ])(\"%i\", ([points, tier]) => {\n    expect(loyaltyTier(points)).toBe(tier);\n  });\n});\n";
+    assert!(
+        extract_tests(Path::new(FILE), shadowed).is_empty(),
+        "a suite-local test object is not a runner"
+    );
+    let renamed = "import { expect, test as t } from \"vitest\";\nimport { loyaltyTier } from \"../src/tier\";\n\nt.for([\n  [999, \"silver\"],\n])(\"%i\", ([points, tier]) => {\n  expect(loyaltyTier(points)).toBe(tier);\n});\n";
+    assert!(
+        extract_tests(Path::new(FILE), renamed).is_empty(),
+        "renamed .for roots are not read yet"
+    );
 }

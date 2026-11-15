@@ -546,11 +546,7 @@ const INDEXED_ROW_PLACEHOLDER: &str = "__ripr_for_row_";
 /// `None` when `row` appears in code any other way (a whole-row read, a
 /// member, a spaced or computed index) or the stand-in prefix already
 /// occurs. Strings and comments are masked, so a quoted `row[0]` stays text.
-fn rewrite_indexed_row_reads(
-    body: &str,
-    row: &str,
-    width: usize,
-) -> Option<(String, Vec<String>)> {
+fn rewrite_indexed_row_reads(body: &str, row: &str, width: usize) -> Option<(String, Vec<String>)> {
     if body.contains(INDEXED_ROW_PLACEHOLDER) {
         return None;
     }
@@ -563,8 +559,14 @@ fn rewrite_indexed_row_reads(
         let at = from + rel;
         let end = at + row.len();
         from = end;
-        let before_ok = at == 0
-            || !(is_identifier_part(masked_bytes[at - 1]) || masked_bytes[at - 1] == b'.');
+        let before = masked.get(..at)?.trim_end();
+        // A spread (`...row`) reads the whole row: not an indexed read.
+        if before.ends_with("...") {
+            return None;
+        }
+        // A member name (`x.row`, `x?.row`, `x. row`) is not the row.
+        let before_ok =
+            (at == 0 || !is_identifier_part(masked_bytes[at - 1])) && !before.ends_with('.');
         let after_ok = masked_bytes
             .get(end)
             .is_none_or(|byte| !is_identifier_part(*byte));

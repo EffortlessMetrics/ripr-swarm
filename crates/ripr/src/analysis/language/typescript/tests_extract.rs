@@ -4310,8 +4310,9 @@ fn call_callee_is_active_for_declaration(
     call: &oxc_ast::ast::CallExpression<'_>,
     root: TestDeclarationRoot,
 ) -> bool {
-    for_declaration_callee(call, root)
-        .is_some_and(|for_call| !for_table_is_empty(for_call) && declaration_options_are_active(call))
+    for_declaration_callee(call, root).is_some_and(|for_call| {
+        !for_table_is_empty(for_call) && declaration_options_are_active(call)
+    })
 }
 
 fn each_declaration_callee<'a, 'b>(
