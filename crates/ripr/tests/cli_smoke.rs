@@ -36716,6 +36716,8 @@ fn feedback_export_out_refuses_to_replace_a_special_node() -> Result<(), std::io
 /// `--root` as a new directory tree and exit 0, and `feedback record` shared
 /// the same unvalidated root. A missing path and a file path must both be
 /// refused by the shared root validator, and nothing may be created.
+/// #14624 adds `policy preview-promote`, which wrote its default reports
+/// under the CWD instead of refusing.
 #[test]
 fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
     let scratch = unique_temp_workspace("mistyped-root");
@@ -36723,7 +36725,7 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
     let missing = scratch.join("nope").join("deep");
     let file = scratch.join("a-file");
     std::fs::write(&file, "not a directory\n")?;
-    let commands: [(&str, &[&str]); 8] = [
+    let commands: [(&str, &[&str]); 9] = [
         ("reports ci-packet", &["reports", "ci-packet"]),
         ("feedback export", &["feedback", "export"]),
         (
@@ -36739,6 +36741,17 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
         ),
         ("policy readiness", &["policy", "readiness"]),
         ("policy waiver-aging", &["policy", "waiver-aging"]),
+        (
+            "policy preview-promote",
+            &[
+                "policy",
+                "preview-promote",
+                "--language",
+                "python",
+                "--class",
+                "behavioral",
+            ],
+        ),
         ("pr-comments plan", &["pr-comments", "plan"]),
         ("reports index", &["reports", "index"]),
         ("reports ci-summary", &["reports", "ci-summary"]),
@@ -36771,6 +36784,46 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
     );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert_eq!(file_kept, "not a directory\n");
+    Ok(())
+}
+
+/// #14624: the refusal matrix cannot catch a gate that refuses every root.
+/// With a valid `--root` and no `--out`/`--out-md`, `policy preview-promote`
+/// must still succeed and write its default reports.
+#[test]
+fn policy_preview_promote_accepts_a_valid_root() -> Result<(), std::io::Error> {
+    let root = unique_temp_workspace("preview-promote-valid-root");
+    std::fs::create_dir_all(&root)?;
+    let root_text = root.display().to_string();
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &[
+            "policy",
+            "preview-promote",
+            "--root",
+            root_text.as_str(),
+            "--language",
+            "python",
+            "--class",
+            "behavioral",
+        ],
+    )?;
+    let wrote = root
+        .join("target/ripr/reports/preview-promotion-python-behavioral.json")
+        .is_file()
+        && root
+            .join("target/ripr/reports/preview-promotion-python-behavioral.md")
+            .is_file();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(wrote, "default reports not written:\n{stdout}\n{stderr}");
     Ok(())
 }
 
