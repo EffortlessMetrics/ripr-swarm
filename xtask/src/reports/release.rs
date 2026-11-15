@@ -6026,8 +6026,22 @@ mod tests {
         );
         assert_eq!(super::release_readiness_status(&[check]), "fail");
 
+        // An archive path that exists but is not a regular file measured nothing.
+        let non_regular = upload_size_fixture("non-regular", None)?;
+        fs::create_dir(non_regular.join("ripr-9.9.9.crate")).map_err(|err| err.to_string())?;
+        let check = super::package_upload_size_check_in(&non_regular, "9.9.9", true);
+        assert_eq!((check.status.as_str(), check.required), ("fail", true));
+        assert!(check.summary.contains("not a regular file"));
+        assert!(
+            check
+                .details
+                .contains(&"not a regular file: ripr-9.9.9.crate".to_string())
+        );
+        assert_eq!(super::release_readiness_status(&[check]), "fail");
+
         let _ = fs::remove_dir_all(stale);
         let _ = fs::remove_dir_all(missing);
+        let _ = fs::remove_dir_all(non_regular);
         Ok(())
     }
 

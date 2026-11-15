@@ -262,9 +262,11 @@ list in `crates/ripr/Cargo.toml` therefore leaves out:
   check build the packaged crate and catch that);
 - every other file under `tests/`.
 
-With that list the packaged crate was 10,002,936 bytes. That is about 4.6%
-under the limit, so the durable fix is still a raised crates.io limit or a
-smaller `ripr` crate; #14071 tracks it.
+With that list the packaged crate measured 10,285,280 bytes on the current
+candidate (200,480 bytes, about 1.9%, under the limit; 1,002 files,
+47,848,218 bytes uncompressed, via `cargo xtask publish-dry-run`). That is
+inside the 10% warning band, so the durable fix is still a raised crates.io
+limit or a smaller `ripr` crate; #14071 tracks it.
 
 Neither `cargo package` nor `cargo publish --dry-run` applies the registry
 limit. The `package-upload-size` check of `cargo xtask release-readiness`
