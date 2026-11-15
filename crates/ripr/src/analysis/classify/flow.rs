@@ -797,57 +797,89 @@ fn predicate_as_owner_tail(
 /// decide inputs that are not literal arguments (`let d = 0; f(d)`), so the
 /// sink would let those read `exposed` (independent review of #14797;
 /// #14815). Comparison and `&&`/`||` tails keep their own readers.
+///
+/// The replaced line must be a constant tail too. A constant that replaces a
+/// named tail (`flag` to `false`) agrees with it wherever the name holds that
+/// value, and a test passing `let flag = false;` cannot be folded, so that
+/// edit keeps the unknown sink. A pure addition (no replaced line) does too.
 fn return_value_as_owner_tail(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
 ) -> Option<LocalTextFact> {
-    use ra_ap_syntax::{AstNode, SyntaxKind};
-    if !owner_tail_is_whole_body(owner_fn?) {
+    if !owner_tail_is_whole_body(owner_fn?)
+        || !probe.before.as_deref().is_some_and(text_is_constant_value)
+    {
         return None;
     }
-    owner_single_line_tail(probe, owner_fn, |tail| {
-        tail.syntax().descendants().all(|node| {
-            matches!(
-                node.kind(),
-                SyntaxKind::LITERAL
-                    | SyntaxKind::PREFIX_EXPR
-                    | SyntaxKind::BIN_EXPR
-                    | SyntaxKind::PAREN_EXPR
-                    | SyntaxKind::ARRAY_EXPR
-                    | SyntaxKind::TUPLE_EXPR
-                    | SyntaxKind::REF_EXPR
-                    | SyntaxKind::MACRO_EXPR
-                    | SyntaxKind::MACRO_CALL
-                    | SyntaxKind::PATH
-                    | SyntaxKind::PATH_SEGMENT
-                    | SyntaxKind::NAME_REF
-                    | SyntaxKind::TOKEN_TREE
-            )
-        }) && tail.syntax().descendants().all(|node| {
-            // A path only ever appears as a macro's own path here (there is
-            // no PATH_EXPR in the allowlist); the macro must be a bare
-            // `vec!` whose tokens name nothing.
-            ra_ap_syntax::ast::MacroCall::cast(node).is_none_or(|call| {
-                call.path()
-                    .is_some_and(|path| path.syntax().text() == "vec")
-                    && call.token_tree().is_some_and(|tree| {
-                        !tree
-                            .syntax()
-                            .descendants_with_tokens()
-                            .any(|element| element.kind() == SyntaxKind::IDENT)
-                    })
+    owner_single_line_tail(probe, owner_fn, is_constant_value_expr)
+}
+
+/// Whether `text` parses as exactly one expression that
+/// [`is_constant_value_expr`] admits.
+fn text_is_constant_value(text: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    let source = format!("fn ripr_replaced_tail() {{\n{}\n}}\n", text.trim());
+    crate::analysis::syntax::parse_clean_source_file(&source).is_some_and(|parse| {
+        parse
+            .tree()
+            .syntax()
+            .children()
+            .find_map(ast::Fn::cast)
+            .and_then(|function| function.body())
+            .and_then(|body| body.stmt_list())
+            .is_some_and(|list| {
+                list.statements().next().is_none()
+                    && list
+                        .tail_expr()
+                        .is_some_and(|tail| is_constant_value_expr(&tail))
             })
-        }) && tail.syntax().descendants().all(|node| {
-            ra_ap_syntax::ast::BinExpr::cast(node).is_none_or(|binary| {
-                !matches!(
-                    binary.op_kind(),
-                    Some(
-                        ra_ap_syntax::ast::BinaryOp::CmpOp(_)
-                            | ra_ap_syntax::ast::BinaryOp::LogicOp(_)
-                            | ra_ap_syntax::ast::BinaryOp::Assignment { .. }
-                    )
+    })
+}
+
+/// A value expression that names nothing: see [`return_value_as_owner_tail`].
+fn is_constant_value_expr(tail: &ra_ap_syntax::ast::Expr) -> bool {
+    use ra_ap_syntax::{AstNode, SyntaxKind};
+    tail.syntax().descendants().all(|node| {
+        matches!(
+            node.kind(),
+            SyntaxKind::LITERAL
+                | SyntaxKind::PREFIX_EXPR
+                | SyntaxKind::BIN_EXPR
+                | SyntaxKind::PAREN_EXPR
+                | SyntaxKind::ARRAY_EXPR
+                | SyntaxKind::TUPLE_EXPR
+                | SyntaxKind::REF_EXPR
+                | SyntaxKind::MACRO_EXPR
+                | SyntaxKind::MACRO_CALL
+                | SyntaxKind::PATH
+                | SyntaxKind::PATH_SEGMENT
+                | SyntaxKind::NAME_REF
+                | SyntaxKind::TOKEN_TREE
+        )
+    }) && tail.syntax().descendants().all(|node| {
+        // A path only ever appears as a macro's own path here (there is
+        // no PATH_EXPR in the allowlist); the macro must be a bare
+        // `vec!` whose tokens name nothing.
+        ra_ap_syntax::ast::MacroCall::cast(node).is_none_or(|call| {
+            call.path()
+                .is_some_and(|path| path.syntax().text() == "vec")
+                && call.token_tree().is_some_and(|tree| {
+                    !tree
+                        .syntax()
+                        .descendants_with_tokens()
+                        .any(|element| element.kind() == SyntaxKind::IDENT)
+                })
+        })
+    }) && tail.syntax().descendants().all(|node| {
+        ra_ap_syntax::ast::BinExpr::cast(node).is_none_or(|binary| {
+            !matches!(
+                binary.op_kind(),
+                Some(
+                    ra_ap_syntax::ast::BinaryOp::CmpOp(_)
+                        | ra_ap_syntax::ast::BinaryOp::LogicOp(_)
+                        | ra_ap_syntax::ast::BinaryOp::Assignment { .. }
                 )
-            })
+            )
         })
     })
 }
@@ -2493,17 +2525,23 @@ mod tests {
     #[test]
     fn owner_tail_value_without_text_cues_reaches_return_sink() {
         for (body, before, expression, line) in [
-            // Constant tails: old and new values differ at every input.
-            ("pub fn ready() -> bool {\n    false\n}", None, "false", 2),
+            // Constant tails replacing constant tails: old and new values
+            // are each the same at every input.
+            (
+                "pub fn ready() -> bool {\n    false\n}",
+                Some("true"),
+                "false",
+                2,
+            ),
             (
                 "pub fn ids() -> Vec<u32> {\n    vec![]\n}",
-                None,
+                Some("vec![1, 2]"),
                 "vec![]",
                 2,
             ),
             (
                 "pub fn pair() -> [u8; 2] { [b'a', b'b'] }",
-                None,
+                Some("[b'a', b'c']"),
                 "[b'a', b'b']",
                 1,
             ),
@@ -2522,7 +2560,12 @@ mod tests {
                 FlowSinkKind::ReturnValue,
                 "{body}: {sinks:?}"
             );
-            assert_eq!(sinks[0].text, expression, "{body}");
+            // The sink carries the masked tail, as the predicate tail does.
+            assert_eq!(
+                sinks[0].text,
+                crate::analysis::language::mask_rust_comments_and_strings(expression).trim(),
+                "{body}"
+            );
             assert_eq!(sinks[0].line, line, "{body}");
         }
     }
@@ -2568,6 +2611,28 @@ mod tests {
                 "pub fn wide(a: i32) -> i64 {\n    -a as i64\n}",
                 Some("a as i64"),
                 "-a as i64",
+                2,
+            ),
+            // A constant replacing a named tail agrees with it wherever the
+            // name holds that value (`let flag = false; enabled(flag)`), and
+            // a pure addition has no replaced value to compare.
+            (
+                "pub fn enabled(flag: bool) -> bool {\n    false\n}",
+                Some("flag"),
+                "false",
+                2,
+            ),
+            (
+                "pub fn ids(x: u32) -> Vec<u32> {\n    vec![]\n}",
+                Some("vec![x]"),
+                "vec![]",
+                2,
+            ),
+            ("pub fn ready() -> bool {\n    false\n}", None, "false", 2),
+            (
+                "pub fn ready() -> bool {\n    false\n}",
+                Some("true,"),
+                "false",
                 2,
             ),
             // A statement before the tail can shadow an operand; even a

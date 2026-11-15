@@ -1517,6 +1517,29 @@ grants no observation credit (`discriminate` is not `yes`) instead of reading
 propagation, which the rule-7a fixture's constant `u8` tail now establishes
 on its own.
 
+The owner's local return-value sink (`return_value_as_owner_tail` in
+`classify/flow.rs`, #14797) also exists for a constant tail whose text
+carries none of the cues the text-only return reader looks for, such as
+`false`, `vec![]` or `[b'a', b'b']`. It is admitted only when all of these
+hold:
+
+- the owner's whole body is one single-line tail expression with no
+  statement, the probe's changed line is exactly that tail, and the owner
+  does not return `()`;
+- the new tail is built only from literals, unary operators, arithmetic and
+  bitwise binary operators, parentheses, array, tuple and reference
+  literals, and a bare `vec!` whose tokens hold no identifier;
+- the replaced line parses as one expression of that same constant shape.
+
+Both versions are then the same value at every input, so no test input can
+make them agree unless the edit keeps the value (`!true` to `false`). Every
+other tail keeps the unknown sink: a tail that names a parameter, local,
+constant or field (`-delta`, `p.x`); a constant replacing a named tail
+(`flag` to `false`, which agrees wherever `flag` is false, and a test
+passing `let flag = false;` cannot be folded); a pure addition; a
+comparison or `&&`/`||` tail, which keeps its own reader; and any other
+macro, block or closure.
+
 ### Format owner tails (#6578)
 
 `format_tail_witness` in `classify/propagation_witness.rs` completes a
