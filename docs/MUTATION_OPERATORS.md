@@ -25,9 +25,9 @@ Verdicts:
 
 - **yes**: the pinning test reads `exposed` and the reaching test does not.
   ripr models this operator. The matrix does not also run an exact assertion
-  at an input where old and new agree; separate negative controls did that for
-  the Rust tail-value rows (`a & b` → `a | b` at `f(3, 3)` reads
-  `weakly_exposed`, `-a` → `a` at `f(0)` stays unknown).
+  at an input where old and new agree, so "yes" does not show that ripr
+  withholds `exposed` there. [#14840](https://github.com/EffortlessMetrics/ripr-swarm/issues/14840)
+  tracks Rust cases where it does not.
 - **partial**: ripr gives the change a specific probe, but does not reach
   `exposed` for the pinning test, or also reads the reaching test as `exposed`.
 - **unknown**: only `static_unknown`, `infection_unknown` or
@@ -54,7 +54,7 @@ family is in parentheses.
 | Compound assignment (`t += b` → `t -= b`) | BinaryOperator | augmented assignment | AssignmentOperator | unknown | yes (predicate) | yes (return_value) |
 | Update (`t++` → `t--`) | n/a | n/a | UpdateOperator | n/a | n/a | partial (predicate) |
 | Unary minus removed (`-a` → `a`) | UnaryOperator | remove unary | UnaryOperator | unknown² | yes (return_value) | yes (return_value) |
-| Bitwise (`a & b` → `a \| b`) | BinaryOperator | `&` ↔ `\|` | none | yes (return_value) | yes (return_value) | yes (return_value) |
+| Bitwise (`a & b` → `a \| b`) | BinaryOperator | `&` ↔ `\|` | none | unknown² | yes (return_value) | yes (return_value) |
 | Module constant (`LIMIT = 100` → `101`) | none | number +1 | none | unknown | false gap | false gap |
 | Number literal in an expression (`x * 3` → `x * 4`) | none | number +1 | none | yes (return_value) | yes (return_value) | yes (return_value) |
 | Boolean literal returned (`true` → `false`) | FnValue | `True` ↔ `False` | BooleanLiteral | yes (return_value) | yes (return_value) | yes (return_value) |
@@ -83,9 +83,9 @@ family is in parentheses.
 
 ¹ cargo-mutants' BinaryOperator replaces `>` with `==` and `<` (the flip row).
 It does not generate the `>=` boundary shift, which ripr does model.
-² Stays unknown when the operand is a bare name that recurs in the function
-(`-a` → `a` in `fn f(a: i32)`): ripr cannot yet check whether the test's input
-tells the two versions apart (`f(0)` does not), so it does not claim
+² A returned unary or bitwise expression over names (`-a`, `!ready`, `a & b`)
+stays unknown: ripr cannot yet check whether the test's inputs tell the two
+versions apart (`f(0)` does not for `-a` → `a`), so it does not claim
 `exposed`. [#14815](https://github.com/EffortlessMetrics/ripr-swarm/issues/14815).
 ³ Not a direct operator. cargo-mutants replaces the callee's body with `()`;
 Stryker empties the whole block.
@@ -102,12 +102,12 @@ mutmut 3's mutation behavior.
 
 | | yes | partial | unknown | false gap | rows |
 | --- | --- | --- | --- | --- | --- |
-| Rust | 15 | 7 | 9 | 0 | 31 |
+| Rust | 14 | 7 | 10 | 0 | 31 |
 | Python | 28 | 4 | 0 | 1 | 33 |
 | TypeScript | 22 | 10 | 1 | 1 | 34 |
 
-Before #14797, Rust was 13 yes, 6 partial and 12 unknown. Boolean literal and
-bitwise tails moved to yes; the emptied collection moved to partial.
+Before #14797, Rust was 13 yes, 6 partial and 12 unknown. A returned boolean
+literal moved to yes and an emptied `vec!` to partial.
 
 ## Where ripr falls short, by language
 
@@ -120,7 +120,7 @@ Loop range bounds ([#11972](https://github.com/EffortlessMetrics/ripr-swarm/issu
 `break`/`continue` and forced conditions
 ([#14816](https://github.com/EffortlessMetrics/ripr-swarm/issues/14816)) are also
 unknown, as are module constants, a returned `a && b` flipped to `a || b`, and
-unary deletion on a bare name (#14815).
+unary or bitwise edits on a returned name (#14815).
 
 **Python.** A changed module constant reads `no_static_path` even though the
 test calls the function that reads it

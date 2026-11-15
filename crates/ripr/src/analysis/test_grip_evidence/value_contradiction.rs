@@ -1090,20 +1090,6 @@ fn count_name_tokens(text: &str, name: &str) -> usize {
 /// [`SEPARATION_WIDE_GRID`], so a change a divisor or a saturation hides below
 /// the small values still counts as a real difference). More than
 /// [`SEPARATION_MAX_PARAMETERS`] parameters are not searched.
-/// Whether the #8659 same-value fold can decide this change at all: `after`
-/// occurs exactly once in the owner body, and on a small input grid the body
-/// folds to a value with `after` and with `before` and the two differ
-/// somewhere. A sink that lets an exact assertion read `exposed` relies on
-/// [`change_is_invisible_to_every_assertion`] withholding credit at inputs
-/// where both versions agree, which needs exactly this (#14797).
-pub(in crate::analysis) fn owner_change_folds(current: &str, before: &str, after: &str) -> bool {
-    if before == after || current.matches(after).count() != 1 {
-        return false;
-    }
-    let baseline = current.replacen(after, before, 1);
-    versions_differ_on_small_inputs(current, &baseline)
-}
-
 fn versions_differ_on_small_inputs(current: &str, baseline: &str) -> bool {
     const SEPARATION_SMALL_GRID: [i128; 8] = [0, 1, 2, 3, 5, 6, 7, 10];
     const SEPARATION_WIDE_GRID: [i128; 16] = [

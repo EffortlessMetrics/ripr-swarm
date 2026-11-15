@@ -778,88 +778,66 @@ fn predicate_as_owner_tail(
 }
 
 /// #14797: a `return_value` probe whose changed line is exactly the owner's
-/// whole single-line tail value. The tail is what the owner returns, so the
-/// sink is that return even when the text carries none of the cues
-/// [`is_obvious_return_expression`] reads (`false`, `!ready`, `-delta`,
-/// `mask & bits`, `vec![]`). Same fail-closed parser rule as the predicate
-/// tail ([`owner_single_line_tail`]); the tail must be one operand-level
-/// expression: a literal, a path, a unary or arithmetic/bitwise binary
-/// expression (no comparison or `&&`/`||`), a call,
-/// a method call, a field read, an index, a cast, an array or tuple literal,
-/// or a bare `vec!` invocation. Blocks, branches, closures, loops, `?`,
-/// `.await` and other macros keep the unknown sink.
+/// whole body, a single-line constant tail. The tail is what the owner
+/// returns, so the sink is that return even when the text carries none of
+/// the cues [`is_obvious_return_expression`] reads (`false`, `vec![]`,
+/// `[b'a', b'b']`, `-(1 << 3)` spelled without spaces). Same fail-closed
+/// parser rule as the predicate tail ([`owner_single_line_tail`]).
 ///
 /// A direct sink lets an exact assertion read `exposed`, so it is admitted
-/// only where an assertion at an input on which both versions agree cannot
-/// borrow that credit (independent review of #14797):
-///
-/// - the tail is the owner's whole body (no statement can shadow an operand
-///   or feed it a value the test's literal arguments do not show); and
-/// - either the tail names nothing (`false`, `"x"`, `vec![]`, `[1, 2]`), so
-///   its old and new values differ at every input, or the infection stage's
-///   same-value fold (#8659) can decide the edit
-///   ([`owner_change_folds`](crate::analysis::test_grip_evidence::owner_change_folds)):
-///   the changed text is unique in the body and both versions fold to
-///   integers that differ somewhere. `-a` to `a` in `fn f(a: i32)`, `-p.x`,
-///   `v[i]` and casts fold to nothing and keep the unknown sink.
+/// only for a tail that names nothing: literals, unary and arithmetic or
+/// bitwise operators, parentheses, array, tuple and reference literals, and a
+/// bare `vec!` whose tokens hold no identifier. Such a value is the same at
+/// every input, so no choice of test input can make the two versions agree
+/// unless the edit itself keeps the value (`!true` to `false`, which a
+/// reviewer should see as an equivalent rewrite). A tail that names a
+/// parameter, a local, a constant or a field (`-delta`, `a & b`, `p.x`) keeps
+/// the unknown sink: whether the test's inputs separate the versions is the
+/// infection stage's question, and its same-value check (#8659) cannot
+/// decide inputs that are not literal arguments (`let d = 0; f(d)`), so the
+/// sink would let those read `exposed` (independent review of #14797;
+/// #14815). Comparison and `&&`/`||` tails keep their own readers.
 fn return_value_as_owner_tail(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
 ) -> Option<LocalTextFact> {
     use ra_ap_syntax::{AstNode, SyntaxKind};
-    let owner = owner_fn?;
-    if !owner_tail_is_whole_body(owner) {
+    if !owner_tail_is_whole_body(owner_fn?) {
         return None;
     }
-    let mut names_something = false;
-    let tail = owner_single_line_tail(probe, owner_fn, |tail| {
-        names_something = tail.syntax().descendants().any(|node| {
-            node.kind() == SyntaxKind::PATH_EXPR
-                || ra_ap_syntax::ast::MacroCall::cast(node).is_some_and(|call| {
-                    call.token_tree().is_some_and(|tree| {
-                        tree.syntax()
-                            .descendants_with_tokens()
-                            .any(|element| element.kind() == SyntaxKind::IDENT)
-                    })
-                })
-        });
+    owner_single_line_tail(probe, owner_fn, |tail| {
         tail.syntax().descendants().all(|node| {
             matches!(
                 node.kind(),
                 SyntaxKind::LITERAL
-                    | SyntaxKind::PATH_EXPR
-                    | SyntaxKind::PATH
-                    | SyntaxKind::PATH_SEGMENT
-                    | SyntaxKind::NAME_REF
                     | SyntaxKind::PREFIX_EXPR
                     | SyntaxKind::BIN_EXPR
                     | SyntaxKind::PAREN_EXPR
-                    | SyntaxKind::FIELD_EXPR
-                    | SyntaxKind::INDEX_EXPR
-                    | SyntaxKind::CALL_EXPR
-                    | SyntaxKind::METHOD_CALL_EXPR
-                    | SyntaxKind::ARG_LIST
-                    | SyntaxKind::CAST_EXPR
                     | SyntaxKind::ARRAY_EXPR
                     | SyntaxKind::TUPLE_EXPR
                     | SyntaxKind::REF_EXPR
-                    | SyntaxKind::PATH_TYPE
-                    | SyntaxKind::GENERIC_ARG_LIST
-                    | SyntaxKind::TYPE_ARG
                     | SyntaxKind::MACRO_EXPR
                     | SyntaxKind::MACRO_CALL
+                    | SyntaxKind::PATH
+                    | SyntaxKind::PATH_SEGMENT
+                    | SyntaxKind::NAME_REF
                     | SyntaxKind::TOKEN_TREE
             )
         }) && tail.syntax().descendants().all(|node| {
+            // A path only ever appears as a macro's own path here (there is
+            // no PATH_EXPR in the allowlist); the macro must be a bare
+            // `vec!` whose tokens name nothing.
             ra_ap_syntax::ast::MacroCall::cast(node).is_none_or(|call| {
                 call.path()
                     .is_some_and(|path| path.syntax().text() == "vec")
+                    && call.token_tree().is_some_and(|tree| {
+                        !tree
+                            .syntax()
+                            .descendants_with_tokens()
+                            .any(|element| element.kind() == SyntaxKind::IDENT)
+                    })
             })
         }) && tail.syntax().descendants().all(|node| {
-            // Comparison and short-circuit tails keep their own readers
-            // (the predicate tail above, RIPR-SPEC-0197 short-circuit tails,
-            // RIPR-SPEC-0158/0353 fixtures): this sink admits value operators
-            // only.
             ra_ap_syntax::ast::BinExpr::cast(node).is_none_or(|binary| {
                 !matches!(
                     binary.op_kind(),
@@ -871,19 +849,7 @@ fn return_value_as_owner_tail(
                 )
             })
         })
-    })?;
-    if names_something
-        && !probe.before.as_deref().is_some_and(|before| {
-            crate::analysis::test_grip_evidence::owner_change_folds(
-                &owner.body,
-                before,
-                &probe.expression,
-            )
-        })
-    {
-        return None;
-    }
-    Some(tail)
+    })
 }
 
 /// Whether the owner's body is one tail expression with no statements.
@@ -2521,9 +2487,9 @@ mod tests {
         assert_eq!(predicate_as_owner_tail(&probe, Some(&owner)), None);
     }
 
-    /// #14797: a tail value with none of the text cues the obvious-return
-    /// reader looks for (a literal, a unary operand, an unspaced or bitwise
-    /// binary, a bare `vec!`) is still what the owner returns.
+    /// #14797: a constant tail with none of the text cues the obvious-return
+    /// reader looks for (a `bool` literal, an array of byte literals, a bare
+    /// `vec![]`) is still what the owner returns.
     #[test]
     fn owner_tail_value_without_text_cues_reaches_return_sink() {
         for (body, before, expression, line) in [
@@ -2540,19 +2506,6 @@ mod tests {
                 None,
                 "[b'a', b'b']",
                 1,
-            ),
-            // Named operands the same-value fold decides.
-            (
-                "pub fn neg(delta: i32) -> i32 {\n    -delta\n}",
-                Some("delta"),
-                "-delta",
-                2,
-            ),
-            (
-                "pub fn mask(bits: u32, keep: u32) -> u32 {\n    bits & keep\n}",
-                Some("bits | keep"),
-                "bits & keep",
-                2,
             ),
         ] {
             assert!(
@@ -2577,10 +2530,28 @@ mod tests {
     #[test]
     fn owner_tail_value_refuses_unfoldable_non_tail_and_opaque_shapes() {
         for (body, before, expression, line) in [
-            // Ambiguous text: the same-value fold cannot locate the change, so
-            // `assert_eq!(neg(0), 0)` would otherwise read exposed.
+            // A tail naming an operand: whether the test's inputs separate
+            // the versions is undecided for non-literal arguments
+            // (`let d = 0; neg(d)`), so `exposed` would be unsupported.
             ("pub fn neg(a: i32) -> i32 {\n    a\n}", Some("-a"), "a", 2),
-            // Named operands the fold cannot evaluate (review of #14797).
+            (
+                "pub fn neg(delta: i32) -> i32 {\n    -delta\n}",
+                Some("delta"),
+                "-delta",
+                2,
+            ),
+            (
+                "pub fn mask(bits: u32, keep: u32) -> u32 {\n    bits & keep\n}",
+                Some("bits | keep"),
+                "bits & keep",
+                2,
+            ),
+            (
+                "pub fn limit() -> u32 {\n    LIMIT\n}",
+                Some("LIMIT + 1"),
+                "LIMIT",
+                2,
+            ),
             (
                 "pub fn x(p: P) -> i32 {\n    -p.x\n}",
                 Some("p.x"),
@@ -2599,14 +2570,14 @@ mod tests {
                 "-a as i64",
                 2,
             ),
-            // Named operand with no baseline text to fold.
+            // A statement before the tail can shadow an operand; even a
+            // constant tail must be the whole body.
             (
-                "pub fn mask(bits: u32, keep: u32) -> u32 {\n    bits & keep\n}",
-                None,
-                "bits & keep",
-                2,
+                "pub fn ready() -> bool {\n    log();\n    false\n}",
+                Some("true"),
+                "false",
+                3,
             ),
-            // A statement before the tail can shadow an operand.
             (
                 "pub fn mix(a: u32, b: u32) -> u32 {\n    let b = 0;\n    a | b\n}",
                 Some("a ^ b"),
