@@ -254,6 +254,13 @@ function stagedIdentities(registry, options) {
   }
   const executable = native.entries.find((entry) => entry.name === `package/${platform.executable}`);
   if (!executable) fail(`${native.basename} does not contain ${platform.executable}`);
+  // A real registry serves every optional native, and npm 11's `npm ci`
+  // refuses a lockfile that omits one, so a partial family is not a consumer.
+  for (const entry of platforms) {
+    if (!registry.staged.some((item) => item.manifest.name === entry.package && item.manifest.version === options.version)) {
+      fail(`no staged ${entry.package}@${options.version} tarball; the journey needs every optional native the launcher pins`);
+    }
+  }
   return {
     launcher,
     native,

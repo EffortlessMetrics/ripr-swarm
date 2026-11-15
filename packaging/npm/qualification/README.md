@@ -32,7 +32,9 @@ receipt.
 
 1. Starts `lib/registry.cjs` in its own process: loopback only, ephemeral
    port, read-only, no upstream. It serves only the staged tarballs and
-   refuses any tarball that declares an install-time lifecycle script.
+   refuses any tarball that declares an install-time lifecycle script. The
+   staged set must hold every native the launcher pins, as a real registry
+   does: npm 11's `npm ci` refuses a lockfile that is missing one.
 2. Builds a consumer `PATH` from the planted decoy `ripr`, Node, git and the OS
    system directories, then checks that `cargo`, `rustc` and `rustup` can't be
    found and that `ripr` resolves only to the decoy.

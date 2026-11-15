@@ -130,6 +130,10 @@ function stageFamily(label, executableBytes) {
   packLauncher(dir);
   const platform = currentPlatform();
   if (platform && executableBytes) packNative(dir, platform, VERSION, executableBytes);
+  // Foreign natives carry a placeholder: the journey must never fetch them.
+  for (const other of launcherManifest().ripr.platforms) {
+    if (!platform || other.package !== platform.package) packNative(dir, other, VERSION, Buffer.from("foreign placeholder\n"));
+  }
   return { dir, platform };
 }
 
@@ -196,7 +200,11 @@ test("staged identities refuse range pins, missing targets and mismatched native
   });
   const launcher = (edit = (value) => value) => ({ basename: "launcher.tgz", entries: [], manifest: edit(JSON.parse(JSON.stringify(manifest))) });
   const options = { version: VERSION, target: platform.rustTarget };
-  const ok = stagedIdentities({ staged: [launcher(), native()] }, options);
+  const foreign = manifest.ripr.platforms.slice(1).map((entry) => ({
+    basename: `${entry.rustTarget}.tgz`, entries: [], sha256: "sha256:y",
+    manifest: { name: entry.package, version: VERSION, riprNative: { target: entry.rustTarget, executable: entry.executable } },
+  }));
+  const ok = stagedIdentities({ staged: [launcher(), native(), ...foreign] }, options);
   assert.equal(ok.platform.package, platform.package);
   assert.match(ok.payloadHash, /^sha256:[0-9a-f]{64}$/);
   assert.throws(() => stagedIdentities({ staged: [launcher((value) => {
@@ -207,6 +215,7 @@ test("staged identities refuse range pins, missing targets and mismatched native
   assert.throws(() => stagedIdentities({ staged: [launcher(), native({ riprNative: { target: "x86_64-unknown-linux-musl", executable: platform.executable } })] }, options), /riprNative metadata must name/);
   assert.throws(() => stagedIdentities({ staged: [launcher(), native({ version: "0.0.1" })] }, options), /no staged/);
   assert.throws(() => stagedIdentities({ staged: [launcher((value) => ({ ...value, dependencies: { leftpad: "1.0.0" } })), native()] }, options), /runtime dependencies/);
+  assert.throws(() => stagedIdentities({ staged: [launcher(), native(), ...foreign.slice(1)] }, options), /every optional native the launcher pins/);
   const base = ["--packages", "p", "--target", "t", "--version", "v", "--receipt", "r"];
   assert.throws(() => parseArgs([...base, "--source-commit", "HEAD", "--source-tree", "b".repeat(40)]), /40-character/);
   assert.throws(() => parseArgs(base), /--source-commit is required/);
