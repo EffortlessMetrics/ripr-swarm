@@ -522,6 +522,21 @@ def comment_body_negative(body: str) -> bool:
             continue
         if STATE_LINE.match(line) or (STATE_MENTION.search(line) and negation_hit(line)):
             return True
+    # #14728 review: a mis-formatted marker is neutral only when the body says
+    # nothing else. Any other prose after it keeps main's negative reading, so a
+    # retraction ("REVIEW_READY <sha>" then "The evidence is weak.") still vetoes
+    # instead of falling through to the description carrier.
+    if neutral_first:
+        remainder = [line.strip() for line in visible[first_index + 1 :] if line.strip()]
+        if remainder:
+            if len(remainder) != 1:
+                return True
+            tail = remainder[0]
+            if not (
+                tail.lower() in CHATTER_BODIES
+                or EXACT_HEAD_REVIEW.fullmatch(tail) is not None
+            ):
+                return True
     # #14728: a mis-formatted marker followed by a plain-English blocker is a
     # stated negative, as main already reads it; only a body with no blocker is
     # neutral chatter.
@@ -682,10 +697,26 @@ def reviews_allow_source_attestation(
     # ``marker_line_neutral`` scores neutral add nothing, so they must not
     # remove a marker either. Any other body still supersedes, fail-closed.
     def neutral_marker_body(body: str) -> bool:
-        for line in normalize_body(body).split("\n"):
-            if line.strip():
-                return marker_line_neutral(line)
-        return False
+        # A mis-formatted marker is inert only when the body says nothing else.
+        # Any other prose after it keeps main's reading, so a retraction
+        # ("REVIEW_READY <sha>" then "The evidence is weak.") still supersedes
+        # and vetoes instead of falling through to the description carrier.
+        parts = split_body(body)
+        if parts is None:
+            return False
+        visible, fenced = parts
+        if any(line.strip() for line in fenced):
+            return False
+        substantive = [line.strip() for line in visible if line.strip()]
+        if not substantive or not marker_line_neutral(substantive[0]):
+            return False
+        remainder = substantive[1:]
+        if not remainder:
+            return True
+        return len(remainder) == 1 and (
+            remainder[0].lower() in CHATTER_BODIES
+            or EXACT_HEAD_REVIEW.fullmatch(remainder[0]) is not None
+        )
 
     effective = [
         r for r in reviews
@@ -1237,6 +1268,8 @@ def self_test() -> None:
         "Looks good.",
         "Nice work.",
         "Thanks for the explanation.",
+        f"REVIEW_READY {sha}\n\nThe evidence is weak.",
+        f"REVIEW_READY {sha}\n\nI have concerns about the oracle.",
     ):
         assert not reviews_allow_source_attestation(
             [
