@@ -23994,6 +23994,17 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     {
         return Some("npm launcher runtime and focused launcher contract tests");
     }
+    if matches!(
+        path,
+        "packaging/npm/qualification/bin/journey.cjs"
+            | "packaging/npm/qualification/lib/journey.cjs"
+            | "packaging/npm/qualification/lib/registry.cjs"
+            | "packaging/npm/qualification/test/journey.test.cjs"
+    ) {
+        return Some(
+            "The npm install-to-use journey must drive real npm and Node package resolution on consumer runners that have no Rust toolchain; its controls run through the Rust-owned npm_consumer integration target (#4627, #4632).",
+        );
+    }
     if path == "editors/vscode/test/developerSetup.cjs" {
         return Some(
             "Dependency-free Node setup entrypoint must inspect the editor checkout before Rust or npm dependencies are available; explicit verification delegates to existing validation owners (#13201, #13212).",
