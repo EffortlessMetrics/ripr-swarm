@@ -17,21 +17,22 @@ entry (`routed-rust.yml:4-20`). `ready_for_review` requests nothing, and any
 other label event still runs the workflow but names its result job
 `Merge-ready Nonrequest` — a skipped required job reports success, so the
 required context must be earned by a merge-ready run or stay absent
-(`routed-rust.yml:472`). A branch or tag `workflow_dispatch` is diagnostic-only:
+(`routed-rust.yml:696`, `routed-rust.yml:987`). A branch or tag `workflow_dispatch` is diagnostic-only:
 the result job fails itself on purpose
-(`routed-rust.yml:621-624`), so it can never produce a passing required check
+(`routed-rust.yml:988-990`), so it can never produce a passing required check
 on a PR head.
 
 The aggregate result job re-binds live eligibility to the admission recorded at
 the start of the run. Admission writes the request as
-`GITHUB_RUN_ID-GITHUB_RUN_ATTEMPT` (`routed-rust.yml:294`), and the recheck
+`GITHUB_RUN_ID-GITHUB_RUN_ATTEMPT` (`routed-rust.yml:328`), and the recheck
 requires that exact string to equal the live run and attempt
-(`routed-rust.yml:486`, `routed-rust.yml:499`). An in-place rerun of failed
+(`routed-rust.yml:756`, `routed-rust.yml:758`). An in-place rerun of failed
 jobs runs under a new attempt while the succeeded admission step keeps its
 original output, so a rerun can structurally never pass. To converge a stale or
 failed qualification, remove and re-apply `merge-ready` for a fresh run on the
-exact head; do not re-apply the label on an unchanged head while a required run
-is queued or running, because it cancels that run.
+exact head (or re-queue the PR to qualify a new merge group); do not re-apply the
+label on an unchanged head while a required run is queued or running, because it
+cancels that run.
 
 Cancellation is routed through the workflow's concurrency group, so a fresh
 trigger from any other actor — a re-fired `merge-ready` label or any
@@ -69,25 +70,19 @@ relabel a run's older checkout as execution of a newer combined tree
 
 ## Merge mechanics
 
-After current-head substantive review, addressed findings, applicable proof and
-all live required checks are established, use an ordinary protected squash with
-the exact current PR head as the expected SHA. Confirm that the current required
-`Ripr Rust Small Result` is successful for the applicable qualification and
-required app, and assess all other required checks and review obligations. Read
-the current requirements rather than assuming a fixed protection configuration.
-A behind-only branch does not itself invalidate unaffected proof; a green
-old-head check does not qualify a new head. Do not arm auto-merge or bypass a
-rule. For example, after independently establishing those conditions:
+`main` requires the native merge queue (ruleset `main`, id `18845973`, active
+since 2026-11-10T21:32Z with `bypass_actors: []`); direct expected-head
+`PUT .../merge` squash calls are refused with HTTP 405 (#13899, recorded on
+#4838).
 
-```bash
-gh api --method PUT "repos/EffortlessMetrics/ripr-swarm/pulls/$pr_number/merge" \
-  -f merge_method=squash -f sha="$expected_head"
-```
-
-Set `expected_head` to the verified full current PR head; do not omit it or use
-an unguarded fallback. The API's expected-SHA check protects the head, but the
-review and check observations are not atomic with the mutation. Native
-protection and final judgment remain necessary.
+After current-head substantive review, addressed findings, applicable proof, and
+all live required PR obligations are established, follow the live queue-landing
+sequence in [merge flow](../MERGE_FLOW.md): confirm `Ripr Rust Small Result` and
+other required checks/review threads, enqueue the PR on the native merge queue,
+and let the queue run qualify and squash the exact queued merge commit. Read the
+current requirements rather than assuming a fixed protection configuration. A
+behind-only branch does not itself invalidate unaffected proof; a green old-head
+check does not qualify a new head. Do not bypass a rule.
 
 `BLOCKED` is a state to investigate, not proof of recompute lag or permission
 to enqueue. Reconcile current review, checks and applicable rules; preserve any
