@@ -164,8 +164,8 @@ Route totals are the `routes` rows at the top of `baseline.json`. What they show
   DETAIL step is skipped when `missing=` is code (`total == 100`), so the loop
   follows explain and context only for rows whose `missing=` is `-` or a
   sentence ("No strong discriminator ..."). Before that rule the loop read
-  8,731 estimated tokens over the six scenarios; with it, 2,619 on the same
-  base, for the same answers. `baseline.json` records the current figure. A
+  8,731 estimated tokens over the original six scenarios; with it, 2,594 for
+  the same answers (#14536). `baseline.json` records the current figure. A
   row with `(+N more)` or a clipped `…` value is followed too.
 - `struct_field` reads `reference_test_closes_loop: false` since #14565 stopped
   crediting the sibling field's assertion; the intended bool-field assertion
