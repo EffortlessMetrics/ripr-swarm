@@ -585,9 +585,24 @@ pub(crate) fn probes_for_file_with_relations(
                         match removed_span_of_shape(text, &shape_text, removed.trim()) {
                             Some(old) => old == shape_text,
                             // No locatable cut: unchanged only when the old
-                            // line still holds the same text as a token run
-                            // (`total > limit` is not inside `subtotal > limit`).
-                            None => super::classify::contains_token_run(removed, &shape_text),
+                            // line holds the text, with no operand syntax
+                            // extending it, at least as often as the new one.
+                            // `total > limit` is not inside `subtotal > limit`,
+                            // `total > limit.max` or `x.total > limit`, and a
+                            // comparison repeated on the new line is not all
+                            // unchanged when the old line held it once.
+                            None => {
+                                let old = super::classify::operand_bounded_token_run_count(
+                                    removed,
+                                    &shape_text,
+                                );
+                                old > 0
+                                    && old
+                                        >= super::classify::operand_bounded_token_run_count(
+                                            text,
+                                            &shape_text,
+                                        )
+                            }
                         }
                     })
                     && canonical_shapes.iter().any(|header| {
@@ -5316,6 +5331,44 @@ mod tests {
             .collect::<Vec<_>>();
         families.sort();
         assert_eq!(families, vec!["predicate", "static_unknown"], "{probes:?}");
+    }
+
+    /// #14722 review: the old line holding the comparison's text only as
+    /// part of a longer operand (`total > limit.max`, `x.total > limit`) does
+    /// not make the comparison unchanged, so it keeps its own probe.
+    #[test]
+    fn a_comparison_found_only_inside_a_longer_old_operand_is_kept() {
+        for removed in [
+            "match (total > limit.max, false) {",
+            "match (x.total > limit, false) {",
+            "match (total > limit as u64, false) {",
+            "match (total > limit | mask, false) {",
+            "match (total > limit << 1, false) {",
+            "match (total > limit!(x), false) {",
+            "match (a | total > limit, false) {",
+            "match (a >> total > limit, false) {",
+        ] {
+            let probes = shapes_probes(
+                "match (total > limit, true) {",
+                removed,
+                &[
+                    (ProbeShapeKind::MatchArm, "match (total > limit, true)"),
+                    (ProbeShapeKind::Predicate, "total > limit"),
+                ],
+                "",
+            );
+
+            let mut families = probes
+                .iter()
+                .map(|probe| probe.family.as_str().to_string())
+                .collect::<Vec<_>>();
+            families.sort();
+            assert_eq!(
+                families,
+                vec!["predicate", "static_unknown"],
+                "{removed}: {probes:?}"
+            );
+        }
     }
 
     /// #14722 review: a `=>` inside a string literal in the scrutinee is not
