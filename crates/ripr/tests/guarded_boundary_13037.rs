@@ -461,3 +461,82 @@ fn a_changed_equality_value_is_credited_only_from_guard_holding_rows() -> Result
     );
     Ok(())
 }
+
+// #14873: rustfmt wraps a long condition and puts the guard on its own
+// line. The diff then changes only the comparison line, and the guard must
+// still be read from the line below it.
+const WRAPPED_AFTER: &str = "pub const FREE_OVER_CENTS: u32 = 5_000;
+
+pub fn shipping_cost(weight_g: u32, order_cents: u32, express: bool) -> u32 {
+    if order_cents >= FREE_OVER_CENTS
+        && !express
+    {
+        return 0;
+    }
+    if express { weight_g * 2 } else { weight_g }
+}
+";
+
+const WRAPPED_PATCH: &str = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,4 +3,4 @@ pub const FREE_OVER_CENTS: u32 = 5_000;
+ pub fn shipping_cost(weight_g: u32, order_cents: u32, express: bool) -> u32 {
+-    if order_cents > FREE_OVER_CENTS
++    if order_cents >= FREE_OVER_CENTS
+         && !express
+     {
+";
+
+fn wrapped_finding(tests: &str) -> Result<Finding, String> {
+    let repo = TempRepo::create_with(WRAPPED_AFTER, WRAPPED_PATCH, tests)?;
+    let output = check_workspace(CheckInput {
+        root: repo.root.clone(),
+        base: None,
+        diff_file: Some(repo.root.join("diff.patch")),
+        mode: Mode::Ready,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let mut found = output.findings.into_iter().filter(|finding| {
+        finding.probe.family == ProbeFamily::Predicate && finding.probe.location.line == 4
+    });
+    match (found.next(), found.next()) {
+        (Some(finding), None) => Ok(finding),
+        other => Err(format!(
+            "premise: exactly one predicate finding on the wrapped line, got {other:?}"
+        )),
+    }
+}
+
+#[test]
+fn a_wrapped_guard_is_read_from_the_line_below() -> Result<(), String> {
+    let missing = test_fn(
+        "express_only",
+        "assert_eq!(shipping_cost(100, 5000, true), 200);\n        assert_eq!(shipping_cost(100, 4999, true), 200);",
+    );
+    let finding = wrapped_finding(&missing)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("`express = false`")),
+        "the wrapped guard is named: {:?}",
+        finding.missing
+    );
+
+    let held = test_fn(
+        "pins",
+        "assert_eq!(shipping_cost(100, 5000, false), 0);\n        assert_eq!(shipping_cost(100, 4999, false), 100);",
+    );
+    let finding = wrapped_finding(&held)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}

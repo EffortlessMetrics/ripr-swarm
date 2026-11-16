@@ -759,10 +759,15 @@ The repo-wide seam view (`--format repo-exposure-json`, the evidence `ripr
 repair` reads) applies the same rule to the comparison seam it splits from
 such a predicate (#14872). The seam's activation is `unknown` with the guards
 named, and it carries no missing value, unless one related test call sits on
-the boundary value while holding every guard as a literal. A `mut` or
-rebound guard, or a compared side that is not a plain parameter, counts as
-unheld. So a row that misses a guard can no longer grip the seam while
-`check` reads the same change as unclear. Honesty-corpus case
+the boundary value while holding every guard. A literal, an immutable test
+local resolved per call, or the boundary constant's own name each count; a
+`mut` or rebound guard, or a compared side that is not a plain parameter,
+counts as unheld. A constant on the left (`LIMIT <= amount`) is oriented as
+`check` orients it. So a row that misses a guard can no longer grip the seam
+while `check` reads the same change as unclear. Both views read the guard
+from the comparison's own `if`/`else if` line plus any lines rustfmt wraps
+under it that each open with `&&`, up to the opening brace; a predicate
+written as `let`/`return` is not yet read as guarded (#14874). Honesty-corpus case
 `rust_repo_exposure_guarded_boundary_guard_missing_not_promoted` pins it.
 
 ## Test Mapping

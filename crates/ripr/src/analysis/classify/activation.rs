@@ -3146,13 +3146,21 @@ pub(in crate::analysis) fn guarded_comparison(
     probe: &Probe,
     owner: &FunctionSummary,
 ) -> Option<GuardedComparison> {
-    let (comparison, guards, rebound_guard) =
-        split_guarded(&probe.expression, owner, probe.location.line)?;
+    let continuation = wrapped_guard_continuation(owner, probe.location.line);
+    let with_continuation = |text: &str| match &continuation {
+        Some(rest) => format!("{text} {rest}"),
+        None => text.to_string(),
+    };
+    let (comparison, guards, rebound_guard) = split_guarded(
+        &with_continuation(&probe.expression),
+        owner,
+        probe.location.line,
+    )?;
     let before = match probe.before.as_deref() {
         None => None,
         Some(before) => {
             let (old_comparison, old_guards, _) =
-                split_guarded(before, owner, probe.location.line)?;
+                split_guarded(&with_continuation(before), owner, probe.location.line)?;
             let sorted = |guards: &[(String, bool)]| {
                 let mut guards = guards.to_vec();
                 guards.sort();
@@ -3209,9 +3217,52 @@ pub(in crate::analysis) fn predicate_line_bool_guards(
         .strip_prefix("} else if ")
         .or_else(|| text.strip_prefix("else if "))
         .unwrap_or(text);
+    let joined;
+    let text = match wrapped_guard_continuation(owner, line) {
+        Some(rest) => {
+            joined = format!("{text} {rest}");
+            joined.as_str()
+        }
+        None => text,
+    };
     let (found, guards, rebound) = split_guarded(text, owner, line)?;
     let squash = |text: &str| text.split_whitespace().collect::<String>();
     (squash(&found) == squash(comparison)).then_some((guards, rebound))
+}
+
+/// The `&& guard` lines rustfmt wraps under a condition (`if a >= T` then
+/// `    && !express` then `{`), joined, so `check` and the repo-wide seam view
+/// read a wrapped guard as they read a one-line one (#14873). Only lines
+/// that each open with `&&` count, up to the opening brace; a `||`, a
+/// comment, or any other continuation is not read, which leaves the
+/// comparison unguarded exactly as before.
+fn wrapped_guard_continuation(owner: &FunctionSummary, line: usize) -> Option<String> {
+    let offset = line.checked_sub(owner.start_line)?;
+    let mut lines = owner.body.lines().skip(offset);
+    let head = lines.next()?.trim_end();
+    if head.ends_with('{') || head.contains("&&") || head.contains("||") {
+        return None;
+    }
+    let mut guards = Vec::new();
+    for next in lines {
+        let next = next.trim();
+        if next == "{" {
+            break;
+        }
+        let rest = next.strip_prefix("&&")?;
+        let (rest, done) = match rest.trim_end().strip_suffix('{') {
+            Some(rest) => (rest, true),
+            None => (rest, false),
+        };
+        if rest.contains("||") || rest.contains("//") {
+            return None;
+        }
+        guards.push(format!("&& {}", rest.trim()));
+        if done {
+            break;
+        }
+    }
+    (!guards.is_empty()).then(|| guards.join(" "))
 }
 
 fn split_guarded(expression: &str, owner: &FunctionSummary, line: usize) -> Option<GuardedSplit> {

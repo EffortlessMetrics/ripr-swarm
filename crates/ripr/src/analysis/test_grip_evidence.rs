@@ -3175,12 +3175,13 @@ fn activate_evidence(
     // for a call that also holds every guard. Without such a call the
     // boundary is unresolved here, as in `check`, never credited from rows
     // that miss a guard and never an actionable missing value.
+    let boundary = owner_fn.and_then(|owner_fn| predicate_boundary_operand(seam, owner_fn));
     let boundary_guard_unheld = owner_fn.and_then(|owner_fn| {
         guarded_boundary_unheld(
             seam,
             owner_fn,
             index,
-            predicate_boundary_operand(seam, owner_fn).as_ref(),
+            boundary.as_ref(),
             boundary_constant.as_ref(),
             &activation_credited,
         )
@@ -3196,7 +3197,6 @@ fn activate_evidence(
             .is_some_and(|constant| !constant.lookup.is_declared_once());
     // A local boundary with no input-free value (#4228) is the same
     // dead end: `check` drops its repair ask, so grip must not grade it.
-    let boundary = owner_fn.and_then(|owner_fn| predicate_boundary_operand(seam, owner_fn));
     let boundary_local_unresolved = !boundary_equality_observed
         && boundary
             .as_ref()
@@ -4400,18 +4400,37 @@ fn guarded_boundary_unheld(
     // The whole signature, as the guards were read: a rustfmt-wrapped
     // parameter list must still place each argument.
     let parameters = whole_signature_parameters(owner_fn);
-    let tested_at = boundary.and_then(|boundary| {
-        parameters
-            .iter()
-            .position(|parameter| *parameter == boundary.tested)
-    });
-    let (Some(boundary), Some(tested_at), false) = (boundary, tested_at, rebound) else {
+    let (Some(boundary), false) = (boundary, rebound) else {
         return Some(describe);
     };
-    let value = boundary
-        .local_value()
-        .or_else(|| constant.and_then(|constant| constant.lookup.value()))
-        .unwrap_or(&boundary.token);
+    let position = |name: &str| parameters.iter().position(|parameter| parameter == name);
+    let reversed_value: String;
+    let (tested_at, value) = match position(&boundary.tested) {
+        Some(at) => (
+            at,
+            boundary
+                .local_value()
+                .or_else(|| constant.and_then(|constant| constant.lookup.value()))
+                .unwrap_or(&boundary.token),
+        ),
+        // A boundary constant on the left (`FREE_OVER_CENTS <= order_cents`)
+        // leaves the operand reader's sides swapped: the parameter is the
+        // token and the constant is the value, as `check` orients it.
+        None => {
+            let reversed = position(&boundary.token).and_then(|at| {
+                let name = super::value_resolution::constant_operand_name(&boundary.tested)?;
+                let value = super::value_resolution::named_constant(&source.source, name)
+                    .value()?
+                    .to_string();
+                Some((at, value))
+            });
+            let Some((at, value)) = reversed else {
+                return Some(describe);
+            };
+            reversed_value = value;
+            (at, reversed_value.as_str())
+        }
+    };
     let held = tests.iter().any(|indexed| {
         indexed.test.calls.iter().any(|call| {
             call.name == owner_fn.name
@@ -4424,11 +4443,38 @@ fn guarded_boundary_unheld(
                                 .position(|parameter| parameter == guard)
                                 .and_then(|at| arguments.get(at))
                                 .is_some_and(|argument| {
-                                    argument.trim() == if *required { "true" } else { "false" }
+                                    let wanted = if *required { "true" } else { "false" };
+                                    // A literal, or an immutable local
+                                    // (`let express = false;`) resolved per
+                                    // call as `check` resolves its rows.
+                                    argument.trim() == wanted
+                                        || resolved_argument_values(
+                                            seam,
+                                            indexed,
+                                            index,
+                                            argument.trim(),
+                                            call,
+                                        )
+                                        .iter()
+                                        .any(|resolved| resolved == wanted)
                                 })
                         });
                         let on_boundary = arguments.get(tested_at).is_some_and(|argument| {
                             comparable_value(argument) == comparable_value(value)
+                                // An immutable local (`let cents = 5000;`)
+                                // resolved per call, as the activation reader
+                                // resolves it.
+                                || resolved_argument_values(
+                                    seam,
+                                    indexed,
+                                    index,
+                                    argument.trim(),
+                                    call,
+                                )
+                                .iter()
+                                .any(|resolved| {
+                                    comparable_value(resolved) == comparable_value(value)
+                                })
                                 || constant.is_some_and(|constant| {
                                     super::value_resolution::argument_names_constant(
                                         argument,

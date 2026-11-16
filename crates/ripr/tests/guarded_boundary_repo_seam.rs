@@ -56,6 +56,10 @@ impl TempRepo {
     }
 
     fn comparison_seam(&self) -> Result<Value, String> {
+        self.comparison_seam_for("order_cents >= FREE_OVER_CENTS")
+    }
+
+    fn comparison_seam_for(&self, expression: &str) -> Result<Value, String> {
         let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
             .args(["check", "--root"])
             .arg(&self.root)
@@ -77,8 +81,7 @@ impl TempRepo {
             .iter()
             .filter(|seam| {
                 seam.get("kind").and_then(Value::as_str) == Some("predicate_boundary")
-                    && seam.get("expression").and_then(Value::as_str)
-                        == Some("order_cents >= FREE_OVER_CENTS")
+                    && seam.get("expression").and_then(Value::as_str) == Some(expression)
             });
         match (seams.next(), seams.next()) {
             (Some(seam), None) => Ok(seam.clone()),
@@ -192,6 +195,133 @@ fn a_call_naming_the_boundary_constant_holds_the_boundary() -> Result<(), String
     let seam = TempRepo::create(
         SOURCE,
         "assert_eq!(shipping_cost(100, guarded_repo_seam::FREE_OVER_CENTS, false), 0);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(field(&seam, "/evidence/activate"), Some("yes"), "{seam}");
+    Ok(())
+}
+
+#[test]
+fn an_immutable_local_on_the_boundary_holds_the_boundary() -> Result<(), String> {
+    let seam = TempRepo::create(
+        SOURCE,
+        "let cents = 5000;\n    assert_eq!(shipping_cost(100, cents, false), 0);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(field(&seam, "/evidence/activate"), Some("yes"), "{seam}");
+    Ok(())
+}
+
+#[test]
+fn an_immutable_local_off_the_boundary_does_not_hold_it() -> Result<(), String> {
+    let seam = TempRepo::create(
+        SOURCE,
+        "let cents = 7000;\n    assert_eq!(shipping_cost(100, cents, false), 0);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "{seam}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_immutable_local_guard_holds_the_guard() -> Result<(), String> {
+    let seam = TempRepo::create(
+        SOURCE,
+        "let express = false;\n    assert_eq!(shipping_cost(100, 5000, express), 0);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(field(&seam, "/evidence/activate"), Some("yes"), "{seam}");
+    Ok(())
+}
+
+const REVERSED: &str = "pub const FREE_OVER_CENTS: u32 = 5_000;
+
+pub fn shipping_cost(weight_g: u32, order_cents: u32, express: bool) -> u32 {
+    if FREE_OVER_CENTS <= order_cents && !express {
+        return 0;
+    }
+    if express { weight_g * 2 } else { weight_g }
+}
+";
+
+fn reversed_seam(test_body: &str) -> Result<Value, String> {
+    TempRepo::create(REVERSED, test_body)?.comparison_seam_for("FREE_OVER_CENTS <= order_cents")
+}
+
+#[test]
+fn a_constant_on_the_left_is_held_by_a_guard_holding_boundary_call() -> Result<(), String> {
+    // The guard gate orients a left-hand constant as `check` does, so a
+    // guard-holding boundary call never reads as missing the guard. (The
+    // seam view does not yet resolve a left-hand constant at all, an
+    // existing fail-closed limitation tracked separately.)
+    let seam = reversed_seam(
+        "assert_eq!(shipping_cost(100, 5000, false), 0);\n    assert_eq!(shipping_cost(100, 4999, false), 100);",
+    )?;
+    let summary = field(&seam, "/evidence_record/evidence_path/activate/summary").unwrap_or("");
+    assert!(
+        !summary.contains("`express = false`"),
+        "the guard is held: {summary}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_constant_on_the_left_still_needs_the_guard() -> Result<(), String> {
+    let seam = reversed_seam(
+        "assert_eq!(shipping_cost(100, 5000, true), 200);\n    assert_eq!(shipping_cost(100, 4999, true), 200);",
+    )?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "{seam}"
+    );
+    let summary = field(&seam, "/evidence_record/evidence_path/activate/summary").unwrap_or("");
+    assert!(
+        summary.contains("`express = false`"),
+        "the guard is named: {summary}"
+    );
+    Ok(())
+}
+
+const WRAPPED: &str = "pub const FREE_OVER_CENTS: u32 = 5_000;
+
+pub fn shipping_cost(weight_g: u32, order_cents: u32, express: bool) -> u32 {
+    if order_cents >= FREE_OVER_CENTS
+        && !express
+    {
+        return 0;
+    }
+    if express { weight_g * 2 } else { weight_g }
+}
+";
+
+#[test]
+fn a_wrapped_guard_is_read_from_the_line_below() -> Result<(), String> {
+    // rustfmt puts a long condition's guard on its own line; `check` reads
+    // it there, so the seam view must too.
+    let seam = TempRepo::create(
+        WRAPPED,
+        "assert_eq!(shipping_cost(100, 5000, true), 200);\n    assert_eq!(shipping_cost(100, 4999, true), 200);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "{seam}"
+    );
+    let summary = field(&seam, "/evidence_record/evidence_path/activate/summary").unwrap_or("");
+    assert!(
+        summary.contains("`express = false`"),
+        "the wrapped guard is named: {summary}"
+    );
+
+    let seam = TempRepo::create(
+        WRAPPED,
+        "assert_eq!(shipping_cost(100, 5000, false), 0);\n    assert_eq!(shipping_cost(100, 4999, false), 100);",
     )?
     .comparison_seam()?;
     assert_eq!(field(&seam, "/evidence/activate"), Some("yes"), "{seam}");
