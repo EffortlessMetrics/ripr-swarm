@@ -521,8 +521,10 @@ without pytest gives no activation advice, and an unreadable venv layout is
 reported as not verified, never as a pass.
 ```
 
-The virtualenv is read statically and never executed. Choosing the venv
-interpreter for the printed verify command itself is #13801.
+The virtualenv is read statically and never executed. The printed verify
+command itself names the project venv interpreter when one exists
+(RIPR-SPEC-0028, #13801); doctor still probes only PATH `python`, so it never
+executes an interpreter from the checkout.
 
 ### Doctor exit codes distinguish findings, usage errors, and clean runs (#5102)
 

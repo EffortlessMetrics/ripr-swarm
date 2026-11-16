@@ -1,6 +1,4 @@
-use super::{
-    ExposureClass, Finding, LanguageId, MissingDiscriminatorFact, RelatedTest, RelatedTestMiss,
-};
+use super::{ExposureClass, Finding, LanguageId, MissingDiscriminatorFact, RelatedTest};
 
 /// The bounded, producer-backed witness projected by passive editor diagnostics.
 ///
@@ -303,8 +301,8 @@ fn suggested_related_test(finding: &Finding) -> Option<&RelatedTest> {
 /// (`same_test_file`, `same_module`, `weak_token_substring`) never run the
 /// change, so naming one as the fix site would send the reader to an
 /// unrelated test (#5354). Rows with no recorded relation (legacy producers)
-/// stay eligible. The row's `miss` annotation is explanatory and decides
-/// nothing here (`output/related_test_role_tests.rs`).
+/// stay eligible. The row's `miss` annotation never makes a row ineligible
+/// here; it only orders eligible rows through `observation_tier` (`output/related_test_role_tests.rs`).
 fn is_call_bearing(test: &RelatedTest) -> bool {
     test.relation_reason
         .is_none_or(|reason| !reason.is_proximity_only())
@@ -339,18 +337,14 @@ fn best_related_test<'a>(
     // the change is never the fix site while another row can, however strong
     // its oracle. A row with no call path to the changed code reaches it
     // least of all, so it ranks below a direct caller whose assertion pins
-    // only the success arm.
-    let observes = |test: &RelatedTest| match test.miss {
-        Some(RelatedTestMiss::NoCallPath) => 0u8,
-        Some(RelatedTestMiss::AssertionNotObserving) => 1,
-        _ => 2,
-    };
+    // only the success arm. The tier is the shared
+    // `RelatedTest::observation_tier` rule (#14483).
     related_tests
         .filter(|test| is_call_bearing(test))
         .min_by(|left, right| {
             reaches_owner(right)
                 .cmp(&reaches_owner(left))
-                .then_with(|| observes(right).cmp(&observes(left)))
+                .then_with(|| right.observation_tier().cmp(&left.observation_tier()))
                 .then_with(|| {
                     right
                         .oracle_strength
@@ -386,8 +380,8 @@ mod tests {
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, FindingCanonicalGap,
         FlowSinkFact, FlowSinkKind, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId,
-        RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, SymbolId,
-        ValueContext, ValueFact,
+        RelatedTestMiss, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState,
+        SymbolId, ValueContext, ValueFact,
     };
     use std::path::PathBuf;
 

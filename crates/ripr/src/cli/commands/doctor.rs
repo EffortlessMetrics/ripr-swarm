@@ -1367,7 +1367,7 @@ fn python_pytest_runtime_probe<F>(
 where
     F: FnMut(&str) -> (output::doctor::DoctorStatus, String),
 {
-    use output::python_env::{VenvPytest, project_venv_pytest, project_venv_python};
+    use analysis::python_env::{VenvPytest, project_venv_pytest, project_venv_python};
     let (status, evidence) = probe(PYTHON_PYTEST_PROBE);
     if status == output::doctor::DoctorStatus::Pass {
         return (status, format!("{evidence} (PATH `python -m pytest`)"));

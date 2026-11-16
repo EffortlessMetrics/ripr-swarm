@@ -2547,8 +2547,14 @@ pub(super) fn limit_leaves_weak_assertion_open(finding: &Finding) -> bool {
 /// `owner_named_test`, `import_path_affinity`, `fixture_owner_affinity`,
 /// `seam_callee_call` and `assertion_target_affinity` still count as bound to
 /// the owner here. This is a reasoned choice, not measured against a corpus.
+///
+/// Among the bound weak rows, the first of the best shared
+/// [`crate::domain::RelatedTest::observation_tier`] is named (#14483), so a
+/// listed-first row with no call path never names the test to open while a
+/// weak row that reaches the change is listed. Whether a row exists is
+/// unchanged.
 pub(super) fn weak_assertion_row(finding: &Finding) -> Option<&crate::domain::RelatedTest> {
-    finding.related_tests.iter().find(|test| {
+    let bound_weak = finding.related_tests.iter().filter(|test| {
         test.is_contributing()
             && !test
                 .relation_reason
@@ -2557,7 +2563,9 @@ pub(super) fn weak_assertion_row(finding: &Finding) -> Option<&crate::domain::Re
                 test.oracle_strength,
                 crate::domain::OracleStrength::Weak | crate::domain::OracleStrength::Smoke
             )
-    })
+    });
+    // `min_by_key` keeps the first of equal keys.
+    bound_weak.min_by_key(|test| std::cmp::Reverse(test.observation_tier()))
 }
 
 pub(super) fn is_preview_limited(finding: &Finding) -> bool {

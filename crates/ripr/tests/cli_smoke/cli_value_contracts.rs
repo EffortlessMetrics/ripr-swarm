@@ -31,16 +31,29 @@ fn diff_format_errors_preserve_exit_and_suggestions() {
 }
 
 #[test]
-fn diff_format_aliases_reach_revision_validation() {
+fn diff_format_aliases_reach_revision_validation() -> Result<(), String> {
     // A later, deterministic argv refusal proves each value reached the
     // parser without requiring a repository or doing analysis. `--help`
     // would bypass diff's parser and could falsely accept every spelling.
-    for value in ["human", "text", "md", "markdown", "json"] {
+    for value in ["human", "text", "md", "markdown"] {
         assert_usage_error(
             run_ripr(&["diff", "--format", value, "--head", ""]),
             "diff --head requires a non-empty revision",
         );
     }
+    // #14859: the JSON format reaches the same refusal, which then writes
+    // the typed `cli_refusal` document beside the unchanged stderr.
+    let json = run_ripr(&["diff", "--format", "json", "--head", ""]);
+    assert_eq!(json.status.code(), Some(2), "{json:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&json.stderr),
+        "ripr: diff --head requires a non-empty revision\n"
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&json.stdout).map_err(|err| format!("{err}: {json:?}"))?;
+    assert_eq!(document["error"]["code"], "missing_value", "{document}");
+    assert_eq!(document["error"]["token"], "--head", "{document}");
+    Ok(())
 }
 
 #[test]

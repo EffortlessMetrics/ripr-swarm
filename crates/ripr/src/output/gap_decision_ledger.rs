@@ -5781,7 +5781,10 @@ mod tests {
         // #12126: `python_coarse_{sign, residue, text_length}` keep a coarse
         // projection of the changed owner result weakly exposed; each weak
         // finding carries one orthogonal card, three more in total.
-        if (direct, no_strong, orthogonal, family_selection) != (23, 38, 34, 1) {
+        // #13869: `python_error_path_shape` pins a builtin `TypeError` ->
+        // `ValueError` swap with `pytest.raises(ValueError)`, which now reads as
+        // an exact error variant; its `no_strong_oracle` card is gone.
+        if (direct, no_strong, orthogonal, family_selection) != (23, 37, 34, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

@@ -79,7 +79,6 @@ pub(crate) mod pr_inline_comment_publish_plan;
 pub(crate) mod pr_review_front_panel;
 pub(crate) mod pr_summary_comment;
 pub(crate) mod preview_actionability;
-pub(crate) mod python_env;
 pub(crate) mod python_repair_card;
 pub mod receipt_lifecycle;
 pub(crate) mod receipt_write;
@@ -87,6 +86,8 @@ pub(crate) mod refusal;
 pub(crate) mod related_test_miss;
 pub(crate) mod render;
 pub(crate) mod repo_exposure;
+#[cfg(test)]
+mod repo_exposure_limitation_tests;
 pub(crate) mod repo_seams;
 pub(crate) mod report_packet_index;
 pub(crate) mod review_comments;
