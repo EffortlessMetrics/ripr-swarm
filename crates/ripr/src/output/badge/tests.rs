@@ -119,6 +119,8 @@ fn check_output(findings: Vec<Finding>) -> CheckOutput {
         suppression: None,
         analysis_outcome: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     }
 }
@@ -1229,6 +1231,7 @@ fn exposure_suppression(finding_id: &str, expires: Option<&str>) -> SuppressionE
         finding_id: Some(finding_id.to_string()),
         test: None,
         path: None,
+        function: None,
         reason: "x".to_string(),
         owner: "y".to_string(),
         expires: expires.map(str::to_string),
@@ -1254,6 +1257,7 @@ fn path_exposure_suppression(
         finding_id: None,
         test: None,
         path: Some(path.to_string()),
+        function: None,
         reason: "x".to_string(),
         owner: "y".to_string(),
         expires: expires.map(str::to_string),
@@ -1275,6 +1279,7 @@ fn te_suppression(test: &str, path: Option<&str>, expires: Option<&str>) -> Supp
         finding_id: None,
         test: Some(test.to_string()),
         path: path.map(str::to_string),
+        function: None,
         reason: "x".to_string(),
         owner: "y".to_string(),
         expires: expires.map(str::to_string),
@@ -2088,6 +2093,8 @@ fn check_output_with_preview_advisory(
         suppression: None,
         analysis_outcome: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     }
 }

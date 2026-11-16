@@ -4555,9 +4555,10 @@ fn approx_band_outside_the_bounded_shape_keeps_abstaining() -> Result<(), String
         ExposureClass::StaticUnknown,
         Some(StaticLimitKind::UnsupportedSyntax),
     );
-    // The old value was already outside the band, a non-literal argument, a
-    // positional band, an operator the evaluation does not model and a value on
-    // the band edge are not decided.
+    // The old value was already outside the band, a non-literal argument, an
+    // operator the evaluation does not model and a value on the band edge are
+    // not decided. (A positional band is read since #13723,
+    // `approx_band_tests.rs`.)
     for (old, new, assertion) in [
         (
             "3.0 * radius * radius",
@@ -4568,11 +4569,6 @@ fn approx_band_outside_the_bounded_shape_keeps_abstaining() -> Result<(), String
             "3.14159 * radius * radius",
             "3.2 * radius * radius",
             "assert circle_area(n) == pytest.approx(12.566, rel=1e-3)",
-        ),
-        (
-            "3.14159 * radius * radius",
-            "3.2 * radius * radius",
-            "assert circle_area(2) == pytest.approx(12.566, 1e-3)",
         ),
         (
             "3.14159 * radius ** 2",
@@ -11252,6 +11248,52 @@ fn protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited
 }
 
 #[test]
+fn protocol_entry_multiline_receiver_rebinding_withholds_credit() -> Result<(), String> {
+    for middle in [
+        "    (x,\n     (r)) = 1, [1]\n",
+        "    (x,\n     r) = 1, [1]\n",
+        "    if (True and\n        True): (x, (r)) = 1, [1]\n",
+        "    for (x,\n         (r)) in [(1, [1])]:\n        pass\n",
+        "    with (manager() as\n          (x, (r))):\n        pass\n",
+        "    del x, (r)\n",
+    ] {
+        let (finding, relations) = classify_reversed_guard(&reversed_receiver_src(middle))?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{middle:?}");
+        assert!(
+            relations
+                .iter()
+                .all(|(_, kind)| *kind != "protocol_entry_call"),
+            "{middle:?}: {relations:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_multiline_receiver_reads_keep_credit() -> Result<(), String> {
+    for middle in [
+        "    x = (1,\n         (r))\n",
+        "    x = f(1,\n          (r))\n",
+        "    if (True and\n        True): x = (1, (r))\n",
+        "    (x, values[(r)]) = 1, 2\n",
+        "    text = '''for (x,\n     (r)) in items: global x, r'''\n",
+        "    # (x,\n    # (r)) = 1, [1]\n",
+    ] {
+        let source = reversed_receiver_src(middle)
+            .replace("numeric_range(0)", "numeric_range(2)")
+            .replace("== [1]", "== [1, 0]");
+        let (finding, relations) = classify_reversed_guard(&source)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{middle:?}");
+        assert_eq!(
+            relations,
+            vec![("test_x".to_string(), "protocol_entry_call")],
+            "{middle:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited() -> Result<(), String> {
     for middle in [
         // Comparisons are not augmented assignments.
@@ -11356,6 +11398,7 @@ fn protocol_entry_receiver_reads_that_resemble_global_del_or_type_stay_credited(
 fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
     use super::related_tests::binds_in_target_list;
     for body in [
+        "r = make()\nmatch value:\n    case Foo(\n        key=(r)\n    ):\n        pass\n",
         "r = make()\ncase (r):\n    pass\n",
         "r = make()\ncase [r]:\n    pass\n",
         "r = make()\n    case (r):\n        pass\n",
@@ -11367,6 +11410,9 @@ fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
         assert!(binds_in_target_list(body, "r"), "{body:?}");
     }
     for body in [
+        "r = make()\nmatch value:\n    case r.VALUE:\n        pass\n",
+        "r = make()\nmatch value:\n    case Other(\n        key=r.VALUE\n    ):\n        pass\n",
+        "r = make()\ndef helper():\n    match value:\n        case Other(\n            key=(r)\n        ):\n            pass\n",
         "r = make()\nif (r):\n    pass\n",
         "r = make()\nif [r]:\n    pass\n",
         "r = make()\ncase_count = (r)\n",

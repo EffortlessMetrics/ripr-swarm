@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,6 +10,6 @@ pub fn gap(pair: &Pair) -> u8 {
+ impl<'a> arbitrary::Arbitrary<'a> for Pair {
+     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+         let a: u8 = u.arbitrary()?;
+-        Ok(Pair(a, a.wrapping_add(2)))
++        Ok(Pair(a, a.wrapping_add(9)))
+     }
+ }

@@ -447,6 +447,27 @@ fn load_review_comments_analysis_outcome(
     Ok(Some(outcome))
 }
 
+/// Findings a validated `ripr check --json` document marks suppressed (#13895).
+fn load_check_output_suppressed_findings(
+    path: &Path,
+) -> Result<Vec<output::review_comments::CheckOutputSuppressedFinding>, String> {
+    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
+        format!(
+            "review-comments --check-output {} is invalid: read failed: {error}",
+            path.display()
+        )
+    })?;
+    let document: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+        format!(
+            "review-comments --check-output {} is invalid: JSON parse failed: {error}",
+            path.display()
+        )
+    })?;
+    Ok(output::review_comments::check_output_suppressed_findings(
+        &document,
+    ))
+}
+
 pub(in crate::cli) fn review_comments(args: &[String]) -> Result<(), String> {
     review_comments_with_diff_loader(args, load_review_comments_diff)
 }
@@ -558,6 +579,12 @@ fn review_comments_with_admission(
     receipt.write_atomic(&receipt_path)?;
 
     if let Some(gap_ledger) = &options.gap_ledger {
+        if options.suppression_policy.is_some() {
+            // The gap-ledger route renders ledger records, whose policy state
+            // is already recorded in the ledger. Ignoring the flag would let
+            // a caller believe a policy was applied.
+            return Err("review-comments --suppression-policy applies to the base/head seam route, not --gap-ledger (ledger records carry their own policy_state); drop one of the two flags".to_string());
+        }
         if options.check_output.is_some() {
             return Err(
                 "review-comments accepts at most one of --gap-ledger or --check-output".to_string(),
@@ -658,6 +685,42 @@ fn review_comments_with_admission(
             error,
         ));
     }
+    // #13895: an explicit policy fails closed (missing or malformed is an
+    // error), exactly like `ripr check --suppression-policy`. The default
+    // `.ripr/suppressions.toml` stays opt-in (#7998); disclose it the way
+    // `ripr check` does instead of applying it silently.
+    let suppression_policy = match &options.suppression_policy {
+        Some(policy) => {
+            let resolved = if policy.is_absolute() {
+                policy.clone()
+            } else {
+                input.root.join(policy)
+            };
+            let entries = output::suppressions::load_check_suppression_policy(&resolved).map_err(
+                |error| {
+                    record_review_comments_error(
+                        &mut receipt,
+                        &receipt_path,
+                        "configuration",
+                        error,
+                    )
+                },
+            )?;
+            Some((policy.display().to_string(), entries))
+        }
+        None => {
+            if input
+                .root
+                .join(output::suppressions::SUPPRESSIONS_PATH)
+                .is_file()
+            {
+                eprintln!(
+                    "ripr: detected .ripr/suppressions.toml under the analyzed root; it was not applied to this review-comments run. Rerun with --suppression-policy .ripr/suppressions.toml to apply it."
+                );
+            }
+            None
+        }
+    };
     receipt.phase("configuration", "diff_discovery");
     receipt.write_atomic(&receipt_path)?;
     let diff_text = analysis::cancellation::with_token(&cancellation, || {
@@ -960,12 +1023,41 @@ fn review_comments_with_admission(
     .map_err(|error| {
         record_review_comments_error(&mut receipt, &receipt_path, "static_rendering", error)
     })?;
+    // The `--check-output` document was validated above as a consumable
+    // producer envelope; honor the suppressions its run recorded. With an
+    // explicit policy as well, the union applies.
+    let check_output_suppressed = match options.check_output.as_deref() {
+        Some(path) => load_check_output_suppressed_findings(path).map_err(|error| {
+            record_review_comments_error(&mut receipt, &receipt_path, "static_rendering", error)
+        })?,
+        None => Vec::new(),
+    };
+    // Uniqueness of a finding id is judged over every seam the streamed
+    // inventory observed, never over the capped selection (#13895).
+    let shared_ids = selection_builder.shared_named_ids();
+    let suppression = match suppression_policy {
+        Some((path, entries)) => Some(output::review_comments::ReviewCommentsSuppression::new(
+            Some(path),
+            entries,
+            check_output_suppressed,
+        )),
+        None if !check_output_suppressed.is_empty() => {
+            Some(output::review_comments::ReviewCommentsSuppression::new(
+                None,
+                Vec::new(),
+                check_output_suppressed,
+            ))
+        }
+        None => None,
+    }
+    .map(|suppression| suppression.with_inventory_shared_ids(shared_ids));
     let render_context = output::review_comments::ReviewCommentsRenderContext {
         root: &input.root,
         base: &options.base,
         head: &options.head,
         mode: &input.mode,
         config: &config,
+        suppression: suppression.as_ref(),
     };
     let rendered_json = output::review_comments::render_review_comments_json_with_scope(
         &render_context,
@@ -1061,6 +1153,7 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
     let mut head: Option<String> = None;
     let mut gap_ledger = None;
     let mut check_output = None;
+    let mut suppression_policy = None;
     let mut out = PathBuf::from("target/ripr/review/comments.json");
     let mut timeout_ms = DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS;
 
@@ -1082,7 +1175,10 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                 i += 1;
                 let value = expect_value(args, i, "--base")?;
                 if value.trim().is_empty() {
-                    return Err("review-comments --base requires a non-empty revision".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--base",
+                        "review-comments --base requires a non-empty revision",
+                    ));
                 }
                 base = Some(value.to_string());
             }
@@ -1090,7 +1186,10 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                 i += 1;
                 let value = expect_value(args, i, "--head")?;
                 if value.trim().is_empty() {
-                    return Err("review-comments --head requires a non-empty revision".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--head",
+                        "review-comments --head requires a non-empty revision",
+                    ));
                 }
                 head = Some(value.to_string());
             }
@@ -1098,9 +1197,10 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                 i += 1;
                 let value = expect_value(args, i, "--gap-ledger")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "review-comments --gap-ledger requires a non-empty path".to_string()
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--gap-ledger",
+                        "review-comments --gap-ledger requires a non-empty path",
+                    ));
                 }
                 gap_ledger = Some(PathBuf::from(value));
             }
@@ -1108,17 +1208,32 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                 i += 1;
                 let value = expect_value(args, i, "--check-output")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "review-comments --check-output requires a non-empty path".to_string()
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--check-output",
+                        "review-comments --check-output requires a non-empty path",
+                    ));
                 }
                 check_output = Some(PathBuf::from(value));
+            }
+            "--suppression-policy" => {
+                i += 1;
+                let value = expect_value(args, i, "--suppression-policy")?;
+                if value.trim().is_empty() {
+                    return Err(
+                        "review-comments --suppression-policy requires a non-empty path"
+                            .to_string(),
+                    );
+                }
+                suppression_policy = Some(PathBuf::from(value));
             }
             "--out" => {
                 i += 1;
                 let value = expect_value(args, i, "--out")?;
                 if value.trim().is_empty() {
-                    return Err("review-comments --out requires a non-empty path".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--out",
+                        "review-comments --out requires a non-empty path",
+                    ));
                 }
                 out = PathBuf::from(value);
             }
@@ -1138,6 +1253,7 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
         head: head.ok_or_else(|| "review-comments requires --head <sha>; pass the pull request's head commit, for example `--base origin/main --head HEAD`".to_string())?,
         gap_ledger,
         check_output,
+        suppression_policy,
         out,
         timeout_ms,
     })
@@ -1421,6 +1537,7 @@ mod tests {
                 head: "HEAD".to_string(),
                 gap_ledger: None,
                 check_output: None,
+                suppression_policy: None,
                 out: PathBuf::from("target/ripr/review/comments.json"),
                 timeout_ms: DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS,
             })
@@ -1442,9 +1559,38 @@ mod tests {
                     "target/ripr/reports/gap-decision-ledger.json"
                 )),
                 check_output: None,
+                suppression_policy: None,
                 out: PathBuf::from("target/ripr/review/comments.json"),
                 timeout_ms: DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS,
             })
+        );
+    }
+
+    #[test]
+    fn review_comments_parses_suppression_policy_and_rejects_an_empty_value() {
+        let parsed = parse_review_comments_options(&args(&[
+            "--base",
+            "main",
+            "--head",
+            "HEAD",
+            "--suppression-policy",
+            ".ripr/suppressions.toml",
+        ]));
+        assert_eq!(
+            parsed.map(|options| options.suppression_policy),
+            Ok(Some(PathBuf::from(".ripr/suppressions.toml")))
+        );
+        assert_eq!(
+            parse_review_comments_options(&args(&[
+                "--base",
+                "main",
+                "--head",
+                "HEAD",
+                "--suppression-policy",
+                " ",
+            ]))
+            .map(|_| ()),
+            Err("review-comments --suppression-policy requires a non-empty path".to_string())
         );
     }
 
@@ -4148,5 +4294,304 @@ mod tests {
         );
         assert_eq!(leaked, 0);
         Ok(())
+    }
+
+    #[test]
+    fn review_comments_cli_gap_parses_timeout_and_input_paths() -> Result<(), String> {
+        let base = ["--base", "main", "--head", "HEAD"];
+        let with = |extra: &[&str]| {
+            let mut all: Vec<&str> = base.to_vec();
+            all.extend_from_slice(extra);
+            parse_review_comments_options(&args(&all))
+        };
+        assert_eq!(with(&["--timeout-ms", "5000"])?.timeout_ms, 5000);
+        assert_eq!(
+            with(&["--timeout-ms", "0"]),
+            Err("--timeout-ms requires a positive integer; pass a whole number of 1 or more, got \"0\"".to_string())
+        );
+        assert_eq!(
+            with(&["--timeout-ms", "fast"]),
+            Err("--timeout-ms requires a positive integer; pass a whole number of 1 or more, got \"fast\"".to_string())
+        );
+        assert_eq!(
+            with(&["--check-output", "check.json"])?.check_output,
+            Some(PathBuf::from("check.json"))
+        );
+        assert_eq!(
+            with(&["--out", "elsewhere/c.json"])?.out,
+            PathBuf::from("elsewhere/c.json")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_cli_gap_every_value_flag_requires_a_value() {
+        for flag in [
+            "--root",
+            "--head",
+            "--gap-ledger",
+            "--check-output",
+            "--out",
+            "--timeout-ms",
+        ] {
+            assert_eq!(
+                parse_review_comments_options(&args(&["--base", "main", flag])),
+                Err(format!(
+                    "missing value for {flag}; pass a value right after it"
+                )),
+                "{flag}"
+            );
+        }
+    }
+
+    #[test]
+    fn review_comments_cli_gap_repeated_root_conflicts_unless_identical() -> Result<(), String> {
+        let tail = ["--base", "main", "--head", "HEAD"];
+        let run = |roots: &[&str]| {
+            let mut all: Vec<&str> = Vec::new();
+            for root in roots {
+                all.extend_from_slice(&["--root", root]);
+            }
+            all.extend_from_slice(&tail);
+            parse_review_comments_options(&args(&all))
+        };
+        assert_eq!(
+            run(&["a", "b"]),
+            Err("review-comments takes --root once (got 'a' and 'b')".to_string())
+        );
+        assert_eq!(run(&["a", "a"])?.root, PathBuf::from("a"));
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_cli_gap_gap_ledger_and_check_output_are_exclusive() -> Result<(), String> {
+        let root = unique_command_test_dir("review-comments-exclusive-inputs");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let _cleanup = OwnedDeadlineFixture(root.clone());
+        let out = root.join("target/ripr/review/comments.json");
+        let loader_calls = std::cell::Cell::new(0usize);
+        let result = review_comments_with_diff_loader(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "main",
+                "--head",
+                "HEAD",
+                "--gap-ledger",
+                "ledger.json",
+                "--check-output",
+                "check.json",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_root, _base, _head| {
+                loader_calls.set(loader_calls.get() + 1);
+                Ok(String::new())
+            },
+        );
+        assert_eq!(
+            result,
+            Err(
+                "review-comments accepts at most one of --gap-ledger or --check-output".to_string()
+            )
+        );
+        assert_eq!(loader_calls.get(), 0, "refusal must precede diff loading");
+        assert!(!out.exists(), "a refused run must not write comments");
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_cli_gap_limit_env_trims_and_refuses_non_utf8() -> Result<(), String> {
+        let ok = |raw: &str| positive_u64_limit_from_env("RIPR_X", 7, Ok(raw.to_string()));
+        assert_eq!(ok(" 42 \n")?, 42);
+        assert_eq!(
+            positive_u64_limit_from_env("RIPR_X", 7, Err(std::env::VarError::NotPresent))?,
+            7
+        );
+        let zero = ok("0").err().unwrap_or_default();
+        assert!(
+            zero.starts_with("RIPR_X must be a positive integer;") && zero.contains("unset it"),
+            "{zero}"
+        );
+        let words = ok("1e3").err().unwrap_or_default();
+        assert!(
+            words.starts_with("RIPR_X must be a positive integer:"),
+            "{words}"
+        );
+        let non_utf8 = positive_u64_limit_from_env(
+            "RIPR_X",
+            7,
+            Err(std::env::VarError::NotUnicode(std::ffi::OsString::from(
+                "x",
+            ))),
+        )
+        .err()
+        .unwrap_or_default();
+        assert_eq!(
+            non_utf8,
+            "RIPR_X must be valid UTF-8; set it to plain digits, or unset it"
+        );
+        assert_eq!(
+            positive_usize_limit_from_env("RIPR_X", 3, Ok("9".to_string()))?,
+            9
+        );
+        assert_eq!(
+            positive_usize_limit_from_env("RIPR_X", 3, Err(std::env::VarError::NotPresent))?,
+            3
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_cli_gap_deadline_fires_exactly_at_the_budget() -> Result<(), String> {
+        let root = unique_command_test_dir("review-comments-deadline-boundary");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let _cleanup = OwnedDeadlineFixture(root.clone());
+        let receipt_path = root.join("run-receipt.json");
+        let mut receipt = ReviewCommentsReceiptRun::new(
+            &root,
+            "main",
+            "HEAD",
+            1000,
+            &[],
+            Some(Duration::from_secs(1)),
+        );
+        let started = Instant::now();
+        // Strictly under the budget: no error.
+        assert_eq!(
+            enforce_review_comments_deadline(
+                &mut receipt,
+                &receipt_path,
+                started,
+                started + Duration::from_millis(999),
+                1000,
+                "static_rendering",
+            ),
+            Ok(())
+        );
+        assert!(!receipt_path.exists(), "no receipt write below the budget");
+        // Clock behind start saturates to zero elapsed: no error.
+        assert_eq!(
+            enforce_review_comments_deadline(
+                &mut receipt,
+                &receipt_path,
+                started + Duration::from_secs(5),
+                started,
+                1000,
+                "static_rendering",
+            ),
+            Ok(())
+        );
+        // Exactly at the budget: timed out, named phase, receipt persisted.
+        assert_eq!(
+            enforce_review_comments_deadline(
+                &mut receipt,
+                &receipt_path,
+                started,
+                started + Duration::from_secs(1),
+                1000,
+                "static_rendering",
+            ),
+            Err("review-comments timed out during static_rendering".to_string())
+        );
+        let written: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&receipt_path).map_err(|err| format!("read receipt: {err}"))?,
+        )
+        .map_err(|err| format!("parse receipt: {err}"))?;
+        assert_eq!(written["status"], "limited_timeout");
+        assert_eq!(written["active_phase"], "static_rendering");
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_cli_gap_early_refusal_probe_fires_only_for_a_refusal() -> Result<(), String>
+    {
+        let dir = unique_command_test_dir("review-comments-early-refusal");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let _cleanup = OwnedDeadlineFixture(dir.clone());
+        let write = |name: &str, text: String| -> Result<PathBuf, String> {
+            let path = dir.join(name);
+            std::fs::write(&path, text).map_err(|err| format!("write {name}: {err}"))?;
+            Ok(path)
+        };
+        let refusal_doc = |with_outcome: bool| {
+            let mut doc = serde_json::json!({
+                "schema_version": "0.2", "tool": "ripr", "mode": "draft",
+                "root": ".", "base": "main", "summary": {}, "findings": [],
+                "analysis_scope": {
+                    "run_status": "diff_scope_oversized",
+                    "downstream_consumable": false,
+                    "repair_route": "analysis/diff-scope-budget"
+                },
+                "run_limitations": [{
+                    "run_status": "diff_scope_oversized",
+                    "downstream_consumable": false,
+                    "message": "diff_scope_oversized: too many lines",
+                    "repair_route": "analysis/diff-scope-budget"
+                }]
+            });
+            if with_outcome {
+                doc["analysis_outcome"] = serde_json::json!({});
+            }
+            doc.to_string()
+        };
+        // No path, missing file, malformed JSON, non-refusal JSON, and a
+        // document that carries an analysis_outcome all keep the loader's
+        // own validation: the probe returns None.
+        assert_eq!(early_producer_refusal_error(None), None);
+        assert_eq!(
+            early_producer_refusal_error(Some(&dir.join("absent.json"))),
+            None
+        );
+        let malformed = write("malformed.json", "{not json".to_string())?;
+        assert_eq!(early_producer_refusal_error(Some(&malformed)), None);
+        let plain = write("plain.json", "{\"findings\": []}".to_string())?;
+        assert_eq!(early_producer_refusal_error(Some(&plain)), None);
+        let with_outcome = write("with-outcome.json", refusal_doc(true))?;
+        assert_eq!(early_producer_refusal_error(Some(&with_outcome)), None);
+        // A true refusal envelope is named.
+        let refusal = write("refusal.json", refusal_doc(false))?;
+        let error = early_producer_refusal_error(Some(&refusal))
+            .ok_or_else(|| "a refusal envelope must be named".to_string())?;
+        assert!(
+            error.contains("run_status: diff_scope_oversized")
+                && error.contains("nothing was analyzed")
+                && error.contains("analysis/diff-scope-budget"),
+            "{error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_cli_gap_refusal_error_names_unknown_status() {
+        let refusal = crate::output::gate::ProducerRefusal {
+            status: None,
+            message: "producer stopped".to_string(),
+            repair_route: "rerun the producer".to_string(),
+        };
+        let error = review_comments_refusal_error(Path::new("check.json"), &refusal);
+        assert_eq!(
+            error,
+            "review-comments --check-output check.json is invalid: producer refusal \
+             (run_status: unknown producer refusal); nothing was analyzed. Producer message: \
+             producer stopped. Next step: rerun the producer"
+        );
+    }
+
+    #[test]
+    fn review_comments_cli_gap_markdown_path_swaps_only_the_extension() {
+        assert_eq!(
+            review_comments_markdown_path(Path::new("out/comments")),
+            PathBuf::from("out/comments.md")
+        );
+        assert_eq!(
+            review_comments_markdown_path(Path::new("out/comments.v1.json")),
+            PathBuf::from("out/comments.v1.md")
+        );
+        assert_eq!(
+            review_comments_markdown_path(Path::new("out/comments.txt")),
+            PathBuf::from("out/comments.md")
+        );
     }
 }

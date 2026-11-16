@@ -199,3 +199,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_mask_unexercised (16)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_mask_unexercised --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_mask_unexercised (17)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_mask_unexercised --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

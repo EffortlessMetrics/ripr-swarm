@@ -22,9 +22,12 @@ cargo xtask fixtures member_reexport_foreign_trait_keeps_dispatch_allowance
 ## Then
 
 A genuine foreign trait keeps the dispatch allowance of #9342: `Display::fmt`
-runs without spelling `fmt`, so the same-leaf-name doctest stays a possible
-reach and the finding is not `no_static_path` (the sibling-crate trait rule of
-#10061 does not apply, because no member declares the trait).
+runs without spelling `fmt`, so reach stays `weak` and the finding is not
+`no_static_path` (the sibling-crate trait rule of #10061 does not apply,
+because no member declares the trait). The doctest in `io/take.rs` shares only
+the leaf file name with the changed `stream/take.rs`; it is not a related test
+and lends no boundary literal or oracle, so the class is `infection_unknown`
+(#7527, #12900).
 
 ## Must Not
 

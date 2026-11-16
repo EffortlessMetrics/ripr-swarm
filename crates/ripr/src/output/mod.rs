@@ -1,4 +1,5 @@
 pub(crate) mod agent_brief;
+pub(crate) mod agent_card;
 pub(crate) mod agent_receipt;
 #[path = "agent_seam_packets_live.rs"]
 pub(crate) mod agent_seam_packets;
@@ -11,6 +12,7 @@ pub(crate) mod badge;
 pub(crate) mod baseline;
 pub(crate) mod baseline_delta;
 pub(crate) mod baseline_update;
+pub(crate) mod check_file_fact_cache;
 pub(crate) mod ci_summary;
 pub(crate) mod compact_json;
 pub(crate) mod count_noun;
@@ -84,6 +86,8 @@ pub(crate) mod refusal;
 pub(crate) mod related_test_miss;
 pub(crate) mod render;
 pub(crate) mod repo_exposure;
+#[cfg(test)]
+mod repo_exposure_limitation_tests;
 pub(crate) mod repo_seams;
 pub(crate) mod report_packet_index;
 pub(crate) mod review_comments;
@@ -91,6 +95,7 @@ pub(crate) mod review_comments_receipt;
 pub(crate) mod ripr_zero_status;
 pub(crate) mod sarif;
 pub(crate) mod schemas;
+pub(crate) mod stage_rows;
 pub mod start_here_state;
 pub(crate) mod suppression_health;
 pub(crate) mod suppressions;

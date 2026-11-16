@@ -15,7 +15,7 @@ pub(in crate::analysis) use calls::path_value_map::{
 pub(crate) use calls::{
     MAX_CALL_FACTS_PER_LINE, attribute_ranges, call_name_bounds_before_paren, extract_call_facts,
     has_saturated_line, line_at_call_budget, local_fn_pointer_call,
-    offset_inside_macro_invocation_delimiters, runs_its_arguments,
+    offsets_inside_macro_invocation_delimiters, runs_its_arguments,
 };
 pub(crate) use groups::{delimiters_balance, group_end};
 pub(crate) use literals::{extract_literal_facts, extract_literals};
@@ -32,8 +32,8 @@ pub(crate) use oracles::{
     guarded_result_match_scan_with_shadow_authority, has_oracle_text_shape,
     is_exact_membership_any_assertion, is_inequality_assertion,
     is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
-    outer_assertion_condition, retain_reached_oracles, terminal_err_return_guard_oracle,
-    uncompared_unwrap_err, unwrap_err_bound_variables,
+    lines_touching_unreached, outer_assertion_condition, retain_reached_oracles,
+    terminal_err_return_guard_oracle, uncompared_unwrap_err, unwrap_err_bound_variables,
 };
 #[cfg(test)]
 pub(crate) use oracles::{contains_macro_invocation, table_builds};

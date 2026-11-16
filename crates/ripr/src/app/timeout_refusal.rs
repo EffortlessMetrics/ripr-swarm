@@ -398,6 +398,12 @@ impl TimeoutRefusalProjection {
         })
     }
 
+    /// The bounded retry when the input can be replayed; a stdin diff's
+    /// consumed bytes cannot, so it has none (#14452).
+    pub(crate) fn replayable_recovery_command(&self) -> Option<String> {
+        (!is_stdin_diff(self.diff_file.as_deref())).then(|| self.recovery_command())
+    }
+
     /// Human-format rendering of the same projection, appended to the stderr
     /// refusal for native CLI consumers.
     pub(crate) fn human_recovery_text(&self) -> String {

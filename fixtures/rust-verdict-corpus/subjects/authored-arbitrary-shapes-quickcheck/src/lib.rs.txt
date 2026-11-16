@@ -1,0 +1,47 @@
+use quickcheck::Arbitrary;
+
+mod generators;
+
+#[derive(Clone, Debug)]
+pub struct Pair(pub u8, pub u8);
+
+#[derive(Clone, Debug)]
+pub struct Span(pub u8, pub u8);
+
+pub fn gap(pair: &Pair) -> u8 {
+    pair.1.wrapping_sub(pair.0)
+}
+
+pub fn width(span: &Span) -> u8 {
+    span.1.wrapping_sub(span.0)
+}
+
+impl Arbitrary for Pair {
+    fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+        let a = u8::arbitrary(g);
+        Pair(a, a.wrapping_add(2))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone, Debug)]
+    struct Window(u8, u8);
+
+    impl quickcheck::Arbitrary for Window {
+        fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+            let a = <u8 as quickcheck::Arbitrary>::arbitrary(g);
+            Window(a, a.wrapping_add(4))
+        }
+    }
+
+    #[test]
+    fn window_width_is_end_minus_start() {
+        fn property(window: Window) -> bool {
+            width(&Span(window.0, window.1)) == 4
+        }
+        quickcheck::quickcheck(property as fn(Window) -> bool);
+    }
+}
