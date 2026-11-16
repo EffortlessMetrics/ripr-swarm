@@ -88,13 +88,13 @@ could not be verified without trusting hand-authored JSON.
    `Old` exactly (`pytest.raises(Old, ...)`), no related
    test names `New`, and `New` is statically known not to be `Old` or a
    subclass of it (resolved through single top-level module classes and the
-   builtin exception table). Such an assertion fails wherever the test reaches the new raise. The
+   builtin exception table). Such an assertion is expected to fail wherever the test reaches the new raise. The
    refusal is the same named gap-binding refusal (exit `3`; the attempt stays
    `awaiting_edit`), names the assertion, `Old` and `New`, and names the next
    step: assert `New`, then rerun. The exposure class is unchanged: a
    pre-existing old-type assertion does notice the edit (RIPR-SPEC-0238
-   example 14). Raise arguments that cannot themselves raise first (constants, plain
-   names, and f-strings over those) are read, so an f-string message still
+   example 14). Raise arguments treated as not raising first (constants, plain
+   names, and f-strings over those; a named value whose `__format__` raises is a documented limit, where the pin can be wrong) are read, so an f-string message still
    names its type. Any shape the analyzer cannot read exactly (a raise that is
    not one `raise Name(...)` line, a raise with a `from` cause or keyword
    arguments, a new class derived from `OSError` (whose constructor picks the errno's subclass; its aliases `IOError` and `EnvironmentError` are not resolved) or from a builtin whose constructor validates its arguments (the Unicode errors, `SyntaxError`, exception groups), a new class name that the production module mentions other than in `raise`, `except` or its one class header (a local `TypeError = ValueError`, a parameter, an import), an argument with a call, operator or subscript, a decorated class, a class with several bases, its own `__new__` or `__init__` (or one inherited from a module class), or any class-body statement other than `pass`, a docstring or an undecorated method, a test module
