@@ -1,0 +1,49 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/predicate_oracle_gated_mod_ungated_owner_refused/input
+
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 1 found, 0 suppressed by your settings
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+Start here:
+  State: ripr cannot tell from reading the code whether tests would notice this
+  Safe next action: look at the reason below before adding a test
+  File: ./src/lib.rs:5
+  Static exposure: unknown (severity: note, confidence 0.43)
+  Why unknown: ripr could not follow the changed value to something a test can check (a return value or side effect)
+  Not credited: `assert_eq!` in pins at src/python.rs:7: `mod python;` at src/lib.rs:2 is gated by a `cfg` ripr cannot evaluate, or nested
+  Gap ID (for scripts): gap:rust:src/lib.rs:gate:predicate_boundary:predicate:11==value
+  Changed behavior: 11 <= value
+  Missing check (1 of 4): value == 11
+  Related test: src/python.rs:6 pins (assertion inert: this test's assertion has a shape that can keep it from running as a standard check here)
+  Next step: Trace the changed value to its output or effect, and inspect what the related test
+    actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or
+    strengthen a test only if this inspection finds a gap. Compare the original and changed
+    implementations with a focused run using the project's configured test runner (`cargo test` for
+    ordinary Cargo tests). Static classification may remain unknown
+  Evidence: reach yes · infection weak · propagation unknown · observation no · assertion no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: Related tests appear to reach gate: pins
+    - infection weak: Related tests contain input values, but the equality-boundary check is missing
+    - 7 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/predicate_oracle_gated_mod_ungated_owner_refused/input --diff <cwd>/fixtures/predicate_oracle_gated_mod_ungated_owner_refused/diff.patch --mode fast probe:src_lib.rs:predicate:574ee60a
+  ripr context --root <cwd>/fixtures/predicate_oracle_gated_mod_ungated_owner_refused/input --diff <cwd>/fixtures/predicate_oracle_gated_mod_ungated_owner_refused/diff.patch --mode fast --at probe:src_lib.rs:predicate:574ee60a
+  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

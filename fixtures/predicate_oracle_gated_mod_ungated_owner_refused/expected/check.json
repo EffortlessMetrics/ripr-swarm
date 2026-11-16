@@ -1,0 +1,123 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/predicate_oracle_gated_mod_ungated_owner_refused/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":1,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:05b10376de186e74a41c39d0016a2f8f94c2b17717949a390ac595fd72fa5b54","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:574ee60a",
+      "canonical_gap_id": "gap:rust:src/lib.rs:gate:predicate_boundary:predicate:11==value",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:gate:predicate_boundary:predicate:11==value",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "gate",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "11==value"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.43,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:574ee60a",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "11 <= value"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach gate: pins"},
+        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary check is missing"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"weak","confidence":"medium"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach gate: pins", "infection weak: Related tests contain input values, but the equality-boundary check is missing", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "related test src/python.rs:6 pins uses no oracle", "source assertion argument value true at line 7", "source function argument value value = 10 at line 7", "missing discriminator value == 11: No related test call uses value equal to 11; observed value values: 10; target 11 value: 11"],
+      "flow_sinks": [
+      ],
+      "evidence": ["No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach gate: pins", "Related tests contain input values, but the equality-boundary check is missing", "assertion not credited: `assert_eq!` in pins at src/python.rs:7: `mod python;` at src/lib.rs:2 is gated by a `cfg` ripr cannot evaluate, or nested"],
+      "missing": ["Missing check value: value == 11", "No clear propagation path from changed behavior to an observable sink", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "7": "assert_eq!(crate::gate(10), true);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 7,
+            "value": "true",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 7,
+            "value": "value = 10",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "value == 11",
+            "reason": "No related test call uses value equal to 11; observed value values: 10; target 11 value: 11",
+            "flow_sink": null
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 7,
+          "value": "true",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 7,
+          "value": "value = 10",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "value == 11",
+          "reason": "No related test call uses value equal to 11; observed value values: 10; target 11 value: 11",
+          "flow_sink": null
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "pins",
+          "file": "src/python.rs",
+          "line": 6,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

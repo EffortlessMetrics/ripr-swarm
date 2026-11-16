@@ -504,7 +504,13 @@ fn shared_drop_in_imports_require_all_manifests_and_match_retained_sites() -> Re
             .find(|function| function.file == shared && function.name == "weight")
             .ok_or("missing shared owner")?;
         let probe = return_probe(function, "3 * x");
-        let refusal = syntax.equality_assertion_refusal(&probe, test, &test.assertions[0], index);
+        let refusal = syntax.equality_assertion_refusal(
+            &probe,
+            Some(function),
+            test,
+            &test.assertions[0],
+            index,
+        );
         if admitted {
             assert_eq!(refusal, None);
         } else {
