@@ -3692,6 +3692,28 @@ mod spec_0106_scan_tests {
     }
 
     #[test]
+    fn extract_assertions_keeps_the_discriminator_after_a_bracket_in_a_string() {
+        // End-to-end shape of the same defect: the unit test above pins the
+        // collected name, this pins what the consumer does with it. Without the
+        // binding the assertion is still reported, but as a plain value instead
+        // of an error-variant oracle, so the seam claims a missing
+        // discriminator it has.
+        let body = r#"
+            let err = parse("(").unwrap_err();
+            assert_eq!(err, E::Unclosed);
+        "#;
+        let facts = extract_assertions(body, 1);
+        let got = facts.iter().find(|f| f.text.contains("assert_eq!"));
+        assert!(got.is_some(), "must find the assert_eq! fact");
+        assert_eq!(
+            got.map(|f| f.kind.clone()),
+            Some(OracleKind::ExactErrorVariant),
+            "assert_eq!(err, E::Unclosed) on an unwrap_err binding must be \
+             ExactErrorVariant even when an argument holds an unmatched bracket"
+        );
+    }
+
+    #[test]
     fn unwrap_err_binding_survives_an_unbalanced_angle_in_a_comment() {
         // #14810 round 3: the comment's `<` must not leave the angle depth
         // open and hide the binding `=`.
