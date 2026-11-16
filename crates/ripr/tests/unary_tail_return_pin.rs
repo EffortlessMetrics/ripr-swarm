@@ -9,6 +9,7 @@
 //! constant), is never `exposed`. Neither is a diff whose old owner held more
 //! than the replaced line.
 
+use ripr::domain::StageState;
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, ProbeFamily, check_workspace};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -60,6 +61,11 @@ struct TempRepo {
 
 impl TempRepo {
     fn create(lib: &str, patch: &str) -> Result<Self, String> {
+        Self::create_files(&[("src/lib.rs", lib)], patch)
+    }
+
+    /// A crate holding each `(path, text)` file, changed by `patch`.
+    fn create_files(files: &[(&str, &str)], patch: &str) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-unary-tail-return-pin-{}-{}",
@@ -73,8 +79,10 @@ impl TempRepo {
             "[package]\nname = \"unary-tail\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
         )
         .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
-        std::fs::write(root.join("src/lib.rs"), lib)
-            .map_err(|error| format!("write source failed: {error}"))?;
+        for (path, text) in files {
+            std::fs::write(root.join(path), text)
+                .map_err(|error| format!("write {path} failed: {error}"))?;
+        }
         std::fs::write(root.join("diff.patch"), patch)
             .map_err(|error| format!("write diff failed: {error}"))?;
         Ok(Self { root })
@@ -544,4 +552,138 @@ index 1111111..2222222 100644
  }
 ";
     assert_tail_not_exposed(lib, patch, 3)
+}
+
+/// The `return_value` findings for each changed tail `(file, tail)` on line 2
+/// of a multi-file crate, none of which may read `exposed` or credit
+/// infection.
+fn assert_file_tails_not_exposed(
+    files: &[(&str, &str)],
+    patch: &str,
+    tails: &[(&str, &str)],
+) -> Result<(), String> {
+    let findings = TempRepo::create_files(files, patch)?.findings()?;
+    for (file, tail) in tails {
+        let in_file: Vec<Finding> = findings
+            .iter()
+            .filter(|finding| finding.probe.location.file.ends_with(file))
+            .cloned()
+            .collect();
+        let finding = tail_finding(&in_file, 2, tail)?;
+        // The test runs a different function than the changed one, so no
+        // input reaches this change: neither the class nor the infection
+        // stage may credit it.
+        assert!(
+            !matches!(finding.class, ExposureClass::Exposed)
+                && finding.ripr.infect.state != StageState::Yes,
+            "{file}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+/// #14852 review: the changed `f` lives in a module the parent declares only
+/// outside tests; the tests call a `#[cfg(test)]` module's twin returning `x`
+/// on both sides. The gate sits on the `mod` declaration in another file.
+#[test]
+fn a_cfg_gated_module_declaration_twin_is_not_exposed() -> Result<(), String> {
+    let lib = "#[cfg(not(test))]
+mod real;
+#[cfg(not(test))]
+pub use real::f;
+
+#[cfg(test)]
+mod fake;
+#[cfg(test)]
+pub use fake::f;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn pins() {
+        assert_eq!(f(5), 5);
+    }
+}
+";
+    let real = "pub fn f(x: i32) -> i32 {\n    x\n}\n";
+    let fake = "pub fn f(x: i32) -> i32 {\n    x\n}\n";
+    let patch = "diff --git a/src/real.rs b/src/real.rs
+index 1111111..2222222 100644
+--- a/src/real.rs
++++ b/src/real.rs
+@@ -1,3 +1,3 @@
+ pub fn f(x: i32) -> i32 {
+-    -x
++    x
+ }
+";
+    assert_file_tails_not_exposed(
+        &[
+            ("src/lib.rs", lib),
+            ("src/real.rs", real),
+            ("src/fake.rs", fake),
+        ],
+        patch,
+        &[("src/real.rs", "x")],
+    )
+}
+
+/// #14852 review: swapping two `#[path]` module files moves each `f` under
+/// the other module name, so `a::f` returns `-x` and `b::f` returns `x` on
+/// both sides while each file's tail flips. The test pins `b::f`, which did
+/// not change.
+#[test]
+fn a_swapped_module_path_attribute_is_not_exposed() -> Result<(), String> {
+    let lib = "#[path = \"y.rs\"]
+pub mod a;
+#[path = \"x.rs\"]
+pub mod b;
+
+#[cfg(test)]
+mod tests {
+    use crate::b::f;
+    #[test]
+    fn pins() {
+        assert_eq!(f(5), 5);
+    }
+}
+";
+    let x = "pub fn f(x: i32) -> i32 {\n    x\n}\n";
+    let y = "pub fn f(x: i32) -> i32 {\n    -x\n}\n";
+    let patch = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,4 +1,4 @@
+-#[path = \"x.rs\"]
++#[path = \"y.rs\"]
+ pub mod a;
+-#[path = \"y.rs\"]
++#[path = \"x.rs\"]
+ pub mod b;
+diff --git a/src/x.rs b/src/x.rs
+index 3333333..4444444 100644
+--- a/src/x.rs
++++ b/src/x.rs
+@@ -1,3 +1,3 @@
+ pub fn f(x: i32) -> i32 {
+-    -x
++    x
+ }
+diff --git a/src/y.rs b/src/y.rs
+index 5555555..6666666 100644
+--- a/src/y.rs
++++ b/src/y.rs
+@@ -1,3 +1,3 @@
+ pub fn f(x: i32) -> i32 {
+-    x
++    -x
+ }
+";
+    assert_file_tails_not_exposed(
+        &[("src/lib.rs", lib), ("src/x.rs", x), ("src/y.rs", y)],
+        patch,
+        &[("src/x.rs", "x"), ("src/y.rs", "-x")],
+    )
 }
