@@ -35,4 +35,3 @@ This two-repository incremental receipt does not publish a single precision rate
 - claims_discriminator: **2/2 scored** (one owner). claims_no_discriminator: **19/90**, with 71 false gaps reported (33 owners).
 - Strict recall: **19/123** runtime-missed, a lower bound because exclusions remain unflagged. These are product-path classifications, never mixed with the span-join receipt above.
 - This independent repeat does not overwrite the previous span-join report or its named 10/14 = 0.714 historical reference.
-
