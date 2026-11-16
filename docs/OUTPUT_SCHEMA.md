@@ -1944,6 +1944,11 @@ classes are:
   `missing_required` with the flag to add as `token`; where the refusal
   offers alternatives (`--diff`, `--base`, `--files` or `--seam-id`), the
   token is the first one it names (#14877);
+- two given flags that cannot be used together (for example `ripr context
+  --json --base main --diff a.diff`, or `ripr rerun --json --changed-test
+  tests/a.rs --gap-ledger ledger.json`), as `conflicting_flags` with one of
+  the conflicting flags as `token`; outside `check`, whose conflicts keep
+  their own check refusal (#14925);
 - a malformed number caught by the CLI's shared numeric parsers (for example
   `context --max-related-tests zz` or `check --timeout zz`), as
   `invalid_value` with the typed value as `token` (#11979); an empty entry in
@@ -1956,16 +1961,16 @@ Every other argv usage error keeps empty stdout even under a JSON request,
 with the cause on stderr only: required-flag refusals not yet typed,
 including those whose wording #14076 is revising (`calibrate cargo-mutants`,
 `zero status`, `pr-ledger record`, `cache export`, `reports gap-ledger`,
-`pr-review front-panel`) and those whose named flag would conflict with one
-already given (`rerun --changed-test` with `--gap-ledger`), a missing or malformed value rejected by a command's own parser rather than
-the shared readers (for example `impacted-evidence`), conflicting or disagreeing flags, an unrecognized value
+`pr-review front-panel`), a missing or malformed value rejected by a
+command's own parser rather than the shared readers (for example
+`impacted-evidence`), conflicting flags not yet typed, an unrecognized value
 rejected outside the CLI's shared builder (for example a gate mode), and any
 other argv error. These are a named gap, not a clean result.
 
 The document carries `schema_version`, `tool`, `status: "refused"` and
 `error {code, message, token?, next}` with `code` one of `unknown_argument`,
 `unknown_command`, `unknown_value`, `missing_value`, `missing_required`,
-`invalid_value`,
+`conflicting_flags`, `invalid_value`,
 `selector_miss`. `token` is the offending argument, command, flag, value or
 selector (an empty malformed value has none); `next` is a fixed help pointer
 (`list_valid_arguments`, `list_valid_commands`) or `null`; `selector_miss`

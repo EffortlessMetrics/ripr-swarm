@@ -2806,28 +2806,39 @@ pub(super) fn drill_in_scope_conflict(
     from_artifact: bool,
 ) -> Result<(), String> {
     if committed && worktree {
-        return Err(format!(
-            "{command} --committed and --worktree select different diff sources; pass one"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--worktree",
+            &format!(
+                "{command} --committed and --worktree select different diff sources; pass one"
+            ),
         ));
     }
     if committed && diff_file {
-        return Err(format!(
-            "{command} --committed cannot be combined with --diff"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--committed",
+            &format!("{command} --committed cannot be combined with --diff"),
         ));
     }
     if committed && from_artifact {
-        return Err(format!(
-            "{command} --committed cannot be combined with --from: the artifact already records the diff it was written from"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--committed",
+            &format!(
+                "{command} --committed cannot be combined with --from: the artifact already records the diff it was written from"
+            ),
         ));
     }
     if worktree && diff_file {
-        return Err(format!(
-            "{command} --worktree cannot be combined with --diff"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--worktree",
+            &format!("{command} --worktree cannot be combined with --diff"),
         ));
     }
     if worktree && from_artifact {
-        return Err(format!(
-            "{command} --worktree cannot be combined with --from: the artifact already records the diff it was written from"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--worktree",
+            &format!(
+                "{command} --worktree cannot be combined with --from: the artifact already records the diff it was written from"
+            ),
         ));
     }
     Ok(())
