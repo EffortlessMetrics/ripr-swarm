@@ -21574,7 +21574,8 @@ fn execute_command_collect_repair_packet_without_a_packet_source_names_the_route
                 reason.starts_with(subject)
                     && reason.contains("target/ripr/reports/actionable-gaps.json")
                     && reason.contains("`ripr check --root .`")
-                    && reason.contains("`ripr repair <id> --root .`")
+                    && reason.contains("the repair start it prints")
+                    && reason.contains("`ripr repair <id> --root .` for Rust")
                     && !reason.contains("ripr pilot")
                     && !reason.contains("gap-ledger"),
                 "reason must name the sources and the check-then-repair route: {reason}"

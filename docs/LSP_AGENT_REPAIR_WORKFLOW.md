@@ -123,8 +123,9 @@ example `42`, `true` or an array) is also an InvalidParams error naming
 blank `gap_id` asks for the top packet. When neither `target/ripr/reports/actionable-gaps.json` nor
 `target/ripr/reports/gap-decision-ledger.json` holds a packet, the result is a
 `not_actionable_or_incomplete` packet whose `reason` names both files and the
-CLI route for the current change (`ripr check --root .` to list its gaps, then
-`ripr repair <id> --root .` to start one). The result is `null` only when the server
+CLI route for the current change: `ripr check --root .` to list its gaps, then
+the repair start `check` prints for one (`ripr repair <id> --root .` for Rust;
+Python and TypeScript gaps use the gap-bound start `check` prints). The result is `null` only when the server
 cannot read its own workspace-root state after an internal failure; restart
 the language server if that happens.
 

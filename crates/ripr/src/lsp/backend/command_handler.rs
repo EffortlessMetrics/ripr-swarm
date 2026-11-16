@@ -768,12 +768,14 @@ pub(super) fn no_repair_packet_reason(gap_id: Option<&str>) -> String {
         }
         None => "no repair packet".to_string(),
     };
-    // #13636 item 3: point at the per-change loop (`ripr check`, then
-    // `ripr repair <id>`), not the whole-repo pilot or gap-ledger recipes.
+    // #13636 item 3: point at the per-change loop (`ripr check`, then the
+    // repair start it prints), not the whole-repo pilot or gap-ledger
+    // recipes. `ripr repair <id>` resolves Rust seams only; Python and
+    // TypeScript gaps start through the gap-bound command `check` prints.
     format!(
         "{subject}: neither {DEFAULT_ACTIONABLE_GAPS_OUT} nor {DEFAULT_GAP_DECISION_LEDGER_OUT} \
-holds one; run `ripr check --root .` to list the gaps on your change, then \
-`ripr repair <id> --root .` to start one"
+holds one; run `ripr check --root .` to list the gaps on your change, then run the repair \
+start it prints for one (`ripr repair <id> --root .` for Rust)"
     )
 }
 
