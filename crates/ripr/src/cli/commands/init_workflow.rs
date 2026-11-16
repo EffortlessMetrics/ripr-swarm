@@ -530,7 +530,8 @@ mod install_version_tests {
     }
 
     /// The action the template names must accept the inputs it passes: an
-    /// `install-only` input that skips `ripr check`, and `version` (#5409).
+    /// `install-only` input that skips `ripr check` and the action's own cache
+    /// step (the generated workflow caches separately), and `version` (#5409).
     #[test]
     fn composite_action_accepts_the_template_inputs() {
         let action = include_str!("../../../../../.github/actions/ripr-check/action.yml");
@@ -540,9 +541,14 @@ mod install_version_tests {
         );
         assert!(action.contains("\n  version:\n"), "no version input");
         assert!(
-            action
-                .contains("    - name: Run ripr check\n      if: inputs.install-only != 'true'\n"),
+            action.contains(
+                "    - name: Run ripr check\n      id: check\n      if: inputs.install-only != 'true'\n"
+            ),
             "install-only must skip the check step"
+        );
+        assert!(
+            action.contains("      if: inputs.cache == 'true' && inputs.install-only != 'true'\n"),
+            "install-only must skip the action's cache step"
         );
     }
 }

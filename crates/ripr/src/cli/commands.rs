@@ -170,7 +170,9 @@ pub(crate) mod ripr_plus_command;
 pub(super) use assistant_loop::assistant_loop;
 pub(super) use first_action::first_action;
 pub(super) use first_pr::first_pr;
+#[cfg(test)]
 pub(super) use reports::reports;
+pub(super) use reports::reports_command;
 
 #[path = "commands/capabilities.rs"]
 mod capabilities;
@@ -2111,7 +2113,9 @@ fn non_empty_string_arg(
 ) -> Result<String, String> {
     let value = expect_value(args, index, flag)?;
     if value.trim().is_empty() {
-        Err(format!("{command} {flag} requires a non-empty value"))
+        let message = format!("{command} {flag} requires a non-empty value");
+        crate::cli::usage_refusal::note_missing_value(flag, &message);
+        Err(message)
     } else {
         Ok(value.to_string())
     }
@@ -2328,10 +2332,16 @@ fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
         .as_deref()
         .is_some_and(|base| base.trim().is_empty())
     {
-        return Err("diff --base requires a non-empty revision".to_string());
+        return Err(crate::cli::usage_refusal::empty_value(
+            "--base",
+            "diff --base requires a non-empty revision",
+        ));
     }
     if options.head.trim().is_empty() {
-        return Err("diff --head requires a non-empty revision".to_string());
+        return Err(crate::cli::usage_refusal::empty_value(
+            "--head",
+            "diff --head requires a non-empty revision",
+        ));
     }
 
     Ok(options)
@@ -6447,10 +6457,16 @@ language = "rust"
             section.contains("always()"),
             "the section no longer names the always() steps the binding above checks"
         );
+        // #14841: the packet exits 3 when only the gate blocked and 2 on any
+        // other required failure; the section and the catalog stop states
+        // must both say so.
         assert!(
-            section.contains("nonzero")
+            section.contains("makes the packet exit `3`")
+                && section.contains("exit `2` after")
                 && include_str!("command_metadata.rs")
-                    .contains("exits nonzero after the packet is written")
+                    .contains("a blocked gate exits 3 after the packet is written")
+                && include_str!("command_metadata.rs")
+                    .contains("exits 2 after the packet is written")
                 && include_str!("commands/ci_packet.rs")
                     .contains("failed and is advisory; continuing"),
             "the section's failure-role prose no longer matches the ci-packet \

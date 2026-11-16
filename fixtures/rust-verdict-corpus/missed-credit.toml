@@ -5,6 +5,10 @@
 # with a reason; an entry whose row credits again fails `verdict-corpus check` until the entry is deleted (#10341).
 
 [[entry]]
+case = "arbitrary_cfg_test_generator_stays_test_code"
+reason = "Discriminated at runtime, abstained on purpose: the changed QuickCheck generator lives in `#[cfg(test)] mod tests`, whose CfgTestModule role outranks the test-input generator role (RIPR-SPEC-0153, #11545), so no production probe is produced and ripr stays silent like any cfg(test) helper (#12774). Delete this entry when the row credits."
+
+[[entry]]
 case = "assoc-generic-caller"
 reason = "Discriminated at runtime, abstained on purpose: the test reaches Tall::MAX only through `limited::<Tall>`, so `Self` is not statically named at the call (RIPR-SPEC-0048 associated-constant must-not-claim). Delete this entry when generic-caller binding credits it."
 

@@ -71,10 +71,11 @@ pub(in crate::analysis) use absorbing_tail::absorbing_tail_sink;
 pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_of,
     assigned_field_read_confirms, assigned_field_seed_is_visible, assigned_field_weak_read_start,
-    call_parameter_names, chain_row_transfer_stop, comparison_operands, computed_input_parameters,
-    literal_operand_value, local_boundary, macro_names_rebound, owner_plain_written_value,
-    owner_receiver_borrow, owner_writes_field_only_at_probe, pushed_collection_compared_whole,
-    pushed_literal_path, signature_parameters, sort_value_facts, test_binds_owner_type,
+    call_parameter_names, chain_row_transfer_stop, changed_comparison_conjunct,
+    comparison_operands, computed_input_parameters, literal_operand_value, local_boundary,
+    macro_names_rebound, owner_plain_written_value, owner_receiver_borrow,
+    owner_writes_field_only_at_probe, pushed_collection_compared_whole, pushed_literal_path,
+    signature_parameters, sort_value_facts, test_binds_owner_type,
 };
 pub(in crate::analysis) use arm_selection::{
     ArmSelector, error_path_arm_probe, match_arm_selection_witness_linkage,
@@ -205,7 +206,8 @@ pub(in crate::analysis) use receiver_unestablished::{
     mark_receiver_unestablished, withhold_receiver_unestablished_gap,
 };
 pub(in crate::analysis) use refusal_miss::{
-    assertion_refusal_counts_as_analyzer_limit, split_assertion_not_credited_misses,
+    assertion_refusal_counts_as_analyzer_limit, name_forwarded_callback_limits,
+    split_assertion_not_credited_misses,
 };
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, assertion_pins_display_string,
@@ -225,7 +227,9 @@ pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 pub(in crate::analysis) use reveal::{
-    ASSERTION_CONTEXT_UNESTABLISHED, FileUseStatements, oracle_crediting_relations,
+    ASSERTION_CONTEXT_UNESTABLISHED, ASSERTION_CONTEXT_UNESTABLISHED_DISCRIMINATE_SUMMARY,
+    FileUseStatements, NO_ASSERTION_DISCRIMINATE_SUMMARY, NO_OBSERVING_ASSERTION_SUMMARY,
+    oracle_crediting_relations,
 };
 pub(in crate::analysis) use reveal::{
     NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY, NO_REACHABLE_TEST_OBSERVE_SUMMARY,

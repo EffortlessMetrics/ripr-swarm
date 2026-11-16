@@ -311,3 +311,28 @@ fn ids_malformed_locations_and_paths_leaving_the_root_get_no_cause_clause() -> R
     }
     Ok(())
 }
+
+/// #14511: an extensionless file whose name is all digits is `file:line`,
+/// not a column form, so it keeps its cause; a column form on an
+/// extensionless file is left to the hint, which must then speak.
+#[test]
+fn digit_named_and_extensionless_files_still_get_a_cause_or_hint() -> Result<(), String> {
+    let repo = Repo::create()?;
+    repo.write("src/2024", "notes\n")?;
+    repo.write("Makefile", "all:\n\ttrue\n")?;
+    for (label, run) in [
+        ("explain", repo.explain("src/2024:10")?),
+        ("context", repo.context("src/2024:10")?),
+    ] {
+        require_miss(label, "src/2024:10", &run, Some(NO_FINDING_IN_FILE))?;
+        require_contains(label, &run.1, "\"src/2024\" exists")?;
+    }
+    for (label, run) in [
+        ("explain", repo.explain("Makefile:2:3")?),
+        ("context", repo.context("Makefile:2:3")?),
+    ] {
+        require_miss(label, "Makefile:2:3", &run, None)?;
+        require_contains(label, &run.1, "Selectors are file:line; drop the column.")?;
+    }
+    Ok(())
+}

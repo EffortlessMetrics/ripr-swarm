@@ -685,8 +685,8 @@ fn probe_walk_full_facts_equal_sort_keys_keep_first_span() -> Result<(), String>
         .collect();
     assert_eq!(calls.len(), 1);
     let start = text.find("notify()").ok_or("missing literal call")?;
-    assert_eq!(calls[0].start_byte, start);
-    assert_eq!(calls[0].end_byte, start + "notify()".len());
+    assert_eq!(calls[0].start_byte(), start);
+    assert_eq!(calls[0].end_byte(), start + "notify()".len());
     assert!(!calls[0].value_consumed);
     Ok(())
 }

@@ -332,13 +332,21 @@ fn module_may_be_declared_invisibly(
 /// Grants the evidence-only `CfgTestModule` role to `Production` functions of
 /// the given files, in both the per-file facts and the flat function list.
 /// Existing evidence roles (executable tests, promoted expansions, same-file
-/// cfg-test helpers) are never demoted: evidence roles union.
+/// cfg-test helpers) are never demoted: evidence roles union. A test-input
+/// generator in a test-only module is test code like its inline twin, not a
+/// visible stimulus change of compiled product source (#11545).
 fn apply_cfg_test_module_grants(index: &mut RustIndex, granted: &BTreeSet<PathBuf>) {
+    let grantable = |role: FunctionSourceRole| {
+        matches!(
+            role,
+            FunctionSourceRole::Production | FunctionSourceRole::TestInputGenerator
+        )
+    };
     let local = granted
         .iter()
         .filter_map(|file| index.files.get(file))
         .flat_map(|file| file.functions.iter().copied())
-        .filter(|&id| index.function_facts[id].source_role == FunctionSourceRole::Production)
+        .filter(|&id| grantable(index.function_facts[id].source_role))
         .map(|id| (id, FunctionSourceRole::CfgTestModule))
         .collect::<Vec<_>>();
     let flat = index
@@ -347,8 +355,7 @@ fn apply_cfg_test_module_grants(index: &mut RustIndex, granted: &BTreeSet<PathBu
         .copied()
         .filter(|&id| {
             let function = &index.function_facts[id];
-            granted.contains(&function.file)
-                && function.source_role == FunctionSourceRole::Production
+            granted.contains(&function.file) && grantable(function.source_role)
         })
         .map(|id| (id, FunctionSourceRole::CfgTestModule))
         .collect::<Vec<_>>();

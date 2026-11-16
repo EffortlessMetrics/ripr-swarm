@@ -513,8 +513,7 @@ fn detect_ts_full_repo_guidance(
     // Guard: if there are Rust files, the empty-seam result is a legitimate
     // Rust analysis outcome (e.g. a workspace with no production shapes), not
     // a TS-first scan gap. Only fire when Rust is absent.
-    let rust_files = analysis::workspace_rust_files(root);
-    if !rust_files.is_empty() {
+    if analysis::workspace_has_rust_source(root) {
         return None;
     }
 
@@ -549,7 +548,7 @@ fn detect_python_repo_exposure_guidance(
     if python_file_count == 0 {
         return None;
     }
-    if !analysis::workspace_rust_files(root).is_empty() {
+    if analysis::workspace_has_rust_source(root) {
         return None;
     }
 
