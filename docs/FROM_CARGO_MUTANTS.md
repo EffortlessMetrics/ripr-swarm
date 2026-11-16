@@ -48,7 +48,7 @@ ripr does not read `.cargo/mutants.toml`. Carry its settings over by hand:
 | `exclude_globs` / `examine_globs` | `--exclude` / `--path` flags ([Configuration](CONFIGURATION.md)); the files they leave out count as requested scope, not as an incomplete run |
 | `exclude_re` / `examine_re` | none |
 | `additional_cargo_test_args`, `test_tool` | not applicable |
-| `#[mutants::skip]` | honored as-is on a changed function or method, including `#[cfg_attr(<predicate>, mutants::skip)]`: `ripr check` withholds that owner's findings and discloses them (count and `owner_mutants_skip`; see [Output schema](OUTPUT_SCHEMA.md#owner_opt_outs-and-withheld-findings-top-level-additive-13819)). A skip on an `impl` block or module is not read; use `.ripr/suppressions.toml` ([example](suppressions.example.toml)) with `--suppression-policy` for those |
+| `#[mutants::skip]` | honored as-is on a changed function or method, including `#[cfg_attr(<predicate>, mutants::skip)]`: `ripr check` withholds that owner's findings and discloses them (count and `owner_mutants_skip`; see [Output schema](OUTPUT_SCHEMA.md#owner_opt_outs-and-withheld-findings-top-level-additive-13819)). A skip on an `impl` block or module is not read; use `.ripr/suppressions.toml` ([example](suppressions.example.toml)) for those: select the function with `path` + `function` so the entry survives edits, and pass it with `--suppression-policy` to `ripr check` and `ripr review-comments` (see [Suppressing in CI](#suppressing-in-ci)) |
 
 `ripr init` writes a `ripr.toml` with the built-in defaults. It is optional.
 
@@ -62,6 +62,46 @@ ripr does not read `.cargo/mutants.toml`. Carry its settings over by hand:
 | Exit code | `ripr check` always exits `0` when it completes; the pass/fail decision is `ripr gate check` or `ripr gate evaluate` (exit `3` when blocked). See [Exit codes](EXIT_CODES.md). |
 
 Do not build a gate on `ripr check`'s exit code.
+
+### Suppressing in CI
+
+A `#[mutants::skip]` on a changed function already withholds its findings.
+For anything else (a skip on an `impl` block or module, or debt you accept
+without the attribute), use `.ripr/suppressions.toml`. A finding id changes on
+every edit (it hashes the expression), so key the entry on the owning function:
+
+```toml
+# .ripr/suppressions.toml
+schema_version = 1
+
+[[suppressions]]
+kind = "exposure_gap"
+path = "src/retry.rs"
+function = "retry_allowed"
+reason = "Retry policy is covered by the integration suite."
+owner = "team-retry"
+expires = "2026-12-31"
+```
+
+The default file is never applied implicitly. Pass it to every step that
+decides, so one suppression reaches the gate:
+
+```bash
+ripr check --root . --base origin/main --json --suppression-policy .ripr/suppressions.toml > target/ripr/pr/check.json
+ripr review-comments --root . --base origin/main --head HEAD \
+  --check-output target/ripr/pr/check.json \
+  --suppression-policy .ripr/suppressions.toml
+ripr gate evaluate --root . --pr-guidance target/ripr/review/comments.json --mode acknowledgeable
+```
+
+`ripr gate check --base origin/main --suppression-policy .ripr/suppressions.toml`
+does the last two steps in one command.
+
+Suppressed seams stay visible in the `suppressed` array of the review-comments
+JSON (reason `suppressed_by_policy`) and do not block the gate. Expired entries
+do not apply. A `function` entry covers every seam in that function, including
+ones added later, so keep `expires` set. `--check-output` alone also honors findings its check run marked
+suppressed.
 
 ## Output map
 

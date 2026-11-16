@@ -150,9 +150,10 @@ pub(in crate::cli) fn parse_receipt_write_options(
                 i += 1;
                 let value = expect_value(args, i, "--gap")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>` (`ripr receipt --help` shows the full command)".to_string(),
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--gap",
+                        "receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>` (`ripr receipt --help` shows the full command)",
+                    ));
                 }
                 canonical_gap_id = Some(value.to_string());
             }
@@ -160,7 +161,10 @@ pub(in crate::cli) fn parse_receipt_write_options(
                 i += 1;
                 let value = expect_value(args, i, "--packet")?;
                 if value.trim().is_empty() {
-                    return Err("receipt write --packet requires a non-empty packet ID; pass a value right after --packet".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--packet",
+                        "receipt write --packet requires a non-empty packet ID; pass a value right after --packet",
+                    ));
                 }
                 packet_id = Some(value.to_string());
             }
@@ -168,7 +172,10 @@ pub(in crate::cli) fn parse_receipt_write_options(
                 i += 1;
                 let value = expect_value(args, i, "--verify-command")?;
                 if value.trim().is_empty() {
-                    return Err("receipt write requires --verify-command; add `--verify-command` to the command".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--verify-command",
+                        "receipt write requires --verify-command; add `--verify-command` to the command",
+                    ));
                 }
                 verify_command = Some(value.to_string());
             }
@@ -187,7 +194,10 @@ pub(in crate::cli) fn parse_receipt_write_options(
                 i += 1;
                 let value = expect_value(args, i, "--out")?;
                 if value.trim().is_empty() {
-                    return Err("receipt write --out requires a non-empty path; pass a value right after --out".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--out",
+                        "receipt write --out requires a non-empty path; pass a value right after --out",
+                    ));
                 }
                 out = Some(PathBuf::from(value));
             }
@@ -244,9 +254,10 @@ pub(in crate::cli) fn parse_receipt_check_options(
                 i += 1;
                 let value = expect_value(args, i, "--gap")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "receipt check --gap requires a non-empty canonical_gap_id; pass a value right after --gap".to_string()
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--gap",
+                        "receipt check --gap requires a non-empty canonical_gap_id; pass a value right after --gap",
+                    ));
                 }
                 gap = Some(value.to_string());
             }
@@ -254,7 +265,10 @@ pub(in crate::cli) fn parse_receipt_check_options(
                 i += 1;
                 let value = expect_value(args, i, "--path")?;
                 if value.trim().is_empty() {
-                    return Err("receipt check --path requires a non-empty path; pass a value right after --path".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--path",
+                        "receipt check --path requires a non-empty path; pass a value right after --path",
+                    ));
                 }
                 path = Some(PathBuf::from(value));
             }
@@ -262,9 +276,10 @@ pub(in crate::cli) fn parse_receipt_check_options(
                 i += 1;
                 let value = expect_value(args, i, "--ledger")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "receipt check --ledger requires a non-empty path to a gap-decision-ledger JSON file; pass a value right after --ledger".to_string()
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--ledger",
+                        "receipt check --ledger requires a non-empty path to a gap-decision-ledger JSON file; pass a value right after --ledger",
+                    ));
                 }
                 ledger = Some(PathBuf::from(value));
             }

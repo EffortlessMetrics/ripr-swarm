@@ -360,3 +360,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — human_full_shared_parse_port (28)
+
+Reason:
+RIPR-SPEC-0122: a Hidden row whose long reason repeats the row above prints same as above (#14308)
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/human.txt`

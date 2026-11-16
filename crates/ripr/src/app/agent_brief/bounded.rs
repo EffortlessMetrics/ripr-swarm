@@ -34,6 +34,10 @@ pub(crate) struct BoundedAgentBrief<'a> {
     withheld_changed_gaps: Vec<AgentBriefWithheldChangedGap>,
     // Only fixed-size identities, never discarded evidence payloads.
     seen_ids: BTreeSet<String>,
+    // Check-finding ids (#13895) minted by more than one observed seam. Ids
+    // are fixed-size text; evidence payloads are never kept here.
+    named_ids_once: BTreeSet<String>,
+    named_ids_shared: BTreeSet<String>,
 }
 
 impl<'a> BoundedAgentBrief<'a> {
@@ -61,6 +65,8 @@ impl<'a> BoundedAgentBrief<'a> {
             omission_counts: Vec::new(),
             withheld_changed_gaps: Vec::new(),
             seen_ids: BTreeSet::new(),
+            named_ids_once: BTreeSet::new(),
+            named_ids_shared: BTreeSet::new(),
         })
     }
 
@@ -71,9 +77,20 @@ impl<'a> BoundedAgentBrief<'a> {
         self.seen_ids.len()
     }
 
+    /// Check-finding ids that more than one observed seam can be named by,
+    /// over every seam this consumer saw (not only the selected ones).
+    pub(crate) fn shared_named_ids(&self) -> BTreeSet<String> {
+        self.named_ids_shared.clone()
+    }
+
     pub(crate) fn observe(&mut self, ordinal: usize, entry: ClassifiedSeam) -> Result<(), String> {
         if !self.seen_ids.insert(entry.seam.id().as_str().to_string()) {
             return Err("duplicate seam identity in streamed review evidence".into());
+        }
+        for id in crate::analysis::canonical_gap::seam_nameable_ids(&entry) {
+            if !self.named_ids_once.insert(id.clone()) {
+                self.named_ids_shared.insert(id);
+            }
         }
         let direct = why_now_for(&entry, &self.normalized);
         let why_now = if let Some(why_now) = direct {
@@ -312,6 +329,54 @@ impl crate::analysis::ScopedEvidenceConsumer for BoundedAgentBrief<'_> {
 mod tests {
     use super::super::tests::classified;
     use super::*;
+
+    #[test]
+    fn shared_named_ids_cover_every_observed_seam_including_unretained_ones() -> Result<(), String>
+    {
+        let config =
+            crate::config::tests_only_parse("[severity.seams]\nweakly_gripped = \"off\"\n")?;
+        let working_set =
+            AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/changed.rs")]);
+        let mut sink =
+            BoundedAgentBrief::new(&working_set, 10, AgentBriefPolicy::from_config(&config))?;
+        // Both seams are omitted by policy (nothing retained), yet the two
+        // same-expression seams of one owner still share their bare ids.
+        for (ordinal, line) in [(0, 1), (1, 7)] {
+            sink.observe(
+                ordinal,
+                classified(
+                    "src/changed.rs",
+                    line,
+                    "src/changed.rs::a",
+                    "n > 0",
+                    SeamGripClass::WeaklyGripped,
+                ),
+            )?;
+        }
+        sink.observe(
+            2,
+            classified(
+                "src/changed.rs",
+                9,
+                "src/changed.rs::b",
+                "n > 0",
+                SeamGripClass::WeaklyGripped,
+            ),
+        )?;
+        assert_eq!(sink.candidates.len(), 0);
+        let shared = sink.shared_named_ids();
+        assert!(!shared.is_empty());
+        let lone = crate::analysis::canonical_gap::seam_nameable_ids(&classified(
+            "src/changed.rs",
+            9,
+            "src/changed.rs::b",
+            "n > 0",
+            SeamGripClass::WeaklyGripped,
+        ));
+        assert!(!lone.is_empty());
+        assert!(lone.iter().all(|id| !shared.contains(id)));
+        Ok(())
+    }
 
     #[test]
     fn observed_seams_counts_every_classified_seam_not_only_retained_ones() -> Result<(), String> {

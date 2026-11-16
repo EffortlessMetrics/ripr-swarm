@@ -5855,6 +5855,7 @@ fn e2e_review_comments_doc_with_outcome(
         head: "HEAD",
         mode: &Mode::Draft,
         config: &config,
+        suppression: None,
     };
     let rendered = render_review_comments_json_with_scope(
         &context,
@@ -6272,6 +6273,7 @@ fn e2e_real_review_render(lib_source: &str, markdown: bool) -> Result<String, St
         head: "HEAD",
         mode: &crate::app::Mode::Draft,
         config: &config,
+        suppression: None,
     };
     let doc = if markdown {
         crate::output::review_comments::render_review_comments_markdown_with_scope(

@@ -180,6 +180,7 @@ the rename is traceable string-for-string:
 | `nearby_test_changed` | existing | the recommended test file changed in this PR, and the seam is not headline-eligible. Unresolved headline-eligible recommendations remain visible with their original evidence and limitations: changing a nearby test does not establish discrimination. |
 | `summary_cap` | existing | the summary item cap was reached. |
 | `static_limitation` | implemented for review guidance (#13892); replaces the warning-only disclosure for these seams | a gap-class seam on a changed line or in a changed owner was withheld from repair guidance because its evidence names a static limitation (for example a computed boundary operand on an owner no test calls). The item names the limitation; it grants no repair route and does not mean the gap is resolved. |
+| `suppressed_by_policy` | implemented (#13895) | an explicit `--suppression-policy` file, or a suppression recorded in `--check-output`, matched the seam. The seam leaves `comments` and `summary_only`; `suppressed[].message` names the policy entry. Opt-in only: the default `.ripr/suppressions.toml` is never applied implicitly. |
 | `missing_verification_command` | existing (emitted on the gap-ledger path today; the working-set path adopts it in the same slice) | actionable guidance requires a verify command; without one the card is suppressed, not weakened. |
 
 No selection or suppression reason outside this vocabulary may ship

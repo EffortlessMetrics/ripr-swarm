@@ -385,7 +385,10 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 refuse_repeated_flag(seam_id.is_some(), "agent repair", "--seam-id")?;
                 let value = expect_value(args, i, "--seam-id")?;
                 if value.trim().is_empty() {
-                    return Err("agent repair --seam-id requires a non-empty ID; pass a value right after --seam-id".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--seam-id",
+                        "agent repair --seam-id requires a non-empty ID; pass a value right after --seam-id",
+                    ));
                 }
                 seam_id = Some(value.to_string());
             }
@@ -394,7 +397,10 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 refuse_repeated_flag(gap_id.is_some(), "agent repair", "--gap-id")?;
                 let value = expect_value(args, i, "--gap-id")?;
                 if value.trim().is_empty() {
-                    return Err("agent repair --gap-id requires a non-empty ID; pass a value right after --gap-id".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--gap-id",
+                        "agent repair --gap-id requires a non-empty ID; pass a value right after --gap-id",
+                    ));
                 }
                 gap_id = Some(value.to_string());
             }
@@ -403,7 +409,10 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 refuse_repeated_flag(base.is_some(), "agent repair", "--base")?;
                 let value = expect_value(args, i, "--base")?;
                 if value.trim().is_empty() {
-                    return Err("agent repair --base requires a non-empty ref; pass a value right after --base".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--base",
+                        "agent repair --base requires a non-empty ref; pass a value right after --base",
+                    ));
                 }
                 base = Some(value.to_string());
             }
@@ -412,7 +421,10 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 refuse_repeated_flag(attempt_id.is_some(), "agent repair", "--attempt")?;
                 let value = expect_value(args, i, "--attempt")?;
                 if value.trim().is_empty() {
-                    return Err("agent repair --attempt requires a non-empty ID; pass a value right after --attempt".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--attempt",
+                        "agent repair --attempt requires a non-empty ID; pass a value right after --attempt",
+                    ));
                 }
                 attempt_id = Some(value.to_string());
             }
@@ -425,10 +437,10 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 )?;
                 let value = expect_value(args, i, "--python-repair-trust-manifest")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "agent repair --python-repair-trust-manifest requires a non-empty path; pass a value right after --python-repair-trust-manifest"
-                            .to_string(),
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--python-repair-trust-manifest",
+                        "agent repair --python-repair-trust-manifest requires a non-empty path; pass a value right after --python-repair-trust-manifest",
+                    ));
                 }
                 trust_manifest = Some(PathBuf::from(value));
             }
@@ -441,10 +453,10 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 )?;
                 let value = expect_value(args, i, "--python-repair-trust-attempt")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "agent repair --python-repair-trust-attempt requires a non-empty attempt identity; pass a value right after --python-repair-trust-attempt"
-                            .to_string(),
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--python-repair-trust-attempt",
+                        "agent repair --python-repair-trust-attempt requires a non-empty attempt identity; pass a value right after --python-repair-trust-attempt",
+                    ));
                 }
                 trust_attempt = Some(value.to_string());
             }
@@ -456,10 +468,10 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 refuse_repeated_flag(edit_authority.is_some(), "agent repair", "--edit-authority")?;
                 let value = expect_value(args, i, "--edit-authority")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "agent repair --edit-authority requires a non-empty operator or agent identity; pass a value right after --edit-authority"
-                            .to_string(),
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--edit-authority",
+                        "agent repair --edit-authority requires a non-empty operator or agent identity; pass a value right after --edit-authority",
+                    ));
                 }
                 edit_authority = Some(value.to_string());
             }
@@ -475,10 +487,10 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 )?;
                 let value = expect_value(args, i, "--verify-authority")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "agent repair --verify-authority requires a non-empty operator or agent identity; pass a value right after --verify-authority"
-                            .to_string(),
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--verify-authority",
+                        "agent repair --verify-authority requires a non-empty operator or agent identity; pass a value right after --verify-authority",
+                    ));
                 }
                 verify_authority = Some(value.to_string());
             }
@@ -490,7 +502,10 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 refuse_repeated_flag(test_result.is_some(), "agent repair", "--test-result")?;
                 let value = expect_value(args, i, "--test-result")?;
                 if value.trim().is_empty() {
-                    return Err("agent repair --test-result requires a non-empty path; pass the focused test result file right after --test-result".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--test-result",
+                        "agent repair --test-result requires a non-empty path; pass the focused test result file right after --test-result",
+                    ));
                 }
                 test_result = Some(PathBuf::from(value));
             }
@@ -499,7 +514,10 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 refuse_repeated_flag(store.is_some(), "agent repair", "--store")?;
                 let value = expect_value(args, i, "--store")?;
                 if value.trim().is_empty() {
-                    return Err("agent repair --store requires a non-empty path; pass a value right after --store".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--store",
+                        "agent repair --store requires a non-empty path; pass a value right after --store",
+                    ));
                 }
                 store = Some(PathBuf::from(value));
             }
@@ -791,7 +809,10 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
                 refuse_repeated_flag(seam_id.is_some(), "agent start", "--seam-id")?;
                 let value = expect_value(args, i, "--seam-id")?;
                 if value.trim().is_empty() {
-                    return Err("agent start --seam-id requires a non-empty ID; pass a value right after --seam-id".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--seam-id",
+                        "agent start --seam-id requires a non-empty ID; pass a value right after --seam-id",
+                    ));
                 }
                 seam_id = Some(value.to_string());
             }
@@ -800,7 +821,10 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
                 refuse_repeated_flag(out_dir.is_some(), "agent start", "--out")?;
                 let value = expect_value(args, i, "--out")?;
                 if value.trim().is_empty() {
-                    return Err("agent start --out requires a non-empty path; pass a value right after --out".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--out",
+                        "agent start --out requires a non-empty path; pass a value right after --out",
+                    ));
                 }
                 out_dir = Some(PathBuf::from(value));
             }
@@ -933,7 +957,10 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
                 refuse_repeated_flag(seam_id.is_some(), "agent packet", "--seam-id")?;
                 let value = expect_value(args, i, "--seam-id")?;
                 if value.trim().is_empty() {
-                    return Err("agent packet --seam-id requires a non-empty ID; pass a value right after --seam-id".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--seam-id",
+                        "agent packet --seam-id requires a non-empty ID; pass a value right after --seam-id",
+                    ));
                 }
                 seam_id = Some(value.to_string());
             }
@@ -942,7 +969,10 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
                 refuse_repeated_flag(gap_ledger.is_some(), "agent packet", "--gap-ledger")?;
                 let value = expect_value(args, i, "--gap-ledger")?;
                 if value.trim().is_empty() {
-                    return Err("agent packet --gap-ledger requires a non-empty path; pass a value right after --gap-ledger".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--gap-ledger",
+                        "agent packet --gap-ledger requires a non-empty path; pass a value right after --gap-ledger",
+                    ));
                 }
                 gap_ledger = Some(PathBuf::from(value));
             }
@@ -951,7 +981,10 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
                 refuse_repeated_flag(gap_id.is_some(), "agent packet", "--gap-id")?;
                 let value = expect_value(args, i, "--gap-id")?;
                 if value.trim().is_empty() {
-                    return Err("agent packet --gap-id requires a non-empty ID; pass a value right after --gap-id".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--gap-id",
+                        "agent packet --gap-id requires a non-empty ID; pass a value right after --gap-id",
+                    ));
                 }
                 gap_id = Some(value.to_string());
             }
@@ -1030,7 +1063,10 @@ pub(super) fn parse_agent_card_options(args: &[String]) -> Result<AgentCardOptio
                 refuse_repeated_flag(seam_id.is_some(), "agent card", "--seam-id")?;
                 let value = expect_value(args, i, "--seam-id")?;
                 if value.trim().is_empty() {
-                    return Err("agent card --seam-id requires a non-empty ID; pass a value right after --seam-id".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--seam-id",
+                        "agent card --seam-id requires a non-empty ID; pass a value right after --seam-id",
+                    ));
                 }
                 seam_id = Some(value.to_string());
             }
@@ -1097,8 +1133,11 @@ pub(super) fn parse_agent_stub_options(args: &[String]) -> Result<AgentStubOptio
                 }
                 let value = expect_value(args, i, &flag)?;
                 if value.trim().is_empty() {
-                    return Err(format!(
-                        "agent stub {flag} requires a non-empty value; pass a value right after {flag}"
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        &flag,
+                        &format!(
+                            "agent stub {flag} requires a non-empty value; pass a value right after {flag}"
+                        ),
                     ));
                 }
                 selector = Some(if flag == "--at" {
@@ -1168,7 +1207,10 @@ pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyO
                 refuse_repeated_flag(gap_id.is_some(), "agent verify", "--gap-id")?;
                 let value = expect_value(args, i, "--gap-id")?;
                 if value.trim().is_empty() {
-                    return Err("agent verify --gap-id requires a non-empty ID; pass a value right after --gap-id".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--gap-id",
+                        "agent verify --gap-id requires a non-empty ID; pass a value right after --gap-id",
+                    ));
                 }
                 gap_id = Some(value.to_string());
             }
@@ -1311,7 +1353,10 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
                 refuse_repeated_flag(seam_id.is_some(), "agent receipt", "--seam-id")?;
                 let value = expect_value(args, i, "--seam-id")?;
                 if value.trim().is_empty() {
-                    return Err("agent receipt --seam-id requires a non-empty ID; pass a value right after --seam-id".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--seam-id",
+                        "agent receipt --seam-id requires a non-empty ID; pass a value right after --seam-id",
+                    ));
                 }
                 seam_id = Some(value.to_string());
             }
@@ -1320,7 +1365,10 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
                 refuse_repeated_flag(attempt_id.is_some(), "agent receipt", "--attempt")?;
                 let value = expect_value(args, i, "--attempt")?;
                 if value.trim().is_empty() {
-                    return Err("agent receipt --attempt requires a non-empty ID; pass a value right after --attempt".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--attempt",
+                        "agent receipt --attempt requires a non-empty ID; pass a value right after --attempt",
+                    ));
                 }
                 attempt_id = Some(value.to_string());
             }
@@ -1329,7 +1377,10 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
                 refuse_repeated_flag(test_changed.is_some(), "agent receipt", "--test")?;
                 let value = expect_value(args, i, "--test")?;
                 if value.trim().is_empty() {
-                    return Err("agent receipt --test requires a non-empty value; pass a value right after --test".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--test",
+                        "agent receipt --test requires a non-empty value; pass a value right after --test",
+                    ));
                 }
                 test_changed = Some(value.to_string());
             }
@@ -1337,7 +1388,10 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
                 i += 1;
                 let value = expect_value(args, i, "--command")?;
                 if value.trim().is_empty() {
-                    return Err("agent receipt --command requires a non-empty value; pass a value right after --command".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--command",
+                        "agent receipt --command requires a non-empty value; pass a value right after --command",
+                    ));
                 }
                 commands_run.push(value.to_string());
             }
@@ -1411,7 +1465,10 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
                 refuse_repeated_flag(store.is_some(), "agent status", "--store")?;
                 let value = expect_value(args, i, "--store")?;
                 if value.trim().is_empty() {
-                    return Err("agent status --store requires a non-empty path; pass a value right after --store".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--store",
+                        "agent status --store requires a non-empty path; pass a value right after --store",
+                    ));
                 }
                 store = Some(PathBuf::from(value));
             }
@@ -1420,9 +1477,10 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
                 refuse_repeated_flag(attempt_id.is_some(), "agent status", "--attempt")?;
                 let value = expect_value(args, i, "--attempt")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "agent status --attempt requires a non-empty repair attempt ID; pass a value right after --attempt".to_string(),
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--attempt",
+                        "agent status --attempt requires a non-empty repair attempt ID; pass a value right after --attempt",
+                    ));
                 }
                 attempt_id = Some(value.to_string());
             }
@@ -1493,7 +1551,9 @@ fn parse_files_value(value: &str) -> Result<Vec<PathBuf>, String> {
     for part in value.split(',') {
         let trimmed = part.trim();
         if trimmed.is_empty() {
-            return Err("agent brief --files requires non-empty paths; pass comma-separated paths with no empty entries, such as `--files src/a.rs,src/b.rs`".to_string());
+            let message = "agent brief --files requires non-empty paths; pass comma-separated paths with no empty entries, such as `--files src/a.rs,src/b.rs`";
+            crate::cli::usage_refusal::note_invalid_value(value, message);
+            return Err(message.to_string());
         }
         paths.push(PathBuf::from(trimmed));
     }
