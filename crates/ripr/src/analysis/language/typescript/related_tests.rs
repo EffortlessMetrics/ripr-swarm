@@ -1,5 +1,6 @@
 //! Related test candidate discovery for the TypeScript preview adapter.
 
+use super::call_lexer::has_unclosed_quote_or_template;
 use super::tsconfig::{TsAliasMap, TsOutDirMap, config_file_owns_paths, load_out_dir_map};
 use super::*;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -6937,38 +6938,6 @@ pub(crate) fn line_prefix_looks_like_comment_or_string(body_text: &str, idx: usi
     let line_start = body_text[..idx].rfind('\n').map_or(0, |offset| offset + 1);
     let prefix = &body_text[line_start..idx];
     prefix.trim_start().starts_with("//") || has_unclosed_quote_or_template(prefix)
-}
-
-pub(crate) fn inside_block_comment(body_text: &str, idx: usize) -> bool {
-    let prefix = &body_text[..idx];
-    let comment_start = prefix.rfind("/*");
-    let comment_end = prefix.rfind("*/");
-    comment_start.is_some_and(|start| comment_end.is_none_or(|end| start > end))
-}
-
-fn has_unclosed_quote_or_template(prefix: &str) -> bool {
-    let mut escaped = false;
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut in_template = false;
-    for ch in prefix.chars() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' {
-            escaped = true;
-            continue;
-        }
-        if ch == '\'' && !in_double && !in_template {
-            in_single = !in_single;
-        } else if ch == '"' && !in_single && !in_template {
-            in_double = !in_double;
-        } else if ch == '`' && !in_single && !in_double {
-            in_template = !in_template;
-        }
-    }
-    in_single || in_double || in_template
 }
 
 pub(crate) fn is_javascript_identifier_char(ch: char) -> bool {
