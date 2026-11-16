@@ -31,6 +31,7 @@
 mod cross_crate_hop;
 mod cross_crate_path;
 mod macro_argument;
+mod own_crate_test_hop;
 mod qualified_hop;
 mod returned_ledger;
 pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
@@ -1202,6 +1203,12 @@ fn chain_through_caller(
         // #11401: a call spelled through another workspace crate that the
         // caller's manifest depends on.
         if let Some(hop) = cross_crate_hop::cross_crate_free_hop(caller, callee_name, index) {
+            return extend_chain(hop, callee_name, index, workspace_complete, visited);
+        }
+        // #8387: an integration-test helper's call spelled through the
+        // package's own library name.
+        if let Some(hop) = own_crate_test_hop::own_crate_test_helper_hop(caller, callee_name, index)
+        {
             return extend_chain(hop, callee_name, index, workspace_complete, visited);
         }
         return stopped(format!(
@@ -4592,9 +4599,11 @@ mod tests {
     }
 
     // #9086: inside a scope the same (source, name, package names) query scans
-    // the source once; a different name or package set is a new scan.
+    // the source once. #11738: so does every other name or package set, since
+    // one scan of a source's macro sites answers all of them; a diff that
+    // changes many functions of one file asks about a new name per function.
     #[test]
-    fn scoped_import_answer_scans_once_per_distinct_query() {
+    fn scoped_import_answer_scans_once_per_source() {
         // #9217: `macro_may_define_item_named` skips `MacroSites::scan` when
         // the source has no `!`. Keep a bang so this pin still measures
         // scan-once-per-distinct-query, not the skip. The unused
@@ -4608,17 +4617,31 @@ mod tests {
         let mut with_package = index_with_tests(vec![], vec![]);
         with_package.package_names = ["serde".to_string()].into_iter().collect();
         let scans = || super::super::macro_item_names::SCAN_COUNT.with(|count| count.get());
-        let _scope = crate::analysis::syntax::run_memo::enter();
+        let scope = crate::analysis::syntax::run_memo::enter();
         super::super::macro_item_names::SCAN_COUNT.with(|count| count.set(0));
         let first = source_imports_foreign_entry(&plain, source, "parse");
         assert_eq!(scans(), 1, "the first ask scans the source");
         let second = source_imports_foreign_entry(&plain, source, "parse");
         assert_eq!(first, second);
         assert_eq!(scans(), 1, "the repeated ask is served from the scope");
-        source_imports_foreign_entry(&plain, source, "other");
-        assert_eq!(scans(), 2, "another name is a new scan");
-        source_imports_foreign_entry(&with_package, source, "parse");
-        assert_eq!(scans(), 3, "another package set is a new scan");
+        let other = source_imports_foreign_entry(&plain, source, "other");
+        assert_eq!(scans(), 1, "another name reads the same scan");
+        let packaged = source_imports_foreign_entry(&with_package, source, "parse");
+        assert_eq!(scans(), 1, "another package set reads the same scan");
+        let edited = format!("{source}fn later() {{}}\n");
+        source_imports_foreign_entry(&plain, &edited, "parse");
+        assert_eq!(scans(), 2, "another source is a new scan");
+        drop(scope);
+        // The memoized answers are the unscoped ones, and nothing is kept
+        // once the scope ends.
+        super::super::macro_item_names::SCAN_COUNT.with(|count| count.set(0));
+        assert_eq!(source_imports_foreign_entry(&plain, source, "parse"), first);
+        assert_eq!(source_imports_foreign_entry(&plain, source, "other"), other);
+        assert_eq!(
+            source_imports_foreign_entry(&with_package, source, "parse"),
+            packaged
+        );
+        assert_eq!(scans(), 3, "outside a scope every ask scans");
     }
 
     // #7080: tests that call the ambiguous name enter the refused chain;

@@ -50,7 +50,7 @@ Updated:
 ## Pending — compile_time_assert_stop_reason (5)
 
 Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+RIPR-SPEC-0002: #12040 a changed const named by a same-file compile-time assertion, and a changed continuation line of a multi-line assertion, report compile_time_invariant
 
 Command:
 `cargo xtask goldens bless compile_time_assert_stop_reason --reason "..."`
@@ -62,7 +62,31 @@ Updated:
 ## Pending — compile_time_assert_stop_reason (6)
 
 Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+RIPR-SPEC-0002: #12040 review: compile-time guard ignores qualified/shadowed/cfg-gated assertions; missing text no longer claims a violation
+
+Command:
+`cargo xtask goldens bless compile_time_assert_stop_reason --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — compile_time_assert_stop_reason (7)
+
+Reason:
+RIPR-SPEC-0002: #12040 review: a guarded assertion line with a ruled-out reach is withheld as unknown too
+
+Command:
+`cargo xtask goldens bless compile_time_assert_stop_reason --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — compile_time_assert_stop_reason (8)
+
+Reason:
+RIPR-SPEC-0411: merge main evidence_stages field into compile-time guard goldens
 
 Command:
 `cargo xtask goldens bless compile_time_assert_stop_reason --reason "..."`

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust predicate that sets one field of the struct literal a function returns (`big: n >= 10,`) no longer reads `exposed` from an assertion on a different field of that result (`assert_eq!(opts(10).retries, 3)`) or from a method of the result. A direct read of the changed field or a comparison of the whole value still credits it. The `field_construction` finding on the same line already read it this way (#14562).

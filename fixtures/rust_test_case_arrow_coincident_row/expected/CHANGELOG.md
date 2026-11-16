@@ -168,3 +168,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_test_case_arrow_coincident_row (14)
+
+Reason:
+RIPR-SPEC-0231: test_case row cells now bind parameters (#6641), so the coincident row adds its input evidence line (x = 0); class unchanged
+
+Command:
+`cargo xtask goldens bless rust_test_case_arrow_coincident_row --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -110,7 +110,13 @@ pub(crate) fn evidence_limitation_json_object(
         "{inner}\"producer_stage\": \"{}\",\n",
         limitation.producer_stage.as_str()
     ));
-    out.push_str(&format!("{inner}\"scope\": \"pass_wide\",\n"));
+    out.push_str(&format!(
+        "{inner}\"scope\": \"{}\",\n",
+        evidence_limitation_scope(limitation)
+    ));
+    if let Some(path) = limitation.path.as_deref() {
+        out.push_str(&format!("{inner}\"path\": \"{}\",\n", json_escape(path)));
+    }
     if let Some(detail) = limitation.bounded_detail.as_deref() {
         out.push_str(&format!(
             "{inner}\"detail\": \"{}\",\n",
@@ -123,6 +129,16 @@ pub(crate) fn evidence_limitation_json_object(
     ));
     out.push_str(&format!("{outer}}}"));
     out
+}
+
+/// Machine-readable `scope` of an evidence limitation: `path` when it names a
+/// skipped file or directory, `pass_wide` otherwise (matches the Markdown).
+pub(crate) fn evidence_limitation_scope(limitation: &AnalysisLimitation) -> &'static str {
+    if limitation.path.is_some() {
+        "path"
+    } else {
+        "pass_wide"
+    }
 }
 
 /// `run_status` of a repo-exposure run whose seam-evidence pass failed
@@ -1484,6 +1500,39 @@ pub(crate) fn render_refusal_json(notice: &crate::core_error::RefusalNotice) -> 
     )
 }
 
+/// The `repo-exposure-summary-json` refusal (#14499): the summary's own
+/// envelope with `run_status: "refused"`, the typed limitation, zeroed
+/// metrics and an empty `top_files`, so a planning consumer reads a refused
+/// run rather than zero bytes or an all-clear.
+pub(crate) fn render_summary_refusal_json(
+    notice: &crate::core_error::RefusalNotice,
+    root: &Path,
+    base: Option<&str>,
+    mode: &str,
+) -> String {
+    // The empty-inventory summary supplies every aggregate, breakdown and
+    // limit field at zero, so the refused document keeps the normal shape.
+    let mut value = repo_exposure_summary_json_value(&[], root, base, mode);
+    if let Some(object) = value.as_object_mut() {
+        object.insert("run_status".to_string(), json!("refused"));
+        object.insert(
+            "limitations".to_string(),
+            json!([{
+                "category": notice.identity,
+                "repair_route": notice.repair_route,
+                "message": notice.message,
+            }]),
+        );
+    }
+    match serde_json::to_string_pretty(&value) {
+        Ok(mut json) => {
+            json.push('\n');
+            json
+        }
+        Err(_) => "{}\n".to_string(),
+    }
+}
+
 /// Render a bounded repo exposure summary JSON.
 ///
 /// Unlike `repo-exposure-json`, this shape deliberately omits per-seam
@@ -1835,6 +1884,18 @@ Next: point `--root` at the directory holding `Cargo.toml` (or at TypeScript or 
 sources with that language enabled in `ripr.toml`), then run `ripr doctor --root <DIR>` \
 to see what the root can analyze.\n";
 
+/// True when a skipped-path limitation already explains why the inventory is
+/// empty (every Rust path was unreadable), so "nothing to analyze, try another
+/// root" would mislead.
+fn limitations_explain_empty_inventory(evidence_limitations: &[AnalysisLimitation]) -> bool {
+    for limitation in evidence_limitations {
+        if limitation.path.is_some() {
+            return true;
+        }
+    }
+    false
+}
+
 /// Render the repo exposure Markdown report. The output uses the
 /// static seam evidence vocabulary only — no runtime-mutation outcome
 /// words per RIPR-SPEC-0005 § Static-Language Boundaries.
@@ -1912,17 +1973,27 @@ pub(crate) fn render_repo_exposure_md_with_limit(
         || !evidence_limitations.is_empty();
     if has_limitations {
         out.push_str("\n## Limitations\n\n");
-        // A failed shared evidence pass leaves opaque stand-in seams, so the
-        // counts above are not an inventory result (#13340). Mirrors the
-        // JSON `limited_seam_evidence` status and pass-wide `producer_failure`.
+        // Keep the #13340 failed-pass wording for a pass-wide failure only.
+        // A named path was skipped; the other paths classified normally.
+        // Mirrors the JSON `limited_seam_evidence` status and pass-wide
+        // `producer_failure` without discrediting readable seams.
         for limitation in evidence_limitations {
-            out.push_str(&format!(
-                "> Seam evidence unavailable ({}; producer_stage: {}; scope: pass_wide): \
-                 the shared test-evidence pass failed, so the counts above are not a \
-                 complete inventory result and every seam carries opaque stand-in evidence.",
-                limitation.kind.as_str(),
-                limitation.producer_stage.as_str(),
-            ));
+            if let Some(path) = limitation.path.as_deref() {
+                out.push_str(&format!(
+                    "> Path skipped ({}; producer_stage: {}; scope: path): \
+                     `{path}` was skipped; the remaining seams were classified normally.",
+                    limitation.kind.as_str(),
+                    limitation.producer_stage.as_str(),
+                ));
+            } else {
+                out.push_str(&format!(
+                    "> Seam evidence unavailable ({}; producer_stage: {}; scope: pass_wide): \
+                     the shared test-evidence pass failed, so the counts above are not a \
+                     complete inventory result and every seam carries opaque stand-in evidence.",
+                    limitation.kind.as_str(),
+                    limitation.producer_stage.as_str(),
+                ));
+            }
             if let Some(detail) = limitation.bounded_detail.as_deref() {
                 out.push_str(&format!(" Detail: {}.", detail.trim_end_matches('.')));
             }
@@ -1994,7 +2065,11 @@ pub(crate) fn render_repo_exposure_md_with_limit(
         // An empty report must still name a next step (an empty directory
         // used to end here with nothing to do). Language guidance above
         // already names its own next step.
-        if ts_guidance.is_none() && python_guidance.is_none() && generated_skip.is_none() {
+        if ts_guidance.is_none()
+            && python_guidance.is_none()
+            && generated_skip.is_none()
+            && !limitations_explain_empty_inventory(evidence_limitations)
+        {
             out.push_str(REPO_EXPOSURE_EMPTY_NEXT_STEP);
         }
         return out;
@@ -4265,5 +4340,37 @@ pub fn surcharge(total: i32) -> Result<i32, String> {
                 "`{invalid}` must fail closed, not fall back to a default or the opt-out"
             );
         }
+    }
+
+    #[test]
+    fn path_scoped_limitation_does_not_discredit_readable_seams() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
+        };
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::LanguageScopeUnsupported,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "Restore read access.")?,
+        )
+        .with_path("src/locked.rs")?;
+        let markdown =
+            render_repo_exposure_md_with_limit(&[], None, None, None, None, &[limitation]);
+        assert!(
+            markdown.contains("`src/locked.rs` was skipped"),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("the remaining seams were classified normally"),
+            "{markdown}"
+        );
+        assert!(
+            !markdown.contains("the shared test-evidence pass failed"),
+            "{markdown}"
+        );
+        assert!(
+            !markdown.contains("every seam carries opaque stand-in evidence"),
+            "{markdown}"
+        );
+        Ok(())
     }
 }
