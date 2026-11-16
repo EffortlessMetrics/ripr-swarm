@@ -14,10 +14,12 @@
     "total_size_bytes",
     "entry_count",
     "foreign_entry_count",
-    "foreign_total_size_bytes"
+    "foreign_total_size_bytes",
+    "reclaimable_entry_count",
+    "reclaimable_size_bytes"
   ],
   "properties": {
-    "schema_version": { "const": "0.2" },
+    "schema_version": { "const": "0.3" },
     "cache_dir": {
       "description": "The cache directory as resolved from `RIPR_CACHE_DIR` or the workspace default, in the host's own path spelling.",
       "type": "string",
@@ -51,7 +53,13 @@
       "type": "integer",
       "minimum": 0
     },
-    "foreign_total_size_bytes": { "type": "integer", "minimum": 0 }
+    "foreign_total_size_bytes": { "type": "integer", "minimum": 0 },
+    "reclaimable_entry_count": {
+      "description": "Per-file fact entries (Rust, TypeScript, Python) the next fact write removes: older cache schemas, and other ripr builds outside the retention window. Kept entries, including newer cache schemas, are not counted. A subset of `entry_count`.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "reclaimable_size_bytes": { "type": "integer", "minimum": 0 }
   },
   "allOf": [
     {
@@ -68,7 +76,9 @@
           "total_size_bytes": { "const": 0 },
           "entry_count": { "const": 0 },
           "foreign_entry_count": { "const": 0 },
-          "foreign_total_size_bytes": { "const": 0 }
+          "foreign_total_size_bytes": { "const": 0 },
+          "reclaimable_entry_count": { "const": 0 },
+          "reclaimable_size_bytes": { "const": 0 }
         }
       }
     }

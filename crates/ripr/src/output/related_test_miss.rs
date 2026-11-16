@@ -740,6 +740,66 @@ mod tests {
         );
     }
 
+    /// #14483: the headline anchor is the first row of the best observation
+    /// tier. A listed-first row that cannot observe the change gives way to
+    /// one that can, a `no_call_path` row ranks below both, and a Python
+    /// changed-file stamp never pulls the headline back to a row of a worse
+    /// tier.
+    #[test]
+    fn headline_anchors_on_the_first_row_that_can_observe_the_change() {
+        let mut rows = vec![
+            python_row("tests/test_a.py", "a", 1),
+            python_row("tests/test_b.py", "b", 2),
+            python_row("tests/test_c.py", "c", 3),
+        ];
+        rows[0].miss = Some(RelatedTestMiss::NoCallPath);
+        rows[1].miss = Some(RelatedTestMiss::AssertionNotObserving);
+        let mut rust = python_finding(rows.clone(), Vec::new());
+        rust.language = Some(LanguageId::Rust);
+        assert_eq!(
+            headline_related_test_for_finding(&rust).map(|t| t.name.as_str()),
+            Some("c")
+        );
+        // The tier reads only the recorded miss, never the relation: a row
+        // linked by file location may still reach the owner through a helper.
+        // `no_assertion` ranks with the observing rows (a reaching test is
+        // where the missing assertion goes), ahead of `assertion_not_observing`.
+        let mut located = rust.clone();
+        located.related_tests[1].relation_reason = Some(RelationReason::SameTestFile);
+        located.related_tests[1].miss = Some(RelatedTestMiss::NoAssertion);
+        located.related_tests[2].miss = Some(RelatedTestMiss::AssertionNotObserving);
+        assert_eq!(
+            headline_related_test_for_finding(&located).map(|t| t.name.as_str()),
+            Some("b")
+        );
+        // An unknown-edge miss ranks with the observing rows too.
+        let mut unknown = rust.clone();
+        unknown.related_tests[2].miss = Some(RelatedTestMiss::ObservationUnconfirmed);
+        assert_eq!(
+            headline_related_test_for_finding(&unknown).map(|t| t.name.as_str()),
+            Some("c")
+        );
+        rust.related_tests.truncate(2);
+        assert_eq!(
+            headline_related_test_for_finding(&rust).map(|t| t.name.as_str()),
+            Some("b")
+        );
+        let stamped = python_finding(rows.clone(), vec![changed_stamp("tests/test_b.py", 2)]);
+        assert_eq!(
+            headline_related_test_for_finding(&stamped).map(|t| t.name.as_str()),
+            Some("c")
+        );
+        // Control: with no recorded miss the listed-first row leads again.
+        for row in &mut rows {
+            row.miss = None;
+        }
+        rust.related_tests = rows;
+        assert_eq!(
+            headline_related_test_for_finding(&rust).map(|t| t.name.as_str()),
+            Some("a")
+        );
+    }
+
     fn support(value: &str) -> RelatedTestMissSupport {
         RelatedTestMissSupport {
             value: value.to_string(),

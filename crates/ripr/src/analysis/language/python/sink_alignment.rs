@@ -1333,6 +1333,8 @@ fn sink_alignment_and_rows(
         is_method_owner
             && !strong_tests_import_only_rival_modules(owner, &[unit.related], test_lookup)
     });
+    // A coroutine owner's result is what `await` hands back.
+    let owner_is_coroutine = owner.decorators.iter().any(|name| name == "async_def");
     // Owner output observed through a module-identified call (#4567): the
     // assertion calls the owner through its module (`utils.sign(0) == 0`,
     // `pkg.utils.sign(0)`, an imported name), or asserts a local the same test
@@ -1357,7 +1359,7 @@ fn sink_alignment_and_rows(
                 };
                 callees.iter().any(|callee| {
                     oracle_operand_calls(&unit.text, callee) || raised_in_body(callee)
-                }) || owner_result_locals(test, &callees)
+                }) || owner_result_locals(test, &callees, owner_is_coroutine)
                     .iter()
                     .any(|local| oracle_operand_names(&unit.text, local))
             })

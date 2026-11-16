@@ -20,6 +20,8 @@ use super::classify::changed_error_variant;
 use super::generated_rust_corpus::{
     AnalyzableRustCorpus, absent_changed_rust_file_limitations, discover_analyzable_rust_corpus,
     discover_analyzable_rust_corpus_for_changed_paths,
+    discover_analyzable_rust_corpus_for_changed_paths_tolerating_unreadable,
+    discover_analyzable_rust_corpus_tolerating_unreadable,
 };
 use super::rust_index::{self, ProbeShapeFact, ProbeShapeKind, RustIndex};
 #[cfg(test)]
@@ -413,8 +415,14 @@ fn refuse_failed_evidence(
     match limitations.first() {
         None => Ok(()),
         Some(limitation) => Err(format!(
-            "{consumer} refused: seam evidence failed ({}; pass-wide, no single file is the cause): {}; next step: {}",
+            "{consumer} refused: seam evidence failed ({}; {}): {}; next step: {}",
             limitation.kind.as_str(),
+            // A named path is an unreadable-input gap this consumer cannot
+            // render; only the unnamed walk failure is pass-wide.
+            match limitation.path.as_deref() {
+                Some(path) => format!("unreadable path `{path}`"),
+                None => "pass-wide, no single file is the cause".to_owned(),
+            },
             limitation
                 .bounded_detail
                 .as_deref()
@@ -487,8 +495,11 @@ fn inventory_classified_seams_report_collect(
     repo_exposure_seam_limit()?;
     let collect_started = Instant::now();
     let selection = match changed_paths {
-        Some(paths) => discover_analyzable_rust_corpus_for_changed_paths(root, config, paths),
-        None => scan_corpus_fingerprint(root, config).map(|corpus| (corpus, false)),
+        Some(paths) => discover_analyzable_rust_corpus_for_changed_paths_tolerating_unreadable(
+            root, config, paths,
+        ),
+        None => discover_analyzable_rust_corpus_tolerating_unreadable(root, config)
+            .map(|corpus| (corpus, false)),
     };
     let (corpus, diff_bound_corpus) = match selection {
         Ok(scan) => scan,
@@ -502,6 +513,10 @@ fn inventory_classified_seams_report_collect(
             return Err(err);
         }
     };
+    // A skipped unreadable path is recomputed from this walk (never cached),
+    // so a warm hit still discloses it; the cache key names only what was read.
+    let unreadable_limitations =
+        workspace::limitations_for_unreadable_unchanged_paths(&corpus.unreadable_paths)?;
     let rust_files = corpus.analyzable;
     let analyzed_production_files = production_files_with_role(root, config, &rust_files);
     let fingerprint = corpus.fingerprint;
@@ -547,7 +562,7 @@ fn inventory_classified_seams_report_collect(
                         root,
                         &lexical_fallback_files,
                     ),
-                    evidence_limitations: Vec::new(),
+                    evidence_limitations: unreadable_limitations,
                 });
             }
             CacheLoad::Miss => {
@@ -618,7 +633,7 @@ fn inventory_classified_seams_report_collect(
                     root,
                     &lexical_fallback_files,
                 ),
-                evidence_limitations: Vec::new(),
+                evidence_limitations: unreadable_limitations,
             });
         }
         CacheLoad::Miss => {
@@ -725,7 +740,10 @@ fn inventory_classified_seams_report_collect(
         skipped_generated,
         naming_only_skips,
         declined_rust_files: rust_index::declined_rust_files_at(root, &lexical_fallback_files),
-        evidence_limitations,
+        evidence_limitations: evidence_limitations
+            .into_iter()
+            .chain(unreadable_limitations)
+            .collect(),
     })
 }
 
@@ -2202,6 +2220,56 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     )
 }
 
+/// The diff-scoped inventory for a lookup that reads one seam by id (#13884):
+/// the same scope and seam walk as
+/// [`inventory_diff_scoped_classified_seams_at_with_config`] with no owner
+/// names, but only the seam whose id is `seam_id` receives evidence and
+/// classification. Evidence is per seam, so that seam's class and evidence
+/// equal its entry in the whole-file result, and an id the file does not
+/// hold yields no entry in either. Without this, a `--at` disclosure lookup
+/// in a large file paid for classifying every other seam in that file.
+pub(crate) fn inventory_diff_scoped_seam_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+    seam_id: &str,
+) -> Result<ScopedClassifiedSeamInventory, String> {
+    let first = |seam: &RepoSeam| seam.id().as_str() == seam_id;
+    let stages = DiffScopeEvidenceStages {
+        first: &first,
+        sufficient: &|_| true,
+        reuse: None,
+    };
+    // Repeated lookups of one seam reuse the result under the same exact-path
+    // rule and content key as the whole-file guidance (#11358), with an
+    // identity that also binds the seam id.
+    let identity = file_seam_guidance_reuse_identity(changed_files, seam_id);
+    let mut inputs = DiffScopeInputs::canonical(changed_files, &[]);
+    inputs.complete_scope_reuse = Some(&identity);
+    inventory_diff_scoped_classified_seams_inner(
+        root,
+        config,
+        inputs,
+        !no_impact_fast_path_disabled(),
+        Some(&stages),
+        None,
+    )
+}
+
+/// Disjoint from the whole-file guidance and staged/bound identities: binds
+/// the native bytes of every scoped file (as `file_guidance_reuse_identity`
+/// does) and the selected seam id.
+fn file_seam_guidance_reuse_identity(files: &[PathBuf], seam_id: &str) -> Vec<u8> {
+    let mut identity = b"file-seam-guidance-v1-lossless-key\0".to_vec();
+    for file in files {
+        identity.extend_from_slice(file.as_os_str().as_encoded_bytes());
+        identity.push(0);
+    }
+    identity.push(1);
+    identity.extend_from_slice(seam_id.as_bytes());
+    identity
+}
+
 /// Complete canonical inventory for one file's stub guidance (#11358).
 /// Only result reuse differs from the ordinary diff-scoped wrapper: every
 /// scoped seam is classified against the full workspace evidence, with no
@@ -2845,8 +2913,9 @@ struct DiffScopeInputs<'a> {
     generated_context: Option<&'a [PathBuf]>,
     /// Also derive the repo-wide seam-limit fact from the built index.
     with_repo_seam_limit: bool,
-    /// Explicit opt-in for a complete canonical scope, independently of the
-    /// two-stage consumer. Its identity must bind the exact scope selection.
+    /// Explicit opt-in for exact-path reuse of a canonical file scope (whole,
+    /// or one selected seam of it), independently of the two-stage consumer.
+    /// Its identity must bind the exact scope and seam selection.
     complete_scope_reuse: Option<&'a [u8]>,
 }
 
@@ -3076,9 +3145,14 @@ fn inventory_diff_scoped_classified_seams_inner<'a>(
         );
     }
     // Complete-scope reuse never changes the staged/streamed consumers or
-    // borrows their identity. Its sole caller asks for the canonical file scope.
-    let complete_scope_reuse = complete_scope_reuse
-        .filter(|_| stages.is_none() && generated_context.is_none() && !with_repo_seam_limit);
+    // borrows their identity. Its callers ask for the canonical file scope,
+    // whole or with one selected seam (#13884); a staged caller that carries
+    // its own reuse identity never takes this route.
+    let complete_scope_reuse = complete_scope_reuse.filter(|_| {
+        stages.is_none_or(|stages| stages.reuse.is_none())
+            && generated_context.is_none()
+            && !with_repo_seam_limit
+    });
     let reuse_candidate = stages
         .and_then(|stages| stages.reuse)
         .or(complete_scope_reuse);
@@ -4838,7 +4912,7 @@ fn build_seam_from_shape(
         && crate::analysis::classify::field_assignment_target(&shape.text).is_some()
     {
         Some(written_field_of_shape(
-            owners.owner(shape.start_line)?,
+            owners.owner(shape.start_line())?,
             shape,
         )?)
     } else {
@@ -4851,7 +4925,7 @@ fn build_seam_from_shape(
     if kind == SeamKind::CallPresence && shape.value_consumed {
         return None;
     }
-    let owner_fact = owners.owner(shape.start_line)?;
+    let owner_fact = owners.owner(shape.start_line())?;
     // Skip shapes whose owner is itself a test function (e.g.,
     // `#[test] fn ...` inside an in-file `#[cfg(test)] mod tests`).
     // the source-role model already excludes physical test files;
@@ -4872,7 +4946,7 @@ fn build_seam_from_shape(
         && crate::analysis::classify::predicate_branch_side_effect_only_in_body(
             owner_fact.body.as_str(),
             owner_fact.start_line,
-            shape.start_line,
+            shape.start_line(),
         ) {
         ExpectedSink::SideEffect
     } else {
@@ -4886,15 +4960,15 @@ fn build_seam_from_shape(
         path,
         owner,
         kind,
-        shape.start_byte,
-        shape.start_line,
+        shape.start_byte(),
+        shape.start_line(),
         expression,
         required_discriminator,
         expected_sink,
         crlf_pairs,
     )
     .with_owner_call(owner_call)
-    .with_source_lines(shape.source_lines);
+    .with_source_lines(shape.source_lines());
     // #12061: a field write is read back from the receiver only when the
     // owner borrows it; record which so every surface words the read alike.
     let seam = if kind == SeamKind::FieldConstruction
@@ -4911,7 +4985,7 @@ fn build_seam_from_shape(
     // not its coverage: use the separately parsed pattern-through-body range.
     // The `match` keyword shape has no arm range and remains line-only.
     let (start_line, start_byte, end_byte) = if shape.kind == ProbeShapeKind::MatchArm {
-        let Some(&(start, end)) = arm_ranges.get(&shape.start_byte) else {
+        let Some(&(start, end)) = arm_ranges.get(&shape.start_byte()) else {
             return Some(seam);
         };
         (
@@ -4920,7 +4994,7 @@ fn build_seam_from_shape(
             end,
         )
     } else {
-        (shape.start_line, shape.start_byte, shape.end_byte)
+        (shape.start_line(), shape.start_byte(), shape.end_byte())
     };
     match byte_span_to_lines_with_starts(source, line_starts, start_line, start_byte, end_byte) {
         Some(span) => Some(seam.with_span(span)),
@@ -4941,7 +5015,7 @@ fn written_field_of_shape(
     crate::analysis::classify::assigned_field_path(
         owner.body.as_str(),
         owner.start_line,
-        shape.start_line,
+        shape.start_line(),
         &shape.text,
         &|_| None,
     )
@@ -10654,6 +10728,103 @@ marker = "libtest_mimic::Trial"
         Ok(())
     }
 
+    /// A file holding `functions` predicate seams, every one called by a test
+    /// with a different oracle, so the seams do not all share one class.
+    fn many_seams_layout(root: &Path, functions: usize) -> Result<(), String> {
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = 'one_seam_fixture'\nversion = '0.1.0'\n\n[workspace]\n",
+        )?;
+        write_file(&root.join("src/lib.rs"), "pub mod limits;\n")?;
+        let mut source = String::new();
+        let mut tests = String::new();
+        for n in 0..functions {
+            source.push_str(&format!(
+                "pub fn over_{n}(value: i32) -> bool {{\n    value > {n}\n}}\n"
+            ));
+            let oracle = if n % 2 == 0 {
+                format!("assert!(one_seam_fixture::limits::over_{n}({}));", n + 1)
+            } else {
+                format!("let _ = one_seam_fixture::limits::over_{n}({n});")
+            };
+            tests.push_str(&format!(
+                "#[test]\nfn over_{n}_checks() {{\n    {oracle}\n}}\n"
+            ));
+        }
+        write_file(&root.join("src/limits.rs"), &source)?;
+        write_file(&root.join("tests/limits.rs"), &tests)?;
+        Ok(())
+    }
+
+    /// #13884: a by-id lookup evaluates exactly the selected seam however
+    /// many seams the file holds, and that seam's classified entry is
+    /// byte-identical to its entry in the whole-file inventory.
+    #[test]
+    fn one_seam_inventory_evaluates_only_the_selected_seam() -> Result<(), String> {
+        for functions in [3usize, 9] {
+            let root = make_tempdir(&format!("one-seam-{functions}"))?;
+            many_seams_layout(&root, functions)?;
+            let config = RiprConfig::default();
+            let changed = [PathBuf::from("src/limits.rs")];
+
+            evaluation_probe::reset();
+            let full = inventory_diff_scoped_classified_seams_at_with_config(
+                &root,
+                &config,
+                &changed,
+                &[],
+            )?;
+            let full_evaluated = evaluation_probe::evaluated();
+            // Fixture premises: at least one seam per function, all evaluated by
+            // the whole-file path, and more than one class among them.
+            let seams = full.classified.len();
+            assert!(seams >= functions, "{:?}", class_names(&full));
+            assert_eq!(full_evaluated, seams);
+            let classes = full
+                .classified
+                .iter()
+                .map(|entry| entry.class.as_str())
+                .collect::<BTreeSet<_>>();
+            assert!(classes.len() > 1, "fixture classes: {classes:?}");
+
+            for entry in &full.classified {
+                let id = entry.seam.id().as_str();
+                evaluation_probe::reset();
+                let one = inventory_diff_scoped_seam_at_with_config(&root, &config, &changed, id)?;
+                assert_eq!(evaluation_probe::evaluated(), 1, "{functions} seams, {id}");
+                assert_eq!(one.unevaluated_seams, seams - 1);
+                assert!(!one.evidence_incomplete());
+                let one_json = serde_json::to_value(&one.classified)
+                    .map_err(|error| format!("serialize: {error}"))?;
+                let full_json =
+                    serde_json::to_value([entry]).map_err(|error| format!("serialize: {error}"))?;
+                assert_eq!(one_json, full_json, "{functions} seams, {id}");
+            }
+
+            // Negative control: an id the file does not hold evaluates nothing
+            // and yields no entry, as the whole-file lookup would.
+            evaluation_probe::reset();
+            let missing = inventory_diff_scoped_seam_at_with_config(
+                &root,
+                &config,
+                &changed,
+                "seam-id-not-in-file",
+            )?;
+            assert_eq!(evaluation_probe::evaluated(), 0);
+            assert!(missing.classified.is_empty());
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    fn class_names(inventory: &ScopedClassifiedSeamInventory) -> Vec<(String, &'static str)> {
+        inventory
+            .classified
+            .iter()
+            .map(|entry| (entry.seam.id().as_str().to_string(), entry.class.as_str()))
+            .collect()
+    }
+
     /// #9210: an unchanged refresh reuses the classified result; any change
     /// to the workspace corpus, the changed-file set or the owner set misses.
     #[test]
@@ -16225,6 +16396,28 @@ mod first {{ pub struct Alpha; impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x >
             );
         }
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unreadable_path_refusal_names_the_path_not_a_pass_wide_failure() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
+        };
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::LanguageScopeUnsupported,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "Restore read access.")?,
+        )
+        .with_path("src/locked")?;
+        let refusal = refuse_failed_evidence(&[limitation], "repo badge")
+            .err()
+            .ok_or("a limitation must refuse")?;
+        assert!(
+            refusal.contains("unreadable path `src/locked`"),
+            "{refusal}"
+        );
+        assert!(!refusal.contains("pass-wide"), "{refusal}");
         Ok(())
     }
 }

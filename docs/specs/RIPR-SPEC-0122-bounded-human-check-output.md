@@ -234,6 +234,12 @@ keeps its own row. The 20-row window then bounds rows, not findings: beyond
 order above, printed in the order of each row's first finding, and the
 remainder line counts the findings in the rows it left out (#14299).
 
+A row whose reason is longer than 40 bytes and equal to the reason of the row
+printed just above it prints `reason: same as above` instead of repeating the
+sentence, so a run of rows that differ only by file or kind states a shared
+limitation once (#14308). Shorter reasons print on every row. `human-full` and
+machine formats keep every reason.
+
 The canonical next action's two `considered finding` alternates are chosen by
 the same priority order from the findings `Start here` did not select, so a
 gap is offered before an already-noticed finding that sorts earlier in the
@@ -418,7 +424,12 @@ selector is deterministic:
    compared even when step 4 put both findings in the same repair-route
    band, so two candidates equal through confidence order
    `reachable_unrevealed`, `weakly_exposed`, `no_static_path`, the unknown
-   classes, then `exposed`, rather than by file path (#14266).
+   classes, then `exposed`, rather than by file path (#14266). The
+   related-test key counts only a decision-set row linked above `low`
+   relation confidence: a row joined by a shared name token or fixture
+   affinity is advisory, so it does not lift a finding over a
+   higher-confidence one (#14734). A row with no recorded relation
+   confidence (an older artifact) still counts.
 
 Apart from the same-behavior shadowing in step 2, verdict order within one
 file role is unchanged: an unshadowed production unknown still leads a

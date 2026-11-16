@@ -6,7 +6,13 @@ fields. A current positive attestation is either:
 
 - a column-zero readiness marker on the first substantive review line; or
 - an explicit ``disposition: SOURCE_REVIEW_READY`` / ``disposition: REVIEW_READY``
-  field on its own line outside fenced examples.
+  field on its own line outside fenced examples; or
+- a column-zero ``VERDICT: APPROVE <full head SHA>`` first line whose SHA equals
+  the review's head, with only a blocker-free tail after the SHA (#8157). The
+  mirror ``VERDICT: BLOCK`` / ``VERDICT: BLOCKED`` first line is a negative
+  statement. Every other ``VERDICT:`` prose is neutral,
+  so an automated verdict review states a disposition instead of silently
+  superseding an earlier marker from the same login as neutral chatter.
 
 Native APPROVED / CHANGES_REQUESTED / DISMISSED reviews remain a separate path.
 
@@ -49,6 +55,16 @@ POSITIVE_LINE = re.compile(
     r"(?P<tail>(?:[ \t]*[,\u2014\u2013]|[ \t]+-[ \t]|[ \t]+for\b)[^\n]*)?[ \t]*$",
     re.IGNORECASE,
 )
+# #14728: a readiness marker whose tail names a commit but is outside the closed
+# vocabulary is an attempted attestation, not a refusal. It attests nothing, and
+# it must not block another login's marker or the description carrier. Only a
+# commit-bearing tail is neutral; a tail that states a disposition or carries a
+# blocker phrase still refuses.
+MARKER_OPEN = re.compile(
+    r"^ {0,3}(?:disposition:[ \t]*)?(?:SOURCE_REVIEW_READY|REVIEW_READY)\b",
+    re.IGNORECASE,
+)
+SHA_TOKEN = re.compile(r"(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])", re.IGNORECASE)
 # Vocabulary derived from the first lines and `disposition:` lines of the 11 real
 # REVIEW_READY native reviews on merged PRs #12736..#12793, plus connectors. Words that
 # can hedge or retract (not, but, if, only, pending, blocked, fix, wait, ...) are absent
@@ -186,6 +202,9 @@ REFUTATION_AFTER = re.compile(
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 DECISIVE_STATES = frozenset({"APPROVED", "CHANGES_REQUESTED", "DISMISSED"})
+# #14728 review: a native review that withdraws a login's earlier stance. A marker
+# COMMENT posted before the withdrawal does not speak for that login afterwards.
+SUPERSEDING_STATES = frozenset({"CHANGES_REQUESTED", "DISMISSED"})
 TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 
 
@@ -273,6 +292,114 @@ def positive_line(line: str) -> bool:
         return False
     tail = match.group("tail") or ""
     return not STATE_TOKEN.search(tail) and tail_allowed(tail)
+
+
+MARKER_NEUTRAL_TAIL = re.compile(
+    r"[\s*_`~>\-]*(?:head[\s*_`~>\-]+)?[0-9a-f]{7,40}[\s*_`~>\-]*",
+    re.IGNORECASE,
+)
+
+
+def marker_line_neutral(line: str) -> bool:
+    """Whether ``line`` is a mis-formatted positive marker: no attestation, no refusal.
+
+    #14728: ``REVIEW_READY <sha>``, ``REVIEW_READY - <sha>`` and ``REVIEW_READY
+    head <sha>`` are attempts to attest. Scoring them as a negative let one
+    login's formatting mistake block every other carrier, including a correct
+    marker and the description line. Only a tail that is nothing but a commit
+    reference is neutral; a tail that states a disposition, carries a blocker
+    phrase or adds any other word still refuses.
+    """
+    normalized = normalize_body(line)
+    match = MARKER_OPEN.match(normalized)
+    if match is None or positive_line(line):
+        return False
+    tail = normalized[match.end() :]
+    if STATE_TOKEN.search(tail) or negation_hit(line):
+        return False
+    # The tail must be nothing but a commit reference. Extracting ASCII words
+    # dropped an emoji, so `REVIEW_READY <sha> ❌` read as neutral and
+    # neither attested nor refused. Any character outside the separator set
+    # now fails the match, so the body falls through to the negative scan.
+    return MARKER_NEUTRAL_TAIL.fullmatch(tail) is not None
+
+
+# #8157 VERDICT carrier: only a column-zero first line in the observed verdict
+# form states a disposition. APPROVE must name the full head SHA; the observed
+# tail after it (``— no blocking findings on this head.``) attests only when it
+# carries no state token or blocker text. BLOCK/BLOCKED may name a short or
+# full SHA and may carry its reason on the same line. Any other VERDICT value
+# or SHA shape is neutral: it neither attests nor vetoes.
+VERDICT_APPROVE_LINE = re.compile(
+    r"^VERDICT:[ \t]+APPROVE[ \t]+([0-9a-f]{40})(?P<tail>.*)$", re.IGNORECASE
+)
+VERDICT_BLOCK_LINE = re.compile(
+    r"^VERDICT:[ \t]+BLOCK(?:ED)?(?![A-Za-z])"
+    r"(?:[ \t]+([0-9a-f]{7,40}))?(?:[ \t]*[,\u2014\u2013-].*)?[ \t]*$",
+    re.IGNORECASE,
+)
+# A verdict tail that conditions the approval attests nothing: the observed
+# benign tail states a present fact ("no blocking findings on this head"),
+# while a hedge defers the disposition to a future event or review.
+VERDICT_TAIL_HEDGE = re.compile(
+    r"\b(?:pending|awaiting|subject[ \t]+to|conditional(?:ly)?|provisional(?:ly)?"
+    r"|if|once|until|after|before|when|provided|tbd|wip)\b",
+    re.IGNORECASE,
+)
+
+
+def _verdict_first_line(body: str) -> tuple[str, str | None] | None:
+    """The VERDICT carrier on the first substantive line, if any."""
+    parts = split_body(body)
+    if parts is None:
+        return None
+    visible, _fenced = parts
+    substantive = [line for line in visible if line.strip()]
+    if not substantive:
+        return None
+    line = substantive[0]
+    approve = VERDICT_APPROVE_LINE.match(line)
+    if approve is not None:
+        tail = approve.group("tail")
+        # A 41st hex character or glued prose is not the observed form.
+        if tail and tail[0] not in " \t,.;:\u2014\u2013-":
+            return None
+        if STATE_TOKEN.search(tail) or negation_hit(line) or VERDICT_TAIL_HEDGE.search(tail):
+            return None
+        return ("approve", approve.group(1))
+    block = VERDICT_BLOCK_LINE.match(line)
+    if block is not None:
+        return ("block", block.group(1))
+    return None
+
+
+def comment_body_verdict_ready(body: str, head: str) -> bool:
+    """Whether the body is a VERDICT: APPROVE carrier for exactly ``head``.
+
+    The later-line and fenced-text screening is the marker screening: a carrier
+    contradicted later in its own body attests nothing.
+    """
+    verdict = _verdict_first_line(body)
+    if verdict is None or verdict != ("approve", head):
+        return False
+    parts = split_body(body)
+    if parts is None:
+        return False
+    visible, fenced = parts
+    substantive = [line for line in visible if line.strip()]
+    if any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced):
+        return False
+    return all(
+        positive_line(line)
+        or not (STATE_LINE.match(line) or negation_hit(line))
+        for line in substantive[1:]
+    )
+
+
+def comment_body_verdict_negative(body: str) -> bool:
+    """Whether the body's first line is a VERDICT: BLOCK/BLOCKED carrier."""
+    verdict = _verdict_first_line(body)
+    return verdict is not None and verdict[0] == "block"
 
 
 def strip_negated_change(line: str) -> str:
@@ -373,7 +500,10 @@ def comment_body_negative(body: str) -> bool:
     """Whether a COMMENT body states a disposition without being exactly positive.
 
     Ordinary chatter with no state mention is neutral. Structurally ambiguous bodies
-    count as negative so they can never silently drop a refusal.
+    count as negative so they can never silently drop a refusal. A mis-formatted
+    positive marker is neutral only when nothing follows it but allowlisted chatter
+    (#14728): on its own it attests nothing and must not block another carrier, but
+    any other prose after it keeps the negative reading, so a retraction still vetoes.
     """
     if comment_body_ready(body):
         return False
@@ -381,12 +511,68 @@ def comment_body_negative(body: str) -> bool:
     if parts is None:
         return True
     visible, fenced = parts
+    substantive = [line for line in visible if line.strip()]
+    neutral_first = bool(substantive) and marker_line_neutral(substantive[0])
+    first_index = next(
+        (index for index, line in enumerate(visible) if line.strip()), None
+    )
     # A prose line that names a state and retracts or blocks it still speaks: another
     # reviewer's "the earlier REVIEW_READY is withdrawn" must not read as chatter.
-    return any(
-        STATE_LINE.match(line) or (STATE_MENTION.search(line) and negation_hit(line))
-        for line in visible
-    ) or any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced)
+    for index, line in enumerate(visible):
+        if neutral_first and index == first_index:
+            continue
+        if STATE_LINE.match(line) or (STATE_MENTION.search(line) and negation_hit(line)):
+            return True
+    # #14728 review: a mis-formatted marker is neutral only when the body says
+    # nothing else. Any other prose after it keeps main's negative reading, so a
+    # retraction ("REVIEW_READY <sha>" then "The evidence is weak.") still vetoes
+    # instead of falling through to the description carrier.
+    if neutral_first:
+        remainder = [line.strip() for line in visible[first_index + 1 :] if line.strip()]
+        if remainder:
+            if len(remainder) != 1:
+                return True
+            tail = remainder[0]
+            if not (
+                tail.lower() in CHATTER_BODIES
+                or EXACT_HEAD_REVIEW.fullmatch(tail) is not None
+            ):
+                return True
+    # #14728: a mis-formatted marker followed by a plain-English blocker is a
+    # stated negative, as main already reads it; only a body with no blocker is
+    # neutral chatter.
+    if neutral_first and any(negation_hit(line) for line in visible if line.strip()):
+        return True
+    return any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced)
+
+
+# #14728: the objection space cannot be enumerated, so a later same-login body
+# supersedes the earlier statement by default. Only this small allowlist of
+# recognised benign chatter preserves it; an empty body is chatter too.
+CHATTER_BODIES = frozenset({"thanks, will look.", "no code change needed."})
+EXACT_HEAD_REVIEW = re.compile(
+    r"exact-head review \(head [0-9a-f]{7,40}\)", re.IGNORECASE
+)
+
+
+def comment_body_chatter(body: str) -> bool:
+    """Whether a body is recognised benign chatter that does not supersede a marker."""
+    parts = split_body(body)
+    if parts is None:
+        return False
+    visible, fenced = parts
+    if any(line.strip() for line in fenced):
+        return False
+    substantive = [line.strip() for line in visible if line.strip()]
+    if not substantive:
+        return True
+    if len(substantive) != 1:
+        return False
+    line = substantive[0]
+    return (
+        line.lower() in CHATTER_BODIES
+        or EXACT_HEAD_REVIEW.fullmatch(line) is not None
+    )
 
 
 def body_attests_head(body: str, head: str) -> bool:
@@ -444,15 +630,20 @@ def _trusted(review: dict[str, Any]) -> bool:
     return str(review.get("author_association") or "").upper() in TRUSTED_ASSOCIATIONS
 
 
+def _review_login(review: dict[str, Any], index: int = 0) -> str:
+    login = str((review.get("user") or {}).get("login") or "")
+    if login:
+        return login
+    # A deleted account yields user: null. Keep each such review as its own
+    # identity so a blocking review is never silently dropped.
+    review_id = review.get("id")
+    return f"<anonymous:{review_id if review_id is not None else f'index-{index}'}>"
+
+
 def _latest_by_login(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_login: dict[str, dict[str, Any]] = {}
     for index, review in enumerate(reviews):
-        login = str((review.get("user") or {}).get("login") or "")
-        if not login:
-            # A deleted account yields user: null. Keep each such review as its own
-            # identity so a blocking review is never silently dropped.
-            review_id = review.get("id")
-            login = f"<anonymous:{review_id if review_id is not None else f'index-{index}'}>"
+        login = _review_login(review, index)
         current = by_login.get(login)
         if current is None or _order(review) >= _order(current):
             by_login[login] = review
@@ -487,37 +678,113 @@ def reviews_allow_source_attestation(
         and str(r.get("state") or "") == "APPROVED"
         and _trusted(r)
     ]
-    # Every positive carrier is subject to the same unresolved-negative veto.
-    # Neutral replies cannot erase a statement. A later explicit ready COMMENT
-    # or still-current native approval resolves only that reviewer's objection.
-    # Use the selected native approvals, not historical ones: a dismissed or
-    # superseded approval cannot silently clear a negative COMMENT.
-    stated = [
+    # #14728: a body supersedes the login's earlier statement unless it is
+    # inert. Recognised chatter, an empty body and a mis-formatted marker that
+    # ``marker_line_neutral`` scores neutral add nothing, so they must not
+    # remove a marker either. Any other body still supersedes, fail-closed.
+    def neutral_marker_body(body: str) -> bool:
+        # A mis-formatted marker is inert only when the body says nothing else.
+        # Any other prose after it keeps main's reading, so a retraction
+        # ("REVIEW_READY <sha>" then "The evidence is weak.") still supersedes
+        # and vetoes instead of falling through to the description carrier.
+        parts = split_body(body)
+        if parts is None:
+            return False
+        visible, fenced = parts
+        if any(line.strip() for line in fenced):
+            return False
+        substantive = [line.strip() for line in visible if line.strip()]
+        if not substantive or not marker_line_neutral(substantive[0]):
+            return False
+        remainder = substantive[1:]
+        if not remainder:
+            return True
+        return len(remainder) == 1 and (
+            remainder[0].lower() in CHATTER_BODIES
+            or EXACT_HEAD_REVIEW.fullmatch(remainder[0]) is not None
+        )
+
+    effective = [
+        r for r in reviews
+        if str(r.get("commit_id") or "") == head
+        and _trusted(r)
+        and str(r.get("state") or "") == "COMMENTED"
+        and not comment_body_chatter(str(r.get("body") or ""))
+        and not neutral_marker_body(str(r.get("body") or ""))
+    ]
+    # #14728 review: a later native withdrawal (CHANGES_REQUESTED or DISMISSED)
+    # from the same login supersedes its earlier statement; a dismissed approval
+    # must not silently restore the statement it replaced.
+    def withdrawn_by_later_native(statement: dict[str, Any]) -> bool:
+        login = _review_login(statement)
+        return any(
+            _review_login(review) == login
+            and str(review.get("state") or "") in SUPERSEDING_STATES
+            and _order(review) > _order(statement)
+            for review in reviews
+        )
+
+    # A login vetoes if it has a negative statement at the head that no later
+    # positive statement from that same login clears. A blocker never clears a
+    # negative; a blocker alone, with no prior negative, does not veto.
+    def cleared_by_later_positive(negative: dict[str, Any]) -> bool:
+        login = _review_login(negative)
+        return any(
+            _review_login(review) == login
+            and _order(review) > _order(negative)
+            and not withdrawn_by_later_native(review)
+            and (
+                (
+                    # #14728 finding: a clearing COMMENT must satisfy the same
+                    # head and trust guard as a clearing APPROVED review. A body
+                    # posted at an earlier head, or by an untrusted association,
+                    # cannot withdraw a statement made at the admitted head.
+                    str(review.get("state") or "") == "COMMENTED"
+                    and str(review.get("commit_id") or "") == head
+                    and _trusted(review)
+                    and (
+                        comment_body_ready(str(review.get("body") or ""))
+                        or comment_body_verdict_ready(
+                            str(review.get("body") or ""), head
+                        )
+                    )
+                )
+                or (
+                    str(review.get("state") or "") == "APPROVED"
+                    and str(review.get("commit_id") or "") == head
+                    and _trusted(review)
+                )
+            )
+            for review in reviews
+        )
+
+    negatives = [
         r for r in reviews
         if str(r.get("commit_id") or "") == head
         and _trusted(r)
         and str(r.get("state") or "") == "COMMENTED"
         and (
-            comment_body_ready(str(r.get("body") or ""))
-            or comment_body_negative(str(r.get("body") or ""))
+            comment_body_verdict_negative(str(r.get("body") or ""))
+            or (
+                comment_body_negative(str(r.get("body") or ""))
+                # A verdict-carrier body already screens its own later lines
+                # for disposition statements and blockers, so the marker
+                # screening must not veto it for also naming a positive
+                # marker later in the same body.
+                and not comment_body_verdict_ready(str(r.get("body") or ""), head)
+            )
         )
     ]
-    if any(
-        str(r.get("state") or "") == "COMMENTED"
-        and comment_body_negative(str(r.get("body") or ""))
-        for r in _latest_by_login(stated + approvals)
-    ):
+    if any(not cleared_by_later_positive(r) for r in negatives):
         return False
     if approvals:
         return True
-    commented = [
-        r
-        for r in _latest_by_login(reviews)
-        if str(r.get("commit_id") or "") == head
-        and _trusted(r)
-        and str(r.get("state") or "") == "COMMENTED"
-    ]
-    if any(comment_body_ready(str(r.get("body") or "")) for r in commented):
+    if any(
+        comment_body_ready(str(r.get("body") or ""))
+        or comment_body_verdict_ready(str(r.get("body") or ""), head)
+        for r in _latest_by_login(effective)
+        if not withdrawn_by_later_native(r)
+    ):
         return True
     return pull_allows_source_attestation(pull, head=head)
 
@@ -837,6 +1104,33 @@ def self_test() -> None:
         actual = comment_body_ready(body)
         assert actual == expected, f"body={body!r} expected={expected} actual={actual}"
 
+    # #14728: a mis-formatted positive marker is neutral, so it cannot block
+    # another login's marker or the description carrier. A contradicting tail
+    # still refuses.
+    sha = "1cc13d3de7941b83f2488853e120fbdfd3d9cee5"
+    for body, ready, negative in (
+        ("SOURCE_REVIEW_READY", True, False),
+        ("REVIEW_READY", True, False),
+        (f"REVIEW_READY {sha}", False, False),
+        (f"REVIEW_READY - {sha}", False, False),
+        (f"REVIEW_READY head {sha}", False, False),
+        (f"REVIEW_READY - head {sha}", True, False),
+        ("REVIEW_READY: no", False, True),
+        (f"REVIEW_READY - {sha} pending the fix", False, True),
+        (f"REVIEW_READY - {sha}\nREPAIR_REQUIRED", False, True),
+        # Main already reads a mis-formatted marker followed by a plain-English
+        # blocker as a stated negative; the neutral tail must not erase that.
+        (f"REVIEW_READY - {sha}\nThe build is red.", False, True),
+    ):
+        actual_ready = comment_body_ready(body)
+        actual_negative = comment_body_negative(body)
+        assert actual_ready == ready, (
+            f"body={body!r} expected ready={ready} actual={actual_ready}"
+        )
+        assert actual_negative == negative, (
+            f"body={body!r} expected negative={negative} actual={actual_negative}"
+        )
+
     head = "a" * 40
     other = "b" * 40
     review = lambda **kw: {
@@ -898,6 +1192,160 @@ def self_test() -> None:
                    submitted_at="2026-10-15T01:00:01Z"),
             review(state="COMMENTED", commit_id=head, id=2, body="Looks fine to me",
                    submitted_at="2026-10-15T01:00:02Z", user={"login": "other"}),
+        ],
+        head=head,
+    )
+    # #14728: a later neutral, empty or prose review from the same login must not
+    # erase that login's marker; a later stated review still supersedes it.
+    marker = review(state="COMMENTED", commit_id=head, id=1, body="REVIEW_READY",
+                    submitted_at="2026-10-15T01:00:01Z")
+    for body in ("Thanks, will look.", f"Exact-head review (head {head})", ""):
+        assert reviews_allow_source_attestation(
+            [
+                marker,
+                review(state="COMMENTED", commit_id=head, id=2, body=body,
+                       submitted_at="2026-10-15T01:00:02Z"),
+            ],
+            head=head,
+        ), body
+    assert not reviews_allow_source_attestation(
+        [
+            marker,
+            review(state="COMMENTED", commit_id=head, id=2, body="REPAIR_REQUIRED",
+                   submitted_at="2026-10-15T01:00:02Z"),
+        ],
+        head=head,
+    )
+    # #14728: a plain-English blocker supersedes the marker even though it is
+    # neither ready nor negative.
+    for body in ("do not merge", "The build is red."):
+        assert not reviews_allow_source_attestation(
+            [
+                marker,
+                review(state="COMMENTED", commit_id=head, id=2, body=body,
+                       submitted_at="2026-10-15T01:00:02Z"),
+            ],
+            head=head,
+        ), body
+    # A body supersedes the marker unless it is inert. Chatter, an empty body and
+    # a mis-formatted marker that `marker_line_neutral` scores neutral add
+    # nothing, so the earlier marker survives them. Any other body, including
+    # plain prose, supersedes fail-closed.
+    for body in (
+        f"REVIEW_READY {sha}",
+        f"REVIEW_READY - {sha}",
+        f"REVIEW_READY head {sha}",
+        "No code change needed.",
+    ):
+        assert reviews_allow_source_attestation(
+            [
+                marker,
+                review(state="COMMENTED", commit_id=head, id=2, body=body,
+                       submitted_at="2026-10-15T01:00:02Z"),
+            ],
+            head=head,
+        ), body
+    for body in (
+        "I don't think this is right.",
+        "This is wrong.",
+        "I have concerns about the selection change.",
+        "This will regress the queue.",
+        "LGTM",
+        "Looks good.",
+        "Nice work.",
+        "Thanks for the explanation.",
+        f"REVIEW_READY {sha}\n\nThe evidence is weak.",
+        f"REVIEW_READY {sha}\n\nI have concerns about the oracle.",
+    ):
+        assert not reviews_allow_source_attestation(
+            [
+                marker,
+                review(state="COMMENTED", commit_id=head, id=2, body=body,
+                       submitted_at="2026-10-15T01:00:02Z"),
+            ],
+            head=head,
+        ), body
+    # A login whose latest statement is a blocker vetoes, whatever another login
+    # posts later.
+    assert not reviews_allow_source_attestation(
+        [
+            review(state="COMMENTED", commit_id=head, id=1, body="REPAIR_REQUIRED",
+                   submitted_at="2026-10-15T01:00:01Z"),
+            review(state="COMMENTED", commit_id=head, id=2, body="The build is red.",
+                   submitted_at="2026-10-15T01:00:02Z"),
+            review(state="COMMENTED", commit_id=head, id=3, body="SOURCE_REVIEW_READY",
+                   submitted_at="2026-10-15T01:00:03Z", user={"login": "other"}),
+        ],
+        head=head,
+    )
+    # A blocker alone, with no prior negative, does not veto another login.
+    assert reviews_allow_source_attestation(
+        [
+            review(state="COMMENTED", commit_id=head, id=1, body="The build is red.",
+                   submitted_at="2026-10-15T01:00:01Z"),
+            review(state="COMMENTED", commit_id=head, id=2, body="SOURCE_REVIEW_READY",
+                   submitted_at="2026-10-15T01:00:02Z", user={"login": "other"}),
+        ],
+        head=head,
+    )
+    # A hedged approve is not inert, so it supersedes the marker fail-closed;
+    # the hedge design is #14770.
+    for tail in ("pending the fix", "after the rebase", "once CI passes", "if the shards pass"):
+        body = f"VERDICT: APPROVE {head} \u2014 {tail}"
+        assert not reviews_allow_source_attestation(
+            [
+                marker,
+                review(state="COMMENTED", commit_id=head, id=2, body=body,
+                       submitted_at="2026-10-15T01:00:02Z"),
+            ],
+            head=head,
+        ), body
+    # #14728 review: a tail with a character outside the commit-reference
+    # grammar is negative, not neutral, so it vetoes another login's marker.
+    emoji = f"REVIEW_READY {sha} \u274c"
+    assert comment_body_negative(emoji)
+    assert not reviews_allow_source_attestation(
+        [
+            review(state="COMMENTED", commit_id=head, id=1, body=emoji,
+                   submitted_at="2026-10-15T01:00:01Z"),
+            review(state="COMMENTED", commit_id=head, id=2, body="SOURCE_REVIEW_READY",
+                   submitted_at="2026-10-15T01:00:02Z", user={"login": "other"}),
+        ],
+        head=head,
+    )
+    # #14728 review: a later native withdrawal supersedes the marker.
+    approval = review(state="APPROVED", commit_id=head, id=2,
+                      submitted_at="2026-10-15T01:01:00Z")
+    dismissed = review(state="DISMISSED", commit_id=head, id=3,
+                       submitted_at="2026-10-15T01:02:00Z")
+    assert not reviews_allow_source_attestation(
+        [marker, approval, dismissed], head=head
+    )
+    assert reviews_allow_source_attestation([marker], head=head)
+    # #14728 finding: a later same-login COMMENTED body only clears that login's
+    # negative when it is trusted and posted at the admitted head. A body written
+    # for an earlier head, or by an untrusted association, cannot withdraw a
+    # statement made at this head. The APPROVED branch already carries the guard.
+    negative = review(state="COMMENTED", commit_id=head, id=1, body="REPAIR_REQUIRED",
+                      submitted_at="2026-10-15T01:00:01Z")
+    later_marker = review(state="COMMENTED", commit_id=head, id=3, body="SOURCE_REVIEW_READY",
+                          submitted_at="2026-10-15T01:00:03Z", user={"login": "other"})
+    assert not reviews_allow_source_attestation([negative, later_marker], head=head)
+    for wrong_head_or_trust in (
+        review(state="COMMENTED", commit_id=other, id=2, body="SOURCE_REVIEW_READY",
+               submitted_at="2026-10-15T01:00:02Z"),
+        review(state="COMMENTED", commit_id=head, id=2, body="SOURCE_REVIEW_READY",
+               author_association="NONE", submitted_at="2026-10-15T01:00:02Z"),
+    ):
+        assert not reviews_allow_source_attestation(
+            [negative, wrong_head_or_trust, later_marker], head=head
+        )
+    assert reviews_allow_source_attestation(
+        [
+            negative,
+            review(state="COMMENTED", commit_id=head, id=2, body="SOURCE_REVIEW_READY",
+                   submitted_at="2026-10-15T01:00:02Z"),
+            later_marker,
         ],
         head=head,
     )
@@ -1080,6 +1528,163 @@ def self_test() -> None:
         pull=pull(),
     )
 
+    # #8157 VERDICT carrier: an exact column-zero first line states the
+    # disposition, so an automated verdict review no longer supersedes an
+    # earlier marker from the same login as neutral chatter (#14652, #13898).
+    vstamp = lambda n: f"2026-10-15T02:00:0{n}Z"
+    verdict_approve = f"VERDICT: APPROVE {head}"
+    verdict_block = f"VERDICT: BLOCK {head}"
+    vreview = lambda **kw: review(state="COMMENTED", commit_id=head, **kw)
+    assert comment_body_verdict_ready(verdict_approve, head)
+    assert not comment_body_verdict_ready(verdict_approve, other)
+    assert not comment_body_verdict_ready(f"VERDICT: APPROVE {head[:12]}", head)
+    assert not comment_body_verdict_ready(f" VERDICT: APPROVE {head}", head)
+    # The observed automated form carries an em-dash tail with no blocker text.
+    assert comment_body_verdict_ready(
+        f"VERDICT: APPROVE {head} \u2014 no blocking findings on this head.", head
+    )
+    assert not comment_body_verdict_ready(
+        f"VERDICT: APPROVE {head} \u2014 repairs required", head
+    )
+    # A conditional tail defers the disposition, so it attests nothing.
+    assert not comment_body_verdict_ready(
+        f"VERDICT: APPROVE {head} \u2014 pending security review", head
+    )
+    assert not comment_body_verdict_ready(
+        f"VERDICT: APPROVE {head} \u2014 subject to CI", head
+    )
+    # A carrier body that also names a positive marker later is still a
+    # carrier: its own later-line screening, not the marker veto, decides.
+    assert comment_body_verdict_ready(f"{verdict_approve}\n\nSOURCE_REVIEW_READY", head)
+    assert not comment_body_verdict_ready(f"{verdict_approve}\n\nREPAIR_REQUIRED", head)
+    assert comment_body_verdict_negative(
+        f"VERDICT: BLOCK {head} \u2014 one finding remains open"
+    )
+    assert comment_body_verdict_negative(verdict_block)
+    assert comment_body_verdict_negative("VERDICT: BLOCK")
+    assert comment_body_verdict_negative(f"VERDICT: BLOCKED {head}")
+    assert not comment_body_verdict_negative("VERDICT: MAYBE")
+    assert not comment_body_verdict_negative(verdict_approve)
+    for rows, allowed in (
+        # Standalone carrier admits on its own.
+        ([vreview(id=1, submitted_at=vstamp(1), body=verdict_approve)], True),
+        # The observed clobber sequence now admits in either order.
+        (
+            [
+                vreview(id=1, submitted_at=vstamp(1), body="SOURCE_REVIEW_READY"),
+                vreview(id=2, submitted_at=vstamp(2), body=verdict_approve),
+            ],
+            True,
+        ),
+        (
+            [
+                vreview(id=1, submitted_at=vstamp(1), body=verdict_approve),
+                vreview(id=2, submitted_at=vstamp(2), body="SOURCE_REVIEW_READY"),
+            ],
+            True,
+        ),
+        # The mirror carrier refuses, standalone and after a marker.
+        ([vreview(id=1, submitted_at=vstamp(1), body=verdict_block)], False),
+        (
+            [
+                vreview(id=1, submitted_at=vstamp(1), body="SOURCE_REVIEW_READY"),
+                vreview(id=2, submitted_at=vstamp(2), body=verdict_block),
+            ],
+            False,
+        ),
+        (
+            [
+                vreview(id=1, submitted_at=vstamp(1), body="SOURCE_REVIEW_READY"),
+                vreview(
+                    id=2, submitted_at=vstamp(2), body=f"VERDICT: BLOCKED {head}"
+                ),
+            ],
+            False,
+        ),
+        # A verdict from another trusted reviewer vetoes like any negative.
+        (
+            [
+                vreview(id=1, submitted_at=vstamp(1), body="SOURCE_REVIEW_READY"),
+                vreview(
+                    id=2,
+                    submitted_at=vstamp(2),
+                    body=verdict_block,
+                    user={"login": "other"},
+                ),
+            ],
+            False,
+        ),
+        # Wrong-head carriers refuse: the SHA must equal this review's head.
+        ([vreview(id=1, submitted_at=vstamp(1), body=f"VERDICT: APPROVE {other}")], False),
+        (
+            [
+                review(
+                    state="COMMENTED",
+                    commit_id=other,
+                    id=1,
+                    submitted_at=vstamp(1),
+                    body=verdict_approve,
+                )
+            ],
+            False,
+        ),
+        # An untrusted verdict carries no authority in either direction.
+        (
+            [
+                vreview(
+                    id=1,
+                    submitted_at=vstamp(1),
+                    body=verdict_approve,
+                    author_association="NONE",
+                )
+            ],
+            False,
+        ),
+        (
+            [
+                vreview(id=1, submitted_at=vstamp(1), body="SOURCE_REVIEW_READY"),
+                vreview(
+                    id=2,
+                    submitted_at=vstamp(2),
+                    body=verdict_block,
+                    user={"login": "other"},
+                    author_association="NONE",
+                ),
+            ],
+            True,
+        ),
+        # Other VERDICT prose stays neutral and attests nothing on its own.
+        ([vreview(id=1, submitted_at=vstamp(1), body="VERDICT: MAYBE")], False),
+        ([vreview(id=1, submitted_at=vstamp(1), body=f"VERDICT: APPROVE {head[:12]}")], False),
+        # A carrier contradicted later in its own body attests nothing.
+        (
+            [vreview(id=1, submitted_at=vstamp(1), body=f"{verdict_approve}\nREPAIR_REQUIRED")],
+            False,
+        ),
+        # A carrier body naming a positive marker later still attests: the
+        # marker screening must not veto the verdict carrier in its own body.
+        (
+            [vreview(id=1, submitted_at=vstamp(1), body=f"{verdict_approve}\n\nSOURCE_REVIEW_READY")],
+            True,
+        ),
+        (
+            [
+                vreview(
+                    id=1,
+                    submitted_at=vstamp(1),
+                    body=f"{verdict_approve}\n\ndisposition: REVIEW_READY",
+                )
+            ],
+            True,
+        ),
+        # A conditional verdict tail attests nothing on its own.
+        (
+            [vreview(id=1, submitted_at=vstamp(1), body=f"{verdict_approve} \u2014 pending security review")],
+            False,
+        ),
+    ):
+        assert reviews_allow_source_attestation(rows, head=head) is allowed, rows
+
     for bad_page in ('{"message": "Bad credentials"}', '[1]', '[{"a":1}] {"b":2}'):
         try:
             parse_paginated(bad_page)
@@ -1228,7 +1833,8 @@ def main() -> int:
             "::error::source review attestation refused: a trusted reviewer "
             "(OWNER/MEMBER/COLLABORATOR) must post a current-head COMMENT whose first line is "
             "exactly SOURCE_REVIEW_READY or REVIEW_READY (or disposition: of either) with no "
-            "contradicting disposition text, or a native APPROVED on the head; narrative "
+            "contradicting disposition text, a COMMENT whose first line is "
+            f"`VERDICT: APPROVE {args.head}`, or a native APPROVED on the head; narrative "
             "tokens and quoted examples do not count (#8157). When GitHub throttles review "
             "writes, a same-repository pull request may instead carry one description line "
             f"`Source review: REVIEW_READY {args.head}` with the full current head SHA (#4984)",

@@ -2111,7 +2111,9 @@ fn non_empty_string_arg(
 ) -> Result<String, String> {
     let value = expect_value(args, index, flag)?;
     if value.trim().is_empty() {
-        Err(format!("{command} {flag} requires a non-empty value"))
+        let message = format!("{command} {flag} requires a non-empty value");
+        crate::cli::usage_refusal::note_missing_value(flag, &message);
+        Err(message)
     } else {
         Ok(value.to_string())
     }
@@ -2328,10 +2330,16 @@ fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
         .as_deref()
         .is_some_and(|base| base.trim().is_empty())
     {
-        return Err("diff --base requires a non-empty revision".to_string());
+        return Err(crate::cli::usage_refusal::empty_value(
+            "--base",
+            "diff --base requires a non-empty revision",
+        ));
     }
     if options.head.trim().is_empty() {
-        return Err("diff --head requires a non-empty revision".to_string());
+        return Err(crate::cli::usage_refusal::empty_value(
+            "--head",
+            "diff --head requires a non-empty revision",
+        ));
     }
 
     Ok(options)

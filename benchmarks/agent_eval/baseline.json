@@ -1,12 +1,12 @@
 {
   "advisory": true,
-  "ripr_version": "ripr 0.11.0 (36abf0b48383eb3efaea606883d4574cef7885ed)",
+  "ripr_version": "ripr 0.11.0 (355c82e8d2b209a6939ff212296cfdfcd0c4b089)",
   "routes": [
-    {"answered":6,"route":"cli-agent-loop","scenarios":6,"tokens_to_answer":1487,"total_tokens":8704},
+    {"answered":6,"route":"cli-agent-loop","scenarios":6,"tokens_to_answer":1487,"total_tokens":2594},
     {"answered":6,"route":"cli-agent-find","scenarios":6,"tokens_to_answer":1487,"total_tokens":1487},
     {"answered":5,"route":"cli-human","scenarios":6,"tokens_to_answer":5254,"total_tokens":6364},
     {"answered":6,"route":"cli-json-terse","scenarios":6,"tokens_to_answer":23334,"total_tokens":23334},
-    {"answered":6,"route":"agent-brief","scenarios":6,"tokens_to_answer":8701,"total_tokens":8701},
+    {"answered":6,"route":"agent-brief","scenarios":6,"tokens_to_answer":9266,"total_tokens":9266},
     {"answered":6,"route":"mcp","scenarios":6,"tokens_to_answer":51875,"total_tokens":56278},
     {"answered":6,"route":"mcp-brief","scenarios":6,"tokens_to_answer":35267,"total_tokens":36389}
   ],
@@ -33,13 +33,11 @@
           "failed_steps": 0,
           "route": "cli-agent-loop",
           "steps": [
-            {"bytes":621,"exit":0,"step":"find","tokens":232},
-            {"bytes":609,"exit":0,"step":"detail:explain","tokens":220},
-            {"bytes":3828,"exit":0,"step":"detail:context","tokens":1356}
+            {"bytes":621,"exit":0,"step":"find","tokens":232}
           ],
           "tokens_to_answer": 232,
-          "total_bytes": 5058,
-          "total_tokens": 1808
+          "total_bytes": 621,
+          "total_tokens": 232
         },
         {
           "answer_reached": true,
@@ -142,13 +140,11 @@
           "failed_steps": 0,
           "route": "cli-agent-loop",
           "steps": [
-            {"bytes":622,"exit":0,"step":"find","tokens":240},
-            {"bytes":596,"exit":0,"step":"detail:explain","tokens":223},
-            {"bytes":3650,"exit":0,"step":"detail:context","tokens":1363}
+            {"bytes":622,"exit":0,"step":"find","tokens":240}
           ],
           "tokens_to_answer": 240,
-          "total_bytes": 4868,
-          "total_tokens": 1826
+          "total_bytes": 622,
+          "total_tokens": 240
         },
         {
           "answer_reached": true,
@@ -188,11 +184,11 @@
           "failed_steps": 0,
           "route": "agent-brief",
           "steps": [
-            {"bytes":6080,"exit":0,"step":"brief","tokens":2013}
+            {"bytes":7972,"exit":0,"step":"brief","tokens":2578}
           ],
-          "tokens_to_answer": 2013,
-          "total_bytes": 6080,
-          "total_tokens": 2013
+          "tokens_to_answer": 2578,
+          "total_bytes": 7972,
+          "total_tokens": 2578
         },
         {
           "answer_reached": true,
@@ -362,13 +358,11 @@
           "failed_steps": 0,
           "route": "cli-agent-loop",
           "steps": [
-            {"bytes":922,"exit":0,"step":"find","tokens":370},
-            {"bytes":679,"exit":0,"step":"detail:explain","tokens":261},
-            {"bytes":3524,"exit":0,"step":"detail:context","tokens":1367}
+            {"bytes":922,"exit":0,"step":"find","tokens":370}
           ],
           "tokens_to_answer": 370,
-          "total_bytes": 5125,
-          "total_tokens": 1998
+          "total_bytes": 922,
+          "total_tokens": 370
         },
         {
           "answer_reached": true,
@@ -578,13 +572,11 @@
           "failed_steps": 0,
           "route": "cli-agent-loop",
           "steps": [
-            {"bytes":905,"exit":0,"step":"find","tokens":348},
-            {"bytes":570,"exit":0,"step":"detail:explain","tokens":211},
-            {"bytes":3041,"exit":0,"step":"detail:context","tokens":1109}
+            {"bytes":905,"exit":0,"step":"find","tokens":348}
           ],
           "tokens_to_answer": 348,
-          "total_bytes": 4516,
-          "total_tokens": 1668
+          "total_bytes": 905,
+          "total_tokens": 348
         },
         {
           "answer_reached": true,

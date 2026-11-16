@@ -49,9 +49,9 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                         )));
                     }
                     None => {
-                        return Err(CommandError::from(
-                            "missing value for --profile; pass a value right after it".to_string(),
-                        ));
+                        return Err(CommandError::from(crate::cli::parse::missing_value(
+                            "--profile",
+                        )));
                     }
                 };
             }
@@ -63,15 +63,15 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                     // pre-#4318 parser answered `missing value for --root`
                     // here. Other dash-prefixed paths stay legitimate values.
                     Some("--help" | "-h" | "--json" | "--timings" | "--profile" | "--root") => {
-                        return Err(CommandError::from(
-                            "missing value for --root; pass a value right after it".to_string(),
-                        ));
+                        return Err(CommandError::from(crate::cli::parse::missing_value(
+                            "--root",
+                        )));
                     }
                     Some(value) => value,
                     None => {
-                        return Err(CommandError::from(
-                            "missing value for --root; pass a value right after it".to_string(),
-                        ));
+                        return Err(CommandError::from(crate::cli::parse::missing_value(
+                            "--root",
+                        )));
                     }
                 };
                 // #4318: a known doctor flag in the value position means the
@@ -1367,7 +1367,7 @@ fn python_pytest_runtime_probe<F>(
 where
     F: FnMut(&str) -> (output::doctor::DoctorStatus, String),
 {
-    use output::python_env::{VenvPytest, project_venv_pytest, project_venv_python};
+    use analysis::python_env::{VenvPytest, project_venv_pytest, project_venv_python};
     let (status, evidence) = probe(PYTHON_PYTEST_PROBE);
     if status == output::doctor::DoctorStatus::Pass {
         return (status, format!("{evidence} (PATH `python -m pytest`)"));

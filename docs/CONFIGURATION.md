@@ -301,7 +301,7 @@ Runs the static exposure analysis and renders findings.
 | `--diff PATH` | _(unset)_ | Path to a unified diff file. Overrides `--base`. `--diff -` reads from stdin. |
 | `--candidate-tree TREE` | _(unset)_ | Analyze exactly this immutable Git tree object, deriving the diff from Git objects alone. Mutually exclusive with `--diff` and `--base`. |
 | `--candidate-base BASE` | repository's empty tree | Base treeish for `--candidate-tree` (a commit, tag, or tree OID). |
-| `--path GLOB` | (all files) | Repeatable. Analyze only changed files matching the repository-relative file, directory or glob. Files left out are named in a `language_scope_unsupported` limitation. |
+| `--path GLOB` | (all files) | Repeatable. Analyze only changed files matching the repository-relative file, directory or glob. Files left out are named in a `requested_scope_excluded` scope note on a complete outcome. |
 | `--exclude GLOB` | (none) | Repeatable. Skip changed files matching the pattern; wins over `--path`. Same disclosure. |
 | `--worktree` | already the default when the tree has staged or unstaged tracked edits | Diff the base against the live working tree instead of `HEAD`, including staged and unstaged tracked edits (untracked files never select it; stage them with `git add -N`). Like the committed `<base>...HEAD` diff, it starts at the merge base of the base and `HEAD`, so commits the base gained after the branch forked are not reported as branch changes (the base tip when there is no merge base, as in a shallow clone). Cannot be combined with `--diff`. |
 | `--committed` | _(off)_ | Diff committed history only (`base...HEAD`) even when the working tree has uncommitted changes; the output notes that those edits were not analyzed. Cannot be combined with `--worktree`, `--diff`, `--candidate-tree`, or repo-scope formats. |
@@ -455,8 +455,8 @@ ripr check --root . --base origin/main --path crates/api --path 'src/**/*.rs'
 ```
 
 Every changed file the scope leaves out is named in a
-`language_scope_unsupported` limitation and has no finding, so the outcome is
-`partial_with_limitations`, never a clean or complete analysis. A scope that
+`requested_scope_excluded` scope note and has no finding. The note is advisory,
+so the outcome stays complete when everything in scope was analyzed. A scope that
 leaves no changed file fails with `scope_filter_matched_nothing` (exit 2). Rust
 files with a generator header (`@generated`, `Code generated ... DO NOT EDIT`,
 rust-bindgen), `cargo vendor` crates and a root `target/` directory are already
@@ -939,6 +939,10 @@ still report them. There is no setting to turn this off; remove the attribute
 to see the findings again.
 
 Validated by `ripr check --format sarif`, `sarif-compact`, `badge-json`, `badge-shields` and the `badge-plus-*` / `repo-badge-plus-*` formats (loaded relative to `--root`).
+In CI, pass the same file to `ripr check --suppression-policy` and to
+`ripr review-comments --suppression-policy .ripr/suppressions.toml`;
+`ripr gate evaluate` then reads the suppressed seams as non-blocking. See the
+[cargo-mutants CI recipe](FROM_CARGO_MUTANTS.md#suppressing-in-ci).
 Schema:
 
 ```toml
@@ -977,6 +981,38 @@ reason = "Generated sources are checked by the generator contract."
 owner = "code-generation"
 ```
 
+Finding ids hash the parsed expression, so editing a suppressed function
+changes its id and silently drops an id-keyed entry. To keep suppressing a
+function across edits, select it by owner with an exact `path` plus `function`
+(a Rust owner name such as `retry_allowed` or `impl Retry::allowed`):
+
+```toml
+[[suppressions]]
+kind = "exposure_gap"
+path = "src/retry.rs"
+function = "retry_allowed"
+reason = "Retry policy is covered by the integration suite."
+owner = "team-retry"
+expires = "2026-12-31"
+```
+
+`owner` stays the team that owns the exception; `function` is the code
+identity. Matching is exact on file and function; a missing or ambiguous owner
+never matches. A `function` entry covers every seam in that function,
+including seams added later, so set `expires` and review it when the function
+changes.
+
+In `ripr review-comments`, a `finding_id` entry applies only when the id names
+exactly one seam of the whole diff-scoped inventory; an id shared with another
+seam (even one outside the brief cap), or carrying a collision ordinal, is
+reported and not applied. An entry narrowed by `static_class` does not apply
+to review-comments seams (their grip classes use a different vocabulary); it
+is reported with a warning ("... uses static_class, which does not apply to
+review-comments seams; entry not applied") instead of being skipped silently.
+A `path` + `function` entry must name the file exactly as the repository
+root sees it (`src/retry.rs`, not `./src/retry.rs`). Policy-suppressed
+seams still count against the brief cap, which stays disclosed.
+
 `static_class` is optional narrowing for a path-glob selector and must name a
 known exposure class. See [the complete example](suppressions.example.toml)
 for expiry and policy-health metadata.
@@ -987,14 +1023,14 @@ Supported `kind` values (closed set): `exposure_gap`, `test_efficiency`.
 | --- | --- |
 | `schema_version = 1` required | Missing or other values fail. |
 | `kind`, `owner`, `reason` required and non-blank | Missing or whitespace-only values fail. |
-| `kind = "exposure_gap"` requires `finding_id` or a `path` glob | Rejects `test`; a path-glob selector may narrow by a known `static_class`. |
+| `kind = "exposure_gap"` requires `finding_id`, a `path` glob, or `path` + `function` | Rejects `test`; `function` needs an exact (non-glob) `path` and cannot combine with `finding_id`; a path-glob selector may narrow by a known `static_class`. |
 | `kind = "test_efficiency"` requires `test` | And rejects `finding_id`; `path` is optional for disambiguation. |
 | `path` repo-relative, slash-separated | Absolute paths and backslash paths fail at parse time. |
 | `expires` ISO `YYYY-MM-DD` if present | Other formats fail at parse time. |
 | `created_at`, `last_seen`, `review_by` ISO `YYYY-MM-DD` if present | Other formats fail at parse time. |
 | Unknown fields rejected | Catches typos. |
 | Duplicate fields rejected | Repeated `schema_version` headers or fields within one entry fail with the original and repeated declaration lines, including empty first values. Fields reused in separate entries remain valid. |
-| Duplicate exact selectors rejected | Same `finding_id` (or `(test, path)`) twice fails. This check does not reject duplicate path-glob selectors. |
+| Duplicate exact selectors rejected | Same `finding_id` (or `(test, path)`, or `(path, function)`) twice fails. This check does not reject duplicate path-glob selectors. |
 | Unmatched selectors surface as warnings | Selector that matches no current finding is reported but does not fail the badge. |
 | Expired suppressions do **not** apply | They surface as warnings on the badge so silent green-forever debt is impossible. |
 
@@ -1306,7 +1342,7 @@ card refuse it); `review-comments` output still lists it, labelled `off`.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `generated_file_patterns` | array of strings | `[]` | Additional Rust generated-source globs. Built-in generated names and `gen/`, `generated/`, and `out/` directories remain excluded unless their exact path is in `handwritten_files`. Files whose first five lines carry an `@generated`, rust-bindgen, or `Code generated ... DO NOT EDIT` comment, and `cargo vendor` crates (directories holding `.cargo-checksum.json`) remain excluded. A pattern without `/` matches any filename; a pattern with `/` matches the repository-relative path. `*` matches within one path segment, `?` matches one character, and `**` matches zero or more path segments. Empty, duplicate, absolute, parent-traversing, drive-prefixed, and backslash-containing patterns are rejected. |
+| `generated_file_patterns` | array of strings | `[]` | Additional Rust generated-source globs. Built-in generated names and `gen/`, `generated/`, and `out/` directories remain excluded unless their exact path is in `handwritten_files`. Files whose first five lines carry an `@generated`, rust-bindgen, or `Code generated ... DO NOT EDIT` comment, and `cargo vendor` crates (directories holding `.cargo-checksum.json`) remain excluded. Diff checks name files matching these patterns in a `requested_scope_excluded` scope note on a complete outcome; the built-in skips stay a partial `language_scope_unsupported` limitation. A pattern without `/` matches any filename; a pattern with `/` matches the repository-relative path. `*` matches within one path segment, `?` matches one character, and `**` matches zero or more path segments. Empty, duplicate, absolute, parent-traversing, drive-prefixed, and backslash-containing patterns are rejected. |
 | `handwritten_files` | array of exact paths | `[]` | Repository-relative `.rs` files to analyze despite a built-in generated filename or directory convention. Explicit `generated_file_patterns`, generator headers and vendor markers still exclude them. Leading `./`, internal `.` and repeated `/` are normalized; order is immaterial. Empty, duplicate after normalization, absolute, parent-traversing, drive-prefixed, backslash-containing, control-character, non-Rust and glob paths are rejected. |
 
 For example, a hand-written test of generated workflows can keep its filename:
@@ -1333,7 +1369,7 @@ adapters:
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `handwritten_files` | array of exact paths | `[]` | Repository-relative files to analyze even though a path component matches the adapter's built-in excluded-directory conventions (`.git`, `target`, `node_modules`, virtualenvs, `site-packages`, caches, and build-output names such as `build/`, `dist/` and, for TypeScript, `out/`). Python declarations must name `.py` files; TypeScript declarations must name one of the routed TypeScript/JavaScript extensions (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cjs`). Exact paths only — globs are rejected. Generated-name conventions still exclude a declared path. The override applies to diff checks; repo-scope exposure remains convention-scoped. |
-| `excluded_file_patterns` | array of strings | `[]` | Additional repository-relative globs omitted from preview-language indexing during diff checks (#5380). Uses the same `/`-separated glob dialect as `[languages.rust] generated_file_patterns`. Parse-budget refusals on paths that look like fixture or data files point here instead of advising a source rewrite. |
+| `excluded_file_patterns` | array of strings | `[]` | Additional repository-relative globs omitted from preview-language indexing during diff checks (#5380). Uses the same `/`-separated glob dialect as `[languages.rust] generated_file_patterns`. Files it leaves out are named in a `requested_scope_excluded` scope note on a complete outcome. Parse-budget refusals on paths that look like fixture or data files point here instead of advising a source rewrite. |
 
 For example, a project that keeps hand-written Python source under a `build/`
 package can admit it:

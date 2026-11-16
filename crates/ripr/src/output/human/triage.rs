@@ -12,8 +12,8 @@ use crate::domain::ProbeFamily;
 use crate::domain::{
     CanonicalNextActionV1, ExposureClass, Finding, LanguageId, NextActionAlternative,
     NextActionCheckCase, NextActionCurrentness, NextActionDiffSource, NextActionInput,
-    NextActionProducer, NextActionStop, StaticLimitKind, current_command_platform,
-    select_canonical_next_action,
+    NextActionProducer, NextActionStop, RelationConfidence, StaticLimitKind,
+    current_command_platform, select_canonical_next_action,
 };
 use crate::output::count_noun::count_noun;
 use crate::output::path::display_path;
@@ -815,7 +815,10 @@ pub(crate) fn render_human_triage(
         // Identical consecutive rows (same location, class, kind and reason)
         // collapse to one row with a repeat count so a diff with many
         // equivalent base-side findings stays scannable.
-        let mut previous: Option<(String, usize)> = None;
+        let mut previous: Option<(String, usize, String)> = None;
+        // #14308 item 3: a long reason the row above already printed is
+        // written once; later rows say `same as above`.
+        let mut last_reason: Option<String> = None;
         for row_members in hidden_rows(&triage.omitted) {
             // #14299: one row stands for every omitted finding that shares
             // file, owner, class, currentness and reason. Members that also
@@ -827,11 +830,12 @@ pub(crate) fn render_human_triage(
             let Some(finding) = members.first().copied() else {
                 continue;
             };
+            let reason = hidden_finding_reason(finding);
             if let Some(row) = grouped_hidden_row(&output.root, &members, label_currentness) {
-                if let Some((prev, count)) = previous.take() {
-                    push_hidden_row(out, &prev, count);
+                if let Some((prev, count, prev_reason)) = previous.take() {
+                    push_hidden_row(out, &prev, count, &prev_reason, &mut last_reason);
                 }
-                out.push_str(&row);
+                push_hidden_row(out, &row, 1, &reason, &mut last_reason);
                 continue;
             }
             let repeat = members.len();
@@ -848,7 +852,7 @@ pub(crate) fn render_human_triage(
                 finding.class.plain_label_with_stage(),
                 currentness,
                 super::evidence_lines::plain_probe_family(&finding.probe.family),
-                hidden_finding_reason(finding)
+                reason
             ));
             if offers_test_stub(finding)
                 && let Some(FindingDrillIn::Commands(navigation)) = drill_in
@@ -874,17 +878,17 @@ pub(crate) fn render_human_triage(
                 }
             }
             match previous.as_mut() {
-                Some((prev, count)) if *prev == row => *count += repeat,
+                Some((prev, count, _)) if *prev == row => *count += repeat,
                 _ => {
-                    if let Some((prev, count)) = previous.take() {
-                        push_hidden_row(out, &prev, count);
+                    if let Some((prev, count, prev_reason)) = previous.take() {
+                        push_hidden_row(out, &prev, count, &prev_reason, &mut last_reason);
                     }
-                    previous = Some((row, repeat));
+                    previous = Some((row, repeat, reason));
                 }
             }
         }
-        if let Some((prev, count)) = previous.take() {
-            push_hidden_row(out, &prev, count);
+        if let Some((prev, count, prev_reason)) = previous.take() {
+            push_hidden_row(out, &prev, count, &prev_reason, &mut last_reason);
         }
         if let Some(command) = stub_template {
             out.push_str("  Write a test for a listed row, replacing TEST_ID with its Test id:\n");
@@ -2336,7 +2340,7 @@ fn triage_rank<'a>(
         preview_rank,
         repair_rank,
         u8::from(finding.canonical_gap.is_none()),
-        u8::from(finding.oracle_related_tests().next().is_none()),
+        u8::from(!has_linked_oracle_test(finding)),
         u8::from(finding.missing.is_empty()),
         -(finding.confidence * 100.0) as i32,
         // #14266: a repair route zeroes `repair_rank` for every routed
@@ -2349,6 +2353,25 @@ fn triage_rank<'a>(
         finding.probe.location.file.as_path(),
         finding.probe.location.line,
     )
+}
+
+/// Whether `finding` has a decision-set related test linked by more than a
+/// shared name token or fixture-helper affinity. A `Low` relation confidence
+/// (`weak_token_substring`, `fixture_owner_affinity`) is advisory only
+/// (`RelationReason::WeakTokenSubstring`), so such a row does not lift a
+/// finding over a higher-confidence one in the Start here order: on semver
+/// `ce1fef1` a format-string literal linked to `test_digit_after_wildcard`
+/// by a shared word led the new `self.0 == '\0'` predicate (#14734).
+/// `Opaque` ranks below `Low`, so it does not count either; no producer
+/// writes it today, but a stored artifact may carry it.
+/// A row from an older artifact (no relation confidence) keeps counting.
+fn has_linked_oracle_test(finding: &Finding) -> bool {
+    finding.oracle_related_tests().any(|test| {
+        !matches!(
+            test.relation_confidence,
+            Some(RelationConfidence::Low | RelationConfidence::Opaque)
+        )
+    })
 }
 
 /// A stable finding ranks by its repair route; a preview finding only by the
@@ -2533,8 +2556,14 @@ pub(super) fn limit_leaves_weak_assertion_open(finding: &Finding) -> bool {
 /// `owner_named_test`, `import_path_affinity`, `fixture_owner_affinity`,
 /// `seam_callee_call` and `assertion_target_affinity` still count as bound to
 /// the owner here. This is a reasoned choice, not measured against a corpus.
+///
+/// Among the bound weak rows, the first of the best shared
+/// [`crate::domain::RelatedTest::observation_tier`] is named (#14483), so a
+/// listed-first row with no call path never names the test to open while a
+/// weak row that reaches the change is listed. Whether a row exists is
+/// unchanged.
 pub(super) fn weak_assertion_row(finding: &Finding) -> Option<&crate::domain::RelatedTest> {
-    finding.related_tests.iter().find(|test| {
+    let bound_weak = finding.related_tests.iter().filter(|test| {
         test.is_contributing()
             && !test
                 .relation_reason
@@ -2543,7 +2572,9 @@ pub(super) fn weak_assertion_row(finding: &Finding) -> Option<&crate::domain::Re
                 test.oracle_strength,
                 crate::domain::OracleStrength::Weak | crate::domain::OracleStrength::Smoke
             )
-    })
+    });
+    // `min_by_key` keeps the first of equal keys.
+    bound_weak.min_by_key(|test| std::cmp::Reverse(test.observation_tier()))
 }
 
 pub(super) fn is_preview_limited(finding: &Finding) -> bool {
@@ -2552,9 +2583,32 @@ pub(super) fn is_preview_limited(finding: &Finding) -> bool {
         .is_some_and(|status| status.as_str() == "preview")
 }
 
+/// #14308 item 3: reasons at most this long print on every row, because
+/// `same as above` would save little and the row reads better whole.
+const HIDDEN_REASON_REPEAT_MIN_BYTES: usize = 40;
+
 /// Append a hidden-finding block, annotating its first line with a repeat
-/// count when identical consecutive rows were collapsed.
-fn push_hidden_row(out: &mut String, row: &str, count: usize) {
+/// count when identical consecutive rows were collapsed. A reason longer than
+/// [`HIDDEN_REASON_REPEAT_MIN_BYTES`] that the row printed just above already
+/// stated prints as `same as above`.
+fn push_hidden_row(
+    out: &mut String,
+    row: &str,
+    count: usize,
+    reason: &str,
+    last_reason: &mut Option<String>,
+) {
+    let stated = format!("; reason: {reason}\n");
+    let shown = if reason.len() > HIDDEN_REASON_REPEAT_MIN_BYTES
+        && last_reason.as_deref() == Some(reason)
+        && row.contains(&stated)
+    {
+        row.replacen(&stated, "; reason: same as above\n", 1)
+    } else {
+        row.to_string()
+    };
+    *last_reason = Some(reason.to_string());
+    let row = shown.as_str();
     if count <= 1 {
         out.push_str(row);
         return;
@@ -4101,6 +4155,125 @@ mod tests {
         assert_eq!(
             triage.selected.map(|finding| finding.id.as_str()),
             Some("finding:unknown")
+        );
+    }
+
+    /// A related test with the given relation, in the decision set.
+    fn related_by(
+        name: &str,
+        reason: crate::domain::RelationReason,
+        confidence: Option<crate::domain::RelationConfidence>,
+    ) -> crate::domain::RelatedTest {
+        crate::domain::RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("tests/version.rs"),
+            line: 10,
+            oracle: None,
+            oracle_kind: crate::domain::OracleKind::Unknown,
+            oracle_strength: crate::domain::OracleStrength::Unknown,
+            relation_reason: Some(reason),
+            relation_confidence: confidence,
+            miss: Some(crate::domain::RelatedTestMiss::NoCallPath),
+            role: crate::domain::RelatedTestRole::Contributing,
+            miss_support: None,
+        }
+    }
+
+    /// #14734 (semver `ce1fef1`): a related test linked only by a shared
+    /// name token is advisory, so it does not lift a lower-confidence
+    /// unknown over the diff's higher-confidence one. The weakly linked
+    /// finding is listed first so insertion order cannot pass for ranking.
+    #[test]
+    fn start_here_does_not_rank_a_name_token_link_as_a_related_test() {
+        use crate::domain::{RelationConfidence, RelationReason};
+        let mut literal = finding_at(
+            "finding:literal",
+            "src/error.rs",
+            ExposureClass::StaticUnknown,
+        );
+        literal.confidence = 0.3;
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::WeakTokenSubstring,
+            Some(RelationConfidence::Low),
+        )];
+        let mut predicate = finding_at(
+            "finding:predicate",
+            "src/error.rs",
+            ExposureClass::InfectionUnknown,
+        );
+        predicate.confidence = 0.43;
+        for finding in [&mut literal, &mut predicate] {
+            finding.recommended_next_step = Some("inspect the change".to_string());
+        }
+        let selected = |findings: Vec<Finding>| {
+            let output = test_output(findings);
+            select_human_triage(&output, &RiprConfig::default())
+                .selected
+                .map(|finding| finding.id.clone())
+        };
+        assert_eq!(
+            selected(vec![literal.clone(), predicate.clone()]),
+            Some("finding:predicate".to_string())
+        );
+
+        // Fixture-helper affinity is the other `Low` relation and is advisory
+        // too.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::FixtureOwnerAffinity,
+            Some(RelationConfidence::Low),
+        )];
+        assert_eq!(
+            selected(vec![literal.clone(), predicate.clone()]),
+            Some("finding:predicate".to_string())
+        );
+
+        // `Opaque` ranks below `Low`, so a stored row carrying it does not
+        // count either.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::SameTestFile,
+            Some(RelationConfidence::Opaque),
+        )];
+        assert_eq!(
+            selected(vec![literal.clone(), predicate.clone()]),
+            Some("finding:predicate".to_string())
+        );
+
+        // A `Medium` relation (same test file) still counts as a related test.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::SameTestFile,
+            Some(RelationConfidence::Medium),
+        )];
+        assert_eq!(
+            selected(vec![predicate.clone(), literal.clone()]),
+            Some("finding:literal".to_string())
+        );
+
+        // Discriminating control: a test the analyzer links through a call
+        // keeps its lead over a higher-confidence finding with no test.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::HelperOwnerCall,
+            Some(RelationConfidence::High),
+        )];
+        assert_eq!(
+            selected(vec![predicate.clone(), literal.clone()]),
+            Some("finding:literal".to_string())
+        );
+
+        // A row from an older artifact carries no relation confidence and
+        // still counts, as before.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::WeakTokenSubstring,
+            None,
+        )];
+        assert_eq!(
+            selected(vec![predicate, literal]),
+            Some("finding:literal".to_string())
         );
     }
 

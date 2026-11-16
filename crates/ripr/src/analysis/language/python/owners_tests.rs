@@ -859,6 +859,9 @@ pub(super) struct TestImportContext<'a> {
     /// Another local class lists this one as a base, so a subclass may replace
     /// its setup hooks.
     pub(super) subclassed: bool,
+    /// The class names `IsolatedAsyncioTestCase` as a direct base, so
+    /// unittest also runs its `asyncSetUp` hook before each test.
+    pub(super) async_case: bool,
 }
 
 /// Preserve each assertion's native byte position inside the exact test slice.
@@ -933,6 +936,7 @@ pub(super) fn collect_tests_from_statements(
             statements,
             import_context.subclassed,
             in_unittest_class,
+            import_context.async_case,
         )
     } else {
         Vec::new()
@@ -1251,6 +1255,7 @@ pub(super) fn collect_tests_from_statements(
                                     &definition_imports,
                                 ),
                             subclassed: class_is_listed_as_base(statements, class_name),
+                            async_case: names_isolated_async_case(class),
                         },
                         out,
                     );
@@ -1282,6 +1287,7 @@ pub(super) fn collect_tests_from_statements(
                                 standard_unittest_list: false,
                                 // A consumer class runs the mixin's tests under its own hooks.
                                 subclassed: true,
+                                async_case: false,
                             },
                             &mut from_mixin,
                         );
@@ -1593,7 +1599,7 @@ pub(super) fn collect_imports_from_statements(
     imports
 }
 
-fn import_source_module(file: &Path, import: &ast::StmtImportFrom) -> String {
+pub(super) fn import_source_module(file: &Path, import: &ast::StmtImportFrom) -> String {
     let module = import
         .module
         .as_ref()
@@ -1664,11 +1670,36 @@ fn has_unresolved_base(statements: &[Stmt], class: &ast::StmtClassDef) -> bool {
     walk(statements, class, 0)
 }
 
+/// A class that names a unittest case base directly: `TestCase` or the
+/// standard library's `IsolatedAsyncioTestCase` (async `test*` methods run on
+/// an event loop), bare or through a module (`unittest.`, `django.test.`).
 fn is_unittest_class(class: &ast::StmtClassDef) -> bool {
     class.bases.iter().any(|base| {
-        expr_full_name(base).is_some_and(|name| name == "TestCase" || name.ends_with(".TestCase"))
+        expr_full_name(base).is_some_and(|name| {
+            UNITTEST_CASE_BASES.iter().any(|case| {
+                name == *case
+                    || name
+                        .strip_suffix(case)
+                        .is_some_and(|module| module.ends_with('.'))
+            })
+        })
     })
 }
+
+/// The class names the standard library's `IsolatedAsyncioTestCase` as a
+/// direct base (bare or through a module), so unittest awaits its
+/// `asyncSetUp` before each test.
+fn names_isolated_async_case(class: &ast::StmtClassDef) -> bool {
+    class.bases.iter().any(|base| {
+        expr_full_name(base).is_some_and(|name| {
+            name == "IsolatedAsyncioTestCase" || name.ends_with(".IsolatedAsyncioTestCase")
+        })
+    })
+}
+
+/// The standard unittest case bases a collected class names directly; neither
+/// defines a `test*` member of its own.
+const UNITTEST_CASE_BASES: [&str; 2] = ["TestCase", "IsolatedAsyncioTestCase"];
 
 /// Which same-scope classes pytest or unittest collects (#4562).
 ///
@@ -1922,8 +1953,8 @@ impl<'a> ScopeClasses<'a> {
     }
 
     /// The bases of `name` in order, local when the scope defines the base
-    /// exactly once and before `name`. `object` and `TestCase` define no
-    /// `test*` member and are left out.
+    /// exactly once and before `name`. `object` and the
+    /// [`UNITTEST_CASE_BASES`] define no `test*` member and are left out.
     fn bases(&self, name: &str) -> Vec<MroEntry<'a>> {
         let Some((index, class)) = self.defs.get(name) else {
             return Vec::new();
@@ -1932,7 +1963,12 @@ impl<'a> ScopeClasses<'a> {
             .bases
             .iter()
             .filter_map(expr_full_name)
-            .filter(|base| !matches!(base.as_str(), "object" | "TestCase" | "unittest.TestCase"))
+            .filter(|base| {
+                base != "object"
+                    && !UNITTEST_CASE_BASES
+                        .iter()
+                        .any(|case| base == *case || base.strip_prefix("unittest.") == Some(*case))
+            })
             .map(|base| match self.defs.get_key_value(base.as_str()) {
                 Some((&key, (base_index, _)))
                     if base_index < index && !self.redefined.contains(key) =>
