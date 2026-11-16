@@ -1922,7 +1922,8 @@ statement, and is a no-op, only when it does not start inside an open `(`,
 `[` or `{`. Inside brackets it is an argument, often one part of an implicitly
 concatenated message, so changing it changes a value. Bracket-continuation
 lines come from one lex of each side: the new file and the rebuilt old file.
-Such a line, including a `"msg",` form with an argument comma, takes the probe
+Such a line, including a `"msg",` form with an argument comma or a trailing
+`# comment`, takes the probe
 family of its whole enclosing statement, which also selects the related
 assertions it is judged against. So a message inside `raise E(` is an error path that only an exact
 error-variant assertion observes, and a return assertion never credits it.
@@ -1932,6 +1933,7 @@ blank lines inside brackets stay no-ops.
 
 Tests: `tests.rs::a_changed_message_string_on_a_continuation_line_gets_a_probe`,
 `tests.rs::a_changed_message_argument_with_a_trailing_comma_is_an_error_path`,
+`tests.rs::a_changed_message_argument_with_a_trailing_comment_is_an_error_path`,
 `tests.rs::a_bracketed_raise_message_is_not_credited_to_a_return_assertion`,
 `tests.rs::an_unlexable_file_keeps_a_changed_bare_string_quiet`,
 `deleted_lines_tests.rs::deleted_string_argument_inside_brackets_is_base_side_evidence` and

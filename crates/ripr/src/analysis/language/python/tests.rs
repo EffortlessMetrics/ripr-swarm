@@ -4491,6 +4491,50 @@ fn a_changed_message_argument_with_a_trailing_comma_is_an_error_path() -> Result
 }
 
 #[test]
+fn a_changed_message_argument_with_a_trailing_comment_is_an_error_path() -> Result<(), String> {
+    // #13875 review: a trailing `# comment` after `"msg",` must not hide the
+    // bare string argument, or the line falls back to a predicate shape and a
+    // test that never raises is credited with exposing the message. A `#`
+    // inside the string itself stays part of the string.
+    let source = concat!(
+        "def check(n):\n",
+        "    if n < 0:\n",
+        "        raise ValueError(\n",
+        "            \"negative #1\",  # must be positive\n",
+        "        )\n",
+        "    return n\n",
+    );
+    let file = Path::new("pkg/__init__.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_check.py"),
+        "from pkg import check\n\n\ndef test_check():\n    assert check(2) == 2\n",
+    );
+    let context = PythonNoBehaviorContext {
+        brackets: BracketLine {
+            new_in: true,
+            old_in: true,
+            span: Some((3, 5)),
+        },
+        ..PythonNoBehaviorContext::default()
+    };
+    let finding = classify_change_with_context(
+        file,
+        4,
+        "            \"XXnegative #1XX\",  # must be positive",
+        Some("            \"negative #1\",  # must be positive"),
+        &owners,
+        &tests,
+        context,
+        Some(source),
+    )
+    .ok_or_else(|| "a changed message argument must carry a probe".to_string())?;
+    assert_eq!(finding.probe.family, ProbeFamily::ErrorPath, "{finding:?}");
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
 fn no_behavior_line_detection_is_conservative() {
     // No-op shapes:
     assert!(is_python_no_behavior_line("    \"\"\"A docstring.\"\"\""));

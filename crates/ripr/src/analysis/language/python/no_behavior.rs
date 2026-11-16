@@ -212,8 +212,9 @@ pub(super) fn bare_string_statement_text(
 ) -> Option<String> {
     let (open, close) = span?;
     // Inside brackets a trailing comma separates arguments, so `"msg",` is
-    // the same bare string argument as `"msg"`.
-    let bare = line_text.trim_end();
+    // the same bare string argument as `"msg"`; a trailing `# comment` is not
+    // part of it either.
+    let bare = without_trailing_comment(line_text)?.trim_end();
     let bare = bare.strip_suffix(',').unwrap_or(bare);
     if !is_python_no_behavior_line_at(bare, false) || bare.trim().is_empty() {
         return None;
@@ -225,6 +226,23 @@ pub(super) fn bare_string_statement_text(
         .map(str::trim)
         .collect();
     (!lines.is_empty()).then(|| lines.join(" "))
+}
+
+/// `line_text` without its trailing `#` comment, cut at the end of the last
+/// code token so a `#` inside a string stays. `None` when the line does not
+/// lex on its own.
+fn without_trailing_comment(line_text: &str) -> Option<&str> {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let trimmed = line_text.trim();
+    let mut code_end = 0;
+    for result in lex(trimmed, Mode::Module) {
+        let (token, range) = result.ok()?;
+        // The lexer drops comments, so the last non-newline token ends the code.
+        if !matches!(token, Tok::Newline) {
+            code_end = usize::from(range.end());
+        }
+    }
+    trimmed.get(..code_end)
 }
 
 /// Whether `new` differs from `old` only in a trailing `#` comment or in
