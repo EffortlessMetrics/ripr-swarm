@@ -399,10 +399,26 @@ pub(crate) fn test_body_scoped_shadow_at_line(body: &str, callee: &str) -> bool 
         let Some(open) = body[start..].find('(') else {
             continue;
         };
-        let Some(close) = body[start + open..].find(')') else {
+        let parameter_list = &body[start + open..];
+        let mut depth = 0usize;
+        let mut close = None;
+        for (offset, byte) in parameter_list.bytes().enumerate() {
+            match byte {
+                b'(' => depth += 1,
+                b')' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        close = Some(offset);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(close) = close else {
             continue;
         };
-        let params = &body[start + open + 1..start + open + close];
+        let params = &parameter_list[1..close];
         if pattern_contains_word(params, callee) {
             return true;
         }
@@ -413,6 +429,11 @@ pub(crate) fn test_body_scoped_shadow_at_line(body: &str, callee: &str) -> bool 
 /// Whether any `<start><pattern><end>` occurrence names `callee`, so a later
 /// loop or `if let` binding is not invisible (#14508 review).
 fn any_between_keywords(body: &str, start: &str, end: &str, callee: &str) -> bool {
+    // Rust tokens may be separated by newlines as well as spaces. Only this
+    // boolean lexical query needs the normalized text; callers retain the
+    // original body and its offsets (#14508 review).
+    let normalized = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    let body = normalized.as_str();
     let mut search = 0usize;
     while let Some(offset) = body[search..].find(start) {
         let pattern_start = search + offset + start.len();
@@ -691,6 +712,22 @@ mod fact_authority_tests {
                 "{label}: {body}"
             );
         }
+    }
+
+    #[test]
+    fn scoped_shadow_sees_a_loop_binding_with_newline_before_in() {
+        assert!(test_body_scoped_shadow_at_line(
+            "for owner\nin items { owner(1); }",
+            "owner"
+        ));
+    }
+
+    #[test]
+    fn scoped_shadow_sees_a_parameter_after_nested_parentheses() {
+        assert!(test_body_scoped_shadow_at_line(
+            "fn helper(pair: (u8, u8), owner: fn(i32, i32) -> i32) { owner(1, 2); }",
+            "owner"
+        ));
     }
 
     #[test]

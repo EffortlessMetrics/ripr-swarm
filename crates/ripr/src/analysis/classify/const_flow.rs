@@ -236,6 +236,13 @@ impl ModuleScopes {
         else {
             return false;
         };
+        // A non-module block (`impl`, `fn`, or a bare block) around the
+        // declaration is not a module scope. Dropping that marker would make
+        // an associated or block-local function look like a root declaration
+        // and falsely shadow a genuine import (#14508 review).
+        if declared.iter().any(Option::is_none) {
+            return false;
+        }
         let declared = declared
             .iter()
             .filter_map(|name| name.as_deref())
