@@ -1193,7 +1193,8 @@ verify=complete|outcome=O|findings=N|exposed=N
   folds into the `field_construction` gap for that initializer
   (`<field>: <value>`) when class, `FILE:LINE`, strongest related test
   (ignoring its `miss=` wording) and `stages=` agree and the predicate names
-  no missing discriminator of its own (#14713). The field row is kept, and
+  no missing discriminator of its own and only `missing` lines the field row
+  also carries (#14713). The field row is kept, and
   `next=` names the first printed row.
 - `unconfirmed_gaps=U` follows `gaps=` (#13803) when the report lists gap
   records the static evidence cannot confirm, so the header never reads

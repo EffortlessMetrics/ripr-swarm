@@ -1104,16 +1104,21 @@ fn intern_test(tests: &mut Vec<TestRef>, root: &Path, test: &RelatedTest) -> usi
 /// #14713: a `predicate` probe on a single struct-literal field initializer
 /// (`verbose: a || b,`) also folds into the `field_construction` row for the
 /// same initializer when that row is already kept, the class, location,
-/// strongest test and `stages=` row agree, and the predicate names no
-/// missing discriminator value of its own (its `missing=` would be only the
-/// fallback prose). The field row need not rank first. The field row already names the value to assert, and
-/// one test of the field closes both, so the predicate row would only send
-/// an agent after a second test with nothing more to say. The field row is
-/// kept wherever it ranks, so `next=` names the first printed row.
+/// strongest test and `stages=` row agree, the predicate names no missing
+/// discriminator value of its own, and every `missing` line the predicate
+/// carries is also on the field row. A predicate-only line (for example "No
+/// detected boundary input for the changed predicate", or a pairing or mask
+/// summary) keeps the predicate row, since it is advice the field row does
+/// not give. The field row need not rank first. Folding claims only that the
+/// predicate row would repeat the field row; it does not claim that a test of
+/// the field settles the predicate. The field row is kept wherever it ranks,
+/// so `next=` names the first printed row.
 fn fold_identical_gap_rows<'a>(root: &Path, gaps: &[&'a Finding]) -> Vec<&'a Finding> {
-    let field_rows: Vec<String> = gaps
+    let field_rows: Vec<(String, &[String])> = gaps
         .iter()
-        .filter_map(|finding| field_construction_row_key(root, finding))
+        .filter_map(|finding| {
+            field_construction_row_key(root, finding).map(|key| (key, finding.missing.as_slice()))
+        })
         .collect();
     let mut seen: Vec<String> = Vec::new();
     let mut rows = Vec::with_capacity(gaps.len());
@@ -1122,7 +1127,15 @@ fn fold_identical_gap_rows<'a>(root: &Path, gaps: &[&'a Finding]) -> Vec<&'a Fin
         if seen.contains(&key) {
             continue;
         }
-        if predicate_field_twin_key(root, finding).is_some_and(|twin| field_rows.contains(&twin)) {
+        if predicate_field_twin_key(root, finding).is_some_and(|twin| {
+            field_rows.iter().any(|(key, field_missing)| {
+                *key == twin
+                    && finding
+                        .missing
+                        .iter()
+                        .all(|line| field_missing.contains(line))
+            })
+        }) {
             continue;
         }
         seen.push(key);
@@ -1173,8 +1186,8 @@ fn predicate_field_twin_key(root: &Path, finding: &Finding) -> Option<String> {
 fn twin_fold_key(root: &Path, finding: &Finding, value: &str) -> String {
     // The test's identity and oracle, without its `miss=`: the two probes
     // word why the same assertion misses differently (the field row says
-    // `missing_exact_assertion`, the predicate `observation_unconfirmed`),
-    // and one assertion on the field closes both.
+    // `missing_exact_assertion`, the predicate `observation_unconfirmed`);
+    // the test's identity is what both rows must share.
     let test = strongest_test(finding).map(|test| {
         format!(
             "{}:{} {} {} {:?}",

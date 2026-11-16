@@ -1060,9 +1060,13 @@ probe's expression is `<field>: <value>` and the predicate's is `<value>`.
 Both must have the same class, `FILE:LINE`, strongest related test (file,
 line, name, oracle kind and oracle, though not its `miss=` wording, which
 differs between the two families for one assertion) and `stages=` row, and
-the predicate must name no missing discriminator of its own. The field row
-names the value to assert and is kept wherever it ranks; `next=` names the
-first printed row. One assertion on the field closes both.
+the predicate must name no missing discriminator of its own, and every
+`missing` line the predicate carries must also be on the field row. A
+predicate-only line, such as the boundary-input, pairing or mask advice,
+keeps the predicate row. The field row names the value to assert and is
+kept wherever it ranks; `next=` names the first printed row. The fold says
+only that the predicate row would repeat the field row, not that a test of
+the field settles the predicate.
 
 ### `explain --format agent` (#12104)
 
