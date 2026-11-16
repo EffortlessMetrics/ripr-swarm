@@ -1,0 +1,11 @@
+diff --git a/src/shapes.rs b/src/shapes.rs
+--- a/src/shapes.rs
++++ b/src/shapes.rs
+@@ -6,6 +6,6 @@ pub struct Span {
+ 
+ impl Span {
+     pub fn end(&self) -> u8 {
+-        self.start.wrapping_add(self.len)
++        self.start.wrapping_sub(self.len)
+     }
+ }

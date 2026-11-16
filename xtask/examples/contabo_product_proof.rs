@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 use std::{
     env, fs,
     io::Write,
+    num::NonZeroUsize,
     path::Path,
     process::{Command, ExitCode},
     time::Instant,
@@ -13,19 +14,16 @@ use std::{
 const OWNER: &str = ".github/workflows/rust-gates.yml";
 const PRODUCT_CONTRACT: &str = ".ci/contabo-product-contract.json";
 const COMMAND_RECEIPT: &str = "target/ripr/contabo/commands.json";
+const CLIPPY_BUILD_JOBS: &str = "${{ inputs.use-scratch && inputs.cargo-build-jobs || '3' }}";
 const PORTFOLIO: &[&str] = &[
     "Formatting preflight",
     "Agent skill contracts",
     "Prepare locked owner-return fixture dependencies",
     "Repository policy preflight",
     "Evidence promotion honesty",
-    "Dependency policy",
-    "Process policy",
-    "Network policy",
     "Strict all-features ripr Clippy",
     "Strict workspace Clippy",
-    "Golden output contracts",
-    "Fixture contracts",
+    "Golden and fixture contracts",
     "Verdict corpora",
     "Required Rust tests",
     "Required Rust doctests",
@@ -39,7 +37,21 @@ struct Step {
     environment: Vec<(String, String)>,
 }
 
-fn portfolio(source: &str) -> Result<Vec<Step>, String> {
+fn self_hosted_build_jobs(route: &str, value: &str) -> Result<NonZeroUsize, String> {
+    // The immutable central workflow marks owned execution, and its slot owner
+    // supplies CARGO_BUILD_JOBS from the selected resource profile. This
+    // rehearsal models that self-hosted branch of the Rust Gates owner only.
+    if route != "true" || value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(
+            "consumer requires the owned route and a positive Cargo build-job bound".into(),
+        );
+    }
+    value
+        .parse()
+        .map_err(|_| "consumer Cargo build-job bound must be a positive integer".into())
+}
+
+fn portfolio(source: &str, build_jobs: NonZeroUsize) -> Result<Vec<Step>, String> {
     let mut result = Vec::new();
     for name in PORTFOLIO {
         let marker = format!("      - name: {name}\n");
@@ -109,24 +121,47 @@ fn portfolio(source: &str) -> Result<Vec<Step>, String> {
                 .split_once(':')
                 .ok_or("malformed step environment")?;
             let value = value.trim().trim_matches('"');
-            // Event expressions have exactly these projections for this detached
-            // integration rehearsal; every other expression is unsupported.
-            if value.contains("${{") {
-                let supported = match key {
-                    "BASE_SHA" => {
-                        "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}"
-                    }
-                    "HEAD_SHA" => {
-                        "${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}"
-                    }
-                    "GITHUB_PR_LABELS" => {
-                        "${{ inputs.pr-labels || join(github.event.pull_request.labels.*.name, ',') }}"
-                    }
-                    _ => "",
-                };
-                if value != supported || supported.is_empty() {
+            if key == "CARGO_BUILD_JOBS" {
+                if *name != "Strict workspace Clippy" || value != CLIPPY_BUILD_JOBS {
+                    return Err(format!("unsupported build-job projection: {name}"));
+                }
+                // Preserve the selected slot's capacity. The hosted '3' branch
+                // is not the consumer's route, and unknown expressions refuse.
+                environment.push((key.to_owned(), build_jobs.to_string()));
+                continue;
+            }
+            // The detached rehearsal uses its reviewed subject, not a queue's
+            // admission record. Explicit empty projections prevent ambient
+            // history-sync inputs from suppressing ordinary evidence producers.
+            let projection = match key {
+                "BASE_SHA" => Some((
+                    "${{ steps.admitted.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
+                    None,
+                )),
+                "HEAD_SHA" => Some((
+                    "${{ steps.admitted.outputs.head || github.event.pull_request.head.sha || github.event.merge_group.head_sha }}",
+                    None,
+                )),
+                "GITHUB_PR_LABELS" => Some((
+                    "${{ inputs.pr-labels || join(github.event.pull_request.labels.*.name, ',') }}",
+                    None,
+                )),
+                "EVENT_NAME" => Some(("${{ github.event_name }}", Some("workflow_dispatch"))),
+                "ADMISSION_REASON" => Some(("${{ inputs.admission-reason }}", Some(""))),
+                "ADMISSION_HEAD" => Some(("${{ inputs.admission-head }}", Some(""))),
+                "SYNC_SOURCE" => Some(("${{ inputs.history-sync-source }}", Some(""))),
+                "SYNC_BASE" => Some(("${{ inputs.history-sync-base }}", Some(""))),
+                _ => None,
+            };
+            if let Some((expected, projected)) = projection {
+                if *name != "PR evidence" || value != expected {
                     return Err(format!("unsupported event projection: {key}"));
                 }
+                if let Some(projected) = projected {
+                    environment.push((key.to_owned(), projected.to_owned()));
+                }
+            } else if value.contains("${{") {
+                return Err(format!("unsupported event projection: {key}"));
             } else {
                 environment.push((key.to_owned(), value.to_owned()));
             }
@@ -338,6 +373,10 @@ fn run() -> Result<i32, String> {
         &env::var("GITHUB_SHA").unwrap_or_default(),
         &env::var("GITHUB_REPOSITORY").unwrap_or_default(),
     )?;
+    let build_jobs = self_hosted_build_jobs(
+        &env::var("EM_CI_EXECUTION_SELF_HOSTED").unwrap_or_default(),
+        &env::var("CARGO_BUILD_JOBS").unwrap_or_default(),
+    )?;
     if capture("git", &["rev-parse", "HEAD"])? != head {
         return Err("checkout differs from exact rehearsal subject".into());
     }
@@ -373,7 +412,10 @@ fn run() -> Result<i32, String> {
         "{}",
         json!({"phase":"llvm_prerequisite", "toolchain":selected, "version":llvm_version})
     );
-    let steps = portfolio(&fs::read_to_string(OWNER).map_err(|e| e.to_string())?)?;
+    let steps = portfolio(
+        &fs::read_to_string(OWNER).map_err(|e| e.to_string())?,
+        build_jobs,
+    )?;
     let context = json!({"profile":"consumer_qualification", "repository":"EffortlessMetrics/ripr-swarm",
         "subject":head, "base":base,
         "owner_blob":capture("git", &["hash-object", OWNER])?, "tree":capture("git", &["rev-parse", "HEAD^{tree}"])?,
@@ -412,7 +454,8 @@ fn main() -> ExitCode {
     }
 }
 
-#[cfg(test)]
+// This consumer executes the Linux/Bash contract of the owned Contabo route.
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     #[test]
@@ -465,7 +508,7 @@ mod tests {
         result
     }
     #[test]
-    fn terminal_success_requires_all_sixteen_native_command_rows() -> Result<(), String> {
+    fn terminal_success_requires_every_native_command_row() -> Result<(), String> {
         let root = env::temp_dir().join(format!("contabo-complete-{}", std::process::id()));
         fs::create_dir(&root).map_err(|error| error.to_string())?;
         let result = (|| {
@@ -481,7 +524,10 @@ mod tests {
                 rows.push(command_row(&step, code, 1));
             }
             let incomplete = root.join("incomplete.json");
-            assert!(retain_terminal_commands(&json!({}), &rows[..15], 0, &incomplete).is_err());
+            assert!(
+                retain_terminal_commands(&json!({}), &rows[..PORTFOLIO.len() - 1], 0, &incomplete)
+                    .is_err()
+            );
             assert!(!incomplete.exists());
             let complete = root.join("complete.json");
             retain_terminal_commands(&json!({"subject":"fixture"}), &rows, 0, &complete)?;
@@ -489,7 +535,7 @@ mod tests {
                 serde_json::from_slice(&fs::read(&complete).map_err(|error| error.to_string())?)
                     .map_err(|error| error.to_string())?;
             assert_eq!(receipt["disposition"], "product_pass");
-            assert_eq!(receipt["steps"].as_array().map(Vec::len), Some(16));
+            assert_eq!(receipt["steps"].as_array().map(Vec::len), Some(12));
             assert!(
                 receipt["steps"]
                     .as_array()
@@ -576,8 +622,9 @@ mod tests {
     fn actual_command_owner_is_complete_and_missing_proof_refuses() -> Result<(), String> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let source = fs::read_to_string(root.join(OWNER)).map_err(|e| e.to_string())?;
-        let steps = portfolio(&source)?;
-        assert_eq!(steps.len(), 16);
+        let jobs = self_hosted_build_jobs("true", "6")?;
+        let steps = portfolio(&source, jobs)?;
+        assert_eq!(steps.len(), 12);
         assert!(
             steps
                 .iter()
@@ -598,10 +645,13 @@ mod tests {
                 .contains(&("RIPR_PR_EVIDENCE_TIMEOUT_SECS".into(), "3600".into()))
         );
         assert!(
-            portfolio(&source.replace(
-                "      - name: Required Rust doctests\n",
-                "      - name: Removed proof\n"
-            ))
+            portfolio(
+                &source.replace(
+                    "      - name: Required Rust doctests\n",
+                    "      - name: Removed proof\n"
+                ),
+                jobs
+            )
             .is_err()
         );
         Ok(())
@@ -626,9 +676,10 @@ mod tests {
     fn unsupported_owner_projections_and_metadata_refuse() -> Result<(), String> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let source = fs::read_to_string(root.join(OWNER)).map_err(|e| e.to_string())?;
+        let jobs = self_hosted_build_jobs("true", "6")?;
         for changed in [
             source.replace(
-                "BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
+                "BASE_SHA: ${{ steps.admitted.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
                 "BASE_SHA: ${{ secrets.UNKNOWN }}",
             ),
             source.replace("id: formatting", "id: formatting\n        shell: pwsh"),
@@ -651,16 +702,181 @@ mod tests {
             ),
         ] {
             assert_ne!(source, changed);
-            assert!(portfolio(&changed).is_err());
+            assert!(portfolio(&changed, jobs).is_err());
         }
         Ok(())
     }
+
+    #[test]
+    fn build_jobs_require_the_owned_route_and_a_positive_profile_bound() {
+        for value in ["1", "6", "8", "16"] {
+            assert!(self_hosted_build_jobs("true", value).is_ok());
+        }
+        for route in ["", "false", "True", "unknown"] {
+            assert!(self_hosted_build_jobs(route, "6").is_err());
+        }
+        for value in [
+            "",
+            "0",
+            "-1",
+            "+1",
+            "6.0",
+            " 6",
+            "six",
+            "999999999999999999999999999",
+        ] {
+            assert!(self_hosted_build_jobs("true", value).is_err());
+        }
+    }
+
+    #[test]
+    fn workspace_clippy_keeps_the_slot_bound_and_native_exit() -> Result<(), String> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let source = fs::read_to_string(root.join(OWNER)).map_err(|error| error.to_string())?;
+        for (bound, native_exit) in [("6", 0), ("8", 23)] {
+            let jobs = self_hosted_build_jobs("true", bound)?;
+            let mut clippy = portfolio(&source, jobs)?
+                .into_iter()
+                .find(|step| step.name == "Strict workspace Clippy")
+                .ok_or("missing workspace Clippy")?;
+            assert!(
+                clippy
+                    .environment
+                    .contains(&("CARGO_BUILD_JOBS".into(), bound.into()))
+            );
+            // Execute the imported command with Cargo stood in, retaining the
+            // actual step environment and shell/native exit propagation.
+            clippy.script = format!(
+                "cargo() {{ test \"$CARGO_BUILD_JOBS\" = {bound} || return 97; test \"$*\" = 'clippy --workspace --all-targets -- -D warnings' || return 98; return {native_exit}; }}\n{}",
+                clippy.script
+            );
+            assert_eq!(execute(&clippy, "base", "head")?, native_exit);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_or_misplaced_build_job_projections_refuse() -> Result<(), String> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let source = fs::read_to_string(root.join(OWNER)).map_err(|error| error.to_string())?;
+        let jobs = self_hosted_build_jobs("true", "6")?;
+        for value in [
+            "${{ inputs.cargo-build-jobs }}",
+            "${{ inputs.use-scratch && inputs.cargo-build-jobs || '4' }}",
+            "${{ secrets.UNKNOWN }}",
+            "3",
+        ] {
+            let changed = source.replace(CLIPPY_BUILD_JOBS, value);
+            assert_ne!(changed, source);
+            assert!(portfolio(&changed, jobs).is_err());
+        }
+        for changed in [
+            source.replace(
+                "id: formatting",
+                &format!(
+                    "id: formatting\n        env:\n          CARGO_BUILD_JOBS: {CLIPPY_BUILD_JOBS}"
+                ),
+            ),
+            source.replace("CARGO_BUILD_JOBS:", "RUSTFLAGS:"),
+        ] {
+            assert_ne!(changed, source);
+            assert!(portfolio(&changed, jobs).is_err());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn detached_evidence_does_not_inherit_admission_or_change_subject_projection()
+    -> Result<(), String> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let source = fs::read_to_string(root.join(OWNER)).map_err(|error| error.to_string())?;
+        let jobs = self_hosted_build_jobs("true", "6")?;
+        for expression in [
+            "${{ steps.admitted.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
+            "${{ steps.admitted.outputs.head || github.event.pull_request.head.sha || github.event.merge_group.head_sha }}",
+            "${{ github.event_name }}",
+            "${{ inputs.admission-reason }}",
+            "${{ inputs.admission-head }}",
+            "${{ inputs.history-sync-source }}",
+            "${{ inputs.history-sync-base }}",
+        ] {
+            for replacement in ["${{ inputs.unknown }}", "history_sync_admitted"] {
+                let changed = source.replace(expression, replacement);
+                assert_ne!(changed, source);
+                assert!(portfolio(&changed, jobs).is_err());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn detached_evidence_runs_ordinary_producers_and_keeps_native_failure() -> Result<(), String> {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let source = fs::read_to_string(repo.join(OWNER)).map_err(|error| error.to_string())?;
+        let root = env::temp_dir().join(format!("contabo-evidence-{}", std::process::id()));
+        fs::create_dir(&root).map_err(|error| error.to_string())?;
+        let result = (|| {
+            for native_exit in [0, 37] {
+                let mut evidence = portfolio(&source, self_hosted_build_jobs("true", "6")?)?
+                    .into_iter()
+                    .find(|step| step.name == "PR evidence")
+                    .ok_or("missing PR evidence")?;
+                for (key, value) in [
+                    ("EVENT_NAME", "workflow_dispatch"),
+                    ("ADMISSION_REASON", ""),
+                    ("ADMISSION_HEAD", ""),
+                    ("SYNC_SOURCE", ""),
+                    ("SYNC_BASE", ""),
+                ] {
+                    assert!(evidence.environment.contains(&(key.into(), value.into())));
+                }
+                let trace = root.join(format!("commands-{native_exit}"));
+                let output = root.join(format!("output-{native_exit}"));
+                evidence.environment.extend([
+                    ("COMMAND_LOG".into(), trace.display().to_string()),
+                    ("GITHUB_OUTPUT".into(), output.display().to_string()),
+                    ("NATIVE_EXIT".into(), native_exit.to_string()),
+                ]);
+                evidence.script = format!(
+                    "cargo() {{ printf '%s\\n' \"$*\" >> \"$COMMAND_LOG\"; return \"$NATIVE_EXIT\"; }}\n{}",
+                    evidence.script
+                );
+                assert_eq!(
+                    execute(&evidence, "reviewed-base", "reviewed-head")?,
+                    native_exit
+                );
+                let commands = fs::read_to_string(trace).map_err(|error| error.to_string())?;
+                assert_eq!(
+                    commands.lines().next(),
+                    Some("xtask ripr-pr --base reviewed-base --head reviewed-head")
+                );
+                if native_exit == 0 {
+                    assert_eq!(commands.lines().count(), 10);
+                    assert_eq!(
+                        commands.lines().last(),
+                        Some("xtask ripr-annotations --check")
+                    );
+                    assert_eq!(
+                        fs::read_to_string(output).map_err(|error| error.to_string())?,
+                        "evidence=produced\n"
+                    );
+                } else {
+                    assert_eq!(commands.lines().count(), 1);
+                    assert!(!output.exists());
+                }
+            }
+            Ok(())
+        })();
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        result
+    }
+
     #[test]
     fn the_shard_condition_on_the_required_tests_step_still_imports() -> Result<(), String> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let source = fs::read_to_string(root.join(OWNER)).map_err(|e| e.to_string())?;
         assert!(source.contains("if: inputs.test-shards == 1"));
-        let steps = portfolio(&source)?;
+        let steps = portfolio(&source, self_hosted_build_jobs("true", "6")?)?;
         let tests = steps
             .iter()
             .find(|step| step.name == "Required Rust tests")

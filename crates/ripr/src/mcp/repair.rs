@@ -701,9 +701,8 @@ pub(super) fn durable_receipt_document(
 }
 
 /// How an agent re-checks its own test edit. ripr never runs the tests; the
-/// default `ripr_refresh` analyses the committed diff and does not see an
-/// uncommitted edit, so the re-check names `source: "worktree"` (audit
-/// finding 2).
+/// re-check names `source: "worktree"` (audit finding 2) so it reads the saved
+/// edit explicitly instead of relying on the default selection (#13096).
 ///
 /// The re-check must analyse the same scope as the snapshot the agent read, so
 /// it carries that snapshot's explicit base (#13196). A snapshot analysed
@@ -720,7 +719,7 @@ pub(super) fn verify_after_editing_tests(base: Option<&str>) -> Value {
             "tool": "ripr_refresh",
             "arguments": arguments,
         },
-        "note": "run the project's tests yourself (ripr executes nothing); the default ripr_refresh analyses the committed diff and does not see an uncommitted edit",
+        "note": "run the project's tests yourself (ripr executes nothing); source worktree reads your saved test edit",
     })
 }
 
@@ -759,8 +758,8 @@ fn refusal_next(
         ),
         "worktree_source_not_committed" => (
             "commit_then_refresh",
-            "a saved-worktree snapshot is never repair-ready; commit the edit and run ripr_refresh with the default committed source",
-            json!({ "tool": "ripr_refresh", "arguments": {} }),
+            "a saved-worktree snapshot is never repair-ready; commit the edit and run ripr_refresh with source committed",
+            json!({ "tool": "ripr_refresh", "arguments": { "source": "committed" } }),
             Value::Null,
         ),
         // A producer readiness fact is read from the committed source and
@@ -1383,6 +1382,7 @@ pub(super) mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: Default::default(),
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1577,6 +1577,7 @@ pub(super) mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: Default::default(),
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         };
         for index in 0..MAX_SUPERSEDED_TOMBSTONES + 10 {
@@ -1610,6 +1611,7 @@ pub(super) mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: Default::default(),
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         };
         let total = MAX_SUPERSEDED_TOMBSTONES + 10;
@@ -3462,5 +3464,83 @@ pub(super) mod tests {
         ] {
             assert_eq!(receipt_resource_id(uri), expected, "{uri}");
         }
+    }
+
+    fn fix_site(inline_module: Option<&str>, new_test_kind: Option<&'static str>) -> RepairFixSite {
+        RepairFixSite {
+            test_name: String::new(),
+            file: "src/lib.rs".to_string(),
+            line: 0,
+            oracle: None,
+            oracle_kind: "none",
+            oracle_strength: "none",
+            inline_test_module: inline_module.map(str::to_string),
+            new_test_kind,
+        }
+    }
+
+    #[test]
+    fn prepare_limitations_distinguish_existing_test_grip_from_an_admitted_proposal() {
+        let existing = prepare_limitations(&fix_site(None, None));
+        assert_eq!(existing.len(), 2);
+        assert!(existing[0].contains("target-admission authority has not run"));
+        assert!(!existing[0].contains("new-test proposal"));
+        let proposal = prepare_limitations(&fix_site(None, Some("integration")));
+        assert_eq!(proposal.len(), 2);
+        assert!(proposal[0].contains("new-test proposal the shared repair gate admitted"));
+        assert!(!proposal[0].contains("target-admission authority has not run"));
+        // Both always state that the transaction dies with the session.
+        for limitations in [&existing, &proposal] {
+            assert!(limitations[1].contains("the transaction is in-memory"));
+            assert!(limitations[1].contains("ripr_get_repair_attempt"));
+        }
+    }
+
+    #[test]
+    fn inline_test_module_boundary_confines_new_tests_to_the_governed_module() {
+        assert_eq!(
+            inline_test_module_boundary(&fix_site(None, None)),
+            Value::Null
+        );
+        let boundary = inline_test_module_boundary(&fix_site(Some("tests"), Some("inline_unit")));
+        assert_eq!(boundary["file"], "src/lib.rs");
+        assert_eq!(boundary["module"], "tests");
+        let text = boundary["boundary"].as_str().unwrap_or_default();
+        assert!(
+            text.contains("inside this inline test module only"),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "production code, the module declaration and existing tests stay unchanged"
+            )
+        );
+        assert_eq!(boundary.as_object().map(serde_json::Map::len), Some(3));
+    }
+
+    #[test]
+    fn must_not_change_swaps_the_production_statement_for_the_inline_module_cage() {
+        use crate::output::agent_seam_packets::{
+            EDIT_CAGE_PRODUCTION_STATEMENT, EDIT_CAGE_TERMINALITY_WARNING,
+            inline_test_module_edit_statement,
+        };
+        assert_eq!(
+            must_not_change(&fix_site(None, None)),
+            vec![
+                EDIT_CAGE_PRODUCTION_STATEMENT.to_string(),
+                EDIT_CAGE_TERMINALITY_WARNING.to_string()
+            ]
+        );
+        let inline = must_not_change(&fix_site(Some("tests"), Some("inline_unit")));
+        assert_eq!(
+            inline,
+            vec![
+                inline_test_module_edit_statement("src/lib.rs", "tests"),
+                EDIT_CAGE_TERMINALITY_WARNING.to_string()
+            ]
+        );
+        assert!(inline[0].contains("src/lib.rs"));
+        assert!(inline[0].contains("mod tests"));
+        assert!(!inline.contains(&EDIT_CAGE_PRODUCTION_STATEMENT.to_string()));
     }
 }

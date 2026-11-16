@@ -1832,8 +1832,9 @@ fn owner_named_row(finding: &Finding) -> Option<(usize, &crate::domain::RelatedT
         .find(|(_, test)| test.name == "numeric_identifier_rejects_garbage")
 }
 
-/// The selection `triage::weak_assertion_row` makes: the first contributing row
-/// whose oracle is `weak` or `smoke`.
+/// The rows `triage::weak_assertion_row` chooses from, simplified: the first
+/// contributing row whose oracle is `weak` or `smoke`. It skips the
+/// observation-tier order the real picker applies (#14483).
 fn weak_bound_row(finding: &Finding) -> Option<&crate::domain::RelatedTest> {
     finding.related_tests.iter().find(|test| {
         test.is_contributing()

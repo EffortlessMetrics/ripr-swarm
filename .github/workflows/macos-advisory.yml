@@ -3,8 +3,6 @@ name: macOS Advisory
 on:
   schedule:
     - cron: "53 5 * * *"
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
 
 permissions:
@@ -142,3 +140,4 @@ jobs:
           name: macos-advisory-logs
           path: ${{ runner.temp }}/macos-advisory/
           if-no-files-found: ignore
+          retention-days: 14

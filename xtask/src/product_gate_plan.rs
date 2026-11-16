@@ -548,8 +548,8 @@ mod tests {
     }
 
     /// The one condition a declared runner step may carry (#10507): the hosted caller
-    /// passes `test-shards: 4` and `rust-test-shards.yml` runs the same selection as
-    /// four partitions. Only the nextest row may carry it, spelled exactly, so the
+    /// passes `test-shards: 2` and `rust-test-shards.yml` runs the same selection as
+    /// two partitions. Only the nextest row may carry it, spelled exactly, so the
     /// doctest row and every other `if:` spelling stay rejected.
     const SANCTIONED_SHARD_CONDITION: &str = "        if: inputs.test-shards == 1";
 
@@ -613,7 +613,12 @@ mod tests {
                 | ProductGateId::NetworkPolicy => "cargo xtask ci-policy",
                 _ => gate.command,
             };
-            if !lines.contains(&command) {
+            // The shared producer preserves two obligations, not a blanket
+            // credit for other evidence gates or an earlier report on disk.
+            let joint_fixture_producer =
+                matches!(gate.id, ProductGateId::Goldens | ProductGateId::Fixtures)
+                    && lines.contains(&"cargo xtask goldens check-with-fixtures");
+            if !lines.contains(&command) && !joint_fixture_producer {
                 violations.push(format!(
                     "{} command `{}` is not executed by the required workflow",
                     gate.id.as_str(),
@@ -825,6 +830,39 @@ mod tests {
                     .any(|message| message.starts_with(id.as_str()))
             );
         }
+    }
+
+    #[test]
+    fn joint_fixture_command_preserves_both_required_obligations() {
+        let joint = "cargo xtask goldens check-with-fixtures";
+        for (replacement, missing) in [
+            ("cargo xtask goldens check", ProductGateId::Fixtures),
+            ("cargo xtask fixtures", ProductGateId::Goldens),
+            ("true", ProductGateId::Goldens),
+            ("true", ProductGateId::Fixtures),
+            (
+                "cargo xtask goldens check-with-fixtures || true",
+                ProductGateId::Fixtures,
+            ),
+        ] {
+            let changed = REQUIRED_WORKFLOW.replace(joint, replacement);
+            assert_ne!(changed, REQUIRED_WORKFLOW);
+            assert!(
+                required_workflow_runner_violations(&changed)
+                    .iter()
+                    .any(|violation| violation.starts_with(missing.as_str()))
+            );
+        }
+        let missing = REQUIRED_WORKFLOW.replace(
+            "run: cargo xtask check-evidence-promotion-honesty",
+            "run: true",
+        );
+        assert_ne!(missing, REQUIRED_WORKFLOW);
+        assert!(
+            required_workflow_runner_violations(&missing)
+                .iter()
+                .any(|violation| violation.contains("check-evidence-promotion-honesty"))
+        );
     }
 
     #[test]

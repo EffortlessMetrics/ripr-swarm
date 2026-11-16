@@ -46,6 +46,7 @@ mod out_parameter;
 mod owner_pin;
 mod owner_shape;
 mod owner_value;
+mod owner_value_sink;
 mod pinned_shape;
 mod poll_helper;
 mod propagation_witness;
@@ -69,10 +70,12 @@ mod variant_field_pattern;
 pub(in crate::analysis) use absorbing_tail::absorbing_tail_sink;
 pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_of,
-    assigned_field_read_confirms, assigned_field_weak_read_start, call_parameter_names,
-    chain_row_transfer_stop, comparison_operands, computed_input_parameters, literal_operand_value,
-    local_boundary, macro_names_rebound, owner_receiver_borrow, pushed_collection_compared_whole,
-    pushed_literal_path, signature_parameters, sort_value_facts,
+    assigned_field_read_confirms, assigned_field_seed_is_visible, assigned_field_weak_read_start,
+    call_parameter_names, chain_row_transfer_stop, changed_comparison_conjunct,
+    comparison_operands, computed_input_parameters, literal_operand_value, local_boundary,
+    macro_names_rebound, owner_plain_written_value, owner_receiver_borrow,
+    owner_writes_field_only_at_probe, pushed_collection_compared_whole, pushed_literal_path,
+    signature_parameters, sort_value_facts, test_binds_owner_type,
 };
 pub(in crate::analysis) use arm_selection::{
     ArmSelector, error_path_arm_probe, match_arm_selection_witness_linkage,
@@ -110,7 +113,7 @@ pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use element_field_pin::{
     drop_is_plain_in_closed_sources, observes_returned_element_field,
-    returned_array_construction_plain,
+    returned_array_construction_plain, workspace_has_visible_non_plain_drop,
 };
 pub(in crate::analysis) use facade_reach::{
     FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,
@@ -119,7 +122,7 @@ pub(in crate::analysis) use facade_reach::{
 pub(in crate::analysis) use field_reach::{FieldTable, owner_name_mentions};
 pub(in crate::analysis) use flow::{
     local_flow_sinks, predicate_branch_side_effect_only_in_body, predicate_line_arms_all_agree,
-    propagation_evidence_with_witness,
+    propagation_evidence_with_witness, same_line_arm_result_in,
 };
 pub(in crate::analysis) use framework_oracle::{
     insta_field_snapshot_limitation, withhold_framework_oracle_gap,
@@ -174,6 +177,7 @@ pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_rec
 #[cfg(test)]
 pub(in crate::analysis) use owner_pin::{SCAN_LOG, nested_parallelism_allowed};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
+pub(in crate::analysis) use owner_value_sink::{bool_field_assertion, use_may_rebind_owner};
 pub(in crate::analysis) use pinned_shape::{
     withhold_pinned_shape_gap, withhold_result_collect_err_pin,
 };
@@ -202,30 +206,38 @@ pub(in crate::analysis) use receiver_unestablished::{
     mark_receiver_unestablished, withhold_receiver_unestablished_gap,
 };
 pub(in crate::analysis) use refusal_miss::{
-    assertion_refusal_counts_as_analyzer_limit, split_assertion_not_credited_misses,
+    assertion_refusal_counts_as_analyzer_limit, name_forwarded_callback_limits,
+    split_assertion_not_credited_misses,
 };
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, assertion_pins_display_string,
     body_contains_owner_call, call_text_may_call_free_function, changes_only_string_literals,
-    declared_dependent_package_calls_owner, find_related_tests_with_candidate_index,
-    free_helper_call_resolves, impl_self_type_name, inherent_owner_call_resolves,
-    is_display_fmt_owner, is_drop_destructor, is_partial_eq_method, manifests_with_unindexed_files,
-    method_call_resolves_to_impl, module_stem, owner_call_is_direct, owner_call_text,
-    owner_dispatch_trait, owner_impl_identity_shadowed, owner_trait_name, package_prefix,
-    requires_inherent_receiver_identity, resolves_method_in_prefix, test_calls_free_function,
+    companion_scope_admits, declared_dependent_package_calls_owner,
+    find_related_tests_with_candidate_index, free_helper_call_resolves, impl_self_type_name,
+    inherent_owner_call_resolves, is_display_fmt_owner, is_drop_destructor, is_partial_eq_method,
+    manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem,
+    owner_call_is_direct, owner_call_text, owner_dispatch_trait, owner_impl_identity_shadowed,
+    owner_trait_name, package_prefix, requires_inherent_receiver_identity,
+    resolves_method_in_prefix, test_calls_free_function,
 };
 #[cfg(feature = "lang-rust")]
 pub(in crate::analysis) use reveal::RELATED_TESTS_RENDER_CAP;
+pub(in crate::analysis) use reveal::assertion_comparison_operands;
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 pub(in crate::analysis) use reveal::{
-    ASSERTION_CONTEXT_UNESTABLISHED, FileUseStatements, oracle_crediting_relations,
+    ASSERTION_CONTEXT_UNESTABLISHED, ASSERTION_CONTEXT_UNESTABLISHED_DISCRIMINATE_SUMMARY,
+    FileUseStatements, NO_ASSERTION_DISCRIMINATE_SUMMARY, NO_OBSERVING_ASSERTION_SUMMARY,
+    oracle_crediting_relations,
 };
 pub(in crate::analysis) use reveal::{
     NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY, NO_REACHABLE_TEST_OBSERVE_SUMMARY,
 };
-pub(in crate::analysis) use reveal::{ReturnOracleAdmission, contains_as_whole_word};
+pub(in crate::analysis) use reveal::{
+    RecordFieldLine, ReturnOracleAdmission, contains_as_whole_word, owner_returns_record,
+    predicate_initialized_field,
+};
 pub(in crate::analysis) use reveal::{only_proximity_oracles, reveal_outcome};
 pub(in crate::analysis) use slice_boundary::refine_slice_boundary;
 pub(in crate::analysis) use slice_counter_boundary::refine_slice_counter_boundary;

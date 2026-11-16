@@ -504,6 +504,17 @@ pub(crate) fn render_with_config(
             true,
         );
         field(&mut out, 2, "stop_reason", scope.stop_reason.as_str(), true);
+        // #13641: files that alone exceed the analysis-cost line limit and
+        // were left out instead of refusing. Emitted only when present, so
+        // existing partial-scope goldens are unchanged.
+        if !scope.over_limit_files.is_empty() {
+            let paths: Vec<String> = scope
+                .over_limit_files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect();
+            array_field(&mut out, 2, "over_limit_files", &paths, true);
+        }
         field(
             &mut out,
             2,
@@ -1376,10 +1387,13 @@ fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
     ) {
         return crate::output::related_test_miss::typescript_script_preview_related_test(finding);
     }
+    // #14483: the shared observation tier leads, so the summary never
+    // describes a row whose assertion cannot observe the change while a row
+    // that can is listed; strength then picks within the tier.
     finding
         .related_tests
         .iter()
-        .max_by_key(|test| test.oracle_strength.rank())
+        .max_by_key(|test| (test.observation_tier(), test.oracle_strength.rank()))
 }
 
 /// The observed values the check JSON renders for a finding: every value up

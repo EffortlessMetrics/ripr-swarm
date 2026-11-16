@@ -6576,6 +6576,48 @@ fn non_rust_programming_policy_requires_retention_rule() {
         non_rust_programming_retention_reason("tools/python/portable-ripr-consumer/run.py")
             .is_some()
     );
+    assert!(
+        non_rust_programming_retention_reason(
+            "examples/python-bulk-discount/project/pricing/core.py"
+        )
+        .is_some()
+    );
+    assert!(
+        non_rust_programming_retention_reason(
+            "examples/typescript-discount-threshold/strengthened/pricing.test.ts"
+        )
+        .is_some()
+    );
+    assert!(non_rust_programming_retention_reason("examples/tools/run.py").is_none());
+    assert!(non_rust_programming_retention_reason("examples/project/build.sh").is_none());
+}
+
+#[test]
+fn shard_verifier_bootstrap_retention_is_exact() -> Result<(), String> {
+    for path in [
+        "tools/ci/shard-verifier-artifact.py",
+        "tools/ci/test_shard_verifier_artifact.py",
+    ] {
+        assert!(is_non_rust_programming_candidate(path), "{path}");
+        let reason = non_rust_programming_retention_reason(path).ok_or_else(|| {
+            format!("the pre-execution verifier needs explicit retention: {path}")
+        })?;
+        assert!(reason.contains("#14580"), "{path}: {reason}");
+    }
+    for path in [
+        "tools/ci/other.py",
+        "tools/ci/shard-verifier-artifact-extra.py",
+        "tools/ci/test_shard_verifier_artifact_extra.py",
+        "tools/ci/nested/shard-verifier-artifact.py",
+        "tools/ci/shard-verifier-artifact.py.extra.py",
+    ] {
+        assert!(is_non_rust_programming_candidate(path), "{path}");
+        assert!(
+            non_rust_programming_retention_reason(path).is_none(),
+            "{path}"
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -6775,6 +6817,8 @@ fn rust_conversion_candidates_derive_retention_from_the_enforced_owner() -> Resu
         ".github/actions/pr-candidate-admission/release_cut_admission.py",
         "tools/activate-rust.sh",
         "tools/test-activate-rust.sh",
+        "tools/ci/shard-verifier-artifact.py",
+        "tools/ci/test_shard_verifier_artifact.py",
     ] {
         let enforced_reason = non_rust_programming_retention_reason(path)
             .ok_or_else(|| format!("approved boundary must be enforced-retained: {path}"))?;
@@ -7887,6 +7931,35 @@ fn windows_absolute_path_tokens_find_tokens_without_trailing_punctuation() {
     let line = format!("Use `{path}`.");
 
     assert_eq!(windows_absolute_path_tokens(&line), vec![path.to_string()]);
+}
+
+#[test]
+fn windows_absolute_path_tokens_preserve_separator_boundaries_and_unicode() {
+    let first = concat!("C:", "/café:stream/雪");
+    let second = concat!("d:", "\\資料");
+    let line = format!(":: Type::member é:/ignored αC:/ignored `{first}`; '{second}' :z");
+    assert_eq!(
+        windows_absolute_path_tokens(&line),
+        vec![first.to_string(), second.to_string()]
+    );
+    for line in ["", ":", "::", "x:", "α:", "Type::member", "wordC:/ignored"] {
+        assert!(windows_absolute_path_tokens(line).is_empty(), "{line}");
+    }
+}
+
+#[test]
+fn windows_absolute_path_tokens_keep_empty_roots_and_distinct_paths() {
+    let first = concat!("C:", "/");
+    let second = concat!("Z:", "\\");
+    let line = format!("`{first}`,\"{second}\" {first}{second}");
+    assert_eq!(
+        windows_absolute_path_tokens(&line),
+        vec![
+            first.to_string(),
+            second.to_string(),
+            format!("{first}{second}")
+        ]
+    );
 }
 
 #[test]
@@ -9796,8 +9869,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "|| [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\"",
         ),
         (
-            "more than one queued PR",
-            "[ \"$parents\" = \"1\" ] && [ \"$parent\" = \"$GROUP_BASE_SHA\" ] && [[ \"$subject\" == *\"(#${pr})\" ]]",
+            "single-parent linear chain",
+            "[ -n \"${p1:-}\" ] && [ -z \"${p2_extra:-}\" ] && [ \"$p1\" = \"$expected_parent\" ]",
         ),
         (
             "bind the queue ref sha",
@@ -9805,11 +9878,23 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         ),
         (
             "PR ref to still name the live head",
-            "[ \"$fetched\" = \"$head\" ]",
+            "[ \"$fetched\" = \"$c_head\" ]",
+        ),
+        (
+            "constituent from its own changed paths",
+            "if classify_constituent_docs \"$c_files\"",
+        ),
+        (
+            "tip with its own docs-only classification",
+            "docs-only: ${{ steps.entry.outputs.tip_docs_only || needs.detect-docs-only.outputs.docs_only || 'false' }}",
+        ),
+        (
+            "constituents with their own docs-only classifications",
+            "while IFS=$'\\t' read -r c_pr c_head c_docs_only; do",
         ),
         (
             "tree to the live head merged onto the group base",
-            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${GROUP_HEAD_SHA}^{tree}\")\" ]",
+            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${c_sha}^{tree}\")\" ]",
         ),
         (
             "same-head succession read as the last live eligibility check",
@@ -28094,6 +28179,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   droid-security-scan:
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
@@ -28120,6 +28206,7 @@ jobs:
           ANTHROPIC_AUTH_TOKEN: ""
           ANTHROPIC_BASE_URL: ""
         with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           upload_debug_artifacts: false
           security_scan_schedule: true
           security_scan_days: 7
@@ -28303,6 +28390,34 @@ fn check_droid_security_scan_flags_missing_contents_read() {
         violations
             .iter()
             .any(|v| v.contains("must set contents: read"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_self_hosted_runner() {
+    let yaml =
+        valid_droid_security_scan_yaml().replace("runs-on: ubuntu-latest", "runs-on: self-hosted");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("GitHub-hosted runner")),
+        "{violations:?}"
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_missing_github_token() {
+    let yaml = valid_droid_security_scan_yaml()
+        .replace("          github_token: ${{ secrets.GITHUB_TOKEN }}\n", "");
+    assert!(
+        !yaml.contains("github_token:"),
+        "token mutation must engage"
+    );
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations.iter().any(|v| v.contains("GITHUB_TOKEN")),
+        "{violations:?}"
     );
 }
 
@@ -54059,8 +54174,7 @@ fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
     let reusable = reusable_rust_workflow_text()?;
     for lane_only in [
         "cargo xtask check-evidence-promotion-honesty",
-        "cargo xtask goldens check",
-        "cargo xtask fixtures",
+        "cargo xtask goldens check-with-fixtures",
     ] {
         let count = reusable.matches(lane_only).count();
         if count != 1 {

@@ -32,6 +32,14 @@ meaning.
 | `product.evidence.goldens` | `cargo xtask goldens check` | required | evidence |
 | `product.evidence.fixtures` | `cargo xtask fixtures` | required | evidence |
 
+Golden and fixture contracts remain separate required obligations. Their one
+`goldens_fixtures` producer runs `cargo xtask goldens check-with-fixtures`,
+evaluates the corpus once, writes both report families and fails if either
+obligation fails. The typed definitions and table retain their standalone
+commands for local use; the workflow contract recognizes only the exact
+combined command as satisfying both rows. The step summary reports one combined
+outcome, not two independent executions.
+
 `product.rust.clippy` also carries the plain workspace type-check. `cargo clippy
 --workspace --all-targets` and `cargo check --workspace --all-targets` build the
 identical 523-unit set (same targets, features and profile; verified with
@@ -68,10 +76,10 @@ changes the blob identities recorded in `run-context.txt`, so an older receipt
 cannot be read as evidence for the new inputs.
 
 Hosted sharded form (#10507, hash layout #12777). On the GitHub-hosted route the same row runs as
-four `cargo nextest run --workspace --profile ci --partition hash:N/4` jobs in
-`rust-test-shards.yml`, started by `routed-rust.yml` only after the hosted
-`rust-gates.yml` job (every other gate, doctests and PR evidence) passed; that
-job is called with `test-shards: 4`, so its own `rust-tests` step is skipped, the
+two `cargo nextest run --workspace --profile ci --partition hash:N/2` jobs in
+`rust-test-shards.yml`, started by `routed-rust.yml` in parallel with the hosted
+`rust-gates.yml` job (every other gate, doctests and PR evidence). The gates
+job is called with `test-shards: 2`, so its own `rust-tests` step is skipped, the
 single `if: inputs.test-shards == 1` condition `product_gate_plan.rs` allows on
 that row. The self-hosted routes keep the unpartitioned step in their gates job.
 A partitioned run selects exactly the tests of the unpartitioned command because
@@ -95,8 +103,8 @@ the unsharded `<artifact>-nextest-<attempt>` name, so consumers of that
 evidence, including the Contabo product contract, read the same files. The
 Contabo importer accepts the one `if: inputs.test-shards == 1` condition on the
 nextest row (it rehearses the unpartitioned form) and refuses any other. The
-parallel form that runs the gates and shards at once would save more time but
-removes the gates-first ordering, so it is not the required shape.
+required Result waits for both the gates and the verified shards; neither
+parallel producer can substitute for the other.
 
 Focused tests in `product_gate_plan.rs` read the real workflow, nextest
 config, and this table. Each of these fails `cargo nextest run`:

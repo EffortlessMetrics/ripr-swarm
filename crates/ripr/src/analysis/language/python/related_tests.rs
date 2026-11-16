@@ -21,7 +21,7 @@ mod dunder_protocol;
 mod project_names;
 mod test_local_shadow;
 pub(super) use dunder_entries::{
-    PythonClassFacts, apply_class_facts, operator_entry_in_text, with_entry,
+    PythonClassFacts, apply_class_facts, operator_entry_in_text_with_factories, with_entry,
 };
 pub(super) use dunder_protocol::body_exercises_dunder_protocol;
 pub(super) use project_names::{
@@ -395,10 +395,10 @@ pub(super) fn helper_owner_call_candidates_indexed<'a>(
             && candidate.class_path.is_empty()
             && candidate.qualified_name == candidate.name
     };
-    let callers: Vec<&PythonOwner> = if let Some(callers) =
+    let (callers, dunder_module_helper): (Vec<&PythonOwner>, bool) = if let Some(callers) =
         dunder_entry_callers(owner, owners, by_class)
     {
-        callers
+        (callers, false)
     } else if !top_level_function(owner)
         || owners
             .iter()
@@ -410,9 +410,12 @@ pub(super) fn helper_owner_call_candidates_indexed<'a>(
     {
         return Vec::new();
     } else {
-        module_function_callers(owner, owners, top_level_function)
+        (
+            module_function_callers(owner, owners, top_level_function),
+            true,
+        )
     };
-    helper_candidates_from_callers(callers, all_tests)
+    helper_candidates_from_callers(callers, all_tests, dunder_module_helper, owners)
 }
 
 fn module_function_callers<'o>(
@@ -456,6 +459,8 @@ fn module_function_callers<'o>(
 fn helper_candidates_from_callers<'a>(
     callers: Vec<&PythonOwner>,
     all_tests: &'a [PythonTest],
+    dunder_module_helper: bool,
+    owners: &[PythonOwner],
 ) -> Vec<HelperOwnerCallCandidate<'a>> {
     let mut found: Vec<HelperOwnerCallCandidate<'a>> = Vec::new();
     let mut seen: std::collections::HashSet<(&'a Path, &'a str)> = std::collections::HashSet::new();
@@ -469,9 +474,10 @@ fn helper_candidates_from_callers<'a>(
         // its relation check.
         let related = |test: &'a PythonTest| {
             !seen.contains(&(test.file.as_path(), test.qualified_name.as_str()))
-                && related_test_relation(test, caller).is_some_and(|relation| {
-                    relation.uses_oracle() || relation == PythonRelationKind::CliRunnerInvoke
-                })
+                && ((dunder_module_helper && dunder_protocol_helper_call(test, caller, owners))
+                    || related_test_relation(test, caller).is_some_and(|relation| {
+                        relation.uses_oracle() || relation == PythonRelationKind::CliRunnerInvoke
+                    }))
         };
         let reached: Vec<&'a PythonTest> = if all_tests.len() >= PARALLEL_RELATION_MIN_TESTS {
             #[cfg(test)]
@@ -511,6 +517,96 @@ fn helper_candidates_from_callers<'a>(
             .then_with(|| left.candidate.test.name.cmp(&right.candidate.test.name))
     });
     found
+}
+
+/// A test protocol-invocation path to a dunder that calls a module-level
+/// helper. The import identifies the caller's module, and an asserted operator
+/// operand must be a bound instance of that class or a uniquely named
+/// same-package factory whose imports and single direct class return identify
+/// it. The resulting `helper_owner_call` relation never carries an oracle:
+/// `duration1 + duration2` can reach `Duration.__add__`, and through its bare
+/// call graph `fquotmod`, without promoting it to `exposed`.
+fn dunder_protocol_helper_call(
+    test: &PythonTest,
+    caller: &PythonOwner,
+    owners: &[PythonOwner],
+) -> bool {
+    let Some(class) = dunder_method_class(caller) else {
+        return false;
+    };
+    let top_class = class.split_once('.').map_or(class, |(top, _)| top);
+    let class_reaches_caller = test_references_owner_class(test, caller, class)
+        || test.imports.iter().any(|import| {
+            (import.imported == top_class || import.imported == "*")
+                && module_contains_owner(&import.source_module, caller)
+                && !test_rebinds_import_alias(test, &import.alias)
+                && test
+                    .imports
+                    .iter()
+                    .filter(|other| other.alias == import.alias)
+                    .count()
+                    == 1
+        });
+    if !class_reaches_caller {
+        return false;
+    }
+    let factories = owners
+        .iter()
+        .filter(|factory| {
+            caller.ambiguous_src_modules.is_empty()
+                && factory.file.parent() == caller.file.parent()
+                && factory.class_path.is_empty()
+                && factory.owner_kind == Some(OwnerKind::Function)
+                && factory.qualified_name == factory.name
+                && factory
+                    .module_callees
+                    .iter()
+                    .any(|callee| callee == top_class)
+                && factory.class_facts.direct_class_return.as_deref() == Some(top_class)
+                && (factory.file == caller.file
+                    || factory.imports.iter().any(|import| {
+                        import.imported == top_class
+                            && module_contains_owner(&import.source_module, caller)
+                    }))
+                && owners
+                    .iter()
+                    .filter(|other| {
+                        other.file == factory.file
+                            && other.owner_kind == Some(OwnerKind::Function)
+                            && other.class_path.is_empty()
+                            && other.qualified_name == factory.qualified_name
+                    })
+                    .count()
+                    == 1
+        })
+        .collect::<Vec<_>>();
+    let factories = factories
+        .iter()
+        .flat_map(|factory| {
+            let mut callees = module_callees_named(test, factory, &factory.name, true);
+            // Preserve a unique discovered test-global factory convention,
+            // but never let it override a foreign import, local assignment or
+            // parameter of the same name. An explicit import or module call
+            // may disambiguate same-named factories by its own module.
+            if callees.is_empty()
+                && factories
+                    .iter()
+                    .filter(|other| other.name == factory.name)
+                    .count()
+                    == 1
+                && !test_binds_local(test, &factory.name)
+                && !test.imports.iter().any(|import| {
+                    import.alias == factory.name
+                        || (import.alias == "*"
+                            && !module_contains_owner(&import.source_module, factory))
+                })
+            {
+                callees.push(factory.name.clone());
+            }
+            callees
+        })
+        .collect::<Vec<_>>();
+    protocol_entry_in_body_with_factories(test, caller, &factories)
 }
 
 fn strongest_rank(test: &PythonTest) -> u8 {
@@ -889,29 +985,60 @@ fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bo
 /// files defining a free function of the same name (#8759), the affirmative
 /// evidence [`bare_name_bound_to_other_module`] needs.
 pub(super) fn apply_rival_definition_modules(owners: &mut [PythonOwner]) {
-    let mut modules_by_name: BTreeMap<String, Vec<(PathBuf, Vec<String>)>> = BTreeMap::new();
-    for owner in owners.iter() {
-        if owner.owner_kind != Some(OwnerKind::Function) || owner.qualified_name != owner.name {
-            continue;
-        }
-        let defs = modules_by_name.entry(owner.name.clone()).or_default();
-        if !defs.iter().any(|(file, _)| *file == owner.file) {
-            defs.push((owner.file.clone(), owner_module_paths(&owner.file)));
+    let index = RivalDefinitionIndex::from_owners(owners.iter());
+    index.apply(owners);
+}
+
+/// Free-function definitions by name with their files' module paths, the
+/// cross-file input of [`apply_rival_definition_modules`]. Repo mode reads one
+/// production file at a time, so it builds this once from the files its tests
+/// import names from (#13880 follow-up).
+#[derive(Default)]
+pub(super) struct RivalDefinitionIndex {
+    modules_by_name: BTreeMap<String, Vec<(PathBuf, Vec<String>)>>,
+}
+
+impl RivalDefinitionIndex {
+    pub(super) fn from_owners<'a>(owners: impl Iterator<Item = &'a PythonOwner>) -> Self {
+        let mut index = Self::default();
+        index.extend(owners);
+        index
+    }
+
+    /// Adds the free-function owners of `owners` to the index.
+    pub(super) fn extend<'a>(&mut self, owners: impl Iterator<Item = &'a PythonOwner>) {
+        for owner in owners {
+            if !is_free_function(owner) {
+                continue;
+            }
+            let defs = self.modules_by_name.entry(owner.name.clone()).or_default();
+            if !defs.iter().any(|(file, _)| *file == owner.file) {
+                defs.push((owner.file.clone(), owner_module_paths(&owner.file)));
+            }
         }
     }
-    for owner in owners.iter_mut() {
-        let Some(defs) = modules_by_name.get(&owner.name) else {
-            continue;
-        };
-        if owner.owner_kind != Some(OwnerKind::Function) || owner.qualified_name != owner.name {
-            continue;
+
+    /// Records on each free-function owner the module paths of the other
+    /// indexed files defining a free function of its name.
+    pub(super) fn apply(&self, owners: &mut [PythonOwner]) {
+        for owner in owners.iter_mut() {
+            let Some(defs) = self.modules_by_name.get(&owner.name) else {
+                continue;
+            };
+            if !is_free_function(owner) {
+                continue;
+            }
+            owner.rival_definition_modules = defs
+                .iter()
+                .filter(|(file, _)| *file != owner.file)
+                .flat_map(|(_, paths)| paths.iter().cloned())
+                .collect();
         }
-        owner.rival_definition_modules = defs
-            .iter()
-            .filter(|(file, _)| *file != owner.file)
-            .flat_map(|(_, paths)| paths.iter().cloned())
-            .collect();
     }
+}
+
+fn is_free_function(owner: &PythonOwner) -> bool {
+    owner.owner_kind == Some(OwnerKind::Function) && owner.qualified_name == owner.name
 }
 
 /// Whether a fixture the test names calls the owner by the rules a test body
@@ -1408,9 +1535,17 @@ fn owner_protocol_entry_calls(
 /// (`assert list(reversed(Range(0))) == []`). An unasserted entry elsewhere in
 /// the body does not relate the test.
 fn protocol_entry_in_body(test: &PythonTest, owner: &PythonOwner) -> bool {
-    test.assertions
-        .iter()
-        .any(|assertion| oracle_operand_protocol_entry(&assertion.gate_text, test, owner))
+    protocol_entry_in_body_with_factories(test, owner, &[])
+}
+
+fn protocol_entry_in_body_with_factories(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    factories: &[String],
+) -> bool {
+    test.assertions.iter().any(|assertion| {
+        oracle_operand_protocol_entry_with_factories(&assertion.gate_text, test, owner, factories)
+    })
 }
 
 /// Whether an assertion's text takes a protocol entry of the owner dunder on a
@@ -1421,7 +1556,16 @@ pub(super) fn oracle_operand_protocol_entry(
     test: &PythonTest,
     owner: &PythonOwner,
 ) -> bool {
-    if operator_entry_in_text(text, test, owner) {
+    oracle_operand_protocol_entry_with_factories(text, test, owner, &[])
+}
+
+pub(super) fn oracle_operand_protocol_entry_with_factories(
+    text: &str,
+    test: &PythonTest,
+    owner: &PythonOwner,
+    factories: &[String],
+) -> bool {
+    if operator_entry_in_text_with_factories(text, test, owner, factories) {
         return true;
     }
     let Some(depth) = oracle_operand_depth(text) else {
@@ -1955,8 +2099,14 @@ pub(super) fn module_callees_named(
 
 /// Locals the test body binds exactly once to the result of an owner call
 /// through one of `callees` (`result = utils.sign(0)`), so an assertion on the
-/// local observes the owner's output (#4567).
-pub(super) fn owner_result_locals(test: &PythonTest, callees: &[String]) -> Vec<String> {
+/// local observes the owner's output (#4567). For a coroutine owner
+/// (`awaited`), `result = await sign(0)` binds the value its body returned
+/// too; awaiting any other owner's result reads a different value.
+pub(super) fn owner_result_locals(
+    test: &PythonTest,
+    callees: &[String],
+    awaited: bool,
+) -> Vec<String> {
     let body = test.body_text.as_str();
     let mut locals = Vec::new();
     let mut line_start = 0usize;
@@ -1967,8 +2117,15 @@ pub(super) fn owner_result_locals(test: &PythonTest, callees: &[String]) -> Vec<
             continue;
         };
         let (target, value) = (line[..eq].trim(), &line[eq + 1..]);
-        let value_start = start + eq + 1 + (value.len() - value.trim_start().len());
-        let value = value.trim_start();
+        let mut value_start = start + eq + 1 + (value.len() - value.trim_start().len());
+        let mut value = value.trim_start();
+        if awaited
+            && let Some(rest) = value.strip_prefix("await")
+            && rest.starts_with([' ', '\t'])
+        {
+            value_start += value.len() - rest.trim_start().len();
+            value = rest.trim_start();
+        }
         // The whole assigned value must be the owner call, so the local holds
         // its result on every path (`r = sign(0)`, not `r = sign(0) or 1`).
         // A sole-argument materializer (`r = list(gen(0))`) keeps that result.
@@ -2104,6 +2261,67 @@ pub(super) fn oracle_operand_calls(text: &str, callee: &str) -> bool {
                 &MATERIALIZING_WRAPPERS,
             )
     })
+}
+
+/// Whether an exception assertion calls `callee` in the code it runs: its
+/// `with` body, or the rule 13 callable call. `gate_text` is the assertion's
+/// gate text and `item_text` its own call, which the gate text starts with.
+///
+/// An exception assertion compares no operand (RIPR-SPEC-0238 rule 4), so the
+/// operand-depth reading of [`oracle_operand_calls`] never finds the call
+/// that raises: it is a statement of the body, not an argument of
+/// `pytest.raises(...)`. Nesting does not hide it either, since Python
+/// evaluates `wrap(utils.parse(""))` arguments before `wrap` runs. A call
+/// deferred by a `lambda` or a nested `def`/`class` does not run in the body
+/// and is not read, nor is one spelled in a comment or a string, including a
+/// triple-quoted string opened on an earlier line.
+///
+/// A rule 14 comparison joined after the body (`assert str(exc.value) ==
+/// ...`) runs after the `with`, when the error was already raised, so an
+/// owner call there is not the call that raises and is not read.
+pub(super) fn exception_body_calls(gate_text: &str, item_text: &str, callee: &str) -> bool {
+    let Some(body) = gate_text
+        .strip_prefix(item_text)
+        .and_then(|rest| rest.strip_prefix('\n'))
+        .map(exception_body_text)
+    else {
+        return false;
+    };
+    let visible = |idx: usize| !python_text_hides_code(body, idx);
+    let defers_by_keyword = body.lines().any(|line| {
+        let line = line.trim_start();
+        ["def ", "async def ", "class "]
+            .iter()
+            .any(|keyword| line.starts_with(keyword))
+    });
+    let defers_by_lambda = body.match_indices("lambda").any(|(idx, word)| {
+        let before = body[..idx].chars().next_back();
+        let after = body[idx + word.len()..].chars().next();
+        !before.is_some_and(is_python_identifier_char)
+            && !after.is_some_and(is_python_identifier_char)
+            && visible(idx)
+    });
+    if defers_by_keyword || defers_by_lambda {
+        return false;
+    }
+    let needle = format!("{callee}(");
+    body.match_indices(&needle)
+        .any(|(idx, _)| python_callee_start_has_boundary(body, idx) && visible(idx))
+}
+
+/// The `with` body (or callable call) of an exception assertion's gate text
+/// after its item: the first line, which the gate text holds trimmed, and the
+/// lines after it that keep their indentation. The first later line at column
+/// 0 is the rule 14 comparison the gate text appends, which is not body.
+fn exception_body_text(after_item: &str) -> &str {
+    let mut end = 0;
+    for (index, line) in after_item.split_inclusive('\n').enumerate() {
+        if index > 0 && !line.starts_with(char::is_whitespace) {
+            break;
+        }
+        end += line.len();
+    }
+    &after_item[..end]
 }
 
 /// Builtins that only re-materialize their one argument, so a call wrapped in
@@ -2386,100 +2604,124 @@ pub(super) fn apply_src_module_ambiguity<'a>(
     owners: &mut [PythonOwner],
     source_files: impl Iterator<Item = &'a PathBuf>,
 ) {
-    let mut roots_by_module: BTreeMap<String, Vec<(PathBuf, PathBuf)>> = BTreeMap::new();
+    SrcModuleIndex::build(source_files).apply(owners);
+}
+
+/// The workspace's src-layout short names and full dotted module paths, built
+/// once from every source file so repo mode, which reads one production file
+/// at a time, records the same ambiguity diff mode does (#13880 follow-up).
+pub(super) struct SrcModuleIndex {
+    roots_by_module: BTreeMap<String, Vec<(PathBuf, PathBuf)>>,
     // Every source file by its full dotted module path, for the plain-module
     // rivals of a src short name (#13745).
-    let mut files_by_full_path: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
-    for file in source_files {
-        for (module, root) in src_layout_module_names(file) {
-            roots_by_module
-                .entry(module)
-                .or_default()
-                .push((file.clone(), root));
+    files_by_full_path: BTreeMap<String, Vec<PathBuf>>,
+}
+
+impl SrcModuleIndex {
+    pub(super) fn build<'a>(source_files: impl Iterator<Item = &'a PathBuf>) -> Self {
+        let mut roots_by_module: BTreeMap<String, Vec<(PathBuf, PathBuf)>> = BTreeMap::new();
+        let mut files_by_full_path: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+        for file in source_files {
+            for (module, root) in src_layout_module_names(file) {
+                roots_by_module
+                    .entry(module)
+                    .or_default()
+                    .push((file.clone(), root));
+            }
+            if let Some(full) = owner_module_paths(file).into_iter().next() {
+                files_by_full_path
+                    .entry(full)
+                    .or_default()
+                    .push(file.clone());
+            }
         }
-        if let Some(full) = owner_module_paths(file).into_iter().next() {
-            files_by_full_path
-                .entry(full)
-                .or_default()
-                .push(file.clone());
+        Self {
+            roots_by_module,
+            files_by_full_path,
         }
     }
-    for owner in owners.iter_mut() {
-        let owner_file = normalized_path(&owner.file);
-        let own = src_layout_module_names(&owner.file);
-        let mut ambiguous = Vec::new();
-        for (module, owner_root) in &own {
-            let rival_roots = rival_roots_for(&roots_by_module, module, |file, _| {
-                normalized_path(file) == owner_file
-            });
-            let shadowed = plain_module_shadows(&files_by_full_path, module, owner_root);
-            if !rival_roots.is_empty() || shadowed {
-                ambiguous.push(AmbiguousSrcModule {
-                    module: module.clone(),
-                    owner_root: owner_root.clone(),
-                    rival_roots,
-                    shadowed,
+
+    /// See [`apply_src_module_ambiguity`]; runs after the re-export pass.
+    pub(super) fn apply(&self, owners: &mut [PythonOwner]) {
+        let roots_by_module = &self.roots_by_module;
+        let files_by_full_path = &self.files_by_full_path;
+        for owner in owners.iter_mut() {
+            let owner_file = normalized_path(&owner.file);
+            let own = src_layout_module_names(&owner.file);
+            let mut ambiguous = Vec::new();
+            for (module, owner_root) in &own {
+                let rival_roots = rival_roots_for(roots_by_module, module, |file, _| {
+                    normalized_path(file) == owner_file
                 });
+                let shadowed = plain_module_shadows(files_by_full_path, module, owner_root);
+                if !rival_roots.is_empty() || shadowed {
+                    ambiguous.push(AmbiguousSrcModule {
+                        module: module.clone(),
+                        owner_root: owner_root.clone(),
+                        rival_roots,
+                        shadowed,
+                    });
+                }
             }
-        }
-        // The owner's own full dotted path is also a bare module name when it
-        // sits at the repository root (`core.py` → `core`); another file's
-        // src short name equal to it makes the name ambiguous for the owner
-        // too, so a `src` module cannot be credited while its plain twin is
-        // not (#13745).
-        if let Some(full) = owner_module_paths(&owner.file).into_iter().next()
-            && !ambiguous.iter().any(|record| record.module == full)
-        {
-            let rival_roots = rival_roots_for(&roots_by_module, &full, |file, _| {
-                normalized_path(file) == owner_file
-            });
-            // A src rival at the repository root imports under the same name
-            // from the same root.
-            let shadowed = rival_roots
-                .iter()
-                .any(|root| normalized_path(root).is_empty());
-            if !rival_roots.is_empty() {
-                ambiguous.push(AmbiguousSrcModule {
-                    module: full,
-                    owner_root: PathBuf::new(),
-                    rival_roots,
-                    shadowed,
+            // The owner's own full dotted path is also a bare module name when it
+            // sits at the repository root (`core.py` → `core`); another file's
+            // src short name equal to it makes the name ambiguous for the owner
+            // too, so a `src` module cannot be credited while its plain twin is
+            // not (#13745).
+            if let Some(full) = owner_module_paths(&owner.file).into_iter().next()
+                && !ambiguous.iter().any(|record| record.module == full)
+            {
+                let rival_roots = rival_roots_for(roots_by_module, &full, |file, _| {
+                    normalized_path(file) == owner_file
                 });
+                // A src rival at the repository root imports under the same name
+                // from the same root.
+                let shadowed = rival_roots
+                    .iter()
+                    .any(|root| normalized_path(root).is_empty());
+                if !rival_roots.is_empty() {
+                    ambiguous.push(AmbiguousSrcModule {
+                        module: full,
+                        owner_root: PathBuf::new(),
+                        rival_roots,
+                        shadowed,
+                    });
+                }
             }
+            for module in &owner.reexport_modules {
+                if own.iter().any(|(own_module, _)| own_module == module) {
+                    continue;
+                }
+                // The re-exporting package is the one whose project root holds the
+                // owner file; a deeper such root wins over an enclosing one.
+                let Some(owner_root) = roots_by_module
+                    .get(module)
+                    .into_iter()
+                    .flatten()
+                    .map(|(_, root)| root)
+                    .filter(|root| path_is_under(&owner.file, root))
+                    .max_by_key(|root| root.components().count())
+                    .cloned()
+                else {
+                    continue;
+                };
+                let rival_roots =
+                    rival_roots_for(roots_by_module, module, |_, root| *root == owner_root);
+                // A plain module of the same project spelled like the re-exporting
+                // package loads instead of it on some `sys.path` orders, exactly as
+                // for the owner's own short name (#13786).
+                let shadowed = plain_module_shadows(files_by_full_path, module, &owner_root);
+                if !rival_roots.is_empty() || shadowed {
+                    ambiguous.push(AmbiguousSrcModule {
+                        module: module.clone(),
+                        owner_root,
+                        rival_roots,
+                        shadowed,
+                    });
+                }
+            }
+            owner.ambiguous_src_modules = ambiguous;
         }
-        for module in &owner.reexport_modules {
-            if own.iter().any(|(own_module, _)| own_module == module) {
-                continue;
-            }
-            // The re-exporting package is the one whose project root holds the
-            // owner file; a deeper such root wins over an enclosing one.
-            let Some(owner_root) = roots_by_module
-                .get(module)
-                .into_iter()
-                .flatten()
-                .map(|(_, root)| root)
-                .filter(|root| path_is_under(&owner.file, root))
-                .max_by_key(|root| root.components().count())
-                .cloned()
-            else {
-                continue;
-            };
-            let rival_roots =
-                rival_roots_for(&roots_by_module, module, |_, root| *root == owner_root);
-            // A plain module of the same project spelled like the re-exporting
-            // package loads instead of it on some `sys.path` orders, exactly as
-            // for the owner's own short name (#13786).
-            let shadowed = plain_module_shadows(&files_by_full_path, module, &owner_root);
-            if !rival_roots.is_empty() || shadowed {
-                ambiguous.push(AmbiguousSrcModule {
-                    module: module.clone(),
-                    owner_root,
-                    rival_roots,
-                    shadowed,
-                });
-            }
-        }
-        owner.ambiguous_src_modules = ambiguous;
     }
 }
 
@@ -4119,7 +4361,67 @@ pub(super) fn similarity_key_contains(haystack: &str, needle: &str) -> bool {
 
 #[cfg(test)]
 mod oracle_operand_tests {
-    use super::{oracle_operand_calls, oracle_operand_names};
+    use super::{exception_body_calls, oracle_operand_calls, oracle_operand_names};
+
+    #[test]
+    fn exception_body_call_is_read_after_the_assertion_item() {
+        let item = "pytest.raises(ValueError, match=\"blank\")";
+        for (body, expected) in [
+            ("\nutils.sign(0)", true),
+            ("\nvalue = 1\n        utils.sign(value)", true),
+            ("\nwrap(utils.sign(0))", true),
+            (
+                "\nutils.sign(0)\nassert str(excinfo.value) == \"blank\"",
+                true,
+            ),
+            ("\nutils.sign(\n            0\n        )", true),
+            ("\nnote = \"lambda\"\n        utils.sign(0)", true),
+            ("\nnote = 1  # lambda\n        utils.sign(0)", true),
+            ("", false),
+            // The rule 14 comparison runs after the error was raised.
+            (
+                "\nother(0)\nassert str(excinfo.value) == utils.sign(1)",
+                false,
+            ),
+            (
+                "\nother(0)\n        more(0)\nassert utils.sign(1) == str(excinfo.value)",
+                false,
+            ),
+            // A triple-quoted string opened on an earlier line.
+            (
+                "\nnote = \"\"\"\n        utils.sign(0)\n        \"\"\"\n        other(0)",
+                false,
+            ),
+            ("\nmyutils.sign(0)", false),
+            ("\nother.utils.sign(0)", false),
+            ("\nutils.signed(0)", false),
+            ("\n# utils.sign(0)\nother(0)", false),
+            ("\nother(\"utils.sign(0)\")", false),
+            ("\ncheck = lambda: utils.sign(0)", false),
+            ("\ndef check():\n    utils.sign(0)", false),
+            ("\nasync def check():\n    utils.sign(0)", false),
+            ("\nclass Check:\n    value = utils.sign(0)", false),
+        ] {
+            let gate = format!("{item}{body}");
+            assert_eq!(
+                exception_body_calls(&gate, item, "utils.sign"),
+                expected,
+                "{gate}"
+            );
+        }
+        // The item's own arguments are not its body, and a gate text that
+        // does not start with the item is not read.
+        assert!(!exception_body_calls(
+            "pytest.raises(ValueError, utils.sign(0))",
+            "pytest.raises(ValueError, utils.sign(0))",
+            "utils.sign"
+        ));
+        assert!(!exception_body_calls(
+            "assert utils.sign(0) == 0",
+            "assert utils.sign(0) == 0, \"message\"",
+            "utils.sign"
+        ));
+    }
 
     #[test]
     fn owner_call_or_local_must_be_an_asserted_operand() {
