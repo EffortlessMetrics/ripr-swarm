@@ -46,7 +46,7 @@ pub(in crate::analysis) enum UnaryOperator {
 }
 
 /// A whole-body tail that changed between `name` and `OP name`, with the
-/// base-side owner text the diff proves.
+/// base-side owner text the diff establishes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::analysis) struct UnaryTailChange {
     pub operator: UnaryOperator,

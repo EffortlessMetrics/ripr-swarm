@@ -701,7 +701,7 @@ pub(in crate::analysis) struct OwnerInputs<'a> {
     pub(in crate::analysis) slice_counter_boundary:
         Option<&'a super::slice_counter_boundary::SliceCounterBoundary>,
     /// #14815: the owner's whole tail gained or lost a prefix `-`/`!`, with
-    /// the base-side owner text the diff proves.
+    /// the base-side owner text the diff establishes.
     pub(in crate::analysis) unary_tail: Option<&'a super::UnaryTailChange>,
 }
 

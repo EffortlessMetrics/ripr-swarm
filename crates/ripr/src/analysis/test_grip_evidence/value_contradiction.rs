@@ -648,7 +648,7 @@ pub(in crate::analysis) fn range_change_visibility(
 }
 
 /// [`range_change_visibility`] for an owner whose whole base-side text is
-/// `baseline` (#14815: the unary-tail reading proves it from the diff rather
+/// `baseline` (#14815: the unary-tail reading establishes it from the diff rather
 /// than locating changed text in the body). The answer reads the owner's
 /// current body against `baseline` at the related tests' asserted literal
 /// calls; nothing here depends on what changed between them.
