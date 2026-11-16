@@ -54127,6 +54127,120 @@ fn reusable_rust_workflow_text() -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))
 }
 
+/// #14906: the `ci` nextest profile's hang window must fit inside the shard
+/// test step, so a hung test is terminated and named by nextest instead of
+/// being ended by the step cap with its log lost.
+///
+/// These are measurements, not guesses. Run 43943282726 (2026-11-16, PR
+/// #14866, head 235641bfe9) uploaded each shard's JUnit and build metrics:
+/// - slowest legitimate test: 210s, `xtask::ripr_public_guide_contract::
+///   doctor_exit_code_guide_distinguishes_analysis_and_source_build`;
+/// - longest build step: 774s (shard 4);
+/// - longest test step: 494s (shard 4).
+///
+/// Refresh them from a green run's `nextest-*` artifacts when the suite grows;
+/// the cap and the window are read live, so only the measurements are pinned.
+const NEXTEST_CI_MEASURED_BUILD_SECONDS: u64 = 774;
+const NEXTEST_CI_MEASURED_TEST_PHASE_SECONDS: u64 = 494;
+const NEXTEST_CI_SLOWEST_LEGITIMATE_TEST_SECONDS: u64 = 210;
+
+/// The `[profile.ci]` `slow-timeout` window in seconds: `period` seconds of
+/// silence marked SLOW, terminated after `terminate-after` periods.
+fn nextest_ci_hang_window_seconds(config: &str) -> Result<u64, String> {
+    let ci = config
+        .split("[profile.ci]")
+        .nth(1)
+        .ok_or("nextest.toml has no [profile.ci] section")?;
+    let section = ci
+        .split("\n[")
+        .next()
+        .ok_or("cannot isolate the [profile.ci] section")?;
+    let line = section
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("slow-timeout ="))
+        .ok_or("[profile.ci] has no slow-timeout")?;
+    let period = line
+        .split("period =")
+        .nth(1)
+        .and_then(|rest| rest.trim_start().strip_prefix('"'))
+        .and_then(|rest| rest.split('"').next())
+        .and_then(|value| value.strip_suffix('s'))
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or_else(|| format!("cannot read a seconds period from {line:?}"))?;
+    let terminate_after = line
+        .split("terminate-after =")
+        .nth(1)
+        .and_then(|rest| {
+            rest.trim_start()
+                .split(|c: char| !c.is_ascii_digit())
+                .next()
+        })
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or_else(|| format!("cannot read terminate-after from {line:?}"))?;
+    Ok(period * terminate_after)
+}
+
+/// The `timeout-minutes` of the first step whose `- name:` contains
+/// `name_fragment` in a workflow, in seconds.
+fn workflow_step_timeout_seconds(workflow: &str, name_fragment: &str) -> Result<u64, String> {
+    let mut in_step = false;
+    for line in workflow.lines() {
+        if line.starts_with("      - ") {
+            if in_step {
+                break;
+            }
+            in_step = line.contains(name_fragment);
+            continue;
+        }
+        if in_step && let Some(value) = line.trim().strip_prefix("timeout-minutes: ") {
+            let minutes = value
+                .trim()
+                .parse::<u64>()
+                .map_err(|err| format!("bad timeout-minutes {value:?}: {err}"))?;
+            return Ok(minutes * 60);
+        }
+    }
+    Err(format!(
+        "rust-test-shards.yml has no step named like {name_fragment:?} with a timeout-minutes"
+    ))
+}
+
+/// #14906 acceptance: the hang window plus the measured build and test-phase
+/// time stays inside the shard step's cap, and the window sits above the
+/// slowest legitimate test. Widening `terminate-after` past the budget fails
+/// here, naming the window and the cap.
+#[test]
+fn nextest_hang_window_fits_the_shard_step_budget() -> Result<(), String> {
+    let root = repo_root()?;
+    let config = std::fs::read_to_string(root.join(".config/nextest.toml"))
+        .map_err(|err| format!("read nextest.toml: {err}"))?;
+    let shard_workflow =
+        std::fs::read_to_string(root.join(".github/workflows/rust-test-shards.yml"))
+            .map_err(|err| format!("read rust-test-shards.yml: {err}"))?;
+    let window = nextest_ci_hang_window_seconds(&config)?;
+    let cap = workflow_step_timeout_seconds(&shard_workflow, "Required Rust tests")?;
+
+    if window <= NEXTEST_CI_SLOWEST_LEGITIMATE_TEST_SECONDS {
+        return Err(format!(
+            "ci hang window {window}s does not sit above the measured slowest legitimate test {}s; a legitimate test would be killed as hung",
+            NEXTEST_CI_SLOWEST_LEGITIMATE_TEST_SECONDS
+        ));
+    }
+    for (phase, measured) in [
+        ("build", NEXTEST_CI_MEASURED_BUILD_SECONDS),
+        ("test phase", NEXTEST_CI_MEASURED_TEST_PHASE_SECONDS),
+    ] {
+        let bound = window + measured;
+        if bound >= cap {
+            return Err(format!(
+                "ci hang window {window}s + measured {phase} {measured}s = {bound}s is not below the shard test step cap {cap}s; reduce terminate-after so a late hang is terminated and named instead of ending at the step cap"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Returns an error unless `lines` mention `cargo xtask precommit` exactly
 /// once as a bare invocation line. A commented-out (`# cargo xtask
 /// precommit`) or otherwise decorated mention does not count as an
