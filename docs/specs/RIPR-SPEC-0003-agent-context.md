@@ -81,7 +81,9 @@ record whether its run was complete (#14440), so a finding there may be
 missing. When no finding path matches exactly but one matches ignoring ASCII
 case, the sentence starts "Paths match case-sensitively." and names the
 correctly cased file and selector; resolution itself stays case-sensitive
-(#14416).
+(#14416). The fresh-run miss cause then gives no clause of its own, so it
+never calls a wrong-case path present but finding-free on a case-insensitive
+filesystem while this sentence names its findings (#14676).
 
 The packet should include:
 
