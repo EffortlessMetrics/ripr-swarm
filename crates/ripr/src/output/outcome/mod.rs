@@ -827,13 +827,16 @@ fn build_targeted_test_outcome_report_from_snapshots(
         .collect();
     // Same-named owners (cfg-gated twins, say) are told apart by a
     // `#L<start_line>` suffix, and the inserted attribute line moves that
-    // suffix too, so the withheld owner's old key names no seam. For a
-    // suffixed withheld owner, exclude every seam whose owner shares its base
-    // key on both sides: this also excludes the twin, which is the
-    // conservative direction (disclosed, never read as resolved).
+    // suffix too, so the withheld owner's old key names no seam. Key every
+    // withheld owner by its base (suffix stripped when present) and exclude
+    // every seam whose owner shares that base on both sides. An unsuffixed
+    // withheld owner also reaches suffixed seams on the other side: one edit
+    // can delete a twin (so the survivor loses its suffix) and skip the
+    // survivor. This also excludes the twin, which is the conservative
+    // direction (disclosed, never read as resolved).
     let withheld_bases: BTreeSet<&str> = withheld_owners
         .iter()
-        .filter_map(|owner| duplicate_owner_base(owner))
+        .map(|owner| duplicate_owner_base(owner).unwrap_or(owner.as_str()))
         .collect();
     let mut withheld: BTreeSet<String> = before
         .owner_opt_outs
@@ -4277,6 +4280,48 @@ mod tests {
         assert_eq!(duplicate_owner_base("src/lib.rs::gate"), None);
         assert_eq!(duplicate_owner_base("src/lib.rs::gate#L"), None);
         assert_eq!(duplicate_owner_base("src/lib.rs::gate#Lx"), None);
+        Ok(())
+    }
+
+    #[test]
+    fn owner_opt_out_unsuffixed_owner_reaches_the_suffixed_keys_of_the_other_side()
+    -> Result<(), String> {
+        // One edit deletes a cfg twin and skips the survivor: before, both
+        // twins carry `#L` suffixes; after, the survivor is unique, so its
+        // withheld owner key has no suffix. Its old seams must not read as
+        // removed.
+        let seam = |id: &str, owner: &str| {
+            format!(
+                r#"{{"seam_id": "{id}", "kind": "predicate_boundary", "file": "src/lib.rs", "line": 3, "owner": "src/lib.rs::{owner}", "grip_class": "weakly_gripped"}}"#
+            )
+        };
+        let before = format!(
+            r#"{{"schema_version": "0.5", "scope": "repo", "seams": [{}, {}, {}]}}"#,
+            seam("old-gate-unix", "gate#L2"),
+            seam("old-gate-other", "gate#L4"),
+            seam("plain", "control")
+        );
+        let after = format!(
+            r#"{{"schema_version": "0.5", "scope": "repo", "seams": [{}], "owner_opt_outs": {{"withheld": 1, "reason": "owner_mutants_skip", "seam_ids": ["new-gate"], "owners": ["src/lib.rs::gate"]}}}}"#,
+            seam("plain", "control")
+        );
+        let report = targeted_test_outcome_report_from_json(
+            &before,
+            &after,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        )?;
+        assert!(report.removed.is_empty(), "{:?}", report.removed);
+        assert!(report.new.is_empty(), "{:?}", report.new);
+        assert_eq!(report.unchanged.len(), 1);
+        assert_eq!(
+            report.owner_opt_out_seam_ids,
+            vec![
+                "new-gate".to_string(),
+                "old-gate-other".to_string(),
+                "old-gate-unix".to_string()
+            ]
+        );
         Ok(())
     }
 

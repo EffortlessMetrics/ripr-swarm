@@ -4032,10 +4032,13 @@ The owner match is what covers an inserted attribute line: a seam id hashes the
 seam's byte offset, so inserting `#[mutants::skip]` gives the owner's seams new
 ids on the withheld side, and the other snapshot's old ids are matched by owner.
 Same-named owners (cfg-gated twins) are told apart by a `#L<start_line>` owner
-suffix, which the inserted line moves as well; for a withheld owner carrying
-that suffix, every seam on either side whose owner has the same base key (the
-suffix removed) is excluded too. That also excludes the twin's seams, the
-conservative direction, and they are disclosed like any other excluded seam.
+suffix, which the inserted line moves as well. Every withheld owner is
+therefore also matched by its base key (the suffix removed when present): every
+seam on either side whose owner has the same base key is excluded too. An
+unsuffixed withheld owner reaches suffixed seams on the other side, which covers
+an edit that deletes one twin and skips the survivor. That also excludes the
+twin's seams, the conservative direction, and they are disclosed like any other
+excluded seam.
 A seam withheld on one side only (a `ripr pilot` snapshot, which keeps every
 seam, against a `ripr check` one, or the attribute added or removed between two
 snapshots) is therefore never reported as removed, resolved or new. Those
