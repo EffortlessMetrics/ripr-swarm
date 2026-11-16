@@ -2159,38 +2159,56 @@ fn push_probe_shape(
     push_probe_shape_with_text(shapes, line_index, kind, start, end, text, None);
 }
 
-/// Drop probe shapes that sit strictly inside a `#[test]` function body and
-/// inside no production-role function (#13703). Tests are the instrument,
-/// not the surface under test: every consumer already refuses those lines
-/// (diff probes treat them as test evidence, repo probes and seam inventory
-/// skip evidence-role owners, constant readers are production-only), so the
-/// shapes only cost memory and cache bytes. A shape on the test's opening
-/// line, or inside a nested production-role `fn`, stays, because the
-/// shared-line and nested-helper rules (#9076, #9177) can still read it.
+/// Drop probe shapes that sit strictly inside a plain `#[test]` function body
+/// and inside no other function (#13703). Tests are the instrument, not the
+/// surface under test: diff probes treat those lines as test evidence, and
+/// repo probes, seam inventory and constant readers skip evidence-role
+/// owners, so the shapes only cost memory and cache bytes.
+///
+/// The rule stays narrow so the parser-time decision cannot disagree with
+/// the roles consumers read after test-style normalization:
+/// - only a bare `#[test]` attribute qualifies (argument-bearing harness
+///   attributes are re-read by normalization and may resolve differently);
+/// - a shape on the test's opening line stays (shared-line rule, #9076);
+/// - a shape inside any other function, such as a nested helper (#9177),
+///   stays whatever that function's role;
+/// - `error_path` shapes always stay, because error-path twin pairing reads
+///   them across the whole file by byte order.
 fn retain_probe_shapes_outside_test_bodies(
     shapes: &mut Vec<ProbeShapeFact>,
     functions: &[FunctionFact],
 ) {
+    let is_plain_test = |function: &&FunctionFact| {
+        function.source_role == FunctionSourceRole::TestAttribute
+            && function.attrs.iter().any(|attr| {
+                attr.chars()
+                    .filter(|ch| !ch.is_whitespace())
+                    .eq("#[test]".chars())
+            })
+    };
     let test_bodies: Vec<(usize, usize)> = functions
         .iter()
-        .filter(|function| function.source_role == FunctionSourceRole::TestAttribute)
+        .filter(is_plain_test)
         .map(|function| (function.start_line, function.end_line))
         .collect();
     if test_bodies.is_empty() {
         return;
     }
-    let production: Vec<(usize, usize)> = functions
+    let other_functions: Vec<(usize, usize)> = functions
         .iter()
-        .filter(|function| !function.source_role.is_evidence_role())
+        .filter(|function| !is_plain_test(function))
         .map(|function| (function.start_line, function.end_line))
         .collect();
     shapes.retain(|shape| {
+        if shape.kind == ProbeShapeKind::ErrorPath {
+            return true;
+        }
         let (start, end) = (shape.start_line(), shape.end_line());
         let inside_test_body = test_bodies
             .iter()
             .any(|&(fn_start, fn_end)| fn_start < start && end <= fn_end);
         !inside_test_body
-            || production
+            || other_functions
                 .iter()
                 .any(|&(fn_start, fn_end)| fn_start <= start && end <= fn_end)
     });
@@ -3601,6 +3619,17 @@ fn prices_discount() {
     }
     assert!(helper(price(4)));
 }
+
+#[tokio::test]
+async fn async_price() {
+    if price(12) > 9 { panic!(\"y\"); }
+}
+
+#[test]
+fn early_error() -> Result<(), String> {
+    if price(1) > 0 { return Err(String::new()); }
+    Ok(())
+}
 ";
         let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
         let lines: Vec<usize> = facts
@@ -3624,8 +3653,27 @@ fn prices_discount() {
             !lines.iter().any(|line| matches!(line, 8 | 12)),
             "test-body shapes were stored: {lines:?}"
         );
-        // The test function itself is still indexed as a test.
-        assert_eq!(facts.tests.len(), 1);
+        // Only a bare `#[test]` qualifies: the tokio test's body keeps its
+        // predicate, because normalization re-reads harness attributes.
+        assert!(lines.contains(&17), "tokio test shape missing: {lines:?}");
+        // Error-path shapes stay even inside a plain test (twin pairing reads
+        // them file-wide); the plain test's predicate on that line is gone.
+        let line_22: Vec<&str> = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.start_line() == 22)
+            .map(|shape| shape.kind.as_str())
+            .collect();
+        assert!(
+            line_22.contains(&"error_path"),
+            "error path dropped: {line_22:?}"
+        );
+        assert!(
+            !line_22.contains(&"predicate"),
+            "test predicate kept: {line_22:?}"
+        );
+        // The test functions are still indexed as tests.
+        assert_eq!(facts.tests.len(), 3);
         Ok(())
     }
     use std::error::Error;
