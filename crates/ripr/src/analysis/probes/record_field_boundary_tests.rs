@@ -123,7 +123,7 @@ fn nested_record_declaration_retains_its_unsafe_boundary() -> Result<(), String>
         .iter()
         .find(|shape| shape.unsafe_boundary)
         .ok_or_else(|| "record field handling erased the unsafe boundary".to_string())?;
-    assert_eq!(retained.start_byte, boundary.start_byte);
+    assert_eq!(retained.start_byte, boundary.start_byte());
     assert_eq!(retained.text, boundary.text);
     let probes = probes_at(source, 3)?;
     assert!(probes.iter().any(|probe| probe.expression == "value: u8,"));

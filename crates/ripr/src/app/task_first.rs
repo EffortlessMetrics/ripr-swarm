@@ -560,7 +560,7 @@ fn route_not_ready_reason(
             ""
         };
         label.push_str(&format!(
-            ": write the boundary test by hand — `ripr agent stub{root_flag} --at {at} --kind predicate` writes a fill-in skeleton for the changed comparison{module_note}; the boundary input is prefilled when it derives, otherwise fill the todo!() values, then rerun `ripr repair`"
+            ": write the boundary test by hand, or run `ripr agent stub{root_flag} --at {at} --kind predicate` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
     // #10701: a changed return value or error with no test ripr can
@@ -2111,6 +2111,19 @@ pub(crate) fn resolve_repair_subject_in(
                 )
         })
         .collect();
+    // #14719: a producer gap id is content-derived, so a compound predicate's
+    // id (`a && s.len() > 1` names `s.len==1`) also names the inner
+    // comparison seam on the same line. When only producer-gap matches
+    // remain, the most-specific seam wins, as the repair-card join already
+    // does (#7179); any other collision stays ambiguous.
+    if matches.len() > 1
+        && matches
+            .iter()
+            .all(|entry| producer_gap_id_names_seam(item, entry))
+        && let Some(innermost) = unique_innermost_seam(&matches)
+    {
+        return outcome_for(innermost);
+    }
     match matches.len() {
         1 => outcome_for(matches[0]),
         0 => RepairSubjectOutcome::Unknown,
@@ -2125,6 +2138,21 @@ pub(crate) fn resolve_repair_subject_in(
                 .collect(),
         },
     }
+}
+
+/// The one seam every other candidate strictly encloses, if there is one
+/// (#7179 most-specific span selection). Identical or crossing spans have no
+/// unique innermost seam.
+fn unique_innermost_seam<'a>(
+    candidates: &[&'a crate::analysis::ClassifiedSeam],
+) -> Option<&'a crate::analysis::ClassifiedSeam> {
+    let mut innermost = candidates.iter().copied().filter(|entry| {
+        candidates.iter().all(|other| {
+            other.seam.id() == entry.seam.id() || other.seam.strictly_encloses(&entry.seam)
+        })
+    });
+    let found = innermost.next()?;
+    innermost.next().is_none().then_some(found)
 }
 
 /// Why one named seam may not start a repair attempt right now (#8766), as
@@ -5582,6 +5610,16 @@ pub(crate) mod tests {
             "{}",
             refusal.reason
         );
+        // #14308: the route names the stub once, in the same short shape as
+        // the return-value route.
+        let printed_root = shell_arg(&bound_root(&root.to_string_lossy()));
+        assert!(
+            refusal.reason.contains(&format!(
+                "or run `ripr agent stub --root {printed_root} --at src/pricing.rs:88 --kind predicate` for a fill-in skeleton"
+            )) && refusal.reason.ends_with("the stub adds one), then rerun `ripr repair`"),
+            "{}",
+            refusal.reason
+        );
 
         // Discriminating negatives: a different target blocker names no
         // route and carries no module note.
@@ -6097,9 +6135,7 @@ pub(crate) mod tests {
                 "ripr agent stub --root {printed_root} --at src/pricing.rs:88 --kind predicate"
             )) && refusal
                 .reason
-                .contains("writes a fill-in skeleton for the changed comparison")
-                && refusal.reason.contains("prefilled when it derives")
-                && refusal.reason.contains("then rerun `ripr repair`"),
+                .contains("--kind predicate` for a fill-in skeleton, then rerun `ripr repair`"),
             "{}",
             refusal.reason
         );

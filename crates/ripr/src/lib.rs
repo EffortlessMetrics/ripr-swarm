@@ -210,3 +210,23 @@ pub fn set_verbose(on: bool) {
 pub(crate) fn is_verbose() -> bool {
     VERBOSE.load(Ordering::Relaxed)
 }
+
+static STDERR_DIAGNOSTICS: AtomicBool = AtomicBool::new(false);
+
+/// Turn on only the stderr diagnostics of verbose mode (`RIPR_VERBOSE`).
+///
+/// The explicit `-v`/`--verbose` flag also widens some stdout screens
+/// (`doctor`, `agent card`, check JSON cache fields). An ambient environment
+/// variable must not change stdout a script or harness parses, so the
+/// environment twin sets this stderr-only level instead.
+#[doc(hidden)]
+pub fn set_stderr_diagnostics(on: bool) {
+    STDERR_DIAGNOSTICS.store(on, Ordering::Relaxed);
+}
+
+/// Whether stderr diagnostics are on: the `-v` flag or `RIPR_VERBOSE`.
+/// Readers that only write stderr use this; readers that change stdout or
+/// written artifacts keep [`is_verbose`].
+pub(crate) fn stderr_diagnostics() -> bool {
+    is_verbose() || STDERR_DIAGNOSTICS.load(Ordering::Relaxed)
+}

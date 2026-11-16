@@ -1,0 +1,1 @@
+crates/ripr/tests/python_stale_raised_type_closure.rs|Command::new|1|stale-raised-type-closure-13622|Integration test spawns the built ripr binary (check, agent repair, continue) against a temp git fixture; no shell or network.

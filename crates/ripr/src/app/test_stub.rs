@@ -1036,9 +1036,10 @@ fn names_identifier(text: &str, name: &str) -> bool {
 }
 
 /// Resolve the selected route plus typed ambiguities for the eligible rows
-/// inside the same bounded Hidden window the default human report displays.
-/// Uses the stub command's root config, disk guard and resolver. A shared seam
-/// index is reused when it covers a file; alternating files may replace it.
+/// from the first 20 omitted findings in report order, the stub-route cutoff
+/// rather than the displayed Hidden window. Uses the stub command's root
+/// config, disk guard and resolver. A shared seam index is reused when it
+/// covers a file; alternating files may replace it.
 pub(crate) fn check_stub_routes(
     root: &Path,
     check_config: &RiprConfig,
@@ -1517,7 +1518,12 @@ fn inventory_entry_facts(
     #[cfg(test)]
     INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.set(count.get() + 1));
     let relative = scoped_file(root, file)?;
-    let scoped = analysis::inventory_file_guidance_at_with_config(root, config, &relative).ok()?;
+    // Only the selected seam receives evidence (#13884): its entry equals the
+    // whole-file inventory's, and the file's other seams are not classified
+    // merely to be discarded.
+    let scoped =
+        analysis::inventory_diff_scoped_seam_at_with_config(root, config, &[relative], seam_id)
+            .ok()?;
     // Disclosure only: a failed warm's stand-in class is not a real class.
     scoped.require_complete_evidence("test stub").ok()?;
     scoped
@@ -3081,6 +3087,59 @@ mod tests {
         let candidates = classified_candidates(&classified);
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].seam().display_line(), 2);
+    }
+
+    /// #13884: the `--at` disclosure lookup (also run by `ripr check`'s stub
+    /// route) evaluates only the selected seam, not every seam in its file,
+    /// and returns that seam's whole-file class.
+    #[test]
+    fn inventory_entry_facts_evaluates_only_the_selected_seam() -> Result<(), String> {
+        let source = (0..6)
+            .map(|n| format!("pub fn over_{n}(value: i32) -> bool {{\n    value > {n}\n}}\n"))
+            .collect::<String>();
+        let config = RiprConfig::default();
+        let root = scratch_stub_crate("one-seam-facts", &source)?;
+        analysis::evaluation_probe::reset();
+        let full = analysis::inventory_diff_scoped_classified_seams_at_with_config(
+            &root,
+            &config,
+            &[PathBuf::from("src/lib.rs")],
+            &[],
+        )?;
+        // The whole-file inventory the lookup used before evaluates every seam.
+        assert_eq!(
+            analysis::evaluation_probe::evaluated(),
+            full.classified.len()
+        );
+        assert!(
+            full.classified.len() >= 6,
+            "fixture must hold a seam per function"
+        );
+        let target = full
+            .classified
+            .get(3)
+            .ok_or("fixture must hold a fourth seam")?;
+        let target_id = target.seam.id().as_str().to_string();
+
+        analysis::evaluation_probe::reset();
+        let facts = inventory_entry_facts(&root, &config, "src/lib.rs", &target_id);
+        let evaluated = analysis::evaluation_probe::evaluated();
+        // An unchanged repeat lookup of the same seam reuses that result.
+        analysis::evaluation_probe::reset();
+        let repeat = inventory_entry_facts(&root, &config, "src/lib.rs", &target_id);
+        let repeat_evaluated = analysis::evaluation_probe::evaluated();
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(evaluated, 1);
+        assert_eq!(repeat_evaluated, 0);
+        assert_eq!(repeat, facts);
+        let (class, guidance) = facts.ok_or("selected seam must be found")?;
+        assert_eq!(class, target.class);
+        assert_eq!(
+            guidance,
+            super::super::task_first::weak_oracle_guidance(target)
+        );
+        Ok(())
     }
 
     /// #13340: a failed evidence warm leaves opaque stand-in seams, so the

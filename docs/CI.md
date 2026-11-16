@@ -67,9 +67,7 @@ queued commit's tree must also equal the live head merged onto the group base
 (`git merge-tree --write-tree <base> <head>`, with the head fetched from the
 PR's own `refs/pull/<n>/head` and required to match the head read from the API).
 A different head, extra content, a merge conflict, a moved PR ref or missing
-history refuses. Admission is per PR, so the queue must use a group size of 1; the queued commit must be a single
-squash commit of the queued PR sitting directly on the group's `base_sha`, or
-admission refuses it, so a batch fails closed even if the ruleset is misconfigured. Batching needs per-PR admission (#8082) and is a follow-up. The
+history refuses. Admission is per constituent PR in `merge_group.base_sha..merge_group.head_sha` (#8082): every constituent commit must form a linear single-parent squash chain, bind to its live PR head (`git merge-tree --write-tree <prev> <head>`) and `mergeQueueEntry`, pass candidate/cut/review/thread admission, and belong to the base repository before self-hosted runners are selected. The
 `merge-ready` label request below still works until the label request is
 retired in a follow-up, after the repository's merge queue is enabled.
 
@@ -128,6 +126,13 @@ it is a state token alone; it carries a `disposition` field label anywhere (such
 cell that holds only a state token. Fenced text is still scanned for any state token. A
 PR description that carries any of these field shapes besides its `Source review:` line
 is ambiguous and attests nothing.
+A COMMENT whose first line is `VERDICT: APPROVE <full 40-character head SHA>` at
+column zero, with the SHA equal to that review's head and only a blocker-free tail
+after it, is the same attestation in verdict form, and `VERDICT: BLOCK` /
+`VERDICT: BLOCKED <sha>` on that first line is a negative statement; every other
+`VERDICT:` prose is neutral (#8157). This keeps an
+automated verdict review from superseding an earlier marker from the same login as
+neutral chatter.
 A state word inside prose, such as a backticked quotation of a marker or "the earlier
 review is superseded", is narration and is not read, because that scan ejected fully
 green queue entries after the whole run (#11566). The PR author can still
@@ -405,7 +410,7 @@ remain in their producing workflows.
 No workflow downloads these four artifacts. Their retrieval window is not a
 retention rule for release or qualification evidence, failure reproducer inputs,
 or reports consumed by later runs. In particular, `dx-scoreboard` feeds the
-outcome page, `outcome-receipts` carries historical trend inputs, and Windows
+outcome page, `outcome-receipts` and `dx-trend-receipts` carry historical trend inputs, and Windows
 Advisory artifacts support retained native dependency receipts. Those artifacts
 keep their existing retention. A diagnostic needed for a longer-lived proof or
 incident must receive its own retention treatment before its copy expires;
@@ -1483,7 +1488,25 @@ minutes), so before calling a head dark the watchdog also lists
 `routed-rust.yml` runs with `event=pull_request` on that SHA. A queued or
 in-progress run is reported as in flight. Re-applying `merge-ready` on such a
 head would cancel the real run, so the watchdog never recommends it. This uses
-`actions: read` only. Drafts and fork heads are
+`actions: read` only. Mergeability is read once per head and never retried
+in-sweep (#14636): `mergeable_state` is not resolved for heads in the merge
+queue, which read `unknown` on repeated polls, and the former in-sweep retry
+spent 10 s of sleep per queued head, which alone exceeded the job cap once most
+eligible heads were queued. A non-queued head that reads `unknown` is the lazy
+first read after a base push and resolves on its own. A head whose
+mergeability is still unreadable is classified `mergeability unreadable` and
+deferred to the next sweep rather than given the re-apply remedy, which cannot
+create a merge ref for a conflicted head; it is counted in the sweep totals and
+re-read by the next sweep, so each sweep defers a head at most once per
+interval; a queued head can stay unresolved for as long as it remains queued,
+because GitHub does not resolve mergeability for a queued head. Conflict
+detection requires `mergeable_state == "dirty"`, so conflict notices are
+unavailable for those heads — and a queued head is the
+worst place to lose that signal, because it is about to merge. The sweep says so
+per head and in its totals rather than implying coverage; the queue's own
+`removed_from_merge_queue` event with `reason=merge_conflict` is the only signal
+that exists for a queued head, and watching it is a separate change. Drafts and
+fork heads are
 not qualified, as are PRs without the `merge-ready` label (no request was made); the sweep still clears their stale conflict status, as described below. The one write is the conflict report (#10136): a labeled, non-draft, same-repo PR that is `dirty` and whose head has no `merge-ready conflict` failure from the actions bot gets one comment per head and base plus that failing status (the same marker and context the label-time notice uses, so the two never double up), and a PR that is no longer conflicting and still carries that failure gets a success status. The job holds `pull-requests: write` and `statuses: write` and still never dispatches. A labeled, non-draft, same-repo head that is not conflicting (mergeability computed), has no required check and no merge-ready run in flight was pushed after the label or lost its label event: the sweep comments once per head (marker `merge-ready-dark`) asking the author to remove and re-apply `merge-ready` (#10136). The comment names the cause (no run exists, or a run finished without the check, for example an admission refusal), and the sweep stays quiet for 10 minutes after any PR activity so a label just applied is not mistaken for a dropped one. A draft or unlabeled same-repo PR whose head still carries the actions bot's failing `merge-ready conflict` status gets a success status, so a removed label or a draft conversion does not leave a stale red status (#10136). Each sweep's summary table is the audit
 trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
 shape (no dispatch command, no `actions: write`), the in-flight check, and
@@ -1884,25 +1907,58 @@ coverage/grip, and receipt artifacts.
 ### Composite Action (`ripr-check`)
 
 For a one-step advisory check without the generated workflow, use the
-composite Action in `.github/actions/ripr-check`:
+composite Action in `.github/actions/ripr-check`. A complete workflow:
 
 ```yaml
-- uses: actions/checkout@v6
-  with:
-    fetch-depth: 0
-- uses: <owner>/<repo>/.github/actions/ripr-check@<ref>
+name: ripr
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  ripr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: EffortlessMetrics/ripr/.github/actions/ripr-check@<release tag or commit SHA>
 ```
 
-Inputs: `version` (default: the latest published release; installs that
+Replace the placeholder with a release tag (for example `v0.11.0` once it is
+published) or a commit SHA of `EffortlessMetrics/ripr`, not a branch. The default `actions/checkout` (`fetch-depth: 1`) is enough. On a
+`pull_request` event the Action fetches the base branch and deepens a shallow
+checkout in doubling steps (50, 100, ... 1,600 commits, then the rest) until
+HEAD meets the base, so the diff has a merge base (#14800). A full checkout is
+not touched. On other events, or with an explicit `base`, use
+`fetch-depth: 0`. If history is still missing, `ripr check` names the repair.
+
+Inputs: `version` (default: the release pinned in the Action at that tag; installs that
 release's prebuilt archive after checking its published SHA-256, and falls
 back to `cargo install ripr --version <version> --locked` where no archive
-exists), `mode` (`draft`, `deep`, `ready`), `format` (`human`, `json`, `sarif`)
-and `base`. An empty `base` uses the pull request base branch on
-`pull_request` events (fetching just that branch when the checkout lacks it)
-and ripr's own default-branch detection elsewhere. A checkout without
-`fetch-depth: 0` can still lack history; `ripr check` then names the repair.
-The Action prints the report to the job log. For the summary comment, inline
-comments, SARIF upload and artifacts, use the generated workflow above.
+exists), `mode` (`draft`, `deep`, `ready`), `format` (any `ripr check` format,
+for example `human`, `json`, `sarif` or `github` for file annotations), `base`
+and `cache`. An empty `base` uses the pull request base branch on
+`pull_request` events and ripr's own default-branch detection elsewhere.
+`cache` (default `true`) restores and saves ripr's analysis cache under the
+runner's temp directory with `actions/cache` pinned to a commit SHA, so later
+pushes re-analyze only changed files. ripr checks each entry against file
+contents, configuration and its own version, so a stale entry is a miss.
+
+Output: the report goes to the job log and to a file. A text report also goes
+to the job summary (cut at 60 KB). Step outputs are `exit-code` and `report`
+(the file's path, for example to pass a SARIF file to an upload step). Findings
+are advisory: a completed check exits 0 whatever it found. A check that could
+not complete (exit 2, or 3 when ripr declines) fails the step. It also emits one
+error annotation and a job-summary line that give the exit meaning and ripr's
+own first reason lines ([exit codes](EXIT_CODES.md)). Replayed report and stderr
+text cannot issue workflow commands, except the report of `format: github`,
+whose annotations are the point. To block on new gaps,
+use the generated workflow's gate modes ([adopting in CI](ADOPTING_IN_CI.md)).
+
+Fork and Dependabot pull requests: the Action needs only `contents: read`. It
+writes nothing to the pull request, so it behaves the same on a fork's
+read-only token. GitHub scopes a cache that a pull request saves to that pull
+request, and the cache lives outside the checkout. Run it on `pull_request`,
+never `pull_request_target`. For the summary comment, inline comments, SARIF
+upload and artifacts, use the generated workflow above.
 
 The Action's `Install ripr` step follows the same contract as the generated
 workflow's (#6245): Windows x64 installs the release `zip` (extracted with the
@@ -1944,6 +2000,12 @@ ripr review-comments \
   --check-output target/ripr/pr/check.json \
   --out target/ripr/review/comments.json
 ```
+
+To honor a repository suppression policy in the gate, add
+`--suppression-policy .ripr/suppressions.toml` here and to the `ripr check`
+step. The default `.ripr/suppressions.toml` is never applied implicitly;
+matching seams move to the `suppressed` array and `ripr gate evaluate` reads
+them as non-blocking. See [coming from cargo-mutants](FROM_CARGO_MUTANTS.md#suppressing-in-ci).
 
 That renderer writes JSON and Markdown under `target/ripr/review/` and does
 not post to GitHub by itself. Teams replacing a cargo-mutants exit-`2` CI gate
@@ -2007,7 +2069,9 @@ ambient Git configuration cannot change the bytes RIPR analyzes, #4005), the
 PR guidance, the comment plan, SARIF and badge renders, the gate, the ledgers,
 start-here, the report index, and the changed-line annotations, each as a log
 group named after the step it replaced. `ripr help reports` lists its
-failure rules, and `--step NAME` reruns one step locally.
+failure rules, and `--step NAME` reruns one step locally. The packet exits
+`3` when the gate blocked and nothing else required failed, and `2` when a
+required step could not complete ([EXIT_CODES.md](EXIT_CODES.md#ci-integration)).
 
 When `ripr agent start` exits 3 for the top seam, the packet logs `RIPR agent
 loop skipped: ... declined` and moves on. Exit 3 means ripr declined (see
@@ -3003,7 +3067,7 @@ Those remain separate qualification and rollout obligations.
 The ordinary size envelope (files and changed lines) counts only what a human
 has to review. Generated files are declared once, with `linguist-generated` in
 `.gitattributes` (dependency lockfiles, blessed `expected/` rows and goldens,
-public-proof metrics, verdict-corpus producer fact packets, honesty-corpus repo-exposure captures), and their lines and files are not counted. The
+public-proof metrics, the canonical DX scoreboard report `metrics/dx-scoreboard/baseline.json`, verdict-corpus producer fact packets, honesty-corpus repo-exposure captures), and their lines and files are not counted. The
 declaration is read from the PR's base commit, so a PR cannot label its own
 files; a `.gitattributes` edit is itself counted in full. Three guards keep the
 label from hiding hand-written code: only declarable shapes count (lockfiles,

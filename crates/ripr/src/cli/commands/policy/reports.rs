@@ -289,6 +289,7 @@ pub(crate) fn policy_promotion(args: &[String]) -> Result<(), String> {
 
 pub(crate) fn policy_preview_promotion(args: &[String]) -> Result<(), String> {
     let options = parse_policy_preview_promotion_options(args)?;
+    ensure_command_root(Path::new(&options.root), "policy preview-promote")?;
     let input = output::policy_preview_promotion::PreviewPromotionInput {
         root: options.root,
         generated_at: policy_readiness_generated_at()?,
