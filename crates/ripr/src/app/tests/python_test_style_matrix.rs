@@ -577,6 +577,8 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
         old: "    return {\"total\": _10, \"count\": 3}",
         new: "    return {\"total\": 10, \"count\": 3}",
     };
+    let chained_alias_app = "from fastapi import FastAPI\n\napp = FastAPI()\nlegacy = app.get(\"/price\")\nreg = legacy\n\n\n@reg\ndef cached():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let attribute_alias_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\nclass Routes:\n    pass\n\n\nroutes_holder = Routes()\nroutes_holder.legacy = app.get(\"/price\")\n\n\n@routes_holder.legacy\ndef cached():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
     let flag_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 10, \"status\": \"ok\"}\n";
     let list_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": [5], \"count\": 3}\n";
     let list_edit = |new: &'static str| Edit {
@@ -943,6 +945,24 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             read("assert response.json()[\"ten\"] == 10"),
         ),
         (
+            "alias of a route alias",
+            chained_alias_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "route call bound to an attribute",
+            attribute_alias_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "list formatting only",
+            list_app,
+            list_edit("    return {\"total\": [ 5 , ], \"count\": 3}"),
+            read("assert response.json()[\"total\"] == [5]"),
+        ),
+        (
             "static route before a parameter route",
             overlap_app,
             overlap_edit,
@@ -968,6 +988,12 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
     // Controls: an apostrophe in a double-quoted string and an integer past
     // 2^53 are values like any other, so a real change to them is credited.
     for (name, old, new, assertion) in [
+        (
+            "string whitespace change",
+            "    return {\"total\": \"a b\", \"count\": 3}",
+            "    return {\"total\": \"ab\", \"count\": 3}",
+            "assert response.json()[\"total\"] == \"ab\"",
+        ),
         (
             "apostrophe string change",
             "    return {\"total\": \"it's fine\", \"count\": 3}",

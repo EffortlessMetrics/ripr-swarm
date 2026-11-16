@@ -1758,7 +1758,9 @@ fn json_normal_form(value: &str) -> Option<String> {
     }
     let mut normal = String::new();
     let mut token = String::new();
-    let mut chars = compact.chars();
+    // The source text, not `compact`: whitespace inside a string is part
+    // of its value, and is dropped only between tokens.
+    let mut chars = value.trim().chars();
     while let Some(ch) = chars.next() {
         if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '+' | '-') {
             token.push(ch);
@@ -1806,6 +1808,7 @@ fn json_normal_form(value: &str) -> Option<String> {
                 }
                 normal.push(']');
             }
+            ch if ch.is_whitespace() => {}
             _ => return None,
         }
     }

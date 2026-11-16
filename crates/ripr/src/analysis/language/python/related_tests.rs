@@ -1206,7 +1206,10 @@ pub(super) fn workspace_registers_routes_indirectly<'a>(
             let Some((target, value)) = line.split_once('=') else {
                 continue;
             };
+            // An attribute target (`self.legacy = app.get(...)`) is
+            // tracked by its last segment.
             let name = target.split(':').next().unwrap_or(target);
+            let name = name.rsplit('.').next().unwrap_or(name);
             let Some((callee, _)) = value.split_once('(') else {
                 continue;
             };
@@ -1222,7 +1225,46 @@ pub(super) fn workspace_registers_routes_indirectly<'a>(
             }
         }
     }
+    // An alias of an alias (`reg = legacy`) is an alias too, to a fixpoint.
+    let mut grew = !aliases.is_empty();
+    while grew {
+        grew = false;
+        for source in sources.clone() {
+            for line in source.lines() {
+                let line: String = strip_line_comment(line)
+                    .chars()
+                    .filter(|ch| !ch.is_whitespace())
+                    .collect();
+                let Some((target, value)) = line.split_once('=') else {
+                    continue;
+                };
+                let name = target.split(':').next().unwrap_or(target);
+                let name: Vec<char> = name.rsplit('.').next().unwrap_or(name).chars().collect();
+                let value: Vec<char> = value.rsplit('.').next().unwrap_or(value).chars().collect();
+                if !name.is_empty()
+                    && name.iter().all(|&ch| identifier(ch))
+                    && aliases.contains(&value)
+                    && aliases.insert(name)
+                {
+                    grew = true;
+                }
+            }
+        }
+    }
     for source in sources {
+        // Any alias token on a decorator line (`@self.legacy`, `@reg`) uses
+        // the route call.
+        if !aliases.is_empty()
+            && source.lines().any(|line| {
+                let line = strip_line_comment(line).trim_start();
+                line.starts_with('@')
+                    && line
+                        .split(|ch: char| !identifier(ch))
+                        .any(|token| aliases.contains(&token.chars().collect::<Vec<char>>()))
+            })
+        {
+            return true;
+        }
         let chars = compact(source);
         for verb in ROUTE_VERBS {
             let stem: Vec<char> = verb.trim_end_matches('(').chars().collect();
