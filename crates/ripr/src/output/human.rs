@@ -7466,6 +7466,37 @@ mod tests {
     }
 
     #[test]
+    fn over_limit_stop_names_only_enabled_language_files_as_selected() -> Result<(), String> {
+        // #13641 review: a fitting file whose adapter is disabled is never
+        // selected, so the over-limit stop must not claim every fitting file
+        // was selected — only every fitting file in an enabled language.
+        use crate::analysis::PartialDiffStopReason;
+        let mut output =
+            partial_scope_output(PartialDiffStopReason::FileExceedsAnalysisLimit, 2, 2510);
+        let scope = output
+            .partial_scope
+            .as_mut()
+            .ok_or("fixture carries a partial scope")?;
+        scope.over_limit_files = vec![crate::analysis::OverLimitFile {
+            path: "src/b.rs".to_string(),
+            changed_lines: 2500,
+            limit: 2000,
+            limit_env: "RIPR_MAX_DIFF_CHANGED_RUST_LINES",
+        }];
+        let rendered =
+            super::render_full_with_config(&output, &crate::config::RiprConfig::default());
+        let needle = "every enabled-language file that fits was selected and 1 file(s) \
+                      that each exceed their language's limit on their own were left out";
+        if !rendered.contains(needle) {
+            return Err(format!("missing `{needle}` in:\n{rendered}"));
+        }
+        if rendered.contains("every file that fits was selected") {
+            return Err(format!("unqualified selection claim in:\n{rendered}"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn human_output_escapes_control_bytes_in_selected_paths() -> Result<(), String> {
         // A crafted diff filename with control bytes must not reach the
         // terminal verbatim (#2142 review): the display is escaped while the

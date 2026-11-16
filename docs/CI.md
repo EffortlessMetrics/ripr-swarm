@@ -2090,7 +2090,7 @@ A PR whose diff is larger than the per-language changed-line limits
 as a bounded partition instead of refused (#13641). `ripr check` analyzes a
 deterministic subset of whole files within the partial budgets
 (`RIPR_PARTIAL_DIFF_FILE_BUDGET`, `RIPR_PARTIAL_DIFF_LINE_BUDGET`, the line
-budget clamped to the smallest enabled limit) and reports
+budget clamped to the smallest limit among the languages the diff contains) and reports
 `analysis_scope.run_status = limited_partial_scope` with the selected files,
 lower-bound uninspected counts, the stop reason, and
 `gate_eligibility = ineligible`. A file that alone exceeds its language's
