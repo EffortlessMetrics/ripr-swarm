@@ -213,3 +213,35 @@ fn the_nested_tail_and_a_chain_link_stay_the_returned_value() -> Result<(), Stri
     );
     Ok(())
 }
+
+/// #14917 review: a trailing comment does not keep the outer shape, and a
+/// closure body inside a tail `match` arm is its own unit too.
+#[test]
+fn a_trailing_comment_and_a_closure_in_an_arm_skip_the_outer_shape() -> Result<(), String> {
+    let commented = CLOSURE.replace("sum += item;", "sum += item; // add it");
+    let before = commented.replace("sum += item;", "sum += item * 2;");
+    let nested = families(&before, &commented, 5)?;
+    assert!(
+        !nested
+            .iter()
+            .any(|family| matches!(family, ProbeFamily::ReturnValue | ProbeFamily::ErrorPath)),
+        "{nested:?}"
+    );
+    let unwrapped = "pub fn total(items: Vec<u32>, flag: u8) -> u32 {
+    match flag {
+        0 => with(|| {
+            let doubled = items.len() as u32 * 2;
+            doubled
+        }),
+        _ => 0,
+    }
+}";
+    let closure_families = families(&unwrapped.replace("* 2", "* 3"), unwrapped, 4)?;
+    assert!(
+        !closure_families
+            .iter()
+            .any(|family| matches!(family, ProbeFamily::ReturnValue | ProbeFamily::ErrorPath)),
+        "{closure_families:?}"
+    );
+    Ok(())
+}

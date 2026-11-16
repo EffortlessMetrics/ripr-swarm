@@ -379,22 +379,64 @@ fn line_is_nested_statement(
         return false;
     }
     let root = parse.tree();
+    if shape_range.end() > root.syntax().text_range().end() {
+        return false;
+    }
     let ra_ap_syntax::NodeOrToken::Node(outer) = root.syntax().covering_element(shape_range) else {
         return false;
     };
     if outer.text_range() != shape_range {
         return false;
     }
-    outer
-        .descendants()
-        .filter_map(ast::Stmt::cast)
-        .any(|statement| {
-            statement.syntax().text_range().contains_range(content)
-                && statement
-                    .syntax()
-                    .parent()
-                    .and_then(ast::StmtList::cast)
-                    .is_some()
+    // A trailing `// comment` sits outside the statement's range, so the line
+    // content ends at its last non-trivia token (#14917 review).
+    let mut content_end = content.end();
+    while content_end > content.start() {
+        let Some(token) = root
+            .syntax()
+            .token_at_offset(content_end)
+            .left_biased()
+            .filter(|token| token.kind().is_trivia())
+        else {
+            break;
+        };
+        content_end = token.text_range().start().max(content.start());
+    }
+    let content = ra_ap_syntax::TextRange::new(content.start(), content_end);
+    if content.is_empty() {
+        return false;
+    }
+    let start = match root.syntax().covering_element(content) {
+        ra_ap_syntax::NodeOrToken::Node(node) => node,
+        ra_ap_syntax::NodeOrToken::Token(token) => match token.parent() {
+            Some(parent) => parent,
+            None => return false,
+        },
+    };
+    // The innermost statement of a block that holds the whole line, walking up
+    // from the line rather than down the whole shape (#14917 review).
+    let Some(statement) = start.ancestors().find(|node| {
+        ast::Stmt::can_cast(node.kind())
+            && node
+                .parent()
+                .is_some_and(|parent| ast::StmtList::can_cast(parent.kind()))
+            && node.text_range().contains_range(content)
+    }) else {
+        return false;
+    };
+    if !shape_range.contains_range(statement.text_range()) || statement == outer {
+        return false;
+    }
+    // Only a closure or `async` body between the statement and the shape runs
+    // as its own unit; a statement of a plain, `if`, `match` or `loop` block
+    // still runs in the owner's own body and feeds its value (#14917 review).
+    statement
+        .ancestors()
+        .skip(1)
+        .take_while(|node| outer.text_range().contains_range(node.text_range()))
+        .any(|node| {
+            ast::ClosureExpr::can_cast(node.kind())
+                || ast::BlockExpr::cast(node).is_some_and(|block| block.async_token().is_some())
         })
 }
 
