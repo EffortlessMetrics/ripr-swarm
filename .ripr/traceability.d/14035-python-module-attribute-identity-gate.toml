@@ -13,3 +13,19 @@ code = [
   "crates/ripr/src/analysis/language/python/literal_patch.rs",
   "crates/ripr/src/analysis/language/python/callee_patch.rs",
 ]
+fixtures = [
+  "fixtures/python_module_constant_boundary_test_local_shadow",
+  "fixtures/python_module_constant_boundary_test_local_control",
+  "fixtures/python_module_constant_boundary_rival_src",
+  "fixtures/python_module_constant_boundary_rival_control",
+]
+
+# The shadowed module-constant boundary graduates into the honesty corpus (#14035).
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/python_module_constant_boundary_test_local_shadow",
+  "fixtures/python_module_constant_boundary_test_local_control",
+  "fixtures/python_module_constant_boundary_rival_src",
+  "fixtures/python_module_constant_boundary_rival_control",
+]
