@@ -1030,7 +1030,7 @@ fn stale_raised_type_refusal(gap: &CheckFindingsGap) -> Option<String> {
         .collect::<Vec<_>>()
         .join(", ");
     Some(format!(
-        "reads `{GAP_CLOSED_CLASSIFICATION}` in the after artifact, but its crediting assertion ({assertions}) pins the old raised type `{old}`, and the changed code now raises `{new}`, which is not `{old}` or a known subclass of it, so that assertion will fail against the new `{new}` raise wherever the test reaches it, and is not closure evidence. Next: assert the new type (for example `pytest.raises({new}, ...)`), or run the test to confirm, then rerun",
+        "reads `{GAP_CLOSED_CLASSIFICATION}` in the after artifact, but its crediting assertion ({assertions}) pins the old raised type `{old}`, and the changed code now raises `{new}`, which is not `{old}` or a known subclass of it, so that assertion is expected to fail against the new `{new}` raise wherever the test reaches it, and is not closure evidence. Next: assert the new type (for example `pytest.raises({new}, ...)`), then rerun",
         old = first.old_type,
         new = first.new_type,
     ))
@@ -2829,9 +2829,9 @@ mod tests {
         for fragment in [
             GAP_BINDING_REFUSAL_PREFIX,
             "pins the old raised type `ValueError`",
-            "will fail against the new `TypeError` raise",
+            "is expected to fail against the new `TypeError` raise",
             "pytest.raises(TypeError, ...)",
-            "run the test",
+            "then rerun",
             "`test_neg`",
         ] {
             if !error.contains(fragment) {

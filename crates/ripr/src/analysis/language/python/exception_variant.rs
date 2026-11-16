@@ -316,15 +316,7 @@ fn stale_pins(
 ) -> Option<Vec<StaleRaisedTypePin>> {
     let old_type = raised_type_name(old_line_text?)?;
     let new_type = raised_type_name(line_text)?;
-    // `OSError(errno, ...)` constructs the errno's subclass
-    // (`OSError(2, "m")` is a `FileNotFoundError`), so the raised type is not
-    // read from the name alone.
-    if old_type == new_type
-        || matches!(
-            new_type.as_str(),
-            "OSError" | "IOError" | "EnvironmentError"
-        )
-    {
+    if old_type == new_type {
         return None;
     }
     let oracle_tests = related_candidates
@@ -409,8 +401,63 @@ fn known_not_subclass(source: &str, new: &str, old: &str) -> Option<bool> {
     // `old` must itself resolve, so an alias such as `IOError` (the same class
     // as `OSError`) or an imported name never reads as unrelated.
     exception_ancestry(&module.body, &facts, old, 0)?;
+    // The raised name must read as the class it names everywhere in the
+    // module: a function-local `TypeError = ValueError`, a parameter or an
+    // import rebinds it (#13622 review).
+    let class_headers = usize::from(!facts.unbound(new));
+    if !only_raised_or_declared(source, new, class_headers) {
+        return None;
+    }
     let ancestry = exception_ancestry(&module.body, &facts, new, 0)?;
+    // Constructors whose arguments choose or reject the class: `OSError(2, "m")`
+    // constructs `FileNotFoundError`, and the Unicode errors, `SyntaxError` and
+    // exception groups raise `TypeError` for the wrong argument shape.
+    if ancestry
+        .iter()
+        .any(|name| CONSTRUCTOR_CHECKED_EXCEPTIONS.contains(&name.as_str()))
+    {
+        return None;
+    }
     Some(!ancestry.iter().any(|name| name == old))
+}
+
+/// Builtin exceptions whose constructor maps or validates its arguments, so a
+/// raise of one (or of a class derived from one) may raise another class.
+const CONSTRUCTOR_CHECKED_EXCEPTIONS: [&str; 6] = [
+    "OSError",
+    "UnicodeDecodeError",
+    "UnicodeEncodeError",
+    "UnicodeTranslateError",
+    "SyntaxError",
+    "BaseExceptionGroup",
+];
+
+/// Whether `name` occurs in `source` (outside string literals) only after
+/// `raise` or `except`, or after `class` at most `class_headers` times. Any
+/// other occurrence (an assignment, a parameter, an import, a nested class)
+/// may rebind it somewhere the raise can see.
+fn only_raised_or_declared(source: &str, name: &str, class_headers: usize) -> bool {
+    let blanked = super::sink_alignment::blank_quoted_strings(source);
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut headers = 0;
+    for (start, _) in blanked.match_indices(name) {
+        let before = blanked[..start].chars().next_back();
+        let after = blanked[start + name.len()..].chars().next();
+        if before.is_some_and(is_word) || after.is_some_and(is_word) {
+            continue;
+        }
+        let preceding = blanked[..start].trim_end();
+        let keyword = preceding
+            .rsplit(|ch: char| !is_word(ch))
+            .next()
+            .unwrap_or_default();
+        match keyword {
+            "raise" | "except" => {}
+            "class" => headers += 1,
+            _ => return false,
+        }
+    }
+    headers <= class_headers
 }
 
 /// `name` and every class it derives from, resolved through single top-level
@@ -442,7 +489,7 @@ fn exception_ancestry(
         _ => None,
     })?;
     // One plain base only: several bases could repeat shared ancestors at
-    // every level, and a class that overrides construction (`__new__`) can
+    // every level, and a class that overrides construction (`__new__` or `__init__`) can
     // return an instance of another class (#13622 review).
     let ([Expr::Name(base)], true, true) = (
         class.bases.as_slice(),
@@ -464,7 +511,7 @@ fn exception_ancestry(
 }
 
 /// Whether a class body may change construction. Only a plain body is read:
-/// `pass`, `...`, docstrings and methods other than `__new__`. Any other
+/// `pass`, `...`, docstrings and methods other than `__new__` and `__init__`. Any other
 /// statement (an assignment, an `if` or `try` that could define `__new__`, a
 /// decorator-built binding) is treated as overriding construction.
 fn overrides_construction(class_body: &[Stmt]) -> bool {
@@ -472,10 +519,12 @@ fn overrides_construction(class_body: &[Stmt]) -> bool {
         Stmt::Pass(_) => true,
         Stmt::Expr(expression) => matches!(expression.value.as_ref(), Expr::Constant(_)),
         Stmt::FunctionDef(function) => {
-            function.name.as_str() != "__new__" && function.decorator_list.is_empty()
+            !matches!(function.name.as_str(), "__new__" | "__init__")
+                && function.decorator_list.is_empty()
         }
         Stmt::AsyncFunctionDef(function) => {
-            function.name.as_str() != "__new__" && function.decorator_list.is_empty()
+            !matches!(function.name.as_str(), "__new__" | "__init__")
+                && function.decorator_list.is_empty()
         }
         _ => false,
     })

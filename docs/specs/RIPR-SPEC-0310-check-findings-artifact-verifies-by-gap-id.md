@@ -91,13 +91,13 @@ could not be verified without trusting hand-authored JSON.
    builtin exception table). Such an assertion fails wherever the test reaches the new raise. The
    refusal is the same named gap-binding refusal (exit `3`; the attempt stays
    `awaiting_edit`), names the assertion, `Old` and `New`, and names the next
-   step: assert `New`, or run the test. The exposure class is unchanged: a
+   step: assert `New`, then rerun. The exposure class is unchanged: a
    pre-existing old-type assertion does notice the edit (RIPR-SPEC-0238
    example 14). Raise arguments that cannot themselves raise first (constants, plain
    names, and f-strings over those) are read, so an f-string message still
    names its type. Any shape the analyzer cannot read exactly (a raise that is
    not one `raise Name(...)` line, a raise with a `from` cause or keyword
-   arguments, a new raise of `OSError` (or its aliases `IOError` and `EnvironmentError`, which construct the errno's subclass), an argument with a call, operator or subscript, a decorated class, a class with several bases, its own `__new__` or any class-body statement other than `pass`, a docstring or an undecorated method, a test module
+   arguments, a new class derived from `OSError` (whose constructor picks the errno's subclass; its aliases `IOError` and `EnvironmentError` are not resolved) or from a builtin whose constructor validates its arguments (the Unicode errors, `SyntaxError`, exception groups), a new class name that the production module mentions other than in `raise`, `except` or its one class header (a local `TypeError = ValueError`, a parameter, an import), an argument with a call, operator or subscript, a decorated class, a class with several bases, its own `__new__` or `__init__` (or one inherited from a module class), or any class-body statement other than `pass`, a docstring or an undecorated method, a test module
    that rebinds the expected name, an attribute, tuple or keyword expected class, an aliased or
    imported class, an unresolvable base) records no fact and keeps today's
    closure.
@@ -155,8 +155,8 @@ could not be verified without trusting hand-authored JSON.
    `raise TypeError("negative quantity")`, and the repair's new test asserts
    `pytest.raises(ValueError, match="negative quantity")`. `ripr continue`
    refuses with exit `3`, says the test pins the old raised type `ValueError`
-   and will fail against the new `TypeError` raise, and names
-   `pytest.raises(TypeError, ...)` or running the test as the next step. The
+   and is expected to fail against the new `TypeError` raise, and names
+   `pytest.raises(TypeError, ...)` as the next step. The
    corrected `pytest.raises(TypeError, ...)` test then closes the gap, as do
    `excinfo.type is TypeError` and an old-type assertion when the new class
    subclasses the old one.

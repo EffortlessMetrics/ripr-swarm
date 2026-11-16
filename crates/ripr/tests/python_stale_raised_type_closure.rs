@@ -198,7 +198,7 @@ fn stale_old_type_test_is_not_reported_closed_and_names_both_types() -> Result<(
     need(&text, "pins the old raised type `ValueError`", "old type")?;
     need(
         &text,
-        "will fail against the new `TypeError` raise",
+        "is expected to fail against the new `TypeError` raise",
         "new type",
     )?;
     need(&text, "pytest.raises(TypeError, ...)", "next step")?;
@@ -308,7 +308,7 @@ fn stale_old_type_test_is_refused_when_the_raise_message_is_an_f_string() -> Res
     need(&text, "pins the old raised type `ValueError`", "old type")?;
     need(
         &text,
-        "will fail against the new `TypeError` raise",
+        "is expected to fail against the new `TypeError` raise",
         "new type",
     )
 }

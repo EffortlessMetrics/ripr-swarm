@@ -693,6 +693,30 @@ fn unreadable_raise_or_class_shapes_record_no_stale_pin() -> Check {
     if !stale_pins(&errno).is_empty() {
         return Err(format!("an OSError raise must fail open: {errno:?}"));
     }
+    // A constructor that validates its arguments (`UnicodeDecodeError` takes
+    // five) may raise `TypeError` itself, and a production-local rebinding
+    // (`TypeError = ValueError`) changes the class raised; both fail open.
+    let typed_raises = RAISES_BODY.replace("{T}", "TypeError");
+    for (source, old, new) in [
+        (
+            "def parse(s):\n    if len(s) > 10:\n        raise UnicodeDecodeError(\"m\")\n    return len(s)\n",
+            "        raise TypeError(\"m\")",
+            "        raise UnicodeDecodeError(\"m\")",
+        ),
+        (
+            "def parse(s):\n    ValueError = TypeError\n    if len(s) > 10:\n        raise ValueError(\"m\")\n    return len(s)\n",
+            "        raise TypeError(\"m\")",
+            "        raise ValueError(\"m\")",
+        ),
+    ] {
+        let tests = format!(
+            "import pytest\nfrom fx.core import parse\n\ndef test_variant():\n{typed_raises}"
+        );
+        let finding = classify_with_context(source, &tests, Some(old), new, true)?;
+        if !stale_pins(&finding).is_empty() {
+            return Err(format!("{new:?} must fail open: {finding:?}"));
+        }
+    }
     // A test module that assigns the expected name fails open.
     let assigned = classify_with_context(
         "def parse(s):\n    if len(s) > 10:\n        raise TypeError(\"m\")\n    return len(s)\n",
@@ -733,6 +757,8 @@ fn unreadable_raise_or_class_shapes_record_no_stale_pin() -> Check {
         "class TooLongError(Exception):\n    if True:\n        def __new__(cls, message):\n            return EmptyError(message)\n",
         "class TooLongError(Exception):\n    __new__ = staticmethod(lambda cls, message: EmptyError(message))\n",
         "def redirect(cls):\n    return EmptyError\n\n@redirect\nclass TooLongError(Exception): pass\n",
+        "class TooLongError(Exception):\n    def __init__(self, message):\n        raise EmptyError(message)\n",
+        "class Base(Exception):\n    def __init__(self, message):\n        raise EmptyError(message)\nclass TooLongError(Base): pass\n",
     ] {
         let source = format!(
             "class EmptyError(Exception): pass\n{class}\ndef parse(s):\n    if len(s) > 10:\n        raise TooLongError(\"too long\")\n    return len(s)\n"
