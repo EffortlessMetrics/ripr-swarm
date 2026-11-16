@@ -500,3 +500,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_predicate_positions (36)
+
+Reason:
+RIPR-SPEC-0122: a Hidden row whose long reason repeats the row above prints same as above (#14308)
+
+Command:
+`cargo xtask goldens bless binding_predicate_positions --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -271,6 +271,16 @@ and literal consumer controls are specified by
 - LSP diagnostics and hover content when used through the editor
 - agent context packet for a selected finding
 
+For the same workspace, diff and root path, `ripr check --diff` stdout in the
+pinned formats (`human`, `human-full`, `json`, `json-terse`, `agent`,
+`github`, `sarif`, `missed-txt`) is byte-identical across repeated runs, a
+cold or warm run cache, one or four analysis workers (`RAYON_NUM_THREADS`),
+and the workspace's files written in reverse order. Not covered by this
+contract: `check-findings-json`, whose artifact stamps a per-run time, and
+the human digest's one-time first-run legend (#10481), which is intended
+state. Rerun commands carry the absolute root, so output also differs by
+checkout location (#14230).
+
 ## Classifications
 
 Static findings may use only these exposure classes:
@@ -756,6 +766,12 @@ case `rust_guarded_boundary_guard_missing_not_promoted` pin the guard-missing
 boundary row as `infection_unknown`.
 
 ## Test Mapping
+
+Output determinism (#14230):
+
+- `crates/ripr/tests/output_determinism.rs::rust_check_output_is_byte_identical_across_runs_workers_and_write_order`
+- `crates/ripr/tests/output_determinism.rs::python_check_output_is_byte_identical_across_runs_workers_and_write_order`
+- `crates/ripr/tests/output_determinism.rs::typescript_check_output_is_byte_identical_across_runs_workers_and_write_order`
 
 Fixture coverage:
 

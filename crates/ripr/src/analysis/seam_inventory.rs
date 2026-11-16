@@ -4912,7 +4912,7 @@ fn build_seam_from_shape(
         && crate::analysis::classify::field_assignment_target(&shape.text).is_some()
     {
         Some(written_field_of_shape(
-            owners.owner(shape.start_line)?,
+            owners.owner(shape.start_line())?,
             shape,
         )?)
     } else {
@@ -4925,7 +4925,7 @@ fn build_seam_from_shape(
     if kind == SeamKind::CallPresence && shape.value_consumed {
         return None;
     }
-    let owner_fact = owners.owner(shape.start_line)?;
+    let owner_fact = owners.owner(shape.start_line())?;
     // Skip shapes whose owner is itself a test function (e.g.,
     // `#[test] fn ...` inside an in-file `#[cfg(test)] mod tests`).
     // the source-role model already excludes physical test files;
@@ -4946,7 +4946,7 @@ fn build_seam_from_shape(
         && crate::analysis::classify::predicate_branch_side_effect_only_in_body(
             owner_fact.body.as_str(),
             owner_fact.start_line,
-            shape.start_line,
+            shape.start_line(),
         ) {
         ExpectedSink::SideEffect
     } else {
@@ -4960,15 +4960,15 @@ fn build_seam_from_shape(
         path,
         owner,
         kind,
-        shape.start_byte,
-        shape.start_line,
+        shape.start_byte(),
+        shape.start_line(),
         expression,
         required_discriminator,
         expected_sink,
         crlf_pairs,
     )
     .with_owner_call(owner_call)
-    .with_source_lines(shape.source_lines);
+    .with_source_lines(shape.source_lines());
     // #12061: a field write is read back from the receiver only when the
     // owner borrows it; record which so every surface words the read alike.
     let seam = if kind == SeamKind::FieldConstruction
@@ -4985,7 +4985,7 @@ fn build_seam_from_shape(
     // not its coverage: use the separately parsed pattern-through-body range.
     // The `match` keyword shape has no arm range and remains line-only.
     let (start_line, start_byte, end_byte) = if shape.kind == ProbeShapeKind::MatchArm {
-        let Some(&(start, end)) = arm_ranges.get(&shape.start_byte) else {
+        let Some(&(start, end)) = arm_ranges.get(&shape.start_byte()) else {
             return Some(seam);
         };
         (
@@ -4994,7 +4994,7 @@ fn build_seam_from_shape(
             end,
         )
     } else {
-        (shape.start_line, shape.start_byte, shape.end_byte)
+        (shape.start_line(), shape.start_byte(), shape.end_byte())
     };
     match byte_span_to_lines_with_starts(source, line_starts, start_line, start_byte, end_byte) {
         Some(span) => Some(seam.with_span(span)),
@@ -5015,7 +5015,7 @@ fn written_field_of_shape(
     crate::analysis::classify::assigned_field_path(
         owner.body.as_str(),
         owner.start_line,
-        shape.start_line,
+        shape.start_line(),
         &shape.text,
         &|_| None,
     )
@@ -8117,6 +8117,307 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             return Err("an unknown `#[path]` target must withdraw the unlinked claim".into());
         }
         Ok(())
+    }
+
+    /// #12947: same-run reuse keeps the extension path for an added file
+    /// with an `include!` directive or text whenever the retained files'
+    /// include view (parents and target membership) is unchanged, and the
+    /// extension then serializes identically to a fresh build. Each row also
+    /// pins which path ran: a fresh build re-parses every file into a new
+    /// allocation, so only the extension keeps the core's parsed file. The
+    /// refused rows (an added second parent, in any spacing; a retained file
+    /// gaining an include parent; a new limitation or module edge that
+    /// withdraws a withheld file's outside-module-tree claim) must fall back
+    /// and still equal a fresh build.
+    #[test]
+    fn same_run_reuse_extends_past_stable_includes_and_matches_fresh() -> Result<(), String> {
+        let lib = (
+            "src/lib.rs",
+            "include!(\"frag.rs\");\npub fn top() -> i32 { 1 }\n",
+        );
+        let frag = ("src/frag.rs", "pub fn fragment() -> i32 { 2 }\n");
+        let orphan = (
+            "src/orphan.rs",
+            "pub fn orphan() -> i32 { 3 }\n#[test]\nfn orphan_test() { assert_eq!(orphan(), 3); }\n",
+        );
+        let other = (
+            "src/other.rs",
+            "include!(\"late.rs\");\npub fn other() -> i32 { 4 }\n",
+        );
+        let late = ("src/late.rs", "pub fn late() -> i32 { 5 }\n");
+        let other_chain = (
+            "src/other_chain.rs",
+            "include!(\"chain.rs\");\npub fn other_chain() -> i32 { 6 }\n",
+        );
+        let chain = (
+            "src/chain.rs",
+            "include!(\"chain_frag.rs\");\npub fn chain() -> i32 { 7 }\n",
+        );
+        let chain_frag = ("src/chain_frag.rs", "pub fn chain_frag() -> i32 { 8 }\n");
+        // The analyzer's own sources look like this: `include!` inside string
+        // literals, comments and assertion-macro token trees.
+        let mentions = (
+            "tests/mentions.rs",
+            "// include!(\"src/frag.rs\") is how a fragment joins a parent.\n\
+             /* include!(\"src/frag.rs\"); */\n\
+             #[test]\n\
+             fn mentions_include_text() {\n    \
+                 let text = \"include!(\\\"frag.rs\\\");\";\n    \
+                 assert!(text.contains(\"include!(\"), \"{}\", stringify!(include!(\"frag.rs\")));\n    \
+                 assert_eq!(reusefix::top(), 1);\n\
+             }\n",
+        );
+        // A second parent for the core's included fragment: ambiguous.
+        let real = (
+            "tests/real.rs",
+            "include!(\"../src/frag.rs\");\n#[test]\nfn real() { assert_eq!(fragment(), 2); }\n",
+        );
+        let spaced = (
+            "tests/spaced.rs",
+            "include /* fragment */ ! (\"../src/frag.rs\");\n#[test]\nfn spaced() { assert_eq!(fragment(), 2); }\n",
+        );
+        // A directive naming a target outside the index: a limitation only,
+        // which also withdraws the core's outside-module-tree claim.
+        let limit = (
+            "tests/limit.rs",
+            "include!(\"missing.rs\");\n#[test]\nfn limit() { assert_eq!(reusefix::top(), 1); }\n",
+        );
+        let pair = (
+            "tests/pair.rs",
+            "include!(\"pair_frag.rs\");\n#[test]\nfn pair() { assert_eq!(pair_frag(), 9); }\n",
+        );
+        let pair_frag = ("tests/pair_frag.rs", "fn pair_frag() -> i32 { 9 }\n");
+        // A retained file linked by a module edge that an added file then
+        // includes: it gains an include parent (and target membership) it
+        // did not have when the core was composed (#13864's re-parenting
+        // guard).
+        let main_rs = ("src/main.rs", "mod plain;\nfn main() {}\n");
+        let dynamic = (
+            "src/dynamic.rs",
+            "include!(concat!(\"gen\", \".rs\"));\npub fn dynamic() -> i32 { 11 }\n",
+        );
+        let plain = ("src/plain.rs", "pub fn plain() -> i32 { 10 }\n");
+        let grab = (
+            "tests/grab.rs",
+            "include!(\"../src/plain.rs\");\n#[test]\nfn grab() { assert_eq!(plain(), 10); }\n",
+        );
+        let all = [
+            lib,
+            frag,
+            orphan,
+            other,
+            late,
+            other_chain,
+            chain,
+            chain_frag,
+            mentions,
+            real,
+            spaced,
+            limit,
+            pair,
+            pair_frag,
+            main_rs,
+            plain,
+            grab,
+            dynamic,
+        ];
+        let root = reuse_fixture_root("reuse-include-extension", &all)?;
+        // A module edge from an added binary root to a file the core withheld
+        // as outside the module tree: no include moves, but composition then
+        // links the file, and its revived tests would come from function
+        // facts, not the parser's test facts. A separate root keeps this
+        // `src/main.rs` apart from the `mod plain;` one above.
+        let linker = ("src/main.rs", "mod orphan;\nfn main() {}\n");
+        let linked_root = match reuse_fixture_root(
+            "reuse-include-extension-linked",
+            &[lib, frag, orphan, linker],
+        ) {
+            Ok(linked_root) => linked_root,
+            Err(err) => {
+                let _ = std::fs::remove_dir_all(&root);
+                return Err(err);
+            }
+        };
+        let outside = |index: &RustIndex, file: &str| {
+            index
+                .files()
+                .get(Path::new(file))
+                .is_some_and(|facts| facts.role_provenance.outside_module_tree)
+        };
+        type Row<'a> = (
+            &'a str,
+            &'a Path,
+            Vec<(&'a str, &'a str)>,
+            Vec<(&'a str, &'a str)>,
+            bool,
+        );
+        let rows: Vec<Row<'_>> = vec![
+            (
+                "text mentions only",
+                root.as_path(),
+                vec![lib, frag, orphan],
+                vec![mentions],
+                true,
+            ),
+            (
+                "second parent",
+                root.as_path(),
+                vec![lib, frag, orphan],
+                vec![real],
+                false,
+            ),
+            (
+                "spaced second parent",
+                root.as_path(),
+                vec![lib, frag, orphan],
+                vec![spaced],
+                false,
+            ),
+            // The limitation withdraws the core's outside-module-tree claim,
+            // whose withheld test cannot be restored in place: fall back.
+            (
+                "unindexed target",
+                root.as_path(),
+                vec![lib, frag, orphan],
+                vec![limit],
+                false,
+            ),
+            // A new limitation that links a withheld file with no tests
+            // changes nothing a fresh build keeps: extend.
+            (
+                "unindexed target links a withheld file without tests",
+                root.as_path(),
+                vec![lib, frag, plain],
+                vec![limit],
+                true,
+            ),
+            // The first unresolved include in an index without withheld
+            // files moves no retained include state: extend.
+            (
+                "first unresolved include",
+                root.as_path(),
+                vec![lib, frag],
+                vec![limit],
+                true,
+            ),
+            // An index that already had an unresolved include (the
+            // ripr-swarm shape) keeps the extension past another one.
+            (
+                "unindexed target after an unresolved include",
+                root.as_path(),
+                vec![lib, frag, dynamic],
+                vec![limit],
+                true,
+            ),
+            (
+                "extras-only include",
+                root.as_path(),
+                vec![lib, frag],
+                vec![pair, pair_frag],
+                true,
+            ),
+            (
+                "core includes an extra",
+                root.as_path(),
+                vec![lib, frag, other],
+                vec![late],
+                true,
+            ),
+            // The extras reach the merged resolution unrebased, so a chain
+            // through two added files is rebased once, as a fresh build does.
+            (
+                "core includes an extra that includes an extra",
+                root.as_path(),
+                vec![lib, frag, other_chain],
+                vec![chain, chain_frag],
+                true,
+            ),
+            // A retained file gaining an include parent: fall back.
+            (
+                "extra includes a module-linked core file",
+                root.as_path(),
+                vec![lib, frag, main_rs, plain],
+                vec![grab],
+                false,
+            ),
+            // A retained withheld file linked by an added module edge: the
+            // withheld-tests guard falls back.
+            (
+                "extra links a withheld file",
+                linked_root.as_path(),
+                vec![lib, frag, orphan],
+                vec![linker],
+                false,
+            ),
+        ];
+        let result = (|| -> Result<(), String> {
+            for (label, root, core_src, extra_src, extends) in rows {
+                // The withheld file a row revives: outside in the core, linked
+                // after the merge.
+                let withheld = match label {
+                    "unindexed target" | "extra links a withheld file" => Some(orphan.0),
+                    "unindexed target links a withheld file without tests" => Some(plain.0),
+                    _ => None,
+                };
+                let core = bytes_of(&core_src);
+                let target_src = core_src
+                    .iter()
+                    .chain(&extra_src)
+                    .copied()
+                    .collect::<Vec<_>>();
+                let target = bytes_of(&target_src);
+                let core_index =
+                    rust_index::build_analysis_index_from_loaded_files(root, &core, &[])?;
+                if core_index.index.include_parents.is_empty() {
+                    return Err(format!("{label}: the core must resolve an include parent"));
+                }
+                if withheld.is_some_and(|file| !outside(&core_index.index, file)) {
+                    return Err(format!(
+                        "{label}: the core must start with the withheld file outside"
+                    ));
+                }
+                let lib_source = |index: &RustIndex| {
+                    index
+                        .files()
+                        .get(Path::new(lib.0))
+                        .map(|file| std::sync::Arc::clone(&file.source))
+                        .ok_or(format!("{label}: src/lib.rs must be indexed"))
+                };
+                let core_source = lib_source(&core_index.index)?;
+                let reused = rust_index::reuse_cached_index_in_run(core_index, root, &target, &[])?;
+                if std::sync::Arc::ptr_eq(&core_source, &lib_source(&reused.index)?) != extends {
+                    return Err(format!("{label}: extension path taken must be {extends}"));
+                }
+                if extra_src
+                    .iter()
+                    .any(|(path, _)| reused.index.files().get(Path::new(path)).is_none())
+                {
+                    return Err(format!("{label}: every added file must be indexed"));
+                }
+                let fresh = rust_index::build_analysis_index_from_loaded_files(root, &target, &[])?;
+                let reused_json =
+                    serde_json::to_string(&reused.index).map_err(|err| err.to_string())?;
+                let fresh_json =
+                    serde_json::to_string(&fresh.index).map_err(|err| err.to_string())?;
+                if reused_json != fresh_json {
+                    return Err(format!(
+                        "{label}: same-run reuse must serialize identically to a fresh build"
+                    ));
+                }
+                if reused.files_content_hash != fresh.files_content_hash {
+                    return Err(format!("{label}: content hash must match a fresh build"));
+                }
+                if withheld.is_some_and(|file| outside(&reused.index, file)) {
+                    return Err(format!(
+                        "{label}: the added file must withdraw the outside claim"
+                    ));
+                }
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&linked_root);
+        result
     }
 
     /// A changed file differing from the indexed one only by a BOM is

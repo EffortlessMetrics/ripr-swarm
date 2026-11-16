@@ -237,6 +237,12 @@ keeps its own row. The 20-row window then bounds rows, not findings: beyond
 order above, printed in the order of each row's first finding, and the
 remainder line counts the findings in the rows it left out (#14299).
 
+A row whose reason is longer than 40 bytes and equal to the reason of the row
+printed just above it prints `reason: same as above` instead of repeating the
+sentence, so a run of rows that differ only by file or kind states a shared
+limitation once (#14308). Shorter reasons print on every row. `human-full` and
+machine formats keep every reason.
+
 The canonical next action's two `considered finding` alternates are chosen by
 the same priority order from the findings `Start here` did not select, so a
 gap is offered before an already-noticed finding that sorts earlier in the

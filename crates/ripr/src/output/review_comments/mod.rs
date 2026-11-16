@@ -19,9 +19,14 @@ mod placement;
 mod publish_plan;
 mod render;
 mod scope;
+mod suppression;
 
 pub(crate) use scope::ReviewCommentsAnalysisScope;
 use scope::ReviewPlacement;
+pub(crate) use suppression::{
+    CheckOutputSuppressedFinding, ReviewCommentsSuppression, SUPPRESSED_BY_POLICY_REASON,
+    check_output_suppressed_findings,
+};
 
 pub(crate) use placement::{
     displaced_seam_location, displaced_seam_prefix, normalize_path_text, placement_for,
@@ -57,6 +62,9 @@ pub(crate) struct ReviewCommentsRenderContext<'a> {
     pub(crate) head: &'a str,
     pub(crate) mode: &'a Mode,
     pub(crate) config: &'a RiprConfig,
+    /// Explicit `--suppression-policy` and/or `--check-output` suppressions
+    /// (#13895). `None` applies nothing.
+    pub(crate) suppression: Option<&'a ReviewCommentsSuppression>,
 }
 
 #[cfg(test)]
@@ -77,6 +85,7 @@ pub(crate) fn render_review_comments_json(
         head,
         mode,
         config,
+        suppression: None,
     };
     render_review_comments_json_with_scope(&context, working_set, selection, &analysis_scope, None)
 }
@@ -135,6 +144,31 @@ pub(crate) fn render_review_comments_json_with_scope(
     }
     if let Some(warning) = causal_projection_warning {
         warnings.push(warning);
+    }
+
+    // #13895: one suppression decision, from the shared policy matcher. A
+    // suppressed seam leaves the inline comment and summary slots and stays
+    // visible in `suppressed`, which `gate evaluate` reads as non-blocking.
+    // Suppression runs after the brief cap, so a suppressed seam still uses
+    // a cap slot (disclosed in SPEC-0007 and CONFIGURATION.md).
+    if let Some(policy) = context.suppression {
+        let seams = actionable
+            .iter()
+            .map(|selected| selected.seam)
+            .collect::<Vec<_>>();
+        let resolved = policy.resolve(context.root, &seams);
+        warnings.extend(resolved.warnings);
+        actionable.retain(|selected| {
+            let Some(message) = resolved.by_seam.get(selected.seam.seam.id().as_str()) else {
+                return true;
+            };
+            suppressed.push(suppressed_json(
+                selected,
+                SUPPRESSED_BY_POLICY_REASON,
+                message,
+            ));
+            false
+        });
     }
 
     for selected in actionable.iter().take(DEFAULT_REVIEW_MAX_SUMMARY_ITEMS) {
@@ -409,6 +443,7 @@ pub(crate) fn render_review_comments_markdown(
         head,
         mode,
         config,
+        suppression: None,
     };
     render_review_comments_markdown_with_scope(
         &context,
@@ -1090,6 +1125,7 @@ mod tests {
             head: "HEAD",
             mode: &Mode::Draft,
             config: &config,
+            suppression: None,
         };
         let rendered = render_review_comments_json_with_scope(
             &context,
@@ -2274,6 +2310,7 @@ mod tests {
                 head: "HEAD",
                 mode: &Mode::Draft,
                 config: &config,
+                suppression: None,
             };
             let markdown = render_review_comments_markdown_with_scope(
                 &context,

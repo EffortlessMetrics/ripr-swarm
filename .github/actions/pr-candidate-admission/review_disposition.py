@@ -501,8 +501,9 @@ def comment_body_negative(body: str) -> bool:
 
     Ordinary chatter with no state mention is neutral. Structurally ambiguous bodies
     count as negative so they can never silently drop a refusal. A mis-formatted
-    positive marker is neutral (#14728): it attests nothing and must not block
-    another carrier.
+    positive marker is neutral only when nothing follows it but allowlisted chatter
+    (#14728): on its own it attests nothing and must not block another carrier, but
+    any other prose after it keeps the negative reading, so a retraction still vetoes.
     """
     if comment_body_ready(body):
         return False
@@ -543,21 +544,6 @@ def comment_body_negative(body: str) -> bool:
     if neutral_first and any(negation_hit(line) for line in visible if line.strip()):
         return True
     return any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced)
-
-
-def comment_body_blocks(body: str) -> bool:
-    """Whether a body carries a blocker phrase, so it vetoes as a statement.
-
-    #14728: a plain-English blocker ("do not merge", "The build is red.") has no
-    state line and no verdict field, so it is neither ready nor negative. It is
-    still a blocker: it supersedes that login's earlier marker and vetoes the
-    head. A hedge is not a blocker; it supersedes without vetoing.
-    """
-    parts = split_body(body)
-    if parts is None:
-        return False
-    visible, fenced = parts
-    return any(negation_hit(line) for line in (*visible, *fenced))
 
 
 # #14728: the objection space cannot be enumerated, so a later same-login body

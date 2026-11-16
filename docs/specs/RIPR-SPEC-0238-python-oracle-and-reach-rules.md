@@ -32,6 +32,9 @@ Linked issues:
   messages; rule 2)
 - #7586 (a mock passed for a called parameter, and the wrapped-argument
   gate; rule 17, example 9)
+- #14803 (async test styles: `IsolatedAsyncioTestCase`, `asyncSetUp`,
+  awaited result locals and `pytest_asyncio` literal fixtures; L8 and
+  sink alignment)
 
 Linked PRs:
 
@@ -610,9 +613,15 @@ This order is the existing behavior and is normative:
   of a method owner's class (#9619, `py-fixtures-deposit`). The fixture
   is a single argument-free fixture decorator (`@pytest.fixture`,
   `@fixture`, an imported alias or `@pytest_asyncio.fixture`: function
-  scope, no `params=`, no `autouse=`) on a synchronous def with no
+  scope, no `params=`, no `autouse=`) on a def with no
   parameters whose body is an optional docstring and
-  `return C(<literals>)`. `C` is the owner's class imported under its own
+  `return C(<literals>)`. A coroutine def counts only under
+  `@pytest_asyncio.fixture` (with a plain `import pytest_asyncio` as the
+  file's only binding of that name) or a `fixture` alias imported from
+  `pytest_asyncio` and not rebound before the def: that plugin awaits it
+  and hands the test its returned value, while plain `pytest.fixture`
+  hands a strict-mode test the un-awaited coroutine (#14803).
+  `C` is the owner's class imported under its own
   name from the owner's module, and the fixture's file binds neither the
   fixture name nor `C` a second time. The test takes the fixture as a
   parameter without a default, does not rebind it, and carries no
@@ -745,7 +754,8 @@ This order is the existing behavior and is normative:
 The credit branches are, in order: `direct` by owner identity token;
 `direct` by a method call on a bound receiver; `alias`; `direct` through a
 module-qualified call or a result local that is an asserted operand
-(RIPR-SPEC-0028, #4567); `changed_sink_token` from the changed-line token
+(RIPR-SPEC-0028, #4567; for a coroutine owner the local may bind
+`await f(..)`, which hands back the value its body returned, #14803); `changed_sink_token` from the changed-line token
 delta; `direct` through the channel a changed write reaches (rule 17);
 else `orthogonal`. A free-function owner's identity, delta-token and
 effect-channel credit need module identity. An empty owner or changed-sink token
@@ -1597,6 +1607,75 @@ mutant calibrates the rule; ripr reports only the static shape.
     keyword arguments. Over-refusal is accepted: a wrong substituted assertion
     would be a wrong credit.
 
+33. **A name the test package binds by import reaches what it binds**
+    (#13927). `from . import X` (or `from P import X`, or `as alias`) where
+    `X` is not a module file or directory of package `P` reads as the import
+    `P/__init__.py` performed to bind `X`: `import tomli as tomllib` there
+    makes `from . import tomllib` in a test read as `import tomli as
+    tomllib`, and `from M import Y as X` there reads as `from M import Y`
+    under the test's local name. Every reach and oracle reader then sees the
+    same evidence the direct import gives. The initializer must be read and
+    parse and bind `X` exactly once, through one unconditional top-level
+    import statement with one alias binding that name (counted by the name
+    Python binds, so `import a as X, X.sub` binds `X` twice, and an
+    unaliased dotted `import X.sub` is refused); up to three package
+    initializers are followed, each a package of the test file's own
+    package chain (its directory and each parent while it has an
+    `__init__.py`). A dotted name is read from the workspace root, and pytest
+    imports a test package from the parent of its topmost package, so a
+    root-relative spelling is the package Python imports only when it is one
+    of those directories (pytest's default prepend import mode; an ini
+    `pythonpath`, append or importlib mode, or an installed package of the
+    same name are not modelled). The import keeps its unresolved reading (no link)
+    when: the package is outside that chain, or its first name also names
+    another directory on the test's path (`tests/project/tests/...`, where
+    another import root can carry `tests`); the
+    initializer is missing, unread or unparsable; `X` is also bound by an
+    assignment, `def`, `class`, loop, `with`, `del`, `try`/`if` branch or a
+    second import, or only inside such a branch; the initializer has a star
+    import, a `match` or `type` statement at any depth the module body
+    executes (outside `def` and `class` bodies), or names a dynamic namespace
+    writer anywhere, even in a comment, as an identifier token so spacing
+    (`vars ()`) cannot hide it (`globals`, `locals`, `vars`, `exec`, `eval`,
+    `setattr`, `__dict__`, `global`, `__getattr__`, any `modules`; any
+    token containing `setattr`, `delattr`, `globals`, `locals`, `frame`,
+    `import_module`, `importlib` or `runpy`; `__import__`), a walrus `:=`,
+    a non-ASCII character (Python NFKC-folds identifiers), `X` as an
+    attribute anywhere (`.X`, as in `tests.X = other`, which replaces the
+    package attribute through any receiver), or any top-level statement
+    besides the binding import that is not a docstring, `pass`, an
+    `__all__` of string literals, or an absolute import of a module that
+    is not in the workspace (at the root or under `src`): a call, a `def`
+    or `class`, or an import of workspace code can run code that writes
+    the attribute; any other read workspace module (test module, conftest,
+    helper), read by its code tokens so comments and plain strings do not
+    count, spells `.X` or a non-ASCII attribute, has an f-string the
+    initializer rule would refuse, or has a reference writer (`setattr`,
+    `delattr`, `__dict__`, `vars`, `globals`, `locals`, a frame, `exec`,
+    `eval`, `modules`) at all, since its target can be computed
+    (`sys.modules[__package__]`), or names the package as an identifier,
+    spells `.__class__`, uses `__import__`, `builtins`, `meta_path`,
+    `path_hooks`, `reload`, `patch`, `monkeypatch`, `gc`,
+    `get_referents`, `get_referrers`, `get_objects`, `ctypes`,
+    `__globals__`, `f_back`, `tb_frame`, `__path__`, `__spec__` or
+    `submodule_search_locations`, `path_importer_cache` or `FileFinder`
+    (a search-path or finder edit lets an import load another `X`), or
+    has a string that is `X` or has it as a dotted component after the
+    first (`".X"`, `"pkg.X.sub"`), a string equal to
+    the package or a dotted path under it, or one containing `setattr`,
+    `delattr`, `__dict__`, `__class__`, `__import__` or `__path__`. Not modelled, as for every
+    directly imported module: modules the bounded read skipped, code inside
+    installed packages, and a write through a reference and attribute name
+    both computed at run time (`importlib.import_module` of a built name
+    then a built dunder lookup), which can equally patch a directly
+    imported module's function; or `P`
+    has a submodule or subpackage named `X`, which an import elsewhere could
+    load over the binding. A followed `from M import Y as X` is a rename
+    the package re-export reading does not follow; it is followed here
+    because the test names the bound `X` itself. This runs after the rule 32
+    helper substitution, which keeps its own module-attribute rule, and
+    fixture definitions' imports are not rewritten.
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
@@ -2322,6 +2401,13 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `crates/ripr/src/analysis/language/python/literal_fixture_tests.rs`
   pins the inlined control, the conftest and same-module fixture, and
   every negative shape and interference route of example 41.
+- Async test styles (#14803):
+  `crates/ripr/src/app/tests/python_test_style_matrix.rs` pins the
+  `pytest_asyncio` literal fixture, the awaited result local, the
+  `IsolatedAsyncioTestCase` and `asyncSetUp` rows (weak, strong before and
+  strong after the diff) and their negatives: a plain `pytest.fixture`
+  coroutine, an alias that becomes `pytest_asyncio`'s only after the def,
+  and `asyncSetUp` on a plain `TestCase`.
 - L8's literal-params fixture and the parametrize-mark scope (#9619):
   `crates/ripr/src/analysis/language/python/param_fixture_tests.rs` pins
   the decorated control, the conftest, same-module and single-name forms,
@@ -2421,6 +2507,8 @@ strong assertions is retained.
 - `oracles.rs` (`is_property_compare`: idempotence and loop-variable identity
   checks, rule 25), pinned by `property_assertion_tests.rs` and the
   `py-grid-*-property` corpus cases.
+- `crates/ripr/src/analysis/language/python/package_aliases.rs`: rule 33,
+  pinned by `package_alias_tests.rs`.
 - `crates/ripr/src/analysis/language/python/param_fixtures.rs` (literal
   `params=` rows and the unpack rewrite) with `fixtures.rs` (isolation) and
   `static_limits.rs` (direct parametrize argnames): L8, example 42.
