@@ -188,8 +188,10 @@ Not-actionable / incomplete sentinel:
 
 ## Acceptance Examples
 
-1. No artifact on disk → `not_actionable_or_incomplete` sentinel whose
-   `reason` names both artifact paths and the `ripr check` route (no packet).
+1. No current analysis snapshot → `analysis_snapshot_stale` sentinel (no
+   packet). A current snapshot with no artifact on disk →
+   `not_actionable_or_incomplete` sentinel whose `reason` names both
+   artifact paths and the `ripr check` route (Behavior item 6; no packet).
 2. Actionable-gaps.json with missing `receipt_command` → sentinel with
    `status: "not_actionable_or_incomplete"`.
 3. Well-formed actionable-gaps.json → full packet with real integer
@@ -238,6 +240,8 @@ Not-actionable / incomplete sentinel:
 
 ## Failure Modes
 
-- No artifact on disk → sentinel naming the `ripr check` route (not an error, never a packet).
+- No current snapshot → `analysis_snapshot_stale` sentinel; current snapshot
+  but no artifact on disk → sentinel naming the `ripr check` route. Neither is
+  an error, and neither is a packet.
 - Incomplete packet → sentinel, never a partial packet.
 - `source_location` line is zero or absent → `source_location_unresolved`, never fabricated.
