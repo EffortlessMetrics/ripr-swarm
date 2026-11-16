@@ -73,8 +73,9 @@ pub(in crate::analysis) use activation::{
     assigned_field_read_confirms, assigned_field_seed_is_visible, assigned_field_weak_read_start,
     call_parameter_names, chain_row_transfer_stop, comparison_operands, computed_input_parameters,
     literal_operand_value, local_boundary, macro_names_rebound, owner_plain_written_value,
-    owner_receiver_borrow, owner_writes_field_only_at_probe, pushed_collection_compared_whole,
-    pushed_literal_path, signature_parameters, sort_value_facts, test_binds_owner_type,
+    owner_receiver_borrow, owner_writes_field_only_at_probe, predicate_line_bool_guards,
+    pushed_collection_compared_whole, pushed_literal_path, signature_parameters, sort_value_facts,
+    test_binds_owner_type,
 };
 pub(in crate::analysis) use arm_selection::{
     ArmSelector, error_path_arm_probe, match_arm_selection_witness_linkage,

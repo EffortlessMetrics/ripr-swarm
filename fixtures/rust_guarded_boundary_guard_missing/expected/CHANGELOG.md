@@ -22,3 +22,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_guarded_boundary_guard_missing (3)
+
+Reason:
+RIPR-SPEC-0001: the repo-wide seam view no longer grips the guarded comparison from a guard-missing row, so the check screen drops the conflicting-evidence advisory (#14872)
+
+Command:
+`cargo xtask goldens bless rust_guarded_boundary_guard_missing --reason "..."`
+
+Updated:
+- `expected/human.txt`

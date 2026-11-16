@@ -48,9 +48,10 @@ use super::classify::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
     assertion_pins_pushed_collection_count, call_text_may_call_free_function,
     direct_collection_mutation_receiver, is_ignored, owner_call_text,
-    predicate_line_arms_all_agree, reach_evidence as classify_reach_evidence,
-    related_tests_reach_owner_indirectly, relation_establishes_reach, test_calls_free_function,
-    test_count_pins_pushed_collection, test_counts_pushed_collection_argument,
+    predicate_line_arms_all_agree, predicate_line_bool_guards,
+    reach_evidence as classify_reach_evidence, related_tests_reach_owner_indirectly,
+    relation_establishes_reach, test_calls_free_function, test_count_pins_pushed_collection,
+    test_counts_pushed_collection_argument,
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
@@ -3169,6 +3170,22 @@ fn activate_evidence(
                     boundary_equality_overlap_score(seam, indexed, context, owner_fn) > 0
                 })
         });
+    // #13037: a comparison guarded by bare bool parameters
+    // (`order_cents >= FREE_OVER_CENTS && !express`) is on its boundary only
+    // for a call that also holds every guard. Without such a call the
+    // boundary is unresolved here, as in `check`, never credited from rows
+    // that miss a guard and never an actionable missing value.
+    let boundary_guard_unheld = owner_fn.and_then(|owner_fn| {
+        guarded_boundary_unheld(
+            seam,
+            owner_fn,
+            index,
+            predicate_boundary_operand(seam, owner_fn).as_ref(),
+            boundary_constant.as_ref(),
+            &activation_credited,
+        )
+    });
+    let boundary_equality_observed = boundary_equality_observed && boundary_guard_unheld.is_none();
     // A constant whose value ripr cannot see and whose declaration it
     // cannot pin to the owner's file can never be matched by a test, so
     // it routes to the unresolved-operand limitation instead of an
@@ -3186,6 +3203,7 @@ fn activate_evidence(
             .is_some_and(PredicateBoundaryOperand::local_unresolved);
     let boundary_activation_operands_unresolved = boundary_constant_unresolved
         || boundary_local_unresolved
+        || boundary_guard_unheld.is_some()
         || observed_argument_selection
             .as_ref()
             .is_some_and(|selection| {
@@ -3257,6 +3275,7 @@ fn activate_evidence(
     } else if ambiguous_constructor_field_owner
         || boundary_constant_unresolved
         || boundary_local_unresolved
+        || boundary_guard_unheld.is_some()
     {
         StageState::Unknown
     } else if !observed.is_empty()
@@ -3273,6 +3292,7 @@ fn activate_evidence(
         state,
         if !boundary_constant_unresolved
             && !boundary_local_unresolved
+            && boundary_guard_unheld.is_none()
             && (!observed.is_empty()
                 || direct_value_insensitive_owner_call
                 || helper_value_insensitive_owner_call)
@@ -3300,6 +3320,17 @@ fn activate_evidence(
             )
         } else if boundary_local_unresolved && !related.is_empty() {
             boundary_activation_operands_unresolved_summary(seam, owner_fn)
+        } else if let Some(guards) = boundary_guard_unheld
+            .as_ref()
+            .filter(|_| !related.is_empty())
+        {
+            format!(
+                "The boundary of seam `{}` decides the result only when {guards}, and no related test call with {guards} passes the boundary value, so ripr cannot tell whether a test reaches it",
+                seam.expression()
+                    .lines()
+                    .next()
+                    .unwrap_or(seam.expression())
+            )
         } else if !observed.is_empty() {
             format!(
                 "Observed {} concrete activation value(s) for seam `{}`",
@@ -4341,6 +4372,78 @@ fn boundary_constant_operand(
 /// A direct owner call whose compared argument names the boundary
 /// constant itself (`discounted_total(DISCOUNT_THRESHOLD)`), in a test whose
 /// own file does not declare a constant of the same name.
+/// #13037: for a predicate seam whose source line guards the comparison
+/// with bare bool parameters, the guards (`` `express = false` ``) when no
+/// related test call sits on the boundary value while holding every guard
+/// as a literal; `None` when the line has no such guards or a call holds
+/// them. A guard the owner may rebind, or a compared side that is not a
+/// plain parameter, counts as unheld: ripr cannot tell which rows reach the
+/// boundary.
+fn guarded_boundary_unheld(
+    seam: &RepoSeam,
+    owner_fn: &FunctionSummary,
+    index: &RustIndex,
+    boundary: Option<&PredicateBoundaryOperand>,
+    constant: Option<&BoundaryConstantOperand>,
+    tests: &[&CompactTest<'_>],
+) -> Option<String> {
+    if seam.kind() != SeamKind::PredicateBoundary {
+        return None;
+    }
+    let line = seam.display_line();
+    let source = index.files().get(&owner_fn.file)?;
+    let line_text = source.data().source.lines().nth(line.checked_sub(1)?)?;
+    let (guards, rebound) =
+        predicate_line_bool_guards(line_text, seam.expression(), owner_fn, line)?;
+    let describe = guards
+        .iter()
+        .map(|(guard, value)| format!("`{guard} = {value}`"))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let parameters = function_parameters(owner_fn);
+    let tested_at = boundary.and_then(|boundary| {
+        parameters
+            .iter()
+            .position(|parameter| *parameter == boundary.tested)
+    });
+    let (Some(boundary), Some(tested_at), false) = (boundary, tested_at, rebound) else {
+        return Some(describe);
+    };
+    let value = boundary
+        .local_value()
+        .or_else(|| constant.and_then(|constant| constant.lookup.value()))
+        .unwrap_or(&boundary.token);
+    let held = tests.iter().any(|indexed| {
+        indexed.test.calls.iter().any(|call| {
+            call.name == owner_fn.name
+                && owner_call_text(&call.text, owner_fn)
+                    .and_then(|text| call_arguments(text, &owner_fn.name))
+                    .is_some_and(|arguments| {
+                        let guards_hold = guards.iter().all(|(guard, required)| {
+                            parameters
+                                .iter()
+                                .position(|parameter| parameter == guard)
+                                .and_then(|at| arguments.get(at))
+                                .is_some_and(|argument| {
+                                    argument.trim() == if *required { "true" } else { "false" }
+                                })
+                        });
+                        let on_boundary = arguments.get(tested_at).is_some_and(|argument| {
+                            comparable_value(argument) == comparable_value(value)
+                                || constant.is_some_and(|constant| {
+                                    super::value_resolution::argument_names_constant(
+                                        argument,
+                                        &constant.name,
+                                    )
+                                })
+                        });
+                        guards_hold && on_boundary
+                    })
+        })
+    });
+    (!held).then_some(describe)
+}
+
 fn test_passes_boundary_constant(
     indexed: &CompactTest<'_>,
     owner_fn: Option<&FunctionSummary>,

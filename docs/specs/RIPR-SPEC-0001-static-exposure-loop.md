@@ -755,6 +755,16 @@ Fixture `fixtures/rust_guarded_boundary_guard_missing` and honesty-corpus
 case `rust_guarded_boundary_guard_missing_not_promoted` pin the guard-missing
 boundary row as `infection_unknown`.
 
+The repo-wide seam view (`--format repo-exposure-json`, the evidence `ripr
+repair` reads) applies the same rule to the comparison seam it splits from
+such a predicate (#14872). The seam's activation is `unknown` with the guards
+named, and it carries no missing value, unless one related test call sits on
+the boundary value while holding every guard as a literal. A `mut` or
+rebound guard, or a compared side that is not a plain parameter, counts as
+unheld. So a row that misses a guard can no longer grip the seam while
+`check` reads the same change as unclear. Honesty-corpus case
+`rust_repo_exposure_guarded_boundary_guard_missing_not_promoted` pins it.
+
 ## Test Mapping
 
 Fixture coverage:

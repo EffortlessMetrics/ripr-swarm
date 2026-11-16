@@ -3190,6 +3190,30 @@ fn comparison_operator(comparison: &str) -> Option<&'static str> {
 /// guard may be rebound before the changed line.
 type GuardedSplit = (String, Vec<(String, bool)>, bool);
 
+/// The bare bool parameter guards of the predicate on one source line
+/// (`if order_cents >= FREE_OVER_CENTS && !express {`) whose comparison is
+/// `comparison`, each with the value it must hold, and whether a guard may
+/// be rebound before that line. `None` when the line is not exactly one
+/// comparison joined by top-level `&&` to bare owner parameters, or its
+/// comparison is a different one. The repo-wide seam view reads the same
+/// guards the diff reading does (#13037), so a row that misses a guard
+/// never lends the comparison a boundary row there either.
+pub(in crate::analysis) fn predicate_line_bool_guards(
+    line_text: &str,
+    comparison: &str,
+    owner: &FunctionSummary,
+    line: usize,
+) -> Option<(Vec<(String, bool)>, bool)> {
+    let text = line_text.trim();
+    let text = text
+        .strip_prefix("} else if ")
+        .or_else(|| text.strip_prefix("else if "))
+        .unwrap_or(text);
+    let (found, guards, rebound) = split_guarded(text, owner, line)?;
+    let squash = |text: &str| text.split_whitespace().collect::<String>();
+    (squash(&found) == squash(comparison)).then_some((guards, rebound))
+}
+
 fn split_guarded(expression: &str, owner: &FunctionSummary, line: usize) -> Option<GuardedSplit> {
     let expression = clean_operand(expression);
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&expression);
