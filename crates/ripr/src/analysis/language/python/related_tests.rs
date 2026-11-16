@@ -1188,29 +1188,60 @@ pub(super) fn workspace_registers_routes_indirectly<'a>(
 /// files defining a free function of the same name (#8759), the affirmative
 /// evidence [`bare_name_bound_to_other_module`] needs.
 pub(super) fn apply_rival_definition_modules(owners: &mut [PythonOwner]) {
-    let mut modules_by_name: BTreeMap<String, Vec<(PathBuf, Vec<String>)>> = BTreeMap::new();
-    for owner in owners.iter() {
-        if owner.owner_kind != Some(OwnerKind::Function) || owner.qualified_name != owner.name {
-            continue;
-        }
-        let defs = modules_by_name.entry(owner.name.clone()).or_default();
-        if !defs.iter().any(|(file, _)| *file == owner.file) {
-            defs.push((owner.file.clone(), owner_module_paths(&owner.file)));
+    let index = RivalDefinitionIndex::from_owners(owners.iter());
+    index.apply(owners);
+}
+
+/// Free-function definitions by name with their files' module paths, the
+/// cross-file input of [`apply_rival_definition_modules`]. Repo mode reads one
+/// production file at a time, so it builds this once from the files its tests
+/// import names from (#13880 follow-up).
+#[derive(Default)]
+pub(super) struct RivalDefinitionIndex {
+    modules_by_name: BTreeMap<String, Vec<(PathBuf, Vec<String>)>>,
+}
+
+impl RivalDefinitionIndex {
+    pub(super) fn from_owners<'a>(owners: impl Iterator<Item = &'a PythonOwner>) -> Self {
+        let mut index = Self::default();
+        index.extend(owners);
+        index
+    }
+
+    /// Adds the free-function owners of `owners` to the index.
+    pub(super) fn extend<'a>(&mut self, owners: impl Iterator<Item = &'a PythonOwner>) {
+        for owner in owners {
+            if !is_free_function(owner) {
+                continue;
+            }
+            let defs = self.modules_by_name.entry(owner.name.clone()).or_default();
+            if !defs.iter().any(|(file, _)| *file == owner.file) {
+                defs.push((owner.file.clone(), owner_module_paths(&owner.file)));
+            }
         }
     }
-    for owner in owners.iter_mut() {
-        let Some(defs) = modules_by_name.get(&owner.name) else {
-            continue;
-        };
-        if owner.owner_kind != Some(OwnerKind::Function) || owner.qualified_name != owner.name {
-            continue;
+
+    /// Records on each free-function owner the module paths of the other
+    /// indexed files defining a free function of its name.
+    pub(super) fn apply(&self, owners: &mut [PythonOwner]) {
+        for owner in owners.iter_mut() {
+            let Some(defs) = self.modules_by_name.get(&owner.name) else {
+                continue;
+            };
+            if !is_free_function(owner) {
+                continue;
+            }
+            owner.rival_definition_modules = defs
+                .iter()
+                .filter(|(file, _)| *file != owner.file)
+                .flat_map(|(_, paths)| paths.iter().cloned())
+                .collect();
         }
-        owner.rival_definition_modules = defs
-            .iter()
-            .filter(|(file, _)| *file != owner.file)
-            .flat_map(|(_, paths)| paths.iter().cloned())
-            .collect();
     }
+}
+
+fn is_free_function(owner: &PythonOwner) -> bool {
+    owner.owner_kind == Some(OwnerKind::Function) && owner.qualified_name == owner.name
 }
 
 /// Whether a fixture the test names calls the owner by the rules a test body
@@ -2763,100 +2794,124 @@ pub(super) fn apply_src_module_ambiguity<'a>(
     owners: &mut [PythonOwner],
     source_files: impl Iterator<Item = &'a PathBuf>,
 ) {
-    let mut roots_by_module: BTreeMap<String, Vec<(PathBuf, PathBuf)>> = BTreeMap::new();
+    SrcModuleIndex::build(source_files).apply(owners);
+}
+
+/// The workspace's src-layout short names and full dotted module paths, built
+/// once from every source file so repo mode, which reads one production file
+/// at a time, records the same ambiguity diff mode does (#13880 follow-up).
+pub(super) struct SrcModuleIndex {
+    roots_by_module: BTreeMap<String, Vec<(PathBuf, PathBuf)>>,
     // Every source file by its full dotted module path, for the plain-module
     // rivals of a src short name (#13745).
-    let mut files_by_full_path: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
-    for file in source_files {
-        for (module, root) in src_layout_module_names(file) {
-            roots_by_module
-                .entry(module)
-                .or_default()
-                .push((file.clone(), root));
+    files_by_full_path: BTreeMap<String, Vec<PathBuf>>,
+}
+
+impl SrcModuleIndex {
+    pub(super) fn build<'a>(source_files: impl Iterator<Item = &'a PathBuf>) -> Self {
+        let mut roots_by_module: BTreeMap<String, Vec<(PathBuf, PathBuf)>> = BTreeMap::new();
+        let mut files_by_full_path: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+        for file in source_files {
+            for (module, root) in src_layout_module_names(file) {
+                roots_by_module
+                    .entry(module)
+                    .or_default()
+                    .push((file.clone(), root));
+            }
+            if let Some(full) = owner_module_paths(file).into_iter().next() {
+                files_by_full_path
+                    .entry(full)
+                    .or_default()
+                    .push(file.clone());
+            }
         }
-        if let Some(full) = owner_module_paths(file).into_iter().next() {
-            files_by_full_path
-                .entry(full)
-                .or_default()
-                .push(file.clone());
+        Self {
+            roots_by_module,
+            files_by_full_path,
         }
     }
-    for owner in owners.iter_mut() {
-        let owner_file = normalized_path(&owner.file);
-        let own = src_layout_module_names(&owner.file);
-        let mut ambiguous = Vec::new();
-        for (module, owner_root) in &own {
-            let rival_roots = rival_roots_for(&roots_by_module, module, |file, _| {
-                normalized_path(file) == owner_file
-            });
-            let shadowed = plain_module_shadows(&files_by_full_path, module, owner_root);
-            if !rival_roots.is_empty() || shadowed {
-                ambiguous.push(AmbiguousSrcModule {
-                    module: module.clone(),
-                    owner_root: owner_root.clone(),
-                    rival_roots,
-                    shadowed,
+
+    /// See [`apply_src_module_ambiguity`]; runs after the re-export pass.
+    pub(super) fn apply(&self, owners: &mut [PythonOwner]) {
+        let roots_by_module = &self.roots_by_module;
+        let files_by_full_path = &self.files_by_full_path;
+        for owner in owners.iter_mut() {
+            let owner_file = normalized_path(&owner.file);
+            let own = src_layout_module_names(&owner.file);
+            let mut ambiguous = Vec::new();
+            for (module, owner_root) in &own {
+                let rival_roots = rival_roots_for(roots_by_module, module, |file, _| {
+                    normalized_path(file) == owner_file
                 });
+                let shadowed = plain_module_shadows(files_by_full_path, module, owner_root);
+                if !rival_roots.is_empty() || shadowed {
+                    ambiguous.push(AmbiguousSrcModule {
+                        module: module.clone(),
+                        owner_root: owner_root.clone(),
+                        rival_roots,
+                        shadowed,
+                    });
+                }
             }
-        }
-        // The owner's own full dotted path is also a bare module name when it
-        // sits at the repository root (`core.py` → `core`); another file's
-        // src short name equal to it makes the name ambiguous for the owner
-        // too, so a `src` module cannot be credited while its plain twin is
-        // not (#13745).
-        if let Some(full) = owner_module_paths(&owner.file).into_iter().next()
-            && !ambiguous.iter().any(|record| record.module == full)
-        {
-            let rival_roots = rival_roots_for(&roots_by_module, &full, |file, _| {
-                normalized_path(file) == owner_file
-            });
-            // A src rival at the repository root imports under the same name
-            // from the same root.
-            let shadowed = rival_roots
-                .iter()
-                .any(|root| normalized_path(root).is_empty());
-            if !rival_roots.is_empty() {
-                ambiguous.push(AmbiguousSrcModule {
-                    module: full,
-                    owner_root: PathBuf::new(),
-                    rival_roots,
-                    shadowed,
+            // The owner's own full dotted path is also a bare module name when it
+            // sits at the repository root (`core.py` → `core`); another file's
+            // src short name equal to it makes the name ambiguous for the owner
+            // too, so a `src` module cannot be credited while its plain twin is
+            // not (#13745).
+            if let Some(full) = owner_module_paths(&owner.file).into_iter().next()
+                && !ambiguous.iter().any(|record| record.module == full)
+            {
+                let rival_roots = rival_roots_for(roots_by_module, &full, |file, _| {
+                    normalized_path(file) == owner_file
                 });
+                // A src rival at the repository root imports under the same name
+                // from the same root.
+                let shadowed = rival_roots
+                    .iter()
+                    .any(|root| normalized_path(root).is_empty());
+                if !rival_roots.is_empty() {
+                    ambiguous.push(AmbiguousSrcModule {
+                        module: full,
+                        owner_root: PathBuf::new(),
+                        rival_roots,
+                        shadowed,
+                    });
+                }
             }
+            for module in &owner.reexport_modules {
+                if own.iter().any(|(own_module, _)| own_module == module) {
+                    continue;
+                }
+                // The re-exporting package is the one whose project root holds the
+                // owner file; a deeper such root wins over an enclosing one.
+                let Some(owner_root) = roots_by_module
+                    .get(module)
+                    .into_iter()
+                    .flatten()
+                    .map(|(_, root)| root)
+                    .filter(|root| path_is_under(&owner.file, root))
+                    .max_by_key(|root| root.components().count())
+                    .cloned()
+                else {
+                    continue;
+                };
+                let rival_roots =
+                    rival_roots_for(roots_by_module, module, |_, root| *root == owner_root);
+                // A plain module of the same project spelled like the re-exporting
+                // package loads instead of it on some `sys.path` orders, exactly as
+                // for the owner's own short name (#13786).
+                let shadowed = plain_module_shadows(files_by_full_path, module, &owner_root);
+                if !rival_roots.is_empty() || shadowed {
+                    ambiguous.push(AmbiguousSrcModule {
+                        module: module.clone(),
+                        owner_root,
+                        rival_roots,
+                        shadowed,
+                    });
+                }
+            }
+            owner.ambiguous_src_modules = ambiguous;
         }
-        for module in &owner.reexport_modules {
-            if own.iter().any(|(own_module, _)| own_module == module) {
-                continue;
-            }
-            // The re-exporting package is the one whose project root holds the
-            // owner file; a deeper such root wins over an enclosing one.
-            let Some(owner_root) = roots_by_module
-                .get(module)
-                .into_iter()
-                .flatten()
-                .map(|(_, root)| root)
-                .filter(|root| path_is_under(&owner.file, root))
-                .max_by_key(|root| root.components().count())
-                .cloned()
-            else {
-                continue;
-            };
-            let rival_roots =
-                rival_roots_for(&roots_by_module, module, |_, root| *root == owner_root);
-            // A plain module of the same project spelled like the re-exporting
-            // package loads instead of it on some `sys.path` orders, exactly as
-            // for the owner's own short name (#13786).
-            let shadowed = plain_module_shadows(&files_by_full_path, module, &owner_root);
-            if !rival_roots.is_empty() || shadowed {
-                ambiguous.push(AmbiguousSrcModule {
-                    module: module.clone(),
-                    owner_root,
-                    rival_roots,
-                    shadowed,
-                });
-            }
-        }
-        owner.ambiguous_src_modules = ambiguous;
     }
 }
 

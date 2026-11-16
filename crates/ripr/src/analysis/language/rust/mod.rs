@@ -23,7 +23,7 @@ pub(crate) mod probes;
 mod proof_harness;
 mod repo;
 
-pub(crate) use probe_shape::producer_gap_names_seam_shape;
+pub(crate) use probe_shape::{producer_gap_names_seam_shape, rust_gap_id_for_seam_shape};
 pub(crate) use probes::{
     changed_let_binding, mask_rust_char_literals, mask_rust_comments_and_strings,
 };
@@ -2636,14 +2636,15 @@ impl RustAdapter {
         }
         let (rust_files, unreadable_dirs) =
             workspace::discover_rust_files_tolerating_unreadable(&options.root)?;
-        let mut unreadable_unchanged_paths = unreadable_dirs
-            .into_iter()
-            .map(|(path, _)| path)
-            .collect::<Vec<_>>();
         let changed_paths = changed_files
             .iter()
             .map(|file| file.path.clone())
             .collect::<BTreeSet<_>>();
+        workspace::refuse_unreadable_dir_over_changed_path(&unreadable_dirs, &changed_paths)?;
+        let mut unreadable_unchanged_paths = unreadable_dirs
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect::<Vec<_>>();
         let (rust_files, unreadable_files) =
             workspace::split_unreadable_unchanged_files(&options.root, rust_files, &changed_paths);
         unreadable_unchanged_paths.extend(unreadable_files);

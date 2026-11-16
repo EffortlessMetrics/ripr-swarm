@@ -198,11 +198,23 @@ Test discovery:
   of the registration. A string literal or a substitution-free template keeps
   its text.
 - a Vitest `test.for(rows)(title, fn)` / `it.for(rows)(title, fn)`
-  registration is not indexed (the table call and the title/callback call
-  are not decomposed), so an active, non-empty, non-skipped one is disclosed
-  as the `test.for registration` shape of
-  `typescript_test_extraction_partial` instead of being silently lost; an
-  empty table, a skip option and an unrelated `.for` helper are not (#10757).
+  registration whose root is a named `test` / `it` import from `vitest` and
+  whose table is an inline literal table is indexed with one concrete case
+  per row (#10760). Vitest passes each row whole as the callback's first
+  argument, so the row binding is read from that parameter only: plain
+  array destructuring whose element count equals every row's length, a
+  plain identifier over a table of literal scalars, a plain identifier read
+  only as `row[<digit index>]` over array rows, or no parameter. The second
+  parameter is the `TestContext`: exactly `{ expect }` supplies the runner
+  `expect` unless the body re-declares it, and a named context is accepted
+  only when the body never mentions it (so `ctx.skip()` withdraws the test).
+  Any other `.for` registration (a global `test`, a variable, object or
+  spread table, defaulted, rest or extra destructured parameters, an
+  `.each`-style `(a, b)` parameter list, a used named context) is not
+  indexed, and an active, non-empty, non-skipped one is disclosed as the
+  `test.for registration` shape of `typescript_test_extraction_partial`
+  instead of being silently lost; an empty table, a skip option and an
+  unrelated `.for` helper are not (#10757).
 - a registration the extractor drops makes the analysis partial
   (`typescript_test_extraction_partial`) only when a test in that file can be
   related to the diff. The test index is workspace-wide, so the disclosure is

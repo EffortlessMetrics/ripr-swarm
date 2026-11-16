@@ -1105,29 +1105,61 @@ mutant calibrates the rule; ripr reports only the static shape.
     row selects passes an explicit band, `approx(expected, rel=...)`,
     `abs=...`, a positional second or third argument, or a `*` or `**`
     spread that may carry one (a literal `None` counts as absent), the
-    band may admit the pre-change value. One shape is evaluated: the owner
-    is an undecorated one-statement function whose changed line is
-    `return <expr>` over numeric literals, its own parameters and
-    `+ - * /`, and the assertion is `<owner>(<numeric literals>) ==
-    approx(<number>, rel=<number>, abs=<number>)` in either operand order
-    (only `rel`, `abs` and `nan_ok` keywords). The old and new results are
-    compared with pytest's tolerance (`abs` alone, else the larger of
+    band may admit the pre-change value. These shapes are evaluated. The
+    owner's result is `+ - * /` arithmetic over numeric literals and its
+    own parameters, read from: an undecorated one-statement function whose
+    changed line is `return <expr>`; the same function decorated only by
+    `functools.lru_cache` (bare, or called with a literal `maxsize` and
+    `typed` and nothing else) or `functools.cache`, the name resolving to
+    `functools` and bound once in the module, with no attribute write in
+    the owner's or the test's module naming the decorator
+    (`functools.lru_cache = ...` replaces it under a bound `functools`),
+    which returns the function's own result (#13723); a function whose body
+    is single-line `name = <expr>` assignments then `return <expr>`, when
+    the file's whole diff is the changed line and exactly one body statement spells it, so the old
+    body is the new body with the old line put back (#13723); or a
+    one-statement method of a module-level class bound once, with no
+    decorator, base or class keyword, whose body holds only undecorated
+    non-dunder `def`s, a docstring or `pass`, whose method name no
+    attribute write in the module names and with no dunder attribute write
+    in the module (`Rates.__getattribute__ = ...` redirects the lookup),
+    called as `Class().<method>(...)`
+    with no constructor arguments, `Class` imported under its own name from
+    the owner's module and never rebound or attribute-written, nor any
+    dunder attribute written, by the test module (#13723). The assertion is `<call>(<numeric literals>) ==
+    approx(<expected>, <rel>, <abs>, <nan_ok>)` in either operand order,
+    the band by keyword or positionally in pytest's parameter order (a
+    positional `nan_ok` must be `True` or `False`, and a parameter passed
+    twice is not read). The `approx` must be pytest's own: `pytest.approx`
+    through a plain `import pytest`, or `approx` through `from pytest import
+    approx`, bound once in the test's module, not shadowed by the test and
+    not attribute-patched; a project helper also named `approx` may read
+    its arguments differently (an absolute tolerance), so its band is not
+    read (#13723). The expected value and each band are numeric
+    literals or constants of the test's own module that the test-module
+    constant reading of RIPR-SPEC-0028 (#10707) holds at their value
+    (#13723). The old and new results are compared with pytest's tolerance (`abs` alone, else the larger of
     `rel * |expected|` and `abs`, default `1e-12`). An old result inside
     the band and a new result outside it is `exposed`
-    (`py-idioms-approx-constant-outside-tolerance`); both inside, for
+    (`py-idioms-approx-constant-outside-tolerance`,
+    `py-bands-positional-band-outside`); both inside, for
     every selected strong assertion and with no unbanded strong
-    assertion, is `weakly_exposed` naming the band
+    assertion, is `weakly_exposed` naming the band, whatever the changed
+    line's probe family
     (`py-idioms-approx-constant-within-tolerance`, whose old reading as
-    `exposed` was a false exposed). Everything else stays
+    `exposed` was a false exposed, and `py-bands-positional-band-within`,
+    `py-bands-non-literal-band`, `py-bands-decorated-owner`,
+    `py-bands-longer-body`, `py-bands-method-owner`). Everything else stays
     `static_unknown` with the static limit `unsupported_syntax` naming the
     band: an old result already outside the band, a result within `1e-9`
-    (relative) of the band edge, a non-literal argument, a positional
-    band, `**`, a longer body, a method or decorated owner, and a run
-    without the old line (repo mode). The `py-bands-*` cases pin the
-    abstentions: a positional band (an edit the band absorbs and one it
-    rejects, the latter a documented missed credit), a `**` spread,
-    named constants for the expected value and band, a two-statement
-    owner, a method owner and a decorated owner.
+    (relative) of the band edge, a non-literal argument, a `*` or `**`
+    spread, a constant the test or its module may rebind, any other
+    decorator, a body with any other statement or more than one changed
+    line, a method on a class with an initializer, dunder, base or
+    decorator, a receiver built with arguments or held in a name, and a
+    run without the old line (repo mode). `py-bands-spread-band` pins the
+    `**` spread abstention: a dict constant is mutable and its keys are
+    not read.
 22. **A `caplog.text` membership check on a changed log call is
     evaluated where it is decidable, else abstains.** When the changed
     line is a logging call (`<receiver>.debug`, `.info`, `.warning`,
@@ -1607,6 +1639,75 @@ mutant calibrates the rule; ripr reports only the static shape.
     `sys.path`; a relative import escapes the package; or the call passes
     keyword arguments. Over-refusal is accepted: a wrong substituted assertion
     would be a wrong credit.
+
+33. **A name the test package binds by import reaches what it binds**
+    (#13927). `from . import X` (or `from P import X`, or `as alias`) where
+    `X` is not a module file or directory of package `P` reads as the import
+    `P/__init__.py` performed to bind `X`: `import tomli as tomllib` there
+    makes `from . import tomllib` in a test read as `import tomli as
+    tomllib`, and `from M import Y as X` there reads as `from M import Y`
+    under the test's local name. Every reach and oracle reader then sees the
+    same evidence the direct import gives. The initializer must be read and
+    parse and bind `X` exactly once, through one unconditional top-level
+    import statement with one alias binding that name (counted by the name
+    Python binds, so `import a as X, X.sub` binds `X` twice, and an
+    unaliased dotted `import X.sub` is refused); up to three package
+    initializers are followed, each a package of the test file's own
+    package chain (its directory and each parent while it has an
+    `__init__.py`). A dotted name is read from the workspace root, and pytest
+    imports a test package from the parent of its topmost package, so a
+    root-relative spelling is the package Python imports only when it is one
+    of those directories (pytest's default prepend import mode; an ini
+    `pythonpath`, append or importlib mode, or an installed package of the
+    same name are not modelled). The import keeps its unresolved reading (no link)
+    when: the package is outside that chain, or its first name also names
+    another directory on the test's path (`tests/project/tests/...`, where
+    another import root can carry `tests`); the
+    initializer is missing, unread or unparsable; `X` is also bound by an
+    assignment, `def`, `class`, loop, `with`, `del`, `try`/`if` branch or a
+    second import, or only inside such a branch; the initializer has a star
+    import, a `match` or `type` statement at any depth the module body
+    executes (outside `def` and `class` bodies), or names a dynamic namespace
+    writer anywhere, even in a comment, as an identifier token so spacing
+    (`vars ()`) cannot hide it (`globals`, `locals`, `vars`, `exec`, `eval`,
+    `setattr`, `__dict__`, `global`, `__getattr__`, any `modules`; any
+    token containing `setattr`, `delattr`, `globals`, `locals`, `frame`,
+    `import_module`, `importlib` or `runpy`; `__import__`), a walrus `:=`,
+    a non-ASCII character (Python NFKC-folds identifiers), `X` as an
+    attribute anywhere (`.X`, as in `tests.X = other`, which replaces the
+    package attribute through any receiver), or any top-level statement
+    besides the binding import that is not a docstring, `pass`, an
+    `__all__` of string literals, or an absolute import of a module that
+    is not in the workspace (at the root or under `src`): a call, a `def`
+    or `class`, or an import of workspace code can run code that writes
+    the attribute; any other read workspace module (test module, conftest,
+    helper), read by its code tokens so comments and plain strings do not
+    count, spells `.X` or a non-ASCII attribute, has an f-string the
+    initializer rule would refuse, or has a reference writer (`setattr`,
+    `delattr`, `__dict__`, `vars`, `globals`, `locals`, a frame, `exec`,
+    `eval`, `modules`) at all, since its target can be computed
+    (`sys.modules[__package__]`), or names the package as an identifier,
+    spells `.__class__`, uses `__import__`, `builtins`, `meta_path`,
+    `path_hooks`, `reload`, `patch`, `monkeypatch`, `gc`,
+    `get_referents`, `get_referrers`, `get_objects`, `ctypes`,
+    `__globals__`, `f_back`, `tb_frame`, `__path__`, `__spec__` or
+    `submodule_search_locations`, `path_importer_cache` or `FileFinder`
+    (a search-path or finder edit lets an import load another `X`), or
+    has a string that is `X` or has it as a dotted component after the
+    first (`".X"`, `"pkg.X.sub"`), a string equal to
+    the package or a dotted path under it, or one containing `setattr`,
+    `delattr`, `__dict__`, `__class__`, `__import__` or `__path__`. Not modelled, as for every
+    directly imported module: modules the bounded read skipped, code inside
+    installed packages, and a write through a reference and attribute name
+    both computed at run time (`importlib.import_module` of a built name
+    then a built dunder lookup), which can equally patch a directly
+    imported module's function; or `P`
+    has a submodule or subpackage named `X`, which an import elsewhere could
+    load over the binding. A followed `from M import Y as X` is a rename
+    the package re-export reading does not follow; it is followed here
+    because the test names the bound `X` itself. This runs after the rule 32
+    helper substitution, which keeps its own module-attribute rule, and
+    fixture definitions' imports are not rewritten.
 
 ### Verdict ladder
 
@@ -2338,6 +2439,22 @@ and the test is `tests/test_subject.py`, which imports each owner from
   the decorated control, the conftest, same-module and single-name forms,
   the off-boundary parity and every negative shape of example 42;
   `classify/tests.rs` `an_indirect_parametrize_argname_is_an_unresolved_fixture`.
+- Rule 21's `approx` band shapes (#13723):
+  `crates/ripr/src/analysis/language/python/approx_band_tests.rs` pins the
+  positional band (`a_positional_band_is_read_in_pytests_parameter_order`,
+  `a_positional_band_outside_the_read_shape_keeps_abstaining`), pytest's own
+  `approx` (`only_pytests_own_approx_band_is_read`), the named band constant
+  (`a_band_named_by_test_module_constants_is_read`,
+  `a_named_band_that_may_differ_at_the_assertion_keeps_abstaining`), the
+  memoized owner (`functools_memoization_returns_the_decorated_result`,
+  `a_decorator_that_may_change_the_result_keeps_abstaining`), the longer
+  body (`a_straight_line_body_is_rebuilt_when_the_line_is_the_whole_diff`,
+  `a_body_that_cannot_be_rebuilt_keeps_abstaining`), the method owner
+  (`a_method_called_on_a_fresh_plain_instance_is_read`,
+  `a_method_whose_instance_may_differ_keeps_abstaining`), a replaced cache
+  decorator or class dunder
+  (`a_replaced_cache_decorator_or_class_dunder_keeps_abstaining`) and the
+  async owner (`an_async_owner_keeps_abstaining`).
 
 ## Numeric factor reorders
 
@@ -2372,6 +2489,9 @@ strong assertions is retained.
 
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/language/python/approx_band.rs`: rule 21, the
+  `pytest.approx` band reader (owner edit, band, owner definition and the
+  argument binding).
 - `crates/ripr/src/analysis/language/python/doctest_tests.rs` and
   `doctest_eval.rs`: rule 26, collection detection, example reading and the
   evaluator gate.
@@ -2413,6 +2533,8 @@ strong assertions is retained.
 - `oracles.rs` (`is_property_compare`: idempotence and loop-variable identity
   checks, rule 25), pinned by `property_assertion_tests.rs` and the
   `py-grid-*-property` corpus cases.
+- `crates/ripr/src/analysis/language/python/package_aliases.rs`: rule 33,
+  pinned by `package_alias_tests.rs`.
 - `crates/ripr/src/analysis/language/python/param_fixtures.rs` (literal
   `params=` rows and the unpack rewrite) with `fixtures.rs` (isolation) and
   `static_limits.rs` (direct parametrize argnames): L8, example 42.

@@ -533,6 +533,8 @@ const CONTRACTS: &[VerificationContract] = &[
             "via_symlink",
             "foreign_entry_count",
             "foreign_total_size_bytes",
+            "reclaimable_entry_count",
+            "reclaimable_size_bytes",
             "not_found",
             "unavailable",
         ],

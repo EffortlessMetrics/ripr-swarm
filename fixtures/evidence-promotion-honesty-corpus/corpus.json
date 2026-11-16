@@ -234,6 +234,60 @@
       ]
     },
     {
+      "id": "python_package_alias_attribute_write",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_package_alias_attribute_write",
+      "vector": "package_bound_alias_replaced_by_initializer_attribute_write",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:src/tomli/_parser.py::loads"
+        }
+      ]
+    },
+    {
+      "id": "python_package_alias_nested_root",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_package_alias_nested_root",
+      "vector": "package_bound_alias_absolute_hop_outside_test_package_chain",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:src/tomli/_parser.py::loads"
+        }
+      ]
+    },
+    {
       "id": "python_coarse_sign",
       "language": "python",
       "tier": "pure",
@@ -14192,6 +14246,31 @@
       ]
     },
     {
+      "id": "ts_field_construction_sibling_field_read_does_not_pin_changed_field",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_field_construction_sibling_field",
+      "vector": "sibling_field_read_does_not_pin_changed_field",
+      "control": "must_stay_weakly_exposed",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_one_hop_field_projection",
       "language": "rust",
       "tier": "pure",
@@ -19432,6 +19511,30 @@
       "tier": "pure",
       "source_fixture": "fixtures/rust_multi_line_dropped_conjunct",
       "vector": "boundary_input_cannot_credit_predicate_that_dropped_multi_line_conjunct",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_guarded_boundary_guard_missing_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_guarded_boundary_guard_missing",
+      "vector": "boundary_row_that_misses_its_bool_guard_cannot_credit_the_guarded_comparison",
       "probe_family": "predicate",
       "assertions": [
         {

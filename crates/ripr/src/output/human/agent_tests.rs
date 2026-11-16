@@ -709,6 +709,35 @@ fn reach_limit_with_weak_assertion_row_does_not_stop() {
     );
 }
 
+/// #14483: the `open=` row names the first bound weak row of the best shared
+/// observation tier, so a listed-first owner-named weak row with no call path
+/// gives way to a weak row that reaches the change; without the miss the
+/// listed-first row is named again.
+#[test]
+fn the_open_row_names_a_weak_row_that_can_observe_the_change() {
+    let mut open = reach_limited_weak("probe:fortnight", 264);
+    open.related_tests[0].name = "reaches_the_change".to_string();
+    open.related_tests[0].line = 9;
+    let mut unreached = open.related_tests[0].clone();
+    unreached.name = "named_after_the_owner".to_string();
+    unreached.line = 3;
+    unreached.relation_reason = Some(crate::domain::RelationReason::OwnerNamedTest);
+    unreached.miss = Some(RelatedTestMiss::NoCallPath);
+    open.related_tests.insert(0, unreached);
+    let text = rendered(&output(vec![open.clone()]));
+    assert!(text.contains("\nopen="), "{text}");
+    assert!(
+        text.contains("\nt1=tests/t.rs:9 reaches_the_change "),
+        "{text}"
+    );
+    open.related_tests[0].miss = Some(RelatedTestMiss::WeakAssertion);
+    let text = rendered(&output(vec![open]));
+    assert!(
+        text.contains("\nt1=tests/t.rs:3 named_after_the_owner "),
+        "{text}"
+    );
+}
+
 /// #11825: more open findings than `MAX_GAP_LINES` print the cap and an
 /// exact omitted count; `reachable_unrevealed` opens the same way.
 #[test]
@@ -1069,6 +1098,75 @@ fn the_test_row_skips_a_strong_row_that_cannot_observe_the_change() {
         text.contains("\nt1=tests/t.rs:3 accepts_short_names "),
         "{text}"
     );
+}
+
+/// #14483 on the #14454 repro: the human `Related test` headline, the JSON
+/// oracle summary, the context fix site and the agent `tK=` row all name
+/// the observing `rejects_long_names` row over the listed-first, stronger
+/// `accepts_short_names` Ok pin that cannot observe the changed error
+/// variant. Without the miss, every surface names the Ok pin again.
+#[test]
+fn every_test_picker_agrees_with_the_test_row_on_the_error_variant_repro() {
+    let mut gap = weak_gap("probe:error_variant", 11);
+    gap.probe.family = ProbeFamily::ErrorPath;
+    gap.related_tests[0].name = "rejects_long_names".to_string();
+    gap.related_tests[0].oracle = Some("assert!(parse_name(\"abcdefghij\").is_err());".to_string());
+    gap.related_tests[0].miss = Some(RelatedTestMiss::MissingExactAssertion);
+    let mut ok_pin = gap.related_tests[0].clone();
+    ok_pin.name = "accepts_short_names".to_string();
+    ok_pin.line = 8;
+    ok_pin.oracle = Some("assert_eq!(parse_name(\"ada\"), Ok(\"ada\".to_string()));".to_string());
+    ok_pin.oracle_kind = OracleKind::ExactValue;
+    ok_pin.oracle_strength = OracleStrength::Strong;
+    ok_pin.miss = Some(RelatedTestMiss::AssertionNotObserving);
+    gap.related_tests.insert(0, ok_pin);
+
+    let picks = |gap: &Finding| {
+        let check = output(vec![gap.clone()]);
+        let agent = rendered(&check);
+        let human = crate::output::human::render(&check);
+        let headline = human
+            .lines()
+            .find(|line| line.trim_start().starts_with("Related test"))
+            .map(str::to_string)
+            .unwrap_or_default();
+        let json: serde_json::Value =
+            serde_json::from_str(&crate::output::json::render(&check)).unwrap_or_default();
+        let summary = json["findings"][0]["oracle_strength"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let fix_site = crate::domain::DiagnosticWitness::selected_related_test(gap)
+            .map(|test| test.name.clone())
+            .unwrap_or_default();
+        (headline, summary, fix_site, agent, human)
+    };
+
+    let (headline, summary, fix_site, agent, human) = picks(&gap);
+    assert!(
+        agent.contains("\nt1=tests/t.rs:3 rejects_long_names "),
+        "{agent}"
+    );
+    assert!(headline.contains("rejects_long_names"), "{human}");
+    assert!(!headline.contains("accepts_short_names"), "{human}");
+    assert_eq!(
+        summary, "weak",
+        "the JSON summary describes the observing row"
+    );
+    assert_eq!(fix_site, "rejects_long_names");
+
+    // Discriminating control: when the Ok pin records an observing miss
+    // (`missing_exact_assertion`) instead, every surface names the stronger,
+    // listed-first row again.
+    gap.related_tests[0].miss = Some(RelatedTestMiss::MissingExactAssertion);
+    let (headline, summary, fix_site, agent, human) = picks(&gap);
+    assert!(
+        agent.contains("\nt1=tests/t.rs:8 accepts_short_names "),
+        "{agent}"
+    );
+    assert!(headline.contains("accepts_short_names"), "{human}");
+    assert_eq!(summary, "strong");
+    assert_eq!(fix_site, "accepts_short_names");
 }
 
 /// #14338: an `error_path` and a `return_value` probe on one changed line
@@ -2023,7 +2121,8 @@ fn rows_without_a_recorded_relation_still_pick_the_stronger_oracle() {
 }
 
 /// #13603 review: a `done=` line names the test that appears to notice the
-/// change, so a stronger pin outranks a direct caller holding a smoke check.
+/// change, so a stronger pin outranks a direct caller holding a smoke check
+/// unless the producer marked the pin `no_call_path` (#14483).
 #[test]
 fn a_done_line_names_the_pinning_test_over_a_smoke_only_direct_caller() {
     use crate::domain::{RelationConfidence, RelationReason};
@@ -2046,6 +2145,18 @@ fn a_done_line_names_the_pinning_test_over_a_smoke_only_direct_caller() {
     assert!(text.lines().any(|line| line.starts_with("done=")), "{text}");
     assert!(text.contains("exact_pin"), "{text}");
     assert!(!text.contains("caller_smoke"), "{text}");
+
+    // #14483: a strong pin the producer marked `no_call_path` is never the
+    // noticer while a reaching test is listed. Only the recorded miss moves
+    // the noticer: the relation alone (the file-location pin above, which
+    // records no miss) decides nothing.
+    let mut unreached = done.clone();
+    unreached.related_tests[1].relation_reason = Some(RelationReason::OwnerNamedTest);
+    unreached.related_tests[1].miss = Some(RelatedTestMiss::NoCallPath);
+    let text = explained(&unreached);
+    assert!(text.lines().any(|line| line.starts_with("done=")), "{text}");
+    assert!(text.contains("caller_smoke"), "{text}");
+    assert!(!text.contains("exact_pin"), "{text}");
 }
 
 fn verify_line(output: &CheckOutput) -> Result<String, String> {

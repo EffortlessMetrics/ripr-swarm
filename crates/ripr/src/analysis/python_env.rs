@@ -1,11 +1,12 @@
-//! Static facts about a project virtualenv (`.venv` or `venv`) for the doctor
-//! pytest probe (#13617).
+//! Static facts about a project virtualenv (`.venv` or `venv`) (#13617,
+//! #13801).
 //!
-//! Doctor always probes the PATH `python -m pytest` that the printed verify
-//! command runs. These facts only explain a PATH failure, for example by
-//! suggesting that the user activate a venv that has pytest. Choosing the venv
-//! interpreter for the printed command itself is #13801. Detection is purely
-//! static: doctor never executes code from the checkout to learn this.
+//! The Python producer reads them once to choose the interpreter and
+//! confidence of the printed pytest verify command
+//! (`analysis/language/python/verify_interpreter.rs`). Doctor probes PATH
+//! `python -m pytest` and uses them only to explain a PATH failure, for
+//! example by suggesting that the user activate a venv that has pytest.
+//! Detection is purely static: nothing from the checkout is executed.
 
 use std::path::Path;
 
