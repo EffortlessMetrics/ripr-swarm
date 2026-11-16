@@ -1,7 +1,9 @@
 # Wrap one release rehearsal's qualified server-archive payloads into the PyPI
 # and npm package family (one ripr-rs wheel and one native npm package per
 # target, plus the launcher), then install each platform's packages offline on
-# its native runner. Called by release-server-binaries.yml after the archives
+# its native runner, and runs the npm install-to-use journey through an
+# isolated loopback registry on each runner, gating every receipt (#4632).
+# Called by release-server-binaries.yml after the archives
 # qualify, in the same run, so it reads that run's archive artifacts. It
 # cannot publish: no registry token, no OIDC, no release or upload step.
 name: Qualify ripr PyPI and npm Package Family (read-only)
@@ -128,3 +130,121 @@ jobs:
               echo "::error::binary needs macOS $minos, above the $WHEEL_TAG claim"; exit 1
             fi
           fi
+
+  npm-journey:
+    # #4632: install the launcher through npm's own optional-dependency
+    # resolution from an isolated loopback registry holding all five native
+    # packages, then run the #4627 TypeScript journey. No Rust toolchain is
+    # installed here, and the journey removes every runner-provided toolchain
+    # directory from its consumer PATH.
+    name: npm registry journey on ${{ matrix.target }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+          - { target: x86_64-apple-darwin, os: macos-15-intel }
+          - { target: aarch64-apple-darwin, os: macos-15 }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: packaging/npm/qualification
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: ripr-platform-packages
+          path: ${{ runner.temp }}/packages
+
+      - name: Install from the isolated registry and run the journey
+        env:
+          VERSION: ${{ inputs.version }}
+          TARGET: ${{ matrix.target }}
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+          mkdir -p "$RUNNER_TEMP/journey"
+          node packaging/npm/qualification/bin/journey.cjs \
+            --packages "$RUNNER_TEMP/packages/npm" --target "$TARGET" --version "$version" \
+            --receipt "$RUNNER_TEMP/journey/receipt.json" --log "$RUNNER_TEMP/journey/log.json" \
+            --source-commit "$CANDIDATE_SHA" --source-tree "$(git rev-parse 'HEAD^{tree}')" \
+            --expected-version-line "ripr $version ($CANDIDATE_SHA)"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: ripr-npm-journey-${{ matrix.target }}
+          path: ${{ runner.temp }}/journey/
+          if-no-files-found: error
+
+  npm-journey-gate:
+    # Every target's receipt must exist and pass package-qualification-gate
+    # against this commit, tree and that target's qualified payload digest. A
+    # missing, failed, zero-subject or substituted row fails the aggregate.
+    name: gate the npm journey receipts
+    needs: [build, npm-journey]
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # v1
+        with:
+          toolchain: 1.95.0
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: ripr-{npm-journey,final-native-payload}-*
+          path: ${{ runner.temp }}/evidence
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: ripr-platform-packages
+          path: ${{ runner.temp }}/packages
+
+      - name: Gate each target's receipt against its qualified payload
+        env:
+          CANDIDATE_SHA: ${{ github.sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/evidence"; tree=$(git rev-parse 'HEAD^{tree}'); failed=0
+          launcher="sha256:$(sha256sum "$RUNNER_TEMP/packages/npm/effortlessmetrics-ripr-${VERSION#v}.tgz" | awk '{print $1}')"
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
+            receipt="$evidence/ripr-npm-journey-$target/receipt.json"
+            mapfile -t identities < <(find "$evidence/ripr-final-native-payload-$target" -type f -name payload-identity.json -print 2>/dev/null)
+            if [ ! -f "$receipt" ] || [ "${#identities[@]}" -ne 1 ]; then
+              echo "::error::$target has no journey receipt or no single qualified payload identity"; failed=1; continue
+            fi
+            payload="sha256:$(jq -er '[.files[] | select(.role == "executable")] | if length == 1 then .[0].sha256 else error("expected one executable") end' "${identities[0]}")"
+            if ! cargo xtask package-qualification-gate --receipt "$receipt" --out "$RUNNER_TEMP/gate/$target" \
+                --expected-commit "$CANDIDATE_SHA" --expected-tree "$tree" --expected-package-hash "$launcher" --expected-payload-hash "$payload"; then
+              echo "::error::$target npm journey receipt failed the package-qualification gate"; failed=1
+            fi
+          done
+          exit "$failed"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: ripr-npm-journey-gate
+          path: ${{ runner.temp }}/gate/
+          if-no-files-found: warn
