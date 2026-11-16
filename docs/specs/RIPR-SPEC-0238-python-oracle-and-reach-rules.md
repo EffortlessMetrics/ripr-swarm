@@ -1424,6 +1424,40 @@ mutant calibrates the rule; ripr reports only the static shape.
     `py-trap-wrapped-conditional` and `py-trap-wrapped-finally` stay
     non-credited, #9619).
 
+    Amended (2026-11-16, #13723): a wrapper that provably swallows the
+    helper's failure makes that call hold no assertion. When the whole
+    statement is `wrapper(lambda: helper(args))`, admission skips the
+    wrapper and helper and walks only `args`, so a test with nothing else
+    assertion-like completes as `extraction_complete_no_assertion` (a gap,
+    not a limit). `helper` must be a def of the test module whose body,
+    after a docstring, is only `assert` statements over its parameters,
+    literals and plain operators, with plain positional parameters and no
+    defaults or decorators. It can then raise only `AssertionError`, never
+    a pytest outcome such as `fail` or `skip`, which derive from
+    `BaseException` and escape `except Exception`. `wrapper` has the same
+    parameter, `try` body and binding requirements as above, with no `else`.
+    It must swallow in one of two ways. In the first, a `finally` whose only
+    statement is `return` of nothing or a literal discards the exception;
+    every handler then only passes, re-raises bare or returns a literal. In
+    the second, there is no `finally`, and the first handler that catches
+    `AssertionError` ends without raising. That handler is bare, or names
+    `Exception`, `BaseException` or `AssertionError`, and it follows only
+    handlers for builtin classes unrelated to `AssertionError`, such as
+    `ValueError`, `KeyError` or `TypeError`. It ends with `pass`, `return` of
+    nothing or a literal, or `if isinstance(<its bound name>, <unrelated
+    builtins>): raise` with no `else`. A module that binds any exception
+    class it names, or `isinstance`, is not read. So is a module that
+    mentions `builtins`, has a star import or a walrus, or binds the wrapper
+    or helper twice, imports it, or mentions it other than as its def and
+    plain calls. A project exception class is not read either. The test
+    scope must not shadow either name. Re-raising `AssertionError` before
+    a swallowing `Exception` handler, a handler that calls anything, a
+    helper that calls `pytest.fail` or a function, and a lambda with a
+    parameter all keep the call assertion-like. Four trap rows move from
+    `limited` to `gap`: `py-trap-wrapped-swallow`,
+    `py-trap-wrapped-partial`, `py-trap-wrapped-conditional` and
+    `py-trap-wrapped-finally`.
+
 28. **numpy.testing and assertpy equality helpers are the equality they
     run.** `numpy.testing.assert_array_equal(a, b)`,
     `numpy.testing.assert_equal(a, b)` and
@@ -2196,6 +2230,13 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `given_a_reraising_wrapper_when_the_call_is_not_a_bare_helper_lambda_then_nothing_resolves`,
   `given_a_wrapper_name_the_test_rebinds_or_imports_when_called_then_nothing_resolves`,
   `given_a_reraising_wrapper_around_an_unresolvable_helper_when_called_then_nothing_resolves`.
+- Existing: `crates/ripr/src/analysis/language/python/swallowing_wrapper_tests.rs`
+  (rule 27, amended)
+  `given_a_swallowing_wrapper_around_an_assert_only_helper_then_no_assertion_can_fail`,
+  `given_a_wrapper_that_lets_the_assertion_escape_then_admission_stays_unresolved`,
+  `given_a_helper_that_can_escape_an_exception_handler_then_admission_stays_unresolved`,
+  `given_a_rebound_or_unproven_name_then_the_swallowing_read_is_refused`,
+  `given_a_swallowed_helper_beside_a_real_assertion_then_the_assertion_is_recognized`.
 - Existing: corpus rows `py-trap-wrapped-swallow`, `py-trap-wrapped-partial`,
   `py-trap-wrapped-conditional` and `py-trap-wrapped-finally` (`cargo xtask
   verdict-corpus check --language python`): rule 27's runtime-verified
@@ -2384,7 +2425,9 @@ strong assertions is retained.
   `doctest_eval.rs`: rule 26, collection detection, example reading and the
   evaluator gate.
 - `crates/ripr/src/analysis/language/python/helper_assertions.rs`: rule 27,
-  the re-raising wrapper read beside the single-assert helper read.
+  the re-raising wrapper read beside the single-assert helper read, and
+  the swallowing wrapper and assert-only helper read (amended); `admission.rs`
+  applies the swallowing read in its body scan.
 - `crates/ripr/src/analysis/language/python/oracles.rs`: assertion table,
   rules 1 to 3, 12, 14 and 15, and each assertion's gate text (rules 4
   and 13).

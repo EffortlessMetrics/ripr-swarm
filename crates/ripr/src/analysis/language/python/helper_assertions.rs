@@ -21,7 +21,7 @@ use super::owners_tests::collect_imports_from_statements;
 use super::related_tests::is_python_identifier_char;
 use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, line_for_range_start, text_for_range};
-use super::{PythonAssertion, PythonOracleShape, PythonTest};
+use super::{PythonAssertion, PythonImport, PythonOracleShape, PythonTest};
 use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -343,6 +343,322 @@ fn is_reraising_wrapper(function: &ast::StmtFunctionDef) -> bool {
         })
 }
 
+/// What a swallowing wrapper lets escape from the callable it runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Swallows {
+    /// A handler for `Exception` (or `AssertionError`) swallows the
+    /// callable's `AssertionError`; a `BaseException` such as pytest's
+    /// `fail` or `skip` outcome still escapes.
+    AssertionErrors,
+    /// A bare `except`, `except BaseException` or a `finally: return`
+    /// swallows everything the callable raises.
+    Everything,
+}
+
+/// A def of one plain parameter `fn` whose whole body is `try: return fn()`
+/// (or `fn()`) and that provably swallows an `AssertionError` the callable
+/// raises, so an assertion inside the callable can never fail the test
+/// (#13723, the negative side of RIPR-SPEC-0238 rule 27). Two shapes are read:
+/// a `finally` whose only statement is `return` with no value or a literal,
+/// which discards any exception; or no `finally`, where the first handler
+/// that catches `AssertionError` (bare, `Exception`, `BaseException` or
+/// `AssertionError`, after only handlers for builtin classes unrelated to
+/// `AssertionError`) ends without raising: `pass`, `return` of nothing or a
+/// literal, or `if isinstance(<bound name>, <unrelated builtins>): raise`.
+/// Any `else`, other statement, handler, parameter shape or name that a
+/// module binding may replace leaves the def unread.
+pub(super) fn swallowing_wrapper(
+    function: &ast::StmtFunctionDef,
+    module_bound: &BTreeSet<String>,
+) -> Option<Swallows> {
+    let args = function.args.as_ref();
+    if !function.decorator_list.is_empty()
+        || !args.posonlyargs.is_empty()
+        || !args.kwonlyargs.is_empty()
+        || args.vararg.is_some()
+        || args.kwarg.is_some()
+        || args.args.len() != 1
+        || args.args[0].default.is_some()
+    {
+        return None;
+    }
+    let param = args.args[0].def.arg.as_str();
+    let mut body = function.body.as_slice();
+    if let [Stmt::Expr(first), rest @ ..] = body
+        && matches!(
+            first.value.as_ref(),
+            Expr::Constant(ast::ExprConstant {
+                value: ast::Constant::Str(_),
+                ..
+            })
+        )
+    {
+        body = rest;
+    }
+    let [Stmt::Try(try_stmt)] = body else {
+        return None;
+    };
+    if !try_stmt.orelse.is_empty() {
+        return None;
+    }
+    let called = match try_stmt.body.as_slice() {
+        [Stmt::Return(ret)] => ret.value.as_deref(),
+        [Stmt::Expr(expr)] => Some(expr.value.as_ref()),
+        _ => None,
+    };
+    let Some(Expr::Call(call)) = called else {
+        return None;
+    };
+    if !matches!(call.func.as_ref(), Expr::Name(name) if name.id.as_str() == param)
+        || !call.args.is_empty()
+        || !call.keywords.is_empty()
+    {
+        return None;
+    }
+    // Every handler type must be inert to evaluate and every handler body
+    // must only raise, pass or return a literal, so nothing before the
+    // `finally` can end the test another way (`os._exit`, a hook).
+    for handler in &try_stmt.handlers {
+        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+        if !handler.type_.as_deref().is_none_or(plain_exception_type) {
+            return None;
+        }
+    }
+    if !try_stmt.finalbody.is_empty() {
+        let [Stmt::Return(ret)] = try_stmt.finalbody.as_slice() else {
+            return None;
+        };
+        let handlers_inert = try_stmt.handlers.iter().all(|handler| {
+            let ast::ExceptHandler::ExceptHandler(handler) = handler;
+            handler.body.iter().all(|stmt| {
+                matches!(stmt, Stmt::Pass(_))
+                    || matches!(stmt, Stmt::Raise(raise) if raise.exc.is_none() && raise.cause.is_none())
+                    || matches!(stmt, Stmt::Return(ret) if ret.value.as_deref().is_none_or(is_literal))
+            })
+        });
+        return (handlers_inert && ret.value.as_deref().is_none_or(is_literal))
+            .then_some(Swallows::Everything);
+    }
+    for handler in &try_stmt.handlers {
+        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+        let catches = match handler.type_.as_deref() {
+            None => Some(Swallows::Everything),
+            Some(kind) => catch_of(kind, module_bound)?,
+        };
+        let Some(catches) = catches else {
+            continue;
+        };
+        let bound = handler.name.as_ref().map(|name| name.as_str());
+        return handler_swallows(&handler.body, bound, module_bound).then_some(catches);
+    }
+    None
+}
+
+/// The swallowing wrappers and assert-only helpers of one test module, for
+/// the admission scan (#13723). A wrapper or helper is read only when the
+/// module binds its name once, by that def, and otherwise only calls it; no
+/// star import, `builtins` access or dynamic namespace write may replace a
+/// builtin exception class or the def.
+pub(super) fn swallowing_wrappers(
+    source: &str,
+    statements: &[Stmt],
+    imports: &[PythonImport],
+) -> (BTreeSet<String>, BTreeSet<String>) {
+    let mut swallowers = BTreeSet::new();
+    let mut assert_only = BTreeSet::new();
+    if imports
+        .iter()
+        .any(|import| import.imported == "*" || import.alias == "*")
+        || super::mentions_python_name(source, "builtins")
+        || source.contains(":=")
+    {
+        return (swallowers, assert_only);
+    }
+    let mut module_bound = BTreeSet::new();
+    bound_names(statements, &mut module_bound);
+    module_bound.extend(imports.iter().map(|import| import.alias.clone()));
+    for (index, stmt) in statements.iter().enumerate() {
+        let Stmt::FunctionDef(function) = stmt else {
+            continue;
+        };
+        let name = function.name.as_str();
+        let swallower = swallowing_wrapper(function, &module_bound).is_some();
+        let asserts = assert_only_helper(function);
+        if !swallower && !asserts {
+            continue;
+        }
+        let mut others = BTreeSet::new();
+        bound_names(&statements[..index], &mut others);
+        bound_names(&statements[index + 1..], &mut others);
+        if others.contains(name)
+            || imports.iter().any(|import| import.alias == name)
+            || !wrapper_only_defined_and_called(source, name)
+        {
+            continue;
+        }
+        if swallower {
+            swallowers.insert(name.to_string());
+        } else {
+            assert_only.insert(name.to_string());
+        }
+    }
+    (swallowers, assert_only)
+}
+
+/// A def of plain positional parameters whose whole body (after a docstring)
+/// is `assert` statements over parameters, literals and plain operators: it
+/// can raise only `AssertionError` (or an error from an operator), never a
+/// pytest outcome, so a handler for `Exception` swallows its failure.
+fn assert_only_helper(function: &ast::StmtFunctionDef) -> bool {
+    let args = function.args.as_ref();
+    if !function.decorator_list.is_empty()
+        || !args.posonlyargs.is_empty()
+        || !args.kwonlyargs.is_empty()
+        || args.vararg.is_some()
+        || args.kwarg.is_some()
+        || args.args.is_empty()
+        || args.args.iter().any(|arg| arg.default.is_some())
+    {
+        return false;
+    }
+    let params: BTreeSet<&str> = args.args.iter().map(|arg| arg.def.arg.as_str()).collect();
+    let mut body = function.body.as_slice();
+    if let [Stmt::Expr(first), rest @ ..] = body
+        && matches!(
+            first.value.as_ref(),
+            Expr::Constant(ast::ExprConstant {
+                value: ast::Constant::Str(_),
+                ..
+            })
+        )
+    {
+        body = rest;
+    }
+    !body.is_empty()
+        && body.iter().all(|stmt| {
+            matches!(stmt, Stmt::Assert(assert)
+                if plain_operand(&assert.test, &params)
+                    && assert.msg.as_deref().is_none_or(|msg| plain_operand(msg, &params)))
+        })
+}
+
+/// Parameters, literals, comparisons and boolean or arithmetic operators.
+fn plain_operand(expr: &Expr, params: &BTreeSet<&str>) -> bool {
+    match expr {
+        Expr::Name(name) => params.contains(name.id.as_str()),
+        Expr::Constant(_) => true,
+        Expr::Compare(compare) => {
+            plain_operand(&compare.left, params)
+                && compare
+                    .comparators
+                    .iter()
+                    .all(|value| plain_operand(value, params))
+        }
+        Expr::BoolOp(op) => op.values.iter().all(|value| plain_operand(value, params)),
+        Expr::UnaryOp(op) => plain_operand(&op.operand, params),
+        Expr::BinOp(op) => plain_operand(&op.left, params) && plain_operand(&op.right, params),
+        Expr::Tuple(tuple) => tuple.elts.iter().all(|value| plain_operand(value, params)),
+        _ => false,
+    }
+}
+
+/// Whether a handler for `kind` catches an `AssertionError`: `Some(Some(_))`
+/// when it does, `Some(None)` when every class is a builtin unrelated to
+/// `AssertionError`, and `None` when RIPR cannot tell.
+fn catch_of(kind: &Expr, module_bound: &BTreeSet<String>) -> Option<Option<Swallows>> {
+    let names: Vec<&str> = match kind {
+        Expr::Tuple(tuple) => tuple
+            .elts
+            .iter()
+            .map(builtin_class_name)
+            .collect::<Option<Vec<_>>>()?,
+        other => vec![builtin_class_name(other)?],
+    };
+    if names.iter().any(|name| module_bound.contains(*name)) {
+        return None;
+    }
+    if names.contains(&"BaseException") {
+        return Some(Some(Swallows::Everything));
+    }
+    if names
+        .iter()
+        .any(|name| matches!(*name, "Exception" | "AssertionError"))
+    {
+        return Some(Some(Swallows::AssertionErrors));
+    }
+    names
+        .iter()
+        .all(|name| UNRELATED_BUILTIN_EXCEPTIONS.contains(name))
+        .then_some(None)
+}
+
+/// A bare builtin class name, or `builtins.<name>`.
+fn builtin_class_name(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Name(name) => Some(name.id.as_str()),
+        Expr::Attribute(attribute) if matches!(attribute.value.as_ref(), Expr::Name(root) if root.id.as_str() == "builtins") => {
+            Some(attribute.attr.as_str())
+        }
+        _ => None,
+    }
+}
+
+/// Builtin exception classes that neither are nor derive from
+/// `AssertionError`, so a handler for them lets an `AssertionError` pass.
+const UNRELATED_BUILTIN_EXCEPTIONS: &[&str] = &[
+    "ArithmeticError",
+    "AttributeError",
+    "ImportError",
+    "IndexError",
+    "KeyError",
+    "LookupError",
+    "NameError",
+    "NotImplementedError",
+    "OSError",
+    "OverflowError",
+    "RuntimeError",
+    "StopIteration",
+    "TypeError",
+    "UnicodeError",
+    "ValueError",
+    "ZeroDivisionError",
+];
+
+/// The handler ends without raising an `AssertionError` again: `pass`,
+/// `return` of nothing or a literal, or a re-raise guarded only by
+/// `isinstance(<bound name>, <unrelated builtins>)`.
+fn handler_swallows(body: &[Stmt], bound: Option<&str>, module_bound: &BTreeSet<String>) -> bool {
+    body.iter().all(|stmt| match stmt {
+        Stmt::Pass(_) => true,
+        Stmt::Return(ret) => ret.value.as_deref().is_none_or(is_literal),
+        Stmt::If(guard) => {
+            guard.orelse.is_empty()
+                && matches!(guard.body.as_slice(), [Stmt::Raise(raise)] if raise.exc.is_none() && raise.cause.is_none())
+                && bound.is_some_and(|bound| isinstance_unrelated(&guard.test, bound, module_bound))
+        }
+        _ => false,
+    })
+}
+
+/// `isinstance(<bound>, <unrelated builtins>)` with `isinstance` unbound.
+fn isinstance_unrelated(test: &Expr, bound: &str, module_bound: &BTreeSet<String>) -> bool {
+    let Expr::Call(call) = test else {
+        return false;
+    };
+    let [Expr::Name(subject), kind] = call.args.as_slice() else {
+        return false;
+    };
+    matches!(call.func.as_ref(), Expr::Name(name) if name.id.as_str() == "isinstance")
+        && !module_bound.contains("isinstance")
+        && call.keywords.is_empty()
+        && subject.id.as_str() == bound
+        && catch_of(kind, module_bound) == Some(None)
+}
+
+fn is_literal(expr: &Expr) -> bool {
+    matches!(expr, Expr::Constant(_))
+}
+
 /// An exception class expression that cannot run code: a name, a dotted
 /// attribute path or a tuple of those. The type expression is evaluated when
 /// an exception reaches the handler, so `except pytest.skip('x'):` would skip.
@@ -361,7 +677,7 @@ fn plain_exception_type(expr: &Expr) -> bool {
 /// `setattr`) could rebind it, and the binding scan does not see inside
 /// function bodies, expressions or nested imports. Dynamic namespace access
 /// (`globals()`, `vars()`, `exec`, `eval`, a star import) refuses the module.
-fn wrapper_only_defined_and_called(text: &str, name: &str) -> bool {
+pub(super) fn wrapper_only_defined_and_called(text: &str, name: &str) -> bool {
     if [
         "import *", "globals(", "vars(", "exec(", "eval(", "__dict__",
     ]
