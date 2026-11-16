@@ -242,8 +242,8 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
         }
         let family = family_for_probe_shape(shape.kind);
         if matches!(family, ProbeFamily::ReturnValue | ProbeFamily::ErrorPath)
-            && shape.start_line < line
-            && line < shape.end_line
+            && shape.start_line() < line
+            && line < shape.end_line()
             && parsed
                 .get_or_insert_with(|| last_file_parse(&facts.source))
                 .as_ref()
@@ -367,15 +367,13 @@ fn line_is_nested_statement(
     if text.trim().is_empty() {
         return false;
     }
-    let (Ok(content_start), Ok(content_end), Ok(shape_start), Ok(shape_end)) = (
+    let (Ok(content_start), Ok(content_end)) = (
         u32::try_from(line_range.start + leading),
         u32::try_from(line_range.end - trailing),
-        u32::try_from(shape.start_byte),
-        u32::try_from(shape.end_byte),
     ) else {
         return false;
     };
-    let shape_range = ra_ap_syntax::TextRange::new(shape_start.into(), shape_end.into());
+    let shape_range = ra_ap_syntax::TextRange::new(shape.start_byte.into(), shape.end_byte.into());
     let content = ra_ap_syntax::TextRange::new(content_start.into(), content_end.into());
     if shape_range.is_empty() || !shape_range.contains_range(content) {
         return false;
