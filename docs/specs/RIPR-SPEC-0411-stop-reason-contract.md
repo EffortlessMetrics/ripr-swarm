@@ -119,6 +119,7 @@ slice does not remove tokens.
 - `crates/ripr/src/analysis/classify/stop_reason_contract.rs::tests::stop_reason_contract_registry_is_exhaustive_and_unique`
 - `crates/ripr/src/analysis/classify/stop_reason_contract.rs::tests::reserved_wire_stop_reasons_have_no_production_push_sites`
 - `crates/ripr/src/analysis/classify/stop_reason_contract.rs::tests::stop_reason_contract_spec_documents_every_wire_value`
+- `crates/ripr/src/analysis/classify/decision.rs::tests::async_boundary_signals_match_whole_name_segments`
 
 ## Implementation Mapping
 
