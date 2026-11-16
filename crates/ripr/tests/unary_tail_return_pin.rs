@@ -9,10 +9,7 @@
 //! constant), is never `exposed`. Neither is a diff whose old owner held more
 //! than the replaced line.
 
-use ripr::{
-    CheckInput, ExposureClass, Finding, FlowSinkKind, Mode, OutputFormat, ProbeFamily,
-    check_workspace,
-};
+use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, ProbeFamily, check_workspace};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -151,7 +148,8 @@ fn an_exact_pin_where_the_versions_differ_exposes_a_deleted_or_added_minus() -> 
             finding
                 .flow_sinks
                 .iter()
-                .any(|sink| sink.kind == FlowSinkKind::ReturnValue && sink.text == added),
+                .any(|sink| sink.kind == ripr::domain::FlowSinkKind::ReturnValue
+                    && sink.text == added),
             "the sink is the owner's return, named by the raw tail: {finding:?}"
         );
     }
