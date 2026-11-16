@@ -994,16 +994,23 @@ fn is_inline_const_assertion(masked: &str) -> bool {
         .iter()
         .find_map(|path| inner.strip_prefix(path))
         .unwrap_or(inner);
-    let Some(call) = [
-        "assert!",
-        "assert_eq!",
-        "assert_ne!",
-        "debug_assert!",
-        "debug_assert_eq!",
-        "debug_assert_ne!",
-    ]
-    .iter()
-    .find_map(|name| inner.strip_prefix(name)) else {
+    // Masked text has comments as spaces, so `assert /* note */ !(..)` reads
+    // as `assert   !(..)`: whitespace may sit between the name and `!`.
+    let name_end = inner
+        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .unwrap_or(inner.len());
+    if !matches!(
+        &inner[..name_end],
+        "assert"
+            | "assert_eq"
+            | "assert_ne"
+            | "debug_assert"
+            | "debug_assert_eq"
+            | "debug_assert_ne"
+    ) {
+        return false;
+    }
+    let Some(call) = inner[name_end..].trim_start().strip_prefix('!') else {
         return false;
     };
     let call = call.trim_start();
@@ -1042,6 +1049,8 @@ mod tests {
             "const {assert!(N < 8)};",
             "const { core::assert!(N <= 249) };",
             "const { ::std::assert!(N <= 249, \"too long\") };",
+            "const { assert /* note */ !(N <= 249) };",
+            "const { assert !(N <= 249) };",
         ] {
             assert_eq!(
                 classify_changed_line(line),
@@ -1057,6 +1066,7 @@ mod tests {
             "const { assert!(N <= 249); f(x) > 3 };",
             "const { assert!(N <= 249) }; f(x) > 3;",
             "const { other::assert!(N <= 249) };",
+            "const { asserts!(N <= 249) };",
         ] {
             assert!(
                 classify_changed_line(line).contains(&ProbeFamily::Predicate),
