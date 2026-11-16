@@ -971,8 +971,9 @@ fn is_constant_declaration(text: &str) -> bool {
 }
 
 /// A statement that is one inline const block holding only an assertion
-/// macro: `const { assert!(..) };`, also `assert_eq!`/`assert_ne!` and the
-/// `debug_` forms. Read on masked text, so a quoted `}` cannot end it. A const
+/// macro: `const { assert!(..) };`, also `assert_eq!`/`assert_ne!`, the
+/// `debug_` forms and their `core::`/`std::` paths. One line only: a
+/// rustfmt-split block keeps the line-by-line reading. Read on masked text, so a quoted `}` cannot end it. A const
 /// block producing a value (`let x = const { 1 + 2 };`) is runtime-visible
 /// and is not matched.
 fn is_inline_const_assertion(masked: &str) -> bool {
@@ -989,6 +990,10 @@ fn is_inline_const_assertion(masked: &str) -> bool {
     };
     let inner = inner.trim();
     let inner = inner.strip_suffix(';').map_or(inner, str::trim_end);
+    let inner = ["::core::", "::std::", "core::", "std::"]
+        .iter()
+        .find_map(|path| inner.strip_prefix(path))
+        .unwrap_or(inner);
     let Some(call) = [
         "assert!",
         "assert_eq!",
@@ -1035,6 +1040,8 @@ mod tests {
             "const { assert_eq!(N, 4) }",
             "const { assert!(N > 0, \"N must be } positive\"); };",
             "const {assert!(N < 8)};",
+            "const { core::assert!(N <= 249) };",
+            "const { ::std::assert!(N <= 249, \"too long\") };",
         ] {
             assert_eq!(
                 classify_changed_line(line),
@@ -1048,6 +1055,8 @@ mod tests {
             "let ok = const { N <= 249 };",
             "const LIMIT: bool = N <= 249;",
             "const { assert!(N <= 249); f(x) > 3 };",
+            "const { assert!(N <= 249) }; f(x) > 3;",
+            "const { other::assert!(N <= 249) };",
         ] {
             assert!(
                 classify_changed_line(line).contains(&ProbeFamily::Predicate),

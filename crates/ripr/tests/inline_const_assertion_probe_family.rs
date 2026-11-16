@@ -155,10 +155,18 @@ fn assert_one_static_unknown(findings: &[Finding]) -> Result<(), String> {
             describe(findings)
         ));
     }
-    let debug = format!("{:?}", line[0]);
-    if debug.contains("predicate_boundary") || debug.contains("boundary input") {
+    if let Some(gap) = &line[0].canonical_gap
+        && (gap.behavior_kind == "predicate_boundary" || gap.probe_kind == "predicate")
+    {
         return Err(format!(
-            "a build-time check must not carry boundary evidence: {debug}"
+            "a build-time check must not mint a predicate gap id: {}",
+            gap.id
+        ));
+    }
+    let advice = format!("{:?} {:?}", line[0].missing, line[0].recommended_next_step);
+    if advice.contains("boundary input") {
+        return Err(format!(
+            "a build-time check must not advise boundary inputs: {advice}"
         ));
     }
     Ok(())
