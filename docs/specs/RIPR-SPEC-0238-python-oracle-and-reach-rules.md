@@ -1441,9 +1441,12 @@ mutant calibrates the rule; ripr reports only the static shape.
     `TypeError` still lets a crash fail the test, which, as everywhere in
     this spec, is not a discriminating assertion. `wrapper` has the same
     parameter and `try` body requirements as above, with no `else`.
-    It must swallow in one of two ways. In the first, a `finally` whose only
-    statement is `return` of nothing or a literal discards the exception;
-    every handler then only passes, re-raises bare or returns a literal. In
+    Every handler, whichever exception reaches it, only re-raises bare,
+    passes, returns nothing or a literal, or re-raises behind the
+    `isinstance` guard below; a handler that asserts on an owner's
+    exception is a check. It must swallow in one of two ways. In the first,
+    a `finally` whose only statement is `return` of nothing or a literal
+    discards the exception. In
     the second, there is no `finally`, and the first handler that catches
     `AssertionError` ends without raising. That handler is bare, or names
     `Exception`, `BaseException` or `AssertionError`, and it follows only
@@ -1463,7 +1466,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     shadow either. Re-raising `AssertionError` before a swallowing
     `Exception` handler, a handler that calls anything, a helper that calls
     `pytest.fail` or a function, and a lambda with a parameter all keep the
-    call assertion-like. Four trap rows move from `limited` to `gap`:
+    call assertion-like. Residual, shared with every operator-based read in
+    this spec: RIPR does not type the helper's operands, so an owner result
+    whose own `__eq__` (or other operator dunder) raises a pytest outcome or
+    an `AssertionError` subclass that an earlier handler re-raises is not
+    seen. Four trap rows move from `limited` to `gap`:
     `py-trap-wrapped-swallow`, `py-trap-wrapped-partial`,
     `py-trap-wrapped-conditional` and `py-trap-wrapped-finally`.
 

@@ -425,19 +425,24 @@ pub(super) fn swallowing_wrapper(
             return false;
         }
     }
+    // Every handler, whichever exception reaches it, may only re-raise bare,
+    // pass, return a literal or re-raise behind an unrelated `isinstance`:
+    // a handler for `ValueError` that asserts on the message is a check the
+    // owner's own exception can fail.
+    let handlers_inert = try_stmt.handlers.iter().all(|handler| {
+        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+        let bound = handler.name.as_ref().map(|name| name.as_str());
+        handler_ends_in_bare_raise(&handler.body)
+            || handler_swallows(&handler.body, bound, &rebinds)
+    });
+    if !handlers_inert {
+        return false;
+    }
     if !try_stmt.finalbody.is_empty() {
         let [Stmt::Return(ret)] = try_stmt.finalbody.as_slice() else {
             return false;
         };
-        let handlers_inert = try_stmt.handlers.iter().all(|handler| {
-            let ast::ExceptHandler::ExceptHandler(handler) = handler;
-            handler.body.iter().all(|stmt| {
-                matches!(stmt, Stmt::Pass(_))
-                    || matches!(stmt, Stmt::Raise(raise) if raise.exc.is_none() && raise.cause.is_none())
-                    || matches!(stmt, Stmt::Return(ret) if ret.value.as_deref().is_none_or(is_literal))
-            })
-        });
-        return handlers_inert && ret.value.as_deref().is_none_or(is_literal);
+        return ret.value.as_deref().is_none_or(is_literal);
     }
     for handler in &try_stmt.handlers {
         let ast::ExceptHandler::ExceptHandler(handler) = handler;

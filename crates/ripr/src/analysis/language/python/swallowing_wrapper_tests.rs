@@ -134,6 +134,14 @@ fn given_a_wrapper_that_lets_the_assertion_escape_then_admission_stays_unresolve
             "def quiet(fn):\n    try:\n        return fn()\n    except Exception as isinstance:\n        if isinstance(isinstance, ValueError):\n            raise\n",
         ),
         (
+            "asserts in an earlier unrelated handler",
+            "def quiet(fn):\n    try:\n        return fn()\n    except ValueError as exc:\n        assert exc.args == ('expected',)\n    except Exception:\n        return None\n",
+        ),
+        (
+            "asserts in a later handler",
+            "def quiet(fn):\n    try:\n        return fn()\n    except Exception:\n        return None\n    except BaseException:\n        assert False\n",
+        ),
+        (
             "is decorated",
             "@wraps\ndef quiet(fn):\n    try:\n        return fn()\n    except Exception:\n        return None\n",
         ),
