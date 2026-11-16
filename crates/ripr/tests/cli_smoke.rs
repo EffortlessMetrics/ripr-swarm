@@ -27938,7 +27938,10 @@ fn check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed() 
 /// run: `limits=` plus the `ripr explain` drill-in (#13594 dropped the
 /// `missing=-` per-finding records, which named nothing to fix), and the terminal must not claim nothing more is
 /// fixable while the human Start-here block recommends adding a co-located
-/// test.
+/// test. #14820: the base names `levy` and `fee` in a comment, so the
+/// RIPR-SPEC-0219 unreferenced-owner marker is withheld and the run stays
+/// all-limited; an owner nothing names reads as a gap instead (see
+/// `tests/agent_unreferenced_owner_gap.rs`).
 #[test]
 fn check_format_agent_all_static_limited_emits_a_route_without_records() -> Result<(), String> {
     let root = unique_temp_workspace("agent-format-all-limited");
@@ -27946,7 +27949,7 @@ fn check_format_agent_all_static_limited_emits_a_route_without_records() -> Resu
     run_git(&root, &["init", "-b", "main"])?;
     run_git(&root, &["config", "user.email", "test@test.com"])?;
     run_git(&root, &["config", "user.name", "Test"])?;
-    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")
+    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n// The host crate wires up levy and fee.\n")
         .map_err(|e| format!("write lib: {e}"))?;
     std::fs::write(
         root.join("Cargo.toml"),
@@ -27958,7 +27961,7 @@ fn check_format_agent_all_static_limited_emits_a_route_without_records() -> Resu
     run_git(&root, &["commit", "-m", "initial"])?;
     std::fs::write(
         root.join("src/lib.rs"),
-        "pub fn one() -> i32 { 1 }\n\npub fn levy(pct: u32) -> bool {\n    pct >= 50\n}\n\npub fn fee(pct: u32) -> bool {\n    pct >= 90\n}\n",
+        "pub fn one() -> i32 { 1 }\n// The host crate wires up levy and fee.\n\npub fn levy(pct: u32) -> bool {\n    pct >= 50\n}\n\npub fn fee(pct: u32) -> bool {\n    pct >= 90\n}\n",
     )
     .map_err(|e| format!("write lib v2: {e}"))?;
     run_git(&root, &["add", "."])?;
