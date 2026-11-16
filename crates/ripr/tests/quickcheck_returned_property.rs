@@ -87,8 +87,8 @@ const ADD_ASSERTION: &str = "Add a meaningful assertion";
 const PROPERTY_LINE: &str = "QuickCheck property returns its check: `holds`";
 
 /// The `holds` row's miss token, whether the finding names the property,
-/// whether its next step asks for an assertion, and whether it is exposed.
-type Reading = (Option<&'static str>, bool, bool, bool);
+/// whether its next step asks for an assertion, and the finding's class.
+type Reading = (Option<&'static str>, bool, bool, &'static str);
 
 fn read(tests: &str) -> Result<Reading, String> {
     read_related(tests)?.ok_or_else(|| format!("premise: `holds` is related\n{tests}"))
@@ -115,12 +115,12 @@ fn read_related(tests: &str) -> Result<Option<Reading>, String> {
         .recommended_next_step
         .as_deref()
         .is_some_and(|step| step.starts_with(ADD_ASSERTION));
-    let exposed = finding.class == ripr::ExposureClass::Exposed;
+    let class = finding.class.as_str();
     Ok(Some((
         row.miss.map(|miss| miss.as_str()),
         named,
         asks,
-        exposed,
+        class,
     )))
 }
 
@@ -131,10 +131,14 @@ fn a_returned_property_is_not_read_as_missing_an_assertion() -> Result<(), Strin
         "    #[quickcheck_macros::quickcheck]\n    fn holds(x: u32) -> bool {\n        bump(x) == x.wrapping_add(2)\n    }\n",
         "    #[quickcheck]\n    fn holds(x: u32) -> TestResult {\n        TestResult::from_bool(bump(x) == x.wrapping_add(2))\n    }\n",
     ] {
-        let (miss, named, asks, exposed) = read(tests)?;
-        if miss != Some("assertion_admission_unproven") || !named || asks || exposed {
+        let (miss, named, asks, class) = read(tests)?;
+        if miss != Some("assertion_admission_unproven")
+            || !named
+            || asks
+            || class != "reachable_unrevealed"
+        {
             return Err(format!(
-                "a returned property must name the limit without credit: miss={miss:?} named={named} asks={asks} exposed={exposed}\n{tests}"
+                "a returned property must name the limit without credit or a class change: miss={miss:?} named={named} asks={asks} class={class}\n{tests}"
             ));
         }
     }
@@ -146,13 +150,15 @@ fn other_shapes_keep_the_absence_claim() -> Result<(), String> {
     for tests in [
         // Returns nothing: no check reaches the harness.
         "    #[quickcheck]\n    fn holds(x: u32) {\n        let _ = bump(x);\n    }\n",
-        // A plain test returning a value is not a property.
+        // A plain test that computes a comparison and discards it.
         "    #[test]\n    fn holds() {\n        let _ = bump(1) == 3;\n    }\n",
+        // A plain test returning `bool` is not a QuickCheck property.
+        "    #[test]\n    fn holds() -> bool {\n        bump(1) == 3\n    }\n",
     ] {
-        let (miss, named, _, exposed) = read(tests)?;
-        if named || miss == Some("assertion_admission_unproven") || exposed {
+        let (miss, named, asks, class) = read(tests)?;
+        if named || miss != Some("no_assertion") || !asks || class != "reachable_unrevealed" {
             return Err(format!(
-                "this shape must keep its previous reading: miss={miss:?} named={named} exposed={exposed}\n{tests}"
+                "this shape must keep its absence claim: miss={miss:?} named={named} asks={asks} class={class}\n{tests}"
             ));
         }
     }
@@ -164,11 +170,11 @@ fn another_attribute_ending_in_quickcheck_is_not_a_property() -> Result<(), Stri
     // `#[my::quickcheck]` is not a test attribute ripr knows: either the
     // function is not related at all, or it keeps its previous reading.
     let tests = "    #[my::quickcheck]\n    fn holds(x: u32) -> bool {\n        bump(x) == x.wrapping_add(2)\n    }\n";
-    if let Some((miss, named, _, exposed)) = read_related(tests)?
-        && (named || miss == Some("assertion_admission_unproven") || exposed)
+    if let Some((miss, named, _, class)) = read_related(tests)?
+        && (named || miss == Some("assertion_admission_unproven") || class == "exposed")
     {
         return Err(format!(
-            "an unknown attribute must not be read as a property: miss={miss:?} named={named} exposed={exposed}"
+            "an unknown attribute must not be read as a property: miss={miss:?} named={named} class={class}"
         ));
     }
     Ok(())

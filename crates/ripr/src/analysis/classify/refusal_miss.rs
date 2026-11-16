@@ -313,11 +313,45 @@ pub(in crate::analysis) fn is_returned_quickcheck_property(test: &TestSummary) -
 }
 
 /// The return type written in the function header before its body's `{`.
+/// The declared return type of the function whose source starts at `body`:
+/// the text after the parameter list's closing parenthesis and its `->`, up to
+/// a `where` clause or the body. A `->` inside generics, parameters or a
+/// `where` bound is never read as the return type.
 fn returned_type(body: &str) -> Option<&str> {
-    let header = &body[..body.find('{')?];
-    let (_, returned) = header.rsplit_once("->")?;
-    let returned = returned.split(" where ").next().unwrap_or(returned);
-    Some(returned.trim())
+    let mut angle = 0usize;
+    let mut paren = 0usize;
+    let mut previous = ' ';
+    let mut params_end = None;
+    for (index, c) in body.char_indices() {
+        match c {
+            '<' if paren == 0 => angle += 1,
+            '>' if paren == 0 && previous != '-' => angle = angle.saturating_sub(1),
+            '(' if angle == 0 => paren += 1,
+            ')' if angle == 0 && paren > 0 => {
+                paren -= 1;
+                if paren == 0 {
+                    params_end = Some(index + 1);
+                    break;
+                }
+            }
+            '{' | ';' if angle == 0 && paren == 0 => return None,
+            _ => {}
+        }
+        previous = c;
+    }
+    let rest = body[params_end?..].trim_start().strip_prefix("->")?;
+    let end = rest.find('{').unwrap_or(rest.len());
+    let returned = &rest[..end];
+    let cut = returned
+        .match_indices("where")
+        .find(|(at, _)| {
+            let before = returned[..*at].chars().next_back();
+            let after = returned[at + "where".len()..].chars().next();
+            before.is_some_and(char::is_whitespace) && after.is_none_or(char::is_whitespace)
+        })
+        .map_or(returned.len(), |(at, _)| at);
+    let returned = returned[..cut].trim();
+    (!returned.is_empty()).then_some(returned)
 }
 
 fn is_property_result_type(returned: &str) -> bool {
@@ -368,5 +402,42 @@ mod combine_tests {
             fold(&[AssertionInert, AssertionInert]),
             Some(AssertionInert)
         );
+    }
+}
+
+#[cfg(test)]
+mod returned_type_tests {
+    use super::{is_property_result_type, returned_type};
+
+    fn property(body: &str) -> bool {
+        returned_type(body).is_some_and(is_property_result_type)
+    }
+
+    #[test]
+    fn a_declared_bool_or_test_result_is_a_property_result() {
+        for body in [
+            "fn holds(x: u32) -> bool {\n    true\n}",
+            "fn holds(x: u32) -> TestResult { TestResult::passed() }",
+            "fn holds(x: u32) -> quickcheck::TestResult { TestResult::passed() }",
+            "fn holds<T: Clone>(x: T) -> bool where T: Copy { true }",
+            "fn holds<T>(x: T) -> bool\nwhere\n    T: Copy,\n{ true }",
+            "fn holds(f: fn(u32) -> u32) -> bool { true }",
+        ] {
+            assert!(property(body), "{body}");
+        }
+    }
+
+    #[test]
+    fn an_arrow_outside_the_return_type_is_not_read_as_one() {
+        for body in [
+            "fn p<F>(f: F) where F: Fn() -> bool { f(); }",
+            "fn p<F: Fn() -> bool>(f: F) { f(); }",
+            "fn p(f: impl Fn(u32) -> bool) { f(1); }",
+            "fn p(x: u32) { let _ = x; }",
+            "fn p(x: u32) -> u32 { x }",
+            "fn p(x: u32) -> boolean { x }",
+        ] {
+            assert!(!property(body), "{body}");
+        }
     }
 }
