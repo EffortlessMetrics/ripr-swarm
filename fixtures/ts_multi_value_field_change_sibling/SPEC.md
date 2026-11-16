@@ -1,6 +1,9 @@
 # Fixture: ts_multi_value_field_change_sibling
 
-Spec: RIPR-SPEC-0243 (Rule 24)
+Spec: RIPR-SPEC-0243
+
+Rule: 24 (a change that moves two field values on one line is not witnessed by a
+read of a third, untouched field).
 
 ## Given
 
