@@ -281,14 +281,24 @@ impl AssertKind {
 fn name_segments(token: &str) -> Vec<&str> {
     let mut segments = Vec::new();
     for part in token.split('_').filter(|part| !part.is_empty()) {
+        let chars: Vec<(usize, char)> = part.char_indices().collect();
         let mut begin = 0;
-        let mut previous_lower = false;
-        for (index, ch) in part.char_indices() {
-            if ch.is_uppercase() && previous_lower {
+        for (at, &(index, ch)) in chars.iter().enumerate().skip(1) {
+            let Some(&(_, previous)) = chars.get(at - 1) else {
+                continue;
+            };
+            let next_lower = chars
+                .get(at + 1)
+                .is_some_and(|(_, next)| next.is_lowercase());
+            // `readFile` splits before `F`; `HTTPSpawn` splits before `S`.
+            let step = ch.is_uppercase()
+                && (previous.is_lowercase()
+                    || previous.is_ascii_digit()
+                    || (previous.is_uppercase() && next_lower));
+            if step {
                 segments.extend(part.get(begin..index));
                 begin = index;
             }
-            previous_lower = ch.is_lowercase() || ch.is_ascii_digit();
         }
         segments.extend(part.get(begin..));
     }
@@ -1665,6 +1675,8 @@ mod tests {
             "asyncio.run(main())",
             "proc.spawnSync(cmd)",
             "readFileAsync(path)",
+            "HTTPSpawn::new()",
+            "IOAsync",
             "r#async",
             "async spawn await",
         ] {
@@ -1682,6 +1694,7 @@ mod tests {
             "spawner.len()",
             "respawnLimit > n",
             "asynchronousMode",
+            "HTTPSpawner",
             "log(\"async done\")",
             "x > 1 // await later",
         ] {
