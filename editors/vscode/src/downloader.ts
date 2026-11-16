@@ -737,8 +737,9 @@ export function assertSafeZipListing(entries: readonly ZipCentralDirectoryEntry[
     }
     for (const segment of segments) {
       // Win32 strips trailing dots and spaces (so `.. ` becomes `..`) and maps
-      // device names to devices whatever the extension.
-      if (segment.length > 0 && (/[. ]$/.test(segment) || WINDOWS_RESERVED_NAME.test(segment))) {
+      // device names to devices whatever the extension. A lone `.` is a no-op
+      // component (`./ripr.exe`); `..` is refused above.
+      if (segment.length > 0 && segment !== '.' && (/[. ]$/.test(segment) || WINDOWS_RESERVED_NAME.test(segment))) {
         throw new Error(`Refusing server archive member with unsafe Windows path ${JSON.stringify(entry.name)}.`);
       }
     }

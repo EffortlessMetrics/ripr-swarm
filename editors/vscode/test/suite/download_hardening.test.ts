@@ -505,7 +505,9 @@ suite('VS Code download hardening (#11477 item 5)', () => {
       { name: 'console.txt', externalAttributes: 0 },
       { name: 'com10', externalAttributes: 0 },
       { name: 'bin/ripr.exe', externalAttributes: 0 },
-      { name: 'caf\u00e9/', externalAttributes: 0 }
+      { name: 'caf\u00e9/', externalAttributes: 0 },
+      { name: './ripr.exe', externalAttributes: 0 },
+      { name: './bin/', externalAttributes: 0 }
     ]));
     for (const name of ['', 'ripr.exe:stream', ':stream', 'D:evil.dll']) {
       assert.throws(() => assertSafeZipListing([{ name, externalAttributes: 0 }]), /unsafe path/, JSON.stringify(name));
