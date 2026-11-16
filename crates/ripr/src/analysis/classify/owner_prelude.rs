@@ -41,10 +41,15 @@ impl OwnerPrelude {
 
     /// The initializer with every negated flag's condition flipped:
     /// `if si {..}` reads `if !si {..}` and `if !si {..}` reads `if si {..}`.
-    /// A negated flag anywhere else in the initializer returns `None`.
+    /// A flag the initializer does not read is skipped; a negated flag
+    /// anywhere else in the initializer returns `None`.
     pub(super) fn rewrite_initializer(&self, initializer: &str) -> Option<String> {
         let mut text = initializer.trim().to_string();
         for flag in &self.negated_flags {
+            // A flag the initializer never reads leaves the local unchanged.
+            if token_count(&text, flag) == 0 {
+                continue;
+            }
             let rest = text.strip_prefix("if ")?.trim_start();
             let (negated, after) = match rest.strip_prefix('!') {
                 Some(after) => (true, after.trim_start()),

@@ -58,10 +58,16 @@ fn a_negated_flag_rebinding_flips_the_condition_the_local_reads() {
         negated.rewrite_initializer("if si { si } else { KB }"),
         None
     );
-    assert_eq!(negated.rewrite_initializer("KB"), None);
+    // A flag the initializer never reads is skipped, not refused.
+    assert_eq!(negated.rewrite_initializer("KB"), Some("KB".to_string()));
+    assert_eq!(
+        negated.rewrite_initializer("text.len()"),
+        Some("text.len()".to_string())
+    );
+    // `sin` is another identifier, so the flag is not read and nothing flips.
     assert_eq!(
         negated.rewrite_initializer("if sin { KIB } else { KB }"),
-        None
+        Some("if sin { KIB } else { KB }".to_string())
     );
 }
 
@@ -191,4 +197,24 @@ fn a_local_constant_named_like_a_parameter_declines() {
         None
     );
     assert!(owner_prelude(&owner(body), "unit", "KB", &params(&["bytes"])).is_some());
+}
+
+#[test]
+fn a_negated_flag_the_initializer_does_not_read_is_skipped() {
+    // #14921 review: a second, unread flag must not refuse the prelude.
+    let body = "pub fn tier(bytes: u64, si: bool, other: bool) -> &'static str {\n    let other = !other;\n    let si = !si;\n    let unit = if si { KIB } else { KB };\n    if bytes >= unit { \"unit\" } else { \"byte\" }\n}\n";
+    let found = owner_prelude(
+        &owner(body),
+        "unit",
+        FLAGGED,
+        &params(&["bytes", "si", "other"]),
+    );
+    assert_eq!(
+        found.as_ref().map(|prelude| prelude.negated_flags.clone()),
+        Some(vec!["other".to_string(), "si".to_string()])
+    );
+    assert_eq!(
+        found.and_then(|prelude| prelude.rewrite_initializer(FLAGGED)),
+        Some("if !si { KIB } else { KB }".to_string())
+    );
 }
