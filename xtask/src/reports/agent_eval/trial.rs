@@ -273,6 +273,10 @@ mod tests {
         assert!(!gap_caught(true, true, false));
     }
 
+    fn error_of<E: std::fmt::Display>(result: Result<(), E>) -> Option<String> {
+        result.err().map(|error| error.to_string())
+    }
+
     fn scratch(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "ripr-agent-eval-trial-{name}-{}",
@@ -299,8 +303,8 @@ mod tests {
     #[test]
     fn setup_refuses_a_directory_that_is_not_empty() {
         let dir = scratch("nonempty");
-        assert!(fs::create_dir_all(&dir).is_ok());
-        assert!(fs::write(dir.join("keep.txt"), "mine").is_ok());
+        assert_eq!(error_of(fs::create_dir_all(&dir)), None);
+        assert_eq!(error_of(fs::write(dir.join("keep.txt"), "mine")), None);
         assert!(trial_setup(&dir).is_err());
         assert_eq!(
             fs::read_to_string(dir.join("keep.txt")).ok().as_deref(),
@@ -315,16 +319,19 @@ mod tests {
         // the agent's edit, so it must win over the file and come back.
         let dir = scratch("interrupted");
         let root = dir.join("repo");
-        assert!(fs::create_dir_all(root.join("src")).is_ok());
+        assert_eq!(error_of(fs::create_dir_all(root.join("src"))), None);
         let head = SCENARIOS[0].head_lib;
         let agent_lib = format!("{head}// agent edit\n");
-        assert!(fs::write(root.join("src/lib.rs"), head).is_ok());
-        assert!(fs::write(root.join(AGENT_LIB_COPY), &agent_lib).is_ok());
+        assert_eq!(error_of(fs::write(root.join("src/lib.rs"), head)), None);
+        assert_eq!(
+            error_of(fs::write(root.join(AGENT_LIB_COPY), &agent_lib)),
+            None
+        );
         assert_eq!(
             hold_agent_lib(&root).ok().as_deref(),
             Some(agent_lib.as_str())
         );
-        assert!(release_agent_lib(&root, &agent_lib).is_ok());
+        assert_eq!(error_of(release_agent_lib(&root, &agent_lib)), None);
         assert_eq!(
             fs::read_to_string(root.join("src/lib.rs")).ok().as_deref(),
             Some(agent_lib.as_str())
