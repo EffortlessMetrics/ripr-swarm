@@ -41,7 +41,10 @@ fn successful_setup_survives_until_the_caller_finishes() -> TestResult {
     run_git(&root, &["rev-parse", "--verify", "HEAD"])?;
     run_git(&root, &["diff", "--exit-code", "HEAD", "--"])?;
     drop(cleanup);
-    assert!(!root.exists(), "caller cleanup must remove a successful fixture");
+    assert!(
+        !root.exists(),
+        "caller cleanup must remove a successful fixture"
+    );
     Ok(())
 }
 
@@ -57,6 +60,9 @@ fn caller_assertion_unwind_removes_the_successful_workspace() -> TestResult {
     if unwound.is_ok() {
         return Err("the deliberate assertion must unwind".into());
     }
-    assert!(!root.exists(), "the caller guard must clean up while unwinding");
+    assert!(
+        !root.exists(),
+        "the caller guard must clean up while unwinding"
+    );
     Ok(())
 }
