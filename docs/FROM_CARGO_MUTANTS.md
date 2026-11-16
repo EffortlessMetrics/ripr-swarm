@@ -331,4 +331,6 @@ costs more than a plain `ripr check`. The import is advisory and does not change
   `src/gen/`), even with no flags
   ([#13894](https://github.com/EffortlessMetrics/ripr-swarm/issues/13894)).
 - **Mutation operators.** ripr's probe families are not cargo-mutants' operator
-  list, so counts will not line up one to one.
+  list, so counts will not line up one to one. [Mutation operators ripr
+  models](MUTATION_OPERATORS.md) maps each cargo-mutants genre (and mutmut and
+  Stryker operator) to what ripr reports, with the gaps.
