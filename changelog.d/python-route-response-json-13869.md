@@ -7,4 +7,6 @@
   changed value. A `status_code` check, another key, another route or an
   unidentified app still never reads `exposed`, and neither does a handler
   with a response model, a return annotation, another decorator, another
-  `return` or a `raise`, or a changed `detail` key (#13869).
+  `return` or a `raise`, a `**` unpack or repeated key in the returned
+  dict, a changed `detail` key, an assertion on an unchanged sibling field,
+  or a request another route also accepts (#13869).

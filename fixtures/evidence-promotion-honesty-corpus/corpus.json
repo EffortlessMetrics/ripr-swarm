@@ -207,6 +207,33 @@
   ],
   "cases": [
     {
+      "id": "python_route_response_sibling",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_sibling",
+      "vector": "route_response_sibling_field_does_not_pin_changed_key",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
       "id": "python_coarse_sign",
       "language": "python",
       "tier": "pure",

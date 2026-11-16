@@ -732,6 +732,13 @@ struct PythonOwner {
     /// `false` by default, which grants no response-read credit.
     #[serde(default)]
     route_returns_body: bool,
+    /// Every other route of the workspace, as `(path, verbs)`, set after all
+    /// files are read for an owner with [`Self::route_returns_body`]. A
+    /// request one of them also accepts may be dispatched to that handler
+    /// instead (registration order is not read), so it earns no
+    /// response-read credit (#13869).
+    #[serde(default)]
+    route_rivals: Vec<(String, Vec<String>)>,
 }
 
 /// One declared parameter of a Python function owner.
@@ -1772,6 +1779,12 @@ impl PythonAdapter {
         );
         related_tests::apply_rival_definition_modules(&mut all_owners);
         related_tests::apply_class_facts(&mut all_owners);
+        // A rival route in an unread file cannot be ruled out, so a partial
+        // walk or read refuses the route-response credit (#13869).
+        related_tests::apply_route_rivals(
+            &mut all_owners,
+            refused_files == 0 && workspace_read.limits.is_empty(),
+        );
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's

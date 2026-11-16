@@ -984,6 +984,43 @@ fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bo
 /// Records on each free-function owner the module paths of other workspace
 /// files defining a free function of the same name (#8759), the affirmative
 /// evidence [`bare_name_bound_to_other_module`] needs.
+/// Record, on each owner whose route returns its body, every other route of
+/// the workspace (#13869). When `complete` is false some file was not read,
+/// so a rival cannot be ruled out and the credit is withdrawn.
+pub(super) fn apply_route_rivals(owners: &mut [PythonOwner], complete: bool) {
+    let routes: Vec<(usize, String, Vec<String>)> = owners
+        .iter()
+        .enumerate()
+        .flat_map(|(index, owner)| {
+            owner
+                .route_paths
+                .iter()
+                .enumerate()
+                .map(move |(route, path)| {
+                    (
+                        index,
+                        path.clone(),
+                        owner.route_methods.get(route).cloned().unwrap_or_default(),
+                    )
+                })
+        })
+        .collect();
+    for (index, owner) in owners.iter_mut().enumerate() {
+        if !owner.route_returns_body {
+            continue;
+        }
+        if !complete {
+            owner.route_returns_body = false;
+            continue;
+        }
+        owner.route_rivals = routes
+            .iter()
+            .filter(|(other, _, _)| *other != index)
+            .map(|(_, path, verbs)| (path.clone(), verbs.clone()))
+            .collect();
+    }
+}
+
 pub(super) fn apply_rival_definition_modules(owners: &mut [PythonOwner]) {
     let mut modules_by_name: BTreeMap<String, Vec<(PathBuf, Vec<String>)>> = BTreeMap::new();
     for owner in owners.iter() {
@@ -2925,7 +2962,14 @@ pub(super) fn identified_route_response_names(
             for (name, verb, path) in route_response_assignments(test, receiver) {
                 let http_verb = ["get", "post", "put", "patch", "delete", "options", "head"]
                     .contains(&verb.as_str());
+                // Another route that accepts the same request may be the one
+                // dispatched (FastAPI and Flask match in registration order).
+                let rival_accepts = owner.route_rivals.iter().any(|(rival, rival_verbs)| {
+                    (rival_verbs.is_empty() || rival_verbs.contains(&verb))
+                        && python_route_matches_call_path(rival, &path)
+                });
                 if http_verb
+                    && !rival_accepts
                     && (verbs.is_empty() || verbs.contains(&verb))
                     && python_route_matches_call_path(route, &path)
                     && super::route_client::single_call_bindings(
@@ -2960,6 +3004,17 @@ fn route_response_assignments(test: &PythonTest, receiver: &str) -> Vec<(String,
         [Stmt::AsyncFunctionDef(function)] => &function.body,
         _ => return Vec::new(),
     };
+    // A `match` capture or a walrus rebinds a name without an assignment
+    // statement, which the bound-once count does not read, so either refuses
+    // the read (fail closed).
+    if test.body_text.contains(":=")
+        || test.body_text.lines().any(|line| {
+            let line = line.trim_start();
+            line.starts_with("match ") || line.starts_with("match(") || line.starts_with("case ")
+        })
+    {
+        return Vec::new();
+    }
     body.iter()
         .filter_map(|statement| {
             let (target, value) = match statement {

@@ -1,0 +1,8 @@
+# Independent no-promotion control for the route-response read credit (#13869).
+[[extend]]
+id = "RIPR-SPEC-0238"
+fixtures = ["fixtures/python_route_response_sibling"]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = ["fixtures/python_route_response_sibling"]

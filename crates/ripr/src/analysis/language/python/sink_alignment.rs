@@ -1581,13 +1581,25 @@ fn sink_alignment_and_rows(
                 .iter()
                 .any(|key| key.trim_matches(|c| c == '"' || c == '\'') == "detail")
         });
+    // The response operand itself must read a changed key: the shared
+    // changed-key gate also accepts a whole-collection comparison or a
+    // changed-key subscript on the expected side, which an unchanged sibling
+    // field (`response.json()["meta"] == {...}`) would pass.
+    let changed_response_keys: Vec<String> = dict_change
+        .as_ref()
+        .map(|(keys, _)| {
+            keys.iter()
+                .map(|key| key.trim_matches(|c| c == '"' || c == '\'').to_string())
+                .collect()
+        })
+        .unwrap_or_default();
     let route_response_observed = |unit: &AlignmentUnit<'_>| {
         returns_changed_dict
             && unit.kind == OracleKind::ExactValue
             && unit.test.is_some_and(|test| {
                 super::related_tests::identified_route_response_names(test, owner)
                     .iter()
-                    .any(|name| reads_response_json(&unit.text, name))
+                    .any(|name| reads_response_json(&unit.text, name, &changed_response_keys))
             })
             && gates_ok(unit)
     };
@@ -1673,11 +1685,11 @@ fn sink_alignment_and_rows(
     )
 }
 
-/// Whether an exact assertion compares one quoted key of `name.json()` with
-/// `==` or `self.assertEqual`: `response.json()["total"] == 195`. Any other
+/// Whether an exact assertion compares one changed quoted key of `name.json()`
+/// with `==` or `self.assertEqual`: `response.json()["total"] == 195`. Any other
 /// comparison, the whole body, or a read of another attribute of the response
 /// (`status_code`, `text`) is not it.
-fn reads_response_json(text: &str, name: &str) -> bool {
+fn reads_response_json(text: &str, name: &str, changed_keys: &[String]) -> bool {
     let text = text.trim();
     let (left, right) = if let Some(arguments) = text
         .strip_prefix("self.assertEqual(")
@@ -1705,7 +1717,8 @@ fn reads_response_json(text: &str, name: &str) -> bool {
         // the changed `return`, and the changed-key gate accepts any whole
         // comparison.
         side.strip_prefix(target.as_str())
-            .is_some_and(|rest| plain_key_subscript(rest.trim_start()))
+            .and_then(|rest| plain_key_subscript(rest.trim_start()))
+            .is_some_and(|key| changed_keys.iter().any(|changed| changed == key))
     };
     reads(left) || reads(right)
 }
@@ -1750,17 +1763,14 @@ fn two_plain_arguments(arguments: &str) -> Option<(&str, &str)> {
     Some((first, second))
 }
 
-/// Whether `text` is exactly one subscript by a quoted identifier-like key
-/// (`["total"]`, `['total']`). Anything after it (`["a"] + x["b"]`, a second
-/// subscript, a call) is not.
-fn plain_key_subscript(text: &str) -> bool {
-    let Some(inner) = text
+/// The key of `text` when it is exactly one subscript by a quoted
+/// identifier-like key (`["total"]`, `['total']`). Anything after it (`["a"] + x["b"]`,
+/// a second subscript, a call) yields nothing.
+fn plain_key_subscript(text: &str) -> Option<&str> {
+    let inner = text
         .strip_prefix('[')
-        .and_then(|rest| rest.strip_suffix(']'))
-    else {
-        return false;
-    };
-    let inner = inner.trim();
+        .and_then(|rest| rest.strip_suffix(']'))?
+        .trim();
     let key = inner
         .strip_prefix('"')
         .and_then(|rest| rest.strip_suffix('"'))
@@ -1769,7 +1779,7 @@ fn plain_key_subscript(text: &str) -> bool {
                 .strip_prefix('\'')
                 .and_then(|rest| rest.strip_suffix('\''))
         });
-    key.is_some_and(|key| {
+    key.filter(|key| {
         !key.is_empty()
             && key
                 .chars()
@@ -2387,6 +2397,7 @@ mod row_sink_alignment_tests {
             nested_result_discarded: false,
             trusted_stdlib_click_alias: false,
             route_returns_body: false,
+            route_rivals: Vec::new(),
         }
     }
 

@@ -491,6 +491,98 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
     if finding.class == ExposureClass::Exposed {
         failures.push("detail key: read exposed".to_string());
     }
+    // Reads that do not pin the changed entry of the body the request gets:
+    // an unchanged sibling field, a changed key only on the expected side, an
+    // entry a later `**` unpack or repeated key overrides, a response a
+    // `match` capture or walrus rebinds, and a request another route of the
+    // workspace also accepts (dispatch order is not read).
+    let read = |assertion: &str| {
+        format!(
+            "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    {assertion}\n"
+        )
+    };
+    let sibling_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"meta\": {\"count\": 3}}\n";
+    let sibling_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": 200 - 10, \"meta\": {\"count\": 3}}",
+        new: "    return {\"total\": 200 - 5, \"meta\": {\"count\": 3}}",
+    };
+    let unpack_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, **{\"total\": 190}}\n";
+    let unpack_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": 200 - 10, **{\"total\": 190}}",
+        new: "    return {\"total\": 200 - 5, **{\"total\": 190}}",
+    };
+    let repeated_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"total\": 190}\n";
+    let repeated_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": 200 - 10, \"total\": 190}",
+        new: "    return {\"total\": 200 - 5, \"total\": 190}",
+    };
+    let shadow_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef cached_price():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let overlap_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/items/latest\")\ndef latest():\n    return {\"total\": 190}\n\n\n@app.get(\"/items/{item_id}\")\ndef item(item_id: str):\n    return {\"total\": 200 - 10}\n";
+    let overlap_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": 200 - 10}",
+        new: "    return {\"total\": 200 - 5}",
+    };
+    let overlap_test = format!(
+        "{CLIENT_IMPORTS}def test_latest():\n    client = TestClient(app)\n    response = client.get(\"/items/latest\")\n    assert response.json()[\"total\"] == 190\n"
+    );
+    let match_test = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    match client.get(\"/other\"):\n        case response:\n            assert response.json()[\"total\"] == 190\n"
+    );
+    let walrus_test = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    if (response := client.get(\"/other\")):\n        assert response.json()[\"total\"] == 190\n"
+    );
+    let cases: [(&str, &str, Edit, String); 8] = [
+        (
+            "unchanged sibling",
+            sibling_app,
+            sibling_edit,
+            read("assert response.json()[\"meta\"] == {\"count\": 3}"),
+        ),
+        (
+            "changed key on the expected side",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "expected = {\"total\": 3}\n    assert response.json()[\"count\"] == expected[\"total\"]",
+            ),
+        ),
+        (
+            "overriding unpack",
+            unpack_app,
+            unpack_edit,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "repeated key",
+            repeated_app,
+            repeated_edit,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        ("match capture", PRICE_APP, PRICE_EDIT, match_test),
+        ("walrus rebinding", PRICE_APP, PRICE_EDIT, walrus_test),
+        (
+            "duplicate route",
+            shadow_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "static route before a parameter route",
+            overlap_app,
+            overlap_edit,
+            overlap_test,
+        ),
+    ];
+    for (name, app, edit, test) in cases {
+        let finding = check_style(name, &[("src/app.py", app)], edit, &test)?;
+        if finding.class == ExposureClass::Exposed {
+            failures.push(format!("{name}: read exposed"));
+        }
+    }
     // A client over another application does not reach the owner's handler.
     let rival = "from fastapi import FastAPI\nfrom fastapi.testclient import TestClient\n\nfrom src.app import app\n\nother_app = FastAPI()\n\n\ndef test_price():\n    client = TestClient(other_app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 190\n";
     let finding = check_style("rival app", &[("src/app.py", PRICE_APP)], PRICE_EDIT, rival)?;

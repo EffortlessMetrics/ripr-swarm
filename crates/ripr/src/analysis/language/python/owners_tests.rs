@@ -663,6 +663,7 @@ fn owner_from_function(
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body,
+        route_rivals: Vec::new(),
     }
 }
 
@@ -796,6 +797,7 @@ fn owner_from_class(
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_rivals: Vec::new(),
     }
 }
 
@@ -840,6 +842,7 @@ pub(super) fn module_owner(
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_rivals: Vec::new(),
     }
 }
 
@@ -2217,7 +2220,24 @@ fn route_returns_body(decorators: &[Expr], body: &[Stmt]) -> bool {
     let mut returns = Vec::new();
     let mut escapes = false;
     collect_returns(body, &mut returns, &mut escapes);
-    !escapes && matches!(returns.as_slice(), [Some(Expr::Dict(_))])
+    !escapes && matches!(returns.as_slice(), [Some(Expr::Dict(dict))] if plain_distinct_keys(dict))
+}
+
+/// Whether every entry of a dict display has its own string-literal key, none
+/// repeated: a `**` unpack or a repeated key can override the changed entry,
+/// so the returned body's value for it is not the edited one (#13869).
+fn plain_distinct_keys(dict: &ast::ExprDict) -> bool {
+    let mut seen: Vec<&str> = Vec::new();
+    dict.keys.iter().all(|key| match key {
+        Some(Expr::Constant(constant)) => match &constant.value {
+            ast::Constant::Str(key) if !seen.contains(&key.as_str()) => {
+                seen.push(key.as_str());
+                true
+            }
+            _ => false,
+        },
+        _ => false,
+    })
 }
 
 /// The value of each `return` in `body` (not inside a nested function or

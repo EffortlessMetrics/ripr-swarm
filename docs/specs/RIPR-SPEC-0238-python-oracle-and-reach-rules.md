@@ -520,13 +520,18 @@ Relations, first match wins (rank, oracle-eligible):
   the owner's own application with a first argument the route accepts, and
   an exact assertion (`assert` with one `==`, or `self.assertEqual` with two
   plain arguments) compares that name's `.json()` with one quoted key
-  subscript against the other side. The changed-key gate still decides
-  which key observes the edit. The handler must return its body as is:
+  subscript against the other side, and that key is one the edit changed
+  (an unchanged sibling field, or a changed key only on the expected side,
+  is not). A test with a `match` statement or a walrus rebinding grants no
+  credit, and neither does a request that another route of the workspace
+  also accepts (dispatch order is not read) or a run that did not read
+  every workspace file. The handler must return its body as is:
   every decorator is a static route decorator whose keywords cannot reshape
   the body (no `response_model` or `response_class`), there is no return
   annotation other than a bare `dict` (FastAPI reads one as a response
-  model), and the function has exactly one `return`, of a dict literal, and
-  no `yield` or `raise` (a raised error answers with its own body). A
+  model), and the function has exactly one `return`, of a dict literal
+  whose keys are distinct string literals (no `**` unpack), and no `yield`
+  or `raise` (a raised error answers with its own body). A
   changed `detail` key never earns this credit, because `detail` is the key
   of FastAPI's `HTTPException` and validation (422) error bodies. A
   whole-body comparison (which can match an error body the
