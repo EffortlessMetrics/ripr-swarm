@@ -95,7 +95,7 @@ fn measured_suite(root: &Path, target_dir: &Path) -> Result<Suite, String> {
 
 /// Where `score_one` keeps the agent's `src/lib.rs` while it swaps in head
 /// and reverted text. It sits outside `src/` so an interrupted score (Ctrl-C,
-/// a killed process) can be recovered: the next run restores from it instead
+/// a terminated process) can be recovered: the next run restores from it instead
 /// of mistaking the head text it left behind for the agent's own file.
 const AGENT_LIB_COPY: &str = ".trial-score-agent-lib.rs";
 
