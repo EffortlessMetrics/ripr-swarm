@@ -20621,7 +20621,7 @@ tests = [
   "crates/ripr/tests/cli_smoke/value_refusal_json.rs::verbose_between_command_words_keeps_the_help_route",
   "crates/ripr/tests/cli_smoke/value_refusal_json.rs::an_empty_files_entry_under_json_is_an_invalid_value",
   "crates/ripr/tests/cli_smoke/value_refusal_json.rs::missing_required_flags_under_json_name_the_flag_to_add",
-  "crates/ripr/tests/cli_smoke/value_refusal_json.rs::a_conflicting_rerun_ledger_under_json_stays_untyped",
+  "crates/ripr/tests/cli_smoke/value_refusal_json.rs::conflicting_flags_under_json_name_a_flag_to_drop",
   "crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::python_stdin_artifact_refusal_preserves_named_recovery",
   "crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::javascript_stdin_artifact_refusal_preserves_named_recovery",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::git_launch_failure_stops_root_discovery_with_consumer_recovery",

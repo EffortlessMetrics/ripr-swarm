@@ -50,10 +50,10 @@ pub(in crate::cli) fn capabilities(args: &[String]) -> Result<(), String> {
     }
     if markdown_output {
         if json_output || language.is_some() {
-            return Err(
-                "capabilities --markdown prints the whole-table docs block; it cannot be combined with --json or --language. Run `ripr capabilities --help`."
-                    .to_string(),
-            );
+            return Err(crate::cli::usage_refusal::conflicting_flags(
+                "--markdown",
+                "capabilities --markdown prints the whole-table docs block; it cannot be combined with --json or --language. Run `ripr capabilities --help`.",
+            ));
         }
         print!("{}", output::language_capabilities::render_markdown());
     } else if json_output {
