@@ -149,6 +149,8 @@ mod related_test_count;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/repair_orderfile.rs"]
 mod repair_orderfile;
+#[path = "cli_smoke/repair_route_cleanup.rs"]
+mod repair_route_cleanup;
 #[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/requested_scope_complete.rs"]
 mod requested_scope_complete;
@@ -31488,7 +31490,13 @@ fn agent_status_refuses_non_default_out_dir() -> Result<(), String> {
 /// part of the directory name, so callers can put spaces and non-ASCII
 /// characters in the path.
 fn repair_route_workspace(label: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace(label);
+    repair_route_workspace_at(unique_temp_workspace(label))
+}
+
+// Own construction cleanup until all fallible setup has succeeded. Callers
+// retain their existing cleanup policy after the path is returned.
+fn repair_route_workspace_at(root: PathBuf) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let mut cleanup = DeclaredHunkScratch(root.clone());
     std::fs::create_dir_all(root.join("src"))?;
     std::fs::create_dir_all(root.join("tests"))?;
     std::fs::write(
@@ -31503,7 +31511,8 @@ fn repair_route_workspace(label: &str) -> Result<PathBuf, Box<dyn std::error::Er
     init_git_fixture_repo(&root)?;
     run_git(&root, &["add", "Cargo.toml", "src", "tests"])?;
     repair_route_commit(&root, "fixture source")?;
-    Ok(root)
+    // Transfer the path out of the guard; dropping an empty path removes nothing.
+    Ok(std::mem::take(&mut cleanup.0))
 }
 
 const REPAIR_ROUTE_SEAM: &str = "67fc764ba37d77bd";
