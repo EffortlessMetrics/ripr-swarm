@@ -548,6 +548,27 @@ fn brief_text(document: &Value) -> String {
             "exposed_omitted: {hidden} (seam already gripped by existing tests); call ripr_list_gaps with class: \"exposed\" to list them"
         ));
     }
+    // #14138: findings `ripr check` withholds for an owner opt-out are not
+    // items. A text-only host must still see that zero items means withheld,
+    // not "no gaps".
+    if let Some(opt_outs) = document
+        .get("owner_opt_outs")
+        .filter(|value| value.is_object())
+    {
+        let all = if opt_outs.get("all_withheld").and_then(Value::as_bool) == Some(true) {
+            "; every finding is withheld, so this is not a clean result"
+        } else {
+            ""
+        };
+        lines.push(format!(
+            "owner_opt_outs: {} withheld ({}: the changed owner carries #[mutants::skip]); not repair targets{all}",
+            opt_outs
+                .get("withheld")
+                .and_then(Value::as_u64)
+                .map_or_else(|| "?".to_string(), |number| number.to_string()),
+            text(opt_outs, "reason"),
+        ));
+    }
     if let Some(next) = document
         .pointer("/page/next_offset")
         .and_then(Value::as_u64)
@@ -1412,6 +1433,26 @@ pub(super) fn typed_failure_document_schema(schema_version: &str) -> Value {
     })
 }
 
+/// The additive owner opt-out disclosure (#14138): present only when a
+/// finding is withheld, so `withheld` is at least one. The same closed shape
+/// rides the gap list, the refresh `snapshot` summary and the status
+/// `last_completed_snapshot`.
+fn owner_opt_outs_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "withheld": { "type": "integer", "minimum": 1 },
+            "reason": {
+                "type": "string",
+                "const": crate::analysis::owner_opt_out::OwnerOptOutReason::MutantsSkip.as_str()
+            },
+            "all_withheld": { "type": "boolean", "const": true }
+        },
+        "required": ["withheld", "reason"],
+        "additionalProperties": false
+    })
+}
+
 fn status_output_schema() -> Value {
     // Like every other tool schema: the success document, or the typed
     // failure the bound path returns for an oversized status (#6291).
@@ -1638,7 +1679,10 @@ pub(super) fn status_success_schema() -> Value {
                         "additionalProperties": false
                     },
                     "scope": scope_disclosure_schema(),
-                    "last_completed_snapshot": { "type": ["object", "null"] },
+                    "last_completed_snapshot": {
+                        "type": ["object", "null"],
+                        "properties": { "owner_opt_outs": owner_opt_outs_schema() }
+                    },
                     "last_known_good": { "type": ["object", "null"] },
                     "last_failure": { "type": ["object", "null"] },
                     "freshness": {
@@ -1817,7 +1861,10 @@ fn refresh_output_schema() -> Value {
                     },
                     "requested_source": { "type": "string", "enum": ["committed", "worktree", "default"] },
                     "captured_source": { "type": ["string", "null"], "enum": ["committed", "worktree", null] },
-                    "snapshot": { "type": ["object", "null"] },
+                    "snapshot": {
+                        "type": ["object", "null"],
+                        "properties": { "owner_opt_outs": owner_opt_outs_schema() }
+                    },
                     "last_known_good": { "type": ["object", "null"] },
                     "claim_boundary": { "type": "string" },
                     "limitations": {
@@ -1896,6 +1943,7 @@ fn gap_list_output_schema() -> Value {
                         "minimum": 1
                     },
                     "exposed_route": { "type": "string" },
+                    "owner_opt_outs": owner_opt_outs_schema(),
                     "proof_harness_only": {
                         "type": "integer",
                         "minimum": 1,
@@ -3637,7 +3685,12 @@ mod tests {
         // output schema gains the additive `exposed_omitted`/`exposed_route`
         // disclosure (+83 bytes, measured 41,065); the slim default every
         // session pays is unchanged, so only the opt-in full budget moves.
-        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 41_200)] {
+        // #14138 budget decision: the full listing declares the optional
+        // closed `owner_opt_outs` disclosure on the gap list, refresh
+        // `snapshot` and status `last_completed_snapshot`, and every typed
+        // failure branch gains the `owner_opt_out` code (measured 41,576).
+        // The slim default is unchanged.
+        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 41_700)] {
             let payload = tools_list_result_for(mode);
             let bytes = serde_json::to_vec(&payload)
                 .map_err(|error| format!("measure tools/list payload: {error}"))?

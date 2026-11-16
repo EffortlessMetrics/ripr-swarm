@@ -472,3 +472,320 @@ fn all_withheld_snapshot_reports_that_state_not_a_clean_empty_list() -> Result<(
     }
     Ok(())
 }
+
+/// A deliberately small JSON Schema validator for the keywords the MCP
+/// output schemas use. An unrecognized keyword is an error, never a silent
+/// pass, so a schema that grows a new keyword fails this oracle loudly.
+fn schema_violation(schema: &Value, value: &Value, path: &str) -> Option<String> {
+    const KNOWN: &[&str] = &[
+        "type",
+        "const",
+        "enum",
+        "properties",
+        "required",
+        "additionalProperties",
+        "items",
+        "oneOf",
+        "minimum",
+        "maximum",
+        "minItems",
+        "maxItems",
+        "minLength",
+        "maxLength",
+        "description",
+        "title",
+    ];
+    let Some(schema) = schema.as_object() else {
+        return Some(format!("{path}: schema is not an object"));
+    };
+    if let Some(unknown) = schema.keys().find(|key| !KNOWN.contains(&key.as_str())) {
+        return Some(format!("{path}: unsupported schema keyword {unknown:?}"));
+    }
+    if let Some(types) = schema.get("type") {
+        let names: Vec<&str> = match types {
+            Value::String(name) => vec![name.as_str()],
+            Value::Array(names) => names.iter().filter_map(Value::as_str).collect(),
+            _ => return Some(format!("{path}: malformed type")),
+        };
+        let matches = |name: &str| match name {
+            "object" => value.is_object(),
+            "array" => value.is_array(),
+            "string" => value.is_string(),
+            "boolean" => value.is_boolean(),
+            "null" => value.is_null(),
+            "integer" => value.is_u64() || value.is_i64(),
+            "number" => value.is_number(),
+            _ => false,
+        };
+        if !names.iter().any(|name| matches(name)) {
+            return Some(format!("{path}: {value} is not of type {types}"));
+        }
+    }
+    if let Some(expected) = schema.get("const")
+        && expected != value
+    {
+        return Some(format!("{path}: {value} != const {expected}"));
+    }
+    if let Some(allowed) = schema.get("enum").and_then(Value::as_array)
+        && !allowed.contains(value)
+    {
+        return Some(format!("{path}: {value} not in enum {allowed:?}"));
+    }
+    if let (Some(minimum), Some(number)) = (
+        schema.get("minimum").and_then(Value::as_f64),
+        value.as_f64(),
+    ) && number < minimum
+    {
+        return Some(format!("{path}: {number} < minimum {minimum}"));
+    }
+    if let (Some(maximum), Some(number)) = (
+        schema.get("maximum").and_then(Value::as_f64),
+        value.as_f64(),
+    ) && number > maximum
+    {
+        return Some(format!("{path}: {number} > maximum {maximum}"));
+    }
+    let bounded = |key: &str, size: Option<usize>, under: bool| -> Option<String> {
+        let bound = schema.get(key).and_then(Value::as_u64)?;
+        let size = size? as u64;
+        let violates = if under { size < bound } else { size > bound };
+        violates.then(|| format!("{path}: size {size} violates {key} {bound}"))
+    };
+    let items_len = value.as_array().map(Vec::len);
+    let chars_len = value.as_str().map(|text| text.chars().count());
+    if let Some(violation) = [
+        bounded("minItems", items_len, true),
+        bounded("maxItems", items_len, false),
+        bounded("minLength", chars_len, true),
+        bounded("maxLength", chars_len, false),
+    ]
+    .into_iter()
+    .flatten()
+    .next()
+    {
+        return Some(violation);
+    }
+    if let Some(branches) = schema.get("oneOf").and_then(Value::as_array) {
+        let failures: Vec<String> = branches
+            .iter()
+            .filter_map(|branch| schema_violation(branch, value, path))
+            .collect();
+        if branches.len() - failures.len() != 1 {
+            return Some(format!(
+                "{path}: {} of {} oneOf branches matched: {failures:?}",
+                branches.len() - failures.len(),
+                branches.len()
+            ));
+        }
+    }
+    if let Some(object) = value.as_object() {
+        let properties = schema.get("properties").and_then(Value::as_object);
+        if let Some(required) = schema.get("required").and_then(Value::as_array) {
+            for key in required.iter().filter_map(Value::as_str) {
+                if !object.contains_key(key) {
+                    return Some(format!("{path}: missing required {key:?}"));
+                }
+            }
+        }
+        for (key, child) in object {
+            match properties.and_then(|properties| properties.get(key)) {
+                Some(child_schema) => {
+                    if let Some(violation) =
+                        schema_violation(child_schema, child, &format!("{path}/{key}"))
+                    {
+                        return Some(violation);
+                    }
+                }
+                None if schema.get("additionalProperties") == Some(&Value::Bool(false)) => {
+                    return Some(format!("{path}: undeclared property {key:?}"));
+                }
+                None => {}
+            }
+        }
+    }
+    if let (Some(items), Some(entries)) = (schema.get("items"), value.as_array()) {
+        for (index, entry) in entries.iter().enumerate() {
+            if let Some(violation) = schema_violation(items, entry, &format!("{path}/{index}")) {
+                return Some(violation);
+            }
+        }
+    }
+    None
+}
+
+fn advertised_output_schema(tool: &str) -> Result<Value, String> {
+    let catalog = crate::mcp::protocol::tools_list_result();
+    catalog["tools"]
+        .as_array()
+        .and_then(|tools| tools.iter().find(|descriptor| descriptor["name"] == tool))
+        .and_then(|descriptor| descriptor.get("outputSchema"))
+        .cloned()
+        .ok_or_else(|| format!("the full tools/list advertises no outputSchema for {tool}"))
+}
+
+/// The structured copy a real tool envelope carries, validated against the
+/// complete advertised output schema of that tool.
+fn validate_tool_result(tool: &str, envelope: &Value) -> Result<(), String> {
+    let schema = advertised_output_schema(tool)?;
+    let structured = envelope
+        .get("structuredContent")
+        .ok_or_else(|| format!("{tool}: envelope lost structuredContent"))?;
+    match schema_violation(&schema, structured, tool) {
+        None => Ok(()),
+        Some(violation) => Err(format!(
+            "{tool} result violates its outputSchema: {violation}"
+        )),
+    }
+}
+
+/// Review follow-up (#14138): the advertised MCP output schemas are closed, so
+/// every document that now carries `owner_opt_outs` (gap list, refresh
+/// `snapshot`, status `last_completed_snapshot`) and every `owner_opt_out`
+/// refusal must validate against the full advertised schema of its tool, for
+/// a mixed and an all-withheld snapshot.
+#[test]
+fn owner_opt_out_results_validate_against_the_advertised_output_schemas() -> Result<(), String> {
+    use crate::mcp::protocol::{
+        GET_GAP_TOOL_NAME, GET_TOP_LIMITATION_TOOL_NAME, LIST_GAPS_TOOL_NAME,
+        PREPARE_REPAIR_TOOL_NAME, REFRESH_TOOL_NAME, STATUS_TOOL_NAME, status_document,
+        tool_failure, tool_result,
+    };
+    let budget = crate::mcp::MAX_RESPONSE_BYTES;
+    for (tag, change_sibling) in [("schema-mixed", true), ("schema-all", false)] {
+        let fixture = install(tag, SKIP, change_sibling)?;
+        let snapshot = refresh(&fixture.root)?;
+        let withheld = snapshot
+            .withheld
+            .first()
+            .map(|item| item.canonical_id.clone())
+            .ok_or_else(|| format!("{tag}: the fixture must withhold a finding"))?;
+        let mut session = session_over(snapshot);
+
+        let gap_list = list(&session)?;
+        if gap_list.get("owner_opt_outs").is_none() {
+            return Err(format!("{tag}: the subject must carry owner_opt_outs"));
+        }
+        validate_tool_result(LIST_GAPS_TOOL_NAME, &tool_result(gap_list.clone(), budget)?)?;
+
+        let refreshed = refresh_document(&session);
+        if refreshed.pointer("/snapshot/owner_opt_outs").is_none() {
+            return Err(format!("{tag}: refresh subject lost owner_opt_outs"));
+        }
+        validate_tool_result(REFRESH_TOOL_NAME, &tool_result(refreshed, budget)?)?;
+
+        let (status, _) =
+            crate::workspace_status::WorkspaceStatus::resolve_with_root(Some(fixture.root.clone()));
+        let status_doc = status_document(
+            &status,
+            &session,
+            &SessionProfile::resolve(Some(fixture.root.as_path())),
+            crate::mcp::MAX_MESSAGE_BYTES,
+            budget,
+        );
+        if status_doc
+            .pointer("/session/last_completed_snapshot/owner_opt_outs")
+            .is_none()
+        {
+            return Err(format!("{tag}: status subject lost owner_opt_outs"));
+        }
+        validate_tool_result(STATUS_TOOL_NAME, &tool_result(status_doc, budget)?)?;
+
+        // The typed refusal validates against each refusing tool's schema.
+        let refusals = [
+            (
+                GET_GAP_TOOL_NAME,
+                super::gaps::GAP_SCHEMA_VERSION,
+                session.get_gap(&withheld, None).err(),
+            ),
+            (
+                GET_TOP_LIMITATION_TOOL_NAME,
+                super::gaps::LIMITATION_SCHEMA_VERSION,
+                session.get_limitation(&withheld, None).err(),
+            ),
+            (
+                "ripr_get_repair_card",
+                super::repair_card::REPAIR_CARD_SCHEMA_VERSION,
+                session
+                    .repair_card_document(&withheld, None, Some(&fixture.root))
+                    .err(),
+            ),
+            (
+                PREPARE_REPAIR_TOOL_NAME,
+                super::repair::REPAIR_PACKET_SCHEMA_VERSION,
+                session
+                    .prepare_repair(&withheld, None, Some(ROOT_IDENTITY))
+                    .err(),
+            ),
+        ];
+        for (tool, schema_version, failure) in refusals {
+            let failure = failure
+                .filter(|failure| failure.code == CODE_OWNER_OPT_OUT)
+                .ok_or_else(|| format!("{tag}: {tool} must refuse with owner_opt_out"))?;
+            validate_tool_result(tool, &tool_failure(&failure, schema_version)?)?;
+        }
+
+        // The oracle discriminates: the same gap list fails once its
+        // disclosure is malformed, or once the schema no longer declares it.
+        let schema = advertised_output_schema(LIST_GAPS_TOOL_NAME)?;
+        let mut wrong_reason = gap_list.clone();
+        wrong_reason["owner_opt_outs"]["reason"] = serde_json::json!("other");
+        let mut extra_key = gap_list.clone();
+        extra_key["owner_opt_outs"]["owner"] = serde_json::json!("limit");
+        let mut undeclared = schema.clone();
+        if let Some(properties) = undeclared
+            .pointer_mut("/oneOf/0/properties")
+            .and_then(Value::as_object_mut)
+        {
+            properties.remove("owner_opt_outs");
+        }
+        if schema_violation(&schema, &wrong_reason, "list").is_none()
+            || schema_violation(&schema, &extra_key, "list").is_none()
+            || schema_violation(&undeclared, &gap_list, "list").is_none()
+        {
+            return Err(format!(
+                "{tag}: the schema oracle must reject a malformed or undeclared owner_opt_outs"
+            ));
+        }
+        session.repairs.clear();
+    }
+    Ok(())
+}
+
+/// Review follow-up (#14138): with `RIPR_MCP_TEXT_CONTENT=brief` a text-only
+/// host reads the brief, not the structured copy, so the brief must name the
+/// withheld count and reason; an all-withheld list must not read as clean.
+#[test]
+fn brief_gap_list_text_names_the_owner_opt_out() -> Result<(), String> {
+    use crate::mcp::protocol::{TextContentMode, tool_result_with};
+    let brief = |root: &Path| -> Result<String, String> {
+        let document = list(&session_over(refresh(root)?))?;
+        let envelope = tool_result_with(
+            document,
+            crate::mcp::MAX_RESPONSE_BYTES,
+            TextContentMode::Brief,
+        )?;
+        envelope
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| format!("brief envelope lost its text: {envelope}"))
+    };
+    let mixed = install("brief-mixed", SKIP, true)?;
+    let all = install("brief-all", SKIP, false)?;
+    let control = install("brief-control", NO_SKIP, true)?;
+    let line = "owner_opt_outs: 1 withheld (owner_mutants_skip: the changed owner carries #[mutants::skip]); not repair targets";
+    let all_suffix = "every finding is withheld, so this is not a clean result";
+    let mixed_text = brief(&mixed.root)?;
+    if !mixed_text.contains(line) || mixed_text.contains(all_suffix) {
+        return Err(format!("mixed brief must name one withheld: {mixed_text}"));
+    }
+    let all_text = brief(&all.root)?;
+    if !all_text.contains(&format!("{line}; {all_suffix}")) {
+        return Err(format!("all-withheld brief must say so: {all_text}"));
+    }
+    let control_text = brief(&control.root)?;
+    if control_text.contains("owner_opt_outs") {
+        return Err(format!("nothing withheld adds no line: {control_text}"));
+    }
+    Ok(())
+}
