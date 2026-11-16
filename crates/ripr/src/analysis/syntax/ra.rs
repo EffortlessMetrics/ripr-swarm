@@ -996,6 +996,7 @@ fn summarize_file_with_collectors(
             && a.kind == b.kind
             && a.text == b.text
     });
+    retain_probe_shapes_outside_test_bodies(&mut file_probe_shapes, &functions);
 
     let mut item_scopes = collect_scopes(&source, &line_index);
     let keep: std::collections::BTreeSet<&str> = functions
@@ -2156,6 +2157,43 @@ fn push_probe_shape(
     let link_start = (u32::from(start) as usize).saturating_add(leading);
     let text = SourceText::shared_or_owned(source, link_start, &snippet);
     push_probe_shape_with_text(shapes, line_index, kind, start, end, text, None);
+}
+
+/// Drop probe shapes that sit strictly inside a `#[test]` function body and
+/// inside no production-role function (#13703). Tests are the instrument,
+/// not the surface under test: every consumer already refuses those lines
+/// (diff probes treat them as test evidence, repo probes and seam inventory
+/// skip evidence-role owners, constant readers are production-only), so the
+/// shapes only cost memory and cache bytes. A shape on the test's opening
+/// line, or inside a nested production-role `fn`, stays, because the
+/// shared-line and nested-helper rules (#9076, #9177) can still read it.
+fn retain_probe_shapes_outside_test_bodies(
+    shapes: &mut Vec<ProbeShapeFact>,
+    functions: &[FunctionFact],
+) {
+    let test_bodies: Vec<(usize, usize)> = functions
+        .iter()
+        .filter(|function| function.source_role == FunctionSourceRole::TestAttribute)
+        .map(|function| (function.start_line, function.end_line))
+        .collect();
+    if test_bodies.is_empty() {
+        return;
+    }
+    let production: Vec<(usize, usize)> = functions
+        .iter()
+        .filter(|function| !function.source_role.is_evidence_role())
+        .map(|function| (function.start_line, function.end_line))
+        .collect();
+    shapes.retain(|shape| {
+        let (start, end) = (shape.start_line(), shape.end_line());
+        let inside_test_body = test_bodies
+            .iter()
+            .any(|&(fn_start, fn_end)| fn_start < start && end <= fn_end);
+        !inside_test_body
+            || production
+                .iter()
+                .any(|&(fn_start, fn_end)| fn_start <= start && end <= fn_end)
+    });
 }
 
 fn push_probe_shape_with_text(
@@ -3545,6 +3583,51 @@ fn function_span(function: &FunctionFact) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_body_probe_shapes_are_not_stored_but_production_and_nested_shapes_are()
+    -> Result<(), String> {
+        let source = "\
+pub fn price(amount: i32) -> i32 {
+    if amount > 10 { return amount - 1; }
+    amount
+}
+
+#[test]
+fn prices_discount() {
+    if price(11) > 9 { panic!(\"x\"); }
+    fn helper(v: i32) -> bool {
+        v > 3
+    }
+    assert!(helper(price(4)));
+}
+";
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        let lines: Vec<usize> = facts
+            .probe_shapes
+            .iter()
+            .map(ProbeShapeFact::start_line)
+            .collect();
+        // Production body shapes stay.
+        assert!(
+            lines.contains(&2),
+            "production predicate missing: {lines:?}"
+        );
+        // The nested production-role helper inside the test keeps its shape.
+        assert!(
+            lines.contains(&10),
+            "nested helper shape missing: {lines:?}"
+        );
+        // Shapes on the test's own body lines (predicate, call deletion,
+        // assertion) are dropped.
+        assert!(
+            !lines.iter().any(|line| matches!(line, 8 | 12)),
+            "test-body shapes were stored: {lines:?}"
+        );
+        // The test function itself is still indexed as a test.
+        assert_eq!(facts.tests.len(), 1);
+        Ok(())
+    }
     use std::error::Error;
     use std::fs;
     use std::path::{Path, PathBuf};
