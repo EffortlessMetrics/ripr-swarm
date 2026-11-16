@@ -1131,8 +1131,12 @@ fn parse_outcome_options(args: &[String]) -> Result<OutcomeOptions, String> {
         i += 1;
     }
 
-    let before = before.ok_or_else(|| OUTCOME_BEFORE_REFUSAL.to_string())?;
-    let after = after.ok_or_else(|| OUTCOME_AFTER_REFUSAL.to_string())?;
+    let before = before.ok_or_else(|| {
+        crate::cli::usage_refusal::missing_required("--before", OUTCOME_BEFORE_REFUSAL)
+    })?;
+    let after = after.ok_or_else(|| {
+        crate::cli::usage_refusal::missing_required("--after", OUTCOME_AFTER_REFUSAL)
+    })?;
     if let Some(out) = out.as_deref() {
         refuse_output_naming_input(
             "outcome",
@@ -1938,10 +1942,10 @@ fn parse_coverage_grip_frontier_options(
     }
 
     if ledger.is_none() && baseline_delta.is_none() && zero_status.is_none() {
-        return Err(
-            "coverage-grip frontier requires at least one of --ledger, --baseline-delta, or --zero-status"
-                .to_string(),
-        );
+        return Err(crate::cli::usage_refusal::missing_required(
+            "--ledger",
+            "coverage-grip frontier requires at least one of --ledger, --baseline-delta, or --zero-status",
+        ));
     }
 
     refuse_output_naming_input(
