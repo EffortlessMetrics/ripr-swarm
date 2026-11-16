@@ -552,6 +552,21 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
     };
     let catch_all_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/{rest:path}\")\ndef fallback(rest: str):\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
     let dynamic_app = "from fastapi import FastAPI\n\napp = FastAPI()\nPRICE = \"/price\"\n\n\n@app.get(PRICE)\ndef cached():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let mixed_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": (1, 2), \"count\": 3}\n";
+    let mixed_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": (1, 2), \"count\": 3}",
+        new: "    return {\"total\": [1, 2], \"count\": 4}",
+    };
+    let other_receiver_app = "from fastapi import APIRouter, FastAPI\n\napp = FastAPI()\nitems_router = APIRouter()\n\n\n@items_router.get(\"/price\")\ndef cached():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let prefix_app = "from fastapi import APIRouter, FastAPI\n\napp = FastAPI()\nrouter = APIRouter()\n\n\n@router.get(\"/{item}\")\ndef cached(item: str):\n    return {\"total\": 190, \"count\": 3}\n\n\napp.include_router(router, prefix=\"/items\")\n\n\n@app.get(\"/items/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let prefix_test = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/items/price\")\n    assert response.json()[\"total\"] == 190\n"
+    );
+    let partial_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/items/{name}.json\")\ndef named(name: str):\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/items/latest.json\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let partial_test = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/items/latest.json\")\n    assert response.json()[\"total\"] == 190\n"
+    );
     let two_responses = format!(
         "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    first = client.get(\"/price\")\n    second = client.get(\"/price\")\n    assert first.json()[\"total\"] == second.json()[\"total\"]\n"
     );
@@ -605,11 +620,54 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             read("assert response.json()[\"total\"] == 5"),
         ),
         (
+            "mixed tuple and value change",
+            mixed_app,
+            mixed_edit,
+            read("assert response.json()[\"total\"] == [1, 2]"),
+        ),
+        (
+            "router on another receiver",
+            other_receiver_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        ("router prefix", prefix_app, PRICE_EDIT, prefix_test),
+        (
+            "partial-segment parameter",
+            partial_app,
+            PRICE_EDIT,
+            partial_test,
+        ),
+        (
+            "expected side bound to a request",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "baseline = client.get(\"/price\").json()[\"total\"]\n    assert response.json()[\"total\"] == baseline",
+            ),
+        ),
+        (
             "replaced json method",
             PRICE_APP,
             PRICE_EDIT,
             read(
                 "response.json = lambda: {\"total\": 190}\n    assert response.json()[\"total\"] == 190",
+            ),
+        ),
+        (
+            "replaced json method with spaced assignment",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "response.json  = lambda: {\"total\": 190}\n    assert response.json()[\"total\"] == 190",
+            ),
+        ),
+        (
+            "json method replaced through setattr",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "setattr(response, \"json\", lambda: {\"total\": 190})\n    assert response.json()[\"total\"] == 190",
             ),
         ),
         (

@@ -1777,17 +1777,24 @@ impl PythonAdapter {
         // A rival route in an unread file cannot be ruled out, so a partial
         // walk or read refuses the route-response credit, as does any source
         // that reshapes responses or registers unrecorded routes (#13869).
-        // A test file can register a route too (`@app.get(...)` on a shared
-        // app); test-file owners are not collected, so one refuses as well.
+        // Every route decorator line of every read source (test files
+        // included, whose owners are not collected) is counted against the
+        // routes the owners record; a file that failed to parse records none.
         related_tests::apply_route_overlaps(
             &mut all_owners,
             refused_files != 0
                 || !workspace_read.limits.is_empty()
                 || !workspace_read.io_failures.is_empty()
-                || workspace_read.sources.iter().any(|(file, source)| {
-                    related_tests::workspace_reshapes_responses(source)
-                        || (is_test_file(file) && related_tests::declares_route(source))
-                }),
+                || !parse_failure_paths.is_empty()
+                || workspace_read
+                    .sources
+                    .values()
+                    .any(|source| related_tests::workspace_reshapes_responses(source)),
+            workspace_read
+                .sources
+                .values()
+                .map(|source| related_tests::route_decorator_lines(source))
+                .sum(),
         );
 
         // Walk-count cap disclosure: one named limitation carrying the

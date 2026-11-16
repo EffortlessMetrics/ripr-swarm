@@ -991,8 +991,18 @@ fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bo
 /// source reshapes responses or registers routes the owners do not record,
 /// see [`workspace_reshapes_responses`]) or when any owner has a dynamic
 /// route decorator.
-pub(super) fn apply_route_overlaps(owners: &mut [PythonOwner], opaque: bool) {
+pub(super) fn apply_route_overlaps(
+    owners: &mut [PythonOwner],
+    opaque: bool,
+    declared_route_decorators: usize,
+) {
+    // Every route decorator line in the workspace must be a route the owners
+    // record; one they do not (an unrecognized receiver, a conditional
+    // module-level definition, a test file) is a rival that cannot be ruled
+    // out.
+    let recorded: usize = owners.iter().map(|owner| owner.route_paths.len()).sum();
     let opaque = opaque
+        || recorded != declared_route_decorators
         || owners
             .iter()
             .any(|owner| !owner.dynamic_route_decorators.is_empty());
@@ -1047,10 +1057,7 @@ fn route_patterns_overlap(left: &str, right: &str) -> bool {
     }
     let left: Vec<&str> = left.trim_end_matches('/').split('/').collect();
     let right: Vec<&str> = right.trim_end_matches('/').split('/').collect();
-    let parameter = |segment: &str| {
-        (segment.starts_with('{') && segment.ends_with('}'))
-            || (segment.starts_with('<') && segment.ends_with('>'))
-    };
+    let parameter = |segment: &str| segment.contains(['{', '<']);
     left.len() == right.len()
         && left
             .iter()
@@ -1060,11 +1067,13 @@ fn route_patterns_overlap(left: &str, right: &str) -> bool {
 
 /// Whether a workspace source can answer a request with a body other than the
 /// handler's returned dict, or registers a route the owners do not record
-/// (#13869): an exception handler or middleware (which may answer with the
-/// changed key on an error path), an imperative route registration, a mount,
-/// or a catch-all `:path` parameter.
+/// (#13869): an exception handler, middleware or request hook (which may
+/// answer with the changed key on an error path), a dependency override, a
+/// custom route class, an imperative or declarative route registration, a
+/// router or blueprint inclusion or prefix, a mount, or a catch-all `:path`
+/// parameter.
 pub(super) fn workspace_reshapes_responses(source: &str) -> bool {
-    const MARKERS: [&str; 13] = [
+    const MARKERS: [&str; 19] = [
         "exception_handler",
         "errorhandler(",
         "middleware",
@@ -1078,13 +1087,22 @@ pub(super) fn workspace_reshapes_responses(source: &str) -> bool {
         ".mount(",
         ":path}",
         "dependency_overrides",
+        "include_router(",
+        "register_blueprint(",
+        "routes=",
+        "route_class",
+        "APIRoute",
+        ".routes.",
     ];
-    MARKERS.iter().any(|marker| source.contains(marker))
+    // Whitespace may sit inside a call (`app.add_api_route ("/x", f)`), so
+    // the markers are matched against the source without it.
+    let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
+    MARKERS.iter().any(|marker| compact.contains(marker))
 }
 
-/// Whether a source has a decorator line that may register a route
+/// The number of decorator lines in a source that may register a route
 /// (`@app.get(...)`, `@bp.route(...)`, `@router.api_route(...)`).
-pub(super) fn declares_route(source: &str) -> bool {
+pub(super) fn route_decorator_lines(source: &str) -> usize {
     const VERBS: [&str; 9] = [
         ".get(",
         ".post(",
@@ -1096,10 +1114,13 @@ pub(super) fn declares_route(source: &str) -> bool {
         ".route(",
         ".api_route(",
     ];
-    source.lines().any(|line| {
-        let line = line.trim_start();
-        line.starts_with('@') && VERBS.iter().any(|verb| line.contains(verb))
-    })
+    source
+        .lines()
+        .filter(|line| {
+            let line: String = line.chars().filter(|ch| !ch.is_whitespace()).collect();
+            line.starts_with('@') && VERBS.iter().any(|verb| line.contains(verb))
+        })
+        .count()
 }
 
 /// Records on each free-function owner the module paths of other workspace
@@ -3083,11 +3104,17 @@ fn route_response_assignments(test: &PythonTest, receiver: &str) -> Vec<(String,
     };
     // A `match` capture or a walrus rebinds a name without an assignment
     // statement, which the bound-once count does not read, and an assignment
-    // to `.json` replaces the method the read calls, so each refuses the read
-    // (fail closed).
+    // to `.json` (or any `setattr`) replaces the method the read calls, so each
+    // refuses the read (fail closed).
+    let compact: String = test
+        .body_text
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
     if test.body_text.contains(":=")
-        || test.body_text.contains(".json =")
-        || test.body_text.contains(".json=")
+        || compact.contains(".json=")
+        || compact.contains(".json:")
+        || compact.contains("setattr(")
         || test.body_text.lines().any(|line| {
             let line = line.trim_start();
             line.starts_with("match ") || line.starts_with("match(") || line.starts_with("case ")

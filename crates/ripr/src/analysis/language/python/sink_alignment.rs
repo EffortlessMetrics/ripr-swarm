@@ -1574,26 +1574,31 @@ fn sink_alignment_and_rows(
     // `detail` is the error-envelope key of FastAPI's `HTTPException` and
     // request-validation (422) bodies, so a keyed `detail` read may observe
     // an error response that never reached the changed return.
-    let returns_changed_dict = owner.route_returns_body
-        && line_text.trim_start().starts_with("return ")
-        && dict_change.as_ref().is_some_and(|(keys, _)| {
-            !keys
-                .iter()
-                .any(|key| key.trim_matches(|c| c == '"' || c == '\'') == "detail")
-        })
-        && !json_equivalent_change(gate_old, gate_new);
     // The response operand itself must read a changed key: the shared
     // changed-key gate also accepts a whole-collection comparison or a
     // changed-key subscript on the expected side, which an unchanged sibling
-    // field (`response.json()["meta"] == {...}`) would pass.
+    // field (`response.json()["meta"] == {...}`) would pass. A key whose old
+    // and new values serialize to the same JSON is not changed in the body.
+    let json_equivalent = json_equivalent_keys(gate_old, gate_new);
     let changed_response_keys: Vec<String> = dict_change
         .as_ref()
         .map(|(keys, _)| {
             keys.iter()
                 .map(|key| key.trim_matches(|c| c == '"' || c == '\'').to_string())
+                .filter(|key| !json_equivalent.contains(key))
                 .collect()
         })
         .unwrap_or_default();
+    // An old line is required (repo mode has none, so it never earns this).
+    let returns_changed_dict = owner.route_returns_body
+        && gate_old.is_some()
+        && line_text.trim_start().starts_with("return ")
+        && !changed_response_keys.is_empty()
+        && dict_change.as_ref().is_some_and(|(keys, _)| {
+            !keys
+                .iter()
+                .any(|key| key.trim_matches(|c| c == '"' || c == '\'') == "detail")
+        });
     let route_response_observed = |unit: &AlignmentUnit<'_>| {
         returns_changed_dict
             && unit.kind == OracleKind::ExactValue
@@ -1686,52 +1691,95 @@ fn sink_alignment_and_rows(
     )
 }
 
-/// Whether every changed entry of a dict-literal change serializes to the
-/// same JSON on both sides (#13869): a tuple and a list (`(1, 2)` and
-/// `[1, 2]`), or an integer and its float form (`5` and `5.0`), give one
+/// The unquoted keys of a dict-literal change whose old and new values
+/// serialize to the same JSON (#13869): a tuple and a list (`(1, 2)` and
+/// `[1, 2]`), or numbers of one value (`5`, `5.0`, `5.00`), give one
 /// response body, so a response read cannot tell them apart.
-fn json_equivalent_change(old_line: Option<&str>, new_line: &str) -> bool {
+fn json_equivalent_keys(old_line: Option<&str>, new_line: &str) -> Vec<String> {
     let (Some(old), Some(new)) = (
         old_line.and_then(parse_dict_literal_fields),
         parse_dict_literal_fields(new_line),
     ) else {
-        return false;
+        return Vec::new();
     };
     let json_form = |value: &str| {
-        let value: String = value
-            .trim()
-            .chars()
-            .filter(|ch| !ch.is_whitespace())
-            .map(|ch| match ch {
-                '(' => '[',
-                ')' => ']',
-                other => other,
-            })
-            .collect();
-        let value = value.replace(",]", "]");
-        match value.strip_suffix(".0") {
-            Some(whole)
-                if !whole.is_empty()
-                    && whole.chars().all(|ch| ch.is_ascii_digit() || ch == '-') =>
-            {
-                whole.to_string()
+        // Outside string literals only: whitespace is dropped and tuple
+        // brackets read as list brackets; string contents stay as written.
+        let mut normal = String::new();
+        let mut quote: Option<char> = None;
+        for ch in value.trim().chars() {
+            match quote {
+                Some(open) => {
+                    normal.push(ch);
+                    if ch == open {
+                        quote = None;
+                    }
+                }
+                None => match ch {
+                    '"' | '\'' => {
+                        quote = Some(ch);
+                        normal.push(ch);
+                    }
+                    '(' => normal.push('['),
+                    ')' => normal.push(']'),
+                    ch if ch.is_whitespace() => {}
+                    other => normal.push(other),
+                },
             }
-            _ => value,
         }
-    };
-    let mut changed = false;
-    for (key, new_value) in &new {
-        let Some((_, old_value)) = old.iter().find(|(k, _)| k == key) else {
-            return false;
+        let value = if quote.is_none() {
+            normal.replace(",]", "]")
+        } else {
+            normal
         };
-        if old_value != new_value {
-            if json_form(old_value) != json_form(new_value) {
-                return false;
+        let numeric = value.strip_prefix('-').unwrap_or(&value);
+        if numeric.contains('.')
+            && numeric.chars().all(|ch| ch.is_ascii_digit() || ch == '.')
+            && numeric.matches('.').count() == 1
+        {
+            let trimmed = value.trim_end_matches('0').trim_end_matches('.');
+            return trimmed.to_string();
+        }
+        value
+    };
+    new.iter()
+        .filter_map(|(key, new_value)| {
+            let (_, old_value) = old.iter().find(|(k, _)| k == key)?;
+            (old_value != new_value && json_form(old_value) == json_form(new_value))
+                .then(|| key.trim_matches(|c| c == '"' || c == '\'').to_string())
+        })
+        .collect()
+}
+
+/// Whether `side` is a literal expected value: numbers, strings without
+/// escapes, `True`/`False`/`None`, and lists, tuples or dicts of them. A
+/// name, call or attribute may carry the route's own response (a binding,
+/// helper or fixture that makes the same request), so it is not one.
+fn literal_expected(side: &str) -> bool {
+    let mut stripped = String::new();
+    let mut chars = side.trim().chars();
+    while let Some(ch) = chars.next() {
+        if ch == '"' || ch == '\'' {
+            loop {
+                match chars.next() {
+                    Some(close) if close == ch => break,
+                    Some('\\') | None => return false,
+                    Some(_) => {}
+                }
             }
-            changed = true;
+            stripped.push('0');
+        } else {
+            stripped.push(ch);
         }
     }
-    changed && old.len() == new.len()
+    let stripped = stripped
+        .replace("True", "0")
+        .replace("False", "0")
+        .replace("None", "0");
+    !stripped.trim().is_empty()
+        && stripped
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || ch.is_whitespace() || "-+.[](){},:".contains(ch))
 }
 
 /// Whether an exact assertion compares one changed quoted key of `name.json()`
@@ -1769,27 +1817,10 @@ fn reads_response_json(text: &str, name: &str, changed_keys: &[String]) -> bool 
             .and_then(|rest| plain_key_subscript(rest.trim_start()))
             .is_some_and(|key| changed_keys.iter().any(|changed| changed == key))
     };
-    // The expected side must be independent of the route: another response
-    // (`first.json()["total"] == second.json()["total"]`), an inline request
-    // or the same read compares the handler with itself and passes on both
-    // versions.
-    let independent = |side: &str| {
-        !side.contains(".json")
-            && !side.contains(name)
-            && ![
-                ".get(",
-                ".post(",
-                ".put(",
-                ".patch(",
-                ".delete(",
-                ".options(",
-                ".head(",
-                ".request(",
-            ]
-            .iter()
-            .any(|call| side.contains(call))
-    };
-    (reads(left) && independent(right)) || (reads(right) && independent(left))
+    // The expected side must be a literal: another response, an inline
+    // request, the same read, or a name bound to a request compares the
+    // handler with itself and passes on both versions.
+    (reads(left) && literal_expected(right)) || (reads(right) && literal_expected(left))
 }
 
 /// The two arguments of `self.assertEqual(first, second)`, split at the one
