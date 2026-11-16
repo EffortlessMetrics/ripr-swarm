@@ -322,6 +322,16 @@ impl ClassifiedProbeEvidence {
         ) {
             flow_sinks = vec![sink];
         }
+        // #14852: a returned constant replaced by a different constant
+        // reaches the owner's return; its sink carries the raw tail text.
+        if flow_sinks
+            .iter()
+            .all(|sink| sink.kind == FlowSinkKind::Unknown)
+            && let (Some(owner), Some(change)) =
+                (context.owner_fn, context.constant_tail_change.as_ref())
+        {
+            flow_sinks = vec![change.return_sink(owner)];
+        }
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
                 context.index.files().get(&owner.file).and_then(|file| {
@@ -353,6 +363,19 @@ impl ClassifiedProbeEvidence {
             context.owner_fn.and_then(|owner| {
                 crate::analysis::classify::constant_tail_witness(context.probe, owner, &flow_sinks)
             })
+        })
+        .or_else(|| {
+            context
+                .owner_fn
+                .zip(context.constant_tail_change.as_ref())
+                .and_then(|(owner, change)| {
+                    crate::analysis::classify::constant_tail_change_witness(
+                        context.probe,
+                        owner,
+                        &flow_sinks,
+                        change,
+                    )
+                })
         })
         .or_else(|| {
             context.owner_fn.and_then(|owner| {
