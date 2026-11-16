@@ -1,0 +1,279 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "columnKind": "unicodeCodePoints",
+      "properties": {
+        "analysis_complete": true,
+        "analysis_outcome": {
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.",
+          "counts": {
+            "candidate_line_count": 1,
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "finding_count": 1,
+            "probe_count": 1
+          },
+          "identity": {
+            "base_revision": null,
+            "config_identity": null,
+            "git_candidate_subject": null,
+            "input_identity": "sha256:3fb55ad86040f1a32f0a1b2160746e2b5d37a82f961410eb6585ae17218c6a5c",
+            "repository_identity": null,
+            "root_identity": null,
+            "snapshot_identity": null
+          },
+          "kind": "complete_with_findings",
+          "limitations": [],
+          "schema_version": "0.1"
+        },
+        "run_status": "complete",
+        "schema_version": "0.1",
+        "scope": "finding",
+        "tool": "ripr"
+      },
+      "results": [
+        {
+          "fingerprints": {
+            "riprFingerprintV1": "ripr.finding.propagation_unknown|probe:src_lib.rs:field_construction:42ec5018|probe:src_lib.rs:field_construction:42ec5018|fixtures/one_hop_field_projection_discarded/input/src/lib.rs"
+          },
+          "level": "note",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "fixtures/one_hop_field_projection_discarded/input/src/lib.rs"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 5
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Missing check: No field-value assertion observes the constructed field: missing_duration_count: total - known. propagation_unknown static exposure for field_construction probe: missing_duration_count: total - known. Next step: Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+          },
+          "partialFingerprints": {
+            "riprFingerprintV1": "ripr.finding.propagation_unknown|probe:src_lib.rs:field_construction:42ec5018|probe:src_lib.rs:field_construction:42ec5018|fixtures/one_hop_field_projection_discarded/input/src/lib.rs"
+          },
+          "properties": {
+            "canonical_gap": {
+              "behavior_kind": "field_construction",
+              "file": "src/lib.rs",
+              "id": "gap:rust:src/lib.rs:stats:field_construction:field_construction:missing_duration_count_total-known",
+              "language": "rust",
+              "normalized_discriminator": "missing_duration_count_total-known",
+              "owner": "stats",
+              "probe_kind": "field_construction"
+            },
+            "canonical_gap_id": "gap:rust:src/lib.rs:stats:field_construction:field_construction:missing_duration_count_total-known",
+            "changed_expression": "missing_duration_count: total - known",
+            "classification": "propagation_unknown",
+            "confidence": 0.66,
+            "finding_id": "probe:src_lib.rs:field_construction:42ec5018",
+            "flow_sinks": [
+              {
+                "kind": "struct_field",
+                "line": 5,
+                "owner": "src/lib.rs::stats",
+                "text": "missing_duration_count: total - known"
+              }
+            ],
+            "kind": "finding",
+            "language": "rust",
+            "missing_discriminators": [
+              {
+                "flow_sink": {
+                  "kind": "struct_field",
+                  "line": 5,
+                  "owner": "src/lib.rs::stats",
+                  "text": "missing_duration_count: total - known"
+                },
+                "reason": "No field-value assertion observes the constructed field: missing_duration_count: total - known",
+                "value": "missing_duration_count: total - known"
+              }
+            ],
+            "observed_values": [
+              {
+                "context": "assertion_argument",
+                "line": 12,
+                "text": "assert_eq!(projected(20, 1), 19);",
+                "value": "1"
+              },
+              {
+                "context": "assertion_argument",
+                "line": 12,
+                "text": "assert_eq!(projected(20, 1), 19);",
+                "value": "19"
+              },
+              {
+                "context": "assertion_argument",
+                "line": 12,
+                "text": "assert_eq!(projected(20, 1), 19);",
+                "value": "20"
+              }
+            ],
+            "owner": "src/lib.rs::stats",
+            "probe_delta": "value",
+            "probe_family": "field_construction",
+            "probe_id": "probe:src_lib.rs:field_construction:42ec5018",
+            "related_tests": [
+              {
+                "file": "src/lib.rs",
+                "line": 12,
+                "name": "pin",
+                "oracle": "assert_eq!(projected(20, 1), 19);",
+                "oracle_kind": "exact_value",
+                "oracle_strength": "strong"
+              }
+            ],
+            "related_tests_total": 1,
+            "ripr": {
+              "discriminate": {
+                "confidence": "medium",
+                "state": "weak",
+                "summary": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+              },
+              "infect": {
+                "confidence": "medium",
+                "state": "yes",
+                "summary": "Reachable tests can plausibly activate this changed behavior"
+              },
+              "observe": {
+                "confidence": "medium",
+                "state": "yes",
+                "summary": "A related test observes a value or effect near the changed behavior"
+              },
+              "propagate": {
+                "confidence": "low",
+                "state": "unknown",
+                "summary": "Propagation unknown: the related tests reach `stats` only through a caller that does not forward its result unchanged (helper_result_not_forwarded)"
+              },
+              "reach": {
+                "confidence": "medium",
+                "state": "yes",
+                "summary": "Related tests appear to reach stats: pin"
+              }
+            },
+            "severity": "note",
+            "stop_reasons": [
+              "propagation_evidence_unknown"
+            ],
+            "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+            "tool": "ripr"
+          },
+          "ruleId": "ripr.finding.propagation_unknown"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/EffortlessMetrics/ripr",
+          "name": "ripr",
+          "rules": [
+            {
+              "fullDescription": {
+                "text": "Static analysis found a complete path from the changed code to a test oracle strong enough to observe the changed behavior."
+              },
+              "help": {
+                "text": "This is static evidence, not a runtime verdict: ripr did not execute any test. Next step: run the linked related test and confirm it observes the changed sink."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.exposed",
+              "name": "ripr exposed",
+              "shortDescription": {
+                "text": "Changed behavior appears covered by a strong test oracle"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "A static path from the change to a related test exists, but the infection or the oracle's discrimination looks weak, so the test could pass even when the behavior is wrong."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: strengthen the nearest assertion so it observes the changed sink directly, then re-run ripr check."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.weakly_exposed",
+              "name": "ripr weakly_exposed",
+              "shortDescription": {
+                "text": "Changed behavior may not be caught by the current tests"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Related tests appear to reach the changed code, but no meaningful oracle was found that would notice a wrong result."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: add or sharpen an assertion that discriminates the changed behavior."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.reachable_unrevealed",
+              "name": "ripr reachable_unrevealed",
+              "shortDescription": {
+                "text": "Tests reach the changed code but no assertion appears to check it"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "No static test path to the changed owner was found; static analysis could not trace any related test to this behavior."
+              },
+              "help": {
+                "text": "This is a static reachability statement, not a runtime coverage measurement. Next step: add a focused test that exercises the changed behavior."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.no_static_path",
+              "name": "ripr no_static_path",
+              "shortDescription": {
+                "text": "No test appears to reach the changed code"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Tests may reach the change, but the input or fixture evidence is opaque, so static analysis cannot tell whether a wrong result would propagate."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: make the decisive input or fixture value explicit, then re-run ripr check."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.infection_unknown",
+              "name": "ripr infection_unknown",
+              "shortDescription": {
+                "text": "Tests may reach the change but their inputs are not visible to static analysis"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "The changed behavior crosses a boundary static analysis cannot see through, so it is unknown whether a wrong result would reach an observable sink."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: add an assertion at an observable sink beyond the boundary."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.propagation_unknown",
+              "name": "ripr propagation_unknown",
+              "shortDescription": {
+                "text": "Static analysis cannot tell whether a wrong result would reach an assertion"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Syntax-first analysis could not make a credible judgment for this finding, usually because parsing or symbol resolution was incomplete."
+              },
+              "help": {
+                "text": "This is an analysis limitation disclosure, not a coverage verdict. Next step: re-run with fuller analysis settings or triage the finding manually."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.static_unknown",
+              "name": "ripr static_unknown",
+              "shortDescription": {
+                "text": "Static analysis could not judge this change"
+              }
+            }
+          ],
+          "semanticVersion": "0.11.0"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

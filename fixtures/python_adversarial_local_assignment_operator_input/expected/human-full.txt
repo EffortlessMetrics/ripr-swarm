@@ -22,11 +22,11 @@ Changed
   after:      total = base - bonus
 
 Change type
-  a condition or comparison changed
-  family: predicate
-  delta:  control (changes which code path runs)
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
   owner:  python:src/calc.py::compute
-  gap id (for scripts): gap:python:src/calc.py:compute:predicate_boundary:predicate:total=base-bonus
+  gap id (for scripts): gap:python:src/calc.py:compute:return_value:return_value:total=base-bonus
 
 Language
   language: python

@@ -59,6 +59,7 @@ impl Repo {
     }
 
     /// A package with no Rust seam whose only change is to a Python file.
+    #[cfg(feature = "lang-python")]
     fn python_only(form: Form) -> Result<Self, String> {
         let repo = Self::empty()?;
         repo.write(
@@ -67,6 +68,12 @@ impl Repo {
         )?;
         repo.write("src/lib.rs", "pub struct Marker;\n")?;
         repo.write("tools/x.py", "def f(x):\n    return x\n")?;
+        // Zero-config detection does not enable Python for `tools/x.py`
+        // (#13571); this fixture tests the enabled-language guidance.
+        repo.write(
+            "ripr.toml",
+            "[languages]\nenabled = [\"rust\", \"python\"]\n",
+        )?;
         repo.commit_base(form)?;
         repo.write("tools/x.py", "def f(x):\n    return x + 1\n")?;
         repo.land_change(form)?;
@@ -499,6 +506,7 @@ fn an_explicit_base_reads_the_dirty_working_tree_too() -> Result<(), String> {
 }
 
 #[test]
+#[cfg(feature = "lang-python")]
 fn zero_seam_refusal_leads_with_the_unscoped_note() -> Result<(), String> {
     let repo = Repo::python_only(Form::NoResolvableBase)?;
     repo.assert_changed_paths(Form::NoResolvableBase, "tools/x.py")?;
@@ -508,16 +516,17 @@ fn zero_seam_refusal_leads_with_the_unscoped_note() -> Result<(), String> {
             && repair.contains("could not tell which lines you changed"),
         "{repair}"
     );
-    assert!(!repair.contains("works from Rust gaps only"), "{repair}");
+    assert!(!repair.contains("seam flow is Rust only"), "{repair}");
     Ok(())
 }
 
 #[test]
+#[cfg(feature = "lang-python")]
 fn an_explicit_base_reaches_the_non_rust_guidance() -> Result<(), String> {
     let repo = Repo::python_only(Form::NoResolvableBase)?;
     let explicit = repo.ripr(&["repair", "--root", ".", "--base", "HEAD~1"])?;
     assert!(
-        explicit.contains("is Python") && explicit.contains("works from Rust gaps only"),
+        explicit.contains("is Python") && explicit.contains("seam flow is Rust only"),
         "the named base finds the Python change:\n{explicit}"
     );
     Ok(())

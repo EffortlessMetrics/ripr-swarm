@@ -35,7 +35,9 @@ pub(crate) fn headline_related_test_for_finding(finding: &Finding) -> Option<&Re
     ) {
         return typescript_script_preview_related_test(finding);
     }
-    finding.related_tests.first()
+    // #14027: a Python finding prefers a same-strength row in a test file the
+    // diff changed over a later-sorting untouched file; otherwise first row.
+    crate::domain::python_headline_related_test(finding)
 }
 
 /// Legacy entry point for table tests that only hold related-test rows.
@@ -85,6 +87,14 @@ pub(crate) fn related_test_miss_reason(test: &RelatedTest, family: &ProbeFamily)
         }
         RelatedTestMiss::AssertionNotCredited => {
             "assertion not credited: ripr could not establish that this assertion counts here"
+                .to_string()
+        }
+        RelatedTestMiss::AssertionInert => {
+            "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+                .to_string()
+        }
+        RelatedTestMiss::AssertionAdmissionUnproven => {
+            "assertion admission unproven: ripr could not establish that this assertion counts here"
                 .to_string()
         }
         RelatedTestMiss::WeakAssertion => {
@@ -245,6 +255,7 @@ fn one_line(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{
         MissingDiscriminatorFact, OracleKind, OracleStrength, RelatedTestMissSupport,
     };
@@ -461,6 +472,8 @@ mod tests {
             reason: "changed TypeScript equality-boundary lacks a concrete preview discriminator"
                 .to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         with_ref
             .evidence
@@ -550,6 +563,8 @@ mod tests {
                         "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"
                             .to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 }],
             },
             stop_reasons: Vec::new(),
@@ -633,6 +648,96 @@ mod tests {
             miss_support: None,
             role: crate::domain::RelatedTestRole::Contributing,
         }
+    }
+
+    fn python_finding(rows: Vec<RelatedTest>, evidence: Vec<String>) -> Finding {
+        // The shared sample is a Perl finding; only the fields the Python
+        // headline reads are replaced.
+        let mut finding = sample_finding();
+        finding.language = Some(LanguageId::Python);
+        finding.related_tests = rows;
+        finding.evidence = evidence;
+        finding
+    }
+
+    fn python_row(file: &str, name: &str, line: usize) -> RelatedTest {
+        let mut row = test_with(None, None);
+        row.file = PathBuf::from(file);
+        row.name = name.to_string();
+        row.line = line;
+        row
+    }
+
+    fn changed_stamp(file: &str, line: usize) -> String {
+        format!(
+            "{}{file}:{line}",
+            crate::domain::RELATED_TEST_CHANGED_IN_DIFF_PREFIX
+        )
+    }
+
+    /// #14027: a same-strength row in a test file the diff changed leads the
+    /// Python headline over an untouched first row.
+    #[test]
+    fn python_headline_prefers_a_row_in_a_changed_test_file() {
+        let rows = vec![
+            python_row("tests/test_i18n.py", "test_naturaldelta", 135),
+            python_row("tests/test_time.py", "test_naturaldelta", 140),
+        ];
+        let finding = python_finding(rows, vec![changed_stamp("tests/test_time.py", 140)]);
+        let pick = headline_related_test_for_finding(&finding);
+        assert_eq!(
+            pick.map(|t| t.file.display().to_string()),
+            Some("tests/test_time.py".to_string())
+        );
+        assert_eq!(pick.map(|t| t.line), Some(140));
+    }
+
+    /// #14027 negative: no changed row (or a stamp that names no row) keeps
+    /// the first row.
+    #[test]
+    fn python_headline_keeps_the_first_row_without_a_changed_row() {
+        let rows = vec![
+            python_row("tests/test_i18n.py", "test_naturaldelta", 135),
+            python_row("tests/test_time.py", "test_naturaldelta", 140),
+        ];
+        let plain = python_finding(rows.clone(), Vec::new());
+        assert_eq!(
+            headline_related_test_for_finding(&plain).map(|t| t.line),
+            Some(135)
+        );
+        let stale = python_finding(rows, vec![changed_stamp("tests/test_time.py", 999)]);
+        assert_eq!(
+            headline_related_test_for_finding(&stale).map(|t| t.line),
+            Some(135)
+        );
+    }
+
+    /// #14027 tie: several changed rows resolve to the first of them in row
+    /// order, and a changed row of another strength never displaces the first
+    /// row's tier.
+    #[test]
+    fn python_headline_ties_and_strength_tiers_stay_deterministic() {
+        let rows = vec![
+            python_row("tests/test_a.py", "a", 1),
+            python_row("tests/test_b.py", "b", 2),
+            python_row("tests/test_c.py", "c", 3),
+        ];
+        let both = vec![
+            changed_stamp("tests/test_c.py", 3),
+            changed_stamp("tests/test_b.py", 2),
+        ];
+        let finding = python_finding(rows.clone(), both);
+        assert_eq!(
+            headline_related_test_for_finding(&finding).map(|t| t.name.as_str()),
+            Some("b")
+        );
+        let mut weaker = rows;
+        weaker[1].oracle_strength = OracleStrength::Weak;
+        let finding = python_finding(weaker, vec![changed_stamp("tests/test_b.py", 2)]);
+        assert_eq!(
+            headline_related_test_for_finding(&finding).map(|t| t.name.as_str()),
+            Some("a")
+        );
     }
 
     fn support(value: &str) -> RelatedTestMissSupport {
@@ -815,6 +920,8 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "no related test passes the boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         let owner = row_named(
             "misses",
@@ -849,6 +956,8 @@ mod tests {
             value: "other == wrong".to_string(),
             reason: "another row's fact".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         let row = row_named(
             "mine",
@@ -982,15 +1091,17 @@ mod tests {
     #[test]
     fn support_carries_its_own_sink_per_row_and_round_trips() -> Result<(), String> {
         use crate::domain::{FlowSinkFact, FlowSinkKind};
-        let fact = |value: &str, text: &str, line: usize| MissingDiscriminatorFact {
-            value: value.to_string(),
-            reason: "r".to_string(),
-            flow_sink: Some(FlowSinkFact {
-                kind: FlowSinkKind::ReturnValue,
-                text: text.to_string(),
-                line,
-                owner: None,
-            }),
+        let fact = |value: &str, text: &str, line: usize| {
+            MissingDiscriminatorFact::equality_spelled(
+                value.to_string(),
+                "r".to_string(),
+                Some(FlowSinkFact {
+                    kind: FlowSinkKind::ReturnValue,
+                    text: text.to_string(),
+                    line,
+                    owner: None,
+                }),
+            )
         };
         let fact_a = fact("a == 1", "return a", 3);
         let fact_b = fact("b == 2", "return b", 9);
@@ -1090,6 +1201,8 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 unlinked_python_tests: None,
+                file_fact_cache: None,
+                owner_opt_outs: Vec::new(),
                 analyzed_revisions: None,
             }
         }
@@ -1179,16 +1292,19 @@ mod tests {
             let (evidence, verdict) = explain
                 .split_once("Why this verdict")
                 .ok_or("explain should add the verdict section")?;
-            for (text, prefix, separator) in [
-                (full.as_str(), "- related test", "; "),
-                (evidence, "- related test", "; "),
-                (verdict, "- t/app.t", ": "),
+            // The verdict block keeps the label and points at the Evidence
+            // rows (which carry the shared sentence) instead of repeating it.
+            for (text, prefix, expected_suffix) in [
+                (full.as_str(), "- related test", format!("; {label}: {why}")),
+                (evidence, "- related test", format!("; {label}: {why}")),
+                (
+                    verdict,
+                    "- t/app.t",
+                    format!(": {label} (see Evidence above)"),
+                ),
             ] {
                 let line = line_naming(text, prefix, &direct.name)?;
-                assert!(
-                    line.ends_with(&format!("{separator}{label}: {why}")),
-                    "{line}"
-                );
+                assert!(line.ends_with(&expected_suffix), "{line}");
                 let line = line_naming(text, prefix, &advisory.name)?;
                 assert!(
                     !line.contains(&why) && !line.contains(&format!("{label}:")),
@@ -1341,6 +1457,8 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 unlinked_python_tests: None,
+                file_fact_cache: None,
+                owner_opt_outs: Vec::new(),
                 analyzed_revisions: None,
             }
         }
@@ -1436,7 +1554,6 @@ mod tests {
             for (text, prefix, separator) in [
                 (full.as_str(), "- related test", "; "),
                 (evidence, "- related test", "; "),
-                (verdict, "- tests/test_subject.py", ": "),
             ] {
                 let line = line_naming(text, prefix, &explained.name)?;
                 assert!(
@@ -1444,6 +1561,21 @@ mod tests {
                     "{line}"
                 );
                 let line = line_naming(text, prefix, &withheld.name)?;
+                assert!(
+                    !line.contains(&why) && !line.contains(&format!("{label}:")),
+                    "{line}"
+                );
+            }
+            // #13307: the explain verdict block keeps the verdict label and
+            // points at the Evidence row instead of re-listing the reason
+            // there; the Evidence section above still carries `{label}: {why}`.
+            {
+                let line = line_naming(verdict, "- tests/test_subject.py", &explained.name)?;
+                assert!(
+                    line.ends_with(&format!(": {label} (see Evidence above)")),
+                    "{line}"
+                );
+                let line = line_naming(verdict, "- tests/test_subject.py", &withheld.name)?;
                 assert!(
                     !line.contains(&why) && !line.contains(&format!("{label}:")),
                     "{line}"

@@ -1,0 +1,24 @@
+{
+  "schema_version": "ripr-mutation-spot-check-python-corpus-v1",
+  "status": "unrun",
+  "note": "Pinned for .github/workflows/mutation-spot-check-python.yml. The workflow has not run yet, so no package here has been confirmed to install, pass its own tests, or produce a cosmic-ray session. Revisions are the HEAD commits read with a read-only ls-remote on 2026-11-08; package contents were not inspected.",
+  "cosmic_ray": {
+    "version": "8.8.0"
+  },
+  "packages": [
+    {
+      "name": "cachetools",
+      "url": "https://github.com/tkem/cachetools",
+      "sha": "1ce79efa552d1bdda70d144d401ef9105d999184",
+      "module_path": "src/cachetools",
+      "test_command": "python -m pytest -x -q -p no:cacheprovider -o addopts= tests"
+    },
+    {
+      "name": "python-semver",
+      "url": "https://github.com/python-semver/python-semver",
+      "sha": "f3c7138120d7f49e190bd7c555c6e7eb155b482d",
+      "module_path": "src/semver",
+      "test_command": "python -m pytest -x -q -p no:cacheprovider -o addopts= tests"
+    }
+  ]
+}

@@ -105,6 +105,13 @@ claim. For `check-fast`, independently verify the diff selector and base before
 using it as evidence. An empty or failed selector is not proof that nothing
 needs testing.
 
+On a host with less than 24 GiB of memory and more than one CPU, local
+`precommit` runs its Clippy and `covered_by` Cargo children with
+`CARGO_BUILD_JOBS=1` and says so; set `CARGO_BUILD_JOBS` yourself to override.
+In a 4-core, 15 GB container, whole-workspace Clippy was stopped by the memory
+limit at the default job count and once at two jobs (#13705).
+`CARGO_INCREMENTAL=0` keeps `target/` from filling a small disk.
+
 ### Local mirror of the required hosted gate
 
 Hosted CI is requested late (merge-ready), so the coding session carries the
@@ -116,9 +123,9 @@ PR-native continuation record's `Validation:` line (see
 
 | Hosted step | Local command | Notes |
 | --- | --- | --- |
-| fmt, policy, dependency/process/network, selected Clippy | `cargo xtask precommit` | Selects Clippy packages from the diff. |
+| fmt, policy, dependency/process/network, selected Clippy | `cargo xtask precommit` | Selects Clippy packages from the diff. `check-file-policy` builds test binaries to list `covered_by` tests only when the diff touches Rust source, a manifest, a workspace-wide Rust control file or `policy/`; otherwise the reports say the listing was not run (#13705). When it does build, a library unit-test selector (`cargo test -p <package> --lib <module path>`) is checked against source instead of building the library test target, and its row says `not_listed`. Hosted `ci-policy` and `cargo xtask check-file-policy` always build and list. |
 | Evidence promotion honesty | `cargo xtask check-evidence-promotion-honesty` | Not part of `precommit`; run when evidence promotion changes. |
-| All-features check | `cargo check -p ripr --all-targets --all-features` | Run for `ripr` changes. The hosted run has no separate `cargo check --workspace --all-targets` step; Strict Clippy builds the same units (#10341). |
+| Strict all-features RIPR Clippy | `cargo clippy -p ripr --all-targets --all-features -- -D warnings` | Lints optional-feature code as well as type-checking it. The default workspace pass below retains disabled-feature branches. The hosted run has no separate `cargo check --workspace --all-targets` step; Strict Clippy builds the same units (#10341). |
 | Strict workspace Clippy | `cargo clippy --workspace --all-targets -- -D warnings` | Hosted always runs the full workspace. |
 | Required Rust tests | `cargo nextest run -p <impacted package>` | Hosted runs `cargo nextest run --workspace --profile ci`. A `-p` run is focused proof, not that run; `cargo-nextest` may need installing, and `.config/nextest.toml` lists `--skip` filters for the slow LSP tests. |
 | Doctests | `cargo test --workspace --doc` | Nextest does not run doctests. |
@@ -235,6 +242,32 @@ features, doctests, ignored tests, configuration, retries and execution behavior
 
 ## Workflow policy
 
+Run semantic workflow validation before paying for hosted qualification:
+
+```text
+uvx --from jactionlint==2.5.0 jactionlint --config-file .github/jactionlint.yaml --profile correctness --no-online --shellcheck= --pyflakes=
+```
+
+Run from the repository root so the complete workflow/action/config set is
+checked, not only changed lines. This matches the initial `workflow-lint.yml`
+scope: Actions correctness, explicitly excluding external ShellCheck/Pyflakes.
+Both commands explicitly load the repository-owned, unsuppressed configuration;
+personal global configuration cannot disable rules in this check. Node 20 or
+newer on `PATH` is needed for the `github-script-syntax` check. If Node is
+unavailable, record that dimension as omitted; a successful local exit does not
+then establish the same JavaScript syntax coverage as the hosted Ubuntu run.
+Keep any separate script/security checks. It neither proves concurrency or
+release independence nor measures cold/warm hosted-cache behavior.
+
+A user-level `uv tool install jactionlint` exposes `jactionlint` directly; verify
+`jactionlint --version` before comparing it with the hosted pin. If an existing
+agent session cannot find it, inspect `uv tool dir --bin` or use the pinned
+`uvx --from` command above. Do not fall back to a Python YAML parse because
+`actionlint` is absent. Record the actual version, command, exit status, findings
+and omitted coverage; do not add blanket ignores or a baseline to make it green.
+
+The semantic linter supplements the existing repository workflow policy:
+
 ```bash
 cargo xtask check-workflows
 ```
@@ -250,7 +283,7 @@ cargo xtask check-droid-review-config
 
 Run this with `check-workflows` for changes to:
 
-- `.github/workflows/droid.yml` or `droid-security-scan.yml`;
+- `.github/workflows/droid-security-scan.yml` or the retired development-review event boundary;
 - `docs/agent-context/review-invariants.md` or `droid-smoke-tests.md`;
 - `.factory/skills/review-guidelines/SKILL.md` or `.factory/rules/droid-review.md`.
 

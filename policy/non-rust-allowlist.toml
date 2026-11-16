@@ -177,6 +177,33 @@ reason = "Product-independent workflow and agent policy package manifest."
 covered_by = ["cargo check -p repo-policy --locked"]
 
 [[allow]]
+glob = "evals/Cargo.toml"
+kind = "rust_manifest"
+owner = "evals"
+surface = "rust"
+classification = "config"
+reason = "Tier 2 excluded evals workspace manifest (#14643)."
+covered_by = ["cargo check --manifest-path evals/Cargo.toml --locked"]
+
+[[allow]]
+glob = "evals/Cargo.lock"
+kind = "rust_lockfile"
+owner = "evals"
+surface = "rust"
+classification = "metadata"
+reason = "Pinned Cargo lockfile for the Tier 2 excluded evals workspace (#14643)."
+covered_by = ["cargo check --manifest-path evals/Cargo.toml --locked"]
+
+[[allow]]
+glob = "evals/**/Cargo.toml"
+kind = "rust_manifest"
+owner = "evals"
+surface = "rust"
+classification = "config"
+reason = "Tier 2 excluded evals workspace member manifests (#14643)."
+covered_by = ["cargo test --manifest-path evals/Cargo.toml --locked"]
+
+[[allow]]
 glob = "tools/activate-rust.sh"
 kind = "shell_activation"
 owner = "rust"
@@ -198,6 +225,26 @@ covered_by_unix = ["cargo test -p xtask --test rust_activation"]
 
 # The harness can also run directly as `bash tools/test-activate-rust.sh`.
 # Unix workspace tests own behavioral coverage; native Windows is not claimed.
+
+[[allow]]
+glob = "tools/provision-dev.cjs"
+kind = "developer_provisioning"
+owner = "rust/setup"
+surface = "repo"
+classification = "tooling"
+reason = "#13437: explicit dependency-free Node bootstrap must install Rust before Cargo can run; reuses checked setup requirements and existing activation/editor verification, with bounded literal-argv child processes and explicit online downloads. Ordinary diagnosis stays read-only."
+covered_by = ["cargo xtask check-file-policy"]
+covered_by_unix = ["cargo test -p xtask --test developer_provisioning"]
+
+[[allow]]
+glob = "tools/provision-dev.test.cjs"
+kind = "developer_provisioning_test"
+owner = "rust/setup"
+surface = "repo"
+classification = "test"
+reason = "#13437: Node built-in behavioral controls exercise the pre-compiler provisioning boundary without live downloads; Rust-owned integration runs the same suite."
+covered_by = ["cargo xtask check-file-policy"]
+covered_by_unix = ["cargo test -p xtask --test developer_provisioning"]
 
 # ---------------------------------------------------------------------------
 # Distribution adapters
@@ -271,6 +318,15 @@ reason = "Dependabot update configuration for Cargo, npm, and GitHub Actions."
 covered_by = []
 
 [[allow]]
+glob = ".github/jactionlint.yaml"
+kind = "workflow_lint_config"
+owner = "release/ci"
+surface = "ci"
+classification = "config"
+reason = "Declarative configuration consumed by pinned jactionlint; keeps local and hosted workflow rule policy repository-owned."
+covered_by = ["uvx --from jactionlint==2.5.0 jactionlint --config-file .github/jactionlint.yaml --profile correctness --no-online --shellcheck= --pyflakes="]
+
+[[allow]]
 glob = ".github/settings.yml"
 kind = "github_settings_contract"
 owner = "repo-process"
@@ -322,6 +378,15 @@ owner = "release/ci"
 surface = "ci"
 classification = "config"
 reason = "Codecov configuration for coverage status checks and reporting."
+covered_by = []
+
+[[allow]]
+glob = ".pre-commit-hooks.yaml"
+kind = "pre_commit_hook_manifest"
+owner = "release/ci"
+surface = "ci"
+classification = "config"
+reason = "Hook manifest the pre-commit framework reads from this repository root so consumers can reference the advisory ripr check by id."
 covered_by = []
 
 # ---------------------------------------------------------------------------
@@ -736,6 +801,15 @@ covered_by = ["npm --prefix packaging/npm/launcher pack --dry-run --json --ignor
 # ---------------------------------------------------------------------------
 
 [[allow]]
+glob = "tools/repo-policy/tests/workflow_contracts/fixtures/inventory-map.json"
+kind = "fixture_input"
+owner = "repo-policy"
+surface = "fixtures"
+classification = "fixture"
+reason = "Frozen workflow-contract test identities verify that executable consolidation preserves every original logical case and ignored state (#12914)."
+covered_by = ["cargo test -p repo-policy --test workflow_contracts workflow_contracts::inventory_contract", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "docs/agent-context/review-conversations.fixture.json"
 kind = "fixture_input"
 owner = "agents/review"
@@ -753,6 +827,15 @@ surface = "fixtures"
 classification = "fixture"
 reason = "Packaged sample workspace and diff are analyzed inputs."
 covered_by = ["cargo xtask check-fixture-contracts"]
+
+[[allow]]
+glob = "examples/**"
+kind = "starter_example"
+owner = "docs"
+surface = "docs"
+classification = "fixture"
+reason = "Starter example projects (Rust, Python, TypeScript) a new user runs ripr on; each carries analyzed source, a diff and a strengthened test file (#14151)."
+covered_by = ["cargo test -p ripr --test starter_examples"]
 
 [[allow]]
 glob = "fixtures/**"
@@ -827,6 +910,24 @@ reason = "Controlled inputs, specs, and corpora consumed by the B1-B6 agentic-su
 covered_by = ["cargo xtask agentic-bench", "cargo xtask check-file-policy"]
 
 [[allow]]
+glob = "benchmarks/agent_eval/baseline.json"
+kind = "benchmark_receipt"
+owner = "agent-eval"
+surface = "repo"
+classification = "metadata"
+reason = "Committed baseline of the answer-keyed agent eval (#14298): per-scenario, per-route estimated tokens to the answer and loop checks, compared by cargo xtask agent-eval --compare."
+covered_by = ["cargo xtask agent-eval --compare benchmarks/agent_eval/baseline.json", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/agent-discrimination/**"
+kind = "benchmark_fixture"
+owner = "agent-efficiency-bench"
+surface = "fixtures"
+classification = "fixture"
+reason = "Agent A/B discrimination harness (issue #13113): recorded scenario crate content trees, seed-study context captures and reports, and POSIX evaluator/record scripts. Scenario crates are analyzed inputs; the shell scripts must run under the solver's POSIX shell (Git Bash/WSL) alongside cargo, not inside cargo, so an xtask port cannot host them."
+covered_by = ["cargo xtask check-file-policy", "bash benchmarks/agent-discrimination/eval.sh", "bash benchmarks/agent-discrimination/make-scenario-crates.sh"]
+
+[[allow]]
 glob = "crates/ripr/vendor/**"
 kind = "vendor_proto"
 owner = "analysis"
@@ -888,6 +989,15 @@ surface = "fixtures"
 classification = "fixture"
 reason = "Pinned upstream Kani contract examples and an authored no-promotion report projection; no native-run capture claim."
 covered_by = ["cargo test -p ripr --test kani_report_cli"]
+
+[[allow]]
+glob = "xtask/tests/fixtures/kani-cover-evidence/provenance.json"
+kind = "kani_native_conformance_fixture"
+owner = "verification/kani-lane"
+surface = "fixtures"
+classification = "fixture"
+reason = "Authored provenance for retained native cover-evidence fixtures replayed by the lane tests; the capture record is not authenticated execution."
+covered_by = ["cargo test -p xtask kani_lane::tests::pinned_native_cover_captures_keep_distinct_lane_dispositions", "cargo xtask check-file-policy"]
 
 [[allow]]
 glob = "crates/ripr/src/app/kani_import/fixtures/native-captures/**"
@@ -1194,3 +1304,48 @@ surface = "repo"
 classification = "tooling"
 reason = "Stdlib Python cohort scoring and accounting owner retained from #13071; the Rust-owned selftest executes native and accounting controls without model calls (#12902)."
 covered_by = ["cargo test -p xtask --test agent_cohort_selftest", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/mutation_spot_check/corpus.json"
+kind = "benchmark_metadata"
+owner = "mutation-spot-check"
+surface = "repo"
+classification = "metadata"
+reason = "Pinned checkouts (name, URL, full revision, optional cargo-mutants arguments) read by the hosted Mutation Spot Check workflow to build its --repo list; data only, no logic (#12901)."
+covered_by = ["cargo xtask check-workflows", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/mutation_spot_check/corpus-typescript.json"
+kind = "benchmark_metadata"
+owner = "mutation-spot-check"
+surface = "repo"
+classification = "metadata"
+reason = "Pinned TypeScript package list (full SHAs, Stryker version, mutate globs) read by .github/workflows/mutation-spot-check-typescript.yml for the Stryker real-mutant spot check (#12901); declarative data, no logic. The workflow has not run."
+covered_by = ["cargo xtask check-workflows", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/mutation_spot_check/corpus-python.json"
+kind = "benchmark_metadata"
+owner = "mutation-spot-check"
+surface = "repo"
+classification = "metadata"
+reason = "Pinned Python package list (full SHAs, cosmic-ray version, module paths, test commands) read by .github/workflows/mutation-spot-check-python.yml for the cosmic-ray real-mutant spot check (#12901); declarative data, no logic. The workflow has not run."
+covered_by = ["cargo xtask check-workflows", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "tools/ci/shard-verifier-artifact.py"
+kind = "shard_verifier_bootstrap"
+owner = "ci/shard-verifier"
+surface = "ci"
+classification = "tooling"
+reason = "#14580: the unprivileged verify job must validate the downloaded xtask before executing it and intentionally has no Rust toolchain/build; runner-provided stdlib Python checks exact artifact identity, ZIP members and hashes without bootstrapping trust from that binary."
+covered_by = ["cargo xtask check-file-policy", "cargo xtask check-network-policy"]
+
+[[allow]]
+glob = "tools/ci/test_shard_verifier_artifact.py"
+kind = "shard_verifier_bootstrap_controls"
+owner = "ci/shard-verifier"
+surface = "ci"
+classification = "test"
+reason = "#14580: stdlib command-entry/ZIP controls execute the actual Python bootstrap and workflow shell with inert binaries and a fixture GitHub API; the Linux repo-policy integration test runs this suite in ordinary workspace qualification."
+covered_by = ["cargo xtask check-file-policy", "cargo xtask check-process-policy"]

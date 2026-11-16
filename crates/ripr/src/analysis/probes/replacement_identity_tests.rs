@@ -478,14 +478,15 @@ fn a_guard_replacement_does_not_consume_an_identical_unpaired_arm() -> Result<()
         vec!["-4 +4", "-13 +12,0"]
     );
     // Equal text is not equal identity: old 4 has a counterpart; old 13 does not.
-    // A zero-length new range anchors the deletion at the preceding new line12.
+    // A zero-length new range (`+12,0`) names the line before the gap, so the
+    // deletion anchors at the next new line, 13 (#13098).
     assert_eq!(
         changed
             .removed_lines
             .iter()
             .map(|line| (line.line, line.new_side_line, line.text.trim()))
             .collect::<Vec<_>>(),
-        vec![(4, 4, "n if n < 0 => -1,"), (13, 12, "n if n < 0 => -1,")]
+        vec![(4, 4, "n if n < 0 => -1,"), (13, 13, "n if n < 0 => -1,")]
     );
     assert_eq!(
         changed
@@ -515,7 +516,7 @@ fn a_guard_replacement_does_not_consume_an_identical_unpaired_arm() -> Result<()
         vec![
             LiteralIdentity {
                 file: "src/lib.rs",
-                line: 12,
+                line: 13,
                 family: "match_arm",
                 expression: "n if n < 0 => -1,",
                 before: Some("n if n < 0 => -1,"),
@@ -525,7 +526,7 @@ fn a_guard_replacement_does_not_consume_an_identical_unpaired_arm() -> Result<()
             },
             LiteralIdentity {
                 file: "src/lib.rs",
-                line: 12,
+                line: 13,
                 family: "predicate",
                 expression: "n if n < 0 => -1,",
                 before: Some("n if n < 0 => -1,"),
@@ -639,7 +640,7 @@ fn pure_short_conjunct_edits_keep_exact_current_and_historical_identities() -> R
             (Some("src/a.rs"), vec![(3, 4)], vec![(4, 3)]),
             (Some("src/b.rs"), vec![(3, 3)], vec![(3, 3)]),
             (Some("src/c.rs"), vec![(3, 3)], vec![(3, 3)]),
-            (Some("src/d.rs"), vec![(3, 2)], vec![]),
+            (Some("src/d.rs"), vec![(3, 3)], vec![]),
         ]
     );
     // Added/deleted conjuncts retain current arm heads. The unchanged-chain
@@ -707,7 +708,7 @@ fn pure_short_conjunct_edits_keep_exact_current_and_historical_identities() -> R
         vec![
             LiteralIdentity {
                 file: "src/d.rs",
-                line: 2,
+                line: 3,
                 family: "match_arm",
                 expression: "n if m > 0 && n <= 0 => -1,",
                 before: Some("n if m > 0 && n <= 0 => -1,"),
@@ -717,7 +718,7 @@ fn pure_short_conjunct_edits_keep_exact_current_and_historical_identities() -> R
             },
             LiteralIdentity {
                 file: "src/d.rs",
-                line: 2,
+                line: 3,
                 family: "predicate",
                 expression: "n if m > 0 && n <= 0 => -1,",
                 before: Some("n if m > 0 && n <= 0 => -1,"),

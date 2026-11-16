@@ -893,13 +893,12 @@ fn write_after_verification_snapshot(root: &Path) -> Result<(String, String), St
     let temporary = path.with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
     // Mirrors the snapshot's own run_status so the receipt never calls an
     // after analysis complete when the file it hashes says it is limited.
-    let run_status = if report.limit_info.is_some() {
-        "seam_limit_applied".to_string()
-    } else if declined_files {
-        crate::output::repo_exposure::GeneratedRustSkip::DECLINED_RUN_STATUS.to_string()
-    } else {
-        "complete".to_string()
-    };
+    let run_status = after_analysis_run_status(
+        !report.evidence_limitations.is_empty(),
+        report.limit_info.is_some(),
+        declined_files,
+    )
+    .to_string();
     let write_result = (|| -> Result<(), String> {
         let file = crate::output::file_write::create_exclusive(&temporary)
             .map_err(|error| format!("create {} failed: {error}; check that the directory is writable and has free space, then rerun the verify phase", temporary.display()))?;
@@ -910,6 +909,7 @@ fn write_after_verification_snapshot(root: &Path) -> Result<(String, String), St
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip.as_ref(),
+            &report.evidence_limitations,
             &context,
             &mut writer,
         )
@@ -934,6 +934,25 @@ fn write_after_verification_snapshot(root: &Path) -> Result<(String, String), St
     let _ = std::fs::remove_file(&temporary);
     published?;
     Ok((digest, run_status))
+}
+
+/// The after analysis's run status. A failed evidence warm (#13340) voids every
+/// seam's evidence, so it outranks a seam cap or declined files; any value other
+/// than `complete` types the movement `limited`, never an improvement.
+fn after_analysis_run_status(
+    evidence_failed: bool,
+    seam_limit_applied: bool,
+    declined_files: bool,
+) -> &'static str {
+    if evidence_failed {
+        "limited_seam_evidence"
+    } else if seam_limit_applied {
+        "seam_limit_applied"
+    } else if declined_files {
+        crate::output::repo_exposure::GeneratedRustSkip::DECLINED_RUN_STATUS
+    } else {
+        "complete"
+    }
 }
 
 /// One seam entry reduced to the fields the native-identity join and the
@@ -2236,6 +2255,8 @@ mod python_repair_verification_semantics {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            external_test_file_target: false,
+            new_test_proposal: None,
         })
     }
 
@@ -3527,6 +3548,8 @@ mod python_repair_verification_semantics {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            external_test_file_target: false,
+            new_test_proposal: None,
         };
         let baseline = crate::edit_cage::capture_attempt_baseline(&fixture.root, &policy)?;
         ensure(
@@ -3563,6 +3586,183 @@ mod python_repair_verification_semantics {
             content.contains("assert!(true)"),
             "the refusal happens before any destructive command",
         )
+    }
+
+    // ------------------------------------------------------------------
+    // Rollback guard operational failures and the bounded git readers.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn bounded_git_readers_trim_text_keep_bytes_and_refuse_failures() -> Result<(), String> {
+        let fixture = rollback_fixture("git-readers")?;
+        let root = fixture.root.as_path();
+        std::fs::write(root.join("raw.bin"), [0xffu8, 0xfe, b'\n', b'\n'])
+            .map_err(|error| format!("write raw blob: {error}"))?;
+        rollback_git(root, &["add", "raw.bin"])?;
+        rollback_git(root, &["commit", "-qm", "raw"])?;
+        let blob = git_text_with_limit(root, &["rev-parse", "HEAD:raw.bin"])?;
+        ensure(
+            blob.len() == 40 && blob.trim() == blob,
+            format!("the text reader must return a trimmed object id: {blob:?}"),
+        )?;
+
+        // Text readers trim trailing whitespace; the byte reader never does.
+        let head_text = git_text_with_limit(root, &["rev-parse", "HEAD"])?;
+        let head_bytes = git_bytes_with_limit(root, &["rev-parse", "HEAD"])?;
+        ensure(
+            head_bytes.ends_with(b"\n") && head_bytes.len() == head_text.len() + 1,
+            format!("the byte reader must keep the trailing newline: {head_bytes:?}"),
+        )?;
+        let raw = git_bytes_with_limit(root, &["cat-file", "blob", &blob])?;
+        ensure(
+            raw == [0xffu8, 0xfe, b'\n', b'\n'],
+            format!("the byte reader must return the blob untouched: {raw:?}"),
+        )?;
+
+        // Non-UTF-8 output is a refusal for the text reader, never lossy text.
+        let utf8 = refusal_of(
+            git_text_with_limit(root, &["cat-file", "blob", &blob]),
+            "non-UTF-8 text",
+        )?;
+        ensure(
+            utf8.contains("git cat-file emitted non-UTF-8 output"),
+            format!("the text reader must name the non-UTF-8 output: {utf8}"),
+        )?;
+
+        // A failing git command names the subcommand on both readers.
+        for (label, error) in [
+            (
+                "text",
+                refusal_of(
+                    git_text_with_limit(root, &["cat-file", "blob", &"0".repeat(40)]),
+                    "text failure",
+                )?,
+            ),
+            (
+                "bytes",
+                refusal_of(
+                    git_bytes_with_limit(root, &["cat-file", "blob", &"0".repeat(40)]),
+                    "bytes failure",
+                )?,
+            ),
+        ] {
+            ensure(
+                error.contains("git cat-file failed:")
+                    && error.contains("then rerun the verify phase"),
+                format!("the {label} reader must name the failed subcommand: {error}"),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// The captured baseline of a clean selected target plus its applied edit,
+    /// ready for `run_rollback`.
+    fn rollback_with_applied_edit(
+        label: &str,
+    ) -> Result<(RollbackFixture, crate::edit_cage::AttemptBaseline, String), String> {
+        let fixture = rollback_fixture(label)?;
+        let baseline =
+            crate::edit_cage::capture_attempt_baseline(&fixture.root, &rollback_policy()?)?;
+        std::fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            "fn boundary() { assert!(true); }\n",
+        )
+        .map_err(|error| format!("write applied edit: {error}"))?;
+        let head = crate::agent::artifact::current_git_head(&fixture.root)?;
+        Ok((fixture, baseline, head))
+    }
+
+    fn rollback_block_reason(
+        fixture: &RollbackFixture,
+        baseline: &crate::edit_cage::AttemptBaseline,
+        head: &str,
+    ) -> Result<String, String> {
+        let outcome = run_rollback(
+            &fixture.root,
+            &["tests/pricing.rs".to_string()],
+            &rollback_allowed(),
+            baseline,
+            head,
+        );
+        ensure(
+            outcome.state == "blocked" && outcome.post_rollback_head.is_none(),
+            format!("an unverifiable or failed restore must block, got {outcome:?}"),
+        )?;
+        outcome
+            .reason
+            .ok_or_else(|| "the block must carry a reason".to_string())
+    }
+
+    fn edit_still_on_disk(fixture: &RollbackFixture) -> Result<(), String> {
+        let content = std::fs::read_to_string(fixture.root.join("tests/pricing.rs"))
+            .map_err(|error| format!("read target after blocked rollback: {error}"))?;
+        ensure(
+            content.contains("assert!(true)"),
+            "a blocked rollback must leave the applied edit untouched",
+        )
+    }
+
+    #[test]
+    fn rollback_treats_an_unreadable_baseline_blob_as_destructive() -> Result<(), String> {
+        let (fixture, baseline, head) = rollback_with_applied_edit("blob-missing")?;
+        // Positive control: with the blob present the same inputs prove.
+        let control = rollback_with_applied_edit("blob-control")?;
+        let proved = run_rollback(
+            &control.0.root,
+            &["tests/pricing.rs".to_string()],
+            &rollback_allowed(),
+            &control.1,
+            &control.2,
+        );
+        ensure(
+            proved.state == "proved",
+            format!("the control restore must prove, got {proved:?}"),
+        )?;
+
+        // Removing the loose baseline blob makes the destruction guard
+        // unable to compare content: the restore is refused, not attempted.
+        let oid = git_text_with_limit(&fixture.root, &["rev-parse", "HEAD:tests/pricing.rs"])?;
+        let loose = fixture
+            .root
+            .join(".git/objects")
+            .join(&oid[..2])
+            .join(&oid[2..]);
+        std::fs::remove_file(&loose)
+            .map_err(|error| format!("remove loose blob {}: {error}", loose.display()))?;
+        let reason = rollback_block_reason(&fixture, &baseline, &head)?;
+        ensure(
+            reason.contains("the baseline index blob") && reason.contains("could not be read"),
+            format!("the refusal must name the unreadable blob: {reason}"),
+        )?;
+        edit_still_on_disk(&fixture)
+    }
+
+    #[test]
+    fn rollback_treats_an_unreadable_index_as_destructive() -> Result<(), String> {
+        let (fixture, baseline, head) = rollback_with_applied_edit("index-corrupt")?;
+        std::fs::write(fixture.root.join(".git/index"), b"not an index")
+            .map_err(|error| format!("corrupt index: {error}"))?;
+        let reason = rollback_block_reason(&fixture, &baseline, &head)?;
+        ensure(
+            reason.contains("the current git index entry could not be read"),
+            format!("the refusal must name the unreadable index: {reason}"),
+        )?;
+        edit_still_on_disk(&fixture)
+    }
+
+    #[test]
+    fn rollback_reports_a_failed_restore_instead_of_proving_it() -> Result<(), String> {
+        let (fixture, baseline, head) = rollback_with_applied_edit("restore-fails")?;
+        // A held index lock lets the read-only guard pass but fails the
+        // checkout; the failure is reported and never read as a proof.
+        std::fs::write(fixture.root.join(".git/index.lock"), b"")
+            .map_err(|error| format!("hold index lock: {error}"))?;
+        let reason = rollback_block_reason(&fixture, &baseline, &head)?;
+        ensure(
+            reason.contains("git restore of the changed paths failed"),
+            format!("the block must name the failed restore: {reason}"),
+        )?;
+        edit_still_on_disk(&fixture)
     }
 
     // ------------------------------------------------------------------
@@ -3929,6 +4129,123 @@ mod python_repair_verification_semantics {
             fixture.packet_path.is_file(),
             "the retained packet the phase reads must be present",
         )
+    }
+
+    #[test]
+    fn failed_evidence_warm_after_analysis_types_movement_limited_not_improved()
+    -> Result<(), String> {
+        ensure(
+            after_analysis_run_status(true, true, true) == "limited_seam_evidence",
+            "a failed evidence warm outranks a seam cap and declined files",
+        )?;
+        ensure(
+            after_analysis_run_status(false, false, false) == "complete",
+            "a healthy walk stays complete",
+        )?;
+        ensure(
+            after_analysis_run_status(false, true, false) == "seam_limit_applied",
+            "a seam cap without a failed warm keeps its status",
+        )?;
+        let owner = "price";
+        let discriminator = "amount >= threshold";
+        let before = snapshot(vec![seam(
+            "s1",
+            owner,
+            discriminator,
+            true,
+            "weakly_gripped",
+            "weak",
+        )]);
+        // The opaque stand-ins of a failed warm must never read as an improvement.
+        let after = snapshot(vec![seam(
+            "s1",
+            owner,
+            discriminator,
+            false,
+            "strongly_gripped",
+            "strong",
+        )]);
+        let failed = compare_movement(
+            &before,
+            &after,
+            after_analysis_run_status(true, false, false),
+            owner,
+            discriminator,
+            "s1",
+        )?;
+        ensure(
+            failed.state == "limited",
+            format!("a failed warm must type limited, got `{}`", failed.state),
+        )?;
+        let healthy = compare_movement(
+            &before,
+            &after,
+            after_analysis_run_status(false, false, false),
+            owner,
+            discriminator,
+            "s1",
+        )?;
+        ensure(
+            healthy.state != "limited",
+            "the same snapshots over a healthy walk resolve the join",
+        )
+    }
+
+    /// #13340: a failed evidence warm reaches the after snapshot instead of
+    /// being refused early, and the status the receipt carries equals the
+    /// published snapshot's own `run_status`; a healthy root stays `complete`.
+    #[test]
+    fn failed_evidence_warm_snapshot_and_receipt_status_agree() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let _cwd = crate::testing::cwd_lock::hold_cwd();
+        let make_root = |label: &str| -> Result<PathBuf, String> {
+            let root = unique_root(label)?;
+            std::fs::create_dir_all(root.join("src"))
+                .map_err(|error| format!("create src: {error}"))?;
+            std::fs::write(
+                root.join("Cargo.toml"),
+                "[package]\nname=\"after-warm\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+            )
+            .map_err(|error| format!("write manifest: {error}"))?;
+            std::fs::write(
+                root.join("src/lib.rs"),
+                "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+            )
+            .map_err(|error| format!("write lib: {error}"))?;
+            Ok(root)
+        };
+        let published = |root: &Path| -> Result<(String, String), String> {
+            let (_, status) = write_after_verification_snapshot(root)?;
+            let bytes = std::fs::read(root.join(AFTER_VERIFICATION_SNAPSHOT_REL))
+                .map_err(|error| format!("read snapshot: {error}"))?;
+            let value: Value = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("decode snapshot: {error}"))?;
+            let in_file = value
+                .get("run_status")
+                .and_then(Value::as_str)
+                .ok_or("snapshot has no run_status")?
+                .to_string();
+            Ok((status, in_file))
+        };
+
+        // Unarmed control on its own root: its cached healthy walk cannot
+        // answer the armed runs.
+        let control = make_root("after-warm-control")?;
+        let (status, in_file) = published(&control)?;
+        ensure(
+            status == "complete" && in_file == "complete",
+            format!("healthy control must stay complete: {status} / {in_file}"),
+        )?;
+        for point in [1u8, 2u8] {
+            let root = make_root(&format!("after-warm-{point}"))?;
+            let _armed = WarmPanicGuard::arm(point);
+            let (status, in_file) = published(&root)?;
+            ensure(
+                status == "limited_seam_evidence" && in_file == status,
+                format!("point {point}: receipt `{status}` vs snapshot `{in_file}`"),
+            )?;
+        }
+        Ok(())
     }
 
     #[test]

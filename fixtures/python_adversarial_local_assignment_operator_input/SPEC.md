@@ -27,8 +27,10 @@ def test_base_unchanged():
 ```
 
 A plain local assignment (`total = base - bonus`) is not recognized by
-`classify_probe_shape`, so it previously fell to that function's **default**
-`(Predicate, Control)` arm. The empty-delta operand fallback (#1278) is keyed on a
+`classify_probe_shape`, so it falls to that function's **default**
+`(Predicate, Control)` arm for analysis. The finding presents itself as a value
+change (`return_value` family, `value` delta; #13587) because it tests no
+condition; analysis, gates and credit still use the default arm. The empty-delta operand fallback (#1278) is keyed on a
 control-flow change, so a default-`Control` assignment wrongly kept the fallback and
 credited `changed_sink_token` on the unchanged operand `base`. The test never
 observes `total`, so it cannot notice if the `+`/`-` change were wrong.
@@ -46,6 +48,13 @@ local or augmented assignment is not a control-flow line, so the fallback is
 withheld and the unchanged input operand is not credited. A discriminating test that
 observes the owner's call result (`assert compute(10, 3) == 7`) still classifies
 `exposed` via the `direct` path (a companion unit test pins this).
+
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_calc.py:python_preview:3ddbe784 -> weakly_exposed
+```
 
 ## Must Not
 

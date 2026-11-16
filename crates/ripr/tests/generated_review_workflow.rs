@@ -270,31 +270,59 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
         !summary.contains("Safe next action command: `none`"),
         "summary still says there is no safe next action"
     );
-    // Each full report is collapsed under its at-a-glance lines: every
-    // `Full report` opener has its own closer, and no report's top-level
-    // heading (the workflow's own headings are `##` and deeper) is visible
-    // outside a collapsed block.
-    let openers = summary.matches("<details><summary>Full report: ").count();
-    assert!(openers > 0, "summary collapses no full report:\n{summary}");
-    // The governance fold is a `<details>` block too, so compare every opener.
+    // Full reports are named for the uploaded artifact, not inlined
+    // (#14301): no report's top-level heading (the summary's own headings are
+    // `##` and deeper) appears anywhere, and the page stays bounded.
+    assert!(
+        summary.contains("- Full report: `")
+            && summary.contains("` in the `ripr-reports` artifact"),
+        "summary names no full report:\n{summary}"
+    );
+    // The artifact is rooted at `target/` (it uploads `target/ripr` and
+    // `target/ci`), so a named report drops that prefix.
+    assert!(!summary.contains("- Full report: `target/"), "{summary}");
+    // Every line that points into the artifact uses the same form: a
+    // `target/` path there names a file the downloaded archive lacks.
+    let workspace_paths = summary
+        .lines()
+        .filter(|line| line.to_lowercase().contains("artifact") && line.contains("`target/"))
+        .collect::<Vec<_>>();
+    assert!(workspace_paths.is_empty(), "{workspace_paths:#?}");
+    // Each file a line places in the `ripr-reports` artifact is named by its
+    // path there (`ripr/...` or `ci/...`), never a bare or workspace name.
+    let misnamed = summary
+        .lines()
+        .filter(|line| line.contains("the `ripr-reports` artifact"))
+        .flat_map(|line| line.split('`').skip(1).step_by(2))
+        .filter(|name| *name != "ripr-reports")
+        .filter(|name| !(name.starts_with("ripr/") || name.starts_with("ci/")))
+        .collect::<Vec<_>>();
+    assert!(misnamed.is_empty(), "{misnamed:#?}");
+    assert!(
+        summary.contains("- Pilot reports: `ripr/pilot/`")
+            && summary.contains("- CI labels and plan inputs: `ci/`"),
+        "{summary}"
+    );
+    assert!(
+        !summary.contains("<details><summary>Full report: "),
+        "{summary}"
+    );
     assert_eq!(
         summary.matches("<details").count(),
         summary.matches("</details>").count(),
         "every collapsed block must close"
     );
-    let mut collapsed = false;
     for line in summary.lines() {
-        if line.starts_with("<details><summary>Full report: ") {
-            collapsed = true;
-        } else if line == "</details>" {
-            collapsed = false;
-        } else if !collapsed {
-            assert!(
-                !line.starts_with("# "),
-                "a full report's heading is visible outside its collapsed block: {line}"
-            );
-        }
+        assert!(
+            !line.starts_with("# "),
+            "a full report is inlined in the summary: {line}"
+        );
     }
+    assert!(
+        summary.len() < 20_000,
+        "the step summary must stay bounded; it is {} bytes:\n{summary}",
+        summary.len()
+    );
 
     // The annotation GitHub places on the changed line carries the same
     // repair start, and nothing that points into this runner's checkout
@@ -432,11 +460,9 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
             .any(|command| command.contains("--phase before")),
         "a before-phase command must not be labelled as a post-edit step: {deferred:?}"
     );
-    for label in [
-        "ripr agent verify ",
-        "ripr agent receipt ",
-        "ripr assistant-loop proof ",
-    ] {
+    // `ripr assistant-loop proof` is printed by the full reports the summary
+    // names in the artifact rather than inlines (#14301).
+    for label in ["ripr agent verify ", "ripr agent receipt "] {
         assert!(
             deferred.iter().any(|command| command.starts_with(label)),
             "expected the summary to print `{label}...` as a post-edit step: {deferred:?}"
@@ -802,9 +828,11 @@ fn doctor_packet_refresh_and_first_check_preserve_physical_root_identity()
                 .lines()
                 .find_map(|line| line.strip_prefix("- Recommended first command: "))
                 .ok_or("doctor emitted no recommended check")?;
+            // The fixture's only remote branch is `origin/trunk`, so no
+            // default base resolves and the check names an explicit one.
             assert_eq!(
                 recommended,
-                format!("ripr check --root '{}'", selected.display())
+                format!("ripr check --root '{}' --base REF", selected.display())
             );
             let after = paths.iter().map(fs::read).collect::<Result<Vec<_>, _>>()?;
             assert_eq!(
@@ -959,7 +987,10 @@ fn doctor_packet_refresh_uses_lossless_alias_for_non_utf8_physical_root()
             refresh,
             format!("ripr first-pr --root '{}' --head HEAD", absolute.display())
         );
-        assert_eq!(check, format!("ripr check --root '{}'", absolute.display()));
+        assert_eq!(
+            check,
+            format!("ripr check --root '{}' --base REF", absolute.display())
+        );
         assert!(!refresh.contains('\u{fffd}') && !check.contains('\u{fffd}'));
     }
     // Here both the physical spelling and the absolute original spelling
@@ -3463,8 +3494,8 @@ fn generated_compact_body_lifts_code_spans_of_any_fence_length() -> Result<(), B
     Ok(())
 }
 
-/// The CI summary's PR review summary and Recommended next test blocks,
-/// collapsed full reports included, print commands a reader copies on
+/// The CI summary's PR review summary and Recommended next test blocks
+/// print commands a reader copies on
 /// another machine. When `ripr agent start` bound them to the runner's
 /// absolute checkout (#3999), the summary names the repository root `.`
 /// instead, like the Agent review packet block; a sibling path that only
@@ -3536,11 +3567,12 @@ fn generated_summary_prints_repository_relative_commands() -> Result<(), Box<dyn
             !without_sibling.contains(checkout),
             "{heading:?} prints the runner checkout path:\n{block}"
         );
-        // The at-a-glance line and the collapsed full report both rewrite.
+        // The at-a-glance line rewrites; the full report is named for the
+        // artifact, not inlined (#14301).
         assert_eq!(
             block.matches(relative_verify).count(),
-            2,
-            "{heading:?} must print verify at the repository root twice:\n{block}"
+            1,
+            "{heading:?} must print verify at the repository root once:\n{block}"
         );
     }
     assert!(
@@ -3551,10 +3583,9 @@ fn generated_summary_prints_repository_relative_commands() -> Result<(), Box<dyn
         summary.contains("ripr agent brief --root '.' --seam-id s1 --json"),
         "{summary}"
     );
-    assert!(
-        summary.contains(&format!("- Notes: `{sibling}`")),
-        "a path that only shares the checkout prefix must stay as written:\n{summary}"
-    );
+    // The sibling-prefix `Notes` line lived only in the inlined full report,
+    // which the summary now names instead (#14301); the rewrite's prefix edge
+    // stays pinned by `repo_relative_*` in `ci_summary/jq.rs`.
 
     if let Some(parent) = root.parent() {
         fs::remove_dir_all(parent)?;
@@ -4480,6 +4511,32 @@ fn generated_install_windows_zip_route_replays_securely() -> Result<(), Box<dyn 
             "duplicate entry",
         ),
         (
+            "literal-match-only",
+            zip_bytes(&[file("riprXexe", good_exe.as_bytes())])?,
+            "does not contain ripr.exe at its root",
+        ),
+        (
+            "lone-uppercase",
+            zip_bytes(&[file("RIPR.EXE", good_exe.as_bytes())])?,
+            "does not contain ripr.exe at its root",
+        ),
+        (
+            "case-duplicate",
+            zip_bytes(&[
+                file("ripr.exe", good_exe.as_bytes()),
+                file("RIPR.EXE", b"#!/bin/sh\necho evil"),
+            ])?,
+            "duplicate entry",
+        ),
+        (
+            "trailing-dot-duplicate",
+            zip_bytes(&[
+                file("ripr.exe", good_exe.as_bytes()),
+                file("ripr.exe.", b"#!/bin/sh\necho evil"),
+            ])?,
+            "duplicate entry",
+        ),
+        (
             "not-a-zip",
             b"this is not a zip archive".to_vec(),
             "is not a readable zip archive",
@@ -5196,4 +5253,40 @@ fn ci_packet_annotations_emit_a_notice_for_a_static_limitation() -> Result<(), B
         "{stdout}"
     );
     Ok(())
+}
+
+/// A pull request from a fork or from Dependabot gets a read-only token, so
+/// every step that writes to the pull request must carry the same trust guard
+/// the summary step uses instead of running and failing (#11206).
+#[test]
+fn comment_writing_steps_skip_fork_and_dependabot_pull_requests() -> Result<(), Box<dyn Error>> {
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-fork-guard-workflow-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root)?;
+    let result = (|| -> Result<(), Box<dyn Error>> {
+        let init = run_ripr_init(&root)?;
+        assert!(init.status.success(), "ripr init failed");
+        let workflow = fs::read_to_string(root.join(".github/workflows/ripr.yml"))?;
+        for step in [
+            "Publish RIPR summary comment",
+            "Publish RIPR inline comments",
+        ] {
+            let block = workflow_step_block(&workflow, step).ok_or("missing step")?;
+            assert!(
+                block
+                    .contains("github.event.pull_request.head.repo.full_name == github.repository"),
+                "{step} must skip fork heads:\n{block}"
+            );
+            assert!(
+                block.contains("github.actor != 'dependabot[bot]'"),
+                "{step} must skip Dependabot:\n{block}"
+            );
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&root);
+    result
 }

@@ -27,6 +27,13 @@ pub(crate) fn setup_hook_calls_owner(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
+    // A method or class-method owner relates through a receiver, which this
+    // guard does not read; a barrel-rewritten class import reports that
+    // receiver relation as `ReExportChainFollowed` (#13592 B3), so the kind
+    // alone cannot exclude it.
+    if matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod) {
+        return false;
+    }
     candidates
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())

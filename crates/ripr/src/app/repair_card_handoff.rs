@@ -1140,6 +1140,7 @@ mod tests {
         ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
     };
     use crate::analysis::test_grip_evidence::TestGripEvidence;
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{Confidence, FixInstructionState, StageEvidence, StageState};
 
     fn stage(state: StageState) -> StageEvidence {
@@ -1491,6 +1492,8 @@ mod tests {
                 line: 88,
                 owner: None,
             }),
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         entry.evidence.related_tests = vec![std::sync::Arc::new(RelatedTestGrip {
             test_name: "below_threshold_has_no_discount".to_string(),
@@ -2524,6 +2527,7 @@ mod tests {
             limitations: Vec::new(),
             non_claims: Vec::new(),
             after: None,
+            focused_receipt_evaluation: None,
             last_after_refusal: None,
             after_refusal_count: 0,
             after_refusal_history: Vec::new(),

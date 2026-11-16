@@ -103,7 +103,13 @@ read-only and without execution authority (ADR 0022):
   discriminator is accepted only on a `weakly_exposed` finding, where the
   named value is the repair target), and an established fix site (a strong-oracle,
   high-confidence directly-related test on a shared edit-cage test-surface
-  path). The first failing gate is the typed reason (`not_candidate_actionable`,
+  path; for a `weakly_exposed` finding that names its missing discriminator the
+  fix site is instead the high-confidence directly-related test of graded
+  non-strong oracle strength that the repair extends, exactly the "test to
+  extend" `ripr repair` names, because a strong direct test would make the item
+  exposed; an ungraded oracle, a lower-confidence relation or an off-surface
+  path stays refused, and the packet's `fix_site.oracle_strength` and
+  `established_by` say so). The first failing gate is the typed reason (`not_candidate_actionable`,
   `missing_discriminator`,
   `discriminator_not_populated_for_language`, `static_limitation`,
   `fix_site_not_established`,

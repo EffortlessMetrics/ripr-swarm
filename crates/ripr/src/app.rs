@@ -10,6 +10,7 @@ pub(crate) mod annotations;
 pub(crate) mod causal_projection;
 mod check;
 pub(crate) mod check_artifact;
+pub(crate) mod check_verification;
 mod context;
 pub(crate) mod diff_source;
 mod explain;
@@ -19,7 +20,6 @@ pub(crate) mod kani_import;
 mod navigation;
 pub mod pr_evidence;
 mod progress;
-pub use impacted_evidence::run_impacted_evidence_at;
 pub use pr_evidence::reject_pr_evidence_error_packet;
 pub(crate) mod feedback;
 /// Shared PR-evidence summary projection used by the `ripr` binary and the
@@ -58,6 +58,7 @@ pub fn qualify_legacy_ripr_plus_receipt(
 ) -> Result<serde_json::Value, String> {
     ripr_plus::qualify_legacy_receipt(receipt)
 }
+pub(crate) mod focused_run;
 mod selector;
 pub(crate) mod temp_diff;
 pub(crate) mod test_stub;
@@ -134,6 +135,11 @@ use crate::output;
 use std::path::PathBuf;
 
 pub(crate) const CHECK_OUTPUT_SCHEMA_VERSION: &str = "0.2";
+
+/// Schema generation of the standalone `cli_refusal` document (#11584): the
+/// shared refusal block for argv usage errors and selector misses under an
+/// explicit JSON request. Independent of every command's own generation.
+pub(crate) const CLI_REFUSAL_SCHEMA_VERSION: &str = "0.1";
 
 /// Refusal-envelope schema generation for the `analysis_timeout`
 /// input-context amendment (#10796, RIPR-SPEC-0241): generation `0.3` adds
@@ -225,6 +231,51 @@ pub(crate) const DEFAULT_CLI_GIT_TIMEOUT_SECS: u64 = 300;
 
 pub(crate) fn default_cli_git_timeout() -> std::time::Duration {
     std::time::Duration::from_secs(DEFAULT_CLI_GIT_TIMEOUT_SECS)
+}
+
+/// Parse one git-deadline value in whole seconds, `0` disabling the
+/// deadline (#2613). `source` names the flag or env var in the refusal, so a
+/// typo never runs with a silently different bound. Shared by the CLI
+/// `--git-timeout` flag and every `RIPR_GIT_TIMEOUT` reader (#14386).
+pub(crate) fn parse_git_timeout_seconds(
+    source: &str,
+    value: &str,
+) -> Result<Option<std::time::Duration>, String> {
+    let secs: u64 = value.parse().map_err(|_parse_err| {
+        format!("{source} requires a non-negative integer (seconds); got {value:?}")
+    })?;
+    let timeout = std::time::Duration::from_secs(secs);
+    if std::time::Instant::now().checked_add(timeout).is_none() {
+        return Err(format!(
+            "{source} is too large for the platform deadline; got {secs} seconds; pass a smaller number of seconds"
+        ));
+    }
+    Ok((secs > 0).then_some(timeout))
+}
+
+/// Read one `RIPR_GIT_TIMEOUT` value (#2613, #14386). `Ok(None)` means the
+/// variable is unset, so the caller keeps its own default; `Ok(Some(None))`
+/// disables the deadline. A present but unreadable or invalid value is a
+/// misconfiguration and refuses (#4374).
+pub(crate) fn git_timeout_from_env_value(
+    env_value: Result<String, std::env::VarError>,
+) -> Result<Option<Option<std::time::Duration>>, String> {
+    match env_value {
+        Ok(value) => parse_git_timeout_seconds("RIPR_GIT_TIMEOUT", &value).map(Some),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err("RIPR_GIT_TIMEOUT must be valid UTF-8".to_string())
+        }
+    }
+}
+
+/// The git deadline a long-lived adapter without a `--git-timeout` flag
+/// (`ripr mcp`) runs with: `RIPR_GIT_TIMEOUT` when set, else the CLI default
+/// (#14386). Same parser and default as `ripr check`.
+pub(crate) fn env_or_default_git_timeout(
+    env_value: Result<String, std::env::VarError>,
+) -> Result<Option<std::time::Duration>, String> {
+    Ok(git_timeout_from_env_value(env_value)?.unwrap_or(Some(default_cli_git_timeout())))
 }
 
 /// Public analysis effort profile used by both CLI flags and library
@@ -345,6 +396,14 @@ pub struct CheckOutput {
     /// does not link Python tests to Rust changes. Never serialized; no
     /// verdict, class or gate reads it.
     pub(crate) unlinked_python_tests: Option<crate::analysis::UnlinkedPythonTests>,
+    /// Findings withheld because their changed owner opted out (#13819):
+    /// `#[mutants::skip]` on the owner function, directly or through
+    /// `cfg_attr`. Like suppressed findings, they stay in `findings` (marked
+    /// by renderers) while the per-class `summary` buckets count only
+    /// findings that are neither suppressed nor withheld. A finding already
+    /// suppressed by `--suppression-policy` is not listed again. Empty when
+    /// no owner opted out.
+    pub(crate) owner_opt_outs: Vec<crate::analysis::owner_opt_out::OwnerOptOut>,
     /// Suppression-policy application outcome (#1441). `Some` only when the
     /// caller passed `--suppression-policy`; findings named here stay in
     /// `findings` (visible, marked suppressed by renderers) while the
@@ -363,6 +422,11 @@ pub struct CheckOutput {
     /// every diff-scoped check header. `None` when the input was a diff file,
     /// stdin, a candidate tree, or a repo-scope run.
     pub(crate) analyzed_revisions: Option<crate::analysis::AnalyzedRevisions>,
+    /// Producer-owned Rust file-fact cache stats for this check run (#4975).
+    /// `None` when the Rust index path did not observe cache work (repo-scope
+    /// stub output, or no Rust analysis). Verbose JSON and `-v` stderr project
+    /// this; default JSON omits it.
+    pub(crate) file_fact_cache: Option<crate::analysis::seam_cache::FileFactCacheStats>,
 }
 
 /// Renders a previously computed [`CheckOutput`] in the requested format.
@@ -413,5 +477,26 @@ impl CheckOutput {
     /// ambiguous provenance. Unknown individual origins stay `None`.
     pub fn source_value_files(&self, finding: &Finding) -> Option<&[Option<PathBuf>]> {
         self.value_origins.files(finding)
+    }
+
+    /// Ids of every finding withheld from actionable output: those an
+    /// explicit `--suppression-policy` suppressed (#1441) and those whose
+    /// changed owner opted out (#13819). The one set every findings-based
+    /// renderer filters on, so the two sources cannot drift apart.
+    pub(crate) fn withheld_finding_ids(&self) -> std::collections::BTreeSet<&str> {
+        self.suppression
+            .iter()
+            .flat_map(|outcome| {
+                outcome
+                    .suppressed
+                    .iter()
+                    .map(|entry| entry.finding_id.as_str())
+            })
+            .chain(
+                self.owner_opt_outs
+                    .iter()
+                    .map(|opt_out| opt_out.finding_id.as_str()),
+            )
+            .collect()
     }
 }

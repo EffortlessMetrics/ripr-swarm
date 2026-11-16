@@ -176,6 +176,20 @@ pub(crate) fn render_pilot_summary_json(
         )),
         None => out.push_str("  \"repo_exposure_byte_bound\": null,\n"),
     }
+    // #13340: the inventory's evidence pass failed. Omitted when healthy so
+    // the summary stays byte-identical.
+    if !context.inventory_evidence_limitations.is_empty() {
+        out.push_str("  \"inventory_evidence_limitations\": [\n");
+        for (idx, limitation) in context.inventory_evidence_limitations.iter().enumerate() {
+            if idx > 0 {
+                out.push_str(",\n");
+            }
+            out.push_str(
+                &crate::output::repo_exposure::evidence_limitation_json_object(limitation, 4),
+            );
+        }
+        out.push_str("\n  ],\n");
+    }
     push_declined_rust_files_json(&mut out, declined_rust_files(context));
     out.push_str(&format!(
         "  \"withheld_static_limitations_total\": {},\n",
@@ -313,6 +327,7 @@ fn render_pilot_summary_md_with_target(
     // #6602: a seam limit cut the classified list before ranking, so every
     // Rust seam count below covers only the seams that were kept, and the
     // actionable count is a lower bound.
+    push_inventory_evidence_limitations(&mut out, context, true);
     if let Some(bound) = context.repo_exposure_byte_bound {
         out.push_str(&format!(
             "- repo-exposure.json byte bound reached: it lists {} of {} spots ({} byte budget); ranking and `agent-seam-packets.json` cover all {}. Set `{}=0` to list every spot\n",
@@ -324,8 +339,20 @@ fn render_pilot_summary_md_with_target(
         ));
     }
     if let Some(limit) = context.seam_limit {
+        // #5371: name how the analyzed slice was chosen. The pilot budget
+        // keeps the inventory's path-order prefix plus the seams the current
+        // change touches that still fit the budget (keeps_past_budget; the
+        // final truncate can drop even those — on the inventory-only path
+        // changed seams are added regardless of actionability), and ranking
+        // reorders only that slice — so a Rust recommendation, when present,
+        // is the highest-ranked seam in the slice, not necessarily of the
+        // whole repository. Saying "ranked" alone overstated it.
         out.push_str(&format!(
-            "- Seam limit reached: ranked {} of {} seams; Rust seam counts below cover those only\n",
+            "- Seam limit reached: analyzed {} of {} seams, kept as the inventory's path-order \
+             slice plus seams your change touches that fit the budget, then ranked by \
+             actionability within that slice -- a Rust recommendation, when present, is the \
+             highest-ranked seam in this slice, not of the whole repository; actionable-seam \
+             and owner counts below cover this slice only\n",
             limit.analyzed, limit.total
         ));
         out.push_str(&format!(
@@ -726,6 +753,7 @@ fn render_pilot_terminal_with_target(
             limit.analyzed, limit.total
         ));
     }
+    push_inventory_evidence_limitations(&mut out, context, false);
     // #12108: the terminal states the byte cut too, as JSON and Markdown do.
     if let Some(bound) = context.repo_exposure_byte_bound {
         out.push_str(&format!(
@@ -814,7 +842,11 @@ fn render_pilot_terminal_with_target(
         if let Some(value) = outline.candidate_value.as_ref() {
             out.push_str(&format!("  candidate value: {value}\n"));
         }
-        push_assertion_shape(&mut out, &outline.assertion_shape);
+        push_assertion_shape(
+            &mut out,
+            &outline.assertion_shape,
+            outline.assertion_drafted,
+        );
         // Only a seam that passes the fail-closed repair-packet flip gets the
         // paste-ready command. Route readiness alone is weaker: a ready seam
         // can still be ineligible, and offering a repair transaction there
@@ -1384,11 +1416,49 @@ impl CurrentChangeLabel {
 }
 
 /// Project the producer's named coverage limitation, even with a changed top pick.
+/// #13340: names a failed inventory evidence pass, so a count read from the
+/// opaque stand-ins is never taken for an inventory result. Nothing for a
+/// healthy run.
+fn push_inventory_evidence_limitations(
+    out: &mut String,
+    context: PilotSummaryContext<'_>,
+    markdown: bool,
+) {
+    for limitation in context.inventory_evidence_limitations {
+        let prefix = if markdown {
+            "- Inventory limitation"
+        } else {
+            "  inventory limitation"
+        };
+        out.push_str(&terminal_safe(format!(
+            "{prefix}: {}: {}; spot counts and rankings below are not an inventory result. {}\n",
+            limitation.kind.as_str(),
+            limitation.kind.plain_label(),
+            limitation.recovery.detail
+        )));
+    }
+}
+
 fn push_changed_file_limitations(
     out: &mut String,
     change: Option<&PilotCurrentChange>,
     markdown: bool,
 ) {
+    // #13340: the classification's own pass-wide failure has no path and is
+    // not an absent file, so it is named on its own line before the files.
+    for limitation in change.map_or(&[][..], PilotCurrentChange::evidence_limitations) {
+        let prefix = if markdown {
+            "- Current change limitation"
+        } else {
+            "  current change limitation"
+        };
+        out.push_str(&terminal_safe(format!(
+            "{prefix}: {}: {}. {}\n",
+            limitation.kind.as_str(),
+            limitation.kind.plain_label(),
+            limitation.recovery.detail
+        )));
+    }
     let Some(limitations) = change.and_then(PilotCurrentChange::absent_file_limitations) else {
         return;
     };
@@ -1438,6 +1508,18 @@ fn push_current_change_json(
                 Some(path) => out.push_str(&format!("\"{}\"", json_escape(path))),
                 None => out.push_str("null"),
             }
+        }
+        out.push_str("],\n");
+    }
+    // #13340: present only when the change classification's evidence warm
+    // failed, so a healthy summary stays byte-identical.
+    if !change.evidence_limitations().is_empty() {
+        out.push_str("    \"evidence_limitations\": [");
+        for (index, limitation) in change.evidence_limitations().iter().enumerate() {
+            if index > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&format!("\"{}\"", json_escape(limitation.kind.as_str())));
         }
         out.push_str("],\n");
     }
@@ -2292,6 +2374,8 @@ fn repair_action_label(action: &str) -> &'static str {
 /// #9244 item 3: shared placeholder-assertion wording. The helper lives in
 /// `output::placeholder_assertion` so the other human handoff lines use the
 /// same fill-in note.
-fn push_assertion_shape(out: &mut String, shape: &str) {
-    crate::output::placeholder_assertion::push_terminal_assertion(out, "  ", shape);
+fn push_assertion_shape(out: &mut String, shape: &str, drafted: bool) {
+    crate::output::placeholder_assertion::push_drafted_terminal_assertion(
+        out, "  ", shape, drafted,
+    );
 }

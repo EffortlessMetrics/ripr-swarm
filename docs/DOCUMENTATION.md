@@ -57,6 +57,9 @@ Current how-to docs:
 - [Sibling-tool interop and learning ledger](interop/sibling-tools.md)
 - [Integrations](INTEGRATIONS.md)
 - [Install channels](INSTALL_CHANNELS.md)
+- [Windows](WINDOWS.md)
+- [Troubleshooting](TROUBLESHOOTING.md) - match the line on your screen to
+  the cause when ripr reports nothing, stops, or reports something unexpected
 - [Security policy](../SECURITY.md)
 - [Repository settings](REPO_SETTINGS.md)
 - [Swarm development](swarm-development.md)
@@ -85,6 +88,7 @@ Current how-to docs:
 - [Calibrated gate policy](CALIBRATED_GATE_POLICY.md)
 - [RIPR blocking readiness](BLOCKING_READINESS.md)
 - [Adopting RIPR in CI](ADOPTING_IN_CI.md)
+- [Coming from cargo-mutants](FROM_CARGO_MUTANTS.md)
 - [Baseline ledger workflow](BASELINE_LEDGER_WORKFLOW.md)
 - [RIPR Zero reporting workflow](RIPR_ZERO_REPORTING_WORKFLOW.md)
 - [PR evidence ledger workflow](PR_EVIDENCE_LEDGER_WORKFLOW.md)
@@ -145,6 +149,8 @@ Current how-to docs:
   adversarial corpus for Rust and Python nesting
 - [Size scaling gate](SIZE_SCALING.md) - exact-binary check that cost grows
   no faster than input size for Rust, Python and TypeScript files
+- [Performance regression guards](PERFORMANCE_GUARDS.md) - which check
+  notices a startup, output-size or run-time regression, and where it runs
 - [Per-probe incremental analysis](PER_PROBE_INCREMENTAL_ANALYSIS.md) - design
   note: what a probe classification reads and how a stored result is
   validated, fail-closed on any unrecorded read
@@ -178,6 +184,7 @@ Current reference docs:
 - [Output schema](OUTPUT_SCHEMA.md)
 - [Static exposure model](STATIC_EXPOSURE_MODEL.md)
 - [Configuration](CONFIGURATION.md)
+- [CLI reference](CLI_REFERENCE.md)
 - [Exit codes](EXIT_CODES.md)
 - [Terminology](TERMINOLOGY.md)
 - [User text glossary](USER_TEXT_GLOSSARY.md)

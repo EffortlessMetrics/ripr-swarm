@@ -19,6 +19,13 @@ The finding stays `exposed`: the pattern tells the old and the new message
 apart, so the two-step message gate does not engage. This is the positive
 control for the two-step reading.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_check.py:python_preview:v1-11825c93 -> exposed
+```
+
 ## Must Not
 
 Demote the finding to `weakly_exposed` when a pattern discriminates the message.

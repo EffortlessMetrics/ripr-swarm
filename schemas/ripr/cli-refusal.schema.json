@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effortlessmetrics.dev/ripr/cli-refusal.schema.json",
+  "title": "RIPR CLI Refusal",
+  "description": "The minimal document ripr writes to stdout when an argv usage error (unknown command, argument or value) or a context selector miss occurs under an explicit JSON request (#11584, #6834 decision). Exit code (2) and stderr prose are unchanged. It carries no argv echo and no partial analysis; without a JSON request stdout stays empty.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "tool", "status", "error"],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "tool": { "const": "ripr" },
+    "status": { "const": "refused" },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "next"],
+      "properties": {
+        "code": {
+          "enum": [
+            "unknown_argument",
+            "unknown_command",
+            "unknown_value",
+            "selector_miss"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "token": { "type": "string", "minLength": 1 },
+        "next": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["purpose", "command"],
+          "properties": {
+            "purpose": {
+              "enum": [
+                "follow_stated_step",
+                "list_valid_arguments",
+                "list_valid_commands"
+              ]
+            },
+            "command": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    }
+  }
+}

@@ -120,16 +120,25 @@ fn json_terse_round_trips_fixture_prose_and_beats_compact_in_size() -> Result<()
     );
     for (full_finding, terse_finding) in full_findings.iter().zip(terse_findings.iter()) {
         // Identity and verdict fields move verbatim.
-        for key in [
-            "id",
-            "classification",
-            "severity",
-            "confidence",
-            "probe",
-            "ripr",
-        ] {
+        for key in ["id", "classification", "severity", "confidence", "probe"] {
             assert_eq!(full_finding[key], terse_finding[key], "{key} moved");
         }
+        // `ripr` keeps every state and confidence; a coded stage summary
+        // expands back to the original (#13673).
+        let mut restored_ripr = terse_finding["ripr"].clone();
+        if let Some(stages) = restored_ripr.as_object_mut() {
+            for stage in stages.values_mut() {
+                if let Some(summary) = stage.get_mut("summary")
+                    && let Some(text) = summary.as_str()
+                {
+                    *summary = serde_json::Value::String(expand(text));
+                }
+            }
+        }
+        assert_eq!(
+            full_finding["ripr"], restored_ripr,
+            "ripr did not round-trip"
+        );
         // Coded prose surfaces round-trip through the legend, in order.
         for key in ["evidence_path", "evidence", "missing"] {
             let expanded: Vec<String> = terse_finding[key]
@@ -149,6 +158,22 @@ fn json_terse_round_trips_fixture_prose_and_beats_compact_in_size() -> Result<()
                 .collect();
             assert_eq!(expanded, original, "{key} did not round-trip");
         }
+        // Related-test oracle lines and `why` sentences expand back (#13673).
+        let mut restored_rows = terse_finding["related_tests"].clone();
+        if let Some(rows) = restored_rows.as_array_mut() {
+            for row in rows {
+                for key in ["oracle", "why"] {
+                    if let Some(text) = row.get(key).and_then(serde_json::Value::as_str) {
+                        let text = expand(text);
+                        row[key] = serde_json::Value::String(text);
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            full_finding["related_tests"], restored_rows,
+            "related_tests did not round-trip"
+        );
     }
     // Head identity fields are untouched.
     for key in [
@@ -162,7 +187,10 @@ fn json_terse_round_trips_fixture_prose_and_beats_compact_in_size() -> Result<()
         assert_eq!(full[key], terse[key], "{key} moved");
     }
 
-    let compact_text = crate::output::json::render_compact(full_text);
+    let compact_text = crate::output::compact_json::finish(
+        full_text.to_string(),
+        &crate::output::format::OutputFormat::JsonCompact,
+    );
     assert!(
         terse_text.len() < compact_text.len(),
         "terse {} bytes must beat json-compact {} bytes on a multi-finding document",

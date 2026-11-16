@@ -49,6 +49,8 @@ pub(crate) use ripr_contract::domain::ContinuationId;
 pub use ripr_contract::domain::DeltaAttribution;
 pub use ripr_contract::domain::DeltaKind;
 pub(crate) use ripr_contract::domain::DiagnosticResultId;
+pub use ripr_contract::domain::DiscriminatorShape;
+pub use ripr_contract::domain::DraftedBoundaryAssertion;
 pub(crate) use ripr_contract::domain::EXECUTED_CONTROL_PACKET_KIND;
 pub(crate) use ripr_contract::domain::EXECUTED_CONTROL_SCHEMA_VERSION;
 pub use ripr_contract::domain::EnvironmentAssignment;
@@ -180,7 +182,8 @@ pub use ripr_contract::domain::verify_command_is_unbounded_repo_exposure_snapsho
 pub(crate) use ripr_contract::domain::why_capped_line;
 pub(crate) use ripr_contract::domain::{
     CanonicalSourceRole, FactCurrentnessV1, PROJECT_FACTS_SCHEMA_VERSION, ProjectFactsV1,
-    SourceUnitFactV1, TestEnvironmentFactV1, ts_oracle_kind_matches_seam,
+    RELATED_TEST_CHANGED_IN_DIFF_PREFIX, SourceUnitFactV1, TestEnvironmentFactV1,
+    python_headline_related_test, ts_oracle_kind_matches_seam,
     typescript_script_preview_related_test,
 };
 

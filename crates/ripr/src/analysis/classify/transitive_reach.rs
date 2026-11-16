@@ -143,6 +143,7 @@ fn find_transitive_witness(owner_name: &str, index: &RustIndex) -> Option<Transi
 pub(in crate::analysis) struct TransitiveReachIndex<'a> {
     index: &'a RustIndex,
     graph: OnceLock<ReachGraph<'a>>,
+    pub(in crate::analysis) effect_method_names: super::effect_carrier::EffectMethodNames<'a>,
 }
 
 struct ReachGraph<'a> {
@@ -1504,6 +1505,7 @@ impl<'a> TransitiveReachIndex<'a> {
         Self {
             index,
             graph: OnceLock::new(),
+            effect_method_names: super::effect_carrier::EffectMethodNames::new(index),
         }
     }
 
@@ -1568,9 +1570,16 @@ impl<'a> TransitiveReachIndex<'a> {
             .get(callee_name)
             .is_some_and(|functions| functions.len() > 1)
             && shared_owner_call_identity(self.index, callee).is_some();
+        // `callers` holds exactly the names of the production functions
+        // whose non-macro call facts name `callee_name` (built over the same
+        // `by_name` population), so only those names' functions are checked
+        // instead of every function in the workspace on every hop.
         graph
-            .by_name
-            .values()
+            .callers
+            .get(callee_name)
+            .into_iter()
+            .flatten()
+            .filter_map(|caller_name| graph.by_name.get(caller_name))
             .flatten()
             .filter(|function| !function.source_role.is_evidence_role())
             .filter(|function| {
@@ -2560,13 +2569,22 @@ fn proc_macro_derive_entries(source: &str) -> Vec<(String, String, usize)> {
 fn derive_names(source: &str) -> Vec<String> {
     let masked = crate::analysis::extract::mask_comments_and_strings(source);
     let ranges = crate::analysis::extract::attribute_ranges(&masked);
+    let derive_args: Vec<(usize, &str)> = ranges
+        .iter()
+        .enumerate()
+        .filter_map(|(index, range)| {
+            attribute_call_args(&masked[range.clone()], "derive").map(|args| (index, args))
+        })
+        .collect();
+    let starts: Vec<usize> = derive_args
+        .iter()
+        .map(|&(index, _)| ranges[index].start)
+        .collect();
+    let in_macro =
+        crate::analysis::extract::offsets_inside_macro_invocation_delimiters(&masked, &starts);
     let mut names = Vec::new();
-    for (index, range) in ranges.iter().enumerate() {
-        let Some(args) = attribute_call_args(&masked[range.clone()], "derive") else {
-            continue;
-        };
-        if crate::analysis::extract::offset_inside_macro_invocation_delimiters(&masked, range.start)
-        {
+    for (&(index, args), inside_macro) in derive_args.iter().zip(in_macro) {
+        if inside_macro {
             continue;
         }
         if !derive_attribute_binds_active_item(&masked, &ranges, index) {
@@ -4018,12 +4036,12 @@ mod tests {
                 })
                 .collect(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -4049,10 +4067,10 @@ mod tests {
                 })
                 .collect(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -4810,7 +4828,8 @@ mod tests {
                     line: index * 10 + 2,
                     name: "render".to_string(),
                     text: text.into(),
-                }];
+                }]
+                .into();
                 test
             })
             .collect();

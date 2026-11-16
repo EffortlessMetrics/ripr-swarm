@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- MCP: a weakly exposed gap that names its missing discriminator is repair-ready when its weak, high-confidence directly-related test is the fix site, so `ripr_list_gaps`, `ripr_prepare_repair`, `ripr_get_repair_card` and `ripr repair` agree instead of MCP refusing as `fix_site_not_established` (#10718). A refused prepare no longer advises a `ripr_refresh` of unchanged input.

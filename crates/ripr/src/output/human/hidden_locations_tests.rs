@@ -179,7 +179,7 @@ fn location_change_keeps_the_twenty_row_cap_and_continuation() {
         "{rendered}"
     );
     assert!(!rendered.contains("    - ./src/f20.rs:"), "{rendered}");
-    assert!(rendered.contains("    - … and 3 more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"), "{rendered}");
+    assert!(rendered.contains("    - … and 3 more omitted finding(s): 3 weak; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"), "{rendered}");
 }
 
 /// #9373 items 2 and 3: hidden rows tell the three unknown classes apart and
@@ -241,4 +241,41 @@ fn hidden_classes_gloss_only_listed_classes() {
     assert_eq!(rendered.matches("    weak = ").count(), 1, "{rendered}");
     assert!(!rendered.contains("unknown:"), "{rendered}");
     assert!(!rendered.contains("no path ="), "{rendered}");
+}
+
+#[test]
+fn identical_hidden_rows_collapse_with_a_repeat_count() {
+    let findings = (0..3)
+        .map(|index| {
+            let mut finding = sample_finding();
+            finding.id = format!("finding-{index}");
+            finding.source_currentness = SourceCurrentness::BaseDeleted;
+            finding
+        })
+        .collect();
+    let rendered = render(&bounded_output_with_findings(findings));
+    assert_eq!(rendered.matches("    - ").count(), 1, "{rendered}");
+    assert!(
+        rendered.contains("reason: missing strong oracle (x3)\n"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn distinct_or_non_consecutive_hidden_rows_stay_separate() {
+    let findings = [0usize, 1, 0]
+        .iter()
+        .enumerate()
+        .map(|(index, file)| {
+            let mut finding = sample_finding();
+            finding.id = format!("finding-{index}");
+            finding.probe.location =
+                SourceLocation::new(PathBuf::from(format!("src/f{file}.rs")), 7, 1);
+            finding.source_currentness = SourceCurrentness::BaseDeleted;
+            finding
+        })
+        .collect();
+    let rendered = render(&bounded_output_with_findings(findings));
+    assert_eq!(rendered.matches("    - ").count(), 3, "{rendered}");
+    assert!(!rendered.contains(" (x"), "{rendered}");
 }

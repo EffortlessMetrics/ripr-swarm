@@ -44,6 +44,18 @@ pub(crate) struct InvokedCallbackParam {
 /// The helper call itself must be a statement the test body reaches
 /// unconditionally and in order. `None` when the text does not parse cleanly.
 pub(crate) fn closure_argument_positions(test_text: &str, helper: &str) -> Option<BTreeSet<usize>> {
+    // Pure in the text and helper name; the overlapping indexes of one run
+    // credit the same tests and re-read the same bodies.
+    crate::analysis::syntax::run_memo::memoize_with(
+        crate::analysis::syntax::run_memo::Product::ClosureArgumentPositions,
+        0,
+        helper,
+        test_text,
+        || closure_argument_positions_uncached(test_text, helper),
+    )
+}
+
+fn closure_argument_positions_uncached(test_text: &str, helper: &str) -> Option<BTreeSet<usize>> {
     let parse = parse_clean_source_file(test_text)?;
     let function = parse
         .tree()
@@ -119,6 +131,32 @@ pub(crate) fn closure_argument_positions(test_text: &str, helper: &str) -> Optio
 /// spelling neither establishes `Clone` dispatch nor grants callback execution.
 /// Function items passed by name are not recognized.
 pub(crate) fn passes_call_making_closure(test_text: &str, helper: &str) -> bool {
+    // Pure in the text and the helper name; the helper-credit pass asks it
+    // once per (test, helper call) in every overlapping index of a diff run.
+    super::super::run_memo::memoize_with(
+        super::super::run_memo::Product::CallMakingClosure,
+        0,
+        helper,
+        test_text,
+        || passes_call_making_closure_uncached(test_text, helper),
+    )
+}
+
+#[cfg(test)]
+thread_local! {
+    static CALL_MAKING_CLOSURE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Parses [`passes_call_making_closure`] ran on this thread since the last
+/// call.
+#[cfg(test)]
+pub(crate) fn take_call_making_closure_scans() -> usize {
+    CALL_MAKING_CLOSURE_SCANS.with(|count| count.replace(0))
+}
+
+fn passes_call_making_closure_uncached(test_text: &str, helper: &str) -> bool {
+    #[cfg(test)]
+    CALL_MAKING_CLOSURE_SCANS.with(|count| count.set(count.get() + 1));
     let Some(parse) = parse_clean_source_file(test_text) else {
         return true;
     };
@@ -475,6 +513,15 @@ fn may_exit_early(node: &ra_ap_syntax::SyntaxNode) -> bool {
 /// the function rebinds, so a shadowing `let` or pattern cannot redirect the
 /// call. A method (`self`) or an unparsable text yields `None`.
 pub(crate) fn invoked_callback_params(helper_text: &str) -> Option<Vec<InvokedCallbackParam>> {
+    crate::analysis::syntax::run_memo::memoize(
+        crate::analysis::syntax::run_memo::Product::InvokedCallbackParams,
+        0,
+        helper_text,
+        || invoked_callback_params_uncached(helper_text),
+    )
+}
+
+fn invoked_callback_params_uncached(helper_text: &str) -> Option<Vec<InvokedCallbackParam>> {
     let parse = parse_clean_source_file(helper_text)?;
     let function = parse
         .tree()

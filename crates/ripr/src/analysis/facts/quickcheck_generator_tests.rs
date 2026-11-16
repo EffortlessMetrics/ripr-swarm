@@ -2,6 +2,17 @@ use super::*;
 use crate::analysis::diff::{ChangedFile, ChangedLine};
 use crate::domain::{ExposureClass, ProbeFamily};
 
+/// No test is related to the changed code. A method of a foreign trait
+/// (`Arbitrary::arbitrary`) may still run through generic code, so its reach is
+/// undecided (`infection_unknown`) rather than ruled out (`no_static_path`);
+/// either way the line stays a finding, never exposed.
+fn is_unreached_gap(class: &ExposureClass) -> bool {
+    matches!(
+        class,
+        ExposureClass::NoStaticPath | ExposureClass::InfectionUnknown
+    )
+}
+
 #[test]
 fn quickcheck_generator_closing_line_cannot_absorb_a_production_initializer() -> Result<(), String>
 {
@@ -35,7 +46,7 @@ fn quickcheck_generator_dependency_library_collision_is_not_provider_identity() 
             ("production/src/lib.rs", "pub trait Arbitrary {}"),
         ],
     )? {
-        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert!(is_unreached_gap(&finding.class), "{finding:?}");
         assert_eq!(finding.probe.family, ProbeFamily::ReturnValue);
     }
     Ok(())
@@ -51,7 +62,7 @@ fn quickcheck_generator_sharing_a_production_line_cannot_hide_its_gap() -> Resul
         findings.iter().any(
             |finding| finding.probe.expression == "Pair(a, a.wrapping_add(2))"
                 && finding.probe.family == ProbeFamily::ReturnValue
-                && finding.class == ExposureClass::NoStaticPath
+                && is_unreached_gap(&finding.class)
         ),
         "{findings:?}"
     );
@@ -209,7 +220,7 @@ fn quickcheck_generator_nonempty_compiler_wrapper_refuses_role() -> Result<(), S
                 "one changed return remains a product subject"
             );
             for finding in findings {
-                assert_eq!(finding.class, ExposureClass::NoStaticPath);
+                assert!(is_unreached_gap(&finding.class), "{finding:?}");
                 assert_eq!(finding.probe.family, ProbeFamily::ReturnValue);
                 assert!(
                     !finding
@@ -235,13 +246,16 @@ fn quickcheck_generator_lookalikes_remain_production() -> Result<(), String> {
         format!("use production::*;\n{SOURCE}"),
         format!("extern crate production as quickcheck;\n{SOURCE}"),
     ];
-    for source in sources {
-        for finding in findings(MANIFEST, &source)? {
-            assert_eq!(
-                finding.class,
-                ExposureClass::NoStaticPath,
-                "{source}: {finding:?}"
-            );
+    for (index, source) in sources.iter().enumerate() {
+        for finding in findings(MANIFEST, source)? {
+            // An inherent `impl Pair` (2) is not language-dispatched, so its
+            // gap stays ruled out. The other spellings name a trait that may
+            // be foreign, so they may read undecided instead.
+            if index == 2 {
+                assert_eq!(finding.class, ExposureClass::NoStaticPath, "{source}");
+            } else {
+                assert!(is_unreached_gap(&finding.class), "{source}: {finding:?}");
+            }
             assert_eq!(finding.probe.family, ProbeFamily::ReturnValue);
         }
     }
@@ -258,9 +272,8 @@ fn quickcheck_generator_unverified_dependency_is_not_reclassified() -> Result<()
     ] {
         let manifest = MANIFEST.replace("quickcheck='1'", dependency);
         for finding in findings(&manifest, SOURCE)? {
-            assert_eq!(
-                finding.class,
-                ExposureClass::NoStaticPath,
+            assert!(
+                is_unreached_gap(&finding.class),
                 "{dependency}: {finding:?}"
             );
         }

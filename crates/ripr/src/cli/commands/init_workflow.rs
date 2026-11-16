@@ -118,8 +118,8 @@ jobs:
               if [ -z "$entries" ] || grep -Eq '[/\\:]|^\.\.?$|^$' <<< "$entries"; then
                 echo "::error::$asset lists an entry outside a flat archive root (nested, absolute, traversal or empty name)"; exit 1
               fi
-              [ -z "$(printf '%s\n' "$entries" | uniq -d)" ] || { echo "::error::$asset lists a duplicate entry"; exit 1; }
-              grep -qx "$exe" <<< "$entries" || { echo "::error::$asset does not contain $exe at its root"; exit 1; }
+              [ -z "$(printf '%s\n' "$entries" | tr 'A-Z' 'a-z' | sed 's/[. ]*$//' | LC_ALL=C sort | uniq -d)" ] || { echo "::error::$asset lists a duplicate entry"; exit 1; }
+              grep -Fqx -- "$exe" <<< "$entries" || { echo "::error::$asset does not contain $exe at its root"; exit 1; }
               "$ziptool" -xf "$asset" -C ripr-bin || { echo "::error::$asset could not be extracted"; exit 1; }
             else
               tar -xzf "$asset" -C ripr-bin || { echo "::error::$asset could not be extracted"; exit 1; }
@@ -180,7 +180,7 @@ jobs:
           done < target/ripr/review/summary/summary.tsv
 
       - name: Publish RIPR inline comments
-        if: always() && github.event_name == 'pull_request' && env.RIPR_COMMENT_MODE == 'inline' && hashFiles('target/ripr/review/comment-publish-plan.json') != ''
+        if: always() && github.event_name == 'pull_request' && env.RIPR_COMMENT_MODE == 'inline' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && hashFiles('target/ripr/review/comment-publish-plan.json') != ''
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -220,7 +220,7 @@ const TEMPLATE_TAIL: &str = r#"      - name: Upload RIPR report artifacts
 
       - name: Upload RIPR repo seams
         id: sarif_seams
-        if: always() && env.RIPR_UPLOAD_SARIF == 'true' && hashFiles('target/ripr/reports/ripr-seams.sarif') != ''
+        if: always() && env.RIPR_UPLOAD_SARIF == 'true' && github.event_name != 'pull_request' && hashFiles('target/ripr/reports/ripr-seams.sarif') != ''
         continue-on-error: true
         uses: github/codeql-action/upload-sarif@v4
         with:
@@ -428,13 +428,15 @@ mod template_pin_tests {
     /// optional pilot timeout repository variable and re-measured it. #6245
     /// added the Windows x64 zip route, the Windows ARM64 unsupported error and
     /// the fail-closed integrity/archive handling to the install step, and
-    /// re-measured it once more.
+    /// re-measured it once more. #11206 added the fork and Dependabot guard to
+    /// the inline comment step and re-measured it. #14300 limited the repo
+    /// seam SARIF upload to manual runs and re-measured it.
     /// The unrendered template is the stable identity:
     /// rendering additionally substitutes the install version, the pin
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "f1773a7c70be426820f7983d3b3eca41a3f6516baa72b1f1691166f44c3027cc";
+        "6bd24dd92c8ea90fb1f54e8b5e0662f2db3f3af3b1d1c2af4760a29ff03dc8fe";
 
     #[test]
     fn template_matches_the_pinned_bytes() {

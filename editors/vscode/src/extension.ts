@@ -82,7 +82,7 @@ export async function pauseRemovedWorkspaceRootOnce(
 }
 
 const NO_ANALYZABLE_PROJECT_LOG =
-  'ripr: no analyzable project marker in the workspace (Cargo.toml, ripr.toml, or a Python project file); staying idle.';
+  'ripr: no analyzable project marker in the workspace (Cargo.toml, ripr.toml, a Python project file, or tsconfig.json/jsconfig.json); staying idle.';
 
 /** Activation-only gate (#5315): skip server download/start when nothing is analyzable. */
 export async function startServerOnActivationIfAnalyzable(

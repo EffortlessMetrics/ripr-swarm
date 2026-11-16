@@ -1,4 +1,6 @@
-use super::{ExposureClass, Finding, LanguageId, MissingDiscriminatorFact, RelatedTest};
+use super::{
+    ExposureClass, Finding, LanguageId, MissingDiscriminatorFact, RelatedTest, RelatedTestMiss,
+};
 
 /// The bounded, producer-backed witness projected by passive editor diagnostics.
 ///
@@ -283,8 +285,10 @@ fn suggested_related_test(finding: &Finding) -> Option<&RelatedTest> {
     let name = evidence("suggested_test_name: ")?;
     // The file, when the producer names one, disambiguates same-named tests.
     let file = evidence("suggested_test_file: ");
+    // A proximity-only row is never the fix site, even when named (#5354).
     let mut matches = finding.oracle_related_tests().filter(|test| {
-        test.name == name
+        is_call_bearing(test)
+            && test.name == name
             && file.is_none_or(|file| test.file.to_string_lossy().replace('\\', "/") == file)
     });
     let first = matches.next()?;
@@ -292,24 +296,77 @@ fn suggested_related_test(finding: &Finding) -> Option<&RelatedTest> {
     matches.next().is_none().then_some(first)
 }
 
+/// Whether a row may be a fix site: any relation except proximity alone.
+/// This is weaker than `RelationReason::establishes_reach` (a name or import
+/// affinity still qualifies); it only removes rows that share nothing with
+/// the owner but a location or a token. Proximity-only links
+/// (`same_test_file`, `same_module`, `weak_token_substring`) never run the
+/// change, so naming one as the fix site would send the reader to an
+/// unrelated test (#5354). Rows with no recorded relation (legacy producers)
+/// stay eligible. The row's `miss` annotation is explanatory and decides
+/// nothing here (`output/related_test_role_tests.rs`).
+fn is_call_bearing(test: &RelatedTest) -> bool {
+    test.relation_reason
+        .is_none_or(|reason| !reason.is_proximity_only())
+}
+
+/// Whether a row's relation shows the test runs the owner
+/// (`RelationReason::establishes_reach`: a direct call, a helper chain, a
+/// followed re-export). Rows with no recorded relation count too. A name,
+/// import or fixture affinity is still eligible as a fix site, but ranks
+/// after every reaching row: otherwise a name-matched test with a stronger
+/// oracle on other code would win over the test that calls the change, the
+/// #5335 defect. The owner is treated as a function, so an assertion-target
+/// affinity is a fallback here; that only orders candidates.
+fn reaches_owner(test: &RelatedTest) -> bool {
+    test.relation_reason
+        .is_none_or(|reason| reason.establishes_reach(true))
+}
+
+/// Rows that reach the owner first, then rows whose assertion can observe the
+/// change (#14454), then oracle strength, then relation confidence, over
+/// call-bearing rows only; when none exists there is no fix
+/// site rather than a nearby test.
 fn best_related_test<'a>(
     related_tests: impl Iterator<Item = &'a RelatedTest>,
 ) -> Option<&'a RelatedTest> {
-    related_tests.max_by(|left, right| {
-        left.oracle_strength
-            .rank()
-            .cmp(&right.oracle_strength.rank())
-            .then_with(|| {
-                right
-                    .relation_confidence
-                    .map_or(3, |confidence| confidence.rank())
-                    .cmp(
-                        &left
-                            .relation_confidence
-                            .map_or(3, |confidence| confidence.rank()),
-                    )
-            })
-    })
+    // `min_by` over the reversed ranking keeps the earliest of equally
+    // ranked rows: the producer lists related tests by relation priority, so
+    // a tie resolves to the row `check` shows first, and the lens and the
+    // hover open the same test.
+    //
+    // #14454: among rows of equal reach, a row whose assertion cannot observe
+    // the change is never the fix site while another row can, however strong
+    // its oracle. A row with no call path to the changed code reaches it
+    // least of all, so it ranks below a direct caller whose assertion pins
+    // only the success arm.
+    let observes = |test: &RelatedTest| match test.miss {
+        Some(RelatedTestMiss::NoCallPath) => 0u8,
+        Some(RelatedTestMiss::AssertionNotObserving) => 1,
+        _ => 2,
+    };
+    related_tests
+        .filter(|test| is_call_bearing(test))
+        .min_by(|left, right| {
+            reaches_owner(right)
+                .cmp(&reaches_owner(left))
+                .then_with(|| observes(right).cmp(&observes(left)))
+                .then_with(|| {
+                    right
+                        .oracle_strength
+                        .rank()
+                        .cmp(&left.oracle_strength.rank())
+                })
+                .then_with(|| {
+                    left.relation_confidence
+                        .map_or(3, |confidence| confidence.rank())
+                        .cmp(
+                            &right
+                                .relation_confidence
+                                .map_or(3, |confidence| confidence.rank()),
+                        )
+                })
+        })
 }
 
 fn display_path(path: &std::path::Path) -> String {
@@ -327,9 +384,10 @@ fn limitation(kind: &str, detail: &str) -> DiagnosticWitnessLimitation {
 mod tests {
     use super::*;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
-        OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RevealEvidence, RiprEvidence,
-        SourceLocation, StageEvidence, StageState, SymbolId, ValueContext, ValueFact,
+        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, FindingCanonicalGap,
+        FlowSinkFact, FlowSinkKind, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId,
+        RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, SymbolId,
+        ValueContext, ValueFact,
     };
     use std::path::PathBuf;
 
@@ -360,6 +418,8 @@ mod tests {
             value: "PricingError::Boundary".to_string(),
             reason: "the broad error oracle does not distinguish the variant".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.activation.observed_values = vec![ValueFact {
             line: 12,
@@ -404,7 +464,8 @@ mod tests {
             witness.missing_discriminators[0].value,
             "PricingError::Boundary"
         );
-        assert_eq!(witness.fix_site.as_ref().map(|site| site.line), Some(22));
+        // Equally ranked rows resolve to the earliest listed (#5354).
+        assert_eq!(witness.fix_site.as_ref().map(|site| site.line), Some(10));
         assert!(
             witness
                 .fix_site
@@ -425,6 +486,66 @@ mod tests {
                 .any(|item| item.kind == "suggested_assertion_unavailable")
         );
         Ok(())
+    }
+
+    /// #14454: a strong row that cannot observe the change (an `Ok`-only pin
+    /// on a changed error variant) is never the fix site over a weaker row
+    /// that does; without that miss, oracle strength still leads.
+    #[test]
+    fn fix_site_skips_a_strong_row_that_cannot_observe_the_change() {
+        let related = |name: &str, strength: OracleStrength, miss: RelatedTestMiss| RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("tests/existing.rs"),
+            line: 4,
+            oracle: Some(format!("{name}_assertion")),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: strength,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: Some(miss),
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        };
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.related_tests = vec![
+            related(
+                "accepts_short_names",
+                OracleStrength::Strong,
+                RelatedTestMiss::AssertionNotObserving,
+            ),
+            related(
+                "rejects_long_names",
+                OracleStrength::Weak,
+                RelatedTestMiss::WeakAssertion,
+            ),
+        ];
+        let fix_test = |finding: &Finding| {
+            DiagnosticWitness::from_finding(finding)
+                .and_then(|witness| witness.fix_site)
+                .map(|site| site.test_name)
+        };
+        assert_eq!(fix_test(&finding).as_deref(), Some("rejects_long_names"));
+        // A strong row with no call path to the change ranks below the
+        // Ok-only direct caller, never above it.
+        let mut no_call = finding.clone();
+        no_call.related_tests[1] = related(
+            "checks_other",
+            OracleStrength::Strong,
+            RelatedTestMiss::NoCallPath,
+        );
+        assert_eq!(fix_test(&no_call).as_deref(), Some("accepts_short_names"));
+        // Reach leads (#5335): a direct caller whose assertion pins only the
+        // success arm still outranks an observing row that is linked only by
+        // the owner's name, because that row may never run the change.
+        let mut reach = finding.clone();
+        reach.related_tests[0].relation_reason =
+            Some(crate::domain::RelationReason::DirectOwnerCall);
+        reach.related_tests[1].relation_reason =
+            Some(crate::domain::RelationReason::OwnerNamedTest);
+        assert_eq!(fix_test(&reach).as_deref(), Some("accepts_short_names"));
+        finding.related_tests[0].miss = Some(RelatedTestMiss::MissingExactAssertion);
+        assert_eq!(fix_test(&finding).as_deref(), Some("accepts_short_names"));
     }
 
     /// RC walk (py-pricing): `check` and the repair card named
@@ -452,6 +573,8 @@ mod tests {
             value: "amount == DISCOUNT_THRESHOLD".to_string(),
             reason: "no related input at the boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![
             related("test_no_discount_below_threshold", 4),
@@ -479,6 +602,171 @@ mod tests {
         // A suggestion that names no related test falls back to the ranking.
         finding.evidence = vec!["suggested_test_name: test_new_boundary".to_string()];
         assert_eq!(fix_test(&finding), ranked);
+    }
+
+    fn rust_related(
+        name: &str,
+        line: usize,
+        reason: crate::domain::RelationReason,
+        oracle_strength: OracleStrength,
+        miss: crate::domain::RelatedTestMiss,
+    ) -> RelatedTest {
+        RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            line,
+            oracle: (oracle_strength != OracleStrength::None)
+                .then(|| "assert!(discount(200, true) < 200)".to_string()),
+            oracle_kind: OracleKind::Unknown,
+            oracle_strength,
+            relation_reason: Some(reason),
+            relation_confidence: Some(reason.confidence()),
+            miss: Some(miss),
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        }
+    }
+
+    /// #5354: a call-bearing test with no assertion beats a proximity-only
+    /// test whose oracle belongs to a different function.
+    #[test]
+    fn fix_site_prefers_a_call_bearing_test_over_a_proximity_only_oracle() -> Result<(), String> {
+        use crate::domain::{RelatedTestMiss, RelationReason};
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::ReachableUnrevealed;
+        finding.related_tests = vec![
+            rust_related(
+                "member_gets_discount",
+                17,
+                RelationReason::SameTestFile,
+                OracleStrength::Weak,
+                RelatedTestMiss::NoCallPath,
+            ),
+            rust_related(
+                "shipping_runs",
+                19,
+                RelationReason::DirectOwnerCall,
+                OracleStrength::None,
+                RelatedTestMiss::NoAssertion,
+            ),
+        ];
+        let witness = DiagnosticWitness::from_finding(&finding)
+            .ok_or("a reachable_unrevealed finding builds a witness")?;
+        let fix_site = witness
+            .fix_site
+            .ok_or("a call-bearing test is the fix site")?;
+        assert_eq!(fix_site.test_name, "shipping_runs");
+        assert_eq!(fix_site.line, 19);
+        assert_eq!(fix_site.current_oracle, None);
+        Ok(())
+    }
+
+    /// #5354: a test that only carries the owner's name, with a strong
+    /// oracle on other code, ranks after a weaker test that calls the owner.
+    #[test]
+    fn fix_site_prefers_a_calling_test_over_a_stronger_name_only_test() -> Result<(), String> {
+        use crate::domain::{RelatedTestMiss, RelationReason};
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.related_tests = vec![
+            rust_related(
+                "discount_named_elsewhere",
+                9,
+                RelationReason::OwnerNamedTest,
+                OracleStrength::Strong,
+                RelatedTestMiss::NoCallPath,
+            ),
+            rust_related(
+                "checkout_applies_discount",
+                21,
+                RelationReason::DirectOwnerCall,
+                OracleStrength::Weak,
+                RelatedTestMiss::WeakAssertion,
+            ),
+        ];
+        let witness = DiagnosticWitness::from_finding(&finding)
+            .ok_or("a weakly_exposed finding builds a witness")?;
+        let fix_site = witness.fix_site.ok_or("the calling test is the fix site")?;
+        assert_eq!(fix_site.test_name, "checkout_applies_discount");
+        assert_eq!(fix_site.line, 21);
+
+        // With no calling test the name-matched one is still offered.
+        finding.related_tests.truncate(1);
+        let witness = DiagnosticWitness::from_finding(&finding)
+            .ok_or("a weakly_exposed finding builds a witness")?;
+        let fix_site = witness
+            .fix_site
+            .ok_or("a name-matched test remains a fallback fix site")?;
+        assert_eq!(fix_site.test_name, "discount_named_elsewhere");
+        Ok(())
+    }
+
+    /// #5354: a producer-named suggested test that is linked only by
+    /// proximity does not override the calling test.
+    #[test]
+    fn a_suggested_proximity_only_test_is_not_the_fix_site() -> Result<(), String> {
+        use crate::domain::{RelatedTestMiss, RelationReason};
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::ReachableUnrevealed;
+        finding.evidence = vec!["suggested_test_name: member_gets_discount".to_string()];
+        finding.related_tests = vec![
+            rust_related(
+                "member_gets_discount",
+                17,
+                RelationReason::SameTestFile,
+                OracleStrength::Weak,
+                RelatedTestMiss::NoCallPath,
+            ),
+            rust_related(
+                "shipping_runs",
+                19,
+                RelationReason::DirectOwnerCall,
+                OracleStrength::None,
+                RelatedTestMiss::NoAssertion,
+            ),
+        ];
+        let witness = DiagnosticWitness::from_finding(&finding)
+            .ok_or("a reachable_unrevealed finding builds a witness")?;
+        let fix_site = witness.fix_site.ok_or("the calling test is the fix site")?;
+        assert_eq!(fix_site.test_name, "shipping_runs");
+        Ok(())
+    }
+
+    /// #5354: with only proximity-linked tests there is no fix site, and the
+    /// witness says so instead of naming a nearby test.
+    #[test]
+    fn proximity_only_related_tests_never_become_the_fix_site() -> Result<(), String> {
+        use crate::domain::{RelatedTestMiss, RelationReason};
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::ReachableUnrevealed;
+        finding.related_tests = vec![
+            rust_related(
+                "member_gets_discount",
+                17,
+                RelationReason::SameTestFile,
+                OracleStrength::Strong,
+                RelatedTestMiss::NoCallPath,
+            ),
+            rust_related(
+                "token_neighbour",
+                30,
+                RelationReason::WeakTokenSubstring,
+                OracleStrength::Strong,
+                RelatedTestMiss::WeakAssertion,
+            ),
+        ];
+        let witness = DiagnosticWitness::from_finding(&finding)
+            .ok_or("a reachable_unrevealed finding builds a witness")?;
+        assert_eq!(witness.fix_site, None);
+        assert!(
+            witness
+                .limitations
+                .iter()
+                .any(|limitation| limitation.kind == "fix_site_unavailable"),
+            "{:?}",
+            witness.limitations
+        );
+        Ok(())
     }
 
     /// #5344 review: a test listed only because ripr examined it (none of its
@@ -538,6 +826,8 @@ mod tests {
             value: "amount == DISCOUNT_THRESHOLD".to_string(),
             reason: "no related input at the boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![related("tests/test_a.py", 4), related("tests/test_b.py", 8)];
         let fix_file = |finding: &Finding| {

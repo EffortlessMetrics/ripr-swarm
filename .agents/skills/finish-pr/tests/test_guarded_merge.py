@@ -258,6 +258,30 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(pages), 6)
         for args in pages: self.assertIn('--slurp', args)
 
+    def test_gh_transport_decodes_utf8_independently_of_windows_locale(self):
+        payload = {'title': 'Review \u2014 \u96ea \U0001f680'}
+        raw = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        def invoke(args, **kwargs):
+            # Model a Windows locale default while respecting an explicit codec.
+            text = raw.decode(kwargs.get('encoding', 'cp1252'))
+            return SimpleNamespace(returncode=0, stdout=text, stderr='')
+        with patch.object(g.subprocess, 'run', side_effect=invoke):
+            self.assertEqual(g.Gh(g.AUDITED_REPO, 42).pr(), payload)
+
+    def test_gh_transport_refuses_invalid_utf8_without_echoing_payload(self):
+        def invoke(args, **kwargs):
+            text = b'{"private":"\xff"}'.decode(kwargs.get('encoding', 'cp1252'))
+            return SimpleNamespace(returncode=0, stdout=text, stderr='')
+        with patch.object(g.subprocess, 'run', side_effect=invoke):
+            with self.assertRaisesRegex(g.Refusal, '^GitHub response is not valid UTF-8$'):
+                g.Gh(g.AUDITED_REPO, 42).pr()
+
+    def test_gh_merge_decode_failure_requires_readback(self):
+        error = UnicodeDecodeError('utf-8', b'\xff', 0, 1, 'invalid byte')
+        with patch.object(g.subprocess, 'run', side_effect=error):
+            with self.assertRaisesRegex(g.Refusal, 'read PR state before retry'):
+                g.Gh(g.AUDITED_REPO, 42).merge(HEAD)
+
     def test_gh_transport_server_race_rejects_without_successful_mutation(self):
         sample = NativeAPI()
         evidence = [sample.r, sample.detail, sample.commit_data] + [

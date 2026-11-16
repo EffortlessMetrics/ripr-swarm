@@ -1,0 +1,16 @@
+[[extend]]
+id = "RIPR-SPEC-0190"
+tests = [
+  "crates/ripr/tests/cli_help_json_flags.rs::gate_rows_carry_the_shared_gate_flags",
+  "crates/ripr/tests/cli_help_json_flags.rs::every_flag_an_own_body_row_lists_is_accepted_by_the_parser",
+  "crates/ripr/tests/cli_help_hierarchy.rs::group_help_preserves_explicit_errors_and_gate_flag_alias",
+]
+code = [
+  "crates/ripr/src/cli/help.rs::help_text_for",
+  "crates/ripr/src/cli/help_flags.rs::flags_for",
+  "crates/ripr/src/cli/suggest.rs::unknown_argument",
+  "crates/ripr/src/cli/help/policy.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0190-help-json-machine-discovery.md",
+]

@@ -80,8 +80,8 @@ runs:
             if [ -z "$entries" ] || grep -Eq '[/\\:]|^\.\.?$|^$' <<< "$entries"; then
               echo "::error::$asset lists an entry outside a flat archive root (nested, absolute, traversal or empty name)"; exit 1
             fi
-            [ -z "$(printf '%s\n' "$entries" | uniq -d)" ] || { echo "::error::$asset lists a duplicate entry"; exit 1; }
-            grep -qx "$exe" <<< "$entries" || { echo "::error::$asset does not contain $exe at its root"; exit 1; }
+            [ -z "$(printf '%s\n' "$entries" | tr 'A-Z' 'a-z' | sed 's/[. ]*$//' | LC_ALL=C sort | uniq -d)" ] || { echo "::error::$asset lists a duplicate entry"; exit 1; }
+            grep -Fqx -- "$exe" <<< "$entries" || { echo "::error::$asset does not contain $exe at its root"; exit 1; }
             "$ziptool" -xf "$asset" -C ripr-bin || { echo "::error::$asset could not be extracted"; exit 1; }
           else
             tar -xzf "$asset" -C ripr-bin || { echo "::error::$asset could not be extracted"; exit 1; }
