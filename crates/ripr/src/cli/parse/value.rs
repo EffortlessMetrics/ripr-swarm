@@ -33,8 +33,12 @@ pub(crate) fn expect_path_value<'a>(
 ) -> Result<&'a str, String> {
     let value = expect_value(args, idx, flag)?;
     if value.trim().is_empty() {
-        return Err(format!(
-            "{flag} requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)"
+        // Typed like a missing value under a JSON request (#14859).
+        return Err(crate::cli::usage_refusal::empty_value(
+            flag,
+            &format!(
+                "{flag} requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)"
+            ),
         ));
     }
     Ok(value)
