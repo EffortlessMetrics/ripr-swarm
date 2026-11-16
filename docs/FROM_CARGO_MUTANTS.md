@@ -45,7 +45,7 @@ ripr does not read `.cargo/mutants.toml`. Carry its settings over by hand:
 
 | cargo-mutants (`.cargo/mutants.toml`) | ripr |
 | --- | --- |
-| `exclude_globs` / `examine_globs` | `--exclude` / `--path` flags ([Configuration](CONFIGURATION.md)) |
+| `exclude_globs` / `examine_globs` | `--exclude` / `--path` flags ([Configuration](CONFIGURATION.md)); the files they leave out count as requested scope, not as an incomplete run |
 | `exclude_re` / `examine_re` | none |
 | `additional_cargo_test_args`, `test_tool` | not applicable |
 | `#[mutants::skip]` | honored as-is on a changed function or method, including `#[cfg_attr(<predicate>, mutants::skip)]`: `ripr check` withholds that owner's findings and discloses them (count and `owner_mutants_skip`; see [Output schema](OUTPUT_SCHEMA.md#owner_opt_outs-and-withheld-findings-top-level-additive-13819)). A skip on an `impl` block or module is not read; use `.ripr/suppressions.toml` ([example](suppressions.example.toml)) with `--suppression-policy` for those |
@@ -103,7 +103,13 @@ Two rules for scripts that read this file:
   `# ripr: ...` comments when the run is incomplete, when sources are
   uncommitted, or when findings were left out. Skip them when listing gaps,
   but do not treat comment-only output as clean: only zero bytes means a
-  fully analyzed run with nothing to list.
+  fully analyzed run with nothing to list. Files you leave out on purpose
+  with `--exclude`/`--path` (or a configured `generated_file_patterns`) are
+  requested scope: they do not add a comment, and an otherwise fully analyzed
+  scoped run still prints zero bytes. The human and JSON reports name them in
+  a scope note. Files ripr skips on its own (built-in generated-file names
+  such as `generated.rs` or a `gen/` directory, unsupported languages, parse
+  failures) are not requested scope and still print a comment.
 - `ripr check` exits `0` whether or not it found gaps. A non-zero exit means
   the analysis did not complete. Do not gate on `check`'s exit code.
 
@@ -142,8 +148,11 @@ What it blocks: gaps that are policy-eligible and have a complete, bounded
 repair route. It does not block every finding. In the example above
 `missed-txt` listed two lines, while the gate reported one blocking gap and
 kept the other advisory (`incomplete_repair_route`). A gap stays advisory, for
-instance, when ripr cannot name a repair or when a test next to it changed in
-the same pull request. `gate-decision.md` states the reason for each one.
+instance, when ripr cannot name a repair, or when the pull request changed a
+test that calls the gap's function (directly, through a helper, or through a
+verified re-export). Changing an unrelated test, even one in the same file or
+with the same name in another module, does not keep a gap advisory.
+`gate-decision.md` states the reason for each one.
 
 A changed gap that ripr withholds as a static limitation is listed too, not
 dropped. For example, a changed function no test calls, whose boundary operand
