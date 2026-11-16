@@ -1431,9 +1431,6 @@ fn select_partial_diff_partition_with_identity(
     )
 }
 
-/// Whether the enabled set runs the adapter `language` routes to. `route`
-/// maps `.js`-family paths to [`LanguageId::TypeScript`], and the TypeScript
-/// adapter serves both ids, so a JavaScript-only run enables them (#13641).
 /// The enabled languages this diff actually contains, for budget resolution
 /// (#13641 review). Each file is judged against its own language limit, so
 /// the aggregate line-budget clamp and the widen advice only consider limits
@@ -1468,6 +1465,9 @@ fn diff_budget_languages(
     languages
 }
 
+/// Whether the enabled set runs the adapter `language` routes to. `route`
+/// maps `.js`-family paths to [`LanguageId::TypeScript`], and the TypeScript
+/// adapter serves both ids, so a JavaScript-only run enables them (#13641).
 fn language_adapter_enabled(enabled_languages: &[LanguageId], language: LanguageId) -> bool {
     match language {
         LanguageId::TypeScript | LanguageId::JavaScript => {

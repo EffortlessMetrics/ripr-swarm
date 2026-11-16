@@ -41,6 +41,7 @@ tests = [
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::following_over_limit_advice_analyzes_the_whole_diff",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::each_file_is_judged_against_its_own_language_limit",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::a_lowered_limit_only_clamps_diffs_that_contain_its_language",
+  "crates/ripr/src/analysis/pipeline.rs::tests::lowered_python_limit_leaves_a_rust_only_diff_at_full_scope",
   "crates/ripr/src/output/human.rs::tests::over_limit_stop_names_only_enabled_language_files_as_selected",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::partial_budgets_read_only_enabled_language_limits",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::generated_preview_files_are_never_partition_candidates",

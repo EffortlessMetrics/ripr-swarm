@@ -89,7 +89,7 @@ explainable refusal to repair from.
    file's line count and its language limit env (not a diff path), so the
    `--json` basis follows the refusing language. Each file is judged against
    its own language's limit, the partial line budget is clamped to the
-   smallest limit among the enabled languages the diff contains, and only those languages' limits are read (a lowered Python limit never clamps a Rust-only diff). The streaming parse guards and the index-file guard are unchanged.
+   smallest limit among the enabled languages the diff contains, and only those languages' limits clamp the line budget (a lowered Python limit never clamps a Rust-only diff). The streaming parse guards and the index-file guard are unchanged.
 6. In the `--json` limited artifact, `analysis_scope.basis` (and
    `run_limitations[].basis`) name the budget that fired:
    `python_diff_scope_budget`, `typescript_diff_scope_budget`, or
@@ -172,6 +172,7 @@ explainable refusal to repair from.
   `{rust,python,typescript}_diff_over_the_changed_line_guard_degrades_into_partial_scope`,
   `over_limit_python_file_sorting_first_is_left_out_of_a_partial_scope`,
   `lowered_python_limit_leaves_an_over_limit_py_out_beside_rust`,
+  `lowered_python_limit_leaves_a_rust_only_diff_at_full_scope`,
   `raised_typescript_limit_never_runs_over_limit_files_as_full_scope`.
 - `crates/ripr/src/analysis/language/rust/mod.rs` tests:
   `changed_rust_line_guard_measures_the_selected_partition`,
