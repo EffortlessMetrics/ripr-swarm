@@ -3159,8 +3159,23 @@ pub(in crate::analysis) fn guarded_comparison(
     let before = match probe.before.as_deref() {
         None => None,
         Some(before) => {
-            let (old_comparison, old_guards, _) =
-                split_guarded(&with_continuation(before), owner, probe.location.line)?;
+            let Some((old_comparison, old_guards, _)) =
+                split_guarded(&with_continuation(before), owner, probe.location.line)
+            else {
+                // A wrapped guard the old line cannot be read with (`if a > T {`
+                // becoming `if a >= T` over `&& !x`) is a guard-touching edit:
+                // decline it rather than fall back to reading the comparison
+                // without its guards.
+                if continuation.is_some() {
+                    return Some(GuardedComparison {
+                        comparison,
+                        guards,
+                        rebound_guard: true,
+                        before: None,
+                    });
+                }
+                return None;
+            };
             let sorted = |guards: &[(String, bool)]| {
                 let mut guards = guards.to_vec();
                 guards.sort();
@@ -3232,15 +3247,20 @@ pub(in crate::analysis) fn predicate_line_bool_guards(
 
 /// The `&& guard` lines rustfmt wraps under a condition (`if a >= T` then
 /// `    && !express` then `{`), joined, so `check` and the repo-wide seam view
-/// read a wrapped guard as they read a one-line one (#14873). Only lines
+/// read a wrapped guard as they read a one-line one (#14873). The head may
+/// already carry guards (`if a >= T && member`); its continuation adds the
+/// rest. Only lines
 /// that each open with `&&` count, up to the opening brace; a `||`, a
 /// comment, or any other continuation is not read, which leaves the
 /// comparison unguarded exactly as before.
 fn wrapped_guard_continuation(owner: &FunctionSummary, line: usize) -> Option<String> {
     let offset = line.checked_sub(owner.start_line)?;
     let mut lines = owner.body.lines().skip(offset);
-    let head = lines.next()?.trim_end();
-    if head.ends_with('{') || head.contains("&&") || head.contains("||") {
+    let head = lines.next()?.trim();
+    let opens_condition = ["if ", "} else if ", "else if ", "while "]
+        .iter()
+        .any(|prefix| head.starts_with(prefix));
+    if !opens_condition || head.ends_with('{') || head.contains("||") {
         return None;
     }
     let mut guards = Vec::new();

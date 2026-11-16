@@ -327,3 +327,110 @@ fn a_wrapped_guard_is_read_from_the_line_below() -> Result<(), String> {
     assert_eq!(field(&seam, "/evidence/activate"), Some("yes"), "{seam}");
     Ok(())
 }
+
+#[test]
+fn a_reassigned_mut_local_is_not_read_from_its_initializer() -> Result<(), String> {
+    // The call runs with `express = true`: the initializer must not hold
+    // the guard.
+    let seam = TempRepo::create(
+        SOURCE,
+        "let mut express = false;\n    express = true;\n    assert_eq!(shipping_cost(100, 5000, express), 200);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "{seam}"
+    );
+
+    // The call runs with 5001: the initializer must not sit on the boundary.
+    let seam = TempRepo::create(
+        SOURCE,
+        "let mut cents = 5000;\n    cents += 1;\n    assert_eq!(shipping_cost(100, cents, false), 0);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "{seam}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unasserted_guard_holding_call_does_not_activate_a_separately_asserted_one()
+-> Result<(), String> {
+    let seam = TempRepo::create(
+        SOURCE,
+        "let _ = shipping_cost(100, 5000, false);\n    assert_eq!(shipping_cost(100, 5000, true), 200);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "{seam}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_bound_result_of_the_guard_holding_call_is_observed_through_its_binding() -> Result<(), String>
+{
+    let seam = TempRepo::create(
+        SOURCE,
+        "let free = shipping_cost(100, 5000, false);\n    assert_eq!(free, 0);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(field(&seam, "/evidence/activate"), Some("yes"), "{seam}");
+
+    let seam = TempRepo::create(
+        SOURCE,
+        "let mut free = shipping_cost(100, 5000, false);\n    free = 0;\n    assert_eq!(free, 0);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "a reassigned binding observes nothing: {seam}"
+    );
+    Ok(())
+}
+
+const TWO_GUARDS_WRAPPED: &str = "pub const FREE_OVER_CENTS: u32 = 5_000;
+
+pub fn shipping_cost(weight_g: u32, order_cents: u32, member: bool, express: bool) -> u32 {
+    if order_cents >= FREE_OVER_CENTS && member
+        && !express
+    {
+        return 0;
+    }
+    if express { weight_g * 2 } else { weight_g }
+}
+";
+
+#[test]
+fn a_second_guard_wrapped_under_a_guarded_head_is_read() -> Result<(), String> {
+    let seam = TempRepo::create(
+        TWO_GUARDS_WRAPPED,
+        "assert_eq!(shipping_cost(100, 5000, true, true), 200);\n    assert_eq!(shipping_cost(100, 4999, true, true), 200);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "{seam}"
+    );
+    let summary = field(&seam, "/evidence_record/evidence_path/activate/summary").unwrap_or("");
+    assert!(
+        summary.contains("`express = false`") && summary.contains("`member = true`"),
+        "both guards are named: {summary}"
+    );
+
+    let seam = TempRepo::create(
+        TWO_GUARDS_WRAPPED,
+        "assert_eq!(shipping_cost(100, 5000, true, false), 0);\n    assert_eq!(shipping_cost(100, 4999, true, false), 100);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(field(&seam, "/evidence/activate"), Some("yes"), "{seam}");
+    Ok(())
+}

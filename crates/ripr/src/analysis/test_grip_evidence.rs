@@ -4448,7 +4448,7 @@ fn guarded_boundary_unheld(
                                     // (`let express = false;`) resolved per
                                     // call as `check` resolves its rows.
                                     argument.trim() == wanted
-                                        || resolved_argument_values(
+                                        || stable_local_values(
                                             seam,
                                             indexed,
                                             index,
@@ -4464,7 +4464,7 @@ fn guarded_boundary_unheld(
                                 // An immutable local (`let cents = 5000;`)
                                 // resolved per call, as the activation reader
                                 // resolves it.
-                                || resolved_argument_values(
+                                || stable_local_values(
                                     seam,
                                     indexed,
                                     index,
@@ -4482,7 +4482,7 @@ fn guarded_boundary_unheld(
                                     )
                                 })
                         });
-                        guards_hold && on_boundary
+                        guards_hold && on_boundary && guarded_call_is_asserted(indexed.test, call)
                     })
         })
     });
@@ -4492,6 +4492,126 @@ fn guarded_boundary_unheld(
 /// A direct owner call whose compared argument names the boundary
 /// constant itself (`discounted_total(DISCOUNT_THRESHOLD)`), in a test whose
 /// own file does not declare a constant of the same name.
+/// Whether the guard-holding boundary call is itself the one a
+/// discriminating assertion observes, as `check` pairs it: the call sits
+/// inside that assertion, or its result is bound once (`let r = call;`,
+/// never reassigned) and a later assertion names the binding. A separate
+/// unasserted call (`let _ = f(5000, false); assert_eq!(f(5000, true), ..)`)
+/// reaches the boundary but nothing observes it there.
+fn guarded_call_is_asserted(test: &TestSummary, call: &CallFact) -> bool {
+    let call_text = call.text.as_str().trim();
+    if call_text.is_empty() {
+        return false;
+    }
+    let discriminating = || {
+        test.assertions
+            .iter()
+            .filter(|assertion| super::classify::assertion_is_discriminating(assertion))
+    };
+    let inside = discriminating().any(|assertion| {
+        let last = assertion.line + assertion.text.lines().count().saturating_sub(1);
+        (assertion.line..=last).contains(&call.line) && assertion.text.contains(call_text)
+    });
+    if inside {
+        return true;
+    }
+    let body = test.body.as_str();
+    let Some(statement) = call
+        .line
+        .checked_sub(test.start_line)
+        .and_then(|offset| body.lines().nth(offset))
+    else {
+        return false;
+    };
+    let Some(binding) = statement
+        .trim()
+        .strip_prefix("let ")
+        .and_then(|rest| rest.split_once('='))
+        .map(|(name, _)| name.split(':').next().unwrap_or("").trim())
+        .filter(|name| {
+            !name.is_empty()
+                && *name != "_"
+                && name.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+        })
+    else {
+        return false;
+    };
+    if !statement.contains(call_text) || test_may_reassign(body, binding) {
+        return false;
+    }
+    discriminating()
+        .any(|assertion| assertion.line > call.line && text_names_ident(&assertion.text, binding))
+}
+
+fn text_names_ident(text: &str, name: &str) -> bool {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    text.match_indices(name).any(|(at, _)| {
+        text[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_ident(ch))
+            && text[at + name.len()..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !is_ident(ch))
+    })
+}
+
+/// `resolved_argument_values` for the guarded-boundary gate, declined for a
+/// name the test may change after binding it (`let mut`, `&mut`, or any
+/// assignment): the resolver reads the initializer, and a reassigned guard
+/// or boundary must never be credited from it.
+fn stable_local_values(
+    seam: &RepoSeam,
+    indexed: &CompactTest<'_>,
+    index: &RustIndex,
+    argument: &str,
+    call: &CallFact,
+) -> Vec<String> {
+    if test_may_reassign(indexed.test.body.as_str(), argument) {
+        return Vec::new();
+    }
+    resolved_argument_values(seam, indexed, index, argument, call)
+}
+
+/// Whether `body` may change `name` after binding it. Over-approximates:
+/// any `mut` binding, `&mut` borrow, or assignment-shaped use declines.
+fn test_may_reassign(body: &str, name: &str) -> bool {
+    if name.is_empty() || !name.chars().all(|ch| ch.is_alphanumeric() || ch == '_') {
+        return false;
+    }
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut from = 0;
+    while let Some(found) = body[from..].find(name) {
+        let at = from + found;
+        let end = at + name.len();
+        from = end;
+        let before_ok = body[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_ident(ch));
+        let after_ok = body[end..].chars().next().is_none_or(|ch| !is_ident(ch));
+        if !before_ok || !after_ok {
+            continue;
+        }
+        let prefix = body[..at].trim_end();
+        if prefix.ends_with("mut") {
+            return true;
+        }
+        let rest = body[end..].trim_start();
+        let compound = ["+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "<<=", ">>="];
+        if compound.iter().any(|op| rest.starts_with(op))
+            || (rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>"))
+        {
+            // `let name = ..` is the binding itself, not a reassignment.
+            if !prefix.ends_with("let") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn test_passes_boundary_constant(
     indexed: &CompactTest<'_>,
     owner_fn: Option<&FunctionSummary>,

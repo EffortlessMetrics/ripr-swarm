@@ -540,3 +540,129 @@ fn a_wrapped_guard_is_read_from_the_line_below() -> Result<(), String> {
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
+
+const WRAPPED_GUARD_ADDED_BEFORE: &str = "pub const FREE_OVER_CENTS: u32 = 5_000;
+
+pub fn shipping_cost(weight_g: u32, order_cents: u32, express: bool) -> u32 {
+    if order_cents > FREE_OVER_CENTS {
+        return 0;
+    }
+    if express { weight_g * 2 } else { weight_g }
+}
+";
+
+const WRAPPED_GUARD_ADDED_PATCH: &str = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,3 +3,5 @@ pub const FREE_OVER_CENTS: u32 = 5_000;
+ pub fn shipping_cost(weight_g: u32, order_cents: u32, express: bool) -> u32 {
+-    if order_cents > FREE_OVER_CENTS {
++    if order_cents >= FREE_OVER_CENTS
++        && !express
++    {
+         return 0;
+";
+
+#[test]
+fn an_edit_that_adds_a_wrapped_guard_is_not_credited_from_guard_missing_rows() -> Result<(), String>
+{
+    assert!(WRAPPED_GUARD_ADDED_BEFORE.contains("if order_cents > FREE_OVER_CENTS {"));
+    let tests = test_fn(
+        "express_only",
+        "assert_eq!(shipping_cost(100, 5000, true), 200);\n        assert_eq!(shipping_cost(100, 4999, true), 200);",
+    );
+    let repo = TempRepo::create_with(WRAPPED_AFTER, WRAPPED_GUARD_ADDED_PATCH, &tests)?;
+    let output = check_workspace(CheckInput {
+        root: repo.root.clone(),
+        base: None,
+        diff_file: Some(repo.root.join("diff.patch")),
+        mode: Mode::Ready,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let finding = output
+        .findings
+        .into_iter()
+        .find(|finding| {
+            finding.probe.family == ProbeFamily::Predicate && finding.probe.location.line == 4
+        })
+        .ok_or("premise: a predicate finding on the wrapped line")?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+const TWO_GUARDS_WRAPPED_AFTER: &str = "pub const FREE_OVER_CENTS: u32 = 5_000;
+
+pub fn shipping_cost(weight_g: u32, order_cents: u32, member: bool, express: bool) -> u32 {
+    if order_cents >= FREE_OVER_CENTS && member
+        && !express
+    {
+        return 0;
+    }
+    if express { weight_g * 2 } else { weight_g }
+}
+";
+
+const TWO_GUARDS_WRAPPED_PATCH: &str = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,4 +3,4 @@ pub const FREE_OVER_CENTS: u32 = 5_000;
+ pub fn shipping_cost(weight_g: u32, order_cents: u32, member: bool, express: bool) -> u32 {
+-    if order_cents > FREE_OVER_CENTS && member
++    if order_cents >= FREE_OVER_CENTS && member
+         && !express
+     {
+";
+
+fn two_guard_finding(tests: &str) -> Result<Finding, String> {
+    let repo = TempRepo::create_with(TWO_GUARDS_WRAPPED_AFTER, TWO_GUARDS_WRAPPED_PATCH, tests)?;
+    let output = check_workspace(CheckInput {
+        root: repo.root.clone(),
+        base: None,
+        diff_file: Some(repo.root.join("diff.patch")),
+        mode: Mode::Ready,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    output
+        .findings
+        .into_iter()
+        .find(|finding| {
+            finding.probe.family == ProbeFamily::Predicate && finding.probe.location.line == 4
+        })
+        .ok_or_else(|| "premise: a predicate finding on the guarded head".to_string())
+}
+
+#[test]
+fn a_second_guard_wrapped_under_a_guarded_head_is_read() -> Result<(), String> {
+    let missing = test_fn(
+        "member_express",
+        "assert_eq!(shipping_cost(100, 5000, true, true), 200);\n        assert_eq!(shipping_cost(100, 4999, true, true), 200);",
+    );
+    let finding = two_guard_finding(&missing)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("`express = false`")),
+        "the wrapped second guard is named: {:?}",
+        finding.missing
+    );
+
+    let held = test_fn(
+        "pins",
+        "assert_eq!(shipping_cost(100, 5000, true, false), 0);\n        assert_eq!(shipping_cost(100, 4999, true, false), 100);",
+    );
+    let finding = two_guard_finding(&held)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
