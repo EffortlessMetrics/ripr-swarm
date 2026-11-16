@@ -54144,28 +54144,46 @@ const NEXTEST_CI_MEASURED_BUILD_SECONDS: u64 = 774;
 const NEXTEST_CI_MEASURED_TEST_PHASE_SECONDS: u64 = 494;
 const NEXTEST_CI_SLOWEST_LEGITIMATE_TEST_SECONDS: u64 = 210;
 
+/// The trimmed key and value of a `key = value` line, tolerating any spacing
+/// around the `=`: `slow-timeout={...}` and `slow-timeout = {...}` are the
+/// same key, so a spelling cannot slip past a prefix match.
+fn toml_key_value(line: &str) -> Option<(&str, &str)> {
+    let (key, value) = line.split_once('=')?;
+    Some((key.trim(), value.trim()))
+}
+
 /// One `slow-timeout = { period = "Ns", terminate-after = N }` value as its
 /// window in seconds: `period` seconds of silence marked SLOW, terminated
-/// after `terminate-after` periods.
-fn parse_nextest_slow_timeout(line: &str) -> Result<u64, String> {
-    let period = line
-        .split("period =")
-        .nth(1)
-        .and_then(|rest| rest.trim_start().strip_prefix('"'))
-        .and_then(|rest| rest.split('"').next())
-        .and_then(|value| value.strip_suffix('s'))
-        .and_then(|value| value.parse::<u64>().ok())
-        .ok_or_else(|| format!("cannot read a seconds period from {line:?}"))?;
-    let terminate_after = line
-        .split("terminate-after =")
-        .nth(1)
-        .and_then(|rest| {
-            rest.trim_start()
-                .split(|c: char| !c.is_ascii_digit())
-                .next()
-        })
-        .and_then(|value| value.parse::<u64>().ok())
-        .ok_or_else(|| format!("cannot read terminate-after from {line:?}"))?;
+/// after `terminate-after` periods. Keys are read by name, so spacing and key
+/// order do not matter.
+fn parse_nextest_slow_timeout(value: &str) -> Result<u64, String> {
+    let inner = value
+        .trim()
+        .strip_prefix('{')
+        .and_then(|rest| rest.strip_suffix('}'))
+        .unwrap_or(value);
+    let mut period = None;
+    let mut terminate_after = None;
+    for part in inner.split(',') {
+        let Some((key, value)) = toml_key_value(part) else {
+            continue;
+        };
+        match key {
+            "period" => {
+                period = value
+                    .trim_matches('"')
+                    .strip_suffix('s')
+                    .and_then(|secs| secs.parse::<u64>().ok());
+            }
+            "terminate-after" => {
+                terminate_after = value.parse::<u64>().ok();
+            }
+            _ => {}
+        }
+    }
+    let period = period.ok_or_else(|| format!("cannot read a seconds period from {value:?}"))?;
+    let terminate_after =
+        terminate_after.ok_or_else(|| format!("cannot read terminate-after from {value:?}"))?;
     Ok(period * terminate_after)
 }
 
@@ -54186,12 +54204,14 @@ fn nextest_ci_hang_windows(config: &str) -> Result<(u64, Vec<(String, u64)>), St
         .split("\n[")
         .next()
         .ok_or("cannot isolate the [profile.ci] section")?;
-    let profile_line = section
+    let profile_value = section
         .lines()
-        .map(str::trim)
-        .find(|line| line.starts_with("slow-timeout ="))
+        .find_map(|line| {
+            let (key, value) = toml_key_value(line.trim())?;
+            (key == "slow-timeout").then_some(value)
+        })
         .ok_or("[profile.ci] has no slow-timeout")?;
-    let profile_window = parse_nextest_slow_timeout(profile_line)?;
+    let profile_window = parse_nextest_slow_timeout(profile_value)?;
 
     fn finish(
         block: &mut Option<(usize, Option<String>, Option<u64>)>,
@@ -54211,7 +54231,7 @@ fn nextest_ci_hang_windows(config: &str) -> Result<(u64, Vec<(String, u64)>), St
     let mut ordinal = 0usize;
     for line in config.lines() {
         let trimmed = line.trim();
-        if trimmed == "[[profile.ci.overrides]]" {
+        if trimmed.starts_with("[[profile.ci.overrides]]") {
             finish(&mut block, &mut overrides);
             ordinal += 1;
             block = Some((ordinal, None, None));
@@ -54224,16 +54244,20 @@ fn nextest_ci_hang_windows(config: &str) -> Result<(u64, Vec<(String, u64)>), St
         let Some((_, filter, window)) = block.as_mut() else {
             continue;
         };
-        if let Some(value) = trimmed.strip_prefix("filter = ") {
-            *filter = Some(value.to_string());
-        }
-        if trimmed.starts_with("slow-timeout =") {
-            *window = Some(parse_nextest_slow_timeout(trimmed).map_err(|err| {
-                format!(
-                    "cannot parse the slow-timeout of override {}: {err}",
-                    filter.as_deref().unwrap_or("<unnamed>")
-                )
-            })?);
+        let Some((key, value)) = toml_key_value(trimmed) else {
+            continue;
+        };
+        match key {
+            "filter" => *filter = Some(value.to_string()),
+            "slow-timeout" => {
+                *window = Some(parse_nextest_slow_timeout(value).map_err(|err| {
+                    format!(
+                        "cannot parse the slow-timeout of override {}: {err}",
+                        filter.as_deref().unwrap_or("<unnamed>")
+                    )
+                })?);
+            }
+            _ => {}
         }
     }
     finish(&mut block, &mut overrides);
