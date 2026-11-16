@@ -562,6 +562,11 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
     let direct_call_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\napp.get(\"/price\")(legacy)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
     let alias_app = "from fastapi import FastAPI\n\napp = FastAPI()\nlegacy_route = app.get(\"/price\")\n\n\n@legacy_route\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
     let websocket_app = "from fastapi import FastAPI\n\napp = FastAPI()\napplication = app\n\n\n@app.websocket(\"/ws\")\nasync def ws(websocket):\n    await websocket.accept()\n\n\n@application.get(\"/price\")\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let alias_call_app = "from fastapi import FastAPI\n\napp = FastAPI()\nlegacy_route = app.get(\"/price\")\n\n\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\nlegacy_route(legacy)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let split_call_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\napp.get(\n    \"/price\",\n)(legacy)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let partial_route_app = "from functools import partial\n\nfrom fastapi import FastAPI\n\napp = FastAPI()\nprice_route = partial(app.get, \"/price\")\n\n\n@price_route()\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let route_object_app = "from fastapi import FastAPI\nfrom fastapi.routing import APIRoute\n\napp = FastAPI()\n\n\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\napp.router.routes += [APIRoute(\"/price\", legacy, methods=[\"GET\"])]\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let patched_json_app = "import pytest\nfrom fastapi import FastAPI\nfrom starlette.responses import Response\n\napp = FastAPI()\n\n\n@pytest.fixture(autouse=True)\ndef fake_json(monkeypatch):\n    monkeypatch.setattr(Response, \"json\", lambda self: {\"total\": 190})\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
     let flag_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 10, \"status\": \"ok\"}\n";
     let list_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": [5], \"count\": 3}\n";
     let list_edit = |new: &'static str| Edit {
@@ -812,6 +817,68 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             read("assert response.json()[\"flag\"] == 1"),
         ),
         (
+            "route alias called directly",
+            alias_call_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "route applied by a call split over lines",
+            split_call_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "route method passed to partial",
+            partial_route_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "route object appended to the routes",
+            route_object_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "json patched by a workspace fixture",
+            patched_json_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "json replaced through object.__setattr__",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "object.__setattr__(response, \"json\", lambda: {\"total\": 190})\n    assert response.json()[\"total\"] == 190",
+            ),
+        ),
+        (
+            "parenthesized value",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": (1), \"zero\": 0, \"ten\": 10, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"flag\"] == 1"),
+        ),
+        (
+            "string prefix only",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 10, \"status\": u\"ok\"}",
+            ),
+            read("assert response.json()[\"status\"] == \"ok\""),
+        ),
+        (
+            "power spelling",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 100**0.5, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == 10"),
+        ),
+        (
             "static route before a parameter route",
             overlap_app,
             overlap_edit,
@@ -833,6 +900,39 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
     )?;
     if finding.class != ExposureClass::Exposed {
         failures.push(format!("nested value change: read {:?}", finding.class));
+    }
+    // Controls: an apostrophe in a double-quoted string and an integer past
+    // 2^53 are values like any other, so a real change to them is credited.
+    for (name, old, new, assertion) in [
+        (
+            "apostrophe string change",
+            "    return {\"total\": \"it's fine\", \"count\": 3}",
+            "    return {\"total\": \"it is fine\", \"count\": 3}",
+            "assert response.json()[\"total\"] == \"it is fine\"",
+        ),
+        (
+            "large integer change",
+            "    return {\"total\": 9007199254740993, \"count\": 3}",
+            "    return {\"total\": 9007199254740992, \"count\": 3}",
+            "assert response.json()[\"total\"] == 9007199254740992",
+        ),
+    ] {
+        let app = format!(
+            "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n{old}\n"
+        );
+        let finding = check_style(
+            name,
+            &[("src/app.py", app.as_str())],
+            Edit {
+                owner: "src/app.py",
+                old,
+                new,
+            },
+            &read(assertion),
+        )?;
+        if finding.class != ExposureClass::Exposed {
+            failures.push(format!("{name}: read {:?}", finding.class));
+        }
     }
     // Control: punctuation inside a string is part of the value.
     let comma_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": \"a,]b\", \"count\": 3}\n";

@@ -207,6 +207,60 @@
   ],
   "cases": [
     {
+      "id": "python_route_response_json_patch",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_json_patch",
+      "vector": "route_response_replaced_json_method_does_not_read_the_handler",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
+      "id": "python_route_response_equivalent_number",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_equivalent_number",
+      "vector": "route_response_json_equivalent_value_is_not_a_changed_key",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
       "id": "python_route_response_sibling",
       "language": "python",
       "tier": "pure",

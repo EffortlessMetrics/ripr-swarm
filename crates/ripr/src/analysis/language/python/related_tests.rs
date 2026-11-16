@@ -1070,10 +1070,12 @@ fn route_patterns_overlap(left: &str, right: &str) -> bool {
 /// (#13869): an exception handler, middleware or request hook (which may
 /// answer with the changed key on an error path), a dependency override, a
 /// custom route class, an imperative or declarative route registration, a
-/// router or blueprint inclusion or prefix, a mount, or a catch-all `:path`
-/// parameter.
+/// router or blueprint inclusion or prefix, a mount, a catch-all `:path`
+/// parameter, a route object (`Route(...)`, `APIRoute` used as a value or
+/// base, `routes += [...]`), or a patch naming the `json` attribute
+/// (`monkeypatch.setattr(Response, "json", ...)`).
 pub(super) fn workspace_reshapes_responses(source: &str) -> bool {
-    const MARKERS: [&str; 19] = [
+    const MARKERS: [&str; 23] = [
         "exception_handler",
         "errorhandler(",
         "middleware",
@@ -1091,13 +1093,20 @@ pub(super) fn workspace_reshapes_responses(source: &str) -> bool {
         "register_blueprint(",
         "routes=",
         "route_class",
-        "APIRoute)",
+        "Route(",
         ".routes.",
+        ".routes+=",
+        ".routes[",
+        ",\"json\"",
+        ",'json'",
     ];
     // Whitespace may sit inside a call (`app.add_api_route ("/x", f)`), so
     // the markers are matched against the source without it.
     let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
     MARKERS.iter().any(|marker| compact.contains(marker))
+        || compact
+            .match_indices("APIRoute")
+            .any(|(at, _)| !compact[at + "APIRoute".len()..].starts_with('r'))
 }
 
 /// The route-registering method calls the owners record (#13869).
@@ -1130,58 +1139,107 @@ pub(super) fn route_decorator_lines(source: &str) -> usize {
 
 /// Whether the workspace may register a route without a route decorator line
 /// (#13869), which neither the decorator count nor the owners would see: a
-/// route call applied directly (`app.get("/price")(legacy)`), or a route call
-/// bound to a name that a decorator then uses (`legacy = app.get("/price")`
-/// then `@legacy`). Either makes the run opaque (fail closed); a dispatch
-/// such as `handlers.get(name)(args)` refuses as well.
+/// route call applied directly (`app.get("/price")(legacy)`, on one line or
+/// several), a route method used without being called (`partial(app.get,
+/// "/price")`, `r = app.get`), or a route call bound to a name that is later
+/// called or used as a decorator (`legacy = app.get("/price")` then
+/// `legacy(view)` or `@legacy`). Any of them makes the run opaque (fail
+/// closed); a dispatch such as `handlers.get(name)(args)` or `key=d.get`
+/// refuses as well.
 pub(super) fn workspace_registers_routes_indirectly<'a>(
     sources: impl Iterator<Item = &'a str> + Clone,
 ) -> bool {
-    let compact_lines = |source: &'a str| {
-        source.lines().map(|line| {
-            line.chars()
-                .filter(|ch| !ch.is_whitespace())
-                .collect::<String>()
-        })
-    };
-    let mut aliases: Vec<String> = Vec::new();
-    for line in sources.clone().flat_map(compact_lines) {
-        if line.starts_with('@') {
-            continue;
-        }
-        if ROUTE_VERBS.iter().any(|verb| {
-            line.match_indices(verb)
-                .any(|(at, _)| line[at..].contains(")("))
-        }) {
-            return true;
-        }
-        let Some((target, value)) = line.split_once('=') else {
-            continue;
-        };
-        let name = target.split(':').next().unwrap_or(target);
-        let Some((callee, _)) = value.split_once('(') else {
-            continue;
-        };
-        let callee = format!("{callee}(");
-        if !name.is_empty()
-            && name.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
-            && callee
-                .chars()
-                .all(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '.' | '('))
-            && ROUTE_VERBS.iter().any(|verb| callee.ends_with(verb))
-        {
-            aliases.push(name.to_string());
+    let compact =
+        |source: &str| -> Vec<char> { source.chars().filter(|ch| !ch.is_whitespace()).collect() };
+    let identifier = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut aliases: Vec<Vec<char>> = Vec::new();
+    for source in sources.clone() {
+        for line in source.lines() {
+            let line: String = line.chars().filter(|ch| !ch.is_whitespace()).collect();
+            let Some((target, value)) = line.split_once('=') else {
+                continue;
+            };
+            let name = target.split(':').next().unwrap_or(target);
+            let Some((callee, _)) = value.split_once('(') else {
+                continue;
+            };
+            let callee = format!("{callee}(");
+            if !name.is_empty()
+                && name.chars().all(identifier)
+                && callee
+                    .chars()
+                    .all(|ch| identifier(ch) || matches!(ch, '.' | '('))
+                && ROUTE_VERBS.iter().any(|verb| callee.ends_with(verb))
+            {
+                aliases.push(name.chars().collect());
+            }
         }
     }
-    !aliases.is_empty()
-        && sources.flat_map(compact_lines).any(|line| {
-            let Some(decorator) = line.strip_prefix('@') else {
-                return false;
-            };
-            let head = decorator.split('(').next().unwrap_or(decorator);
-            let last = head.rsplit('.').next().unwrap_or(head);
-            aliases.iter().any(|alias| alias == last)
-        })
+    for source in sources {
+        let chars = compact(source);
+        for verb in ROUTE_VERBS {
+            let stem: Vec<char> = verb.trim_end_matches('(').chars().collect();
+            let mut at = 0;
+            while at + stem.len() <= chars.len() {
+                if chars[at..at + stem.len()] != stem[..] {
+                    at += 1;
+                    continue;
+                }
+                let after = at + stem.len();
+                match chars.get(after) {
+                    Some('(') => {
+                        // Find the call's closing parenthesis (strings
+                        // skipped); a call right after it applies the route.
+                        let mut depth = 0usize;
+                        let mut quote: Option<char> = None;
+                        let mut index = after;
+                        while let Some(&ch) = chars.get(index) {
+                            match quote {
+                                Some(open) => {
+                                    if ch == open {
+                                        quote = None;
+                                    }
+                                }
+                                None => match ch {
+                                    '"' | '\'' => quote = Some(ch),
+                                    '(' => depth += 1,
+                                    ')' => {
+                                        depth = depth.saturating_sub(1);
+                                        if depth == 0 {
+                                            break;
+                                        }
+                                    }
+                                    _ => {}
+                                },
+                            }
+                            index += 1;
+                        }
+                        if chars.get(index + 1) == Some(&'(') {
+                            return true;
+                        }
+                    }
+                    Some(&next) if identifier(next) => {}
+                    _ => return true,
+                }
+                at = after;
+            }
+        }
+        for alias in &aliases {
+            let mut at = 0;
+            while at + alias.len() <= chars.len() {
+                let end = at + alias.len();
+                let starts = at == 0 || chars.get(at - 1).is_some_and(|&ch| !identifier(ch));
+                if starts
+                    && chars[at..end] == alias[..]
+                    && (chars.get(end) == Some(&'(') || (at > 0 && chars.get(at - 1) == Some(&'@')))
+                {
+                    return true;
+                }
+                at += 1;
+            }
+        }
+    }
+    false
 }
 
 /// Records on each free-function owner the module paths of other workspace
@@ -3232,7 +3290,9 @@ fn route_response_assignments(test: &PythonTest, receiver: &str) -> Vec<(String,
         || compact
             .match_indices(".json")
             .any(|(at, _)| !compact[at + ".json".len()..].starts_with('('))
-        || compact.contains("setattr(")
+        || compact.contains("setattr")
+        || compact.contains("\"json\"")
+        || compact.contains("'json'")
         || test.body_text.lines().any(|line| {
             let line = line.trim_start();
             line.starts_with("match ") || line.starts_with("match(") || line.starts_with("case ")

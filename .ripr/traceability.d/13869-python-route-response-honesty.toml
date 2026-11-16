@@ -1,8 +1,16 @@
-# Independent no-promotion control for the route-response read credit (#13869).
+# Independent no-promotion controls for the route-response read credit (#13869).
 [[extend]]
 id = "RIPR-SPEC-0238"
-fixtures = ["fixtures/python_route_response_sibling"]
+fixtures = [
+  "fixtures/python_route_response_sibling",
+  "fixtures/python_route_response_json_patch",
+  "fixtures/python_route_response_equivalent_number",
+]
 
 [[extend]]
 id = "RIPR-SPEC-0108"
-fixtures = ["fixtures/python_route_response_sibling"]
+fixtures = [
+  "fixtures/python_route_response_sibling",
+  "fixtures/python_route_response_json_patch",
+  "fixtures/python_route_response_equivalent_number",
+]

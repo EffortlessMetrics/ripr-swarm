@@ -1692,10 +1692,12 @@ fn sink_alignment_and_rows(
 }
 
 /// The unquoted keys of a dict-literal change whose old and new values
-/// serialize to JSON that a Python comparison cannot tell apart (#13869): a
-/// tuple and a list (`(1, 2)` and `[1, 2]`), one string in either quote
-/// style, or numbers of one value (`5`, `5.0`, `1_0` and `10`, `1e1`, `0`
-/// and `-0.0`, `1` and `True`), or a value whose string is not established.
+/// a Python comparison of the JSON body may not tell apart (#13869): one
+/// string in either quote style, numbers or numeric expressions of one value
+/// (`5`, `5.0`, `1_0` and `10`, `1e1`, `0` and `-0.0`, `1` and `True`, `(1)`,
+/// `10**2` and `100`), lists of such values, and any value whose form
+/// [`json_normal_form`] cannot establish (a tuple, a dict, a name, a prefixed
+/// or adjacent string), which fails closed.
 fn json_equivalent_keys(old_line: Option<&str>, new_line: &str) -> Vec<String> {
     let (Some(old), Some(new)) = (
         old_line.and_then(parse_dict_literal_fields),
@@ -1714,61 +1716,60 @@ fn json_equivalent_keys(old_line: Option<&str>, new_line: &str) -> Vec<String> {
         .collect()
 }
 
-/// A comparison-level normal form of a Python literal's JSON body (#13869).
-/// Outside strings, whitespace is dropped, tuple brackets read as list
-/// brackets, a trailing comma before a closing bracket is dropped, and each
-/// scalar token that reads as a number (`True`/`False` as 1/0, underscores
-/// ignored, hex/octal/binary integers) is replaced by its value. A string is
-/// rewritten in double quotes. `None` when a string holds an escape, the
-/// other quote character or no closing quote: its value is not established,
-/// so the caller treats the key as unchanged (fail closed).
+/// A comparison-level normal form of a Python literal's JSON body (#13869),
+/// or `None` when the value is not established (the caller then treats the
+/// key as unchanged, failing closed).
+///
+/// A value made only of numbers, `+ - * / // % **` and parentheses is
+/// evaluated (`200 - 10` reads 190, `(1)` reads 1, `10**2` reads 100). Any
+/// other value is read as a literal: whitespace is dropped, a trailing comma
+/// before `]` is dropped, each number token is replaced by its value
+/// (`True`/`False` as 1/0, underscores ignored, exponents, hex/octal/binary
+/// integers within `i64`) and each string is rewritten in double quotes. A
+/// string with a prefix or an escape, adjacent strings, a
+/// tuple or dict, a name or any other operator is not established.
 fn json_normal_form(value: &str) -> Option<String> {
-    fn scalar(token: &str) -> String {
-        let digits = token.replace('_', "");
-        let (sign, magnitude) = match digits.strip_prefix('-') {
-            Some(rest) => (-1.0, rest),
-            None => (1.0, digits.strip_prefix('+').unwrap_or(&digits)),
-        };
-        let radix = |prefix: [&str; 2], radix: u32| {
-            prefix
-                .iter()
-                .find_map(|p| magnitude.strip_prefix(p))
-                .and_then(|rest| i64::from_str_radix(rest, radix).ok())
-                .map(|n| sign * n as f64)
-        };
-        let numeric = match token {
-            "True" => Some(1.0),
-            "False" => Some(0.0),
-            _ => radix(["0x", "0X"], 16)
-                .or_else(|| radix(["0o", "0O"], 8))
-                .or_else(|| radix(["0b", "0B"], 2))
-                .or_else(|| digits.parse::<f64>().ok()),
-        };
-        match numeric {
-            Some(number) if number.is_finite() => {
-                if number == 0.0 {
-                    "0".to_string()
-                } else {
-                    format!("{number}")
-                }
-            }
-            _ => token.to_string(),
+    let compact: String = value.chars().filter(|ch| !ch.is_whitespace()).collect();
+    // A plain integer is compared exactly (`literal_scalar`), not through the
+    // `f64` arithmetic below, which merges integers past 2^53.
+    let unsigned = compact.strip_prefix(['-', '+']).unwrap_or(&compact);
+    if !unsigned.is_empty() && unsigned.chars().all(|ch| ch.is_ascii_digit() || ch == '_') {
+        return literal_scalar(&compact);
+    }
+    if !compact.is_empty()
+        && compact
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || "._+-*/%()eE".contains(ch))
+    {
+        let chars: Vec<char> = compact.chars().collect();
+        let mut at = 0;
+        let number = arithmetic_sum(&chars, &mut at)?;
+        if at != chars.len() {
+            return None;
         }
+        return canonical_number(number);
     }
     let mut normal = String::new();
     let mut token = String::new();
-    let mut chars = value.trim().chars();
+    let mut chars = compact.chars();
     while let Some(ch) = chars.next() {
         if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '+' | '-') {
             token.push(ch);
             continue;
         }
         if !token.is_empty() {
-            normal.push_str(&scalar(&token));
+            // A token right before a quote is a string prefix (`r`, `f`, `b`).
+            if matches!(ch, '"' | '\'') {
+                return None;
+            }
+            normal.push_str(&literal_scalar(&token)?);
             token.clear();
         }
         match ch {
             '"' | '\'' => {
+                if normal.ends_with('"') {
+                    return None;
+                }
                 let mut closed = false;
                 normal.push('"');
                 for inner in chars.by_ref() {
@@ -1776,33 +1777,197 @@ fn json_normal_form(value: &str) -> Option<String> {
                         closed = true;
                         break;
                     }
-                    if matches!(inner, '\\' | '"' | '\'') {
-                        return None;
+                    // An escape is not established; the other quote is plain
+                    // content, escaped in the double-quoted form.
+                    match inner {
+                        '\\' => return None,
+                        '"' => normal.push_str("\\\""),
+                        _ => normal.push(inner),
                     }
-                    normal.push(inner);
                 }
                 if !closed {
                     return None;
                 }
                 normal.push('"');
             }
-            '(' => normal.push('['),
-            ')' | ']' | '}' => {
+            '[' | ',' => normal.push(ch),
+            ']' => {
                 // A string always ends in its closing quote, so a comma at
                 // the end here is a structural trailing comma.
                 if normal.ends_with(',') {
                     normal.pop();
                 }
-                normal.push(if ch == ')' { ']' } else { ch });
+                normal.push(']');
             }
-            ch if ch.is_whitespace() => {}
-            other => normal.push(other),
+            _ => return None,
         }
     }
     if !token.is_empty() {
-        normal.push_str(&scalar(&token));
+        normal.push_str(&literal_scalar(&token)?);
     }
     Some(normal)
+}
+
+/// A scalar literal token's canonical text: a number's value, or `None` /
+/// `null` for Python's `None`; any other name is not established.
+fn literal_scalar(token: &str) -> Option<String> {
+    let digits = token.replace('_', "");
+    let (negative, magnitude) = match digits.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, digits.strip_prefix('+').unwrap_or(&digits)),
+    };
+    let radix_integer = [
+        ("0x", 16),
+        ("0X", 16),
+        ("0o", 8),
+        ("0O", 8),
+        ("0b", 2),
+        ("0B", 2),
+    ]
+    .iter()
+    .find_map(|(prefix, radix)| {
+        magnitude
+            .strip_prefix(prefix)
+            .map(|rest| i128::from_str_radix(rest, *radix).ok())
+    });
+    let integer = match token {
+        "None" => return Some("null".to_string()),
+        "True" => Some(1),
+        "False" => Some(0),
+        _ => match radix_integer {
+            Some(parsed) => Some(parsed?),
+            None if !magnitude.is_empty() && magnitude.chars().all(|ch| ch.is_ascii_digit()) => {
+                Some(magnitude.parse::<i128>().ok()?)
+            }
+            None => None,
+        },
+    };
+    if let Some(integer) = integer {
+        let integer = if negative { -integer } else { integer };
+        // Python compares integers exactly; beyond 2^53 a float would merge
+        // neighbours, so the digits themselves are the form.
+        return if integer.unsigned_abs() < EXACT_FLOAT_INTEGER {
+            canonical_number(integer as f64)
+        } else {
+            Some(integer.to_string())
+        };
+    }
+    if !magnitude.starts_with(|ch: char| ch.is_ascii_digit() || ch == '.') {
+        return None;
+    }
+    canonical_number(digits.parse::<f64>().ok()?)
+}
+
+/// 2^53: below it every integer has an exact `f64`.
+const EXACT_FLOAT_INTEGER: u128 = 1 << 53;
+
+/// A finite number's canonical text (signed zero reads `0`), or `None` at or
+/// beyond 2^53, where distinct values may share one `f64` (fail closed).
+fn canonical_number(number: f64) -> Option<String> {
+    if !number.is_finite() || number.abs() >= EXACT_FLOAT_INTEGER as f64 {
+        return None;
+    }
+    Some(if number == 0.0 {
+        "0".to_string()
+    } else {
+        format!("{number}")
+    })
+}
+
+/// `sum := product (('+' | '-') product)*` over a whitespace-free numeric
+/// expression.
+fn arithmetic_sum(chars: &[char], at: &mut usize) -> Option<f64> {
+    let mut value = arithmetic_product(chars, at)?;
+    while let Some(&op) = chars.get(*at) {
+        if !matches!(op, '+' | '-') {
+            break;
+        }
+        *at += 1;
+        let rhs = arithmetic_product(chars, at)?;
+        value = if op == '+' { value + rhs } else { value - rhs };
+    }
+    Some(value)
+}
+
+/// `product := power (('*' | '/' | '//' | '%') power)*`.
+fn arithmetic_product(chars: &[char], at: &mut usize) -> Option<f64> {
+    let mut value = arithmetic_power(chars, at)?;
+    loop {
+        let op = match (chars.get(*at), chars.get(*at + 1)) {
+            (Some('*'), Some('*')) => break,
+            (Some('/'), Some('/')) => "//",
+            (Some('*'), _) => "*",
+            (Some('/'), _) => "/",
+            (Some('%'), _) => "%",
+            _ => break,
+        };
+        *at += op.len();
+        let rhs = arithmetic_power(chars, at)?;
+        if matches!(op, "/" | "//" | "%") && rhs == 0.0 {
+            return None;
+        }
+        value = match op {
+            "*" => value * rhs,
+            "/" => value / rhs,
+            "//" => (value / rhs).floor(),
+            _ => value - rhs * (value / rhs).floor(),
+        };
+    }
+    Some(value)
+}
+
+/// `power := unary ('**' power)?`.
+fn arithmetic_power(chars: &[char], at: &mut usize) -> Option<f64> {
+    let base = arithmetic_unary(chars, at)?;
+    if chars.get(*at) == Some(&'*') && chars.get(*at + 1) == Some(&'*') {
+        *at += 2;
+        let exponent = arithmetic_power(chars, at)?;
+        return Some(base.powf(exponent));
+    }
+    Some(base)
+}
+
+/// `unary := ('+' | '-')* atom`, `atom := number | '(' sum ')'`.
+fn arithmetic_unary(chars: &[char], at: &mut usize) -> Option<f64> {
+    match chars.get(*at) {
+        Some('-') => {
+            *at += 1;
+            arithmetic_unary(chars, at).map(|value| -value)
+        }
+        Some('+') => {
+            *at += 1;
+            arithmetic_unary(chars, at)
+        }
+        Some('(') => {
+            *at += 1;
+            let value = arithmetic_sum(chars, at)?;
+            (chars.get(*at) == Some(&')')).then_some(())?;
+            *at += 1;
+            Some(value)
+        }
+        _ => {
+            let start = *at;
+            while let Some(&ch) = chars.get(*at) {
+                let exponent_sign = matches!(ch, '+' | '-')
+                    && *at > start
+                    && matches!(chars.get(*at - 1), Some('e' | 'E'));
+                if ch.is_ascii_digit() || matches!(ch, '.' | '_' | 'e' | 'E') || exponent_sign {
+                    *at += 1;
+                } else {
+                    break;
+                }
+            }
+            let text: String = chars
+                .get(start..*at)?
+                .iter()
+                .filter(|&&ch| ch != '_')
+                .collect();
+            if text.is_empty() || !text.starts_with(|ch: char| ch.is_ascii_digit() || ch == '.') {
+                return None;
+            }
+            text.parse::<f64>().ok()
+        }
+    }
 }
 
 /// Whether `side` is a literal expected value: numbers, strings without

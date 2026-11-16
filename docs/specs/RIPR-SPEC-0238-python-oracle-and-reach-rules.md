@@ -525,7 +525,8 @@ Relations, first match wins (rank, oracle-eligible):
   is not). The other side must be a literal (numbers, strings without escapes, `True`,
   `False`, `None`, and lists, tuples or dicts of them): a name, call or
   attribute may carry the route's own response. A test with a `match`
-  statement, a walrus, an assignment to `.json` or a `setattr` grants no credit. The
+  statement, a walrus, a `.json` that is not called at once, a `setattr` or a
+  quoted `json` grants no credit. The
   handler must not share a request with another route of the workspace
   (verbs that can meet and paths that can match one request, a segment
   holding any parameter matching anything; dispatch order is not read). The
@@ -534,15 +535,21 @@ Relations, first match wins (rank, oracle-eligible):
   decorator lines of the read sources (test files included, counting the
   same verbs the owners record, `websocket` among them) outnumber or
   undercount the routes the owners record, a route call is applied directly
-  (`app.get("/p")(view)`) or bound to a name a decorator uses, or any
-  source has an exception
+  (`app.get("/p")(view)`, on one line or several), a route method is used
+  without being called (`partial(app.get, "/p")`), a route call is bound to
+  a name that is later called or used as a decorator, or any source has an
+  exception
   handler, middleware, a request hook, `dependency_overrides`, a custom
   route class, an imperative or declarative route registration, a router
-  or blueprint inclusion, a mount or a `:path` catch-all. A changed key
-  whose old and new values a Python comparison of the JSON body cannot tell
-  apart (a tuple and a list, either quote style, numbers of one value in
-  any spelling with `True`/`False` as 1/0) or whose string value is not
-  established (an escape) is not a changed key for this read, and the run
+  or blueprint inclusion, a mount, a `:path` catch-all, a route object
+  (`Route(...)`, `APIRoute` as a value or base, `routes += [...]`) or a patch
+  naming the `json` attribute. A changed key
+  whose old and new values may give one JSON body to a Python comparison
+  (either quote style; numbers or `+ - * / // % **` expressions of one
+  value, with `True`/`False` as 1/0, integers compared exactly; lists of
+  such values) or whose value is not established as a literal (a tuple, a
+  dict, a name, a prefixed, escaped or adjacent string, a float at or past
+  2^53) is not a changed key for this read, and the run
   needs the old line (repo mode, which has none, never earns it). The handler must return its body as is:
   every decorator is a static route decorator whose keywords cannot reshape
   the body (no `response_model` or `response_class`), there is no return
