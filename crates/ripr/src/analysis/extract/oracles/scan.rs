@@ -2452,8 +2452,14 @@ pub(crate) fn unwrap_err_bound_variables(body: &str) -> std::collections::BTreeS
     // assertion is never upgraded to ExactErrorVariant, and the seam carries a
     // contradictory `missing_discriminators` line despite being discriminated.
     // The split is depth-aware (#14810 round 3), so `f(&[1; 3]).unwrap_err()`
-    // stays one statement.
-    for stmt in split_statements(body) {
+    // stays one statement. It runs over the masked body, like
+    // [`placeholder_bound_variables`] below: a bracket inside a string or
+    // comment would otherwise invert the depth and swallow the assertion that
+    // follows the `;`. Masking preserves byte length and leaves the binding
+    // text intact, so the collected names are the same.
+    let masked = mask_comments_and_strings(body);
+    for (start, end) in split_statement_ranges(&masked) {
+        let stmt = &body[start..end];
         if let Some(binding) = let_binding_substring(stmt)
             && let Some(var) = extract_unwrap_err_binding(binding)
         {
@@ -2741,6 +2747,16 @@ fn split_top_level(text: &str, sep: char) -> Vec<&str> {
 /// A `;` inside a type such as `[i32; 3]` is not a boundary, and neither is
 /// a `,` or `=` inside a generic (#14810 round 3).
 fn split_statements(text: &str) -> Vec<&str> {
+    split_statement_ranges(text)
+        .into_iter()
+        .map(|(start, end)| &text[start..end])
+        .collect()
+}
+
+/// [`split_statements`] as byte ranges, so a caller that splits the *masked*
+/// body can still read the raw statement at the same offsets - masking
+/// preserves byte length (#14810 round 3).
+fn split_statement_ranges(text: &str) -> Vec<(usize, usize)> {
     let mut parts = Vec::new();
     let mut depth = 0i32;
     let mut start = 0;
@@ -2749,18 +2765,18 @@ fn split_statements(text: &str) -> Vec<&str> {
             '(' | '[' => depth += 1,
             ')' | ']' => depth -= 1,
             '{' | '}' => {
-                parts.push(&text[start..i]);
+                parts.push((start, i));
                 start = i + ch.len_utf8();
                 depth = 0;
             }
             ';' if depth == 0 => {
-                parts.push(&text[start..i]);
+                parts.push((start, i));
                 start = i + ch.len_utf8();
             }
             _ => {}
         }
     }
-    parts.push(&text[start..]);
+    parts.push((start, text.len()));
     parts
 }
 
@@ -3657,6 +3673,22 @@ mod spec_0106_scan_tests {
             vars.contains("err"),
             "a `;` inside an array argument must not hide the unwrap_err binding: {vars:?}"
         );
+    }
+
+    #[test]
+    fn unwrap_err_binding_survives_a_bracket_inside_a_string() {
+        // #14810 round 3: a `(` or `)` inside a string literal must not raise
+        // the depth and swallow the assertion that follows the `;`.
+        for arg in [r#""(""#, r#"")""#] {
+            let body = format!(
+                "\n            let err = parse({arg}).unwrap_err();\n            assert_eq!(err, E::Unclosed);\n        "
+            );
+            let vars = unwrap_err_bound_variables(&body);
+            assert!(
+                vars.contains("err"),
+                "a bracket inside a string argument must not hide the unwrap_err binding: {vars:?}"
+            );
+        }
     }
 
     #[test]
