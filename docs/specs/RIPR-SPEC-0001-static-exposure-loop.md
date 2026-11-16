@@ -138,6 +138,23 @@ length-preserving chains (`.iter().map(..).collect()`, slicing, `.len()`,
 non-empty input. A set collect or an input where both ranges are empty is the
 known limit there.
 
+A free owner whose whole body is one single-line tail that is a parameter,
+bare on one side of the diff and under one prefix `-` (a signed `i8`-`i64`
+parameter) or `!` (a `bool` or primitive integer parameter) on the other,
+gets the owner's return as its flow sink (#14815), but only when, inside the
+owner's span, the diff adds exactly that tail line and removes exactly its
+positional counterpart, so the base-side owner is the current owner with that
+line restored; the paired removed line alone never stands in for the old
+owner. The parameter and return types must be the same unshadowed primitive.
+`!` differs from its operand at every input, so the ordinary infection
+reading applies. `-a` and `a` agree at `0`, so infection reads `yes` only when
+an exact assertion pins a bare literal call whose folded result differs
+between the base-side and current owner, or every owner call in every related
+test that names it is such a literal call; agreeing asserted calls read
+`weak`, and an argument ripr cannot fold (a local, a loop row, a constant)
+reads `unknown`. So `-a` to `a` tested by `assert_eq!(f(0), 0)` is not
+`exposed`.
+
 A removed line that is one bare literal (a number, `true`/`false`, or one
 quoted string or char, optionally followed by `,` or `;`) adds no removed-side
 `static_unknown` probe when its positional replacement in the same block

@@ -644,6 +644,24 @@ pub(in crate::analysis) fn range_change_visibility(
         return RangeChangeVisibility::NotEstablished;
     }
     let baseline = current.replacen(after, before, 1);
+    owner_change_visibility(owner, &baseline, tests, owner_has_other_callers)
+}
+
+/// [`range_change_visibility`] for an owner whose whole base-side text is
+/// `baseline` (#14815: the unary-tail reading proves it from the diff rather
+/// than locating changed text in the body). The answer reads the owner's
+/// current body against `baseline` at the related tests' asserted literal
+/// calls; nothing here depends on what changed between them.
+pub(in crate::analysis) fn owner_change_visibility(
+    owner: &FunctionSummary,
+    baseline: &str,
+    tests: &[&TestSummary],
+    owner_has_other_callers: bool,
+) -> RangeChangeVisibility {
+    let current = owner.body.as_str();
+    if current == baseline {
+        return RangeChangeVisibility::NotEstablished;
+    }
     let read_call = |operand: &str| -> CallReading {
         let read = || {
             if count_name_tokens(operand, &owner.name) != 1 {
@@ -663,7 +681,7 @@ pub(in crate::analysis) fn range_change_visibility(
                 values.push(fold_expression(argument, &environment)?);
             }
             let changed = fold_function_value(current, &values)?;
-            let unchanged = fold_function_value(&baseline, &values)?;
+            let unchanged = fold_function_value(baseline, &values)?;
             let call = operand.trim().to_string();
             Some(if changed == unchanged {
                 CallReading::Agrees(call)
@@ -815,12 +833,89 @@ pub(in crate::analysis) fn range_change_visibility(
         (None, Some(call))
             if every_mention_agrees
                 && !owner_has_other_callers
-                && versions_differ_on_small_inputs(current, &baseline) =>
+                && versions_differ_on_small_inputs(current, baseline) =>
         {
             RangeChangeVisibility::EveryAssertedInputAgrees(call)
         }
         _ => RangeChangeVisibility::NotEstablished,
     }
+}
+
+/// #14815: one owner call that separates the current owner from `baseline`
+/// when every mention of the owner in every related test that names it is a
+/// bare call with literal arguments at which the two fold to different
+/// values; `None` otherwise. Whatever such a test does with the results, each
+/// result it computes differs between the versions, so the inputs reach the
+/// change even where no assertion pins them (`let _ = owner(5);`). A test
+/// that rebinds the owner's name, a case table, another caller that may feed
+/// the owner other inputs, or any argument the fold cannot read gives `None`.
+pub(in crate::analysis) fn every_owner_call_separates(
+    owner: &FunctionSummary,
+    baseline: &str,
+    tests: &[&TestSummary],
+    owner_has_other_callers: bool,
+) -> Option<String> {
+    let current = owner.body.as_str();
+    if owner_has_other_callers || current == baseline || owner.name.is_empty() {
+        return None;
+    }
+    let mut first = None;
+    for test in tests {
+        let body = test.body.as_str();
+        let mentions = count_name_tokens(body, &owner.name);
+        if mentions == 0 {
+            continue;
+        }
+        if case_row_bindings(test).is_some()
+            || test
+                .let_bindings
+                .iter()
+                .any(|binding| binding.name == owner.name)
+            || body_declares_same_name_fn(test, &owner.name)
+            || body_imports_same_name(test, &owner.name)
+        {
+            return None;
+        }
+        let masked = crate::analysis::extract::mask_comments_and_strings(body);
+        if masked.len() != body.len() {
+            return None;
+        }
+        let mut separating = 0usize;
+        for (start, _) in masked.match_indices(owner.name.as_str()) {
+            let end = start + owner.name.len();
+            let bytes = masked.as_bytes();
+            let ident = |at: usize| bytes.get(at).is_some_and(|byte| is_ident_byte(*byte));
+            if (start > 0 && ident(start - 1)) || ident(end) {
+                continue;
+            }
+            // A method receiver or a qualified path names another entity.
+            let before = masked[..start].trim_end();
+            if before.ends_with('.') || before.ends_with("::") || bytes.get(end) != Some(&b'(') {
+                return None;
+            }
+            let inside = super::delimited_contents_at(&masked, end)?;
+            let environment = BTreeMap::new();
+            let mut values = Vec::new();
+            for argument in super::split_top_level_commas(&inside) {
+                values.push(fold_expression(&argument, &environment)?);
+            }
+            let changed = fold_function_value(current, &values)?;
+            let unchanged = fold_function_value(baseline, &values)?;
+            if changed == unchanged {
+                return None;
+            }
+            separating += 1;
+            first.get_or_insert_with(|| format!("{}({inside})", owner.name));
+        }
+        if separating != mentions {
+            return None;
+        }
+    }
+    first
+}
+
+fn is_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
 /// An operand that names one constant no owner change can move: an integer

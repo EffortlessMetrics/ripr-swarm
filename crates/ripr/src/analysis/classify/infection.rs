@@ -700,6 +700,9 @@ pub(in crate::analysis) struct OwnerInputs<'a> {
         Option<&'a super::literal_length_boundary::LiteralLengthBoundary>,
     pub(in crate::analysis) slice_counter_boundary:
         Option<&'a super::slice_counter_boundary::SliceCounterBoundary>,
+    /// #14815: the owner's whole tail gained or lost a prefix `-`/`!`, with
+    /// the base-side owner text the diff proves.
+    pub(in crate::analysis) unary_tail: Option<&'a super::UnaryTailChange>,
 }
 
 /// [`infection_evidence_with_boundary_input`] given the changed owner, which
@@ -724,6 +727,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
         owner,
         literal_length_boundary,
         slice_counter_boundary,
+        unary_tail,
     } = owner_inputs;
     // A returned bare comparison with a resolved missing boundary
     // discriminator reads the predicate lens's gap, never a better reading:
@@ -1102,6 +1106,17 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                         )
                     }
                 }
+            } else if let Some((owner, change)) = owner
+                .zip(unary_tail)
+                .filter(|_| matches!(probe.family, ProbeFamily::ReturnValue))
+            {
+                unary_tail_infection(
+                    owner,
+                    change,
+                    related_tests,
+                    owner_has_other_callers,
+                    assertion_macros_rebound,
+                )
             } else if let Some((before, after, kind)) = probe.before.as_deref().and_then(|before| {
                 // A match-arm probe carries only the arm head (`_ =>`) even
                 // when the edit sits in the arm body; read the whole arm line.
@@ -1124,6 +1139,91 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                 )
             }
         }
+    }
+}
+
+/// #14815: infection for a prefix `-`/`!` added to or removed from the
+/// owner's whole tail. `!` on `bool` or an integer changes the result at
+/// every input, so any reaching input infects. `-` leaves the result
+/// unchanged at `0`, so credit needs an asserted literal call at which the
+/// owner folds to different values on the base-side owner and the current
+/// one; a computed, bound, looped or constant argument stays unknown, and a
+/// rebound assertion macro reads nothing.
+fn unary_tail_infection(
+    owner: &FunctionSummary,
+    change: &super::UnaryTailChange,
+    related_tests: &[&TestSummary],
+    owner_has_other_callers: bool,
+    assertion_macros_rebound: bool,
+) -> StageEvidence {
+    use crate::analysis::test_grip_evidence::{
+        RangeChangeVisibility, every_owner_call_separates, owner_change_visibility,
+    };
+    let operand = &change.operand;
+    if change.operator == super::UnaryOperator::Not {
+        return StageEvidence::new(
+            StageState::Yes,
+            Confidence::Medium,
+            format!(
+                "The returned `{operand}` and `!{operand}` differ at every input, so any reaching call infects the result"
+            ),
+        );
+    }
+    if assertion_macros_rebound {
+        return StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            "The workspace rebinds an assertion macro, so ripr does not read which asserted inputs tell the versions apart",
+        );
+    }
+    match owner_change_visibility(
+        owner,
+        &change.baseline,
+        related_tests,
+        owner_has_other_callers,
+    ) {
+        RangeChangeVisibility::ExactInputSeparates(call) => StageEvidence::new(
+            StageState::Yes,
+            Confidence::Medium,
+            format!(
+                "A related test asserts an exact value for `{call}`, an input at which the returned `{operand}` and `-{operand}` differ, so the input reaches the change"
+            ),
+        ),
+        RangeChangeVisibility::InexactInputSeparates(call) => StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            format!(
+                "A related test calls `{call}`, where the returned `{operand}` and `-{operand}` differ, but only a relational or inequality assertion checks it; no exact assertion pins an input that tells them apart"
+            ),
+        ),
+        RangeChangeVisibility::EveryAssertedInputAgrees(call) => StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            format!(
+                "Every related test asserts the owner only at inputs where `{operand}` and `-{operand}` are equal (for example `{call}`), so no test input reaches the change"
+            ),
+        ),
+        RangeChangeVisibility::NotEstablished => match every_owner_call_separates(
+            owner,
+            &change.baseline,
+            related_tests,
+            owner_has_other_callers,
+        ) {
+            Some(call) => StageEvidence::new(
+                StageState::Yes,
+                Confidence::Medium,
+                format!(
+                    "Every call the related tests make, for example `{call}`, passes a literal input at which the returned `{operand}` and `-{operand}` differ, so the inputs reach the change"
+                ),
+            ),
+            None => StageEvidence::new(
+                StageState::Unknown,
+                Confidence::Low,
+                format!(
+                    "The returned `{operand}` and `-{operand}` agree at `{operand} = 0`; ripr could not show that any related test asserts an exact value at a literal input where they differ, so infection is not credited"
+                ),
+            ),
+        },
     }
 }
 
@@ -2370,6 +2470,7 @@ mod tests {
                 owner: Some(&owner),
                 literal_length_boundary: None,
                 slice_counter_boundary: None,
+                unary_tail: None,
             },
             true,
             false,
@@ -2416,6 +2517,7 @@ mod tests {
                 owner: Some(&owner),
                 literal_length_boundary: None,
                 slice_counter_boundary: None,
+                unary_tail: None,
             },
             other_callers,
             assertion_macros_rebound,

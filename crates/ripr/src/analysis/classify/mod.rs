@@ -63,6 +63,7 @@ mod stop_reason_contract;
 mod targeted_calls;
 mod text;
 mod transitive_reach;
+mod unary_tail;
 mod unpolled_future;
 mod value_transfer;
 mod variant_field_pattern;
@@ -241,6 +242,7 @@ pub(in crate::analysis) use reveal::{
 pub(in crate::analysis) use reveal::{only_proximity_oracles, reveal_outcome};
 pub(in crate::analysis) use slice_boundary::refine_slice_boundary;
 pub(in crate::analysis) use slice_counter_boundary::refine_slice_counter_boundary;
+pub(in crate::analysis) use unary_tail::{UnaryOperator, UnaryTailChange, unary_tail_change};
 pub(in crate::analysis) use unpolled_future::withhold_unpolled_future_gap;
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can
 // apply variant-binding without reaching into the private `text` submodule.

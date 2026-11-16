@@ -62,6 +62,11 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// stop reason and withholds a ruled-out reach (`no_static_path`) as
     /// `static_unknown`; never promotes.
     pub compile_time_guarded: bool,
+    /// #14815: the owner's whole one-line tail gained or lost one prefix
+    /// `-`/`!` on a returned parameter, with the base-side owner the diff
+    /// proves. Gives the change a return-value sink and decides its
+    /// infection; `None` keeps the ordinary reading.
+    pub unary_tail: Option<super::UnaryTailChange>,
     #[cfg(feature = "lang-rust")]
     pub tier_flow: Option<super::TierFlow>,
 }
@@ -96,6 +101,7 @@ impl<'a> ProbeContext<'a> {
             const_flow: None,
             binding_return_flow: None,
             compile_time_guarded: false,
+            unary_tail: None,
             #[cfg(feature = "lang-rust")]
             tier_flow: None,
         }

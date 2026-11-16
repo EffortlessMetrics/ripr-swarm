@@ -34,7 +34,8 @@ use value_contradiction::{
 };
 pub(in crate::analysis) use value_contradiction::{
     InvisibilityReason, PointerReturnChange, RangeChangeVisibility,
-    change_is_invisible_to_every_assertion, fold_owner_body_at, range_change_visibility,
+    change_is_invisible_to_every_assertion, every_owner_call_separates, fold_owner_body_at,
+    owner_change_visibility, range_change_visibility,
 };
 
 pub(crate) use related_tests::CompactGripContext;
