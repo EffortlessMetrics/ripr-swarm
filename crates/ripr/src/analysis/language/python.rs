@@ -2247,9 +2247,10 @@ impl PythonAdapter {
                                 || is_python_import_line(&removed.text)
                                 || is_python_no_behavior_line_at(
                                     &removed.text,
-                                    old_bracket_ranges.as_deref().is_none_or(|ranges| {
-                                        line_is_in_ranges(removed.line, ranges)
-                                    }),
+                                    old_source.is_some()
+                                        && old_bracket_ranges.as_deref().is_none_or(|ranges| {
+                                            line_is_in_ranges(removed.line, ranges)
+                                        }),
                                 )
                                 || is_python_structural_line(&removed.text)
                         }))
@@ -2323,11 +2324,15 @@ impl PythonAdapter {
                     bracket_statement_span: bracket_ranges.as_deref().and_then(|ranges| {
                         no_behavior::enclosing_bracket_statement(ranges, added.line)
                     }),
-                    old_line_in_brackets: old_line.is_some_and(|removed| {
-                        old_bracket_ranges
-                            .as_deref()
-                            .is_none_or(|ranges| line_is_in_ranges(removed.line, ranges))
-                    }),
+                    // With no rebuilt old file there is no bracket evidence,
+                    // so the old line keeps the docstring reading, as on the
+                    // deleted-line path.
+                    old_line_in_brackets: old_source.is_some()
+                        && old_line.is_some_and(|removed| {
+                            old_bracket_ranges
+                                .as_deref()
+                                .is_none_or(|ranges| line_is_in_ranges(removed.line, ranges))
+                        }),
                     opens_owner_with_added_body: owner_for_changed_line(
                         &changed.path,
                         added.line,

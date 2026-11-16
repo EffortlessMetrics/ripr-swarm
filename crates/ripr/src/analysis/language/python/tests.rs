@@ -4353,6 +4353,53 @@ fn a_changed_message_string_on_a_continuation_line_gets_a_probe() -> Result<(), 
 }
 
 #[test]
+fn an_unlexable_file_keeps_a_changed_bare_string_quiet() {
+    // #13875 fallback: an unlexable new file counts every line as inside
+    // brackets with no statement span, and an unlexable old file does the
+    // same for the old line. With nothing to shape it by, a string-to-string
+    // edit keeps the earlier no-op reading on both sides.
+    let source = "def f():\n    \"Sum the items.\"\n    return 1\n";
+    let file = Path::new("src/m.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_m.py"),
+        "from src.m import f\n\n\ndef test_f():\n    assert f() == 1\n",
+    );
+    let context = PythonNoBehaviorContext {
+        new_line_in_brackets: true,
+        old_line_in_brackets: true,
+        bracket_statement_span: None,
+        ..PythonNoBehaviorContext::default()
+    };
+    let finding = classify_change_with_context(
+        file,
+        2,
+        "    \"Sum all items.\"",
+        Some("    \"Sum the items.\""),
+        &owners,
+        &tests,
+        context,
+        Some(source),
+    );
+    assert!(finding.is_none(), "{finding:?}");
+    // Control: the old line was real code, so the edit keeps its probe.
+    let from_code = classify_change_with_context(
+        file,
+        2,
+        "    \"Sum all items.\"",
+        Some("    total = 2"),
+        &owners,
+        &tests,
+        context,
+        Some(source),
+    );
+    assert!(
+        from_code.is_some(),
+        "replacing code with a string is behavior"
+    );
+}
+
+#[test]
 fn a_changed_message_argument_with_a_trailing_comma_is_an_error_path() -> Result<(), String> {
     // #13875: `"msg",` inside `raise E(` is the same bare string argument as
     // `"msg"`, so it takes the raise statement's shape. Before, it was read as

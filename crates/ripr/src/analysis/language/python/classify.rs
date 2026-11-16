@@ -300,12 +300,24 @@ fn classify_change_full<'a>(
     // A bare string inside brackets is behavior, but only its statement says
     // what kind (#13875). With no statement span (an unlexable file) there is
     // nothing to shape it by, so it keeps the earlier no-op reading rather than
-    // a bare string's default shape and an oracle it does not have.
+    // a bare string's default shape and an oracle it does not have. An
+    // unlexable new file counts every line as in brackets with no span; then
+    // the old side has no trustworthy bracket evidence either, so it is read
+    // bracket-blind too.
+    let new_file_unlexed =
+        no_behavior.new_line_in_brackets && no_behavior.bracket_statement_span.is_none();
+    let old_reads_noop = if new_file_unlexed {
+        old_line_text.is_none_or(|old| {
+            no_behavior.old_line_in_docstring || is_python_no_behavior_line_at(old, false)
+        })
+    } else {
+        old_is_noop
+    };
     if is_python_no_behavior_line_at(line_text, false)
         && !line_text.trim().is_empty()
         && !line_text.trim_start().starts_with('#')
         && no_behavior.bracket_statement_span.is_none()
-        && old_is_noop
+        && old_reads_noop
     {
         return None;
     }
