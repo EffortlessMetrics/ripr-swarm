@@ -1,9 +1,9 @@
 {
   "advisory": true,
-  "ripr_version": "ripr 0.11.0 (7f5580181be60a05fb4c6066bb9440f310e3cfe6)",
+  "ripr_version": "ripr 0.11.0 (9a1a0ff8bca66c84ecee7d54dbe38e3fc8010744)",
   "routes": [
-    {"answered":6,"route":"cli-agent-loop","scenarios":6,"tokens_to_answer":1487,"total_tokens":2594},
-    {"answered":6,"route":"cli-agent-find","scenarios":6,"tokens_to_answer":1487,"total_tokens":1487},
+    {"answered":6,"route":"cli-agent-loop","scenarios":6,"tokens_to_answer":1395,"total_tokens":2502},
+    {"answered":6,"route":"cli-agent-find","scenarios":6,"tokens_to_answer":1395,"total_tokens":1395},
     {"answered":5,"route":"cli-human","scenarios":6,"tokens_to_answer":5257,"total_tokens":6367},
     {"answered":6,"route":"cli-json-terse","scenarios":6,"tokens_to_answer":23085,"total_tokens":23085},
     {"answered":6,"route":"agent-brief","scenarios":6,"tokens_to_answer":8701,"total_tokens":8701},
@@ -341,13 +341,13 @@
       "keyed_gaps": 1,
       "loop": {
         "expected_gap_lines": [10],
-        "extra_gaps": 1,
+        "extra_gaps": 0,
         "find_exit": 0,
-        "gaps_header": 2,
+        "gaps_header": 1,
         "missed_gaps": 0,
         "reference_key_valid": true,
         "reference_test_closes_loop": false,
-        "reported_gap_lines": [10,10],
+        "reported_gap_lines": [10],
         "silent_on_control": null,
         "weak_key_valid": true,
         "weak_test_still_flagged": true
@@ -358,22 +358,22 @@
           "failed_steps": 0,
           "route": "cli-agent-loop",
           "steps": [
-            {"bytes":922,"exit":0,"step":"find","tokens":370}
+            {"bytes":705,"exit":0,"step":"find","tokens":278}
           ],
-          "tokens_to_answer": 370,
-          "total_bytes": 922,
-          "total_tokens": 370
+          "tokens_to_answer": 278,
+          "total_bytes": 705,
+          "total_tokens": 278
         },
         {
           "answer_reached": true,
           "failed_steps": 0,
           "route": "cli-agent-find",
           "steps": [
-            {"bytes":922,"exit":0,"step":"find","tokens":370}
+            {"bytes":705,"exit":0,"step":"find","tokens":278}
           ],
-          "tokens_to_answer": 370,
-          "total_bytes": 922,
-          "total_tokens": 370
+          "tokens_to_answer": 278,
+          "total_bytes": 705,
+          "total_tokens": 278
         },
         {
           "answer_reached": true,
