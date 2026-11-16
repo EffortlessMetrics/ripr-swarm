@@ -20,7 +20,9 @@ fn setup_error_removes_the_partially_populated_workspace() -> TestResult {
     assert!(root.join("tests").is_file());
 
     let result = repair_route_workspace_at(root.clone());
-    assert!(result.is_err(), "the setup blocker must be reached");
+    if result.is_ok() {
+        return Err("the setup blocker must be reached".into());
+    }
     assert!(
         !root.exists(),
         "construction must clean up before returning its setup error: {}",
@@ -47,12 +49,14 @@ fn successful_setup_survives_until_the_caller_finishes() -> TestResult {
 fn caller_assertion_unwind_removes_the_successful_workspace() -> TestResult {
     let root = repair_route_workspace("repair route assertion unwind ü")?;
     let _fallback = DeclaredHunkScratch(root.clone());
+    assert!(root.join("src/lib.rs").is_file());
     let unwound = std::panic::catch_unwind(|| {
         let _cleanup = DeclaredHunkScratch(root.clone());
-        assert!(root.join("src/lib.rs").is_file());
-        assert_eq!(1, 2, "deliberate caller assertion failure");
+        assert!(!root.exists(), "deliberate caller assertion failure");
     });
-    assert!(unwound.is_err(), "the deliberate assertion must unwind");
+    if unwound.is_ok() {
+        return Err("the deliberate assertion must unwind".into());
+    }
     assert!(!root.exists(), "the caller guard must clean up while unwinding");
     Ok(())
 }
