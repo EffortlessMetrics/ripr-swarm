@@ -533,9 +533,11 @@ pub(super) fn swallowing_wrappers(
 }
 
 /// A def of plain positional parameters whose whole body (after a docstring)
-/// is `assert` statements over parameters, literals and plain operators: it
-/// can raise only `AssertionError` (or an error from an operator), never a
-/// pytest outcome, so a handler for `Exception` swallows its failure.
+/// is `assert` statements over parameters, literals and plain operators. It
+/// calls nothing, so on plain operand values it raises only `AssertionError`
+/// (or an error from an operator) and a handler for `Exception` swallows its
+/// failure. An operand's own operator dunder is not typed (RIPR-SPEC-0238
+/// rule 27, amended residual).
 fn assert_only_helper(function: &ast::StmtFunctionDef) -> bool {
     let args = function.args.as_ref();
     if !function.decorator_list.is_empty()
