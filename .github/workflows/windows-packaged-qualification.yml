@@ -52,7 +52,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $receipts, $work | Out-Null
 
       - name: Checkout immutable candidate
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ inputs.candidate_sha }}
           fetch-depth: 0
@@ -292,7 +292,7 @@ jobs:
 
       - name: Upload Actions-only receipts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-packaged-qualification-${{ inputs.candidate_sha }}
           path: ${{ runner.temp }}\ripr-windows-packaged-qualification\receipts
