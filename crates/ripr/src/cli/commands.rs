@@ -170,7 +170,9 @@ pub(crate) mod ripr_plus_command;
 pub(super) use assistant_loop::assistant_loop;
 pub(super) use first_action::first_action;
 pub(super) use first_pr::first_pr;
+#[cfg(test)]
 pub(super) use reports::reports;
+pub(super) use reports::reports_command;
 
 #[path = "commands/capabilities.rs"]
 mod capabilities;
@@ -634,6 +636,10 @@ fn pr_evidence_ledger_record(args: &[String]) -> Result<(), String> {
 
 fn pr_comments_plan(args: &[String]) -> Result<(), String> {
     let options = parse_pr_comments_plan_options(args)?;
+    crate::cli::commands_context::ensure_command_root(
+        Path::new(&options.root),
+        "pr-comments plan",
+    )?;
     let pr_guidance_path = options
         .pr_guidance
         .as_ref()
@@ -755,7 +761,7 @@ fn pr_review_front_panel(args: &[String]) -> Result<(), String> {
         assistant_proof_json: options
             .assistant_proof
             .as_ref()
-            .map(|path| read_report_input_plain("assistant proof", path)),
+            .map(|path| read_report_input_plain_typed("assistant proof", path)),
         assistant_health_json: options
             .assistant_health
             .as_ref()
@@ -1125,8 +1131,12 @@ fn parse_outcome_options(args: &[String]) -> Result<OutcomeOptions, String> {
         i += 1;
     }
 
-    let before = before.ok_or_else(|| OUTCOME_BEFORE_REFUSAL.to_string())?;
-    let after = after.ok_or_else(|| OUTCOME_AFTER_REFUSAL.to_string())?;
+    let before = before.ok_or_else(|| {
+        crate::cli::usage_refusal::missing_required("--before", OUTCOME_BEFORE_REFUSAL)
+    })?;
+    let after = after.ok_or_else(|| {
+        crate::cli::usage_refusal::missing_required("--after", OUTCOME_AFTER_REFUSAL)
+    })?;
     if let Some(out) = out.as_deref() {
         refuse_output_naming_input(
             "outcome",
@@ -1932,10 +1942,10 @@ fn parse_coverage_grip_frontier_options(
     }
 
     if ledger.is_none() && baseline_delta.is_none() && zero_status.is_none() {
-        return Err(
-            "coverage-grip frontier requires at least one of --ledger, --baseline-delta, or --zero-status"
-                .to_string(),
-        );
+        return Err(crate::cli::usage_refusal::missing_required(
+            "--ledger",
+            "coverage-grip frontier requires at least one of --ledger, --baseline-delta, or --zero-status",
+        ));
     }
 
     refuse_output_naming_input(
@@ -1993,6 +2003,28 @@ fn read_report_input_plain(label: &str, path: &Path) -> Result<String, String> {
             output::baseline_delta::display_path(path),
             crate::bounded_input::read_failure_detail(&err)
         )
+    })
+}
+
+/// [`read_report_input_plain`] with the not-found case kept separate, so the
+/// front panel can say "missing" only when the path is really absent (#14553).
+fn read_report_input_plain_typed(
+    label: &str,
+    path: &Path,
+) -> Result<String, output::pr_review_front_panel::PanelInputError> {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
+        let detail = crate::bounded_input::read_failure_detail(&err);
+        let detail = match detail.find(" (os error ") {
+            Some(index) => detail[..index].to_string(),
+            None => detail,
+        };
+        output::pr_review_front_panel::PanelInputError {
+            not_found: err.kind() == std::io::ErrorKind::NotFound,
+            message: format!(
+                "read {label} {} failed: {detail}",
+                output::baseline_delta::display_path(path)
+            ),
+        }
     })
 }
 
@@ -2085,7 +2117,9 @@ fn non_empty_string_arg(
 ) -> Result<String, String> {
     let value = expect_value(args, index, flag)?;
     if value.trim().is_empty() {
-        Err(format!("{command} {flag} requires a non-empty value"))
+        let message = format!("{command} {flag} requires a non-empty value");
+        crate::cli::usage_refusal::note_missing_value(flag, &message);
+        Err(message)
     } else {
         Ok(value.to_string())
     }
@@ -2302,10 +2336,16 @@ fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
         .as_deref()
         .is_some_and(|base| base.trim().is_empty())
     {
-        return Err("diff --base requires a non-empty revision".to_string());
+        return Err(crate::cli::usage_refusal::empty_value(
+            "--base",
+            "diff --base requires a non-empty revision",
+        ));
     }
     if options.head.trim().is_empty() {
-        return Err("diff --head requires a non-empty revision".to_string());
+        return Err(crate::cli::usage_refusal::empty_value(
+            "--head",
+            "diff --head requires a non-empty revision",
+        ));
     }
 
     Ok(options)
@@ -6416,10 +6456,16 @@ language = "rust"
             section.contains("always()"),
             "the section no longer names the always() steps the binding above checks"
         );
+        // #14841: the packet exits 3 when only the gate blocked and 2 on any
+        // other required failure; the section and the catalog stop states
+        // must both say so.
         assert!(
-            section.contains("nonzero")
+            section.contains("makes the packet exit `3`")
+                && section.contains("exit `2` after")
                 && include_str!("command_metadata.rs")
-                    .contains("exits nonzero after the packet is written")
+                    .contains("a blocked gate exits 3 after the packet is written")
+                && include_str!("command_metadata.rs")
+                    .contains("exits 2 after the packet is written")
                 && include_str!("commands/ci_packet.rs")
                     .contains("failed and is advisory; continuing"),
             "the section's failure-role prose no longer matches the ci-packet \

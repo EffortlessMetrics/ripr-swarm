@@ -1617,6 +1617,10 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         .into_iter()
         .map(str::to_string)
         .collect();
+    // The disclosure count is the owner opt-out count, which equals the
+    // withheld set only while the LSP check input carries no suppression policy
+    // (#14610). Withheld findings are removed before the out-of-scope
+    // partition below, so the partition cannot reduce the count.
     let owner_opt_out_findings = output.owner_opt_outs.len();
     // A withheld finding that carries a static limit still limits the run: the
     // analysis was incomplete for that owner, so the status stays `limited`
@@ -3020,7 +3024,7 @@ fn load_gap_ledger_records(
         repo_config,
     };
     match validate_gap_artifact(&artifact, &context) {
-        Ok(validated) if validated.kind == GapArtifactKind::GapDecisionLedger => {}
+        Ok(validated) if validated.kind() == GapArtifactKind::GapDecisionLedger => {}
         Ok(_) => {
             return failed(
                 "gap_ledger_wrong_kind",

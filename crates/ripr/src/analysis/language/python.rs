@@ -376,6 +376,7 @@ mod guard_activation;
 mod guard_atoms;
 mod guard_credit;
 mod helper_inline;
+mod import_adds_binding;
 mod import_identity;
 mod imported_call_operator;
 mod known_equality_helpers;
@@ -390,6 +391,7 @@ mod module_value;
 mod test_local_literal;
 mod type_checking_block;
 mod type_guard;
+mod verify_interpreter;
 mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_value_origins};
 #[cfg(test)]
@@ -413,6 +415,7 @@ mod no_behavior;
 mod oracles;
 mod owner_exact;
 mod owners_tests;
+mod package_aliases;
 mod param_fixtures;
 mod parametrize;
 mod parse_budget;
@@ -938,6 +941,11 @@ struct PythonAssertion {
     /// operands without `msg`, and an exception assertion's `with` item
     /// together with its body. `text` stays the reported oracle.
     gate_text: String,
+    /// Byte offset in `gate_text` where the exception body ends, before the
+    /// rule 14 comparison is appended (#14754 review). `None` for a
+    /// non-exception assertion or a cached fact written before this field.
+    #[serde(default)]
+    exception_body_end: Option<usize>,
     /// The call a callable-form exception assertion makes
     /// (`assertRaisesRegex(E, 'm', check, 20, n=3)` calls `check(20, n=3)`;
     /// RIPR-SPEC-0238 rule 13), with every argument it passes on.
@@ -1680,6 +1688,15 @@ impl PythonAdapter {
         }
         fixtures::attach_fixture_defs(&mut all_tests, &fixture_defs_by_file);
         helper_assertions::apply_helper_assertions(&mut all_tests, &helper_modules_by_file);
+        // `from . import X` where the test package's `__init__.py` binds `X`
+        // by import (#13927). After the helper substitution, which keeps its
+        // own stricter module-attribute rule (RIPR-SPEC-0238 rule 32), and
+        // before every reach and oracle reader of test imports.
+        package_aliases::apply_package_import_aliases(
+            &mut all_tests,
+            &workspace_read.sources,
+            |path| options.root.join(path).exists(),
+        );
         // A chain conftest that exists but was never read (capped, excluded or
         // unreadable) cannot be ruled out.
         let unreadable_conftest = |conftest: &Path| {
@@ -2194,8 +2211,17 @@ impl PythonAdapter {
             let is_added_import = |added: &crate::analysis::diff::ChangedLine| {
                 line_is_in_ranges(added.line, import_ranges)
                     && counterparts.get(&added.line).is_none_or(|removed| {
-                        !line_is_in_ranges(removed.line, &old_import_ranges)
-                            && !is_python_import_line(&removed.text)
+                        (!line_is_in_ranges(removed.line, &old_import_ranges)
+                            && !is_python_import_line(&removed.text))
+                            // #14157: the old import line with more names
+                            // is an added import in place.
+                            || old_source.as_deref().is_some_and(|old_source| {
+                                import_adds_binding::import_line_only_adds_bindings(
+                                    &removed.text,
+                                    &added.text,
+                                    old_source,
+                                )
+                            })
                     })
             };
             let covered = python_quiet_lines_covered_by_run(&changed.added_lines, |added| {
@@ -2389,6 +2415,9 @@ impl PythonAdapter {
             star_facts_by_file,
         );
         teardown::free_in_background(facts);
+        // #13801: the interpreter and confidence of the pytest verify route
+        // are decided once here, from static facts at the root.
+        verify_interpreter::PytestVerifyInterpreter::at(&options.root).apply(&mut findings);
         Ok(LanguageDiffResult {
             value_origins,
             findings,
@@ -2423,7 +2452,8 @@ impl PythonAdapter {
         working_set_limit: repo::RepoWorkingSetLimit,
     ) -> Result<LanguageRepoResult, String> {
         let input = repo::select_repo_input_with_limit(root, working_set_limit);
-        let evidence = repo::build_repo_evidence(&input, root);
+        let mut evidence = repo::build_repo_evidence(&input, root);
+        verify_interpreter::PytestVerifyInterpreter::at(root).apply(&mut evidence.findings);
         let partial_reason = repo::partial_disclosure(&evidence);
         let production_files = input.production_files.len();
         let skipped_files = evidence.counts.skipped;
@@ -2574,6 +2604,8 @@ mod helper_module_attribute_tests;
 mod capability_disposition_tests;
 
 #[cfg(test)]
+mod approx_band_tests;
+#[cfg(test)]
 mod callee_patch_tests;
 #[cfg(test)]
 mod helper_inline_tests;
@@ -2590,6 +2622,8 @@ mod dunder_helper_reach_tests;
 mod helper_owner_call_tests;
 #[cfg(test)]
 mod imported_literal_tests;
+#[cfg(test)]
+mod repo_module_identity_tests;
 #[cfg(test)]
 mod test_body_writer_tests;
 #[cfg(test)]
@@ -2625,6 +2659,8 @@ mod python_tests;
 #[cfg(test)]
 mod layout_tests;
 #[cfg(test)]
+mod package_alias_tests;
+#[cfg(test)]
 mod reexport_tests;
 
 #[cfg(test)]
@@ -2642,6 +2678,8 @@ pub(crate) use row_miss_tests::{python_direct_and_advisory_finding, python_miss_
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod import_adds_binding_tests;
 #[cfg(test)]
 mod loop_walk_tests;
 #[cfg(test)]

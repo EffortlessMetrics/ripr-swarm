@@ -320,6 +320,60 @@ fn agent_dispatch_keeps_partial_gaps_and_complete_controls() -> Result<(), Strin
     Ok(())
 }
 
+/// #13894: the requested-scope note is its own `scope_note=` line, appears
+/// once, and is not counted as an additional analysis limitation.
+#[test]
+fn agent_scope_note_line_is_single_and_not_counted_as_a_limitation() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::{
+        CompleteNoFindings, PartialWithLimitations,
+    };
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    let note = || -> Result<AnalysisLimitation, String> {
+        AnalysisLimitation::new(
+            AnalysisLimitationKind::RequestedScopeExcluded,
+            AnalysisStage::DiffLoad,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "rerun without --exclude")?,
+        )
+        .with_affected_items(2)
+    };
+    let config = RiprConfig::default();
+
+    let mut complete = outcome_output(CompleteNoFindings, Vec::new())?;
+    complete
+        .analysis_outcome
+        .as_mut()
+        .ok_or("missing complete outcome")?
+        .limitations
+        .push(note()?);
+    let text = agent_dispatch(&complete, &config)?;
+    assert_eq!(text.matches("scope_note=").count(), 1, "{text}");
+    assert!(text.contains("scope_note=2 file(s) left out"), "{text}");
+    assert!(!text.contains("analysis=incomplete"), "{text}");
+
+    // Partial run with a real limitation plus the note: the note is neither
+    // the displayed limitation nor part of the "+N more" count.
+    let mut partial = outcome_output(PartialWithLimitations, Vec::new())?;
+    partial
+        .analysis_outcome
+        .as_mut()
+        .ok_or("missing partial outcome")?
+        .limitations
+        .push(note()?);
+    let text = agent_dispatch(&partial, &config)?;
+    assert_eq!(text.matches("scope_note=").count(), 1, "{text}");
+    assert!(text.contains("limitation=producer_failure|"), "{text}");
+    assert!(!text.contains("more analysis limitations"), "{text}");
+
+    // Negative: a partial run without a note carries no scope_note line.
+    let plain = outcome_output(PartialWithLimitations, Vec::new())?;
+    let text = agent_dispatch(&plain, &config)?;
+    assert!(!text.contains("scope_note="), "{text}");
+    Ok(())
+}
+
 #[test]
 fn top_gap_carries_location_missing_value_test_id_and_next_command() {
     let text = rendered(&output(vec![
@@ -352,6 +406,37 @@ fn top_gap_carries_location_missing_value_test_id_and_next_command() {
         "verify=refused|outcome=missing|findings=2|exposed=1|reason=outcome_missing,unexposed_findings_remain"
     );
     assert_eq!(lines.len(), 6, "{text}");
+}
+
+/// A gap with several missing facts shows the first and counts the rest, so
+/// the agent loop's "one code value" DETAIL skip never hides a second fact.
+#[test]
+fn gap_row_counts_missing_facts_beyond_the_first() {
+    let mut gap = weak_gap("probe:a", 2);
+    let second = MissingDiscriminatorFact {
+        value: "pct == 49".to_string(),
+        ..gap.activation.missing_discriminators[0].clone()
+    };
+    gap.activation.missing_discriminators.push(second);
+    let text = rendered(&output(vec![gap]));
+    assert!(
+        text.lines()
+            .any(|line| line
+                == "weakly_exposed|src/lib.rs:2|pct >= 50|missing=pct == 50 (+1 more)|test=t1|id=probe:a"),
+        "{text}"
+    );
+    // A second reason for the same value is not a second fact.
+    let mut repeated = weak_gap("probe:a", 2);
+    let same_value = MissingDiscriminatorFact {
+        reason: "another reason".to_string(),
+        ..repeated.activation.missing_discriminators[0].clone()
+    };
+    repeated.activation.missing_discriminators.push(same_value);
+    let repeated = rendered(&output(vec![repeated]));
+    assert!(repeated.contains("|missing=pct == 50|"), "{repeated}");
+    let single = rendered(&output(vec![weak_gap("probe:a", 2)]));
+    assert!(single.contains("|missing=pct == 50|"), "{single}");
+    assert!(!single.contains("more)"), "{single}");
 }
 
 /// RIPR-SPEC-0429: a record-free terminal run (done=) prints no `stages=`
@@ -651,6 +736,35 @@ fn reach_limit_with_weak_assertion_row_does_not_stop() {
     assert!(
         text.lines()
             .any(|line| line == "next=ripr explain --format agent probe:fortnight"),
+        "{text}"
+    );
+}
+
+/// #14483: the `open=` row names the first bound weak row of the best shared
+/// observation tier, so a listed-first owner-named weak row with no call path
+/// gives way to a weak row that reaches the change; without the miss the
+/// listed-first row is named again.
+#[test]
+fn the_open_row_names_a_weak_row_that_can_observe_the_change() {
+    let mut open = reach_limited_weak("probe:fortnight", 264);
+    open.related_tests[0].name = "reaches_the_change".to_string();
+    open.related_tests[0].line = 9;
+    let mut unreached = open.related_tests[0].clone();
+    unreached.name = "named_after_the_owner".to_string();
+    unreached.line = 3;
+    unreached.relation_reason = Some(crate::domain::RelationReason::OwnerNamedTest);
+    unreached.miss = Some(RelatedTestMiss::NoCallPath);
+    open.related_tests.insert(0, unreached);
+    let text = rendered(&output(vec![open.clone()]));
+    assert!(text.contains("\nopen="), "{text}");
+    assert!(
+        text.contains("\nt1=tests/t.rs:9 reaches_the_change "),
+        "{text}"
+    );
+    open.related_tests[0].miss = Some(RelatedTestMiss::WeakAssertion);
+    let text = rendered(&output(vec![open]));
+    assert!(
+        text.contains("\nt1=tests/t.rs:3 named_after_the_owner "),
         "{text}"
     );
 }
@@ -990,6 +1104,100 @@ fn gap_lines_are_bounded_and_the_rest_is_counted_explicitly() {
         1,
         "one shared test row: {text}"
     );
+}
+
+/// #14454: the `tK=` row skips a strong related test whose assertion cannot
+/// observe the change for a weaker one that does, at equal relation
+/// confidence; without that miss the strong row still leads.
+#[test]
+fn the_test_row_skips_a_strong_row_that_cannot_observe_the_change() {
+    let mut gap = weak_gap("probe:g", 12);
+    let mut strong = gap.related_tests[0].clone();
+    strong.name = "accepts_short_names".to_string();
+    strong.oracle_strength = OracleStrength::Strong;
+    strong.miss = Some(RelatedTestMiss::AssertionNotObserving);
+    gap.related_tests[0].name = "rejects_long_names".to_string();
+    gap.related_tests.insert(0, strong);
+    let text = rendered(&output(vec![gap.clone()]));
+    assert!(
+        text.contains("\nt1=tests/t.rs:3 rejects_long_names "),
+        "{text}"
+    );
+    gap.related_tests[0].miss = Some(RelatedTestMiss::MissingExactAssertion);
+    let text = rendered(&output(vec![gap]));
+    assert!(
+        text.contains("\nt1=tests/t.rs:3 accepts_short_names "),
+        "{text}"
+    );
+}
+
+/// #14483 on the #14454 repro: the human `Related test` headline, the JSON
+/// oracle summary, the context fix site and the agent `tK=` row all name
+/// the observing `rejects_long_names` row over the listed-first, stronger
+/// `accepts_short_names` Ok pin that cannot observe the changed error
+/// variant. Without the miss, every surface names the Ok pin again.
+#[test]
+fn every_test_picker_agrees_with_the_test_row_on_the_error_variant_repro() {
+    let mut gap = weak_gap("probe:error_variant", 11);
+    gap.probe.family = ProbeFamily::ErrorPath;
+    gap.related_tests[0].name = "rejects_long_names".to_string();
+    gap.related_tests[0].oracle = Some("assert!(parse_name(\"abcdefghij\").is_err());".to_string());
+    gap.related_tests[0].miss = Some(RelatedTestMiss::MissingExactAssertion);
+    let mut ok_pin = gap.related_tests[0].clone();
+    ok_pin.name = "accepts_short_names".to_string();
+    ok_pin.line = 8;
+    ok_pin.oracle = Some("assert_eq!(parse_name(\"ada\"), Ok(\"ada\".to_string()));".to_string());
+    ok_pin.oracle_kind = OracleKind::ExactValue;
+    ok_pin.oracle_strength = OracleStrength::Strong;
+    ok_pin.miss = Some(RelatedTestMiss::AssertionNotObserving);
+    gap.related_tests.insert(0, ok_pin);
+
+    let picks = |gap: &Finding| {
+        let check = output(vec![gap.clone()]);
+        let agent = rendered(&check);
+        let human = crate::output::human::render(&check);
+        let headline = human
+            .lines()
+            .find(|line| line.trim_start().starts_with("Related test"))
+            .map(str::to_string)
+            .unwrap_or_default();
+        let json: serde_json::Value =
+            serde_json::from_str(&crate::output::json::render(&check)).unwrap_or_default();
+        let summary = json["findings"][0]["oracle_strength"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let fix_site = crate::domain::DiagnosticWitness::selected_related_test(gap)
+            .map(|test| test.name.clone())
+            .unwrap_or_default();
+        (headline, summary, fix_site, agent, human)
+    };
+
+    let (headline, summary, fix_site, agent, human) = picks(&gap);
+    assert!(
+        agent.contains("\nt1=tests/t.rs:3 rejects_long_names "),
+        "{agent}"
+    );
+    assert!(headline.contains("rejects_long_names"), "{human}");
+    assert!(!headline.contains("accepts_short_names"), "{human}");
+    assert_eq!(
+        summary, "weak",
+        "the JSON summary describes the observing row"
+    );
+    assert_eq!(fix_site, "rejects_long_names");
+
+    // Discriminating control: when the Ok pin records an observing miss
+    // (`missing_exact_assertion`) instead, every surface names the stronger,
+    // listed-first row again.
+    gap.related_tests[0].miss = Some(RelatedTestMiss::MissingExactAssertion);
+    let (headline, summary, fix_site, agent, human) = picks(&gap);
+    assert!(
+        agent.contains("\nt1=tests/t.rs:8 accepts_short_names "),
+        "{agent}"
+    );
+    assert!(headline.contains("accepts_short_names"), "{human}");
+    assert_eq!(summary, "strong");
+    assert_eq!(fix_site, "accepts_short_names");
 }
 
 /// #14338: an `error_path` and a `return_value` probe on one changed line
@@ -1944,7 +2152,8 @@ fn rows_without_a_recorded_relation_still_pick_the_stronger_oracle() {
 }
 
 /// #13603 review: a `done=` line names the test that appears to notice the
-/// change, so a stronger pin outranks a direct caller holding a smoke check.
+/// change, so a stronger pin outranks a direct caller holding a smoke check
+/// unless the producer marked the pin `no_call_path` (#14483).
 #[test]
 fn a_done_line_names_the_pinning_test_over_a_smoke_only_direct_caller() {
     use crate::domain::{RelationConfidence, RelationReason};
@@ -1967,6 +2176,18 @@ fn a_done_line_names_the_pinning_test_over_a_smoke_only_direct_caller() {
     assert!(text.lines().any(|line| line.starts_with("done=")), "{text}");
     assert!(text.contains("exact_pin"), "{text}");
     assert!(!text.contains("caller_smoke"), "{text}");
+
+    // #14483: a strong pin the producer marked `no_call_path` is never the
+    // noticer while a reaching test is listed. Only the recorded miss moves
+    // the noticer: the relation alone (the file-location pin above, which
+    // records no miss) decides nothing.
+    let mut unreached = done.clone();
+    unreached.related_tests[1].relation_reason = Some(RelationReason::OwnerNamedTest);
+    unreached.related_tests[1].miss = Some(RelatedTestMiss::NoCallPath);
+    let text = explained(&unreached);
+    assert!(text.lines().any(|line| line.starts_with("done=")), "{text}");
+    assert!(text.contains("caller_smoke"), "{text}");
+    assert!(!text.contains("exact_pin"), "{text}");
 }
 
 fn verify_line(output: &CheckOutput) -> Result<String, String> {
@@ -2247,6 +2468,60 @@ fn verification_record_follows_every_terminal_and_is_the_last_line() -> Result<(
     // The explain drill-in is not a completion surface and carries no record.
     assert!(!explained(&weak_gap("probe:gap", 2)).contains("verify="));
     Ok(())
+}
+
+/// #14420: a head-only match-arm row names the arm result the flow model
+/// read on the head's line, so an agent sees the value to pin without
+/// opening the file. A sink on another line, or a non-arm probe, keeps
+/// the expression as it was.
+#[test]
+fn head_only_arm_row_names_the_arm_result() {
+    let root = std::path::Path::new("repo");
+    let ctx = "ripr context --at probe:arm";
+    let mut gap = weak_gap("probe:arm", 10);
+    gap.probe.family = ProbeFamily::MatchArm;
+    gap.probe.expression = "Size::Medium =>".to_string();
+    gap.flow_sinks = vec![crate::domain::FlowSinkFact {
+        kind: crate::domain::FlowSinkKind::MatchArm,
+        text: "450".to_string(),
+        line: 10,
+        owner: None,
+    }];
+    let text = render_finding(&gap, root, ctx, false);
+    assert!(text.contains("|Size::Medium => 450|"), "{text}");
+
+    let mut elsewhere = gap.clone();
+    elsewhere.flow_sinks[0].line = 11;
+    let text = render_finding(&elsewhere, root, ctx, false);
+    assert!(text.contains("|Size::Medium =>|"), "{text}");
+
+    let mut head_sink = gap.clone();
+    head_sink.flow_sinks[0].text = "Size::Medium =>".to_string();
+    let text = render_finding(&head_sink, root, ctx, false);
+    assert!(text.contains("|Size::Medium =>|"), "{text}");
+
+    // The sink was read for the probe's own head, so a different head (an
+    // old `before` arm) is never paired with the new arm's result.
+    assert_eq!(
+        crate::output::flow_sink_line::with_arm_result(&gap, " Size::Medium =>"),
+        "Size::Medium => 450"
+    );
+    assert_eq!(
+        crate::output::flow_sink_line::with_arm_result(&gap, "Size::Large =>"),
+        "Size::Large =>"
+    );
+
+    // A `=>` inside a string pattern is not an arm arrow, so the row still
+    // names the result, as the flow model read it.
+    let mut literal = gap.clone();
+    literal.probe.expression = "\"a=>b\" =>".to_string();
+    let text = render_finding(&literal, root, ctx, false);
+    assert!(text.contains("|\"a=>b\" => 450|"), "{text}");
+
+    let mut predicate = gap;
+    predicate.probe.family = ProbeFamily::Predicate;
+    let text = render_finding(&predicate, root, ctx, false);
+    assert!(text.contains("|Size::Medium =>|"), "{text}");
 }
 
 fn refusal_notice(message: &str) -> crate::core_error::RefusalNotice {

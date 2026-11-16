@@ -49,9 +49,9 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                         )));
                     }
                     None => {
-                        return Err(CommandError::from(
-                            "missing value for --profile; pass a value right after it".to_string(),
-                        ));
+                        return Err(CommandError::from(crate::cli::parse::missing_value(
+                            "--profile",
+                        )));
                     }
                 };
             }
@@ -63,15 +63,15 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                     // pre-#4318 parser answered `missing value for --root`
                     // here. Other dash-prefixed paths stay legitimate values.
                     Some("--help" | "-h" | "--json" | "--timings" | "--profile" | "--root") => {
-                        return Err(CommandError::from(
-                            "missing value for --root; pass a value right after it".to_string(),
-                        ));
+                        return Err(CommandError::from(crate::cli::parse::missing_value(
+                            "--root",
+                        )));
                     }
                     Some(value) => value,
                     None => {
-                        return Err(CommandError::from(
-                            "missing value for --root; pass a value right after it".to_string(),
-                        ));
+                        return Err(CommandError::from(crate::cli::parse::missing_value(
+                            "--root",
+                        )));
                     }
                 };
                 // #4318: a known doctor flag in the value position means the
@@ -1367,7 +1367,7 @@ fn python_pytest_runtime_probe<F>(
 where
     F: FnMut(&str) -> (output::doctor::DoctorStatus, String),
 {
-    use output::python_env::{VenvPytest, project_venv_pytest, project_venv_python};
+    use analysis::python_env::{VenvPytest, project_venv_pytest, project_venv_python};
     let (status, evidence) = probe(PYTHON_PYTEST_PROBE);
     if status == output::doctor::DoctorStatus::Pass {
         return (status, format!("{evidence} (PATH `python -m pytest`)"));
@@ -8675,6 +8675,42 @@ mod tests {
 
     fn test_enable_before_first_command(root: &Path) -> Option<String> {
         enable_before_first_command_line(test_preview_enablement(root).as_ref())
+    }
+
+    /// #13788: after `ripr init` writes its config for a root package.json
+    /// with TypeScript under `web/`, doctor has no TypeScript enablement tip
+    /// left to give. Before the fix init wrote `["rust", "python"]` and doctor
+    /// told the user to hand-edit the file init had just written.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn doctor_has_no_typescript_tip_after_init_for_typescript_under_web() -> Result<(), String> {
+        let dir = unique_command_test_dir("init-then-doctor-ts-web");
+        std::fs::create_dir_all(dir.join("web")).map_err(|err| format!("create dir: {err}"))?;
+        for (path, text) in [
+            ("package.json", "{}\n"),
+            ("web/pricing.ts", "export const p = 1;\n"),
+            ("web/pricing.test.ts", "test(\"p\", () => {});\n"),
+        ] {
+            std::fs::write(dir.join(path), text).map_err(|err| format!("write {path}: {err}"))?;
+        }
+        // Control: with no config at all doctor does suggest TypeScript.
+        let before = test_enablement_suggestions(&dir);
+        std::fs::write(
+            dir.join(crate::config::CONFIG_FILE_NAME),
+            crate::config::generated_init_config_for_root(&dir),
+        )
+        .map_err(|err| format!("write config: {err}"))?;
+        let after = test_enablement_suggestions(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            before.iter().any(|line| line.contains("typescript")),
+            "control: {before:?}"
+        );
+        assert!(
+            !after.iter().any(|line| line.contains("typescript")),
+            "{after:?}"
+        );
+        Ok(())
     }
 
     /// When TypeScript files are detected in a directory that has no ripr.toml

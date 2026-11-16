@@ -80,6 +80,18 @@ fn env_switch_on(value: Option<&str>) -> bool {
     })
 }
 
+/// Environment twin of the global `-v`/`--verbose` flag: harnesses that
+/// cannot edit argv (an editor server, an MCP host, a Git hook, CI) set it
+/// once to get the same stderr diagnostics.
+pub(crate) const VERBOSE_ENV: &str = "RIPR_VERBOSE";
+
+/// `RIPR_VERBOSE` semantics, the same switch parse as `RIPR_QUIET`: unset,
+/// empty, `0` or `false` (any case) leave verbose off; any other value turns
+/// it on.
+pub(crate) fn verbose_env_value(value: Option<&str>) -> bool {
+    env_switch_on(value)
+}
+
 /// `RIPR_QUIET` semantics: unset, empty, `0` or `false` (any case) leave
 /// progress on; any other value silences it.
 pub(crate) fn quiet_env_value(value: Option<&str>) -> bool {
@@ -146,14 +158,7 @@ pub(crate) fn elapsed_class(elapsed: Duration) -> Option<&'static str> {
 }
 
 pub(crate) const fn stage_token(stage: AnalysisProgressStage) -> &'static str {
-    match stage {
-        AnalysisProgressStage::LoadingInput => "loading_input",
-        AnalysisProgressStage::Analyzing => "analyzing",
-        AnalysisProgressStage::BuildingOutput => "building_output",
-        AnalysisProgressStage::Completed => "completed",
-        AnalysisProgressStage::Cancelled => "cancelled",
-        AnalysisProgressStage::Failed => "failed",
-    }
+    stage.as_str()
 }
 
 pub(crate) const fn scope_token(scope: AnalysisProgressScope) -> &'static str {
@@ -891,6 +896,22 @@ mod tests {
             assert!(!quiet_env_value(Some(off)), "{off:?} must keep progress");
         }
         assert!(!quiet_env_value(None), "unset keeps progress");
+    }
+
+    /// `RIPR_VERBOSE` turns verbose on for any value but the off spellings.
+    #[test]
+    fn verbose_env_value_enables_on_any_value_but_the_off_spellings() {
+        for on in ["1", "true", "yes", " 1 ", "anything"] {
+            assert!(verbose_env_value(Some(on)), "{on:?} must enable verbose");
+        }
+        for off in ["", "  ", "0", "false", "FALSE"] {
+            assert!(
+                !verbose_env_value(Some(off)),
+                "{off:?} must leave verbose off"
+            );
+        }
+        assert!(!verbose_env_value(None), "unset leaves verbose off");
+        assert_eq!(VERBOSE_ENV, "RIPR_VERBOSE");
     }
 
     /// #11598: the full decision table. Machine format plus a non-terminal

@@ -31,6 +31,10 @@ pub(crate) struct BoundedAgentBrief<'a> {
     omission_counts: Vec<OmissionCount>,
     // Only fixed-size identities, never discarded evidence payloads.
     seen_ids: BTreeSet<String>,
+    // Check-finding ids (#13895) minted by more than one observed seam. Ids
+    // are fixed-size text; evidence payloads are never kept here.
+    named_ids_once: BTreeSet<String>,
+    named_ids_shared: BTreeSet<String>,
 }
 
 impl<'a> BoundedAgentBrief<'a> {
@@ -57,6 +61,8 @@ impl<'a> BoundedAgentBrief<'a> {
             named_omissions: Vec::new(),
             omission_counts: Vec::new(),
             seen_ids: BTreeSet::new(),
+            named_ids_once: BTreeSet::new(),
+            named_ids_shared: BTreeSet::new(),
         })
     }
 
@@ -67,9 +73,20 @@ impl<'a> BoundedAgentBrief<'a> {
         self.seen_ids.len()
     }
 
+    /// Check-finding ids that more than one observed seam can be named by,
+    /// over every seam this consumer saw (not only the selected ones).
+    pub(crate) fn shared_named_ids(&self) -> BTreeSet<String> {
+        self.named_ids_shared.clone()
+    }
+
     pub(crate) fn observe(&mut self, ordinal: usize, entry: ClassifiedSeam) -> Result<(), String> {
         if !self.seen_ids.insert(entry.seam.id().as_str().to_string()) {
             return Err("duplicate seam identity in streamed review evidence".into());
+        }
+        for id in crate::analysis::canonical_gap::seam_nameable_ids(&entry) {
+            if !self.named_ids_once.insert(id.clone()) {
+                self.named_ids_shared.insert(id);
+            }
         }
         let direct = why_now_for(&entry, &self.normalized);
         let why_now = if let Some(why_now) = direct {
@@ -238,6 +255,7 @@ impl<'a> BoundedAgentBrief<'a> {
                 .map(|item| AgentBriefSelectedSeam {
                     seam: &item.entry,
                     why_now: item.why_now.clone(),
+                    arm_result: None,
                 })
                 .collect(),
             warnings,
@@ -274,21 +292,24 @@ impl crate::analysis::ScopedEvidenceConsumer for BoundedAgentBrief<'_> {
         self.candidates.len()
     }
 
-    fn second_stage_filter<'s>(
-        &'s self,
-        index: &crate::analysis::RustIndex,
-    ) -> Option<crate::analysis::SecondStageFilter<'s>> {
+    fn second_stage_scope(&self) -> Option<crate::analysis::SecondStageScope<'_>> {
         // Fallback seams are discarded once any scoped seam is represented, so
         // narrowing is only sound after a first-stage seam matched.
         if !self.matched_scope {
             return None;
         }
-        let related = self
-            .changed_scope
-            .related_tests_possible(index.tests().iter().map(|test| test.file.as_path()));
-        Some(Box::new(move |seam| {
-            self.changed_scope.can_match_non_fallback(seam, related)
-        }))
+        let scope = &self.changed_scope;
+        Some(crate::analysis::SecondStageScope {
+            keep_without_relation: Box::new(move |seam| scope.can_match_non_fallback(seam, false)),
+            relation_pool: Box::new(move |file, line| {
+                scope.related_test_can_raise_why_now(file, line)
+            }),
+            // Without edit attribution every test in a working-set file is in
+            // the pool, which per-seam lookups cannot afford on a large test
+            // file (#12940), so a non-empty pool then keeps every seam.
+            relation_lookup: scope.knows_edited_tests(),
+            counts_relation: super::related_test_counts_for_why_now,
+        })
     }
 }
 
@@ -296,6 +317,54 @@ impl crate::analysis::ScopedEvidenceConsumer for BoundedAgentBrief<'_> {
 mod tests {
     use super::super::tests::classified;
     use super::*;
+
+    #[test]
+    fn shared_named_ids_cover_every_observed_seam_including_unretained_ones() -> Result<(), String>
+    {
+        let config =
+            crate::config::tests_only_parse("[severity.seams]\nweakly_gripped = \"off\"\n")?;
+        let working_set =
+            AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/changed.rs")]);
+        let mut sink =
+            BoundedAgentBrief::new(&working_set, 10, AgentBriefPolicy::from_config(&config))?;
+        // Both seams are omitted by policy (nothing retained), yet the two
+        // same-expression seams of one owner still share their bare ids.
+        for (ordinal, line) in [(0, 1), (1, 7)] {
+            sink.observe(
+                ordinal,
+                classified(
+                    "src/changed.rs",
+                    line,
+                    "src/changed.rs::a",
+                    "n > 0",
+                    SeamGripClass::WeaklyGripped,
+                ),
+            )?;
+        }
+        sink.observe(
+            2,
+            classified(
+                "src/changed.rs",
+                9,
+                "src/changed.rs::b",
+                "n > 0",
+                SeamGripClass::WeaklyGripped,
+            ),
+        )?;
+        assert_eq!(sink.candidates.len(), 0);
+        let shared = sink.shared_named_ids();
+        assert!(!shared.is_empty());
+        let lone = crate::analysis::canonical_gap::seam_nameable_ids(&classified(
+            "src/changed.rs",
+            9,
+            "src/changed.rs::b",
+            "n > 0",
+            SeamGripClass::WeaklyGripped,
+        ));
+        assert!(!lone.is_empty());
+        assert!(lone.iter().all(|id| !shared.contains(id)));
+        Ok(())
+    }
 
     #[test]
     fn observed_seams_counts_every_classified_seam_not_only_retained_ones() -> Result<(), String> {
@@ -442,12 +511,9 @@ mod tests {
         fn retained_payloads(&self) -> usize {
             self.inner.retained_payloads()
         }
-        fn second_stage_filter<'s>(
-            &'s self,
-            index: &crate::analysis::RustIndex,
-        ) -> Option<crate::analysis::SecondStageFilter<'s>> {
+        fn second_stage_scope(&self) -> Option<crate::analysis::SecondStageScope<'_>> {
             if self.narrow {
-                self.inner.second_stage_filter(index)
+                self.inner.second_stage_scope()
             } else {
                 None
             }
@@ -474,6 +540,19 @@ mod tests {
         narrow: bool,
         hit: bool,
     ) -> Result<FixtureRun, String> {
+        run_fixture_with(label, lib, narrow, hit, &[], None)
+    }
+
+    /// `extra_lines` adds changed lines in `src/lib.rs`; `edited_headers`
+    /// sets edit attribution (`None` leaves it unknown).
+    fn run_fixture_with(
+        label: &str,
+        lib: &str,
+        narrow: bool,
+        hit: bool,
+        extra_lines: &[usize],
+        edited_headers: Option<&[usize]>,
+    ) -> Result<FixtureRun, String> {
         let root = std::env::temp_dir().join(format!(
             "ripr-bounded-{label}-{}-{narrow}",
             std::process::id()
@@ -493,6 +572,17 @@ mod tests {
         let (line, owner) = if hit { (2, "eligible") } else { (90, "absent") };
         working_set.changed_lines = vec![AgentBriefLine::new("src/lib.rs", line)];
         working_set.changed_owners = vec![AgentBriefChangedOwner::new("src/lib.rs", line, owner)];
+        working_set.changed_lines.extend(
+            extra_lines
+                .iter()
+                .map(|extra| AgentBriefLine::new("src/lib.rs", *extra)),
+        );
+        working_set.edited_function_headers = edited_headers.map(|headers| {
+            headers
+                .iter()
+                .map(|header| AgentBriefLine::new("src/lib.rs", *header))
+                .collect()
+        });
         let config = RiprConfig::default();
         let mut brief =
             BoundedAgentBrief::new(&working_set, 10, AgentBriefPolicy::from_config(&config))?;
@@ -585,8 +675,172 @@ mod tests {
         assert!(scope.can_match_non_fallback(&same_file.seam, false));
         assert!(!scope.can_match_non_fallback(&caller.seam, false));
         assert!(scope.can_match_non_fallback(&caller.seam, true));
-        assert!(!scope.related_tests_possible([Path::new("tests/other.rs")]));
-        assert!(scope.related_tests_possible([Path::new("./src/lib.rs")]));
+        // Without edit attribution every test in a working-set file may
+        // raise the file-level why-now; a test outside the working set only
+        // through a changed line on its header or assertion window.
+        assert!(!scope.knows_edited_tests());
+        assert!(!scope.related_test_can_raise_why_now(Path::new("tests/other.rs"), 1));
+        assert!(scope.related_test_can_raise_why_now(Path::new("./src/lib.rs"), 40));
+    }
+
+    #[test]
+    fn edited_test_attribution_limits_the_relation_pool_to_edited_tests() {
+        let mut working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![
+                AgentBriefLine::new("src/lib.rs", 2),
+                AgentBriefLine::new("tests/t.rs", 30),
+            ],
+        )
+        .with_edited_function_headers(Some(vec![
+            AgentBriefLine::new("src/lib.rs", 1),
+            AgentBriefLine::new("tests/t.rs", 10),
+        ]));
+        working_set
+            .files
+            .push(PathBuf::from("tests/listed_only.rs"));
+        let scope = AgentBriefChangedScope::new(&working_set);
+        assert!(scope.knows_edited_tests());
+        // Edited test (its body holds a changed line), by header line.
+        assert!(scope.related_test_can_raise_why_now(Path::new("tests/t.rs"), 10));
+        // Untouched test in a changed test file: no route.
+        assert!(!scope.related_test_can_raise_why_now(Path::new("tests/t.rs"), 50));
+        // Changed line on the header, or inside the assertion window after
+        // it, still admits the test (exact-line and assertion-near routes).
+        assert!(scope.related_test_can_raise_why_now(Path::new("tests/t.rs"), 30));
+        assert!(scope.related_test_can_raise_why_now(Path::new("tests/t.rs"), 18));
+        assert!(!scope.related_test_can_raise_why_now(Path::new("tests/t.rs"), 17));
+        // A working-set file with no changed lines keeps the file route open.
+        assert!(scope.related_test_can_raise_why_now(Path::new("tests/listed_only.rs"), 99));
+        assert!(!scope.related_test_can_raise_why_now(Path::new("tests/other.rs"), 10));
+    }
+
+    /// `src/lib.rs` (after the fixture's `mod caller;` line): `eligible` on
+    /// line 2, test `boundary` on line 7, test `via_caller` on line 9 with
+    /// its assertion on line 11, past the 12-line assertion window of
+    /// `boundary` only when the changed line is beyond line 19.
+    const LIB_WITH_CALLER_TEST: &str = "pub fn eligible(n: i32) -> bool { n >= 10 }\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn boundary() { assert!(eligible(10)); }\n    #[test]\n    fn via_caller() {\n        let n = 3;\n        assert!(crate::caller::caller(n));\n    }\n}\n";
+
+    #[test]
+    fn caller_seam_related_only_to_an_untouched_test_is_skipped() -> Result<(), String> {
+        // The diff edits `eligible` only; `via_caller` (line 9) relates to the
+        // caller seam but is untouched, so no related-test why-now can name
+        // the caller seam and it is not evaluated.
+        let headers: &[usize] = &[2];
+        let (wide, wide_sel, wide_warn) = run_fixture_with(
+            "ut-wide",
+            LIB_WITH_CALLER_TEST,
+            false,
+            true,
+            &[],
+            Some(headers),
+        )?;
+        let (narrow, narrow_sel, narrow_warn) = run_fixture_with(
+            "ut-narrow",
+            LIB_WITH_CALLER_TEST,
+            true,
+            true,
+            &[],
+            Some(headers),
+        )?;
+        assert!(
+            wide.iter().any(|id| id.contains("caller.rs")),
+            "baseline must evaluate the caller-file seam: {wide:?}"
+        );
+        assert!(
+            !narrow.iter().any(|id| id.contains("caller.rs")),
+            "an untouched related test must not keep the caller seam: {narrow:?}"
+        );
+        assert!(
+            narrow.iter().any(|id| id.ends_with("::eligible")),
+            "first-stage seam is still evaluated: {narrow:?}"
+        );
+        assert_eq!(wide_sel, narrow_sel);
+        assert_eq!(wide_warn, narrow_warn);
+        Ok(())
+    }
+
+    /// `LIB_WITH_CALLER_TEST` with `boundary` (line 7) replaced by a test that
+    /// calls and asserts nothing the caller seam names.
+    const LIB_WITH_UNRELATED_EDITED_TEST: &str = "pub fn eligible(n: i32) -> bool { n >= 10 }\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn arithmetic() { assert_eq!(2 + 2, 4); }\n    #[test]\n    fn via_caller() {\n        let n = 3;\n        assert!(crate::caller::caller(n));\n    }\n}\n";
+
+    #[test]
+    fn caller_seam_related_only_to_a_test_outside_a_nonempty_pool_is_skipped() -> Result<(), String>
+    {
+        // The diff edits `eligible` (line 2) and the test `arithmetic` (line
+        // 7), so the pool holds `arithmetic`. The caller seam relates to the
+        // untouched `via_caller` (header 9, after every changed line), and to
+        // `arithmetic` at most by proximity, so the relation lookup must
+        // reject it and selection must not change.
+        let headers: &[usize] = &[2, 7];
+        let (wide, wide_sel, wide_warn) = run_fixture_with(
+            "np-wide",
+            LIB_WITH_UNRELATED_EDITED_TEST,
+            false,
+            true,
+            &[7],
+            Some(headers),
+        )?;
+        let (narrow, narrow_sel, narrow_warn) = run_fixture_with(
+            "np-narrow",
+            LIB_WITH_UNRELATED_EDITED_TEST,
+            true,
+            true,
+            &[7],
+            Some(headers),
+        )?;
+        assert!(
+            wide.iter().any(|id| id.contains("caller.rs")),
+            "baseline must evaluate the caller-file seam: {wide:?}"
+        );
+        assert!(
+            !narrow.iter().any(|id| id.contains("caller.rs")),
+            "a pool test the caller seam does not relate to must not keep it: {narrow:?}"
+        );
+        assert_eq!(wide_sel, narrow_sel);
+        assert_eq!(wide_warn, narrow_warn);
+        Ok(())
+    }
+
+    #[test]
+    fn caller_seam_related_to_an_edited_test_stays_evaluated() -> Result<(), String> {
+        // The diff also edits line 10 inside `via_caller` (header line 9), so
+        // the caller seam relates to an edited test and must be evaluated;
+        // selection names it through the related-test why-now.
+        let headers: &[usize] = &[2, 9];
+        let (wide, wide_sel, wide_warn) = run_fixture_with(
+            "et-wide",
+            LIB_WITH_CALLER_TEST,
+            false,
+            true,
+            &[10],
+            Some(headers),
+        )?;
+        let (narrow, narrow_sel, narrow_warn) = run_fixture_with(
+            "et-narrow",
+            LIB_WITH_CALLER_TEST,
+            true,
+            true,
+            &[10],
+            Some(headers),
+        )?;
+        assert!(
+            wide.iter().any(|id| id.contains("caller.rs")),
+            "baseline must evaluate the caller-file seam: {wide:?}"
+        );
+        assert!(
+            narrow.iter().any(|id| id.contains("caller.rs")),
+            "a related edited test keeps the caller seam: {narrow:?}"
+        );
+        assert!(
+            narrow_sel
+                .iter()
+                .any(|(owner, why)| owner.ends_with("caller") && why.contains("Related")),
+            "the caller seam is selected through its edited related test: {narrow_sel:?}"
+        );
+        assert_eq!(wide_sel, narrow_sel);
+        assert_eq!(wide_warn, narrow_warn);
+        Ok(())
     }
 
     #[test]

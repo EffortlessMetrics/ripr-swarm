@@ -22,7 +22,10 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
                 i += 1;
                 let value = expect_value(args, i, "--root")?;
                 if value.trim().is_empty() {
-                    return Err("swarm ingest --root requires a non-empty path; pass a value right after --root".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--root",
+                        "swarm ingest --root requires a non-empty path; pass a value right after --root",
+                    ));
                 }
                 let reconciled = reconcile_root(&root, root_explicit, value, "swarm ingest")?;
                 root = reconciled;
@@ -32,7 +35,10 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
                 i += 1;
                 let value = expect_value(args, i, "--result")?;
                 if value.trim().is_empty() {
-                    return Err("swarm ingest --result requires a non-empty path; pass a value right after --result".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--result",
+                        "swarm ingest --result requires a non-empty path; pass a value right after --result",
+                    ));
                 }
                 result = Some(PathBuf::from(value));
             }
@@ -52,8 +58,10 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
     Ok(Options {
         root,
         result: result.ok_or_else(|| {
-            "swarm ingest requires --result <path>; add `--result <path>` to the command"
-                .to_string()
+            crate::cli::usage_refusal::missing_required(
+                "--result",
+                "swarm ingest requires --result <path>; add `--result <path>` to the command",
+            )
         })?,
     })
 }

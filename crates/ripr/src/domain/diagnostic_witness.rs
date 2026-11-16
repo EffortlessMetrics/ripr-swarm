@@ -301,8 +301,8 @@ fn suggested_related_test(finding: &Finding) -> Option<&RelatedTest> {
 /// (`same_test_file`, `same_module`, `weak_token_substring`) never run the
 /// change, so naming one as the fix site would send the reader to an
 /// unrelated test (#5354). Rows with no recorded relation (legacy producers)
-/// stay eligible. The row's `miss` annotation is explanatory and decides
-/// nothing here (`output/related_test_role_tests.rs`).
+/// stay eligible. The row's `miss` annotation never makes a row ineligible
+/// here; it only orders eligible rows through `observation_tier` (`output/related_test_role_tests.rs`).
 fn is_call_bearing(test: &RelatedTest) -> bool {
     test.relation_reason
         .is_none_or(|reason| !reason.is_proximity_only())
@@ -321,8 +321,9 @@ fn reaches_owner(test: &RelatedTest) -> bool {
         .is_none_or(|reason| reason.establishes_reach(true))
 }
 
-/// Rows that reach the owner first, then oracle strength, then relation
-/// confidence, over call-bearing rows only; when none exists there is no fix
+/// Rows that reach the owner first, then rows whose assertion can observe the
+/// change (#14454), then oracle strength, then relation confidence, over
+/// call-bearing rows only; when none exists there is no fix
 /// site rather than a nearby test.
 fn best_related_test<'a>(
     related_tests: impl Iterator<Item = &'a RelatedTest>,
@@ -331,11 +332,19 @@ fn best_related_test<'a>(
     // ranked rows: the producer lists related tests by relation priority, so
     // a tie resolves to the row `check` shows first, and the lens and the
     // hover open the same test.
+    //
+    // #14454: among rows of equal reach, a row whose assertion cannot observe
+    // the change is never the fix site while another row can, however strong
+    // its oracle. A row with no call path to the changed code reaches it
+    // least of all, so it ranks below a direct caller whose assertion pins
+    // only the success arm. The tier is the shared
+    // `RelatedTest::observation_tier` rule (#14483).
     related_tests
         .filter(|test| is_call_bearing(test))
         .min_by(|left, right| {
             reaches_owner(right)
                 .cmp(&reaches_owner(left))
+                .then_with(|| right.observation_tier().cmp(&left.observation_tier()))
                 .then_with(|| {
                     right
                         .oracle_strength
@@ -371,8 +380,8 @@ mod tests {
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, FindingCanonicalGap,
         FlowSinkFact, FlowSinkKind, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId,
-        RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, SymbolId,
-        ValueContext, ValueFact,
+        RelatedTestMiss, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState,
+        SymbolId, ValueContext, ValueFact,
     };
     use std::path::PathBuf;
 
@@ -471,6 +480,66 @@ mod tests {
                 .any(|item| item.kind == "suggested_assertion_unavailable")
         );
         Ok(())
+    }
+
+    /// #14454: a strong row that cannot observe the change (an `Ok`-only pin
+    /// on a changed error variant) is never the fix site over a weaker row
+    /// that does; without that miss, oracle strength still leads.
+    #[test]
+    fn fix_site_skips_a_strong_row_that_cannot_observe_the_change() {
+        let related = |name: &str, strength: OracleStrength, miss: RelatedTestMiss| RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("tests/existing.rs"),
+            line: 4,
+            oracle: Some(format!("{name}_assertion")),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: strength,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: Some(miss),
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        };
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.related_tests = vec![
+            related(
+                "accepts_short_names",
+                OracleStrength::Strong,
+                RelatedTestMiss::AssertionNotObserving,
+            ),
+            related(
+                "rejects_long_names",
+                OracleStrength::Weak,
+                RelatedTestMiss::WeakAssertion,
+            ),
+        ];
+        let fix_test = |finding: &Finding| {
+            DiagnosticWitness::from_finding(finding)
+                .and_then(|witness| witness.fix_site)
+                .map(|site| site.test_name)
+        };
+        assert_eq!(fix_test(&finding).as_deref(), Some("rejects_long_names"));
+        // A strong row with no call path to the change ranks below the
+        // Ok-only direct caller, never above it.
+        let mut no_call = finding.clone();
+        no_call.related_tests[1] = related(
+            "checks_other",
+            OracleStrength::Strong,
+            RelatedTestMiss::NoCallPath,
+        );
+        assert_eq!(fix_test(&no_call).as_deref(), Some("accepts_short_names"));
+        // Reach leads (#5335): a direct caller whose assertion pins only the
+        // success arm still outranks an observing row that is linked only by
+        // the owner's name, because that row may never run the change.
+        let mut reach = finding.clone();
+        reach.related_tests[0].relation_reason =
+            Some(crate::domain::RelationReason::DirectOwnerCall);
+        reach.related_tests[1].relation_reason =
+            Some(crate::domain::RelationReason::OwnerNamedTest);
+        assert_eq!(fix_test(&reach).as_deref(), Some("accepts_short_names"));
+        finding.related_tests[0].miss = Some(RelatedTestMiss::MissingExactAssertion);
+        assert_eq!(fix_test(&finding).as_deref(), Some("accepts_short_names"));
     }
 
     /// RC walk (py-pricing): `check` and the repair card named
