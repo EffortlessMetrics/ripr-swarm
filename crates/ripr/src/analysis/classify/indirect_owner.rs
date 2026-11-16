@@ -521,7 +521,7 @@ fn mention_is_value(
         || qualifier
         || field_label
         || typed_fn_pointer_initializer(code, reference_at)
-        || !qualifier_may_name_owner(before, owner_names))
+        || !qualifier_may_name_owner(before, name, owner_names))
 }
 
 /// Path segments that identify where the owner lives: `self`, `super` and
@@ -561,9 +561,15 @@ fn owner_path_names(owner: &FunctionFact) -> Vec<String> {
 
 /// Whether the path written before the owner's name (`other::` in
 /// `other::inc`) can still be the owner's: no qualifier, or one whose first or
-/// last segment is among the names that locate the owner. A qualifier that
-/// names neither is a different entity with the same leaf name.
-fn qualifier_may_name_owner(before: &str, owner_names: &[String]) -> bool {
+/// last segment is among the names that locate the owner, or is spelled like
+/// the owner itself. A qualifier that names none of these is a different
+/// entity with the same leaf name.
+///
+/// The owner's own spelling counts because a module or crate-root re-export can
+/// carry it: `thr::thr` is the re-exported `thr` taken as a function value, and
+/// reading its qualifier as a stranger credited a gap the indirect-owner limit
+/// is there to withhold (review round 1, Devin).
+fn qualifier_may_name_owner(before: &str, name: &str, owner_names: &[String]) -> bool {
     let Some(path) = before.strip_suffix("::") else {
         return true;
     };
@@ -576,7 +582,7 @@ fn qualifier_may_name_owner(before: &str, owner_names: &[String]) -> bool {
         .split("::")
         .filter(|segment| !segment.is_empty())
         .collect();
-    let known = |segment: &&str| owner_names.iter().any(|name| name == segment);
+    let known = |segment: &&str| *segment == name || owner_names.iter().any(|name| name == segment);
     match (segments.first(), segments.last()) {
         (Some(first), Some(last)) => known(first) || known(last),
         // A leading `::` or a generic qualifier (`<T as Trait>::inc`) is not read.
@@ -1341,6 +1347,21 @@ mod tests {
         assert!(!value("assert!(thr::<u8>(50));", "thr"));
     }
 
+    /// Review round 1 (Devin): excluding the qualifier must not eat the value
+    /// behind it. In `let f = thr::thr;` the first `thr` is a module or crate
+    /// whose segment is spelled like the owner, and the terminal `thr` is the
+    /// re-exported owner itself, so the pair is a function value and keeps the
+    /// indirect-owner limit. Only the mention that ends the path can be the
+    /// value, and a qualifier spelled like the owner can still name the owner.
+    #[test]
+    fn a_function_value_behind_a_same_name_qualifier_still_keeps_the_limit() {
+        assert!(value("let f = thr::thr; assert!(!f(50));", "thr"));
+        assert!(value("let f = thr::internal::thr; f(50);", "thr"));
+        // A qualifier that names neither the owner nor the owner's own spelling
+        // stays a different entity, as before.
+        assert!(!value("let f = other::thr; f(50);", "thr"));
+    }
+
     #[test]
     fn a_qualified_path_names_the_owner_only_when_it_locates_the_owner() {
         // A same-leaf function in another module is a different entity.
@@ -1416,12 +1437,14 @@ mod tests {
         // alphanumeric, and is three bytes wide.
         assert!(!super::qualifier_may_name_owner(
             "क्::",
+            "inc",
             &["Owner".to_string()]
         ));
         // A non-ASCII identifier char continues the qualifier, so `क्Owner`
         // is not read as `Owner`.
         assert!(!super::qualifier_may_name_owner(
             "क्Owner::",
+            "Owner",
             &["Owner".to_string()]
         ));
         // `क्::` is a path prefix like `helpers::`.
@@ -1432,6 +1455,7 @@ mod tests {
         assert!(super::typed_fn_pointer_initializer(code, code.len()));
         assert!(super::qualifier_may_name_owner(
             "Owner::",
+            "inc",
             &["Owner".to_string()]
         ));
     }
