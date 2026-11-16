@@ -78,12 +78,14 @@ pub(crate) fn without_unfilled_expected(
     if classification.strength != OracleStrength::Strong || placeholders.is_empty() {
         return classification;
     }
-    // #14810 round 3: mask comments and string literals before matching. The
-    // token scanner is a raw word split, so an assertion message that happens
-    // to contain the placeholder's name (`assert_eq!(price(10), 7, "expected
-    // total")`) would otherwise match a local the assertion never reads.
-    let masked = crate::analysis::extract::mask::mask_comments_and_strings(assertion);
-    let tokens = crate::analysis::extract::text::extract_identifier_tokens(&masked);
+    // #14810 round 3: match against the assertion's semantic operands, not
+    // the whole text. The diagnostic message is not a read, so a message word
+    // must not lower the assertion; a `format!("{expected}")` operand is a
+    // read, so its interpolation must still count. Unknown helpers keep the
+    // masked whole-text fallback.
+    let operand_text = assertion_oracle_text(assertion)
+        .unwrap_or_else(|| crate::analysis::extract::mask::mask_comments_and_strings(assertion));
+    let tokens = crate::analysis::extract::text::extract_identifier_tokens(&operand_text);
     if !placeholders
         .iter()
         .any(|name| tokens.iter().any(|token| token == name))

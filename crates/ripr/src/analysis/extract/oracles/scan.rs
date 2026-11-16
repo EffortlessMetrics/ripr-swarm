@@ -6044,6 +6044,25 @@ fn price_boundary_discriminator() {
     }
 
     #[test]
+    fn a_placeholder_read_through_a_format_interpolation_still_lowers() -> Result<(), String> {
+        // #14810 round 3: `format!("{expected}")` reads the placeholder, so
+        // masking the literal must not hide it.
+        let body = r#"
+fn t() {
+    let expected: i32 = todo!("x");
+    assert_eq!(format!("{expected}"), "9_990");
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.strength != OracleStrength::Unknown {
+            return Err(format!(
+                "a format interpolation reads the placeholder: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn a_semicolon_inside_the_type_does_not_hide_the_placeholder() -> Result<(), String> {
         // #14810 round 3: the statement split must not break on the `;` in
         // `[i32; 3]`, or the initializer is never seen.
