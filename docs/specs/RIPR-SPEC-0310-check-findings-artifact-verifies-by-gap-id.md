@@ -84,7 +84,7 @@ could not be verified without trusting hand-authored JSON.
    edit is still not closed when its finding evidence carries a
    `stale_raised_type_pin:` fact. The Python analyzer records that fact, as
    advisory evidence only, when the changed line replaces `raise Old(...)`
-   with `raise New(...)` (or a bare `raise New` for `raise Old`), every strong
+   with `raise New(...)` (either raise may also be bare, `raise Old` or `raise New`), every strong
    related exact-error assertion expects `Old` exactly (`pytest.raises(Old, ...)`,
    `pytest.raises(expected_exception=Old, ...)`, or a non-empty tuple whose every
    member is the identically spelled `Old`), no related
@@ -100,7 +100,7 @@ could not be verified without trusting hand-authored JSON.
    names its type. Any shape the analyzer cannot read exactly (a raise that is
    not one `raise Name(...)` or bare `raise Name` line, a dotted raise (`raise mod.Exc(...)`, whose hierarchy cannot be resolved and could alias an ancestor of the other class), a raise with a `from` cause or keyword
    arguments, a new class derived from `OSError` (whose constructor picks the errno's subclass; its aliases `IOError` and `EnvironmentError` are not resolved) or from a builtin whose constructor validates its arguments (the Unicode errors, `SyntaxError`, exception groups), a new class name that the production module mentions other than in `raise`, `except` or its one class header (a local `TypeError = ValueError`, a parameter, an import), an argument with a call, operator or subscript, a decorated class, a class with several bases, its own `__new__` or `__init__` (or one inherited from a module class), or any class-body statement other than `pass`, a docstring or an undecorated method, a test module
-   that rebinds the expected name, a dotted (attribute) expected class, a tuple with any member other than `Old`, an expected class `Exception` or `BaseException` (which still passes against `New`, so it is not a stale pin), an aliased or
+   that rebinds the expected name, a dotted (attribute) expected class, a tuple with any member other than `Old`, an expected class other than `Old`, such as a broad `Exception` or `BaseException` that still passes against `New`, an aliased or
    imported class, an unresolvable base) records no fact and keeps today's
    closure.
 
