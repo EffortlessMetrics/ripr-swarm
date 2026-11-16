@@ -511,7 +511,7 @@ fn parse_gate_check_plan(args: &[String]) -> Result<GateCheckPlan, String> {
     }
 
     let base = base.ok_or_else(|| {
-        "gate check requires --base <rev>; pass the pull request's base, for example `ripr gate check --base origin/main`".to_string()
+        crate::cli::usage_refusal::missing_required("--base", "gate check requires --base <rev>; pass the pull request's base, for example `ripr gate check --base origin/main`")
     })?;
     let head = head.unwrap_or_else(|| "HEAD".to_string());
     review_args.extend([

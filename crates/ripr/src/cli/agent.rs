@@ -717,8 +717,11 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 let pilot_root = crate::agent::loop_commands::shell_arg(
                     &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
                 );
-                return Err(format!(
-                    "agent repair --phase before requires --seam-id <id>; run `ripr pilot --root {pilot_root}` to list repair IDs with their exact repair commands, or pass a `ripr check` finding ID (`probe:...` or `repo-probe:...`), a canonical gap ID, or a `file:line` naming one repair-eligible gap"
+                return Err(crate::cli::usage_refusal::missing_required(
+                    "--seam-id",
+                    &format!(
+                        "agent repair --phase before requires --seam-id <id>; run `ripr pilot --root {pilot_root}` to list repair IDs with their exact repair commands, or pass a `ripr check` finding ID (`probe:...` or `repo-probe:...`), a canonical gap ID, or a `file:line` naming one repair-eligible gap"
+                    ),
                 ));
             }
         }
@@ -745,7 +748,10 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 );
             }
             if attempt_id.is_none() {
-                return Err("agent repair --phase verify requires --attempt <id>; add `--attempt <id>` to the command".to_string());
+                return Err(crate::cli::usage_refusal::missing_required(
+                    "--attempt",
+                    "agent repair --phase verify requires --attempt <id>; add `--attempt <id>` to the command",
+                ));
             }
         }
     }
@@ -838,7 +844,10 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
         root,
         root_explicit,
         seam_id: seam_id.ok_or_else(|| {
-            "agent start requires --seam-id; add `--seam-id` to the command".to_string()
+            crate::cli::usage_refusal::missing_required(
+                "--seam-id",
+                "agent start requires --seam-id; add `--seam-id` to the command",
+            )
         })?,
         out_dir: out_dir.unwrap_or_else(|| PathBuf::from("target/ripr/workflow")),
         json,
@@ -911,7 +920,10 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
 
     let working_set = working_set
         .ok_or_else(|| {
-            "agent brief requires exactly one of --diff, --base, --files, or --seam-id".to_string()
+            crate::cli::usage_refusal::missing_required(
+                "--diff",
+                "agent brief requires exactly one of --diff, --base, --files, or --seam-id",
+            )
         })?
         .into_working_set();
 
@@ -1015,8 +1027,11 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
             );
         }
         (false, false, false) => {
-            return Err(format!(
-                "agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`. {SEAM_ID_SOURCE_HINT}"
+            return Err(crate::cli::usage_refusal::missing_required(
+                "--seam-id",
+                &format!(
+                    "agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`. {SEAM_ID_SOURCE_HINT}"
+                ),
             ));
         }
         _ => {}
@@ -1077,7 +1092,10 @@ pub(super) fn parse_agent_card_options(args: &[String]) -> Result<AgentCardOptio
     }
 
     let seam_id = seam_id.ok_or_else(|| {
-        format!("agent card requires --seam-id; add `--seam-id <id>`. {SEAM_ID_SOURCE_HINT}")
+        crate::cli::usage_refusal::missing_required(
+            "--seam-id",
+            &format!("agent card requires --seam-id; add `--seam-id <id>`. {SEAM_ID_SOURCE_HINT}"),
+        )
     })?;
 
     Ok(AgentCardOptions {
@@ -1154,8 +1172,10 @@ pub(super) fn parse_agent_stub_options(args: &[String]) -> Result<AgentStubOptio
     }
 
     let selector = selector.ok_or_else(|| {
-        "agent stub requires --seam-id ID or --at FILE:LINE (the location `ripr check` prints)"
-            .to_string()
+        crate::cli::usage_refusal::missing_required(
+            "--seam-id",
+            "agent stub requires --seam-id ID or --at FILE:LINE (the location `ripr check` prints)",
+        )
     })?;
     let selector = match kind {
         Some(kind) => selector.with_kind(&kind)?,
@@ -1220,8 +1240,8 @@ pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyO
         i += 1;
     }
 
-    let before = before.ok_or_else(|| "agent verify requires --before <path>; pass the snapshot saved before the edit (`ripr agent verify --help` shows the loop)".to_string())?;
-    let after = after.ok_or_else(|| "agent verify requires --after <path>; pass the snapshot saved after the edit (`ripr agent verify --help` shows the loop)".to_string())?;
+    let before = before.ok_or_else(|| crate::cli::usage_refusal::missing_required("--before", "agent verify requires --before <path>; pass the snapshot saved before the edit (`ripr agent verify --help` shows the loop)"))?;
+    let after = after.ok_or_else(|| crate::cli::usage_refusal::missing_required("--after", "agent verify requires --after <path>; pass the snapshot saved after the edit (`ripr agent verify --help` shows the loop)"))?;
     if !json {
         return Err(
             "agent verify requires --json (the supported output for this subcommand); add --json to the command".to_string(),
@@ -1309,9 +1329,9 @@ pub(super) fn parse_agent_verify_execute_options(
         root,
         root_explicit,
         packet: packet
-            .ok_or_else(|| "agent verify-execute requires --packet <path>; add `--packet <path>` to the command".to_string())?,
+            .ok_or_else(|| crate::cli::usage_refusal::missing_required("--packet", "agent verify-execute requires --packet <path>; add `--packet <path>` to the command"))?,
         result_json: result_json
-            .ok_or_else(|| "agent verify-execute requires --result-json <path>; add `--result-json <path>` to the command".to_string())?,
+            .ok_or_else(|| crate::cli::usage_refusal::missing_required("--result-json", "agent verify-execute requires --result-json <path>; add `--result-json <path>` to the command"))?,
         authorize,
         cancel_after_ms,
         json,
@@ -1407,11 +1427,13 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
     }
 
     let verify_json = verify_json.ok_or_else(|| {
-        "agent receipt requires --verify-json <path>; add `--verify-json <path>` to the command"
-            .to_string()
+        crate::cli::usage_refusal::missing_required("--verify-json", "agent receipt requires --verify-json <path>; add `--verify-json <path>` to the command")
     })?;
     let seam_id = seam_id.ok_or_else(|| {
-        "agent receipt requires --seam-id; add `--seam-id` to the command".to_string()
+        crate::cli::usage_refusal::missing_required(
+            "--seam-id",
+            "agent receipt requires --seam-id; add `--seam-id` to the command",
+        )
     })?;
     if !json {
         return Err(

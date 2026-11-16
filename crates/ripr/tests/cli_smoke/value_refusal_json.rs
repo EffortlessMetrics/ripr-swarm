@@ -258,3 +258,62 @@ fn an_empty_files_entry_under_json_is_an_invalid_value() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// #14877: a required flag the invocation left out is `missing_required`,
+/// with the flag to add as token and the command's help route as `next`.
+#[test]
+fn missing_required_flags_under_json_name_the_flag_to_add() -> Result<(), String> {
+    let cases: [(&[&str], &str, &str); 6] = [
+        (
+            &["agent", "verify", "--json"],
+            "--before",
+            "ripr agent verify --help",
+        ),
+        (
+            &["agent", "receipt", "--json"],
+            "--verify-json",
+            "ripr agent receipt --help",
+        ),
+        (
+            &["agent", "start", "--json"],
+            "--seam-id",
+            "ripr agent start --help",
+        ),
+        (
+            &["swarm", "ingest", "--json"],
+            "--result",
+            "ripr swarm ingest --help",
+        ),
+        (&["rerun", "--json"], "--changed-test", "ripr rerun --help"),
+        (
+            &["feedback", "record", "--json"],
+            "--snapshot",
+            "ripr feedback record --help",
+        ),
+    ];
+    for (args, token, help) in cases {
+        let output = run_ripr(args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        let document: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|err| format!("{args:?}: stdout must be one JSON document: {err}"))?;
+        assert_eq!(document["error"]["code"], "missing_required", "{args:?}");
+        assert_eq!(document["error"]["token"], token, "{args:?}");
+        assert_eq!(document["error"]["next"]["command"], help, "{args:?}");
+        let message = document["error"]["message"].as_str().unwrap_or_default();
+        assert!(message.contains("requires"), "{args:?}: {message}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            format!("ripr: {message}\n"),
+            "{args:?}"
+        );
+        let plain: Vec<&str> = args
+            .iter()
+            .copied()
+            .filter(|arg| *arg != "--json")
+            .collect();
+        let plain = run_ripr(&plain);
+        assert_eq!(plain.status.code(), Some(2), "{args:?}");
+        assert!(plain.stdout.is_empty(), "{args:?}");
+    }
+    Ok(())
+}

@@ -1939,6 +1939,11 @@ classes are:
 - a value flag with no value or an empty one (for example `check --json
   --base` with nothing after it, or `agent status --json --attempt ""`), as
   `missing_value` with the flag as `token` (#11979, #14859);
+- a required flag the invocation left out (for example `ripr agent verify
+  --json` without `--before`, or `ripr context --json` with no `--at`), as
+  `missing_required` with the flag to add as `token`; where the refusal
+  offers alternatives (`--diff`, `--base`, `--files` or `--seam-id`), the
+  token is the first one it names (#14877);
 - a malformed number caught by the CLI's shared numeric parsers (for example
   `context --max-related-tests zz` or `check --timeout zz`), as
   `invalid_value` with the typed value as `token` (#11979); an empty entry in
@@ -1948,15 +1953,18 @@ classes are:
   more than one, or could not be decided.
 
 Every other argv usage error keeps empty stdout even under a JSON request,
-with the cause on stderr only: a missing required flag (`requires --X`),
-a missing or malformed value rejected by a command's own parser rather than
+with the cause on stderr only: the required-flag refusals whose wording
+#14076 is revising (`calibrate cargo-mutants`, `zero status`, `pr-ledger
+record`, `cache export`, `reports gap-ledger`, `pr-review front-panel`), a
+missing or malformed value rejected by a command's own parser rather than
 the shared readers (for example `impacted-evidence`), conflicting or disagreeing flags, an unrecognized value
 rejected outside the CLI's shared builder (for example a gate mode), and any
 other argv error. These are a named gap, not a clean result.
 
 The document carries `schema_version`, `tool`, `status: "refused"` and
 `error {code, message, token?, next}` with `code` one of `unknown_argument`,
-`unknown_command`, `unknown_value`, `missing_value`, `invalid_value`,
+`unknown_command`, `unknown_value`, `missing_value`, `missing_required`,
+`invalid_value`,
 `selector_miss`. `token` is the offending argument, command, flag, value or
 selector (an empty malformed value has none); `next` is a fixed help pointer
 (`list_valid_arguments`, `list_valid_commands`) or `null`; `selector_miss`

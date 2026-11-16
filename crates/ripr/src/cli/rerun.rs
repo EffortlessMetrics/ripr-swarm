@@ -538,9 +538,10 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
             RerunSelector::ChangedTest { file, node }
         }
         (Some(_), None, Some(_)) => {
-            return Err(
-                "rerun --gap-ledger requires --gap; add `--gap` to the command".to_string(),
-            );
+            return Err(crate::cli::usage_refusal::missing_required(
+                "--gap",
+                "rerun --gap-ledger requires --gap; add `--gap` to the command",
+            ));
         }
         (None, Some(canonical_gap_id), Some(gap_ledger)) => RerunSelector::Gap {
             canonical_gap_id,
@@ -550,20 +551,27 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
             let root = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
             );
-            return Err(format!(
-                "rerun --gap requires --gap-ledger <path>.\n\
+            return Err(crate::cli::usage_refusal::missing_required(
+                "--gap-ledger",
+                &format!(
+                    "rerun --gap requires --gap-ledger <path>.\n\
                  Rust: run `ripr check --root {root} --format repo-exposure-json` and save stdout as repo-exposure.json, then run `ripr reports gap-ledger --root {root} --repo-exposure repo-exposure.json --out gap-ledger.json`.\n\
                  TypeScript: repeat the check that produced the gap with --json, save stdout as check.json, then run `ripr reports gap-ledger --root {root} --check-output check.json --out gap-ledger.json`.\n\
                  Command forms: Bash. Keep the same root and source scope; the ledger must contain the selected canonical gap ID. Producing a ledger does not translate IDs absent from it; retry with `--gap-ledger gap-ledger.json`."
+                ),
             ));
         }
         (None, None, Some(_)) => {
-            return Err(
-                "rerun --gap-ledger requires --gap; add `--gap` to the command".to_string(),
-            );
+            return Err(crate::cli::usage_refusal::missing_required(
+                "--gap",
+                "rerun --gap-ledger requires --gap; add `--gap` to the command",
+            ));
         }
         (None, None, None) => {
-            return Err("rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>; pass one selector, for example `--changed-test tests/a.rs`".to_string());
+            return Err(crate::cli::usage_refusal::missing_required(
+                "--changed-test",
+                "rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>; pass one selector, for example `--changed-test tests/a.rs`",
+            ));
         }
         (Some(_), Some(_), _) => return Err("rerun accepts exactly one selector".to_string()),
     };

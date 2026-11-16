@@ -1249,8 +1249,8 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
 
     Ok(ReviewCommentsOptions {
         root,
-        base: base.ok_or_else(|| "review-comments requires --base <sha>; pass the pull request's base commit, for example `--base origin/main --head HEAD`".to_string())?,
-        head: head.ok_or_else(|| "review-comments requires --head <sha>; pass the pull request's head commit, for example `--base origin/main --head HEAD`".to_string())?,
+        base: base.ok_or_else(|| crate::cli::usage_refusal::missing_required("--base", "review-comments requires --base <sha>; pass the pull request's base commit, for example `--base origin/main --head HEAD`"))?,
+        head: head.ok_or_else(|| crate::cli::usage_refusal::missing_required("--head", "review-comments requires --head <sha>; pass the pull request's head commit, for example `--base origin/main --head HEAD`"))?,
         gap_ledger,
         check_output,
         suppression_policy,
