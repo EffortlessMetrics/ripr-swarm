@@ -19,8 +19,8 @@ use super::imported_call_operator::{IMPORTED_CALL_LIMIT_EVIDENCE, imported_call_
 use super::message_pin;
 use super::module_value::{ModuleConstantEvidence, ModuleEdit, module_constant_evidence};
 use super::no_behavior::{
-    bare_string_statement_text, changed_default_overridden_params, format_param_name_list,
-    is_annotation_only_def_change, is_annotation_only_var_change,
+    BracketLine, bare_string_statement_text, changed_default_overridden_params,
+    format_param_name_list, is_annotation_only_def_change, is_annotation_only_var_change,
     is_comment_or_whitespace_only_change, is_new_def_header_without_defaults,
     is_python_no_behavior_line_at, is_structural_def_header_text,
 };
@@ -138,16 +138,8 @@ pub(super) struct PythonNoBehaviorContext {
     /// break, or the file could not be lexed to rule that out. A spacing or
     /// comment-looking change there edits the string (#10706).
     pub(super) new_line_in_multiline_string: bool,
-    /// The changed line starts inside an open bracket (or the file could not
-    /// be lexed to rule that out), so a bare string on it is an argument, not
-    /// a docstring (#13875).
-    pub(super) new_line_in_brackets: bool,
-    /// The same for the paired old line, against the reconstructed old source.
-    pub(super) old_line_in_brackets: bool,
-    /// The one-based `(opening, closing)` lines of the bracketed statement the
-    /// changed line continues, when the file lexed. A bare string there takes
-    /// the statement's probe shape, not a bare string's (#13875).
-    pub(super) bracket_statement_span: Option<(usize, usize)>,
+    /// Bracket-continuation facts for the changed line (#13875).
+    pub(super) brackets: BracketLine,
     /// The changed line is the first line of its enclosing owner, and that
     /// owner's span carries at least one other added behavior line.
     pub(super) opens_owner_with_added_body: bool,
@@ -288,11 +280,11 @@ fn classify_change_full<'a>(
     // behavioral) keeps its probe.
     let new_is_noop = no_behavior.new_line_in_docstring
         || no_behavior.new_line_type_checking_only
-        || is_python_no_behavior_line_at(line_text, no_behavior.new_line_in_brackets);
+        || is_python_no_behavior_line_at(line_text, no_behavior.brackets.new_in);
     let old_is_noop = old_line_text.is_none_or(|old| {
         no_behavior.old_line_in_docstring
             || no_behavior.old_line_type_checking_only
-            || is_python_no_behavior_line_at(old, no_behavior.old_line_in_brackets)
+            || is_python_no_behavior_line_at(old, no_behavior.brackets.old_in)
     });
     if new_is_noop && old_is_noop {
         return None;
@@ -304,8 +296,7 @@ fn classify_change_full<'a>(
     // unlexable new file counts every line as in brackets with no span; then
     // the old side has no trustworthy bracket evidence either, so it is read
     // bracket-blind too.
-    let new_file_unlexed =
-        no_behavior.new_line_in_brackets && no_behavior.bracket_statement_span.is_none();
+    let new_file_unlexed = no_behavior.brackets.new_in && no_behavior.brackets.span.is_none();
     let old_reads_noop = if new_file_unlexed {
         old_line_text.is_none_or(|old| {
             no_behavior.old_line_in_docstring || is_python_no_behavior_line_at(old, false)
@@ -316,7 +307,7 @@ fn classify_change_full<'a>(
     if is_python_no_behavior_line_at(line_text, false)
         && !line_text.trim().is_empty()
         && !line_text.trim_start().starts_with('#')
-        && no_behavior.bracket_statement_span.is_none()
+        && no_behavior.brackets.span.is_none()
         && old_reads_noop
     {
         return None;
@@ -520,7 +511,7 @@ fn classify_change_for_owner_inner<'a>(
         return None;
     }
     let statement_text =
-        bare_string_statement_text(line_text, no_behavior.bracket_statement_span, owner_source);
+        bare_string_statement_text(line_text, no_behavior.brackets.span, owner_source);
     let (family, delta) = classify_probe_shape_with_old(
         statement_text.as_deref().unwrap_or(line_text),
         old_line_text,

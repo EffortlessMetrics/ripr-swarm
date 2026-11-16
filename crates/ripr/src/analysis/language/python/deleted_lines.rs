@@ -12,11 +12,11 @@ use super::classify::{
     ChangeSite, OldGuardView, classify_change_for_owner_with_value_origins,
     is_python_declaration_line,
 };
+use super::no_behavior::is_python_no_behavior_line_at;
 use super::related_tests::RelatedCandidateMemo;
 use super::{
     ChangedFile, Finding, PythonNoBehaviorContext, PythonOwner, PythonTest, is_python_import_line,
-    is_python_no_behavior_line_at, is_python_structural_line, line_is_in_ranges,
-    normalize_python_expression, normalized_path,
+    is_python_structural_line, line_is_in_ranges, normalize_python_expression, normalized_path,
 };
 use crate::analysis::diff::ChangedLine;
 use crate::analysis::probes::{collision_ordinals, collision_rank_key};

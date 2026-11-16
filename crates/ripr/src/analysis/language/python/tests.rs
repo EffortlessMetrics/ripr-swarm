@@ -793,6 +793,7 @@ use super::bounded_read::{
     DEFAULT_PYTHON_MAX_FILE_READ_BYTES, DEFAULT_PYTHON_MAX_WORKSPACE_FILES,
     DEFAULT_PYTHON_MAX_WORKSPACE_READ_BYTES,
 };
+use super::no_behavior::BracketLine;
 use super::owners_tests::{extract_owners, extract_tests};
 use super::sink_alignment::{
     enclosing_literal_pair, oracle_compares_whole_collection, oracle_contains_value_literal,
@@ -4313,9 +4314,11 @@ fn a_changed_message_string_on_a_continuation_line_gets_a_probe() -> Result<(), 
         "from src.serializer import load\n\n\ndef test_load():\n    load(b\"x\")\n",
     );
     let context = |in_brackets: bool| PythonNoBehaviorContext {
-        new_line_in_brackets: in_brackets,
-        old_line_in_brackets: in_brackets,
-        bracket_statement_span: in_brackets.then_some((2, 5)),
+        brackets: BracketLine {
+            new_in: in_brackets,
+            old_in: in_brackets,
+            span: in_brackets.then_some((2, 5)),
+        },
         ..PythonNoBehaviorContext::default()
     };
     let new = "        \"XXCould not load the payloadXX\"";
@@ -4366,9 +4369,11 @@ fn an_unlexable_file_keeps_a_changed_bare_string_quiet() {
         "from src.m import f\n\n\ndef test_f():\n    assert f() == 1\n",
     );
     let context = PythonNoBehaviorContext {
-        new_line_in_brackets: true,
-        old_line_in_brackets: true,
-        bracket_statement_span: None,
+        brackets: BracketLine {
+            new_in: true,
+            old_in: true,
+            span: None,
+        },
         ..PythonNoBehaviorContext::default()
     };
     let finding = classify_change_with_context(
@@ -4420,9 +4425,11 @@ fn a_bracketed_raise_message_is_not_credited_to_a_return_assertion() -> Result<(
         "from src.m import f\nfrom tests.helpers import make_item\n\n\ndef test_f():\n    assert f(make_item()) == 1\n",
     );
     let context = PythonNoBehaviorContext {
-        new_line_in_brackets: true,
-        old_line_in_brackets: true,
-        bracket_statement_span: Some((3, 5)),
+        brackets: BracketLine {
+            new_in: true,
+            old_in: true,
+            span: Some((3, 5)),
+        },
         ..PythonNoBehaviorContext::default()
     };
     let finding = classify_change_with_context(
@@ -4461,9 +4468,11 @@ fn a_changed_message_argument_with_a_trailing_comma_is_an_error_path() -> Result
         "from pkg import check\n\n\ndef test_check():\n    assert check(2) == 2\n",
     );
     let context = PythonNoBehaviorContext {
-        new_line_in_brackets: true,
-        old_line_in_brackets: true,
-        bracket_statement_span: Some((3, 5)),
+        brackets: BracketLine {
+            new_in: true,
+            old_in: true,
+            span: Some((3, 5)),
+        },
         ..PythonNoBehaviorContext::default()
     };
     let finding = classify_change_with_context(

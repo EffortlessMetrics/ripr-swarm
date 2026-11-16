@@ -43,6 +43,107 @@ pub(super) fn is_python_no_behavior_line_at(line: &str, inside_brackets: bool) -
         || (!inside_brackets && is_bare_string_literal_statement(trimmed))
 }
 
+/// Bracket-continuation evidence for one changed file, from one lex of each
+/// side (#13875). A side that does not lex counts every line as inside
+/// brackets; with no rebuilt old file there is no old evidence at all, so an
+/// old line keeps the docstring reading.
+pub(super) struct BracketEvidence {
+    new: Option<Vec<std::ops::RangeInclusive<usize>>>,
+    old: Option<Vec<std::ops::RangeInclusive<usize>>>,
+    has_old: bool,
+}
+
+/// The bracket facts of one changed line, as the classifier reads them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct BracketLine {
+    /// The new line starts inside an open bracket, so a bare string on it is
+    /// an argument, not a docstring (#13875). True when the file did not lex.
+    pub(super) new_in: bool,
+    /// The same for the paired old line, against the rebuilt old source.
+    pub(super) old_in: bool,
+    /// The one-based `(opening, closing)` lines of the bracketed statement
+    /// the new line continues, when the file lexed. A bare string there takes
+    /// the statement's probe shape, not a bare string's.
+    pub(super) span: Option<(usize, usize)>,
+}
+
+impl BracketEvidence {
+    /// The evidence for `path`, from its workspace source and its rebuilt
+    /// old source.
+    pub(super) fn of(
+        workspace: &super::bounded_read::CappedWorkspaceSources,
+        path: &Path,
+        old_source: &Option<String>,
+    ) -> Self {
+        Self::read(
+            workspace.sources.get(path).map(String::as_str),
+            old_source.as_deref(),
+        )
+    }
+
+    pub(super) fn read(new_source: Option<&str>, old_source: Option<&str>) -> Self {
+        Self {
+            new: new_source.and_then(bracket_continuation_line_ranges),
+            old: old_source.and_then(bracket_continuation_line_ranges),
+            has_old: old_source.is_some(),
+        }
+    }
+
+    /// The classifier's bracket facts for new-side `line` paired with
+    /// old-side `old_line`.
+    pub(super) fn line(&self, line: usize, old_line: Option<usize>) -> BracketLine {
+        BracketLine {
+            new_in: self.new_line_in(line),
+            old_in: old_line.is_some_and(|old| self.old_line_in(old)),
+            span: self.new_statement_span(line),
+        }
+    }
+
+    /// Whether new-side `text` on `line` is a no-op line (#13875).
+    pub(super) fn new_quiet(&self, text: &str, line: usize) -> bool {
+        is_python_no_behavior_line_at(text, self.new_line_in(line))
+    }
+
+    /// Whether old-side `text` on `line` is a no-op line (#13875).
+    pub(super) fn old_quiet(&self, text: &str, line: usize) -> bool {
+        is_python_no_behavior_line_at(text, self.old_line_in(line))
+    }
+
+    /// Whether new-side `line` starts inside an open bracket.
+    pub(super) fn new_line_in(&self, line: usize) -> bool {
+        match &self.new {
+            Some(ranges) => super::line_is_in_ranges(line, ranges),
+            None => true,
+        }
+    }
+
+    /// Whether old-side `line` starts inside an open bracket.
+    pub(super) fn old_line_in(&self, line: usize) -> bool {
+        if !self.has_old {
+            return false;
+        }
+        match &self.old {
+            Some(ranges) => super::line_is_in_ranges(line, ranges),
+            None => true,
+        }
+    }
+
+    /// The enclosing bracketed statement of new-side `line`, when it lexed.
+    pub(super) fn new_statement_span(&self, line: usize) -> Option<(usize, usize)> {
+        enclosing_bracket_statement(self.new.as_deref()?, line)
+    }
+
+    /// The old-side ranges for the deleted-line path: none to check when the
+    /// old file did not lex, and an empty set when there is no old file.
+    pub(super) fn old_ranges_for_deleted(&self) -> Option<&[std::ops::RangeInclusive<usize>]> {
+        if self.has_old {
+            self.old.as_deref()
+        } else {
+            Some(&[])
+        }
+    }
+}
+
 /// One-based line spans of the lines that start inside an open bracket: for
 /// each outermost `(`/`[`/`{` that closes on a later line, the lines after
 /// the opening one through the closing one. Taken from a lex of the whole

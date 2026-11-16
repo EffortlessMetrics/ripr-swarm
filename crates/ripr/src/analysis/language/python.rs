@@ -449,15 +449,14 @@ use discriminators::{
     python_return_dict_field_discriminator, python_string_literal_value, split_python_assignment,
     top_level_python_segments,
 };
+use no_behavior::{
+    BracketEvidence, header_param_line_defaults, is_python_import_line, is_python_structural_line,
+    is_structural_def_header_text, multi_line_def_header_span, python_quiet_lines_covered_by_run,
+};
 #[cfg(test)]
 use no_behavior::{
     analyze_call_args, changed_default_value_params, free_function_call_arglists,
     is_annotation_only_def_change, is_annotation_only_var_change, is_python_no_behavior_line,
-};
-use no_behavior::{
-    header_param_line_defaults, is_python_import_line, is_python_no_behavior_line_at,
-    is_python_structural_line, is_structural_def_header_text, multi_line_def_header_span,
-    python_quiet_lines_covered_by_run,
 };
 use oracles::collect_assertions_from_statements;
 #[cfg(test)]
@@ -2187,21 +2186,7 @@ impl PythonAdapter {
                     type_checking_block::type_checking_only_line_ranges(&changed.path, source)
                 })
                 .unwrap_or_default();
-            // A bare string on a line that starts inside an open bracket is an
-            // argument, not a docstring (#13875). An unlexable side counts as
-            // all inside brackets, so its string lines stay analyzed.
-            let bracket_ranges = workspace_read
-                .sources
-                .get(&changed.path)
-                .and_then(|source| no_behavior::bracket_continuation_line_ranges(source));
-            let old_bracket_ranges = old_source
-                .as_deref()
-                .and_then(no_behavior::bracket_continuation_line_ranges);
-            let in_brackets = |line: usize| {
-                bracket_ranges
-                    .as_deref()
-                    .is_none_or(|ranges| line_is_in_ranges(line, ranges))
-            };
+            let brackets = BracketEvidence::of(&workspace_read, &changed.path, &old_source);
             let import_ranges = import_ranges_by_file
                 .get(&changed.path)
                 .map(Vec::as_slice)
@@ -2245,17 +2230,11 @@ impl PythonAdapter {
                                 || line_is_in_ranges(removed.line, &old_docstring_ranges)
                                 || line_is_in_ranges(removed.line, &old_import_ranges)
                                 || is_python_import_line(&removed.text)
-                                || is_python_no_behavior_line_at(
-                                    &removed.text,
-                                    old_source.is_some()
-                                        && old_bracket_ranges.as_deref().is_none_or(|ranges| {
-                                            line_is_in_ranges(removed.line, ranges)
-                                        }),
-                                )
+                                || brackets.old_quiet(&removed.text, removed.line)
                                 || is_python_structural_line(&removed.text)
                         }))
                     || is_added_import(added)
-                    || is_python_no_behavior_line_at(&added.text, in_brackets(added.line))
+                    || brackets.new_quiet(&added.text, added.line)
                     || is_python_structural_line(&added.text)
                     // A decorator that opens a newly added function is part of
                     // its definition; the function's own lines carry the change.
@@ -2320,19 +2299,7 @@ impl PythonAdapter {
                     old_line_type_checking_only: old_line.is_some_and(|removed| {
                         line_is_in_ranges(removed.line, &old_type_checking_ranges)
                     }),
-                    new_line_in_brackets: in_brackets(added.line),
-                    bracket_statement_span: bracket_ranges.as_deref().and_then(|ranges| {
-                        no_behavior::enclosing_bracket_statement(ranges, added.line)
-                    }),
-                    // With no rebuilt old file there is no bracket evidence,
-                    // so the old line keeps the docstring reading, as on the
-                    // deleted-line path.
-                    old_line_in_brackets: old_source.is_some()
-                        && old_line.is_some_and(|removed| {
-                            old_bracket_ranges
-                                .as_deref()
-                                .is_none_or(|ranges| line_is_in_ranges(removed.line, ranges))
-                        }),
+                    brackets: brackets.line(added.line, old_line.map(|old| old.line)),
                     opens_owner_with_added_body: owner_for_changed_line(
                         &changed.path,
                         added.line,
@@ -2351,10 +2318,7 @@ impl PythonAdapter {
                                 other.line > owner.start_line
                                     && other.line <= owner.end_line
                                     && !line_is_in_ranges(other.line, new_docstring_ranges)
-                                    && !is_python_no_behavior_line_at(
-                                        &other.text,
-                                        in_brackets(other.line),
-                                    )
+                                    && !brackets.new_quiet(&other.text, other.line)
                             })
                     }),
                     structural_def_header_line: in_multi_line_def_header
@@ -2411,13 +2375,7 @@ impl PythonAdapter {
                     docstrings: &old_docstring_ranges,
                     imports: &old_import_ranges,
                     type_checking_only: &old_type_checking_ranges,
-                    // With no rebuilt old file there is no bracket evidence,
-                    // so a deleted bare string keeps the docstring reading.
-                    brackets: if old_source.is_some() {
-                        old_bracket_ranges.as_deref()
-                    } else {
-                        Some(&[])
-                    },
+                    brackets: brackets.old_ranges_for_deleted(),
                     source: old_source.as_deref(),
                 },
                 workspace_read

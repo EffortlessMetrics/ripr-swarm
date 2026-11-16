@@ -43,6 +43,7 @@ pub(crate) enum Product {
     EmbedFileScan,
     StrippedFileImports,
     ItemSyntax,
+    FnCfgGates,
 }
 
 impl Product {
@@ -65,6 +66,7 @@ impl Product {
             Self::EmbedFileScan => "embed_file_scan",
             Self::StrippedFileImports => "stripped_file_imports",
             Self::ItemSyntax => "item_syntax",
+            Self::FnCfgGates => "fn_cfg_gates",
         }
     }
 }
