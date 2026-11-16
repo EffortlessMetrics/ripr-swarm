@@ -1537,13 +1537,18 @@ impl WorkspaceSession {
     pub(crate) fn snapshot_document(&self, requested: &str) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(Some(requested))?;
         let selection = &snapshot.selection;
-        let outcome = serde_json::to_value(&snapshot.outcome).map_err(|error| {
+        let mut outcome = serde_json::to_value(&snapshot.outcome).map_err(|error| {
             AttemptFailure::new(
                 CODE_ANALYSIS_FAILED,
                 format!("serialize analysis outcome: {error}"),
                 "retry with ripr_refresh",
             )
         })?;
+        // #14138: like the gap list, an all-withheld snapshot is not clean.
+        let owner_opt_outs = snapshot.owner_opt_out_disclosure();
+        if snapshot.items.is_empty() && owner_opt_outs.is_some() {
+            outcome["clean"] = json!(false);
+        }
         let mut document = json!({
             "schema_version": SNAPSHOT_SCHEMA_VERSION,
             "snapshot_id": snapshot.snapshot_id,
@@ -1579,7 +1584,7 @@ impl WorkspaceSession {
             ],
         });
         // Additive (#14138): owner opt-out withheld count and reason.
-        if let Some(disclosure) = snapshot.owner_opt_out_disclosure() {
+        if let Some(disclosure) = owner_opt_outs {
             document["owner_opt_outs"] = disclosure;
         }
         bounded_document(document, RECOVERY_SNAPSHOT_TOO_LARGE)

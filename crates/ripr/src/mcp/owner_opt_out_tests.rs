@@ -328,8 +328,10 @@ fn plain_function_gap_and_card_are_unchanged_by_a_sibling_opt_out() -> Result<()
     let control_limit = item_on_line(&control_snapshot, 3)?;
     let skipped_id = skipped_snapshot.snapshot_id.clone();
     let control_id = control_snapshot.snapshot_id.clone();
+    // The identities differ (the served item lists differ too, so this does
+    // not isolate the `owner_opt_out_withheld` identity payload).
     if skipped_id == control_id {
-        return Err("the withheld set must ride the snapshot identity".to_string());
+        return Err("an opted-out snapshot must not share the control identity".to_string());
     }
     let skipped_session = session_over(skipped_snapshot);
     let control_session = session_over(control_snapshot);
@@ -365,6 +367,18 @@ fn plain_function_gap_and_card_are_unchanged_by_a_sibling_opt_out() -> Result<()
             .get_limitation(&skipped_plain, None)
             .map_err(|failure| format!("{failure:?}"))
     };
+    // This fixture has no admitted test target, so the plain card is refused
+    // as `identity_unnameable` in both runs. Pin that outcome so the equality
+    // below cannot pass on two `owner_opt_out` refusals of the plain item.
+    match control_session.repair_card_document(&skipped_plain, None, Some(&control.root)) {
+        Ok(_) => {}
+        Err(failure) if failure.code == "identity_unnameable" => {}
+        Err(failure) => {
+            return Err(format!(
+                "unexpected control plain card outcome: {failure:?}"
+            ));
+        }
+    }
     let card = |session: &WorkspaceSession, root: &Path| match session.repair_card_document(
         &skipped_plain,
         None,
@@ -416,7 +430,18 @@ fn all_withheld_snapshot_reports_that_state_not_a_clean_empty_list() -> Result<(
             snapshot.items.len()
         ));
     }
+    let snapshot_id = snapshot.snapshot_id.clone();
     let session = session_over(snapshot);
+    let index = session
+        .snapshot_document(&snapshot_id)
+        .map_err(|failure| failure.detail)?;
+    if index["owner_opt_outs"]["all_withheld"] != serde_json::json!(true)
+        || index["outcome"]["clean"] != serde_json::json!(false)
+    {
+        return Err(format!(
+            "the snapshot resource must say all withheld: {index:#}"
+        ));
+    }
     let document = list(&session)?;
     if !listed_ids(&document)?.is_empty() {
         return Err(format!("no item may be served: {document:#}"));
