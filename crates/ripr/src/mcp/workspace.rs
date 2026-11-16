@@ -41,6 +41,12 @@ pub(crate) const CODE_NO_SNAPSHOT: &str = "no_snapshot";
 pub(crate) const CODE_ANALYSIS_IN_FLIGHT: &str = "analysis_in_flight";
 pub(crate) const CODE_STALE_SNAPSHOT: &str = "stale_snapshot";
 pub(crate) const CODE_ITEM_NOT_FOUND: &str = "item_not_found";
+/// The requested id names a finding `ripr check` withholds because its
+/// changed owner opted out with `#[mutants::skip]` (#14138). Not an identity
+/// miss: the finding exists, but it is not offered as a repair target, so a
+/// gap, limitation, repair-card or repair-start read refuses with this code
+/// and `data.reason` `owner_mutants_skip` instead of a document.
+pub(crate) const CODE_OWNER_OPT_OUT: &str = "owner_opt_out";
 /// A call argument the model can correct (unknown name, wrong type, out of
 /// range, bad enum token). Returned as an `isError: true` tool result
 /// instead of a JSON-RPC `-32602`, which many hosts flatten (#11621).
@@ -491,12 +497,62 @@ impl SourceCustody {
     }
 }
 
+/// One finding the snapshot does not serve as a gap because `ripr check`
+/// withholds it (#14138). The id set comes from
+/// [`crate::app::CheckOutput::withheld_finding_ids`]; the owner name comes from
+/// the producer's owner opt-out record. No attribute is read here.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WithheldItem {
+    /// The identity the item would have been served under.
+    pub(crate) canonical_id: String,
+    pub(crate) finding_id: String,
+    /// The opted-out owner function as written, when the producer recorded it.
+    pub(crate) owner: Option<String>,
+}
+
+impl WithheldItem {
+    fn matches(&self, id: &str) -> bool {
+        self.canonical_id == id || self.finding_id == id
+    }
+
+    /// The typed refusal for a read that would offer this finding as a repair
+    /// target. It names the owner opt-out and returns no document.
+    fn refusal(&self) -> AttemptFailure {
+        let reason = OWNER_OPT_OUT_REASON.as_str();
+        let owner = self.owner.as_deref().unwrap_or("its owner");
+        AttemptFailure::new(
+            CODE_OWNER_OPT_OUT,
+            format!(
+                "{} is withheld: its changed owner {owner} opted out with #[mutants::skip] ({reason}), the same finding `ripr check` withholds",
+                self.canonical_id
+            ),
+            "this finding is not a repair target; remove #[mutants::skip] from the owner and call ripr_refresh to serve it, or list the remaining gaps with ripr_list_gaps",
+        )
+        .with_data(json!({
+            "reason": reason,
+            "canonical_id": self.canonical_id,
+            "finding_id": self.finding_id,
+            "owner": self.owner,
+        }))
+    }
+}
+
+/// The only owner opt-out reason the producer records. MCP supplies no
+/// suppression policy, so every withheld id is an owner opt-out.
+const OWNER_OPT_OUT_REASON: crate::analysis::owner_opt_out::OwnerOptOutReason =
+    crate::analysis::owner_opt_out::OwnerOptOutReason::MutantsSkip;
+
 /// The completed-snapshot authority for one MCP session. Immutable once
 /// committed: refresh replaces the whole snapshot, never mutates it.
 pub(crate) struct Snapshot {
     pub(crate) snapshot_id: String,
     pub(crate) outcome: AnalysisOutcome,
     pub(crate) items: Vec<GapItem>,
+    /// Findings withheld by an owner opt-out (#14138), sorted by canonical
+    /// id. They are not items: no list, gap, limitation, card or repair read
+    /// serves them, and the disclosure counts them so "all withheld" never
+    /// reads as "no gaps". Empty when no owner opted out.
+    pub(crate) withheld: Vec<WithheldItem>,
     /// The committed findings the evidence projections read (`ripr_get_gap`
     /// and the repair-card witness matcher both bind from this exact set).
     pub(crate) findings: Vec<crate::domain::Finding>,
@@ -640,9 +696,29 @@ impl Snapshot {
             | AnalysisOutcomeKind::PartialWithLimitations => {}
         }
 
+        // #14138: the findings `ripr check` withholds are not served as gaps.
+        // The id set is the shared `withheld_finding_ids` owner, not an
+        // MCP-side attribute matcher.
+        let withheld_ids = output.withheld_finding_ids();
+        let mut withheld = output
+            .findings
+            .iter()
+            .filter(|finding| withheld_ids.contains(finding.id.as_str()))
+            .map(|finding| WithheldItem {
+                canonical_id: gaps::canonical_id_of(finding),
+                finding_id: finding.id.clone(),
+                owner: output
+                    .owner_opt_outs
+                    .iter()
+                    .find(|opt_out| opt_out.finding_id == finding.id)
+                    .map(|opt_out| opt_out.owner.clone()),
+            })
+            .collect::<Vec<_>>();
+        withheld.sort_by(|left, right| left.canonical_id.cmp(&right.canonical_id));
         let mut items = output
             .findings
             .iter()
+            .filter(|finding| !withheld_ids.contains(finding.id.as_str()))
             .map(|finding| GapItem::from_finding_admitted(finding, &output.root, admission))
             .collect::<Result<Vec<_>, String>>()
             .map_err(|error| {
@@ -655,12 +731,19 @@ impl Snapshot {
         items.sort_by(|left, right| left.canonical_id.cmp(&right.canonical_id));
 
         let scope = ScopeFacts::from_output(output);
-        let snapshot_id = snapshot_identity(&outcome, &items, &scope, source, custody.commitment())
-            .map_err(|error| {
-                AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
-            })?
-            .as_str()
-            .to_string();
+        let snapshot_id = snapshot_identity(
+            &outcome,
+            &items,
+            &withheld,
+            &scope,
+            source,
+            custody.commitment(),
+        )
+        .map_err(|error| {
+            AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
+        })?
+        .as_str()
+        .to_string();
         // The profile identity names the mode the analysis actually ran
         // (`[analysis] mode`, #14347), so a draft and a deep selection never
         // share one identity; default runs keep `profile:diff:draft`.
@@ -691,6 +774,7 @@ impl Snapshot {
             snapshot_id,
             outcome,
             items,
+            withheld,
             findings: output.findings.clone(),
             card_producers: None,
             budget,
@@ -725,6 +809,42 @@ impl Snapshot {
             .iter()
             .find(|item| item.canonical_id == id || item.finding_id == id)
     }
+
+    /// The served item for `id`, or the typed refusal: `owner_opt_out` when
+    /// the id names a withheld finding (#14138), else `item_not_found`. Every
+    /// single-item read (gap, limitation, repair card, repair start) resolves
+    /// through here so a withheld id can never fall through to a document.
+    pub(crate) fn require_item(&self, id: &str) -> Result<&GapItem, AttemptFailure> {
+        if let Some(item) = self.item(id) {
+            return Ok(item);
+        }
+        if let Some(withheld) = self.withheld.iter().find(|withheld| withheld.matches(id)) {
+            return Err(withheld.refusal());
+        }
+        Err(AttemptFailure::new(
+            CODE_ITEM_NOT_FOUND,
+            format!("no canonical item {id} exists in the current snapshot"),
+            "list the current canonical ids with ripr_list_gaps, then retry",
+        ))
+    }
+
+    /// The additive owner opt-out disclosure (#14138), the same
+    /// `{withheld, reason}` shape `ripr check --format json` emits, plus
+    /// `all_withheld` when no item is left to serve. `None` when nothing is
+    /// withheld, so snapshots without the attribute keep their exact shape.
+    pub(crate) fn owner_opt_out_disclosure(&self) -> Option<Value> {
+        if self.withheld.is_empty() {
+            return None;
+        }
+        let mut disclosure = json!({
+            "withheld": self.withheld.len(),
+            "reason": OWNER_OPT_OUT_REASON.as_str(),
+        });
+        if self.items.is_empty() {
+            disclosure["all_withheld"] = json!(true);
+        }
+        Some(disclosure)
+    }
 }
 
 fn limitation_summary(outcome: &AnalysisOutcome) -> String {
@@ -739,6 +859,7 @@ fn limitation_summary(outcome: &AnalysisOutcome) -> String {
 fn snapshot_identity(
     outcome: &AnalysisOutcome,
     items: &[GapItem],
+    withheld: &[WithheldItem],
     scope: &ScopeFacts,
     source: RefreshSource,
     custody_commitment: Option<&str>,
@@ -775,6 +896,17 @@ fn snapshot_identity(
     // outcome's own diff-byte identity cannot see such an edit.
     if let Some(commitment) = custody_commitment {
         payload["consumed_source_commitment"] = json!(commitment);
+    }
+    // #14138: the withheld set changes what the snapshot serves, so adding or
+    // removing an owner opt-out moves the identity. Absent when empty, so
+    // snapshots without the attribute keep their identities.
+    if !withheld.is_empty() {
+        payload["owner_opt_out_withheld"] = json!(
+            withheld
+                .iter()
+                .map(|item| item.canonical_id.as_str())
+                .collect::<Vec<_>>()
+        );
     }
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize snapshot identity: {error}"))?;
@@ -1255,6 +1387,12 @@ impl WorkspaceSession {
             outcome["analysis_status"] = json!("not_analyzed");
             outcome["clean"] = json!(false);
         }
+        // #14138: a snapshot whose every finding an owner opted out serves no
+        // item; it is withheld, not clean.
+        let owner_opt_outs = snapshot.owner_opt_out_disclosure();
+        if snapshot.items.is_empty() && owner_opt_outs.is_some() {
+            outcome["clean"] = json!(false);
+        }
         let mut document = json!({
             "schema_version": GAP_LIST_SCHEMA_VERSION,
             "snapshot_id": snapshot.snapshot_id,
@@ -1310,6 +1448,12 @@ impl WorkspaceSession {
         if scope.proof_harness_only > 0 {
             document["proof_harness_only"] = json!(scope.proof_harness_only);
         }
+        // Additive (#14138): findings `ripr check` withholds for an owner
+        // opt-out are not items; disclose their count and reason. Absent when
+        // zero. `total`, `selected` and `items` count served items only.
+        if let Some(disclosure) = owner_opt_outs {
+            document["owner_opt_outs"] = disclosure;
+        }
         // Additive (#14327): with no `class` filter the list leaves out
         // `exposed` items refused as `seam_already_gripped`. Disclose the
         // count and the route; absent when zero or when `class` was named.
@@ -1330,13 +1474,7 @@ impl WorkspaceSession {
         requested: Option<&str>,
     ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
-        let Some(item) = snapshot.item(canonical_id) else {
-            return Err(AttemptFailure::new(
-                CODE_ITEM_NOT_FOUND,
-                format!("no canonical item {canonical_id} exists in the current snapshot"),
-                "list the current canonical ids with ripr_list_gaps, then retry",
-            ));
-        };
+        let item = snapshot.require_item(canonical_id)?;
         let mut document = item.document(&snapshot.snapshot_id);
         // A live session transaction binds the reserved repair-attempt link;
         // without one the link stays the explicit null the projection sets.
@@ -1386,13 +1524,7 @@ impl WorkspaceSession {
         requested: Option<&str>,
     ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
-        let Some(item) = snapshot.item(canonical_id) else {
-            return Err(AttemptFailure::new(
-                CODE_ITEM_NOT_FOUND,
-                format!("no canonical item {canonical_id} exists in the current snapshot"),
-                "list the current canonical ids with ripr_list_gaps, then retry",
-            ));
-        };
+        let item = snapshot.require_item(canonical_id)?;
         bounded_document(
             item.limitation_document(&snapshot.snapshot_id),
             RECOVERY_LIMITATION_TOO_LARGE,
@@ -1405,14 +1537,19 @@ impl WorkspaceSession {
     pub(crate) fn snapshot_document(&self, requested: &str) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(Some(requested))?;
         let selection = &snapshot.selection;
-        let outcome = serde_json::to_value(&snapshot.outcome).map_err(|error| {
+        let mut outcome = serde_json::to_value(&snapshot.outcome).map_err(|error| {
             AttemptFailure::new(
                 CODE_ANALYSIS_FAILED,
                 format!("serialize analysis outcome: {error}"),
                 "retry with ripr_refresh",
             )
         })?;
-        let document = json!({
+        // #14138: like the gap list, an all-withheld snapshot is not clean.
+        let owner_opt_outs = snapshot.owner_opt_out_disclosure();
+        if snapshot.items.is_empty() && owner_opt_outs.is_some() {
+            outcome["clean"] = json!(false);
+        }
+        let mut document = json!({
             "schema_version": SNAPSHOT_SCHEMA_VERSION,
             "snapshot_id": snapshot.snapshot_id,
             "outcome": outcome,
@@ -1446,6 +1583,10 @@ impl WorkspaceSession {
                 "item entries are identities and locations, not evidence; read one item through ripr_get_gap or ripr://gap/{canonical_id}",
             ],
         });
+        // Additive (#14138): owner opt-out withheld count and reason.
+        if let Some(disclosure) = owner_opt_outs {
+            document["owner_opt_outs"] = disclosure;
+        }
         bounded_document(document, RECOVERY_SNAPSHOT_TOO_LARGE)
     }
 
@@ -1467,6 +1608,7 @@ impl WorkspaceSession {
                 summary["analysis_status"] = json!("not_analyzed");
                 summary["clean"] = json!(false);
             }
+            disclose_owner_opt_outs(&mut summary, snapshot);
             tag_source(summary, snapshot)
         });
         let analysis_outcome = self
@@ -1858,6 +2000,19 @@ fn tag_source(mut summary: Value, snapshot: &Snapshot) -> Value {
     summary
 }
 
+/// #14138: the refresh and status snapshot summaries carry `finding_count`
+/// (the producer count, withheld findings included) beside `total_items`
+/// (served items only). Name the difference, and say a snapshot whose every
+/// finding is withheld is not clean. Absent when nothing is withheld.
+fn disclose_owner_opt_outs(summary: &mut Value, snapshot: &Snapshot) {
+    if let Some(disclosure) = snapshot.owner_opt_out_disclosure() {
+        if snapshot.items.is_empty() {
+            summary["clean"] = json!(false);
+        }
+        summary["owner_opt_outs"] = disclosure;
+    }
+}
+
 /// A committed, zero-item snapshot whose outcome kind says no behavior was
 /// examined (`no_scope`, `no_changed_lines`, `no_behavioral_candidates`). One
 /// owner for the refresh disclosure and the gap-list outcome (#13096, #13280):
@@ -1929,6 +2084,7 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
             summary["analysis_status"] = json!("not_analyzed");
             summary["clean"] = json!(false);
         }
+        disclose_owner_opt_outs(&mut summary, snapshot);
         tag_source(summary, snapshot)
     });
     // `requested_base` appears only when the request named one, so a base-less
@@ -5727,6 +5883,7 @@ mod tests {
             snapshot_identity(
                 &snapshot.outcome,
                 &snapshot.items,
+                &snapshot.withheld,
                 &snapshot.scope,
                 RefreshSource::Worktree,
                 commitment,
@@ -5817,6 +5974,7 @@ mod tests {
             let original_id = snapshot_identity(
                 &snapshot.outcome,
                 &original_items,
+                &snapshot.withheld,
                 &snapshot.scope,
                 RefreshSource::Committed,
                 None,
