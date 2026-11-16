@@ -547,3 +547,18 @@ fn a_parameter_shadowing_the_binding_or_a_buried_call_is_not_observed() -> Resul
     }
     Ok(())
 }
+
+#[test]
+fn a_bound_result_inside_a_larger_operand_is_not_observed() -> Result<(), String> {
+    let seam = TempRepo::create(
+        SOURCE,
+        "let free = shipping_cost(100, 5000, false);\n    assert_eq!(free * 0, 0);\n    assert_eq!(shipping_cost(100, 5000, true), 200);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "{seam}"
+    );
+    Ok(())
+}

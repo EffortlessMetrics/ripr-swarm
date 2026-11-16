@@ -760,8 +760,8 @@ repair` reads) applies the same rule to the comparison seam it splits from
 such a predicate (#14872). The seam's activation is `unknown` with the guards
 named, and it carries no missing value, unless one related test call sits on
 the boundary value while holding every guard, and a discriminating
-assertion's compared operands observe that same call (the call as a whole
-operand, or `let r = call;` with `r` bound once and named there; a line
+assertion's compared operands observe that same call (the call, or `r`
+from `let r = call;` with `r` bound once, as a whole operand; a line
 with two owner calls, a call buried in a larger expression, or a name only
 in the assertion message or a comment, does not count).
 A literal, a test local bound once and never shadowed or reassigned, or

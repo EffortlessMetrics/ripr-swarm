@@ -4577,11 +4577,13 @@ fn guarded_call_is_asserted(test: &TestSummary, call: &CallFact, expr: &str) -> 
     if !path_or_receiver_only(initializer, expr) || !binding_is_stable(body, binding) {
         return false;
     }
+    // The binding is a whole compared operand (comments and strings
+    // masked), never inside an expression that may discard it (`free * 0`).
     observed_operands().any(|(assertion, operands)| {
-        // Comments and strings masked: `200 /* free */` names nothing.
-        let masked =
-            crate::analysis::language::mask_rust_comments_and_strings(&operands.join(", "));
-        assertion.line > call.line && text_names_ident(&masked, binding)
+        assertion.line > call.line
+            && operands.iter().any(|operand| {
+                crate::analysis::language::mask_rust_comments_and_strings(operand).trim() == binding
+            })
     })
 }
 
@@ -4627,10 +4629,6 @@ fn ident_occurrences<'t>(text: &'t str, name: &'t str) -> impl Iterator<Item = u
             .is_none_or(|ch| !is_ident(ch));
         (before && after).then_some(at)
     })
-}
-
-fn text_names_ident(text: &str, name: &str) -> bool {
-    ident_occurrences(text, name).any(|at| !text[..at].ends_with('.'))
 }
 
 /// `resolved_argument_values` for the guarded-boundary gate, declined for a
