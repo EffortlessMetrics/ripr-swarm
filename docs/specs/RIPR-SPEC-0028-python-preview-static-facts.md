@@ -415,10 +415,14 @@ nor is a subproject directory used as the working directory.
 The module-attribute sites go through the same identity gate (#14035): a module
 constant read as `pricing.LIMIT` binds a boundary value, `table.Table` after
 `import table` witnesses the owner's class for the same-class transitive-reach
-limitation, and a `patch("clock.time.time", return_value=...)` target prefix
-identifies the owner's module only while that module name identifies the owner
-for the test, so a test-local shadow (#13706) or a rival src-layout module
-(#4566) of that name gives none of them.
+limitation, and the target prefix of a `patch("clock.time.time",
+return_value=...)` substitution or of a callee-only patch such as
+`patch("pricing.rate", return_value=3)` names the owner's module only while
+that module name identifies the owner for the test, so a test-local shadow
+(#13706) or a rival src-layout module (#4566) of that name gives none of them.
+The source-import reachability walk of `imported_call_operator` is deliberately
+not gated: a stricter walk would find fewer withholding operator definitions
+and so widen credit.
 A test that imports a free-function owner's name from a workspace module that
 defines its own function of that name, when no import reaches the owner's module,
 is not related to the owner even if its call text matches the name (#8759). The

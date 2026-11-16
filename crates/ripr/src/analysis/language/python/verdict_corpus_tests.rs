@@ -2811,7 +2811,7 @@ fn module_constant_boundary_class(
     let mut owners = extract_owners(owner_file, MODULE_CONSTANT_OWNER);
     let files = workspace_files
         .iter()
-        .map(|file| std::path::PathBuf::from(*file))
+        .map(std::path::PathBuf::from)
         .collect::<Vec<_>>();
     related_tests::apply_src_module_ambiguity(
         &mut owners,
