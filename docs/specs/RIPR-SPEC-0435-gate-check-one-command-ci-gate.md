@@ -50,7 +50,7 @@ files (a guidance path ending in `.md` is refused). `--pr-guidance`,
 gate check produces its own guidance. Waiver inputs (`--label`,
 `--labels-json`, `--acknowledgement-label`), `--exception-policy`,
 `--acknowledgements`, `--baseline`, `--root`, `--out` and `--out-md` mean the
-same as for `gate evaluate`. `--timeout-ms` goes to review-comments.
+same as for `gate evaluate`. `--timeout-ms` and `--suppression-policy` (#13895) go to review-comments.
 
 ## Required Evidence
 
@@ -70,6 +70,8 @@ same as for `gate evaluate`. `--timeout-ms` goes to review-comments.
 - An end-to-end test on a git fixture asserts that a weak boundary test
   blocks (exit `3`), the waiver label and visible-only mode exit `0`, and a
   boundary-discriminating test passes.
+- A plan test pins that `--suppression-policy` goes only to the
+  review-comments argv and that a bare flag is a usage error (#13895).
 - Command metadata binds `cmd:gate.check` to the gate exit contract.
 
 ## Known Limits

@@ -135,12 +135,12 @@ impl AnalysisOutcomeKind {
     /// #12416: the MCP `ripr_refresh` base-widening retry route, verbatim.
     /// MCP-owned surface phrasing housed in the single wording owner so the
     /// hint cannot drift from the shared cause sentence above.
-    pub(crate) const EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE: &str = "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}";
+    pub(crate) const EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE: &str = "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"source\": \"committed\", \"base\": \"origin/main\"}";
 
     /// #13096: concrete retry when the default base resolved to the analyzed
     /// commit and the change under review is the last commit. Named, never
     /// inferred: the server does not silently widen the base.
-    pub(crate) const EMPTY_SCOPE_MCP_LAST_COMMIT_RETRY_ROUTE: &str = "if the change under review is the last commit, retry ripr_refresh with {\"base\": \"HEAD~1\"}; the server does not infer this base";
+    pub(crate) const EMPTY_SCOPE_MCP_LAST_COMMIT_RETRY_ROUTE: &str = "if the change under review is the last commit, retry ripr_refresh with {\"source\": \"committed\", \"base\": \"HEAD~1\"}; the server does not infer this base";
 
     /// #13096: the default-base-resolved-to-analyzed-commit causes exclude
     /// `no_behavioral_candidates`, whose diff was non-empty.
@@ -170,7 +170,19 @@ impl AnalysisLimitationKind {
     /// `VerificationOnlyChange`). Every other kind marks the outcome
     /// incomplete.
     pub(crate) const fn is_advisory_disclosure(self) -> bool {
-        matches!(self, Self::EolOnlyChurn | Self::VerificationOnlyChange)
+        matches!(
+            self,
+            Self::EolOnlyChurn | Self::VerificationOnlyChange | Self::RequestedScopeExcluded
+        )
+    }
+
+    /// #13894: files the operator left out on purpose (`--path`, `--exclude`,
+    /// a configured `generated_file_patterns` or preview `excluded_file_patterns`
+    /// entry). The requested scope was analyzed in full, so this is an
+    /// informational scope note, not a limitation: it rides on a complete
+    /// outcome and the quiet `missed-txt`/`github` streams do not repeat it.
+    pub(crate) const fn is_requested_scope_note(self) -> bool {
+        matches!(self, Self::RequestedScopeExcluded)
     }
 
     pub(crate) const fn as_str(self) -> &'static str {
@@ -187,6 +199,7 @@ impl AnalysisLimitationKind {
             Self::EolOnlyChurn => "eol_only_churn",
             Self::VerificationOnlyChange => "verification_only_change",
             Self::UnevaluatedCondition => "unevaluated_condition",
+            Self::RequestedScopeExcluded => "requested_scope_excluded",
         }
     }
 
@@ -209,6 +222,7 @@ impl AnalysisLimitationKind {
             Self::UnevaluatedCondition => {
                 "a test or credited assertion sits under a condition static analysis cannot evaluate"
             }
+            Self::RequestedScopeExcluded => "files were left out of the analysis at your request",
         }
     }
 }
@@ -316,6 +330,14 @@ pub(crate) enum AnalysisLimitationKind {
     /// runs as partial (#8714 review). Letting it ride a complete outcome is
     /// a separate, consumer-visible design decision.
     UnevaluatedCondition,
+    /// #13894: the operator asked for a narrower scope (`--path`, `--exclude`,
+    /// configured `generated_file_patterns` or preview `excluded_file_patterns`)
+    /// and the files left out are named here. The requested scope was fully
+    /// analyzed, so like `EolOnlyChurn` this is an informational scope note
+    /// that rides on a complete outcome; it is never a limitation. Built-in,
+    /// non-configurable skips and unsupported or failed files keep their own
+    /// incomplete kinds.
+    RequestedScopeExcluded,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -575,6 +597,15 @@ impl AnalysisOutcome {
         })
     }
 
+    /// Whether any limitation is more than the requested-scope note (#13894).
+    /// Quiet streams (`missed-txt`, `github`) repeat only these; the note
+    /// itself stays in the JSON and human reports.
+    pub(crate) fn has_advisory_limitations(&self) -> bool {
+        self.limitations
+            .iter()
+            .any(|limitation| !limitation.kind.is_requested_scope_note())
+    }
+
     /// Stable semantic commitment over the versioned typed outcome. The DTO
     /// contains no timestamp, duration, map, or absolute checkout path; the
     /// constructor sorts and deduplicates limitations before hashing.
@@ -589,7 +620,63 @@ impl AnalysisOutcome {
         }
         Ok(format!("sha256:{hex}"))
     }
+
+    /// The not-all-clear sentence for an incomplete outcome (`partial_with_limitations`,
+    /// `unsupported_input`, `analysis_failed`), `None` for a complete or
+    /// empty-scope one (#13562). It reuses the plain labels and the producer-owned
+    /// recovery text that the human `check` limitation lines print, so an editor
+    /// marker cannot drift from `ripr check`. At most
+    /// [`MAX_INCOMPLETE_SENTENCE_LIMITATIONS`] scoping limitations are named; an
+    /// advisory disclosure (`eol_only_churn`, `verification_only_change`) does not
+    /// scope the analysis down and is not named.
+    pub(crate) fn incomplete_scope_sentence(&self) -> Option<String> {
+        if self.kind.is_complete() {
+            return None;
+        }
+        let scoping = self
+            .limitations
+            .iter()
+            .filter(|limitation| !limitation.kind.is_advisory_disclosure())
+            .collect::<Vec<_>>();
+        let mut sentence = format!(
+            "the analysis is incomplete ({}), so having no findings here does not mean the changed behavior is clean.",
+            self.kind.plain_label()
+        );
+        for limitation in scoping.iter().take(MAX_INCOMPLETE_SENTENCE_LIMITATIONS) {
+            sentence.push_str(&format!(
+                " Limitation: {} during {}",
+                limitation.kind.plain_label(),
+                limitation.producer_stage.plain_label()
+            ));
+            if let Some(path) = &limitation.path {
+                sentence.push_str(&format!("; file: {path}"));
+            }
+            if let Some(count) = limitation.affected_items {
+                sentence.push_str(&format!("; affected items: {count}"));
+            }
+            if let Some(detail) = &limitation.bounded_detail {
+                sentence.push_str(&format!("; {}", detail.trim_end_matches('.')));
+            }
+            sentence.push_str(&format!(
+                "; recovery: {} — {}.",
+                limitation.recovery.kind.plain_label(),
+                limitation.recovery.detail.trim_end_matches('.')
+            ));
+        }
+        let unnamed = scoping
+            .len()
+            .saturating_sub(MAX_INCOMPLETE_SENTENCE_LIMITATIONS);
+        if unnamed > 0 {
+            sentence.push_str(&format!(
+                " {unnamed} more limitation(s) are in the full analysis outcome."
+            ));
+        }
+        Some(sentence)
+    }
 }
+
+/// Bound on the limitations one editor marker names (#13562).
+pub(crate) const MAX_INCOMPLETE_SENTENCE_LIMITATIONS: usize = 3;
 
 pub(crate) fn normalize_portable_analysis_path(path: &str) -> Result<String, String> {
     // Paths are filesystem identities, not prose: trimming can name a different
@@ -844,7 +931,7 @@ mod tests {
         assert!(!AnalysisOutcomeKind::CompleteWithFindings.is_empty_scope());
         assert_eq!(
             AnalysisOutcomeKind::EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE,
-            "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}"
+            "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"source\": \"committed\", \"base\": \"origin/main\"}"
         );
         assert_eq!(
             AnalysisOutcomeKind::EMPTY_SCOPE_MCP_SOURCE_RETRY_ROUTE,
@@ -982,10 +1069,11 @@ mod tests {
             AnalysisLimitationKind::EolOnlyChurn => "eol_only_churn",
             AnalysisLimitationKind::VerificationOnlyChange => "verification_only_change",
             AnalysisLimitationKind::UnevaluatedCondition => "unevaluated_condition",
+            AnalysisLimitationKind::RequestedScopeExcluded => "requested_scope_excluded",
         }
     }
 
-    const ALL_ANALYSIS_LIMITATION_KINDS: [AnalysisLimitationKind; 12] = [
+    const ALL_ANALYSIS_LIMITATION_KINDS: [AnalysisLimitationKind; 13] = [
         AnalysisLimitationKind::CombinedHunkUnsupported,
         AnalysisLimitationKind::UnresolvedConflictMarkers,
         AnalysisLimitationKind::MalformedDiff,
@@ -998,6 +1086,7 @@ mod tests {
         AnalysisLimitationKind::EolOnlyChurn,
         AnalysisLimitationKind::VerificationOnlyChange,
         AnalysisLimitationKind::UnevaluatedCondition,
+        AnalysisLimitationKind::RequestedScopeExcluded,
     ];
 
     fn analysis_limitation_kind_ordinal(kind: AnalysisLimitationKind) -> usize {
@@ -1014,6 +1103,7 @@ mod tests {
             AnalysisLimitationKind::EolOnlyChurn => 9,
             AnalysisLimitationKind::VerificationOnlyChange => 10,
             AnalysisLimitationKind::UnevaluatedCondition => 11,
+            AnalysisLimitationKind::RequestedScopeExcluded => 12,
         }
     }
 
@@ -1021,7 +1111,7 @@ mod tests {
     fn typed_limitation_tokens_match_the_wire_contract() -> Result<(), String> {
         use std::collections::BTreeSet;
 
-        const LIMITATION_KIND_COUNT: usize = 12;
+        const LIMITATION_KIND_COUNT: usize = 13;
         assert_eq!(ALL_ANALYSIS_LIMITATION_KINDS.len(), LIMITATION_KIND_COUNT);
         let ordinals: Vec<usize> = ALL_ANALYSIS_LIMITATION_KINDS
             .iter()
@@ -1089,6 +1179,7 @@ mod tests {
                 kind,
                 AnalysisLimitationKind::EolOnlyChurn
                     | AnalysisLimitationKind::VerificationOnlyChange
+                    | AnalysisLimitationKind::RequestedScopeExcluded
             );
             assert_eq!(kind.is_advisory_disclosure(), advisory, "{kind:?}");
         }

@@ -23,6 +23,9 @@ pub mod language_capability_drift;
 pub mod limit_guidance;
 pub mod probe;
 pub mod project_facts;
+#[cfg(any(test, kani))]
+mod proof_domains;
+pub mod python_changed_headline_row;
 pub mod refusal_remedy;
 pub mod resource_dependency;
 pub mod summary;
@@ -61,7 +64,8 @@ pub use command_spec::{
     verify_command_is_unbounded_repo_exposure_snapshot_compare,
 };
 pub use command_spec::{
-    command_tokens, python_pytest_verify_display, python_unittest_verify_display,
+    command_tokens, python_pytest_verify_display, python_pytest_verify_display_for,
+    python_unittest_verify_display,
 };
 pub use confidence_basis::ConfidenceCap;
 pub use confidence_basis::{
@@ -108,7 +112,10 @@ pub use language::{LanguageId, LanguageStatus, OwnerKind, StaticLimitKind};
 pub use language::{
     PERL_FACT_EXPORTER, enablement_tip_languages, format_languages_enabled_toml, rust_markers_at,
 };
-pub use language::{PYTEST_VERIFY_PROGRAM, is_pytest_verify_command};
+pub use language::{
+    PYTEST_VERIFY_INTERPRETERS, PYTEST_VERIFY_PROGRAM, is_pytest_verify_command,
+    pytest_verify_interpreter,
+};
 pub use probe::{
     ARM_UNSELECTED_REASON_PREFIX, GUARD_UNENTERED_REASON_PREFIX, STRONG_CHECK_UNTIED_NEXT_STEP,
     exact_assertion_fact, input_boundary_fact, is_unselected_input_reason,
@@ -127,9 +134,13 @@ pub use probe::LIVE_PYTHON_TRUTHINESS_ALIGNMENT;
 pub use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
 pub use probe::boundary_input_observed_with_weak_oracle;
 pub use probe::declared_const_name;
+pub use probe::first_observing_related_test;
 pub use project_facts::{
     CanonicalSourceRole, FactCurrentnessV1, PROJECT_FACTS_SCHEMA_VERSION, ProjectFactsV1,
     SourceUnitFactV1, TestEnvironmentFactV1,
+};
+pub use python_changed_headline_row::{
+    RELATED_TEST_CHANGED_IN_DIFF_PREFIX, python_headline_related_test,
 };
 pub use resource_dependency::{
     ResourceAccessKindV1, ResourceCompletenessClassV1, ResourceDependencyEdgeV1, ResourceKindV1,

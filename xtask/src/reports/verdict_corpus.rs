@@ -1089,15 +1089,10 @@ pub(crate) fn summarize(spec: String, non_claims: Vec<String>, rows: Vec<CaseRow
 /// file-name order. Scoreboards and the public proof read the corpus rates
 /// through this instead of a committed summary file.
 pub(crate) fn expected_report(dir: &Path) -> Result<Report, String> {
-    // Only the fields the report repeats; `validate` owns the full header.
-    #[derive(Deserialize)]
-    struct Header {
-        spec: String,
-        non_claims: Vec<String>,
-    }
-    let header_path = dir.join("corpus.json");
-    let header: Header = serde_json::from_value(parse_json(&header_path)?)
-        .map_err(|err| format!("parse {}: {err}", normalize_path(&header_path)))?;
+    // Definitions establish truth and origin; row copies cannot establish
+    // their own eligibility or scoring. This is record consistency, not a
+    // fresh analyzer run or the retained-byte validation owned by `validate`.
+    let corpus = load_corpus(dir)?;
     let rows_dir = dir.join("expected").join(ROWS_DIR);
     let rows = record_files(&rows_dir, "case_id")?
         .into_iter()
@@ -1108,21 +1103,49 @@ pub(crate) fn expected_report(dir: &Path) -> Result<Report, String> {
         .collect::<Result<Vec<_>, _>>()?;
     // The rows must cover exactly the corpus's cases: a missing row would
     // otherwise shrink every denominator into a plausible, wrong rate.
-    let case_ids: BTreeSet<String> = record_files(&dir.join("cases"), "case_id")?
+    let cases: BTreeMap<_, _> = corpus
+        .cases
         .iter()
-        .filter_map(|case| case.get("case_id").and_then(Value::as_str))
-        .map(str::to_string)
+        .map(|case| (case.case_id.as_str(), case))
         .collect();
-    let row_ids: BTreeSet<String> = rows.iter().map(|row| row.case_id.clone()).collect();
-    let missing: Vec<&String> = case_ids.difference(&row_ids).collect();
-    let extra: Vec<&String> = row_ids.difference(&case_ids).collect();
+    let case_ids: BTreeSet<_> = cases.keys().copied().collect();
+    let row_ids: BTreeSet<_> = rows.iter().map(|row| row.case_id.as_str()).collect();
+    let missing: Vec<_> = case_ids.difference(&row_ids).collect();
+    let extra: Vec<_> = row_ids.difference(&case_ids).collect();
     if !missing.is_empty() || !extra.is_empty() {
         return Err(format!(
             "{} does not match the corpus cases (missing rows: {missing:?}; rows without a case: {extra:?}); run `cargo xtask verdict-corpus check`",
             normalize_path(&rows_dir)
         ));
     }
-    Ok(summarize(header.spec, header.non_claims, rows))
+    let subjects: BTreeMap<_, _> = corpus
+        .subjects
+        .iter()
+        .map(|subject| (subject.subject_id.as_str(), subject))
+        .collect();
+    for row in &rows {
+        let case = cases
+            .get(row.case_id.as_str())
+            .ok_or_else(|| format!("row {} has no case", row.case_id))?;
+        let subject = subjects
+            .get(case.subject_id.as_str())
+            .ok_or_else(|| format!("case {} has no subject `{}`", case.case_id, case.subject_id))?;
+        if row.subject_id != case.subject_id
+            || row.truth != case.truth.state
+            || row.origin != subject.origin
+            || row.anchor != format!("{}:{}", case.anchor.file, case.anchor.line)
+            || row.ideal_verdict != case.expected.ideal_verdict
+            || row.ideal_verdict != case.truth.state.ideal()
+            || row.packet_provenance != case.perl_facts.as_ref().map(|facts| facts.provenance)
+            || row.outcome != score(case.truth.state, row.observed_verdict)
+        {
+            return Err(format!(
+                "row {} disagrees with its scoring definition",
+                row.case_id
+            ));
+        }
+    }
+    Ok(summarize(corpus.spec, corpus.non_claims, rows))
 }
 
 pub(crate) fn render_report_json(report: &Report) -> Result<String, String> {
@@ -2636,7 +2659,7 @@ pub(crate) fn run_case_expecting(
         args.push(packet.to_string_lossy().into_owned());
     }
     let cache_value = cache.to_string_lossy().into_owned();
-    let stdout = run_output_owned_with_envs(&binary, &args, &[(CACHE_ENV, &cache_value)])?;
+    let stdout = run_case_output(&binary, &args, &cache_value)?;
     let mut subject = case_subject(
         case,
         &fs::read(&diff).map_err(|err| format!("read {}: {err}", normalize_path(&diff)))?,
@@ -2652,6 +2675,16 @@ pub(crate) fn run_case_expecting(
         relativize_probe_files(&mut check, &canonical);
     }
     Ok((check, anchor_line))
+}
+
+/// Parent workers already parallelize cases. Pin each child Rayon pool to one
+/// worker without changing the parent pool or another case's cache.
+fn run_case_output(binary: &str, args: &[String], cache: &str) -> Result<String, String> {
+    run_output_owned_with_envs(
+        binary,
+        args,
+        &[(CACHE_ENV, cache), ("RAYON_NUM_THREADS", "1")],
+    )
 }
 
 /// What the harness fixed about a live case before ripr ran: the language the
@@ -3520,6 +3553,310 @@ pub(crate) struct CorpusArgs {
     pub(crate) language: Option<String>,
     pub(crate) out: Option<PathBuf>,
     pub(crate) cases: Option<Vec<String>>,
+    pub(crate) paths: Option<Vec<String>>,
+    pub(crate) paths_file: Option<String>,
+}
+
+pub(crate) const KNOWN_CORPUS_LANGUAGES: [&str; 4] = ["rust", "typescript", "python", "perl"];
+
+/// How one changed path affects the verdict-corpus selection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AffectedPath {
+    Language(String),
+    All,
+    Ignored,
+}
+
+/// The corpora selected by a set of changed paths.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AffectedSelection {
+    None,
+    Languages(BTreeSet<String>),
+    All { widened_by: String },
+}
+
+/// Normalize changed paths: forward slashes, no leading `./`, no blanks,
+/// commas split, duplicates removed in first-seen order. An empty result
+/// is an error naming the missing input, never a silent pass.
+pub(crate) fn normalize_affected_paths(raw: &[String]) -> Result<Vec<String>, String> {
+    let mut paths: Vec<String> = Vec::new();
+    for item in raw {
+        for part in item.split(',') {
+            let mut path = part.trim().replace('\\', "/");
+            while let Some(rest) = path.strip_prefix("./") {
+                path = rest.to_string();
+            }
+            let path = path.trim_matches('/').to_string();
+            if !path.is_empty() && path != "." && !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+    }
+    if paths.is_empty() {
+        return Err(
+            "verdict-corpus check-affected: no changed paths supplied; pass --paths <p1,p2,...> or --paths-file <file|-> with at least one path"
+                .to_string(),
+        );
+    }
+    Ok(paths)
+}
+
+/// Classify one normalized changed path; first matching rule wins. Shared
+/// and unknown surfaces widen to all corpora, and only the explicit
+/// allowlist below is ignored, so an unrecognized path is never skipped.
+pub(crate) fn classify_affected_path(path: &str) -> AffectedPath {
+    let normalized = normalize_affected_paths(&[path.to_string()])
+        .unwrap_or_else(|_| vec![path.replace('\\', "/")]);
+    let path = normalized.first().map_or(path, String::as_str);
+    let segments: Vec<&str> = path.split('/').collect();
+    let basename = segments.last().copied().unwrap_or_default();
+    // A corpus for a known language selects it (Perl packets/*.json
+    // included); any other *-verdict-corpus widens.
+    if segments.first() == Some(&"fixtures")
+        && let Some(name) = segments.get(1)
+        && let Some(language) = name.strip_suffix(CORPUS_SUFFIX)
+    {
+        return if KNOWN_CORPUS_LANGUAGES.contains(&language) {
+            AffectedPath::Language(language.to_string())
+        } else {
+            AffectedPath::All
+        };
+    }
+    // One language adapter selects its corpus; the language module,
+    // router, adapter, id and any unknown language surface are shared.
+    if let Some(rest) = path.strip_prefix("crates/ripr/src/analysis/language/") {
+        let first = rest.split('/').next().unwrap_or_default();
+        if !rest.contains('/') && first.ends_with(".rs") {
+            if let Some(language) = first.strip_suffix(".rs")
+                && KNOWN_CORPUS_LANGUAGES.contains(&language)
+            {
+                return AffectedPath::Language(language.to_string());
+            }
+            return AffectedPath::All;
+        }
+        if KNOWN_CORPUS_LANGUAGES.contains(&first) {
+            return AffectedPath::Language(first.to_string());
+        }
+        return AffectedPath::All;
+    }
+    // The verdict-corpus harness itself is shared by every corpus.
+    if (path.starts_with("xtask/src/reports/verdict_corpus") && basename.ends_with(".rs"))
+        || matches!(
+            path,
+            "xtask/src/reports/fixtures.rs" | "xtask/src/command.rs" | "xtask/src/dispatch.rs"
+        )
+    {
+        return AffectedPath::All;
+    }
+    // Shared surfaces widen to every corpus. The analyzer crate itself is
+    // shared outside its language subtrees (handled above): a crate-root or
+    // cross-language helper such as bounded_input feeds every corpus.
+    if path.starts_with("crates/ripr/src/")
+        || path.starts_with("crates/ripr-contract/")
+        || [
+            "crates/ripr/src/domain",
+            "crates/ripr/src/analysis",
+            "crates/ripr/src/output",
+            "crates/ripr/src/app",
+            "crates/ripr/src/cli",
+            "crates/ripr/src/config",
+        ]
+        .iter()
+        .any(|prefix| {
+            path == *prefix
+                || path.starts_with(&format!("{prefix}/"))
+                || path == format!("{prefix}.rs")
+        })
+        || matches!(basename, "Cargo.toml" | "Cargo.lock" | "build.rs")
+        || basename.starts_with("rust-toolchain")
+        || segments.contains(&".cargo")
+        || path.starts_with("docs/specs/")
+        || path.starts_with(".github/")
+        || path.starts_with("schemas/")
+    {
+        return AffectedPath::All;
+    }
+    // The explicit ignored allowlist, anchored at the repository root so a
+    // nested examples/badges/metrics segment in a source tree still selects
+    // its language below; everything else defaults to All.
+    if path.starts_with("docs/")
+        || path.starts_with("editors/")
+        || path.starts_with("plugins/")
+        || path.starts_with("fixtures/")
+        || path.starts_with("examples/")
+        || path.starts_with("badges/")
+        || path.starts_with("metrics/")
+        || basename.starts_with("README")
+        || basename.starts_with("CHANGELOG")
+    {
+        return AffectedPath::Ignored;
+    }
+    // Source extensions, case-sensitive exactly as production route().
+    let extension = basename.rsplit_once('.').map(|(_, ext)| ext);
+    match extension {
+        Some("rs") => AffectedPath::Language("rust".to_string()),
+        Some("py") => AffectedPath::Language("python".to_string()),
+        Some("ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs") => {
+            AffectedPath::Language("typescript".to_string())
+        }
+        Some("pm" | "pl" | "t" | "psgi") => AffectedPath::Language("perl".to_string()),
+        _ => AffectedPath::All,
+    }
+}
+
+/// Aggregate changed paths into one selection; the first widening path
+/// is named so the run says why every corpus was selected.
+pub(crate) fn select_affected(paths: &[String]) -> AffectedSelection {
+    let mut languages = BTreeSet::new();
+    for path in paths {
+        match classify_affected_path(path) {
+            AffectedPath::Language(language) => {
+                languages.insert(language);
+            }
+            AffectedPath::All => {
+                return AffectedSelection::All {
+                    widened_by: path.clone(),
+                };
+            }
+            AffectedPath::Ignored => {}
+        }
+    }
+    if languages.is_empty() {
+        AffectedSelection::None
+    } else {
+        AffectedSelection::Languages(languages)
+    }
+}
+
+/// Header and footer lines for a check-affected run, around the existing
+/// per-corpus `checking` lines from `check_each`. Unselected discovered
+/// languages are named as not run, never as passed.
+pub(crate) fn affected_lines(
+    selection: &AffectedSelection,
+    discovered: &[String],
+    checked: usize,
+) -> Vec<String> {
+    let header = match selection {
+        AffectedSelection::Languages(languages) => format!(
+            "verdict-corpus: check-affected selected: {}",
+            languages
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        AffectedSelection::All { widened_by } => {
+            format!("verdict-corpus: check-affected selected: all (widened: {widened_by})")
+        }
+        AffectedSelection::None => "verdict-corpus: check-affected selected: none".to_string(),
+    };
+    let mut lines = vec![header, format!("verdict-corpus: checked {checked} corpora")];
+    let selected: BTreeSet<&str> = match selection {
+        AffectedSelection::Languages(languages) => languages.iter().map(String::as_str).collect(),
+        AffectedSelection::All { .. } => discovered.iter().map(String::as_str).collect(),
+        AffectedSelection::None => BTreeSet::new(),
+    };
+    let not_run: Vec<&str> = discovered
+        .iter()
+        .map(String::as_str)
+        .filter(|language| !selected.contains(language))
+        .collect();
+    if !not_run.is_empty() {
+        lines.push(format!(
+            "verdict-corpus: {} not run (not a pass)",
+            not_run.join(", ")
+        ));
+    }
+    lines
+}
+
+fn read_affected_paths(parsed: &CorpusArgs) -> Result<Vec<String>, String> {
+    let raw: Vec<String> = if let Some(paths) = &parsed.paths {
+        paths.clone()
+    } else if let Some(file) = &parsed.paths_file {
+        let content = if file == "-" {
+            use std::io::Read as _;
+            let mut content = String::new();
+            std::io::stdin()
+                .read_to_string(&mut content)
+                .map_err(|err| format!("verdict-corpus check-affected: read stdin: {err}"))?;
+            content
+        } else {
+            fs::read_to_string(file).map_err(|err| {
+                format!("verdict-corpus check-affected: read --paths-file {file}: {err}")
+            })?
+        };
+        content.lines().map(str::to_string).collect()
+    } else {
+        return Err(
+            "verdict-corpus check-affected: pass exactly one of --paths <p1,p2,...> or --paths-file <file|->"
+                .to_string(),
+        );
+    };
+    normalize_affected_paths(&raw)
+}
+
+/// Run only the corpora affected by `paths`. Discovered corpora are the
+/// denominator: an unknown or malformed discovered corpus widens the run
+/// (and its error then fails through `check_each`), while a failure to
+/// discover corpora at all propagates.
+fn check_affected(paths: &[String]) -> Result<(), String> {
+    let discovered = corpus_dirs(Path::new(FIXTURES_DIR))?;
+    let mut discovered_languages: Vec<String> = Vec::new();
+    let mut widened_by: Option<String> = None;
+    for entry in &discovered {
+        match entry {
+            Ok(dir) => match corpus_language(dir) {
+                Ok(language) if KNOWN_CORPUS_LANGUAGES.contains(&language.as_str()) => {
+                    if !discovered_languages.contains(&language) {
+                        discovered_languages.push(language);
+                    }
+                }
+                _ => {
+                    widened_by.get_or_insert_with(|| normalize_path(dir));
+                }
+            },
+            Err(_) => {
+                widened_by.get_or_insert_with(|| "fixtures".to_string());
+            }
+        }
+    }
+    discovered_languages.sort();
+    let selection = match (select_affected(paths), widened_by) {
+        (AffectedSelection::All { widened_by }, _) => AffectedSelection::All { widened_by },
+        (_, Some(widened_by)) => AffectedSelection::All { widened_by },
+        (selection, None) => selection,
+    };
+    let selected: Vec<Result<PathBuf, String>> = match &selection {
+        AffectedSelection::All { .. } => discovered,
+        AffectedSelection::None => Vec::new(),
+        AffectedSelection::Languages(languages) => discovered
+            .into_iter()
+            .filter(|entry| {
+                entry.as_ref().is_ok_and(|dir| {
+                    corpus_language(dir).is_ok_and(|language| languages.contains(&language))
+                })
+            })
+            .collect(),
+    };
+    let lines = affected_lines(&selection, &discovered_languages, 0);
+    println!("{}", lines[0]);
+    let checked = check_each(selected, |dir| score_corpus(dir, true, None, None));
+    // The selection footer (checked count, not-run disclosure) must print
+    // even when a selected corpus fails; the error then still propagates.
+    match &checked {
+        Ok(count) => {
+            for line in &affected_lines(&selection, &discovered_languages, *count)[1..] {
+                println!("{line}");
+            }
+        }
+        Err(_) => {
+            if let Some(not_run) = lines.iter().find(|line| line.contains("not run")) {
+                println!("{not_run}");
+            }
+        }
+    }
+    checked.map(|_| ())
 }
 
 /// Parse `verdict-corpus` arguments without touching the filesystem. The
@@ -3532,6 +3869,8 @@ pub(crate) fn parse_corpus_args(args: &[String]) -> Result<CorpusArgs, String> {
         language: None,
         out: None,
         cases: None,
+        paths: None,
+        paths_file: None,
     };
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -3561,6 +3900,31 @@ pub(crate) fn parse_corpus_args(args: &[String]) -> Result<CorpusArgs, String> {
                         .collect(),
                 );
             }
+            "--paths" => {
+                let list = iter
+                    .next()
+                    .ok_or("--paths needs comma-separated changed paths")?;
+                if parsed.paths.is_some() {
+                    return Err("verdict-corpus: --paths is given twice; pass one --paths list or one --paths-file".to_string());
+                }
+                parsed.paths = Some(
+                    list.split(',')
+                        .map(str::trim)
+                        .filter(|path| !path.is_empty())
+                        .map(str::to_string)
+                        .collect(),
+                );
+            }
+            "--paths-file" => {
+                let file = iter.next().ok_or("--paths-file needs a file path or -")?;
+                if parsed.paths_file.is_some() {
+                    return Err(
+                        "verdict-corpus: --paths-file is given twice; pass one --paths list or one --paths-file"
+                            .to_string(),
+                    );
+                }
+                parsed.paths_file = Some(file.clone());
+            }
             other if !other.starts_with("--") && sub.is_none() => sub = Some(other.to_string()),
             other => return Err(format!("verdict-corpus: unknown argument `{other}`")),
         }
@@ -3569,6 +3933,38 @@ pub(crate) fn parse_corpus_args(args: &[String]) -> Result<CorpusArgs, String> {
     let sub = parsed.sub.as_str();
     if sub == "check-all" && parsed.language.is_some() {
         return Err("verdict-corpus check-all checks every corpus; drop --language".to_string());
+    }
+    if sub == "check-affected" {
+        if parsed.language.is_some() {
+            return Err(
+                "verdict-corpus check-affected takes only --paths or --paths-file; drop --language"
+                    .to_string(),
+            );
+        }
+        if parsed.out.is_some() {
+            return Err(
+                "verdict-corpus check-affected takes only --paths or --paths-file; drop --out"
+                    .to_string(),
+            );
+        }
+        if parsed.cases.is_some() {
+            return Err(
+                "verdict-corpus check-affected takes only --paths or --paths-file; drop --cases"
+                    .to_string(),
+            );
+        }
+        if parsed.paths.is_some() == parsed.paths_file.is_some() {
+            return Err(
+                "verdict-corpus check-affected: pass exactly one of --paths <p1,p2,...> or --paths-file <file|->"
+                    .to_string(),
+            );
+        }
+        return Ok(parsed);
+    }
+    if parsed.paths.is_some() || parsed.paths_file.is_some() {
+        return Err(
+            "verdict-corpus: --paths and --paths-file apply only to check-affected".to_string(),
+        );
     }
     let takes_options = matches!(sub, "report" | "check");
     if !takes_options && (parsed.out.is_some() || parsed.cases.is_some()) {
@@ -3583,12 +3979,20 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
     if args.first().map(String::as_str) == Some("relabel") {
         return super::verdict_corpus_relabel::relabel(&args[1..]);
     }
+    let parsed = parse_corpus_args(args)?;
+    // check-affected selects its corpora from changed paths, so it must
+    // dispatch before the default (Rust) corpus directory is resolved.
+    if parsed.sub == "check-affected" {
+        let paths = read_affected_paths(&parsed)?;
+        return check_affected(&paths);
+    }
     let CorpusArgs {
         sub,
         language,
         out,
         cases,
-    } = parse_corpus_args(args)?;
+        ..
+    } = parsed;
     let sub = sub.as_str();
     let dir_buf = match &language {
         Some(language) => language_corpus_dir(language)?,
@@ -3657,7 +4061,7 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         other => Err(format!(
-            "verdict-corpus: unknown subcommand `{other}` (expected validate, check, check-all, report, bless, split, or relabel)"
+            "verdict-corpus: unknown subcommand `{other}` (expected validate, check, check-all, check-affected, report, bless, split, or relabel)"
         )),
     }
 }

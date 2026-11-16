@@ -2569,13 +2569,22 @@ fn proc_macro_derive_entries(source: &str) -> Vec<(String, String, usize)> {
 fn derive_names(source: &str) -> Vec<String> {
     let masked = crate::analysis::extract::mask_comments_and_strings(source);
     let ranges = crate::analysis::extract::attribute_ranges(&masked);
+    let derive_args: Vec<(usize, &str)> = ranges
+        .iter()
+        .enumerate()
+        .filter_map(|(index, range)| {
+            attribute_call_args(&masked[range.clone()], "derive").map(|args| (index, args))
+        })
+        .collect();
+    let starts: Vec<usize> = derive_args
+        .iter()
+        .map(|&(index, _)| ranges[index].start)
+        .collect();
+    let in_macro =
+        crate::analysis::extract::offsets_inside_macro_invocation_delimiters(&masked, &starts);
     let mut names = Vec::new();
-    for (index, range) in ranges.iter().enumerate() {
-        let Some(args) = attribute_call_args(&masked[range.clone()], "derive") else {
-            continue;
-        };
-        if crate::analysis::extract::offset_inside_macro_invocation_delimiters(&masked, range.start)
-        {
+    for (&(index, args), inside_macro) in derive_args.iter().zip(in_macro) {
+        if inside_macro {
             continue;
         }
         if !derive_attribute_binds_active_item(&masked, &ranges, index) {

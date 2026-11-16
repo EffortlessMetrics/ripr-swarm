@@ -174,7 +174,9 @@ pub(crate) use ripr_contract::domain::is_unselected_input_reason;
 pub(crate) use ripr_contract::domain::normalize_transport_path;
 #[cfg(feature = "lang-perl")]
 pub(crate) use ripr_contract::domain::perl_fact_packet_guidance;
+pub(crate) use ripr_contract::domain::pytest_verify_interpreter;
 pub(crate) use ripr_contract::domain::python_pytest_verify_display;
+pub(crate) use ripr_contract::domain::python_pytest_verify_display_for;
 pub(crate) use ripr_contract::domain::python_unittest_verify_display;
 pub(crate) use ripr_contract::domain::row_exact_discriminator_fact;
 pub(crate) use ripr_contract::domain::rust_markers_at;
@@ -182,7 +184,8 @@ pub use ripr_contract::domain::verify_command_is_unbounded_repo_exposure_snapsho
 pub(crate) use ripr_contract::domain::why_capped_line;
 pub(crate) use ripr_contract::domain::{
     CanonicalSourceRole, FactCurrentnessV1, PROJECT_FACTS_SCHEMA_VERSION, ProjectFactsV1,
-    SourceUnitFactV1, TestEnvironmentFactV1, ts_oracle_kind_matches_seam,
+    RELATED_TEST_CHANGED_IN_DIFF_PREFIX, SourceUnitFactV1, TestEnvironmentFactV1,
+    python_headline_related_test, ts_oracle_kind_matches_seam,
     typescript_script_preview_related_test,
 };
 

@@ -290,7 +290,7 @@ fn committed_weak_test_gap_keeps_saying_ready_where_repair_starts() -> Result<()
         "{repair}"
     );
     assert!(
-        repair.contains("write the test, then run `ripr continue"),
+        repair.contains("Next, after the test edit: ripr continue"),
         "{repair}"
     );
     assert!(!repair.contains("no ready command"), "{repair}");
