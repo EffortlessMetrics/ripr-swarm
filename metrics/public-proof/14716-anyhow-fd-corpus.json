@@ -1,7 +1,7 @@
 {
   "schema_version": "ripr-named-corpus-receipt-v1",
   "status": "advisory",
-  "corpus_label": "anyhow+fd increment at db01ef5618: two-repository pilot, not a replacement for the five-crate receipt or the named anyhow+fd+bat population",
+  "corpus_label": "anyhow+fd increment at db01ef5618: two-repository pilot, not a replacement for the five-crate receipt or the named anyhow+fd+bat population; separate product-path repeat with both surfaces preserved",
   "analyzer_version": "ripr 0.11.0",
   "analyzer_checkout_revision": "db01ef5618f43a6af4291d94e3b849c27c581b9b",
   "analyzer_version_note": "The WSL-built binary reported `ripr 0.11.0` without checkout metadata; the analyzer worktree was separately verified at `db01ef5618f43a6af4291d94e3b849c27c581b9b`.",
@@ -90,6 +90,54 @@
   "claim_boundary": "Advisory only, at the recorded analyzer and checkout revisions. This run measures the anyhow+fd increment only. No bat run occurred. The historical named-population label is a reference, not a single precision rate published from this increment.",
   "raw_receipts": [
     "14716-anyhow-fd-mutation-spot-check.json",
-    "14716-anyhow-fd-mutation-spot-check.md"
-  ]
+    "14716-anyhow-fd-mutation-spot-check.md",
+    "14716-anyhow-fd-rust-diff-mode.json",
+    "14716-anyhow-fd-rust-diff-mode.md"
+  ],
+  "rust_diff_mode": {
+    "completed_in_one_lane_job": true,
+    "runner_wall_seconds": 3961.65,
+    "runner_wall_minutes": 66.028,
+    "command": "cargo xtask mutation-spot-check --repo anyhow=<checkout> --repo fd=<checkout> --mutants-arg fd=--package=fd-find --run-mutants --jobs 3 --mutant-timeout-secs 60 --rust-diff-mode --max-mutants 1000",
+    "max_mutants": 1000,
+    "raw_receipts": [
+      "14716-anyhow-fd-rust-diff-mode.json",
+      "14716-anyhow-fd-rust-diff-mode.md"
+    ],
+    "surface": "Product path via ripr check --diff; explicitly advisory and never mixed with the span-join figures.",
+    "records_total": 679,
+    "canonical_precise": 285,
+    "excluded": 394,
+    "exclusions_by_reason": {
+      "ambiguous_verdict": 253,
+      "analysis_incomplete": 3,
+      "no_finding_on_mutated_lines": 2,
+      "unscoreable_outcome": 136
+    },
+    "scored_families": {
+      "claims_discriminator": {
+        "agreement_rate": 1.0,
+        "counts": {
+          "agree": 2
+        },
+        "mutants_scored": 2,
+        "owners_scored": 1
+      },
+      "claims_no_discriminator": {
+        "agreement_rate": 0.211,
+        "counts": {
+          "agree": 19,
+          "false_gap": 71
+        },
+        "mutants_scored": 90,
+        "owners_scored": 33
+      }
+    },
+    "strict_recall_of_missed": {
+      "confirmed": 19,
+      "missed_total": 123
+    },
+    "strict_recall_boundary": "19/123 is a lower bound: exclusions remain unflagged by the recall contract.",
+    "independent_repeat_note": "This additional invocation repeats the same pinned build in diff mode; span-join figures in the parent receipt remain independent run evidence and are not overwritten or used as a single product-path rate."
+  }
 }
