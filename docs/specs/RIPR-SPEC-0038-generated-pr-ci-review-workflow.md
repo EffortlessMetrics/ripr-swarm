@@ -79,6 +79,24 @@ come from `policy/distribution.toml`, bound by drift tests. The step:
 The `.github/actions/ripr-check` composite Action's `Install ripr` step carries
 the same contract (#6245); `tests/ripr_check_action.rs` replays it.
 
+Its `Run ripr check` step (#14800):
+
+- on `pull_request` with no explicit `base`, fetches the base branch and, only
+  in a shallow checkout, deepens both sides in doubling steps (50 to 1,600
+  commits, then `--unshallow`) until HEAD has a merge base with it; a full
+  checkout runs no `--depth` or `--deepen`, and a failed fetch warns and leaves
+  the repair message to `ripr check`;
+- restores ripr's analysis cache under `runner.temp` (`RIPR_CACHE_DIR`) with a
+  commit-pinned `actions/cache` when the `cache` input is `true` (default);
+- writes the report to a fresh per-invocation file (output `report`) and the job
+  log, a text report also to the job summary, and the exit status to output
+  `exit-code`; `ripr check` exit codes are unchanged, so findings stay advisory;
+- on a nonzero exit, fails the step with one escaped `::error` annotation that
+  names the exit meaning and ripr's first reason lines;
+- replays report and stderr text inside a `::stop-commands::` window, each
+  marker on its own line, so quoted text cannot issue workflow commands; only
+  the `format: github` report is emitted before the window.
+
 The generated workflow must keep Rust-default behavior unchanged unless a later
 spec explicitly changes that default. Language-aware grouping is opt-in and
 appears only when configured language metadata includes more than Rust.

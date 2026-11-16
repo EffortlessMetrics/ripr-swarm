@@ -1895,25 +1895,58 @@ coverage/grip, and receipt artifacts.
 ### Composite Action (`ripr-check`)
 
 For a one-step advisory check without the generated workflow, use the
-composite Action in `.github/actions/ripr-check`:
+composite Action in `.github/actions/ripr-check`. A complete workflow:
 
 ```yaml
-- uses: actions/checkout@v6
-  with:
-    fetch-depth: 0
-- uses: <owner>/<repo>/.github/actions/ripr-check@<ref>
+name: ripr
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  ripr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: EffortlessMetrics/ripr/.github/actions/ripr-check@<release tag or commit SHA>
 ```
 
-Inputs: `version` (default: the latest published release; installs that
+Replace the placeholder with a release tag (for example `v0.11.0` once it is
+published) or a commit SHA of `EffortlessMetrics/ripr`, not a branch. The default `actions/checkout` (`fetch-depth: 1`) is enough. On a
+`pull_request` event the Action fetches the base branch and deepens a shallow
+checkout in doubling steps (50, 100, ... 1,600 commits, then the rest) until
+HEAD meets the base, so the diff has a merge base (#14800). A full checkout is
+not touched. On other events, or with an explicit `base`, use
+`fetch-depth: 0`. If history is still missing, `ripr check` names the repair.
+
+Inputs: `version` (default: the release pinned in the Action at that tag; installs that
 release's prebuilt archive after checking its published SHA-256, and falls
 back to `cargo install ripr --version <version> --locked` where no archive
-exists), `mode` (`draft`, `deep`, `ready`), `format` (`human`, `json`, `sarif`)
-and `base`. An empty `base` uses the pull request base branch on
-`pull_request` events (fetching just that branch when the checkout lacks it)
-and ripr's own default-branch detection elsewhere. A checkout without
-`fetch-depth: 0` can still lack history; `ripr check` then names the repair.
-The Action prints the report to the job log. For the summary comment, inline
-comments, SARIF upload and artifacts, use the generated workflow above.
+exists), `mode` (`draft`, `deep`, `ready`), `format` (any `ripr check` format,
+for example `human`, `json`, `sarif` or `github` for file annotations), `base`
+and `cache`. An empty `base` uses the pull request base branch on
+`pull_request` events and ripr's own default-branch detection elsewhere.
+`cache` (default `true`) restores and saves ripr's analysis cache under the
+runner's temp directory with `actions/cache` pinned to a commit SHA, so later
+pushes re-analyze only changed files. ripr checks each entry against file
+contents, configuration and its own version, so a stale entry is a miss.
+
+Output: the report goes to the job log and to a file. A text report also goes
+to the job summary (cut at 60 KB). Step outputs are `exit-code` and `report`
+(the file's path, for example to pass a SARIF file to an upload step). Findings
+are advisory: a completed check exits 0 whatever it found. A check that could
+not complete (exit 2, or 3 when ripr declines) fails the step. It also emits one
+error annotation and a job-summary line that give the exit meaning and ripr's
+own first reason lines ([exit codes](EXIT_CODES.md)). Replayed report and stderr
+text cannot issue workflow commands, except the report of `format: github`,
+whose annotations are the point. To block on new gaps,
+use the generated workflow's gate modes ([adopting in CI](ADOPTING_IN_CI.md)).
+
+Fork and Dependabot pull requests: the Action needs only `contents: read`. It
+writes nothing to the pull request, so it behaves the same on a fork's
+read-only token. GitHub scopes a cache that a pull request saves to that pull
+request, and the cache lives outside the checkout. Run it on `pull_request`,
+never `pull_request_target`. For the summary comment, inline comments, SARIF
+upload and artifacts, use the generated workflow above.
 
 The Action's `Install ripr` step follows the same contract as the generated
 workflow's (#6245): Windows x64 installs the release `zip` (extracted with the
