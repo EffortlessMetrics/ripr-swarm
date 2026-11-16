@@ -1218,13 +1218,14 @@ pub(crate) fn resolve_repair_start(
     if let Some(note) = unscoped_diff_note(diff.as_deref(), base) {
         refusal_reasons.insert(0, note);
     }
-    // #12831: several eligible seams on the change. `ripr check` is the
-    // authority on the change, so its single recommended start wins; failing
-    // that, a seam whose check finding is already noticed, or which check
-    // cannot judge (and so offers no start for), is no start here either
-    // (#12849). Only a seam among the eligible ones is taken; no first or
-    // newest pick.
-    if candidates.len() > 1
+    // #12831: eligible seams on the change. `ripr check` is the authority on
+    // the change, so its single recommended start wins; failing that, a seam
+    // whose check finding is already noticed, or which check cannot judge
+    // (and so offers no start for), is no start here either (#12849). Only a
+    // seam among the eligible ones is taken; no first or newest pick. A lone
+    // eligible seam is held to the same rule (#14872): starting it while
+    // check reads its finding as noticed would contradict check.
+    if !candidates.is_empty()
         && matches!(scope, Some(ChangeScope::TouchesSeams(_)))
         && let Some(output) = check_run.get()
     {
@@ -2111,6 +2112,19 @@ pub(crate) fn resolve_repair_subject_in(
                 )
         })
         .collect();
+    // #14719: a producer gap id is content-derived, so a compound predicate's
+    // id (`a && s.len() > 1` names `s.len==1`) also names the inner
+    // comparison seam on the same line. When only producer-gap matches
+    // remain, the most-specific seam wins, as the repair-card join already
+    // does (#7179); any other collision stays ambiguous.
+    if matches.len() > 1
+        && matches
+            .iter()
+            .all(|entry| producer_gap_id_names_seam(item, entry))
+        && let Some(innermost) = unique_innermost_seam(&matches)
+    {
+        return outcome_for(innermost);
+    }
     match matches.len() {
         1 => outcome_for(matches[0]),
         0 => RepairSubjectOutcome::Unknown,
@@ -2125,6 +2139,21 @@ pub(crate) fn resolve_repair_subject_in(
                 .collect(),
         },
     }
+}
+
+/// The one seam every other candidate strictly encloses, if there is one
+/// (#7179 most-specific span selection). Identical or crossing spans have no
+/// unique innermost seam.
+fn unique_innermost_seam<'a>(
+    candidates: &[&'a crate::analysis::ClassifiedSeam],
+) -> Option<&'a crate::analysis::ClassifiedSeam> {
+    let mut innermost = candidates.iter().copied().filter(|entry| {
+        candidates.iter().all(|other| {
+            other.seam.id() == entry.seam.id() || other.seam.strictly_encloses(&entry.seam)
+        })
+    });
+    let found = innermost.next()?;
+    innermost.next().is_none().then_some(found)
 }
 
 /// Why one named seam may not start a repair attempt right now (#8766), as

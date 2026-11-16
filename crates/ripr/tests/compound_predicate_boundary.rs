@@ -112,6 +112,11 @@ fn an_added_length_conjunct_never_names_the_whole_conjunction_as_its_operand() -
         "the `\"-\"` input is read at the `s.len()` boundary: {finding}"
     );
     assert_ne!(finding["classification"], "exposed", "{finding}");
+    // #14719: the public gap identity names the same narrowed boundary.
+    assert_eq!(
+        finding["canonical_gap"]["normalized_discriminator"], "s.len==1",
+        "{finding}"
+    );
     Ok(())
 }
 
@@ -124,6 +129,10 @@ fn a_changed_equality_beside_an_untouched_gate_names_only_that_equality() -> Res
         "assert_eq!(gated(\"beta\", false), false);",
     )?;
     assert_ne!(finding["classification"], "exposed", "{finding}");
+    assert_eq!(
+        finding["canonical_gap"]["normalized_discriminator"], "label==lit62657461",
+        "{finding}"
+    );
     let missing = missing(&finding);
     assert!(
         missing.iter().all(|fact| !fact.contains("&&")),

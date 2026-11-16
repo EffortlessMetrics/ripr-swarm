@@ -64,7 +64,8 @@ pub use command_spec::{
     verify_command_is_unbounded_repo_exposure_snapshot_compare,
 };
 pub use command_spec::{
-    command_tokens, python_pytest_verify_display, python_unittest_verify_display,
+    command_tokens, python_pytest_verify_display, python_pytest_verify_display_for,
+    python_unittest_verify_display,
 };
 pub use confidence_basis::ConfidenceCap;
 pub use confidence_basis::{
@@ -111,7 +112,10 @@ pub use language::{LanguageId, LanguageStatus, OwnerKind, StaticLimitKind};
 pub use language::{
     PERL_FACT_EXPORTER, enablement_tip_languages, format_languages_enabled_toml, rust_markers_at,
 };
-pub use language::{PYTEST_VERIFY_PROGRAM, is_pytest_verify_command};
+pub use language::{
+    PYTEST_VERIFY_INTERPRETERS, PYTEST_VERIFY_PROGRAM, is_pytest_verify_command,
+    pytest_verify_interpreter,
+};
 pub use probe::{
     ARM_UNSELECTED_REASON_PREFIX, GUARD_UNENTERED_REASON_PREFIX, STRONG_CHECK_UNTIED_NEXT_STEP,
     exact_assertion_fact, input_boundary_fact, is_unselected_input_reason,

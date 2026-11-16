@@ -13,7 +13,7 @@ Start here:
   File: ./src/lib.rs:4
   Static exposure: unknown (severity: warning, confidence 0.66)
   Why unknown: the change reaches something a test can check, but ripr could not tell which inputs would trigger it
-  Gap ID (for scripts): gap:rust:src/lib.rs:shipping_cost:predicate_boundary:predicate:order_cents==free_over_cents!express
+  Gap ID (for scripts): gap:rust:src/lib.rs:shipping_cost:predicate_boundary:predicate:order_cents==free_over_cents
   Changed behavior: order_cents >= FREE_OVER_CENTS && !express
   Missing check (1 of 2): Changed boundary input is unresolved: the changed boundary `order_cents >=
     FREE_OVER_CENTS` decides the result only when `express = false`, and no related test row with

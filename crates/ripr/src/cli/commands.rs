@@ -2330,10 +2330,16 @@ fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
         .as_deref()
         .is_some_and(|base| base.trim().is_empty())
     {
-        return Err("diff --base requires a non-empty revision".to_string());
+        return Err(crate::cli::usage_refusal::empty_value(
+            "--base",
+            "diff --base requires a non-empty revision",
+        ));
     }
     if options.head.trim().is_empty() {
-        return Err("diff --head requires a non-empty revision".to_string());
+        return Err(crate::cli::usage_refusal::empty_value(
+            "--head",
+            "diff --head requires a non-empty revision",
+        ));
     }
 
     Ok(options)

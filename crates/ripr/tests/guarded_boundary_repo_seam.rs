@@ -562,3 +562,110 @@ fn a_bound_result_inside_a_larger_operand_is_not_observed() -> Result<(), String
     );
     Ok(())
 }
+
+#[test]
+fn a_parenthesised_whole_operand_is_still_observed() -> Result<(), String> {
+    for test in [
+        "let free = shipping_cost(100, 5000, false);\n    assert_eq!((free), 0);",
+        "assert_eq!((shipping_cost(100, 5000, false)), 0);",
+    ] {
+        let seam = TempRepo::create(SOURCE, test)?.comparison_seam()?;
+        assert_eq!(
+            field(&seam, "/evidence/activate"),
+            Some("yes"),
+            "{test}: {seam}"
+        );
+    }
+    let seam = TempRepo::create(
+        SOURCE,
+        "let free = shipping_cost(100, 5000, false);\n    assert_eq!((free) * (0), 0);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "parentheses around parts are not a whole operand: {seam}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_binding_shadowed_by_a_wrapped_let_pattern_is_not_observed() -> Result<(), String> {
+    let seam = TempRepo::create(
+        SOURCE,
+        "let r = shipping_cost(100, 5000, false);\n    let (\n        r,\n        _x,\n    ) = (shipping_cost(100, 5000, true), 1);\n    assert_eq!(r, 200);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "{seam}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_call_to_a_same_named_function_in_another_module_is_not_the_owner() -> Result<(), String> {
+    let repo = TempRepo::create(
+        SOURCE,
+        "assert_eq!(rival::shipping_cost(100, 5000, false), 0);\n    assert_eq!(shipping_cost(100, 5000, true), 200);",
+    )?;
+    std::fs::write(
+        repo.root.join("tests/shipping.rs"),
+        "use guarded_repo_seam::shipping_cost;\n\nmod rival {\n    pub fn shipping_cost(_w: u32, _c: u32, _e: bool) -> u32 { 0 }\n}\n\n#[test]\nfn pins() {\n    assert_eq!(rival::shipping_cost(100, 5000, false), 0);\n    assert_eq!(shipping_cost(100, 5000, true), 200);\n}\n",
+    )
+    .map_err(|error| format!("write rival test: {error}"))?;
+    let seam = repo.comparison_seam()?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "{seam}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_rebound_compared_parameter_or_an_earlier_decision_is_not_reached() -> Result<(), String> {
+    for source in [
+        SOURCE.replace(
+            "    if order_cents >= FREE_OVER_CENTS && !express {",
+            "    let order_cents = order_cents + 1;\n    if order_cents >= FREE_OVER_CENTS && !express {",
+        ),
+        SOURCE.replace(
+            "    if order_cents >= FREE_OVER_CENTS && !express {",
+            "    if order_cents == FREE_OVER_CENTS {\n        return 0;\n    }\n    if order_cents >= FREE_OVER_CENTS && !express {",
+        ),
+    ] {
+        let seam = TempRepo::create(
+            &source,
+            "assert_eq!(shipping_cost(100, 5000, false), 0);\n    assert_eq!(shipping_cost(100, 4999, false), 100);",
+        )?
+        .comparison_seam()?;
+        assert_ne!(
+            field(&seam, "/evidence/activate"),
+            Some("yes"),
+            "{source}: {seam}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_head_comment_does_not_swallow_the_wrapped_guard() -> Result<(), String> {
+    let source = WRAPPED.replace(
+        "    if order_cents >= FREE_OVER_CENTS\n",
+        "    if order_cents >= FREE_OVER_CENTS // threshold\n",
+    );
+    assert!(source.contains("// threshold"));
+    let seam = TempRepo::create(
+        &source,
+        "assert_eq!(shipping_cost(100, 5000, true), 200);\n    assert_eq!(shipping_cost(100, 4999, true), 200);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "{seam}"
+    );
+    Ok(())
+}

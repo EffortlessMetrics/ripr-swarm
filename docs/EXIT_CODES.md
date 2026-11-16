@@ -137,8 +137,9 @@ reached the caller.
   `cli_refusal` document to stdout (#11584, #6834 decision): an unknown
   command, an unknown flag or stray positional, an unrecognized value
   rejected by the CLI's shared unknown-value builder, `explain --format
-  json`, a value flag missing its value and a malformed number caught by the
-  CLI's shared value and numeric readers (#11979), and a `context` selector
+  json`, a value flag missing its value or given an empty one (#11979,
+  #14859), a malformed number caught by the CLI's shared numeric readers
+  (#11979), and a `context` selector
   miss or ambiguity. The document carries
   `schema_version`, `tool`, `status: "refused"` and
   `error {code, message, token?, next}`. Exit code and stderr are

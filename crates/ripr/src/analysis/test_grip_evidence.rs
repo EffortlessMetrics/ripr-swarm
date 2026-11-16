@@ -1681,8 +1681,10 @@ fn renamed_from(masked: &str, target: &str) -> Vec<String> {
         }
         let before = before.trim_end();
         let start = before
-            .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-            .map_or(0, |found| found + 1);
+            .char_indices()
+            .rev()
+            .find(|&(_, ch)| !(ch == '_' || unicode_ident::is_xid_continue(ch)))
+            .map_or(0, |(found, ch)| found + ch.len_utf8());
         let mut original = &before[start..];
         if original == "self" {
             // `use Type::{Other, self as Name}`: the original is the segment
@@ -1703,8 +1705,10 @@ fn renamed_from(masked: &str, target: &str) -> Vec<String> {
             let head = open.map_or("", |open| before[..open].trim_end());
             let head = head.strip_suffix("::").unwrap_or(head);
             let begin = head
-                .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-                .map_or(0, |found| found + 1);
+                .char_indices()
+                .rev()
+                .find(|&(_, ch)| !(ch == '_' || unicode_ident::is_xid_continue(ch)))
+                .map_or(0, |(found, ch)| found + ch.len_utf8());
             original = &head[begin..];
         }
         if !original.is_empty() {
@@ -4431,13 +4435,32 @@ fn guarded_boundary_unheld(
             (at, reversed_value.as_str())
         }
     };
+    // A rebound compared parameter, or an earlier branch or return, means a
+    // call's boundary argument may never reach this comparison as passed.
+    let compared = parameters.get(tested_at).map(String::as_str).unwrap_or("");
+    if !super::classify::guarded_boundary_row_reaches(
+        owner_fn,
+        Some(&source.data().source),
+        compared,
+        line,
+    ) {
+        return Some(describe);
+    }
     let held = tests.iter().any(|indexed| {
         indexed.test.calls.iter().any(|call| {
-            let Some(expr) = (call.name == owner_fn.name)
-                .then(|| owner_call_text(&call.text, owner_fn))
-                .flatten()
-                .and_then(|text| single_owner_call(text, &owner_fn.name))
-            else {
+            // A qualified call must name this owner, as the activation
+            // reader requires (`rival::gate(..)` is another function).
+            let Some(expr) = (call.name == owner_fn.name
+                && super::classify::qualified_owner_calls_resolve(
+                    index,
+                    owner_fn,
+                    indexed.test,
+                    &call.text,
+                    call.line,
+                ))
+            .then(|| owner_call_text(&call.text, owner_fn))
+            .flatten()
+            .and_then(|text| single_owner_call(text, &owner_fn.name)) else {
                 return false;
             };
             call_arguments(expr, &owner_fn.name).is_some_and(|arguments| {
@@ -4545,7 +4568,7 @@ fn guarded_call_is_asserted(test: &TestSummary, call: &CallFact, expr: &str) -> 
         (assertion.line..=last).contains(&call.line)
             && operands
                 .iter()
-                .any(|operand| path_or_receiver_only(operand.trim(), expr))
+                .any(|operand| path_or_receiver_only(unparenthesized(operand), expr))
     });
     if inside {
         return true;
@@ -4582,9 +4605,39 @@ fn guarded_call_is_asserted(test: &TestSummary, call: &CallFact, expr: &str) -> 
     observed_operands().any(|(assertion, operands)| {
         assertion.line > call.line
             && operands.iter().any(|operand| {
-                crate::analysis::language::mask_rust_comments_and_strings(operand).trim() == binding
+                unparenthesized(&crate::analysis::language::mask_rust_comments_and_strings(
+                    operand,
+                )) == binding
             })
     })
+}
+
+/// `text` trimmed, without parentheses that wrap all of it (`((free))` is
+/// `free`); `(a) + (b)` keeps its parentheses, since they wrap only parts.
+fn unparenthesized(text: &str) -> &str {
+    let mut text = text.trim();
+    while let Some(inner) = text
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        let mut depth = 0usize;
+        let wraps_all = inner.chars().all(|ch| {
+            match ch {
+                '(' => depth += 1,
+                ')' => match depth.checked_sub(1) {
+                    Some(next) => depth = next,
+                    None => return false,
+                },
+                _ => {}
+            }
+            true
+        });
+        if !wraps_all || depth != 0 {
+            break;
+        }
+        text = inner.trim();
+    }
+    text
 }
 
 /// Whether `text` is exactly the call `expr`, behind at most a path or a
@@ -4679,9 +4732,10 @@ fn binding_is_stable(body: &str, name: &str) -> bool {
             .iter()
             .any(|op| rest.starts_with(op))
             || (rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>"));
-        // A second binding site: the name inside a `let`/`for` pattern, a
-        // match-arm pattern, or a closure's parameters. A read on a `let`
-        // line's right-hand side (`let free = f(express);`) is not one.
+        // A second binding site: the name inside a `let` pattern (across
+        // lines, `let (` / `r,` / `) = ..`), a `for` pattern, a match-arm
+        // pattern, or a closure's parameters. A read on a `let` line's
+        // right-hand side (`let free = f(express);`) is not one.
         let column = at - line_start;
         let in_span = |open: &str, close: &str| {
             line.match_indices(open).any(|(start, _)| {
@@ -4695,7 +4749,7 @@ fn binding_is_stable(body: &str, name: &str) -> bool {
         // A typed name outside its `let` (`fn check(r: u32)`) is a
         // parameter binding.
         let typed = rest.starts_with(':') && !rest.starts_with("::");
-        let rebinds = in_span("let ", "=")
+        let rebinds = in_let_pattern(body, at)
             || in_span("for ", " in ")
             || arm_pattern
             || typed
@@ -4709,6 +4763,36 @@ fn binding_is_stable(body: &str, name: &str) -> bool {
         }
     }
     bindings == 1
+}
+
+/// Whether byte `at` of `body` sits in a `let` pattern: after a `let`
+/// keyword and before that statement's binding `=`, across lines.
+fn in_let_pattern(body: &str, at: usize) -> bool {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    body.match_indices("let").any(|(start, _)| {
+        let keyword = body[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_ident(ch))
+            && body[start + 3..]
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace);
+        if !keyword || start >= at {
+            return false;
+        }
+        let from = start + 3;
+        let bytes = body.as_bytes();
+        let binding_eq = (from..body.len()).find(|&index| {
+            bytes[index] == b'='
+                && !matches!(bytes.get(index + 1), Some(b'=' | b'>'))
+                && !matches!(
+                    index.checked_sub(1).and_then(|before| bytes.get(before)),
+                    Some(b'=' | b'<' | b'>' | b'!')
+                )
+        });
+        binding_eq.is_none_or(|end| (from..end).contains(&at))
+    })
 }
 
 /// A direct owner call whose compared argument names the boundary

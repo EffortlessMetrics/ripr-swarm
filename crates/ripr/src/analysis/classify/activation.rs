@@ -2390,6 +2390,22 @@ fn missing_discriminator_facts(
 /// the probe line itself carries a binding form beside it, or when `name` is
 /// ever assigned or bound `mut`. A true result only declines the
 /// intermediate-input reading and keeps the gap (#9147).
+/// Whether a call's boundary row reaches the guarded comparison on `line`
+/// as the caller passed it, as `check`'s guarded reading requires: the
+/// compared parameter is never rebound first, and no earlier branch, early
+/// return or loop can take the row away from the line (#14873).
+pub(in crate::analysis) fn guarded_boundary_row_reaches(
+    owner: &FunctionSummary,
+    owner_source: Option<&str>,
+    parameter: &str,
+    line: usize,
+) -> bool {
+    !parameter_may_be_rebound(owner, parameter, line)
+        && owner_source.is_none_or(|source| {
+            changed_line_is_first_decision(owner.start_line, source, line, false)
+        })
+}
+
 fn parameter_may_be_rebound(owner: &FunctionSummary, name: &str, predicate_line: usize) -> bool {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
@@ -3148,7 +3164,10 @@ pub(in crate::analysis) fn guarded_comparison(
 ) -> Option<GuardedComparison> {
     let continuation = wrapped_guard_continuation(owner, probe.location.line);
     let with_continuation = |text: &str| match &continuation {
-        Some(rest) => format!("{text} {rest}"),
+        Some(rest) => format!(
+            "{} {rest}",
+            crate::analysis::language::mask_rust_comments_and_strings(text).trim_end()
+        ),
         None => text.to_string(),
     };
     let (comparison, guards, rebound_guard) = split_guarded(
@@ -3231,11 +3250,17 @@ pub(in crate::analysis) fn predicate_line_bool_guards(
     let text = text
         .strip_prefix("} else if ")
         .or_else(|| text.strip_prefix("else if "))
+        .or_else(|| text.strip_prefix("while "))
         .unwrap_or(text);
     let joined;
     let text = match wrapped_guard_continuation(owner, line) {
+        // The head's own trailing comment masked, so it cannot swallow the
+        // wrapped guards joined after it (`if a >= T // note` / `&& g`).
         Some(rest) => {
-            joined = format!("{text} {rest}");
+            joined = format!(
+                "{} {rest}",
+                crate::analysis::language::mask_rust_comments_and_strings(text).trim_end()
+            );
             joined.as_str()
         }
         None => text,
@@ -8776,7 +8801,10 @@ fn oriented_comparison_operands(
 /// text the bounded scanner cannot balance (with or without a connective)
 /// and a continuation line that starts with `&&` or `||`, has no single
 /// boundary here.
-fn changed_comparison_conjunct<'a>(expression: &'a str, before: Option<&str>) -> Option<&'a str> {
+pub(in crate::analysis) fn changed_comparison_conjunct<'a>(
+    expression: &'a str,
+    before: Option<&str>,
+) -> Option<&'a str> {
     let operands = top_level_connective_operands(expression)?;
     if operands.len() == 1 {
         return Some(expression);

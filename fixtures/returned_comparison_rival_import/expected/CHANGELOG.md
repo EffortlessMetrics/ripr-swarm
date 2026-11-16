@@ -165,3 +165,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — returned_comparison_rival_import (14)
+
+Reason:
+RIPR-SPEC-0122: a Hidden row whose long reason repeats the row above prints same as above (#14308)
+
+Command:
+`cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
+
+Updated:
+- `expected/human.txt`

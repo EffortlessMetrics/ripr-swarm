@@ -768,7 +768,13 @@ A literal, a test local bound once and never shadowed or reassigned, or
 the boundary constant's own name each count; any other local, a `mut` or
 rebound guard parameter, or a compared side that is not a plain parameter,
 counts as unheld. A constant on the left (`LIMIT <= amount`) is oriented as
-`check` orients it. So a row that misses a guard can no longer grip the seam
+`check` orients it. The call must resolve to the changed owner, not a
+same-named function in another module, and the seam keeps `unknown` without
+crediting any row when the tested parameter may be rebound before the
+comparison or an earlier decision in the owner can return first, the same
+reachability `check` requires. Such a seam is not offered as a `ripr repair`
+start (a `stock > 0 && blocked` change tested only with `blocked = false`
+starts the whole-line seam, not the boundary). So a row that misses a guard can no longer grip the seam
 while `check` reads the same change as unclear. Both views read the guard
 from the comparison's own `if`/`else if`/`while` line plus any lines rustfmt
 wraps under it that each open with `&&`, up to the opening brace, with
