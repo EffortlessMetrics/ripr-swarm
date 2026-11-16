@@ -526,7 +526,10 @@ Relations, first match wins (rank, oracle-eligible):
   the body (no `response_model` or `response_class`), there is no return
   annotation other than a bare `dict` (FastAPI reads one as a response
   model), and the function has exactly one `return`, of a dict literal, and
-  no `yield`. A whole-body comparison (which can match an error body the
+  no `yield` or `raise` (a raised error answers with its own body). A
+  changed `detail` key never earns this credit, because `detail` is the key
+  of FastAPI's `HTTPException` and validation (422) error bodies. A
+  whole-body comparison (which can match an error body the
   changed `return` never produced), another key, a rebound or inline
   response, an expression around the read, another route or verb, an
   unidentified or rival application, or an inequality grants no credit

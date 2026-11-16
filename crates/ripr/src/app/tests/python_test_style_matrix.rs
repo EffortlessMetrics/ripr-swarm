@@ -459,6 +459,38 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             failures.push(format!("{name}: read exposed"));
         }
     }
+    // A handler that raises can answer with an error body instead of the
+    // returned dict, and `detail` is the key of FastAPI's error bodies, so a
+    // keyed read of either may observe a response the changed `return` never
+    // produced.
+    let raising = "from fastapi import FastAPI, HTTPException\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price(vip: bool = True):\n    if not vip:\n        raise HTTPException(404, detail=\"nope\")\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let finding = check_style(
+        "raising handler",
+        &[("src/app.py", raising)],
+        PRICE_EDIT,
+        &strong,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        failures.push("raising handler: read exposed".to_string());
+    }
+    let detail_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price(qty: int):\n    return {\"detail\": 200 - 10, \"count\": 3}\n";
+    let detail_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"detail\": 200 - 10, \"count\": 3}",
+        new: "    return {\"detail\": 200 - 5, \"count\": 3}",
+    };
+    let detail_read = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"detail\"] == 190\n"
+    );
+    let finding = check_style(
+        "detail key",
+        &[("src/app.py", detail_app)],
+        detail_edit,
+        &detail_read,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        failures.push("detail key: read exposed".to_string());
+    }
     // A client over another application does not reach the owner's handler.
     let rival = "from fastapi import FastAPI\nfrom fastapi.testclient import TestClient\n\nfrom src.app import app\n\nother_app = FastAPI()\n\n\ndef test_price():\n    client = TestClient(other_app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 190\n";
     let finding = check_style("rival app", &[("src/app.py", PRICE_APP)], PRICE_EDIT, rival)?;

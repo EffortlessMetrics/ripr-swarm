@@ -6,5 +6,5 @@
   Before, ripr reported a gap even though the test already checked the
   changed value. A `status_code` check, another key, another route or an
   unidentified app still never reads `exposed`, and neither does a handler
-  with a response model, a return annotation, another decorator or another
-  `return` (#13869).
+  with a response model, a return annotation, another decorator, another
+  `return` or a `raise`, or a changed `detail` key (#13869).

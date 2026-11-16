@@ -2180,7 +2180,8 @@ pub(super) fn decorator_names(decorators: &[Expr]) -> Vec<String> {
 /// Whether a route handler's response body is the dict it returns (#13869):
 /// every decorator is a static route decorator call whose keywords cannot
 /// reshape the body (any other decorator may wrap and rewrite it), and the
-/// function has one `return`, of a dict literal, and no `yield`. Nested
+/// function has one `return`, of a dict literal, and no `yield` or `raise`
+/// (a raised error's body is not the returned dict). Nested
 /// functions and classes are not searched. The caller also requires
 /// [`body_returning_annotation`].
 fn route_returns_body(decorators: &[Expr], body: &[Stmt]) -> bool {
@@ -2214,64 +2215,65 @@ fn route_returns_body(decorators: &[Expr], body: &[Stmt]) -> bool {
         return false;
     }
     let mut returns = Vec::new();
-    let mut yields = false;
-    collect_returns(body, &mut returns, &mut yields);
-    !yields && matches!(returns.as_slice(), [Some(Expr::Dict(_))])
+    let mut escapes = false;
+    collect_returns(body, &mut returns, &mut escapes);
+    !escapes && matches!(returns.as_slice(), [Some(Expr::Dict(_))])
 }
 
 /// The value of each `return` in `body` (not inside a nested function or
-/// class) and whether any statement mentions `yield`.
-fn collect_returns<'a>(body: &'a [Stmt], returns: &mut Vec<Option<&'a Expr>>, yields: &mut bool) {
+/// class) and whether any statement yields or raises.
+fn collect_returns<'a>(body: &'a [Stmt], returns: &mut Vec<Option<&'a Expr>>, escapes: &mut bool) {
     for statement in body {
         match statement {
             Stmt::Return(ret) => returns.push(ret.value.as_deref()),
             Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::ClassDef(_) => {}
             Stmt::If(node) => {
-                collect_returns(&node.body, returns, yields);
-                collect_returns(&node.orelse, returns, yields);
+                collect_returns(&node.body, returns, escapes);
+                collect_returns(&node.orelse, returns, escapes);
             }
             Stmt::For(node) => {
-                collect_returns(&node.body, returns, yields);
-                collect_returns(&node.orelse, returns, yields);
+                collect_returns(&node.body, returns, escapes);
+                collect_returns(&node.orelse, returns, escapes);
             }
             Stmt::AsyncFor(node) => {
-                collect_returns(&node.body, returns, yields);
-                collect_returns(&node.orelse, returns, yields);
+                collect_returns(&node.body, returns, escapes);
+                collect_returns(&node.orelse, returns, escapes);
             }
             Stmt::While(node) => {
-                collect_returns(&node.body, returns, yields);
-                collect_returns(&node.orelse, returns, yields);
+                collect_returns(&node.body, returns, escapes);
+                collect_returns(&node.orelse, returns, escapes);
             }
-            Stmt::With(node) => collect_returns(&node.body, returns, yields),
-            Stmt::AsyncWith(node) => collect_returns(&node.body, returns, yields),
+            Stmt::With(node) => collect_returns(&node.body, returns, escapes),
+            Stmt::AsyncWith(node) => collect_returns(&node.body, returns, escapes),
             Stmt::Try(node) => {
-                collect_returns(&node.body, returns, yields);
-                collect_returns(&node.orelse, returns, yields);
-                collect_returns(&node.finalbody, returns, yields);
+                collect_returns(&node.body, returns, escapes);
+                collect_returns(&node.orelse, returns, escapes);
+                collect_returns(&node.finalbody, returns, escapes);
                 for handler in &node.handlers {
                     let ast::ExceptHandler::ExceptHandler(handler) = handler;
-                    collect_returns(&handler.body, returns, yields);
+                    collect_returns(&handler.body, returns, escapes);
                 }
             }
             Stmt::TryStar(node) => {
-                collect_returns(&node.body, returns, yields);
-                collect_returns(&node.orelse, returns, yields);
-                collect_returns(&node.finalbody, returns, yields);
+                collect_returns(&node.body, returns, escapes);
+                collect_returns(&node.orelse, returns, escapes);
+                collect_returns(&node.finalbody, returns, escapes);
                 for handler in &node.handlers {
                     let ast::ExceptHandler::ExceptHandler(handler) = handler;
-                    collect_returns(&handler.body, returns, yields);
+                    collect_returns(&handler.body, returns, escapes);
                 }
             }
             Stmt::Match(node) => {
                 for case in &node.cases {
-                    collect_returns(&case.body, returns, yields);
+                    collect_returns(&case.body, returns, escapes);
                 }
             }
             Stmt::Expr(expr) => {
                 if matches!(expr.value.as_ref(), Expr::Yield(_) | Expr::YieldFrom(_)) {
-                    *yields = true;
+                    *escapes = true;
                 }
             }
+            Stmt::Raise(_) => *escapes = true,
             _ => {}
         }
     }

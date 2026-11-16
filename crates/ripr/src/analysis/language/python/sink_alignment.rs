@@ -1571,9 +1571,16 @@ fn sink_alignment_and_rows(
     // names come from the test body alone and only for the owner's own
     // application; the changed-key gate in `gates_ok` still decides which
     // response field observes the edit.
+    // `detail` is the error-envelope key of FastAPI's `HTTPException` and
+    // request-validation (422) bodies, so a keyed `detail` read may observe
+    // an error response that never reached the changed return.
     let returns_changed_dict = owner.route_returns_body
         && line_text.trim_start().starts_with("return ")
-        && dict_change.is_some();
+        && dict_change.as_ref().is_some_and(|(keys, _)| {
+            !keys
+                .iter()
+                .any(|key| key.trim_matches(|c| c == '"' || c == '\'') == "detail")
+        });
     let route_response_observed = |unit: &AlignmentUnit<'_>| {
         returns_changed_dict
             && unit.kind == OracleKind::ExactValue
