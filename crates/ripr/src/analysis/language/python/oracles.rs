@@ -361,6 +361,10 @@ fn collect_with_item_assertions(
                     assertion.gate_text,
                     text_for_range(source, body_range).trim()
                 );
+                // Record where the body ends before the rule 14 comparison is
+                // appended, so a column-zero comment or continuation inside the
+                // body is not mistaken for the comparison (#14754 review).
+                assertion.exception_body_end = Some(assertion.gate_text.len());
                 // Rule 14: the raised error compared by value after the `with`
                 // pins it; the comparison joins the item's gate text.
                 if let Some(comparison) = bound_exception_comparison(item, after, source) {
@@ -617,6 +621,7 @@ fn assertion_from_assert(
             "assert {}",
             assert_gate_expr(assert_stmt.test.as_ref(), source)
         ),
+        exception_body_end: None,
         source_range: Some(assert_stmt.range),
         observed_operands: assert_gate_values(assert_stmt.test.as_ref(), source)
             .into_iter()
@@ -912,6 +917,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         );
         return Some(PythonAssertion {
             gate_text: format!("{text}\n{callable_call}"),
+            exception_body_end: None,
             callable_call: Some(callable_call),
             helper_origin: super::PythonHelperOrigin::Inline,
             text,
@@ -939,6 +945,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
     Some(PythonAssertion {
         text,
         gate_text,
+        exception_body_end: None,
         callable_call: None,
         helper_origin: super::PythonHelperOrigin::Inline,
         source_range: Some(call.range),

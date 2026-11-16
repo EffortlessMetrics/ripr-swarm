@@ -290,6 +290,29 @@ const SITUATIONS: &[Situation] = &[
         },
     },
     Situation {
+        section: "A partial clone has no network",
+        exit: 2,
+        reproduce: || {
+            if !cfg!(unix) {
+                return Ok(None);
+            }
+            // A blob-filtered clone of a changed branch, whose remote is then
+            // gone: the base-side contents can no longer be downloaded.
+            let origin = Scratch::repo()?;
+            origin.write("src/lib.rs", CHANGED_SRC)?;
+            origin.commit("change")?;
+            origin.git(&["config", "uploadpack.allowFilter", "true"])?;
+            let holder = Scratch::new()?;
+            let source = format!("file://{}", origin.0.display());
+            git_in(
+                &holder.0,
+                &["clone", "-q", "--filter=blob:none", &source, "clone"],
+            )?;
+            drop(origin);
+            ripr_in(&holder.0.join("clone"), &["check", "--base", "HEAD~1"]).map(Some)
+        },
+    },
+    Situation {
         section: "The directory is not a Git repository",
         exit: 2,
         reproduce: || match outside_any_repository()? {

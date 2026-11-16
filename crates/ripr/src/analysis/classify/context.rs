@@ -64,6 +64,11 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     pub compile_time_guarded: bool,
     #[cfg(feature = "lang-rust")]
     pub tier_flow: Option<super::TierFlow>,
+    /// #14387: the diff's old text of the probe's line when that line is the
+    /// owner's only changed line (one replaced line, nothing else added or
+    /// removed inside the owner). `None` when the diff is not at hand or
+    /// changes the owner elsewhere.
+    pub owner_sole_change: Option<String>,
 }
 
 impl<'a> ProbeContext<'a> {
@@ -98,6 +103,7 @@ impl<'a> ProbeContext<'a> {
             compile_time_guarded: false,
             #[cfg(feature = "lang-rust")]
             tier_flow: None,
+            owner_sole_change: None,
         }
     }
 

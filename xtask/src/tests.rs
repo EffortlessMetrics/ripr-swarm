@@ -19701,7 +19701,7 @@ jobs:
 RIPR is advisory static evidence. It does not edit source, generate tests, or run mutation testing.
 
 ### Start here
-- Open `start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
+- Open `ripr/reports/start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
 - {GENERATED_CI_FIRST_ACTION_REPAIR}
 - {GENERATED_CI_FIRST_PR_REPAIR}
 - {GENERATED_CI_FRONT_PANEL_REPAIR}
@@ -19761,6 +19761,30 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
         mutated.errors
     );
     assert!(!mutated.start_here);
+
+    // A heading alone cannot rescue a stale or wrong artifact destination.
+    for path in [
+        "start-here.md",
+        "target/ripr/reports/start-here.md",
+        "ripr/review/start-here.md",
+    ] {
+        let wrong_path = dogfood_generated_ci_cockpit_run_from_surfaces(
+            "wrong-start-here-artifact-path",
+            command,
+            10,
+            workflow,
+            &summary.replace("ripr/reports/start-here.md", path),
+        );
+        assert!(!wrong_path.start_here, "accepted {path}");
+        assert!(
+            wrong_path
+                .errors
+                .iter()
+                .any(|error| error.contains("Start here")),
+            "missing path error for {path}: {:?}",
+            wrong_path.errors
+        );
+    }
 
     // Dropping the gate boundary wording must fail the scenario (#12261).
     let no_gate = dogfood_generated_ci_cockpit_run_from_surfaces(

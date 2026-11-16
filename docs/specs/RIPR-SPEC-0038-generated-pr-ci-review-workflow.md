@@ -57,8 +57,11 @@ truth, rerun hidden analysis to patch missing artifacts, edit source, generate
 tests, call providers, run mutation testing, publish inline comments, change
 branch protection, or change default CI blocking.
 
-The `Install ripr` step (shell `bash`, pinned by `defaults.run.shell`) installs
-the exact pinned release's prebuilt archive for the runner (#6245). Linux and
+The `Install ripr` step runs the `.github/actions/ripr-check` composite Action
+from the pinned release's tag (`EffortlessMetrics/ripr/.github/actions/ripr-check@v<version>`,
+`version: <version>`, `install-only: true`), so the generated workflow carries
+no installer shell of its own (#5409). The Action's `Install ripr` block (shell
+`bash`) installs the exact pinned release's prebuilt archive for the runner (#6245). Linux and
 macOS x64/ARM64 take the `tar.gz`; Windows x64 (`x86_64-pc-windows-msvc`) takes
 the `zip` containing `ripr.exe`. Targets, archive kinds and executable names
 come from `policy/distribution.toml`, bound by drift tests. The step:
@@ -76,8 +79,28 @@ come from `policy/distribution.toml`, bound by drift tests. The step:
   archive, wrong payload or wrong reported version exits 1 with no fallback;
 - stops with an explicit unsupported error on Windows ARM64.
 
-The `.github/actions/ripr-check` composite Action's `Install ripr` step carries
-the same contract (#6245); `tests/ripr_check_action.rs` replays it.
+`tests/ripr_check_action.rs` and the archive replays in
+`tests/generated_review_workflow.rs` run that block with the version the
+generated workflow passes. A ripr already on `PATH` is reused only when it
+reports exactly the pinned version.
+
+Its `Run ripr check` step (#14800):
+
+- on `pull_request` with no explicit `base`, fetches the base branch and, only
+  in a shallow checkout, deepens both sides in doubling steps (50 to 1,600
+  commits, then `--unshallow`) until HEAD has a merge base with it; a full
+  checkout runs no `--depth` or `--deepen`, and a failed fetch warns and leaves
+  the repair message to `ripr check`;
+- restores ripr's analysis cache under `runner.temp` (`RIPR_CACHE_DIR`) with a
+  commit-pinned `actions/cache` when the `cache` input is `true` (default);
+- writes the report to a fresh per-invocation file (output `report`) and the job
+  log, a text report also to the job summary, and the exit status to output
+  `exit-code`; `ripr check` exit codes are unchanged, so findings stay advisory;
+- on a nonzero exit, fails the step with one escaped `::error` annotation that
+  names the exit meaning and ripr's first reason lines;
+- replays report and stderr text inside a `::stop-commands::` window, each
+  marker on its own line, so quoted text cannot issue workflow commands; only
+  the `format: github` report is emitted before the window.
 
 The generated workflow must keep Rust-default behavior unchanged unless a later
 spec explicitly changes that default. Language-aware grouping is opt-in and

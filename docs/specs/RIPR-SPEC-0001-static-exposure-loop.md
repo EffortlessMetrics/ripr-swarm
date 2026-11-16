@@ -122,7 +122,18 @@ equivalent rewrite or when the owner has other callers. A range handed to a call
 (`Iterator::sum(0..n)`) is gated like an absorbing method, `v.get(a..b)` and its
 unchecked or mutable forms slice like `v[a..b]`, and an assertion that
 never runs (a literal-false block, an uncalled closure, after a `return`, even
-on the same line as live code) reads nothing. Any other gated change, including an input ripr cannot fold, reads
+on the same line as live code) reads nothing. An assertion inside code that may
+run zero times or not at all (a nested `fn` or `macro_rules!`, a closure, an
+`async` block, an `if` or `match`, a `for`, `while` or `loop` body, or a
+`#[cfg]`-gated statement) reads nothing too (#14538). A line where several
+ranges change at once is gated unless every changed range keeps a
+length-preserving reading with no range nested inside it. An edit inside a
+macro input (`matches!(n, 1..=5)`) or on a line that does not parse is gated
+when a range's written endpoints or operator differ between the versions
+(an edit beside the ranges, or a change in how many ranges the line holds, is
+not gated), and a
+moved char endpoint
+(`'a'..='z'` to `'b'..='y'`) is gated like an integer one (#14538). Any other gated change, including an input ripr cannot fold, reads
 `unknown`, except a moved match range pattern: whenever the fold does not
 establish what the tests see (arms it cannot read such as `&str` results, or
 rebound assertion macros), it keeps the ordinary arm-routing reading (#5992).
@@ -270,6 +281,16 @@ and literal consumer controls are specified by
 - GitHub annotations
 - LSP diagnostics and hover content when used through the editor
 - agent context packet for a selected finding
+
+For the same workspace, diff and root path, `ripr check --diff` stdout in the
+pinned formats (`human`, `human-full`, `json`, `json-terse`, `agent`,
+`github`, `sarif`, `missed-txt`) is byte-identical across repeated runs, a
+cold or warm run cache, one or four analysis workers (`RAYON_NUM_THREADS`),
+and the workspace's files written in reverse order. Not covered by this
+contract: `check-findings-json`, whose artifact stamps a per-run time, and
+the human digest's one-time first-run legend (#10481), which is intended
+state. Rerun commands carry the absolute root, so output also differs by
+checkout location (#14230).
 
 ## Classifications
 
@@ -755,7 +776,41 @@ Fixture `fixtures/rust_guarded_boundary_guard_missing` and honesty-corpus
 case `rust_guarded_boundary_guard_missing_not_promoted` pin the guard-missing
 boundary row as `infection_unknown`.
 
+The repo-wide seam view (`--format repo-exposure-json`, the evidence `ripr
+repair` reads) applies the same rule to the comparison seam it splits from
+such a predicate (#14872). The seam's activation is `unknown` with the guards
+named, and it carries no missing value, unless one related test call sits on
+the boundary value while holding every guard, and a discriminating
+assertion's compared operands observe that same call (the call, or `r`
+from `let r = call;` with `r` bound once, as a whole operand; a line
+with two owner calls, a call buried in a larger expression, or a name only
+in the assertion message or a comment, does not count).
+A literal, a test local bound once and never shadowed or reassigned, or
+the boundary constant's own name each count; any other local, a `mut` or
+rebound guard parameter, or a compared side that is not a plain parameter,
+counts as unheld. A constant on the left (`LIMIT <= amount`) is oriented as
+`check` orients it. The call must resolve to the changed owner, not a
+same-named function in another module, and the seam keeps `unknown` without
+crediting any row when the tested parameter may be rebound before the
+comparison or an earlier decision in the owner can return first, the same
+reachability `check` requires. Such a seam is not offered as a `ripr repair`
+start (a `stock > 0 && blocked` change tested only with `blocked = false`
+starts the whole-line seam, not the boundary). So a row that misses a guard can no longer grip the seam
+while `check` reads the same change as unclear. Both views read the guard
+from the comparison's own `if`/`else if`/`while` line plus any lines rustfmt
+wraps under it that each open with `&&`, up to the opening brace, with
+comments masked; an edit
+whose old line cannot be read with the wrapped guards is declined; a predicate
+written as `let`/`return` is not yet read as guarded (#14874). Honesty-corpus case
+`rust_repo_exposure_guarded_boundary_guard_missing_not_promoted` pins it.
+
 ## Test Mapping
+
+Output determinism (#14230):
+
+- `crates/ripr/tests/output_determinism.rs::rust_check_output_is_byte_identical_across_runs_workers_and_write_order`
+- `crates/ripr/tests/output_determinism.rs::python_check_output_is_byte_identical_across_runs_workers_and_write_order`
+- `crates/ripr/tests/output_determinism.rs::typescript_check_output_is_byte_identical_across_runs_workers_and_write_order`
 
 Fixture coverage:
 

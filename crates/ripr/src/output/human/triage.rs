@@ -2276,6 +2276,11 @@ fn decisive_shadows_unknown(decisive: &Finding, unknown: &Finding) -> bool {
         && (covers_same_changed_behavior(decisive, unknown) || has_no_distinct_change(unknown))
 }
 
+/// `repair_rank` for a non-preview static-limited finding: behind every
+/// routed or unrouted gap (`reachable_unrevealed` 2, `weakly_exposed` 3) and
+/// level with the unknown classes, ahead of `exposed`.
+const STATIC_LIMITED_REPAIR_TIER: u8 = 5;
+
 fn triage_rank<'a>(
     finding: &'a Finding,
     root: &std::path::Path,
@@ -2304,9 +2309,16 @@ fn triage_rank<'a>(
         ExposureClass::Exposed => 9,
     };
     let preview_rank = u8::from(is_preview_limited(finding));
-    let repair_rank = if finding.class != ExposureClass::Exposed && has_ranked_repair_route(finding)
-    {
+    let repair_rank = if finding.class == ExposureClass::Exposed {
+        class_rank
+    } else if has_ranked_repair_route(finding) {
         0
+    } else if !is_preview_limited(finding) && is_static_limited(finding) {
+        // #14266 item 2: static-limited findings share one tier behind every
+        // gap, so the evidence keys below (gap identity, related test,
+        // missing evidence, confidence) order them among themselves, as they
+        // did while their advisory next step counted as a route.
+        STATIC_LIMITED_REPAIR_TIER
     } else {
         class_rank
     };
@@ -2382,7 +2394,11 @@ fn has_linked_oracle_test(finding: &Finding) -> bool {
 /// unchanged; only the selection order moves.
 fn has_ranked_repair_route(finding: &Finding) -> bool {
     if !is_preview_limited(finding) {
-        return has_repair_route(finding);
+        // #14266 item 2: rank by the route the screen can print. A
+        // static-limited finding never prints a repair route
+        // (`printed_repair_route`), so its advisory next step must not lift
+        // it to the routed tier over a gap whose route does print.
+        return !is_static_limited(finding) && has_repair_route(finding);
     }
     finding.language == Some(LanguageId::Python) && python_repair_card(finding).is_some()
 }
@@ -4121,25 +4137,63 @@ mod tests {
     }
 
     /// #14266: two candidates equal on every evidence key through
-    /// confidence order by exposure class, not by file path. The unknown
-    /// sorts first by path and is listed first, so neither path order nor
-    /// insertion order can masquerade as ranking.
+    /// confidence order by exposure class, not by file path. The weaker
+    /// class sorts first by path and is listed first, so neither path order
+    /// nor insertion order can masquerade as ranking.
     #[test]
     fn start_here_breaks_an_evidence_tie_by_class_before_path() {
-        let mut unknown = finding_at(
-            "finding:unknown",
+        let mut weak = finding_at(
+            "finding:weak",
             "src/a_analysis.rs",
-            ExposureClass::PropagationUnknown,
+            ExposureClass::WeaklyExposed,
         );
         let mut gap = finding_at(
             "finding:unrevealed",
             "src/z_provider.rs",
             ExposureClass::ReachableUnrevealed,
         );
-        for finding in [&mut unknown, &mut gap] {
+        for finding in [&mut weak, &mut gap] {
             finding.recommended_next_step = Some("inspect the related test".to_string());
             finding.confidence = 0.66;
         }
+        let output = test_output(vec![weak.clone(), gap.clone()]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unrevealed")
+        );
+
+        // Discriminating control: a higher-confidence weak gap still leads,
+        // so class only breaks a tie and does not override earlier keys.
+        weak.confidence = 0.9;
+        let output = test_output(vec![gap, weak]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:weak")
+        );
+    }
+
+    /// #14266 item 2: an advisory next step on a static-limited finding is
+    /// not a repair route (the screen never prints one for it), so it does
+    /// not lift the unknown over a gap that has no route either. The unknown
+    /// sorts first by path, is listed first and has the higher confidence.
+    #[test]
+    fn start_here_does_not_rank_an_unprintable_route_as_a_repair_route() {
+        let mut unknown = finding_at(
+            "finding:unknown",
+            "src/a_analysis.rs",
+            ExposureClass::PropagationUnknown,
+        );
+        unknown.recommended_next_step =
+            Some("The indexed related tests do not establish a call".to_string());
+        unknown.confidence = 0.9;
+        let mut gap = finding_at(
+            "finding:unrevealed",
+            "src/z_provider.rs",
+            ExposureClass::ReachableUnrevealed,
+        );
+        gap.confidence = 0.5;
         let output = test_output(vec![unknown.clone(), gap.clone()]);
         let triage = select_human_triage(&output, &RiprConfig::default());
         assert_eq!(
@@ -4147,14 +4201,20 @@ mod tests {
             Some("finding:unrevealed")
         );
 
-        // Discriminating control: a higher-confidence unknown still leads,
-        // so class only breaks a tie and does not override earlier keys.
-        unknown.confidence = 0.9;
-        let output = test_output(vec![gap, unknown]);
+        // Discriminating control: a next step on a finding that is not
+        // static-limited still counts as a route and still leads.
+        let mut routed = finding_at(
+            "finding:routed-weak",
+            "src/a_analysis.rs",
+            ExposureClass::WeaklyExposed,
+        );
+        routed.recommended_next_step = Some("strengthen the assertion".to_string());
+        routed.confidence = 0.9;
+        let output = test_output(vec![routed, gap]);
         let triage = select_human_triage(&output, &RiprConfig::default());
         assert_eq!(
             triage.selected.map(|finding| finding.id.as_str()),
-            Some("finding:unknown")
+            Some("finding:routed-weak")
         );
     }
 
@@ -4274,6 +4334,54 @@ mod tests {
         assert_eq!(
             selected(vec![predicate, literal]),
             Some("finding:literal".to_string())
+        );
+    }
+
+    /// #14266 item 2: static-limited findings share one tier, so the
+    /// evidence keys still order them among themselves. A `no_static_path`
+    /// finding sorts first by path, is listed first and has the better class
+    /// rank, but the unknown carries a gap identity and wins on that key.
+    #[test]
+    fn start_here_orders_static_limited_findings_by_evidence_not_class() {
+        let mut no_path = finding_at(
+            "finding:no-path",
+            "src/a_display.rs",
+            ExposureClass::NoStaticPath,
+        );
+        no_path.recommended_next_step = Some("Tests cannot close this limitation".to_string());
+        let mut unknown = finding_at(
+            "finding:unknown-with-gap",
+            "src/z_impls.rs",
+            ExposureClass::InfectionUnknown,
+        );
+        unknown.recommended_next_step = Some("Open the related test".to_string());
+        unknown.canonical_gap = Some(FindingCanonicalGap {
+            id: "gap:rust:src/z_impls.rs:cmp:return_value".to_string(),
+            language: "rust".to_string(),
+            file: "src/z_impls.rs".to_string(),
+            owner: "cmp".to_string(),
+            behavior_kind: "return_value".to_string(),
+            probe_kind: "return_value".to_string(),
+            normalized_discriminator: "let_some_rhs".to_string(),
+        });
+        for finding in [&mut no_path, &mut unknown] {
+            finding.confidence = 0.45;
+        }
+        let output = test_output(vec![no_path.clone(), unknown.clone()]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unknown-with-gap")
+        );
+
+        // Control: with equal evidence the class tie-break still puts the
+        // no-path finding first, so the tier does not reverse class order.
+        unknown.canonical_gap = None;
+        let output = test_output(vec![unknown, no_path]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:no-path")
         );
     }
 

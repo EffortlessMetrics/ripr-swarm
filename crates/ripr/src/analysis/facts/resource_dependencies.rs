@@ -234,7 +234,15 @@ fn scan_embed_files(
         if !source.contains("include_str") && !source.contains("include_bytes") {
             continue;
         }
-        let scan = rust_embed_file_scan(source, MAX_RESOURCE_EDGES);
+        // A pure read of the source text: one diff check finishes the
+        // admission core and then the extended main index over the same
+        // files, so the run memo serves the second scan.
+        let scan = crate::analysis::syntax::run_memo::memoize(
+            crate::analysis::syntax::run_memo::Product::EmbedFileScan,
+            0,
+            source,
+            || rust_embed_file_scan(source, MAX_RESOURCE_EDGES),
+        );
         scopes
             .entry(shadow_scope(path))
             .or_default()

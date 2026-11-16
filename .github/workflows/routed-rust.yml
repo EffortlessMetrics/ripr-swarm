@@ -266,13 +266,21 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           EVENT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           case "$EVENT_NAME" in
-            pull_request) sha="$PR_BASE_SHA" ;;
+            pull_request)
+              # The judged tree is the merge ref, whose first parent is the
+              # base it was built on. Fetch the merge commit and its parents
+              # so the anchor is local and immutable for this run.
+              git fetch --depth=2 origin "$EVENT_SHA" >/dev/null 2>&1 || { echo "::error::trusted admission source could not fetch the merge ref $EVENT_SHA"; exit 1; }
+              parents="$(git rev-list --parents -n 1 "$EVENT_SHA")"
+              read -r _self p1 p2 extra <<<"$parents"
+              [ -n "${p1:-}" ] && [ -n "${p2:-}" ] && [ -z "${extra:-}" ] || { echo "::error::trusted admission source is not a two-parent merge commit: $EVENT_SHA"; exit 1; }
+              sha="$p1"
+              ;;
             merge_group) sha="$GROUP_BASE_SHA" ;;
             push|workflow_dispatch) sha="$EVENT_SHA" ;;
             *) echo "::error::trusted admission source is undefined for this event"; exit 1 ;;
