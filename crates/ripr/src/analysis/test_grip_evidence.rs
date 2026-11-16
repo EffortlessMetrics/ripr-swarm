@@ -4433,34 +4433,32 @@ fn guarded_boundary_unheld(
     };
     let held = tests.iter().any(|indexed| {
         indexed.test.calls.iter().any(|call| {
-            call.name == owner_fn.name
-                && owner_call_text(&call.text, owner_fn)
-                    .and_then(|text| call_arguments(text, &owner_fn.name))
-                    .is_some_and(|arguments| {
-                        let guards_hold = guards.iter().all(|(guard, required)| {
-                            parameters
-                                .iter()
-                                .position(|parameter| parameter == guard)
-                                .and_then(|at| arguments.get(at))
-                                .is_some_and(|argument| {
-                                    let wanted = if *required { "true" } else { "false" };
-                                    // A literal, or an immutable local
-                                    // (`let express = false;`) resolved per
-                                    // call as `check` resolves its rows.
-                                    argument.trim() == wanted
-                                        || stable_local_values(
-                                            seam,
-                                            indexed,
-                                            index,
-                                            argument.trim(),
-                                            call,
-                                        )
-                                        .iter()
-                                        .any(|resolved| resolved == wanted)
-                                })
-                        });
-                        let on_boundary = arguments.get(tested_at).is_some_and(|argument| {
-                            comparable_value(argument) == comparable_value(value)
+            let Some(expr) = (call.name == owner_fn.name)
+                .then(|| owner_call_text(&call.text, owner_fn))
+                .flatten()
+                .and_then(|text| single_owner_call(text, &owner_fn.name))
+            else {
+                return false;
+            };
+            call_arguments(expr, &owner_fn.name).is_some_and(|arguments| {
+                let guards_hold = guards.iter().all(|(guard, required)| {
+                    parameters
+                        .iter()
+                        .position(|parameter| parameter == guard)
+                        .and_then(|at| arguments.get(at))
+                        .is_some_and(|argument| {
+                            let wanted = if *required { "true" } else { "false" };
+                            // A literal, or an immutable local
+                            // (`let express = false;`) resolved per
+                            // call as `check` resolves its rows.
+                            argument.trim() == wanted
+                                || stable_local_values(seam, indexed, index, argument.trim(), call)
+                                    .iter()
+                                    .any(|resolved| resolved == wanted)
+                        })
+                });
+                let on_boundary = arguments.get(tested_at).is_some_and(|argument| {
+                    comparable_value(argument) == comparable_value(value)
                                 // An immutable local (`let cents = 5000;`)
                                 // resolved per call, as the activation reader
                                 // resolves it.
@@ -4481,36 +4479,67 @@ fn guarded_boundary_unheld(
                                         &constant.name,
                                     )
                                 })
-                        });
-                        guards_hold && on_boundary && guarded_call_is_asserted(indexed.test, call)
-                    })
+                });
+                guards_hold && on_boundary && guarded_call_is_asserted(indexed.test, call, expr)
+            })
         })
     });
     (!held).then_some(describe)
 }
 
-/// A direct owner call whose compared argument names the boundary
-/// constant itself (`discounted_total(DISCOUNT_THRESHOLD)`), in a test whose
-/// own file does not declare a constant of the same name.
-/// Whether the guard-holding boundary call is itself the one a
-/// discriminating assertion observes, as `check` pairs it: the call sits
-/// inside that assertion, or its result is bound once (`let r = call;`,
-/// never reassigned) and a later assertion names the binding. A separate
-/// unasserted call (`let _ = f(5000, false); assert_eq!(f(5000, true), ..)`)
-/// reaches the boundary but nothing observes it there.
-fn guarded_call_is_asserted(test: &TestSummary, call: &CallFact) -> bool {
-    let call_text = call.text.as_str().trim();
-    if call_text.is_empty() {
-        return false;
+/// The one owner call a test line holds, as `name(args)`. A line with two
+/// owner calls is declined: its call facts share the line text, so which
+/// call a fact's arguments belong to is not known.
+fn single_owner_call<'t>(line: &'t str, name: &str) -> Option<&'t str> {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut opens = line.match_indices(name).filter(|(at, _)| {
+        line[..*at]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_ident(ch))
+            && line[at + name.len()..].starts_with('(')
+    });
+    let (Some((start, _)), None) = (opens.next(), opens.next()) else {
+        return None;
+    };
+    let open = start + name.len();
+    let mut depth = 0i32;
+    for (offset, ch) in line[open..].char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&line[start..=open + offset]);
+                }
+            }
+            _ => {}
+        }
     }
-    let discriminating = || {
+    None
+}
+
+/// Whether the guard-holding boundary call `expr` (on `call`'s line) is
+/// itself the one a discriminating assertion observes, as `check` pairs it:
+/// the call sits in that assertion's compared operands, or the line is
+/// exactly `let r = expr;` with `r` stable and a later assertion's operands
+/// name `r`. A separate unasserted call (`let _ = f(5000, false);
+/// assert_eq!(f(5000, true), ..)`) reaches the boundary but nothing
+/// observes it there.
+fn guarded_call_is_asserted(test: &TestSummary, call: &CallFact, expr: &str) -> bool {
+    // Only an assertion's compared operands observe a value: a message
+    // argument (`assert_eq!(a, b, "{free}")`) observes nothing.
+    let observed_operands = || {
         test.assertions
             .iter()
             .filter(|assertion| super::classify::assertion_is_discriminating(assertion))
+            .filter_map(|assertion| {
+                assertion_operands(&assertion.text).map(|operands| (assertion, operands))
+            })
     };
-    let inside = discriminating().any(|assertion| {
+    let inside = observed_operands().any(|(assertion, operands)| {
         let last = assertion.line + assertion.text.lines().count().saturating_sub(1);
-        (assertion.line..=last).contains(&call.line) && assertion.text.contains(call_text)
+        (assertion.line..=last).contains(&call.line) && operands.contains(expr)
     });
     if inside {
         return true;
@@ -4520,47 +4549,80 @@ fn guarded_call_is_asserted(test: &TestSummary, call: &CallFact) -> bool {
         .line
         .checked_sub(test.start_line)
         .and_then(|offset| body.lines().nth(offset))
+        .map(str::trim)
+        .and_then(|line| line.strip_suffix(';'))
     else {
         return false;
     };
-    let Some(binding) = statement
-        .trim()
+    let Some((binding, initializer)) = statement
         .strip_prefix("let ")
         .and_then(|rest| rest.split_once('='))
-        .map(|(name, _)| name.split(':').next().unwrap_or("").trim())
-        .filter(|name| {
-            !name.is_empty()
-                && *name != "_"
-                && name.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+        .map(|(name, initializer)| {
+            (
+                name.split(':').next().unwrap_or("").trim(),
+                initializer.trim(),
+            )
         })
     else {
         return false;
     };
-    if !statement.contains(call_text) || test_may_reassign(body, binding) {
+    // The whole initializer is this call, behind at most a path or a
+    // receiver (`calc.shipping_cost(..)`), never an expression around it.
+    let receiver_only = initializer.strip_suffix(expr).is_some_and(|prefix| {
+        prefix
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || ch == '_' || ch == ':' || ch == '.')
+    });
+    if !receiver_only || !binding_is_stable(body, binding) {
         return false;
     }
-    discriminating()
-        .any(|assertion| assertion.line > call.line && text_names_ident(&assertion.text, binding))
-}
-
-fn text_names_ident(text: &str, name: &str) -> bool {
-    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
-    text.match_indices(name).any(|(at, _)| {
-        text[..at]
-            .chars()
-            .next_back()
-            .is_none_or(|ch| !is_ident(ch))
-            && text[at + name.len()..]
-                .chars()
-                .next()
-                .is_none_or(|ch| !is_ident(ch))
+    observed_operands().any(|(assertion, operands)| {
+        assertion.line > call.line && text_names_ident(&operands, binding)
     })
 }
 
+/// The compared operands of an assertion macro: the first two arguments of
+/// an equality assertion, the first of `assert!`. Any other macro shape is
+/// not read.
+fn assertion_operands(text: &str) -> Option<String> {
+    let open = text.find("!(")?;
+    let name = text[..open]
+        .rsplit(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .next()?;
+    let operands = match name {
+        "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
+        "assert" | "debug_assert" => 1,
+        _ => return None,
+    };
+    let inner = text[open + 2..].trim_end().trim_end_matches(';').trim_end();
+    let inner = inner.strip_suffix(')')?;
+    let arguments = split_top_level_commas(inner);
+    (arguments.len() >= operands).then(|| arguments[..operands].join(", "))
+}
+
+fn ident_occurrences<'t>(text: &'t str, name: &'t str) -> impl Iterator<Item = usize> + 't {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    text.match_indices(name).filter_map(move |(at, _)| {
+        let before = text[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_ident(ch));
+        let after = text[at + name.len()..]
+            .chars()
+            .next()
+            .is_none_or(|ch| !is_ident(ch));
+        (before && after).then_some(at)
+    })
+}
+
+fn text_names_ident(text: &str, name: &str) -> bool {
+    ident_occurrences(text, name).any(|at| !text[..at].ends_with('.'))
+}
+
 /// `resolved_argument_values` for the guarded-boundary gate, declined for a
-/// name the test may change after binding it (`let mut`, `&mut`, or any
-/// assignment): the resolver reads the initializer, and a reassigned guard
-/// or boundary must never be credited from it.
+/// local that is not [`binding_is_stable`]: the resolver reads the
+/// initializer, and a reassigned or shadowed guard or boundary must never
+/// be credited from it.
 fn stable_local_values(
     seam: &RepoSeam,
     indexed: &CompactTest<'_>,
@@ -4568,50 +4630,59 @@ fn stable_local_values(
     argument: &str,
     call: &CallFact,
 ) -> Vec<String> {
-    if test_may_reassign(indexed.test.body.as_str(), argument) {
+    let identifier =
+        !argument.is_empty() && argument.chars().all(|ch| ch.is_alphanumeric() || ch == '_');
+    if identifier && !binding_is_stable(indexed.test.body.as_str(), argument) {
         return Vec::new();
     }
     resolved_argument_values(seam, indexed, index, argument, call)
 }
 
-/// Whether `body` may change `name` after binding it. Over-approximates:
-/// any `mut` binding, `&mut` borrow, or assignment-shaped use declines.
-fn test_may_reassign(body: &str, name: &str) -> bool {
+/// Whether `name` is bound exactly once in `body` (`let name = ..`, never
+/// `mut`) and every other mention is a plain read: no second binding site
+/// (`let`, `for`, `if let`, `match` arm, closure parameter), no `&mut`
+/// borrow, no assignment, no field or format-string use. Text-level and
+/// deliberately over-cautious: anything unclear is unstable.
+fn binding_is_stable(body: &str, name: &str) -> bool {
     if name.is_empty() || !name.chars().all(|ch| ch.is_alphanumeric() || ch == '_') {
         return false;
     }
-    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
-    let mut from = 0;
-    while let Some(found) = body[from..].find(name) {
-        let at = from + found;
-        let end = at + name.len();
-        from = end;
-        let before_ok = body[..at]
-            .chars()
-            .next_back()
-            .is_none_or(|ch| !is_ident(ch));
-        let after_ok = body[end..].chars().next().is_none_or(|ch| !is_ident(ch));
-        if !before_ok || !after_ok {
+    let mut bindings = 0usize;
+    for at in ident_occurrences(body, name) {
+        let line_start = body[..at].rfind('\n').map_or(0, |newline| newline + 1);
+        let line_end = body[at..]
+            .find('\n')
+            .map_or(body.len(), |newline| at + newline);
+        let line = &body[line_start..line_end];
+        let prefix = body[..at].trim_end();
+        let rest = body[at + name.len()..].trim_start();
+        if prefix.ends_with("let") {
+            bindings += 1;
+            if !rest.starts_with('=') && !rest.starts_with(':') {
+                return false;
+            }
             continue;
         }
-        let prefix = body[..at].trim_end();
-        if prefix.ends_with("mut") {
-            return true;
-        }
-        let rest = body[end..].trim_start();
-        let compound = ["+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "<<=", ">>="];
-        if compound.iter().any(|op| rest.starts_with(op))
-            || (rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>"))
-        {
-            // `let name = ..` is the binding itself, not a reassignment.
-            if !prefix.ends_with("let") {
-                return true;
-            }
+        let assigns = ["+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "<<=", ">>="]
+            .iter()
+            .any(|op| rest.starts_with(op))
+            || (rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>"));
+        let rebinds = ["let ", "for ", "=>", "match "]
+            .iter()
+            .any(|marker| line.contains(marker));
+        let odd_prefix = ["mut", "|", ".", "{", "&mut"]
+            .iter()
+            .any(|marker| prefix.ends_with(marker));
+        if assigns || rebinds || odd_prefix {
+            return false;
         }
     }
-    false
+    bindings == 1
 }
 
+/// A direct owner call whose compared argument names the boundary
+/// constant itself (`discounted_total(DISCOUNT_THRESHOLD)`), in a test whose
+/// own file does not declare a constant of the same name.
 fn test_passes_boundary_constant(
     indexed: &CompactTest<'_>,
     owner_fn: Option<&FunctionSummary>,

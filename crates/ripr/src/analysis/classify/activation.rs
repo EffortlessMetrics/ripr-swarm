@@ -3249,13 +3249,18 @@ pub(in crate::analysis) fn predicate_line_bool_guards(
 /// `    && !express` then `{`), joined, so `check` and the repo-wide seam view
 /// read a wrapped guard as they read a one-line one (#14873). The head may
 /// already carry guards (`if a >= T && member`); its continuation adds the
-/// rest. Only lines
-/// that each open with `&&` count, up to the opening brace; a `||`, a
-/// comment, or any other continuation is not read, which leaves the
-/// comparison unguarded exactly as before.
+/// rest. Only lines that each open with `&&` count, up to the opening
+/// brace, with comments masked; a `||` or any other continuation is not
+/// read, which leaves the comparison as its one-line spelling reads.
 fn wrapped_guard_continuation(owner: &FunctionSummary, line: usize) -> Option<String> {
     let offset = line.checked_sub(owner.start_line)?;
-    let mut lines = owner.body.lines().skip(offset);
+    // Comments masked to spaces, so `&& !express // note` reads its guard
+    // instead of dropping the line and the comparison's guard with it.
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    if masked.len() != owner.body.len() {
+        return None;
+    }
+    let mut lines = masked.lines().skip(offset);
     let head = lines.next()?.trim();
     let opens_condition = ["if ", "} else if ", "else if ", "while "]
         .iter()
@@ -3274,7 +3279,7 @@ fn wrapped_guard_continuation(owner: &FunctionSummary, line: usize) -> Option<St
             Some(rest) => (rest, true),
             None => (rest, false),
         };
-        if rest.contains("||") || rest.contains("//") {
+        if rest.contains("||") {
             return None;
         }
         guards.push(format!("&& {}", rest.trim()));

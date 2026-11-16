@@ -434,3 +434,72 @@ fn a_second_guard_wrapped_under_a_guarded_head_is_read() -> Result<(), String> {
     assert_eq!(field(&seam, "/evidence/activate"), Some("yes"), "{seam}");
     Ok(())
 }
+
+#[test]
+fn a_sibling_statements_binding_is_not_the_guard_holding_calls_result() -> Result<(), String> {
+    let seam = TempRepo::create(
+        SOURCE,
+        "let got = shipping_cost(100, 5000, true); let _ = shipping_cost(100, 5000, false);\n    assert_eq!(got, 200);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "{seam}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_binding_named_only_in_an_assertion_message_is_not_observed() -> Result<(), String> {
+    let seam = TempRepo::create(
+        SOURCE,
+        "let free = shipping_cost(100, 5000, false);\n    assert_eq!(shipping_cost(100, 5000, true), 200, \"{free}\");",
+    )?
+    .comparison_seam()?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "{seam}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_shadowed_binding_or_local_is_never_read_from_its_first_value() -> Result<(), String> {
+    for body in [
+        // The asserted `r` is the second, guard-missing call.
+        "let r = shipping_cost(100, 5000, false);\n    let r = shipping_cost(100, 4000, true);\n    assert_eq!(r, 200);",
+        // The guard shadowed to `true` before the call.
+        "let express = false;\n    let express = !express;\n    assert_eq!(shipping_cost(100, 5000, express), 200);",
+        // The boundary shadowed off 5000 before the call.
+        "let cents = 5000;\n    let cents = cents + 1;\n    assert_eq!(shipping_cost(100, cents, false), 0);",
+        // A loop variable shadows the guard.
+        "let express = false;\n    for express in [true] {\n        assert_eq!(shipping_cost(100, 5000, express), 200);\n    }",
+    ] {
+        let seam = TempRepo::create(SOURCE, body)?.comparison_seam()?;
+        assert_eq!(
+            field(&seam, "/evidence/activate"),
+            Some("unknown"),
+            "{body}: {seam}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_commented_wrapped_guard_is_still_read() -> Result<(), String> {
+    let source = WRAPPED.replace("&& !express\n", "&& !express // express never ships free\n");
+    assert!(source.contains("// express never ships free"));
+    let seam = TempRepo::create(
+        &source,
+        "assert_eq!(shipping_cost(100, 5000, true), 200);\n    assert_eq!(shipping_cost(100, 4999, true), 200);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "{seam}"
+    );
+    Ok(())
+}

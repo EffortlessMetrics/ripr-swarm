@@ -666,3 +666,41 @@ fn a_second_guard_wrapped_under_a_guarded_head_is_read() -> Result<(), String> {
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
+
+#[test]
+fn a_commented_wrapped_guard_is_still_read() -> Result<(), String> {
+    let source =
+        WRAPPED_AFTER.replace("&& !express\n", "&& !express // express never ships free\n");
+    let patch = WRAPPED_PATCH.replace(
+        "         && !express\n",
+        "         && !express // express never ships free\n",
+    );
+    assert!(source.contains("// express never ships free") && patch.contains("// express"));
+    let tests = test_fn(
+        "express_only",
+        "assert_eq!(shipping_cost(100, 5000, true), 200);\n        assert_eq!(shipping_cost(100, 4999, true), 200);",
+    );
+    let repo = TempRepo::create_with(&source, &patch, &tests)?;
+    let output = check_workspace(CheckInput {
+        root: repo.root.clone(),
+        base: None,
+        diff_file: Some(repo.root.join("diff.patch")),
+        mode: Mode::Ready,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let finding = output
+        .findings
+        .into_iter()
+        .find(|finding| {
+            finding.probe.family == ProbeFamily::Predicate && finding.probe.location.line == 4
+        })
+        .ok_or("premise: a predicate finding on the wrapped line")?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}
