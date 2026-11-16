@@ -512,7 +512,7 @@ suite('VS Code download hardening (#11477 item 5)', () => {
     }
     for (const name of [
       '.. /evil', 'ripr.exe.', 'ripr.exe ', '.../x', 'CON', 'dir/aux.txt', 'lpt1', 'NUL.tar.gz',
-      'COM\u00b9', 'lpt\u00b2.log', 'CONIN$', 'CONOUT$', 'con .txt'
+      'COM\u00b9', 'lpt\u00b2.log', 'com0', 'LPT0.txt', 'CONIN$', 'CONOUT$', 'con .txt'
     ]) {
       assert.throws(() => assertSafeZipListing([{ name, externalAttributes: 0 }]), /unsafe Windows path/, JSON.stringify(name));
     }

@@ -641,7 +641,7 @@ const ZIP_UNIX_IFREG = 0x8000;
 const ZIP_UNIX_IFDIR = 0x4000;
 const ZIP_MAX_COMMENT_BYTES = 0xffff;
 /** Win32 device names, including superscript-digit and console aliases, with any extension. */
-const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|conin\$|conout\$|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3]) *(\..*)?$/i;
+const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|conin\$|conout\$|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3]) *(\..*)?$/i;
 
 /**
  * Reads the central directory of a zip archive without extracting anything
@@ -720,7 +720,9 @@ export function listZipCentralDirectoryEntries(archive: Buffer): ZipCentralDirec
  * `assertSafeTarListing`: rejects traversal, absolute, drive-qualified or NUL
  * names, symlink members (Unix mode in the external attributes), NTFS reparse
  * points (DOS attributes), any other non-file/directory member type, and
- * oversized member counts.
+ * oversized member counts. Because `Expand-Archive` writes through Win32, it
+ * also rejects empty names, any `:` (alternate data streams), segments ending
+ * in a dot or space, and reserved device names such as `CON` or `COM¹`.
  */
 export function assertSafeZipListing(entries: readonly ZipCentralDirectoryEntry[]): void {
   if (entries.length > ARCHIVE_MAX_MEMBERS) {

@@ -142,11 +142,13 @@ an arbitrary `RIPR_TEST_SERVER_PATH` is not packaged-identity evidence.
 
 A managed server download is inspected before anything is extracted. After
 the SHA-256 check, the tar archive is listed and the zip central directory is
-read; extraction is refused for absolute, drive-qualified, UNC, `..`, NUL or
-`:` stream member paths, symlink, hard-link, reparse-point or other
-non-file/directory members, more than 1000 members, and (zip) trailing
-dot/space segments, reserved Windows device names, ZIP64, multi-disk,
-malformed or comment-smuggled directories (#13640, #13904). The containment
+read; extraction is refused for absolute, drive-qualified, UNC, `..` or NUL
+member paths, symlink, hard-link, reparse-point or other non-file/directory
+members, and more than 1000 members. Zip members are additionally refused for
+empty names, any `:` (alternate data streams), trailing dot/space segments and
+reserved Windows device names, and zip archives for ZIP64, multi-disk, split
+entry counts, malformed directories, or an end record whose comment does not
+end the file (#13640, #13904). The containment
 walk after extraction remains a second check, not the first. Checksum and
 inspection detect corruption and unsafe shape; they are not provenance
 (#1879).
