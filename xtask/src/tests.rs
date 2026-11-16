@@ -54144,22 +54144,10 @@ const NEXTEST_CI_MEASURED_BUILD_SECONDS: u64 = 774;
 const NEXTEST_CI_MEASURED_TEST_PHASE_SECONDS: u64 = 494;
 const NEXTEST_CI_SLOWEST_LEGITIMATE_TEST_SECONDS: u64 = 210;
 
-/// The `[profile.ci]` `slow-timeout` window in seconds: `period` seconds of
-/// silence marked SLOW, terminated after `terminate-after` periods.
-fn nextest_ci_hang_window_seconds(config: &str) -> Result<u64, String> {
-    let ci = config
-        .split("[profile.ci]")
-        .nth(1)
-        .ok_or("nextest.toml has no [profile.ci] section")?;
-    let section = ci
-        .split("\n[")
-        .next()
-        .ok_or("cannot isolate the [profile.ci] section")?;
-    let line = section
-        .lines()
-        .map(str::trim)
-        .find(|line| line.starts_with("slow-timeout ="))
-        .ok_or("[profile.ci] has no slow-timeout")?;
+/// One `slow-timeout = { period = "Ns", terminate-after = N }` value as its
+/// window in seconds: `period` seconds of silence marked SLOW, terminated
+/// after `terminate-after` periods.
+fn parse_nextest_slow_timeout(line: &str) -> Result<u64, String> {
     let period = line
         .split("period =")
         .nth(1)
@@ -54179,6 +54167,77 @@ fn nextest_ci_hang_window_seconds(config: &str) -> Result<u64, String> {
         .and_then(|value| value.parse::<u64>().ok())
         .ok_or_else(|| format!("cannot read terminate-after from {line:?}"))?;
     Ok(period * terminate_after)
+}
+
+/// The `[profile.ci]` `slow-timeout` window plus every
+/// `[[profile.ci.overrides]]` entry that sets its own `slow-timeout`, as
+/// `(name, window_seconds)`. A per-test override is a real execution window,
+/// so a check that read only the profile-level value would pass a test whose
+/// own window is far past the budget.
+///
+/// Fails closed: an override that sets `slow-timeout` but cannot be parsed is
+/// an error, not a skip.
+fn nextest_ci_hang_windows(config: &str) -> Result<(u64, Vec<(String, u64)>), String> {
+    let ci = config
+        .split("[profile.ci]")
+        .nth(1)
+        .ok_or("nextest.toml has no [profile.ci] section")?;
+    let section = ci
+        .split("\n[")
+        .next()
+        .ok_or("cannot isolate the [profile.ci] section")?;
+    let profile_line = section
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("slow-timeout ="))
+        .ok_or("[profile.ci] has no slow-timeout")?;
+    let profile_window = parse_nextest_slow_timeout(profile_line)?;
+
+    fn finish(
+        block: &mut Option<(usize, Option<String>, Option<u64>)>,
+        overrides: &mut Vec<(String, u64)>,
+    ) {
+        if let Some((ordinal, filter, window)) = block.take()
+            && let Some(window) = window
+        {
+            let name = filter.unwrap_or_else(|| format!("[[profile.ci.overrides]] #{ordinal}"));
+            overrides.push((format!("override {name}"), window));
+        }
+    }
+
+    let mut overrides = Vec::new();
+    // (ordinal, filter, window) for the block being read.
+    let mut block: Option<(usize, Option<String>, Option<u64>)> = None;
+    let mut ordinal = 0usize;
+    for line in config.lines() {
+        let trimmed = line.trim();
+        if trimmed == "[[profile.ci.overrides]]" {
+            finish(&mut block, &mut overrides);
+            ordinal += 1;
+            block = Some((ordinal, None, None));
+            continue;
+        }
+        if trimmed.starts_with('[') {
+            finish(&mut block, &mut overrides);
+            continue;
+        }
+        let Some((_, filter, window)) = block.as_mut() else {
+            continue;
+        };
+        if let Some(value) = trimmed.strip_prefix("filter = ") {
+            *filter = Some(value.to_string());
+        }
+        if trimmed.starts_with("slow-timeout =") {
+            *window = Some(parse_nextest_slow_timeout(trimmed).map_err(|err| {
+                format!(
+                    "cannot parse the slow-timeout of override {}: {err}",
+                    filter.as_deref().unwrap_or("<unnamed>")
+                )
+            })?);
+        }
+    }
+    finish(&mut block, &mut overrides);
+    Ok((profile_window, overrides))
 }
 
 /// The `timeout-minutes` of the first step whose `- name:` contains
@@ -54218,7 +54277,7 @@ fn nextest_hang_window_fits_the_shard_step_budget() -> Result<(), String> {
     let shard_workflow =
         std::fs::read_to_string(root.join(".github/workflows/rust-test-shards.yml"))
             .map_err(|err| format!("read rust-test-shards.yml: {err}"))?;
-    let window = nextest_ci_hang_window_seconds(&config)?;
+    let (window, overrides) = nextest_ci_hang_windows(&config)?;
     let cap = workflow_step_timeout_seconds(&shard_workflow, "Required Rust tests")?;
 
     if window <= NEXTEST_CI_SLOWEST_LEGITIMATE_TEST_SECONDS {
@@ -54227,15 +54286,17 @@ fn nextest_hang_window_fits_the_shard_step_budget() -> Result<(), String> {
             NEXTEST_CI_SLOWEST_LEGITIMATE_TEST_SECONDS
         ));
     }
-    for (phase, measured) in [
-        ("build", NEXTEST_CI_MEASURED_BUILD_SECONDS),
-        ("test phase", NEXTEST_CI_MEASURED_TEST_PHASE_SECONDS),
-    ] {
-        let bound = window + measured;
-        if bound >= cap {
-            return Err(format!(
-                "ci hang window {window}s + measured {phase} {measured}s = {bound}s is not below the shard test step cap {cap}s; reduce terminate-after so a late hang is terminated and named instead of ending at the step cap"
-            ));
+    for (name, window) in std::iter::once(("ci profile".to_string(), window)).chain(overrides) {
+        for (phase, measured) in [
+            ("build", NEXTEST_CI_MEASURED_BUILD_SECONDS),
+            ("test phase", NEXTEST_CI_MEASURED_TEST_PHASE_SECONDS),
+        ] {
+            let bound = window + measured;
+            if bound >= cap {
+                return Err(format!(
+                    "{name}: ci hang window {window}s + measured {phase} {measured}s = {bound}s is not below the shard test step cap {cap}s; reduce terminate-after so a late hang is terminated and named instead of ending at the step cap"
+                ));
+            }
         }
     }
     Ok(())
