@@ -265,14 +265,22 @@ jobs:
         id: trusted
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           EVENT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           case "$EVENT_NAME" in
-            pull_request) sha="$PR_BASE_SHA" ;;
+            pull_request)
+              # The judged tree is the merge ref, whose base is the live base
+              # ref, not the PR's recorded base. A stale recorded base would
+              # pin an older admission bundle than the tree is judged against.
+              sha="$(gh api "repos/${REPOSITORY}/git/ref/heads/${PR_BASE_REF}" --jq '.object.sha // empty')"
+              ;;
             merge_group) sha="$GROUP_BASE_SHA" ;;
             push|workflow_dispatch) sha="$EVENT_SHA" ;;
             *) echo "::error::trusted admission source is undefined for this event"; exit 1 ;;
