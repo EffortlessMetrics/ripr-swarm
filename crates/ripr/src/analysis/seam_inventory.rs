@@ -4912,7 +4912,12 @@ fn build_seam_from_shape(
         crlf_pairs,
     )
     .with_owner_call(owner_call)
-    .with_source_lines(shape.source_lines);
+    .with_source_lines(shape.source_lines)
+    // #14139: the one owner opt-out decision, read from the parser-backed
+    // attributes; a lexically read owner has none and is never opted out.
+    .with_owner_opt_out(crate::analysis::owner_opt_out::function_owner_opt_out(
+        owner_fact,
+    ));
     // #12061: a field write is read back from the receiver only when the
     // owner borrows it; record which so every surface words the read alike.
     let seam = if kind == SeamKind::FieldConstruction

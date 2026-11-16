@@ -3932,8 +3932,9 @@ Absent otherwise, so runs without the attribute see byte-identical output.
 Does not bump `schema_version`. Only the owner's own attributes count: a skip
 on a sibling function, on the enclosing `impl` block or on a module does not
 withhold, and a file read through the lexical fallback (no parser-backed
-attributes) is never withheld. Diff-scoped `ripr check` only; repo scope
-reports every owner.
+attributes) is never withheld. Diff-scoped `ripr check` as below; the
+repo-scope formats withhold seams instead of findings (see
+[Repo scope](#repo-scope-owner-opt-outs-14139) below).
 
 The opt-out is the team's recorded intent, not static evidence. A withheld
 finding keeps its `classification` (it is never reclassified as `exposed`),
@@ -3985,9 +3986,41 @@ removed before the out-of-scope test-file partition; the partition therefore
 cannot reduce it. The fixed `owner_mutants_skip` reason holds while
 the editor supplies no suppression policy (#14610).
 
+#### Repo scope owner opt-outs (#14139)
+
+The `ripr check --format` repo formats
+`repo-exposure-json`, `repo-exposure-summary-json`, `repo-exposure-md`,
+`repo-seams-json`, `repo-seams-md`, `repo-badge-json` and `repo-badge-shields`
+withhold every seam whose owner function carries the attribute. The decision is
+the same parser-backed recognizer, read once when the seam is extracted and
+carried with the seam through the classified seam caches; the cache key's
+`files_content_hash` covers the attribute's bytes, so adding or removing it
+never replays the other state. A withheld seam is removed from the format's
+`seams` list and from every count derived from it (`metrics`, class counts,
+`unsuppressed_exposure_gaps`, `top_files`, the badge count), so baselines and
+`ripr gate --repo-exposure` read the same inventory. It is not reclassified.
+The JSON formats add one top-level member, emitted only when at least one seam
+was withheld, so a workspace without the attribute keeps byte-identical repo
+output and no schema version changes:
+
+```json
+"owner_opt_outs": {"withheld": 2, "reason": "owner_mutants_skip"}
+```
+
+`withheld` counts seams (not findings or canonical gaps). The Markdown formats
+print one `Withheld by owner opt-out (owner_mutants_skip): N seam(s) ...` line
+under the summary table (`repo-exposure-md`) or the seam total
+(`repo-seams-md`). The repo badges withhold the seams from their count and add
+no member, like the diff-scope badges. A seam-limit cut
+(`RIPR_REPO_EXPOSURE_SEAM_LIMIT`) is applied before withholding, so its
+`seams_analyzed` counts withheld seams too.
+
 Surfaces that still report withheld findings (not yet wired to the opt-out):
-MCP gaps and repair cards; `ripr explain`; and the repo-scope formats
-(`repo-*`), which do not read the attribute at all. The canonical next-action stop
+MCP gaps and repair cards; `ripr explain`; and the repo-scope producers outside
+`ripr check --format repo-*` (`repo-sarif`, `repo-sarif-compact`,
+`agent-seam-packets-json`, and the repo-exposure artifacts
+written by `ripr pilot` and the agent workflow snapshots), which keep every
+seam and carry no `owner_opt_outs` member. The canonical next-action stop
 case for a run whose every finding is withheld stays `suppressed_by_policy`;
 the human `Safe next action` line names the owner opt-out.
 
