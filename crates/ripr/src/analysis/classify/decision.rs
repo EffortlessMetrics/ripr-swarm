@@ -255,10 +255,23 @@ impl AssertKind {
             .any(|(_, needle)| body.contains(needle))
     }
 
+    /// The expression signals match whole code tokens (#14875): `async`,
+    /// `await`, and a `spawn` or `spawn_*` name (`spawn_blocking`,
+    /// `spawn_local`). `respawn_limit`, `awaiting_ack` and a `"async"`
+    /// string do not mark a task boundary.
     fn matches_in_expression(expression: &str) -> bool {
-        Self::EXPRESSION_SIGNALS
-            .iter()
-            .any(|(_, needle)| expression.contains(needle))
+        let masked = crate::analysis::extract::mask_comments_and_strings(expression);
+        masked
+            .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .any(|token| {
+                Self::EXPRESSION_SIGNALS.iter().any(|(kind, needle)| {
+                    token == *needle
+                        || (*kind == Self::SpawnKeyword
+                            && token
+                                .strip_prefix(needle)
+                                .is_some_and(|rest| rest.starts_with('_')))
+                })
+            })
     }
 }
 
@@ -1593,14 +1606,9 @@ mod tests {
     }
 
     #[test]
-    fn assert_kind_matches_exactly_the_former_body_and_expression_predicates() {
+    fn assert_kind_matches_exactly_the_former_body_predicate() {
         fn legacy_test_body(body: &str) -> bool {
             body.contains("fixture") || body.contains("builder") || body.contains("arb_")
-        }
-        fn legacy_expression(expression: &str) -> bool {
-            expression.contains("async")
-                || expression.contains("spawn")
-                || expression.contains("await")
         }
         let bodies = [
             "let input = load_fixture();",
@@ -1617,17 +1625,41 @@ mod tests {
                 "body: {body}"
             );
         }
-        let expressions = [
+    }
+
+    /// #14875: an expression marks a task boundary only through a whole
+    /// `async`/`await` token or a `spawn`/`spawn_*` name, never through a
+    /// longer identifier, a string or a comment that contains the word.
+    #[test]
+    fn async_boundary_signals_match_whole_code_tokens() {
+        for expression in [
             "async fn run() {}",
+            "async move { work() }",
             "task::spawn(future)",
+            "std::thread::spawn(|| work())",
+            "tokio::task::spawn_blocking(work)",
+            "spawn_local(fut)",
             "value.await",
-            "plain expression",
+            "fetch().await?",
             "async spawn await",
-        ];
-        for expression in expressions {
-            assert_eq!(
+        ] {
+            assert!(
                 super::AssertKind::matches_in_expression(expression),
-                legacy_expression(expression),
+                "expression: {expression}"
+            );
+        }
+        for expression in [
+            "plain expression",
+            "s.respawn_limit > n",
+            "self.asynchronous_mode",
+            "awaiting_ack == 0",
+            "spawned_count + 1",
+            "spawner.len()",
+            "log(\"async done\")",
+            "x > 1 // await later",
+        ] {
+            assert!(
+                !super::AssertKind::matches_in_expression(expression),
                 "expression: {expression}"
             );
         }
