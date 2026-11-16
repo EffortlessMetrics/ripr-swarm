@@ -446,20 +446,21 @@ the stub producer refuses them.
 The check pipeline runs that same `--at` resolver for the selected finding
 before rendering (#5471), with the configuration `ripr agent stub` loads for
 the same root. For a file under the root and a `--kind`, which the printed
-route always carries, that resolver reads the seams of
-that one file from a parse of the file alone, with no workspace index, test
-evidence, or seam classification: `check` already judged the location a gap,
-so the stub is not re-judged by a second classifier. (A bare `--at`, with no
-finding vouching for the location, classifies that one file and tries only
-its reported gaps.) Candidates are the seams
+route always carries, candidate selection reads the seams of that one file
+from a parse of the file alone, with no workspace index, test evidence, or
+seam classification used to pick the seam. Once selected, the exact classified
+entry owns placement and its refusals, including integration-file targets and
+unresolved cross-language targets, so the printed route and the command agree.
+(A bare `--at`, with no finding vouching for the location, classifies that one
+file and tries only its reported gaps.) Candidates are the seams
 on the finding line, then the seams in the same function nearest first,
 limited to seams whose kind matches `--kind` (the one seam kind each of the
 four families names: `predicate` boundary, `return_value`, `error_path` error
 variant, `match_arm`), so a seam of another kind never answers for the
 finding. Two equally near seams of that kind whose source spans do not nest
-(`a > 10 && b > 20`) are refused with their seam IDs rather than guessed, and
-the stub is placed inline (integration-file placement needs classified
-evidence and stays with `--seam-id`). The block is printed only when the
+(`a > 10 && b > 20`) are refused with their seam IDs rather than guessed. The
+stub then follows the selected classified entry's inline or integration-file
+placement. The block is printed only when the
 resolver produces a stub. When it refuses, the block is replaced by one line,
 `No test stub here: <reason>`, naming the producer's refusal. When that
 finding also prints no repair start, one further line follows (#10710):

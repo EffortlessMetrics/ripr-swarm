@@ -293,10 +293,11 @@ To go from one Rust `ripr check` finding to a test in one step, run
 it (or `--seam-id ID`). `--kind` is the finding's probe family; only seams of
 that kind are tried, so it picks the seam the finding reported when its line
 holds several, and two separate seams of that kind on one line are refused
-with their seam IDs. With `--at` and `--kind` the stub
-is read from that one file's seams without using classification to pick the
-seam, and placed inline. After selection the command looks up the inventory
-grip so JSON and human output can disclose it: a strongly_gripped seam stays
+with their seam IDs. With `--at` and `--kind`, selection reads that one file's seams without using
+classification to pick the seam. The exact classified entry then owns
+placement and refusals, including integration-file targets and unresolved
+cross-language targets. The command also uses its inventory grip so JSON and
+human output can disclose it: a strongly_gripped seam stays
 `state: ready` (exit 0) and the disclosure names the real reason — the seam is
 exposed because its tests already discriminate it, so a stub would add
 nothing; only a class a user severity actually disables is described as

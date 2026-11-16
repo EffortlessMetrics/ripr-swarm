@@ -8,6 +8,10 @@ struct Fixture(PathBuf);
 
 impl Fixture {
     fn new(source: &str, before: &str, after: &str) -> Result<Self, String> {
+        Self::new_at("src/lib.rs", source, before, after)
+    }
+
+    fn new_at(file: &str, source: &str, before: &str, after: &str) -> Result<Self, String> {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|error| error.to_string())?
@@ -20,10 +24,10 @@ impl Fixture {
         std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
         let fixture = Self(root);
         fixture.write("Cargo.toml", "[package]\nname = \"stub_inventory\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n")?;
-        fixture.write("src/lib.rs", source)?;
+        fixture.write(file, source)?;
         fixture.write(
             "change.patch",
-            &format!("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +2 @@\n-{before}\n+{after}\n"),
+            &format!("diff --git a/{file} b/{file}\n--- a/{file}\n+++ b/{file}\n@@ -2 +2 @@\n-{before}\n+{after}\n"),
         )?;
         Ok(fixture)
     }
@@ -42,13 +46,14 @@ impl Fixture {
             diff_file: Some(self.0.join("change.patch")),
             ..Default::default()
         })?;
-        output
-            .findings
-            .into_iter()
+        let findings = output.findings;
+        findings
+            .iter()
             .find(|finding| {
                 finding.probe.family.as_str() == family && finding.class != ExposureClass::Exposed
             })
-            .ok_or_else(|| format!("fixture produced no non-exposed {family} finding"))
+            .cloned()
+            .ok_or_else(|| format!("fixture produced no non-exposed {family} finding: {findings:?}"))
     }
 
     fn explicit(&self, family: &str) -> Result<TestStubResolution, String> {
@@ -83,7 +88,7 @@ impl Drop for LookupCount {
 }
 
 #[test]
-fn nonboundary_route_skips_inventory_but_explicit_command_keeps_disclosure() -> Result<(), String> {
+fn nonboundary_route_and_explicit_command_share_classified_placement() -> Result<(), String> {
     for (source, before, after, family) in [
         (
             "pub fn amount(value: i32) -> i32 {\n    value + 1\n}\n",
@@ -105,8 +110,8 @@ fn nonboundary_route_skips_inventory_but_explicit_command_keeps_disclosure() -> 
             .ok_or("real non-predicate finding did not resolve")?;
         assert_eq!(
             calls.get(),
-            0,
-            "non-predicate guidance unexpectedly loaded the full inventory"
+            1,
+            "non-predicate route must share the classified placement lookup"
         );
         assert_eq!(route.finding_id, finding.id);
         assert!(
@@ -117,8 +122,8 @@ fn nonboundary_route_skips_inventory_but_explicit_command_keeps_disclosure() -> 
         let explicit = fixture.explicit(family)?;
         assert_eq!(
             calls.get(),
-            1,
-            "explicit stub must still obtain its class disclosure"
+            2,
+            "explicit stub must independently obtain its class disclosure"
         );
         assert!(explicit.outcome.is_ok(), "{:?}", explicit.outcome);
         assert!(
@@ -208,6 +213,47 @@ fn predicate_inventory_still_sees_a_second_stronger_test() -> Result<(), String>
         "second observer was omitted"
     );
     assert!(explicit.grip_class.is_some());
+    Ok(())
+}
+
+#[test]
+fn kinded_route_and_explicit_command_share_cross_language_refusal() -> Result<(), String> {
+    let file = "src/ffi/bridge.rs";
+    let fixture = Fixture::new_at(
+        file,
+        "pub fn discount(price: u32, qty: u32) -> u32 {\n    if qty > 10 { price * 2 } else { price }\n}\n",
+        "    if qty >= 10 { price * 2 } else { price }",
+        "    if qty > 10 { price * 2 } else { price }",
+    )?;
+    fixture.write(
+        "src/lib.rs",
+        "#[path = \"ffi/bridge.rs\"]\npub mod bridge;\n",
+    )?;
+    // SameTestFile resolves oracle visibility but supplies no direct/helper
+    // Rust target context, so the classified resolver refuses CrossLanguage.
+    fixture.write(
+        "tests/bridge_test.rs",
+        "#[test]\nfn companion_smoke() {\n    assert_eq!(1, 1);\n}\n",
+    )?;
+    let finding = fixture.finding("predicate")?;
+    let selector = TestStubSelector::parse_at(&format!("{file}:2"))?.with_kind("predicate")?;
+    let explicit = resolve_test_stub(&fixture.0, &RiprConfig::default(), &selector)
+        .map_err(|error| format!("{error:?}"))?;
+    assert!(
+        matches!(explicit.outcome, Err(TestStubRefusal::CrossLanguage)),
+        "fixture must reach the classified cross-language refusal: {explicit:?}"
+    );
+
+    let route = stub_route_for_finding(&fixture.0, &RiprConfig::default(), &finding, &mut None)
+        .ok_or("cross-language finding lost its route decision")?;
+    assert!(
+        matches!(
+            route.decision,
+            StubRouteDecision::Refused { ref reason }
+                if reason == TestStubRefusal::CrossLanguage.reason()
+        ),
+        "printed route must share the explicit command's refusal: {route:?}"
+    );
     Ok(())
 }
 
