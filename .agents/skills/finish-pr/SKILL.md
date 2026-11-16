@@ -55,15 +55,19 @@ Do not read protection or ruleset settings or credential values for routine
 PR progression. Inspect exact-head PR-visible checks, review and merge state;
 unknown checks are not passed. A settings-read 403 is not a blanket blocker or
 a reason to request broader access. An ordinary PR/check read failure is a
-separate evidence gap. After required proof and review, use an ordinary protected
-squash with the exact current PR head supplied as the expected SHA. Verify the current required
+separate evidence gap. After required proof and review, the native merge queue is the installed landing
+route for ordinary PRs; use the direct expected-head squash only where the queue
+route is genuinely not in force or a refusal has been reconciled as a supported
+fallback, and never as a bypass. Verify the current required
 Result and all other applicable checks; do not arm auto-merge or retry without
 reconciling an uncertain outcome. Check observations and mutation are not
 atomic, so retain native enforcement. Report a rejection without guessing its
 cause; never bypass enforcement or change settings.
 
-For the audited heavy Rust qualification route, use `scripts/guarded_merge.py`
-for the expected-head squash after completing that final judgment. It does not
+For the audited heavy Rust qualification route, `scripts/guarded_merge.py` is
+the expected-head squash path only where the queue route is genuinely not in
+force or a refusal has been reconciled as a supported fallback, and never as a
+bypass; use it after completing that final judgment. It does not
 establish substantive review or every other gate. A guard refusal, including
 failed or ambiguous evidence, remains blocked until the evidence is reconciled;
 do not treat it as permission to use another merge path. Before invoking, compare the
@@ -114,7 +118,7 @@ to bypass binding or duplicate a queued/running current-subject request.
    - the ordinary squash result is the combined-tree subject.
 10. Do not update a behind-only branch. Unrelated movement on `main` is normal and does not require restacking, force-pushing, or rerunning unaffected proof. Reconcile only an actual conflict, explicit stack change, material prerequisite change, failed combined-tree proof, or exact-base policy that applies to this candidate.
 11. Before spending time on conflict repair, re-run the claim-identity search. When upstream or another PR already delivered the same claim, stop, compare for unique residuals, record the winning implementation, and close or disposition the duplicate rather than resolving a dead candidate.
-12. Select the applicable route in [merge flow](../../../docs/MERGE_FLOW.md). Apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then inspect the existing request and run state for the exact head and subject, and follow the handoff before requesting qualification with `merge-ready`. Applying `merge-ready` requests the required PR qualification (`Ripr Rust Small Result`); it does not enqueue and is not a merge authorization. Never reapply the label over a queued or running current-subject run. A push or material finding returns through that same Draft repair wave, not an immediate re-toggle. After that qualification is green, enqueue the exact head through the native merge queue.
+12. Select the applicable route in [merge flow](../../../docs/MERGE_FLOW.md). Apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then inspect the existing request and run state for the exact head and subject, and follow the handoff before requesting qualification with `merge-ready`. Applying `merge-ready` requests the required PR qualification (`Ripr Rust Small Result`); it does not enqueue and is not a merge authorization. Never reapply the label over a queued or running current-subject run. A push or material finding returns through that same Draft repair wave, not an immediate re-toggle. After that qualification is green, inspect current required proof and findings, make the pre-enqueue judgment, and enqueue the exact head through the native merge queue.
 13. Do not infer review from an empty thread list, reviewer quota/unavailability, or green required checks. Do not infer a human approval requirement or exact cause from `mergeStateStatus: BLOCKED`; inspect available PR/check evidence and report what is known. Do not query settings for routine diagnosis.
 14. Follow [merge flow](../../../docs/MERGE_FLOW.md): applying `merge-ready` requests the required PR qualification (`Ripr Rust Small Result`); it does not enqueue and is not a landing authorization. After that qualification is green, inspect current required proof and findings, make the pre-enqueue judgment, and enqueue the exact head through the native merge queue; do not substitute generic auto-merge. Preserve required checks and approvals. When GitHub owns the next transition, return an in-flight result instead of polling unchanged state. The parent goal may advance another independent claim while this PR waits.
 15. Merge ordinary `ripr-swarm` development PRs with the repository's protected squash method. Exact history-preserving source-integration transactions are a separate controlled path and follow their governing issue instead of this rule.
