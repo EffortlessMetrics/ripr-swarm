@@ -157,6 +157,9 @@ pub(in crate::analysis) struct TransitiveReachIndex<'a> {
 struct WitnessMemo {
     bounded: Mutex<HashMap<String, Option<TransitiveWitness>>>,
     deep: Mutex<HashMap<String, Option<TransitiveWitness>>>,
+    /// Searches actually run, across both memos (test builds only).
+    #[cfg(test)]
+    computed: std::sync::atomic::AtomicUsize,
 }
 
 impl WitnessMemo {
@@ -164,6 +167,7 @@ impl WitnessMemo {
     /// lock: the search is pure, so a racing worker can only insert the same
     /// value, and a nested search never waits on this memo.
     fn get_or_compute(
+        &self,
         memo: &Mutex<HashMap<String, Option<TransitiveWitness>>>,
         owner_name: &str,
         compute: impl FnOnce() -> Option<TransitiveWitness>,
@@ -175,6 +179,9 @@ impl WitnessMemo {
         {
             return answer.clone();
         }
+        #[cfg(test)]
+        self.computed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let answer = compute();
         memo.lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -1560,13 +1567,14 @@ impl<'a> TransitiveReachIndex<'a> {
         if owner_name.is_empty() {
             return None;
         }
-        WitnessMemo::get_or_compute(&self.witnesses.bounded, owner_name, || {
-            let reaching = self.graph().names_reaching(owner_name);
-            if reaching.is_empty() {
-                return None;
-            }
-            self.witness_through(owner_name, &reaching)
-        })
+        self.witnesses
+            .get_or_compute(&self.witnesses.bounded, owner_name, || {
+                let reaching = self.graph().names_reaching(owner_name);
+                if reaching.is_empty() {
+                    return None;
+                }
+                self.witness_through(owner_name, &reaching)
+            })
     }
 
     /// Like [`Self::transitive_witness`], but when same-package rivals share
@@ -1676,11 +1684,12 @@ impl<'a> TransitiveReachIndex<'a> {
         if owner_name.is_empty() {
             return None;
         }
-        WitnessMemo::get_or_compute(&self.witnesses.deep, owner_name, || {
-            self.graph().walk_past_bound(owner_name, |deeper| {
-                self.witness_through(owner_name, deeper)
+        self.witnesses
+            .get_or_compute(&self.witnesses.deep, owner_name, || {
+                self.graph().walk_past_bound(owner_name, |deeper| {
+                    self.witness_through(owner_name, deeper)
+                })
             })
-        })
     }
 
     /// Trait-dispatch ambiguity for `owner_name` (RIPR-SPEC-0114, #11719): the
@@ -4307,6 +4316,14 @@ mod tests {
         };
         assert_eq!(entries(&reach.witnesses.bounded), owners.len());
         assert_eq!(entries(&reach.witnesses.deep), owners.len());
+        // One search per (owner, kind): the second round ran none.
+        assert_eq!(
+            reach
+                .witnesses
+                .computed
+                .load(std::sync::atomic::Ordering::Relaxed),
+            2 * owners.len()
+        );
     }
 
     // (a) Candidate path found -> witness captured naming the test + entry symbol.
