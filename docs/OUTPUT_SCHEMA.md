@@ -3985,8 +3985,18 @@ removed before the out-of-scope test-file partition; the partition therefore
 cannot reduce it. The fixed `owner_mutants_skip` reason holds while
 the editor supplies no suppression policy (#14610).
 
+The MCP adapter consumes the same set (#14138): `ripr mcp --stdio` serves no
+canonical item for a finding id in `CheckOutput::withheld_finding_ids`. The gap
+list and `ripr://snapshot/{snapshot_id}` resource disclose
+`owner_opt_outs: {"withheld": N, "reason": "owner_mutants_skip"}` (plus
+`"all_withheld": true` and `clean: false` when no item is left), the refresh and
+status snapshot summaries carry the same object, and a gap, limitation,
+repair-card or repair-start read of a withheld id refuses with the typed
+`owner_opt_out` failure (`data.reason: "owner_mutants_skip"`). See
+`docs/interop/mcp.md`.
+
 Surfaces that still report withheld findings (not yet wired to the opt-out):
-MCP gaps and repair cards; `ripr explain`; and the repo-scope formats
+`ripr explain`; and the repo-scope formats
 (`repo-*`), which do not read the attribute at all. The canonical next-action stop
 case for a run whose every finding is withheld stays `suppressed_by_policy`;
 the human `Safe next action` line names the owner opt-out.

@@ -43,6 +43,7 @@ pub(super) fn failure_vocabulary() -> Vec<&'static str> {
         "analysis_in_flight",
         "stale_snapshot",
         "item_not_found",
+        super::workspace::CODE_OWNER_OPT_OUT,
         super::workspace::CODE_INVALID_ARGUMENT,
         "result_too_large",
         CODE_ATTEMPT_NOT_FOUND,
