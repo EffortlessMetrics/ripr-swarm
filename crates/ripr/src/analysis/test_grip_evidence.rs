@@ -4539,7 +4539,13 @@ fn guarded_call_is_asserted(test: &TestSummary, call: &CallFact, expr: &str) -> 
     };
     let inside = observed_operands().any(|(assertion, operands)| {
         let last = assertion.line + assertion.text.lines().count().saturating_sub(1);
-        (assertion.line..=last).contains(&call.line) && operands.contains(expr)
+        // The call is a whole compared operand (behind at most a path or
+        // a receiver), not buried in an expression that may discard its
+        // result (`f(..) * 0`, `min(f(..), 0)`).
+        (assertion.line..=last).contains(&call.line)
+            && operands
+                .iter()
+                .any(|operand| path_or_receiver_only(operand.trim(), expr))
     });
     if inside {
         return true;
@@ -4568,23 +4574,31 @@ fn guarded_call_is_asserted(test: &TestSummary, call: &CallFact, expr: &str) -> 
     };
     // The whole initializer is this call, behind at most a path or a
     // receiver (`calc.shipping_cost(..)`), never an expression around it.
-    let receiver_only = initializer.strip_suffix(expr).is_some_and(|prefix| {
-        prefix
-            .chars()
-            .all(|ch| ch.is_alphanumeric() || ch == '_' || ch == ':' || ch == '.')
-    });
-    if !receiver_only || !binding_is_stable(body, binding) {
+    if !path_or_receiver_only(initializer, expr) || !binding_is_stable(body, binding) {
         return false;
     }
     observed_operands().any(|(assertion, operands)| {
-        assertion.line > call.line && text_names_ident(&operands, binding)
+        // Comments and strings masked: `200 /* free */` names nothing.
+        let masked =
+            crate::analysis::language::mask_rust_comments_and_strings(&operands.join(", "));
+        assertion.line > call.line && text_names_ident(&masked, binding)
+    })
+}
+
+/// Whether `text` is exactly the call `expr`, behind at most a path or a
+/// receiver (`calc.shipping_cost(..)`, `crate::shipping_cost(..)`).
+fn path_or_receiver_only(text: &str, expr: &str) -> bool {
+    text.strip_suffix(expr).is_some_and(|prefix| {
+        prefix
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || ch == '_' || ch == ':' || ch == '.')
     })
 }
 
 /// The compared operands of an assertion macro: the first two arguments of
 /// an equality assertion, the first of `assert!`. Any other macro shape is
 /// not read.
-fn assertion_operands(text: &str) -> Option<String> {
+fn assertion_operands(text: &str) -> Option<Vec<String>> {
     let open = text.find("!(")?;
     let name = text[..open]
         .rsplit(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
@@ -4597,7 +4611,7 @@ fn assertion_operands(text: &str) -> Option<String> {
     let inner = text[open + 2..].trim_end().trim_end_matches(';').trim_end();
     let inner = inner.strip_suffix(')')?;
     let arguments = split_top_level_commas(inner);
-    (arguments.len() >= operands).then(|| arguments[..operands].join(", "))
+    (arguments.len() >= operands).then(|| arguments[..operands].to_vec())
 }
 
 fn ident_occurrences<'t>(text: &'t str, name: &'t str) -> impl Iterator<Item = usize> + 't {
@@ -4667,9 +4681,28 @@ fn binding_is_stable(body: &str, name: &str) -> bool {
             .iter()
             .any(|op| rest.starts_with(op))
             || (rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>"));
-        let rebinds = ["let ", "for ", "=>", "match "]
-            .iter()
-            .any(|marker| line.contains(marker));
+        // A second binding site: the name inside a `let`/`for` pattern, a
+        // match-arm pattern, or a closure's parameters. A read on a `let`
+        // line's right-hand side (`let free = f(express);`) is not one.
+        let column = at - line_start;
+        let in_span = |open: &str, close: &str| {
+            line.match_indices(open).any(|(start, _)| {
+                let from = start + open.len();
+                line[from..]
+                    .find(close)
+                    .is_some_and(|end| (from..from + end).contains(&column))
+            })
+        };
+        let arm_pattern = line.find("=>").is_some_and(|arrow| column < arrow);
+        // A typed name outside its `let` (`fn check(r: u32)`) is a
+        // parameter binding.
+        let typed = rest.starts_with(':') && !rest.starts_with("::");
+        let rebinds = in_span("let ", "=")
+            || in_span("for ", " in ")
+            || arm_pattern
+            || typed
+            || line.contains('|')
+            || line.contains("fn ");
         let odd_prefix = ["mut", "|", ".", "{", "&mut"]
             .iter()
             .any(|marker| prefix.ends_with(marker));

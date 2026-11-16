@@ -503,3 +503,47 @@ fn a_commented_wrapped_guard_is_still_read() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn a_binding_named_only_in_an_operand_comment_is_not_observed() -> Result<(), String> {
+    let seam = TempRepo::create(
+        SOURCE,
+        "let free = shipping_cost(100, 5000, false);\n    assert_eq!(shipping_cost(100, 5000, true), 200 /* free */);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "{seam}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_stable_guard_local_read_on_a_result_binding_line_holds() -> Result<(), String> {
+    let seam = TempRepo::create(
+        SOURCE,
+        "let express = false;\n    let free = shipping_cost(100, 5000, express);\n    assert_eq!(free, 0);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(field(&seam, "/evidence/activate"), Some("yes"), "{seam}");
+    Ok(())
+}
+
+#[test]
+fn a_parameter_shadowing_the_binding_or_a_buried_call_is_not_observed() -> Result<(), String> {
+    for body in [
+        "let r = shipping_cost(100, 5000, false);\n    fn check(r: u32) { assert_eq!(r, 0); }\n    assert_eq!(shipping_cost(100, 5000, true), 200);",
+        "let r = shipping_cost(100, 5000, false);\n    [(1u32, 0u32)].iter().for_each(|(_, r)| assert_eq!(*r, 0));\n    assert_eq!(shipping_cost(100, 5000, true), 200);",
+        "assert_eq!(shipping_cost(100, 5000, false) * 0, 0);\n    assert_eq!(shipping_cost(100, 5000, true), 200);",
+        "assert_eq!(std::cmp::min(shipping_cost(100, 5000, false), 0), 0);\n    assert_eq!(shipping_cost(100, 5000, true), 200);",
+    ] {
+        let seam = TempRepo::create(SOURCE, body)?.comparison_seam()?;
+        assert_eq!(
+            field(&seam, "/evidence/activate"),
+            Some("unknown"),
+            "{body}: {seam}"
+        );
+    }
+    Ok(())
+}
