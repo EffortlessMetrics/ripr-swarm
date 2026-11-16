@@ -250,8 +250,8 @@ index 1111111..2222222 100644
         !matches!(finding.class, ExposureClass::Exposed),
         "{finding:?}"
     );
-    // The same old owner with the comment kept as its own unchanged line:
-    // the tail pairs positionally with `-a`, but the owner also lost a line.
+    // The early return deleted in the same block as the replaced tail: the
+    // block is uneven, so nothing pairs with `a`.
     let lib = source(
         "pub fn f(a: i32) -> i32 {\n    a\n}",
         "assert_eq!(f(5), 5);",
@@ -269,6 +269,31 @@ index 1111111..2222222 100644
 ";
     let findings = TempRepo::create(&lib, patch)?.findings()?;
     let finding = tail_finding(&findings, 2, "a")?;
+    assert!(
+        !matches!(finding.class, ExposureClass::Exposed),
+        "{finding:?}"
+    );
+    // The early return deleted in its own block, apart from an even `-a` to
+    // `a` replacement: the tail pairs with `-a` exactly, and only the other
+    // removed line in the owner shows the old owner held more.
+    let lib = source(
+        "pub fn f(a: i32) -> i32 {\n    // c\n    a\n}",
+        "assert_eq!(f(5), 5);",
+    );
+    let patch = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,4 @@
+ pub fn f(a: i32) -> i32 {
+-    if a == 5 { return 5; }
+     // c
+-    -a
++    a
+ }
+";
+    let findings = TempRepo::create(&lib, patch)?.findings()?;
+    let finding = tail_finding(&findings, 3, "a")?;
     assert!(
         !matches!(finding.class, ExposureClass::Exposed),
         "{finding:?}"
