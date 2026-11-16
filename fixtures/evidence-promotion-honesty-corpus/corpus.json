@@ -203,7 +203,8 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-neutral.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-test-local-rival-bare-use.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-test-local-rival-glob-use.json",
-    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json"
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-guarded-boundary-guard-missing.json"
   ],
   "cases": [
     {
@@ -11919,6 +11920,32 @@
           "test": "pinned_even",
           "file": "src/lib.rs",
           "oracle_strength": "none",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_guarded_boundary_guard_missing_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-guarded-boundary-guard-missing.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/guarded-boundary-guard-missing",
+      "vector": "repo_exposure_boundary_call_that_misses_its_bool_guard_cannot_activate_the_guarded_comparison",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::shipping_cost",
+          "expression": "order_cents >= FREE_OVER_CENTS",
+          "grip_class": "activation_unknown",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::shipping_cost",
+          "expression": "order_cents >= FREE_OVER_CENTS",
+          "test": "express_at_the_threshold",
+          "file": "src/lib.rs",
+          "oracle_strength": "strong",
           "relation_reason": "direct_owner_call"
         }
       ]
