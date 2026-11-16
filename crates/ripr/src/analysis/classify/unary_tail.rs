@@ -9,8 +9,10 @@
 //! The decision here does not trust the probe's paired removed line
 //! (`probe.before`), which can be any removed line the diff pairs by position
 //! (#14852). It reads the diff itself: inside the owner's span the diff must
-//! replace exactly the tail line and nothing else, so the base-side owner is
-//! the current owner with that one line restored. Both versions are parsed,
+//! replace exactly the tail line and nothing else, and the base-side item
+//! that [`crate::analysis::diff::verified_base_owner`] establishes as the same
+//! function (not `cfg`-gated) must be the current item with that one line
+//! restored. Both versions are parsed,
 //! and each must be a statement-free body whose tail is the parameter name,
 //! bare on one side and under the operator on the other.
 //!
@@ -126,7 +128,7 @@ pub(in crate::analysis) fn unary_tail_change(
     *baseline_lines.get_mut(offset)? = old_line.to_string();
     let baseline = baseline_lines.join("\n");
 
-    if !owner_identity_is_unchanged(owner, changed, index) {
+    if !base_item_is_the_restored_owner(owner, changed, index, line, current_line, old_line) {
         return None;
     }
     let current = OwnerTail::read(owner.body.as_str(), offset)?;
@@ -160,87 +162,48 @@ pub(in crate::analysis) fn unary_tail_change(
     })
 }
 
-/// Interim base-owner identity guard (#14815 review F1). The line pairing
+/// The base-side owner is the same item (#14815 review F1). The line pairing
 /// inside the owner's span says nothing about which function the removed
 /// line belonged to: swapping two same-name functions between modules, or
 /// swapping their `#[cfg]`s, replaces one line inside the current owner's
-/// span while the old line came from the other function. So the reading
-/// requires that the file declares exactly one `fn` of the owner's name on
-/// both the current and the reconstructed base side, and that no added or
-/// removed line touches the header (from its first attribute to its opening
-/// brace) of the owner or of any enclosing item. Anything unreadable refuses.
-fn owner_identity_is_unchanged(
+/// span while the old line came from the other function. The shared owner
+/// [`crate::analysis::diff::verified_base_owner`] establishes the base-side
+/// item (same qualified path and attributes, unique under it, no changed
+/// header); a `cfg`-gated item refuses, since a test may run a twin compiled
+/// in its place. The verified base item must then be exactly the current
+/// item with the one replaced tail line restored.
+fn base_item_is_the_restored_owner(
     owner: &FunctionSummary,
     changed: &ChangedFile,
     index: &RustIndex,
+    line: usize,
+    current_line: &str,
+    old_line: &str,
 ) -> bool {
     let Some(facts) = crate::analysis::rust_index::find_file_facts(index, &owner.file) else {
         return false;
     };
-    let source: &str = &facts.source;
-    let Some(old_source) = crate::analysis::diff::reconstruct_old_source(source, changed) else {
+    let Some(base) = crate::analysis::diff::verified_base_owner(
+        &facts.source,
+        changed,
+        &owner.name,
+        owner.start_line,
+        owner.end_line,
+    ) else {
         return false;
     };
-    let Some(parse) = parse_clean_source_file(source) else {
-        return false;
-    };
-    let Some(old_parse) = parse_clean_source_file(&old_source) else {
-        return false;
-    };
-    let named = |function: &ast::Fn| {
-        function
-            .name()
-            .is_some_and(|name| name.text() == owner.name.as_str())
-    };
-    let functions: Vec<ast::Fn> = parse
-        .tree()
-        .syntax()
-        .descendants()
-        .filter_map(ast::Fn::cast)
-        .filter(named)
-        .collect();
-    let old_count = old_parse
-        .tree()
-        .syntax()
-        .descendants()
-        .filter_map(ast::Fn::cast)
-        .filter(named)
-        .count();
-    let [function] = functions.as_slice() else {
-        return false;
-    };
-    if old_count != 1 {
+    if base.cfg_gated {
         return false;
     }
-    let line_of =
-        |offset: usize| -> Option<usize> { Some(source.get(..offset)?.matches('\n').count() + 1) };
-    // Header spans of the owner and each enclosing item: first line of the
-    // node (attributes included) through the line of its first `{`.
-    let mut headers = Vec::new();
-    for node in
-        std::iter::once(function.syntax().clone()).chain(function.syntax().ancestors().skip(1))
-    {
-        if ast::SourceFile::can_cast(node.kind()) {
-            break;
-        }
-        let start = usize::from(node.text_range().start());
-        let text = node.text().to_string();
-        let Some(brace) = text.find('{') else {
-            // An enclosing item with no block (it cannot hold the owner)
-            // or an unreadable shape: refuse.
-            return false;
-        };
-        let (Some(first), Some(last)) = (line_of(start), line_of(start + brace)) else {
-            return false;
-        };
-        headers.push(first..=last);
+    let Some(offset) = line.checked_sub(base.new_first_line) else {
+        return false;
+    };
+    let mut restored: Vec<&str> = base.new_text.split('\n').collect();
+    match restored.get_mut(offset) {
+        Some(slot) if slot.trim_end_matches('\r') == current_line => *slot = old_line,
+        _ => return false,
     }
-    let touches = |line: usize| headers.iter().any(|span| span.contains(&line));
-    !changed
-        .added_lines
-        .iter()
-        .chain(&changed.removed_lines)
-        .any(|line| touches(line.new_side_line))
+    restored.join("\n") == base.old_text
 }
 
 /// The operator and whether `new` holds it, when `old` and `new` differ by
