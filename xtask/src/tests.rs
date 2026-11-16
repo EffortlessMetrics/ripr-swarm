@@ -6819,6 +6819,8 @@ fn rust_conversion_candidates_derive_retention_from_the_enforced_owner() -> Resu
         "tools/test-activate-rust.sh",
         "tools/ci/shard-verifier-artifact.py",
         "tools/ci/test_shard_verifier_artifact.py",
+        "tools/ci/main-qualification.py",
+        "tools/ci/test_main_qualification.py",
     ] {
         let enforced_reason = non_rust_programming_retention_reason(path)
             .ok_or_else(|| format!("approved boundary must be enforced-retained: {path}"))?;
@@ -6871,6 +6873,11 @@ fn rust_conversion_candidates_keep_neighboring_unapproved_paths_actionable() -> 
         ".agents/skills/finish-pr/scripts/other.rb",
         "tools/python/installed-provider-recovery/other.py",
         "tools/python/other.py",
+        "tools/ci/main-qualification-extra.py",
+        "tools/ci/test_main_qualification_extra.py",
+        "tools/ci/nested/main-qualification.py",
+        "tools/ci/main-qualification.py.extra.py",
+        "tools/ci/main-qualification.sh",
         "benchmarks/muse-plugin/fixtures/typescript-weak-assertion/src/other.rb",
         "scripts/check.py",
     ] {
