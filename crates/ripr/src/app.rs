@@ -76,8 +76,11 @@ pub use check::{check_workspace, check_workspace_repo, repo_seam_inventory_input
 /// `crate::app::PERL_FACT_PACKET_SCHEMA`.
 pub(crate) const PERL_FACT_PACKET_SCHEMA: &str = "ripr-perl-facts-v1";
 /// Consumer-side v2 wire schema accepted alongside v1 during the #3216 train.
+/// Only the lang-perl packet reader (and unit tests) consult it (#14796).
+#[cfg(any(test, feature = "lang-perl"))]
 pub(crate) const PERL_FACT_PACKET_V2_SCHEMA: &str = "ripr-perl-facts-v2";
 
+#[cfg(any(test, feature = "lang-perl"))]
 pub(crate) fn is_supported_perl_fact_packet_schema(schema: &str) -> bool {
     matches!(schema, PERL_FACT_PACKET_SCHEMA | PERL_FACT_PACKET_V2_SCHEMA)
 }
