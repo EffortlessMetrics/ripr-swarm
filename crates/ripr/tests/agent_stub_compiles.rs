@@ -3239,16 +3239,19 @@ fn stub_for_an_existing_integration_target_is_unique_within_that_file() -> Resul
     }
 
     // A same-named test already present in the target is not shadowed.
-    std::fs::write(
-        root.join("tests/discount.rs"),
-        format!("{EXISTING_TEST}\n#[test]\nfn {name}() {{}}\n"),
-    )
-    .map_err(|error| error.to_string())?;
+    let collided = format!("{EXISTING_TEST}\n#[test]\nfn {name}() {{}}\n");
+    std::fs::write(root.join("tests/discount.rs"), &collided).map_err(|error| error.to_string())?;
     let third = stub_json(&root, "src/lib.rs:2")?;
     let written = std::fs::read_to_string(root.join("tests/discount.rs"))
         .map_err(|error| error.to_string())?;
     assert_eq!(count_fn(&written, &name), 1, "collision:\n{written}");
-    if third["refused"] != true && third["already_present"] != true {
+    // The colliding fn has a different body, so a byte-identical render is
+    // not on disk: `already_present` would be a dishonest answer here, and
+    // the old `&& already_present != true` guard skipped the name check
+    // entirely when it was set. The honest outcomes are a refusal or a
+    // distinct name, and a distinct name must not be the colliding one.
+    assert_ne!(third["already_present"], true, "{third}");
+    if third["refused"] != true {
         assert_ne!(third["test_name"].as_str(), Some(name.as_str()), "{third}");
     }
     scratch.cleanup()?;
