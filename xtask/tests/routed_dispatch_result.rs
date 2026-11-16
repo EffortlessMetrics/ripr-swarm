@@ -13,6 +13,10 @@ const LIVE_GRAPHQL: &str = r#"{"data":{"repository":{"pullRequest":{"headRefOid"
 
 const GROUP_HEAD: &str = "cccccccccccccccccccccccccccccccccccccccc";
 const PR_HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+/// The admitted merge-group constituents the eligibility recheck binds to. A
+/// single-entry group is the production shape (`min_entries_to_merge=1`), and
+/// its tip must be the PR under test.
+const CONSTITUENTS: &str = r#"[{"pr":10,"head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","queue_entry":"entry-10","docs_only":false}]"#;
 const REPOSITORY: &str = "EffortlessMetrics/ripr-swarm";
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -174,6 +178,7 @@ fn run_result(
         ("GITHUB_RUN_ID", "100"),
         ("GITHUB_RUN_ATTEMPT", "1"),
         ("EXPECTED_QUEUE_ENTRY", "entry-10"),
+        ("CONSTITUENTS", CONSTITUENTS),
         ("MOCK_PR", LIVE_PR),
         ("MOCK_GRAPHQL", LIVE_GRAPHQL),
         ("GROUP_HEAD_SHA", GROUP_HEAD),
@@ -1023,7 +1028,7 @@ fn retrying_only_the_second_pr_read_exposes_the_stale_review_false_green() -> Re
     assert_eq!(source.matches(refusal).count(), 1);
     let only_pr_retry = source.replace(
         refusal,
-        "                if [ \"$retry_pr_read\" = true ]; then retry_pr_read=false; sleep 1; read_pr; return; fi\n                pr=; return \"$native\"\n",
+        "                if [ \"$retry_pr_read\" = true ]; then retry_pr_read=false; sleep 1; read_pr \"$target_pr\" \"$target_head\"; return; fi\n                pr=; return \"$native\"\n",
     );
     let blocked = LIVE_GRAPHQL.replace("APPROVED", "CHANGES_REQUESTED");
     let prs = [

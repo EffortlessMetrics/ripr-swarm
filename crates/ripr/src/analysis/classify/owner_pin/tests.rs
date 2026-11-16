@@ -3929,23 +3929,41 @@ fn a_test_case_table_with_literal_rows_runs_the_body_once_per_row() {
             "#[test_case(4, 12)]\n#[serial_test::serial]",
         ),
         ("extern crate test_case;", "#[test_case::test_case(4, 12)]"),
+        // A `; "name"` suffix only names the generated test.
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12 ; \"four\")]",
+        ),
     ] {
         let tests = case_test(prelude, attributes, params, "weighs");
         assert_eq!(test_case_admitted(&tests).len(), 1, "{tests}");
     }
     for (prelude, attributes, parameters, name) in [
         // The `=> expected` form generates its own comparison; `matches`,
-        // `with`, descriptions and the other `test_case` attributes change
-        // what runs.
+        // `with` and the other `test_case` attributes change what runs.
         (
             "use test_case::test_case;",
             "#[test_case(4 => 12)]",
             params,
             "weighs",
         ),
+        // A name that could mark the generated test ignored, or a suffix
+        // that is not one string literal.
         (
             "use test_case::test_case;",
-            "#[test_case(4, 12 ; \"four\")]",
+            "#[test_case(4, 12 ; \"ignore four\")]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12 ; \"inconclusive\")]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12 ; four)]",
             params,
             "weighs",
         ),
@@ -14651,6 +14669,17 @@ fn rename_memo_keys_that_collide_still_answer_per_file() {
         assert!(file_renames_to(&other, "Fxo"));
         assert!(!file_renames_to(&renames, "Fxo"));
     }
+}
+
+/// #14089: the word before `[` was measured with an ASCII-only predicate, so
+/// a non-ASCII identifier char was the char found and the slice started one
+/// byte later, inside it. The identifier now stays whole.
+#[test]
+fn index_operand_reads_a_non_ascii_indexed_place() {
+    assert!(index_operand("größe["));
+    assert!(index_operand("values["));
+    assert!(!index_operand("return ["));
+    assert!(!index_operand("grö ["));
 }
 
 /// #13703: a file read proves the roots of only the rooted spellings the

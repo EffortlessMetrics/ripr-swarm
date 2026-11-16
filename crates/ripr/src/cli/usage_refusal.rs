@@ -110,6 +110,13 @@ pub(crate) fn note_missing_value(flag: &str, message: &str) {
     });
 }
 
+/// The refusal for a value flag given an empty value, typed like a missing
+/// one. Command parsers keep their own wording; only the code travels.
+pub(crate) fn empty_value(flag: &str, message: &str) -> String {
+    note_missing_value(flag, message);
+    message.to_string()
+}
+
 /// Note a value its flag cannot take. The token is the value as typed; an
 /// empty value has no token to name. The boundary fills the help route.
 pub(crate) fn note_invalid_value(value: &str, message: &str) {
@@ -165,10 +172,13 @@ fn is_json_format(value: &str) -> bool {
 /// The command path argv names, when it has help: the two leading command
 /// words (`agent status`) when that path has its own help, else the first.
 fn argv_command(args: &[String]) -> Option<String> {
+    // Dispatch strips the global `-v`/`--verbose` anywhere in argv, so the
+    // command path is read the same way (`ripr agent -v status`).
     let mut words = args
         .iter()
         .skip(1)
         .map(String::as_str)
+        .filter(|arg| *arg != "-v" && *arg != "--verbose")
         .skip_while(|arg| arg.starts_with('-'))
         .take_while(|arg| !arg.starts_with('-'));
     let first = words.next()?;
@@ -304,6 +314,20 @@ mod tests {
         let document = document_for(&args(&["ripr", "status", "nosuch", "--json"]), &failure)
             .ok_or("the fallback still writes a document")?;
         assert!(document.contains("\"ripr status --help\""), "{document}");
+
+        // The global verbosity flag between command words is not a word.
+        for verbose in ["-v", "--verbose"] {
+            note_missing_value("--attempt", message);
+            let document = document_for(
+                &args(&["ripr", "agent", verbose, "status", "--json", "--attempt"]),
+                &failure,
+            )
+            .ok_or("a verbose run still writes a document")?;
+            assert!(
+                document.contains("\"ripr agent status --help\""),
+                "{verbose}: {document}"
+            );
+        }
         Ok(())
     }
 

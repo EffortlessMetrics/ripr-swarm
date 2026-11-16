@@ -1,4 +1,6 @@
-use super::approx_band::{PythonBandReading, PythonBandVerdict, python_band_reading};
+use super::approx_band::{
+    PythonBandReading, PythonBandSource, PythonBandVerdict, python_band_reading,
+};
 use super::arm_activation;
 use super::assertion_selection::{
     PythonAssertionFocus, PythonAssertionSelection, select_relevant_assertion,
@@ -885,7 +887,10 @@ fn classify_change_for_owner_inner<'a>(
         log_evidence.as_ref(),
         &focus,
         owner,
-        owner_source.unwrap_or(""),
+        PythonBandSource {
+            text: owner_source.unwrap_or(""),
+            sole_line_replacement: no_behavior.sole_line_replacement,
+        },
         &related_candidates,
     )
     // A pinned lambda body edit or dataclass default edit is read by the
@@ -1163,6 +1168,24 @@ fn classify_change_for_owner_inner<'a>(
             )
         })
         .flatten();
+    // #13622: an old-type exact assertion after a raised-type replacement is
+    // recorded as advisory evidence only; it never changes the class here. The
+    // gap-bound repair closure reads it (RIPR-SPEC-0310).
+    let stale_raised_type_pins = if static_limit.is_none()
+        && matches!(family, ProbeFamily::ErrorPath)
+        && !no_behavior.multi_line_def_header_line
+        && exception_variants.is_empty()
+    {
+        super::exception_variant::stale_raised_type_pins(
+            line_text,
+            old_line_text,
+            owner_source,
+            &related_candidates,
+            &focus,
+        )
+    } else {
+        Vec::new()
+    };
     let mut message_pin_downgraded = false;
     // Table-driven expected values that never vary the changed returned
     // operand cannot discriminate `return default` -> `return None` (#6651).
@@ -1206,16 +1229,29 @@ fn classify_change_for_owner_inner<'a>(
     let mut table_downgraded = false;
     // An `approx` band that provably admits both the old and the new result
     // lets a strong assertion pass either way (#9546, RIPR-SPEC-0238 rule 21).
+    // The reading succeeds only on a `return` line or a straight-line body
+    // assignment (#13723), whatever its probe family, and the static-limit
+    // pass lifts the band limit on the same reading, so the gap applies to
+    // every family: gating it on `ReturnValue` credited an absorbed edit to
+    // an assignment as exposed.
     let band_gap = (static_limit.is_none()
-        && matches!(family, ProbeFamily::ReturnValue)
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && guarded_arm_gap.is_none()
         && unvaried_table.is_none()
         && !no_behavior.multi_line_def_header_line)
         .then(|| {
-            match python_band_reading(old_line_text, line_text, owner, &related_candidates, &focus)
-            {
+            match python_band_reading(
+                old_line_text,
+                line_text,
+                owner,
+                PythonBandSource {
+                    text: owner_source.unwrap_or(""),
+                    sole_line_replacement: no_behavior.sole_line_replacement,
+                },
+                &related_candidates,
+                &focus,
+            ) {
                 PythonBandReading::Read(evidence)
                     if evidence.verdict == PythonBandVerdict::Absorbs =>
                 {
@@ -2082,6 +2118,11 @@ fn classify_change_for_owner_inner<'a>(
             ),
         },
         alignment_prep,
+    );
+    evidence.extend(
+        stale_raised_type_pins
+            .iter()
+            .map(crate::analysis::stale_raised_type_pin::StaleRaisedTypePin::evidence_line),
     );
     for candidate in related_candidates {
         let test = candidate.test;

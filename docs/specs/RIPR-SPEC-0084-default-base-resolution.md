@@ -293,6 +293,25 @@ without Git history) and trails the root path. The LSP shows it as a
 root is the part shortened, never the remedy. A short failure message is
 shown unchanged.
 
+### Offline partial clone is not object damage (#14799)
+
+ripr makes no network requests. A blob-filtered (partial) clone stores only
+the contents it checked out, so a diff against an older base makes Git fetch
+the missing contents on demand from the clone's promisor remote. When that
+fetch is refused (`could not fetch <oid> from promisor remote` on a Git
+`fatal:`/`error:` line), the refusal names the partial clone and the
+unreachable, refusing, or object-less remote, and offers re-running where
+Git can reach that remote or analyzing a full clone. It is classified before
+the object-damage repair, because Git's transport line ("Could not read from
+remote repository") would otherwise match a damage marker and send the user
+to `git fsck` for a healthy store. Every ripr Git invocation sets
+`GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=never`, so Git neither prompts
+on the terminal nor opens a Git Credential Manager window; a user-configured
+`GIT_ASKPASS`/`core.askPass` helper is left in place (CI token helpers rely
+on it) and is outside this guarantee. Everyday commands (`doctor`, `check`,
+`pilot`, `first-pr`, `cache status`, `help --json`, `init --ci github`)
+complete with the network sealed.
+
 ### Non-claims
 
 - This spec does NOT auto-run the suggested scope or pick an arbitrary ref.
@@ -396,6 +415,10 @@ shown unchanged.
 - `crates/ripr/src/analysis/diff/load.rs::tests::revision_range_separator_is_read_outside_a_commit_message_search`
 - `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_answers_a_range_before_any_remote_or_spelling_advice`
 - `crates/ripr/tests/cli_smoke.rs::check_and_diff_answer_a_revision_range_as_a_range_not_a_missing_branch`
+- `crates/ripr/src/analysis/diff/load.rs::tests::offline_partial_clone_fetch_is_not_object_damage`
+- `crates/ripr/src/git.rs::tests::git_commands_disable_terminal_and_gcm_credential_prompts`
+- `crates/ripr/tests/cli_smoke/offline_network.rs::offline_partial_clone_names_the_missing_download_not_object_damage`
+- `crates/ripr/tests/cli_smoke/offline_network.rs::everyday_commands_complete_with_the_network_sealed`
 
 ## Implementation Mapping
 
