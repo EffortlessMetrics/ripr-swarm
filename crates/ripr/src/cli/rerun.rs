@@ -538,10 +538,11 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
             RerunSelector::ChangedTest { file, node }
         }
         (Some(_), None, Some(_)) => {
-            return Err(crate::cli::usage_refusal::missing_required(
-                "--gap",
-                "rerun --gap-ledger requires --gap; add `--gap` to the command",
-            ));
+            // Not typed: `--gap` would conflict with `--changed-test`, so the
+            // flag the message names is not an additive repair.
+            return Err(
+                "rerun --gap-ledger requires --gap; add `--gap` to the command".to_string(),
+            );
         }
         (None, Some(canonical_gap_id), Some(gap_ledger)) => RerunSelector::Gap {
             canonical_gap_id,

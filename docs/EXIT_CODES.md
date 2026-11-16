@@ -144,9 +144,9 @@ reached the caller.
   `schema_version`, `tool`, `status: "refused"` and
   `error {code, message, token?, next}`. Exit code and stderr are
   unchanged, and without a JSON request stdout stays empty. Other argv
-  errors keep empty stdout even under a JSON request: the required-flag
-  refusals whose wording #14076 is revising, a value rejected by a command's own parser rather than the shared
-  readers, conflicting flags, and a value rejected outside the shared builder
+  errors keep empty stdout even under a JSON request: required-flag
+  refusals not yet typed (including those #14076 is rewording), a value
+  rejected by a command's own parser rather than the shared readers, conflicting flags, and a value rejected outside the shared builder
   (for example a gate mode); see `docs/OUTPUT_SCHEMA.md`.
   Fresh selector misses also retain producer-owned language limitations for
   that run, with the configured-off or unavailable-binary recovery. These

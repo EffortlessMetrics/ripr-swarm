@@ -263,7 +263,7 @@ fn an_empty_files_entry_under_json_is_an_invalid_value() -> Result<(), String> {
 /// with the flag to add as token and the command's help route as `next`.
 #[test]
 fn missing_required_flags_under_json_name_the_flag_to_add() -> Result<(), String> {
-    let cases: [(&[&str], &str, &str); 6] = [
+    let cases: [(&[&str], &str, &str); 9] = [
         (
             &["agent", "verify", "--json"],
             "--before",
@@ -285,6 +285,21 @@ fn missing_required_flags_under_json_name_the_flag_to_add() -> Result<(), String
             "ripr swarm ingest --help",
         ),
         (&["rerun", "--json"], "--changed-test", "ripr rerun --help"),
+        (
+            &["rerun", "--gap-ledger", "ledger.json", "--json"],
+            "--gap",
+            "ripr rerun --help",
+        ),
+        (
+            &["agent", "packet", "--gap-ledger", "ledger.json", "--json"],
+            "--gap-id",
+            "ripr agent packet --help",
+        ),
+        (
+            &["agent", "packet", "--gap-id", "gap:x", "--json"],
+            "--gap-ledger",
+            "ripr agent packet --help",
+        ),
         (
             &["feedback", "record", "--json"],
             "--snapshot",
@@ -316,4 +331,29 @@ fn missing_required_flags_under_json_name_the_flag_to_add() -> Result<(), String
         assert!(plain.stdout.is_empty(), "{args:?}");
     }
     Ok(())
+}
+
+/// #14877: a ledger next to `--changed-test` names `--gap`, which would
+/// conflict with the selector already given, so it stays untyped.
+#[test]
+fn a_conflicting_rerun_ledger_under_json_stays_untyped() {
+    let output = run_ripr(&[
+        "rerun",
+        "--changed-test",
+        "tests/a.rs",
+        "--gap-ledger",
+        "ledger.json",
+        "--json",
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        output.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("rerun --gap-ledger requires --gap"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

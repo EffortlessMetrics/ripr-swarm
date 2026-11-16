@@ -1015,16 +1015,16 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
     match (seam_id.is_some(), gap_ledger.is_some(), gap_id.is_some()) {
         (true, false, false) | (false, true, true) => {}
         (false, true, false) => {
-            return Err(
-                "agent packet --gap-ledger requires --gap-id; add `--gap-id` to the command"
-                    .to_string(),
-            );
+            return Err(crate::cli::usage_refusal::missing_required(
+                "--gap-id",
+                "agent packet --gap-ledger requires --gap-id; add `--gap-id` to the command",
+            ));
         }
         (false, false, true) => {
-            return Err(
-                "agent packet --gap-id requires --gap-ledger; add `--gap-ledger` to the command"
-                    .to_string(),
-            );
+            return Err(crate::cli::usage_refusal::missing_required(
+                "--gap-ledger",
+                "agent packet --gap-id requires --gap-ledger; add `--gap-ledger` to the command",
+            ));
         }
         (false, false, false) => {
             return Err(crate::cli::usage_refusal::missing_required(

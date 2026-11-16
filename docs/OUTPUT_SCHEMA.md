@@ -1953,10 +1953,11 @@ classes are:
   more than one, or could not be decided.
 
 Every other argv usage error keeps empty stdout even under a JSON request,
-with the cause on stderr only: the required-flag refusals whose wording
-#14076 is revising (`calibrate cargo-mutants`, `zero status`, `pr-ledger
-record`, `cache export`, `reports gap-ledger`, `pr-review front-panel`), a
-missing or malformed value rejected by a command's own parser rather than
+with the cause on stderr only: required-flag refusals not yet typed,
+including those whose wording #14076 is revising (`calibrate cargo-mutants`,
+`zero status`, `pr-ledger record`, `cache export`, `reports gap-ledger`,
+`pr-review front-panel`) and those whose named flag would conflict with one
+already given (`rerun --changed-test` with `--gap-ledger`), a missing or malformed value rejected by a command's own parser rather than
 the shared readers (for example `impacted-evidence`), conflicting or disagreeing flags, an unrecognized value
 rejected outside the CLI's shared builder (for example a gate mode), and any
 other argv error. These are a named gap, not a clean result.
