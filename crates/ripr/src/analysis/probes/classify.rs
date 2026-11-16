@@ -474,13 +474,17 @@ pub(super) fn operand_bounded_token_run_count(haystack: &str, needle: &str) -> u
         return 0;
     }
     let masked = mask_comments_and_strings(haystack);
-    let masked = masked.as_bytes();
     haystack
         .match_indices(needle)
         .filter(|(start, _)| {
-            let next = haystack[start + needle.len()..].trim_start();
-            let previous = haystack[..*start].trim_end();
-            is_token_run(haystack, masked, *start, needle)
+            // Neighbours are read on the masked line, so a comment beside
+            // the comparison (`a > b // note`) is not read as an operator.
+            let next = masked
+                .get(start + needle.len()..)
+                .unwrap_or_default()
+                .trim_start();
+            let previous = masked.get(..*start).unwrap_or_default().trim_end();
+            is_token_run(haystack, masked.as_bytes(), *start, needle)
                 && !extends_rightward(next)
                 && !extends_leftward(previous)
         })
@@ -508,18 +512,46 @@ fn extends_rightward(next: &str) -> bool {
 /// Whether `previous` (the text before a match, trailing space trimmed)
 /// continues the left operand: a member or path, an arithmetic or bit
 /// operator (`|` and `&` but not `||`/`&&`), a unary `!`, or a shift.
-/// A struct field `:`, a match arrow `=>` and a return arrow `->` end the
-/// operand instead.
+/// A struct field `:`, a match arrow `=>`, a return arrow `->`, a range
+/// `..` and closure parameters `|x|` end the operand instead.
 fn extends_leftward(previous: &str) -> bool {
+    if previous.ends_with("..") {
+        return false;
+    }
     if previous.ends_with(['.', '+', '-', '*', '/', '%', '!', '^']) {
-        return !previous.ends_with("->");
+        return true;
     }
     let single = |op: char, doubled: &str| previous.ends_with(op) && !previous.ends_with(doubled);
-    single('|', "||")
+    (single('|', "||") && !closes_closure_parameters(previous))
         || single('&', "&&")
         || previous.ends_with("::")
         || previous.ends_with(">>")
         || previous.ends_with("<<")
+}
+
+/// Whether `previous` ends with a closure parameter list (`|x|`,
+/// `move |a, b: u8|`) rather than a bit-or operand: the opening `|` follows
+/// an expression start (`(`, `,`, `=`, `{`, `;`, the line start or `move`),
+/// not a left operand as in `m | n | a > b`.
+fn closes_closure_parameters(previous: &str) -> bool {
+    let Some(head) = previous.strip_suffix('|') else {
+        return false;
+    };
+    let Some(open) = head.rfind('|') else {
+        return false;
+    };
+    let params = head.get(open + 1..).unwrap_or_default();
+    let param_char =
+        |ch: char| ch.is_alphanumeric() || matches!(ch, '_' | ',' | ' ' | ':' | '&' | '(' | ')');
+    if !params.chars().all(param_char) {
+        return false;
+    }
+    let before = head.get(..open).unwrap_or_default().trim_end();
+    before.is_empty()
+        || before.ends_with(['(', ',', '=', '{', ';'])
+        || before
+            .strip_suffix("move")
+            .is_some_and(|rest| !rest.ends_with(|ch: char| ch.is_alphanumeric() || ch == '_'))
 }
 
 /// A record field must be a whole syntactic unit, not the head or tail of a
@@ -2327,7 +2359,7 @@ mod tests {
 
     /// #14722 review: an operator that continues an operand hides the
     /// comparison, and one that ends it (`&&`, `||`, a field `:`, `=>`,
-    /// `->`) does not.
+    /// `->`, a range, closure parameters, a comment) does not.
     #[test]
     fn operand_bounded_count_reads_operand_boundaries() {
         let count = |haystack: &str| operand_bounded_token_run_count(haystack, "a > b");
@@ -2345,6 +2377,26 @@ mod tests {
             "(m >> a > b, c)",
             "(m::a > b, c)",
             "(!a > b, c)",
+            "(a > b.c, c)",
+            "(a > b(c), c)",
+            "(a > b[0], c)",
+            "(a > b?, c)",
+            "(a > b + 1, c)",
+            "(a > b - 1, c)",
+            "(a > b * 2, c)",
+            "(a > b / 2, c)",
+            "(a > b % 2, c)",
+            "(a > b < c, c)",
+            "(m.a > b, c)",
+            "(m + a > b, c)",
+            "(m - a > b, c)",
+            "(m * a > b, c)",
+            "(m / a > b, c)",
+            "(m % a > b, c)",
+            "(m ^ a > b, c)",
+            "(m << a > b, c)",
+            "(m | n | a > b, c)",
+            "(f(x) | a > b, c)",
         ] {
             assert_eq!(count(extended), 0, "{extended}");
         }
@@ -2357,6 +2409,13 @@ mod tests {
             "x => a > b,",
             "fn f() -> bool { a > b }",
             "(a > b assert, c)",
+            "(v.any(|x| a > b), c)",
+            "(move |x, y: u8| a > b, c)",
+            "let f = |x| a > b;",
+            "(x && a > b, c) // note",
+            "x && a > b // a / b",
+            "(/* why */ a > b, c)",
+            "(..a > b, c)",
         ] {
             assert_eq!(count(bounded), 1, "{bounded}");
         }
