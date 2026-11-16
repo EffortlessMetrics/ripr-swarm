@@ -27949,8 +27949,11 @@ fn check_format_agent_all_static_limited_emits_a_route_without_records() -> Resu
     run_git(&root, &["init", "-b", "main"])?;
     run_git(&root, &["config", "user.email", "test@test.com"])?;
     run_git(&root, &["config", "user.name", "Test"])?;
-    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n// The host crate wires up levy and fee.\n")
-        .map_err(|e| format!("write lib: {e}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn one() -> i32 { 1 }\n// The host crate wires up levy and fee.\n",
+    )
+    .map_err(|e| format!("write lib: {e}"))?;
     std::fs::write(
         root.join("Cargo.toml"),
         "[package]\nname = \"agent-all-limited\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
