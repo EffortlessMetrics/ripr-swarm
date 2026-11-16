@@ -35,8 +35,9 @@ receipt.
    refuses any tarball that declares an install-time lifecycle script. The
    staged set must hold every native the launcher pins, as a real registry
    does: npm 11's `npm ci` refuses a lockfile that is missing one.
-2. Builds a consumer `PATH` from the planted decoy `ripr`, Node, git and the OS
-   system directories, then checks that `cargo`, `rustc` and `rustup` can't be
+2. Builds a consumer `PATH` from the planted decoy `ripr`, a private directory
+   linking only Node and git (on POSIX; their own directories can hold a Rust
+   toolchain) and the OS system directories, then checks that `cargo`, `rustc` and `rustup` can't be
    found and that `ripr` resolves only to the decoy.
 3. Installs `@effortlessmetrics/ripr@<version>` with `--ignore-scripts` into a
    TypeScript project. Its path contains spaces and non-ASCII characters, it

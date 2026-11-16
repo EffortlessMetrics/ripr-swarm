@@ -394,8 +394,21 @@ class Journey {
     const system = isWindows(this.platform)
       ? [path.join(process.env.SystemRoot || "C:\\Windows", "System32"), process.env.SystemRoot || "C:\\Windows"]
       : ["/usr/bin", "/bin"];
-    const dirs = [this.decoyDir, path.dirname(process.execPath), path.dirname(git), ...system];
-    return [...new Set(dirs)].join(separator);
+    if (isWindows(this.platform)) {
+      const dirs = [this.decoyDir, path.dirname(process.execPath), path.dirname(git), ...system];
+      return [...new Set(dirs)].join(separator);
+    }
+    // On POSIX link only node and git into a private directory: their own
+    // directories (Homebrew's /opt/homebrew/bin, /usr/local/bin) can also
+    // hold cargo, rustc or rustup.
+    const tools = path.join(this.root, "tools bin");
+    fs.mkdirSync(tools, { recursive: true });
+    for (const [name, target] of [["node", process.execPath], ["git", git]]) {
+      const link = path.join(tools, name);
+      fs.rmSync(link, { force: true });
+      fs.symlinkSync(fs.realpathSync(target), link);
+    }
+    return [...new Set([this.decoyDir, tools, ...system])].join(separator);
   }
 
   env(extra = {}) {
