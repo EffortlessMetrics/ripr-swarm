@@ -12368,6 +12368,41 @@ fn ts_fieldconstruction_multi_value_change_named_read_stays_exposed() -> Result<
     Ok(())
 }
 
+/// #14857 round 1 (Devin): a whole-object assertion whose subject is a
+/// nullish fallback (`f() ?? defaults.config`) receives the whole object
+/// `f()` returns, so it notices both changed values and stays `exposed`.
+/// The trailing `.config` belongs to the fallback, not to `f()`; treating it
+/// as an untouched field of the owner would be an over-correction.
+#[test]
+fn ts_fieldconstruction_multi_value_change_nullish_fallback_whole_object_stays_exposed()
+-> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean; timeout: number }\nexport function f(): C {\n  return { retries: 3, verbose: false, timeout: 30 };\n}\n";
+    let test_src = "import { f } from \"./owner\";\nconst defaults = { config: { retries: 3, verbose: false, timeout: 30 } };\ntest(\"whole\", () => { expect(f() ?? defaults.config).toEqual({ retries: 3, verbose: false, timeout: 30 }); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: true, timeout: 30 };",
+        Some("  return { retries: 3, verbose: false, timeout: 30 };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a whole-object assertion through a nullish fallback must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
 /// #14814 control: the changed field itself, read off the owner's result,
 /// still confirms. `expect(f().retries)` observes `retries`, so the finding
 /// stays `exposed`. A fix that suppressed this too would over-apply.

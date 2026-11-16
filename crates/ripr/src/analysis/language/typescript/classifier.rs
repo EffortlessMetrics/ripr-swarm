@@ -881,7 +881,45 @@ fn ts_value_observed_reads_untouched_field(
     if base.is_empty() {
         return false;
     }
+    // #14857 round 1 (Devin): a compound base is not a projection of the
+    // owner's result. In `f() ?? defaults.config` the trailing `config`
+    // belongs to the fallback while the assertion receives the whole object
+    // `f()` returns, so the read does witness the change and must keep its
+    // credit. Only a plain member-access chain can be a sibling read.
+    if !ts_chain_is_plain_projection(base) {
+        return false;
+    }
     ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers)
+}
+
+/// #14857: whether `base` is a plain member-access chain (`f()`, `a.f()`,
+/// `this.g()`, `f()?.n`) rather than a compound expression. A top-level
+/// operator means the assertion subject is not the owner's field projection:
+/// `f() ?? defaults`, `f() || fallback`, `cond ? a : b`, `a, b`.
+fn ts_chain_is_plain_projection(base: &str) -> bool {
+    let chars: Vec<char> = base.chars().collect();
+    let mut depth = 0i32;
+    for (i, ch) in chars.iter().copied().enumerate() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ if depth == 0 => {
+                let next = chars.get(i + 1).copied();
+                // `?.` and a trailing `?` (the split point of `f()?.field`)
+                // are member access, not a ternary.
+                let optional_chain = ch == '?' && matches!(next, None | Some('.'));
+                let compound = matches!(
+                    ch,
+                    ',' | '=' | '+' | '-' | '*' | '/' | '%' | '<' | '>' | '|' | '&' | '!' | ':'
+                ) || (ch == '?' && !optional_chain);
+                if compound {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
 }
 
 /// #14814 round 3: whether `masked` reads `key` as a member segment of a chain

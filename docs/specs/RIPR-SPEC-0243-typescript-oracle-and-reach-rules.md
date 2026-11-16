@@ -1667,7 +1667,11 @@ unconfirmed, not `exposed`. A read that names either changed field
 (`f().retries`, `f().verbose`), a path that reads through a changed field
 (`f().retries.n`) and a whole-result assertion (`expect(f()).toEqual(...)`)
 keep the existing credit. This is the two-value shape; the single-field
-sibling rule (#14814) covers exactly one changed value. A key-list change, a
+sibling rule (#14814) covers exactly one changed value. A compound assertion
+subject is not a field projection of the owner's result: in
+`expect(f() ?? defaults.config)` the trailing `config` belongs to the
+fallback while the assertion receives the whole object `f()` returns, so it
+keeps its credit. A key-list change, a
 shorthand or spread member, a computed key and a literal of fewer than two
 fields are not this shape and keep their old reading.
 

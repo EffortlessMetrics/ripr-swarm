@@ -1663,14 +1663,14 @@ pub(crate) fn ts_changed_object_fields(
         return None;
     }
     let mut changed = Vec::new();
-    for ((old_key, old_value), (new_key, new_value)) in old.iter().zip(&new) {
+    for ((old_key, old_value), (new_key, new_value)) in old.into_iter().zip(new) {
         if old_key != new_key {
             return None;
         }
         if old_value != new_value {
             changed.push(TypeScriptChangedField {
-                key: new_key.clone(),
-                value: new_value.clone(),
+                key: new_key,
+                value: new_value,
             });
         }
     }
