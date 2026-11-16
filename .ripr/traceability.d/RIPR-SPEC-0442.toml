@@ -1,0 +1,55 @@
+# Aliased direct import of the owner credits the owner only when the import
+# names its module in the same compilation unit (#14508).
+[[behavior]]
+id = "RIPR-SPEC-0442"
+name = "Aliased owner import credit"
+spec = "docs/specs/RIPR-SPEC-0442-aliased-owner-import-credit.md"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_an_integration_test_module_shadows_the_library_module_then_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_the_owner_is_a_nested_module_then_owner_keeps_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_the_owner_is_a_mod_rs_then_owner_keeps_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_sibling_module_declares_the_alias_name_then_owner_keeps_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_the_test_module_declares_the_alias_name_then_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_local_function_shadows_it_then_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_binary_inline_module_shadows_the_library_module_then_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_binary_root_imports_the_library_root_then_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_bin_target_imports_a_library_module_then_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_bin_only_package_imports_its_own_module_then_owner_keeps_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_the_crate_root_redirects_the_module_with_path_then_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_indexed_packages_when_alias_names_a_sibling_package_then_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_integration_test_when_owner_is_imported_under_an_alias_then_owner_keeps_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_scoped_binding_shadows_it_then_owner_takes_no_value_from_it",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_free_and_an_associated_owner_share_the_name_then_associated_takes_no_value",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_qualified_call_shares_the_alias_then_owner_takes_no_value_from_it",
+  "crates/ripr/src/analysis/extract/shadow.rs::fact_authority_tests::scoped_shadow_table_covers_each_scanned_form",
+  "crates/ripr/src/analysis/extract/shadow.rs::fact_authority_tests::scoped_shadow_ignores_a_genuine_call_in_the_last_match_arm",
+  "crates/ripr/src/analysis/extract/shadow.rs::fact_authority_tests::scoped_shadow_keeps_a_real_match_arm_binding",
+  "crates/ripr/src/analysis/extract/shadow.rs::fact_authority_tests::scoped_shadow_sees_a_flat_tuple_pattern_binding",
+  "crates/ripr/src/analysis/extract/shadow.rs::fact_authority_tests::scoped_shadow_sees_a_nested_tuple_pattern_binding",
+  "crates/ripr/src/analysis/extract/shadow.rs::fact_authority_tests::scoped_shadow_sees_a_slice_pattern_binding",
+  "crates/ripr/src/analysis/extract/shadow.rs::fact_authority_tests::scoped_shadow_sees_a_binding_in_a_later_loop",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_library_child_module_imports_the_crate_root_owner_then_owner_keeps_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_bin_only_child_module_imports_its_crate_root_owner_then_owner_keeps_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_binary_child_module_imports_the_binary_root_then_library_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_nearer_unsupported_import_shadows_it_then_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_closure_in_a_macro_token_tree_shadows_it_then_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_the_test_function_parameter_shadows_it_then_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_cfg_gated_module_has_two_paths_then_owner_gets_no_related_test",
+]
+fixtures = [
+  "fixtures/evidence-promotion-honesty-corpus/corpus.json",
+]
+code = [
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests.rs",
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
+  "crates/ripr/src/analysis/classify/const_flow.rs",
+  "crates/ripr/src/analysis/extract/shadow.rs",
+  "crates/ripr/src/analysis/syntax/ra.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0442-aliased-owner-import-credit.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "corpus_case_pass_rate",
+]

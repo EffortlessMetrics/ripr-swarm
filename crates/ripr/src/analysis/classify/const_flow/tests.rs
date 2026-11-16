@@ -431,6 +431,20 @@ fn modules_with_the_same_chain_share_a_scope() {
     assert!(super::shares_module_scope(source, 2, &[3]));
 }
 
+#[test]
+fn an_associated_function_does_not_shadow_a_module_level_import() {
+    let source = "use crate::owner as dt;\n\
+                  impl Rival {\n\
+                  fn dt() {}\n\
+                  }\n\
+                  #[test]\n\
+                  fn genuine() { dt(); }\n";
+    assert!(
+        !super::module_scopes(source).declaration_shadows_import(3, 0, 6),
+        "an associated function cannot rebind the module-level `dt` import"
+    );
+}
+
 /// Run the whole decision on a one-file crate: its production functions that
 /// name `LIMIT` are the readers and its `#[test]`s the related tests.
 fn decide(tests: &str, old: &str, new: &str) -> Result<Option<super::ConstFlow>, String> {

@@ -12,6 +12,18 @@ pub(crate) struct CompactGripContext<'a> {
     pub(in crate::analysis::test_grip_evidence) index: &'a RustIndex,
     pub(in crate::analysis::test_grip_evidence) tests: Vec<CompactTest<'a>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_call_name: BTreeMap<String, Vec<usize>>,
+    /// Tests whose call is spelled through a direct import alias of a
+    /// production function: imported name -> the test, the import's module
+    /// path (slash-separated), whether that path is `crate::`-relative, the
+    /// alias spelling and the call line. A relative path resolves against
+    /// the test's own crate; a package-qualified one names the owner's
+    /// package (#14508).
+    pub(in crate::analysis::test_grip_evidence) tests_by_direct_owner_alias:
+        BTreeMap<String, Vec<DirectOwnerAliasEntry>>,
+    /// Per test file: start lines of every indexed non-test function, keyed by
+    /// name, so the alias shadow guard can tell a same-module declaration
+    /// from a sibling module's (#14508 review).
+    local_function_starts_by_file: BTreeMap<PathBuf, BTreeMap<String, Vec<usize>>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_helper_owner_call_name:
         BTreeMap<String, Vec<usize>>,
     /// Tests whose helper chain reaches the owner name through a
@@ -108,6 +120,22 @@ pub(crate) struct CompactGripContext<'a> {
     /// ran in line while holding it). Not window-cleared: nothing in
     /// here derives from bytes a window can change, only from the index.
     pin_syntax: crate::analysis::classify::OwnerPinSyntax,
+}
+
+/// One alias-spelled call of a directly imported owner (#14508).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::analysis::test_grip_evidence) struct DirectOwnerAliasEntry {
+    pub(in crate::analysis::test_grip_evidence) test_index: usize,
+    /// Slash-separated module segments of the import.
+    pub(in crate::analysis::test_grip_evidence) module_path: String,
+    /// The import was written `crate::`-relative.
+    pub(in crate::analysis::test_grip_evidence) crate_relative: bool,
+    pub(in crate::analysis::test_grip_evidence) alias: String,
+    pub(in crate::analysis::test_grip_evidence) call_line: usize,
+    /// Number of enclosing `mod` scopes at the import, so the local-function
+    /// shadow guard can tell an enclosing declaration from a nearer one
+    /// (#14508 review).
+    pub(in crate::analysis::test_grip_evidence) module_depth: usize,
 }
 
 /// Candidate generation only: the existing `contains` and `same_module`
@@ -283,6 +311,228 @@ impl<'a> CompactGripContext<'a> {
         &self.pin_syntax
     }
 
+    /// Whether `test` reaches `owner_name` through the alias spelling
+    /// `call.name` at `call.line` (#14508). The table lookup is
+    /// allocation-free; on a lexical-fallback file the binding check masks
+    /// the body per alias call, so this is not a constant-time query there.
+    ///
+    /// The table stores one row per resolved call line, so the row's own
+    /// identity is the authority: the row must name this exact call line and
+    /// its import module must name the owner's module. A nested
+    /// `use rival::different_function as dt` binds a later `dt(..)` to another
+    /// function, and a same-named import of another module must not borrow an
+    /// outer owner row's credit (#14508 review).
+    pub(in crate::analysis::test_grip_evidence) fn is_direct_owner_alias(
+        &self,
+        test: &CompactTest<'_>,
+        owner_name: &str,
+        owner_file: &Path,
+        call: &CallFact,
+    ) -> bool {
+        let Some(entries) = self.tests_by_direct_owner_alias.get(owner_name) else {
+            return false;
+        };
+        // An imported alias is a local name, so only a bare `alias(..)`
+        // spelling binds to it. A same-line `rival::alias(..)` names that
+        // module's function and must not borrow the row (#14508 review).
+        if !crate::analysis::classify::call_text_spells_bare_free_call(&call.text, &call.name) {
+            return false;
+        }
+        // The shadow guards are expensive and only decide a call that is
+        // already spelled like one of this owner's aliases at this line, so
+        // find the matching entry first and run them once for that call
+        // (#14508 review).
+        let Some(matched) = entries.iter().find(|entry| {
+            entry.alias == call.name
+                && entry.call_line == call.line
+                && self
+                    .tests
+                    .get(entry.test_index)
+                    .is_some_and(|indexed| std::ptr::eq(indexed.test, test.test))
+        }) else {
+            return false;
+        };
+        if self.alias_binding_shadows_call(test, &call.name, call.line)
+            || self.local_function_shadows_call(test, &call.name, matched.module_depth)
+        {
+            return false;
+        }
+        let owner_module = super::module_path_for_index(self.index, owner_file);
+        let owner_module = owner_module.as_deref().unwrap_or("");
+        let file_stem = module_stem(owner_file).unwrap_or_default();
+        let owner_crate_root = if file_stem.is_empty() {
+            crate_root_file_key(owner_file)
+        } else {
+            None
+        };
+        let owner_is_crate_root = owner_crate_root.is_some();
+        let owner_prefix = super::package_prefix(owner_file);
+        entries.iter().any(|entry| {
+            entry.alias == call.name
+                && entry.call_line == call.line
+                && self
+                    .tests
+                    .get(entry.test_index)
+                    .is_some_and(|indexed| std::ptr::eq(indexed.test, test.test))
+                && !self.local_module_shadows_alias(test, &entry.module_path, owner_name)
+                && super::direct_owner_alias_module_matches(
+                    &entry.module_path,
+                    entry.crate_relative,
+                    owner_module,
+                    owner_is_crate_root,
+                    owner_crate_root.as_deref(),
+                    test.test.file.as_path(),
+                    Some(owner_file),
+                    owner_prefix.as_deref(),
+                    self.index,
+                )
+        })
+    }
+
+    /// Whether a `let`, nested `fn` name, closure parameter, `for`/match-arm/
+    /// `if let`/`while let` pattern, or nested-fn parameter named `call_name`
+    /// encloses the call at `call_line`, so the alias-spelled call binds to
+    /// that local value rather than to the imported owner (#14508 review). A
+    /// `let` keeps the end-of-function over-approximation; the other forms are
+    /// bounded by their body or arm.
+    pub(in crate::analysis::test_grip_evidence) fn alias_binding_shadows_call(
+        &self,
+        test: &CompactTest<'_>,
+        call_name: &str,
+        call_line: usize,
+    ) -> bool {
+        let body_line = call_line.saturating_sub(test.test.start_line);
+        let lexical = self
+            .index
+            .files()
+            .get(&test.test.file)
+            .is_some_and(|facts| facts.used_lexical_fallback);
+        if lexical {
+            let masked = crate::analysis::extract::mask_comments_and_strings(&test.test.body);
+            crate::analysis::extract::ShadowAuthority::LexicalMaskedBody
+                .body_shadows_callee_at_line(&masked, call_name, body_line)
+        } else {
+            crate::analysis::extract::ShadowAuthority::ParserBodyFacts {
+                nested_fn_names: &test.test.nested_fn_names,
+                let_bindings: &test.test.let_bindings,
+            }
+            .body_shadows_callee_at_line("", call_name, body_line)
+        }
+    }
+
+    /// Whether `test`'s own module or a nearer module than the import
+    /// declares a non-test function named `call_name`, so an alias-spelled
+    /// call in that scope binds to the local function rather than to the
+    /// directly imported owner (#14508 review). A declaration in an enclosing
+    /// module than the import is shadowed by the import, and a sibling inline
+    /// module's same-named function is a different name scope.
+    pub(in crate::analysis::test_grip_evidence) fn local_function_shadows_call(
+        &self,
+        test: &CompactTest<'_>,
+        call_name: &str,
+        use_module_depth: usize,
+    ) -> bool {
+        let Some(starts) = self.local_function_starts_by_file.get(&test.test.file) else {
+            return false;
+        };
+        let Some(lines) = starts.get(call_name) else {
+            return false;
+        };
+        let Some(facts) = self.index.files().get(&test.test.file) else {
+            // Without the source the module scopes cannot be read; fall back
+            // to the file-wide answer (fail closed toward withholding).
+            return true;
+        };
+        let scopes = crate::analysis::classify::module_scopes(&facts.source);
+        lines.iter().any(|line| {
+            scopes.declaration_shadows_import(*line, use_module_depth, test.test.start_line)
+        })
+    }
+
+    /// Whether the test file declares an inline module chain that matches the
+    /// alias's module path and defines the imported name, so the `crate::`
+    /// path names that local module rather than the owner file (#14508
+    /// review). A binary target's inline `mod pricing { fn owner }` is a
+    /// different compilation unit from the library's `src/pricing.rs`, and
+    /// the import binds to the local module.
+    pub(in crate::analysis::test_grip_evidence) fn local_module_shadows_alias(
+        &self,
+        test: &CompactTest<'_>,
+        alias_module: &str,
+        imported_name: &str,
+    ) -> bool {
+        let Some(starts) = self.local_function_starts_by_file.get(&test.test.file) else {
+            return false;
+        };
+        let Some(lines) = starts.get(imported_name) else {
+            return false;
+        };
+        let Some(facts) = self.index.files().get(&test.test.file) else {
+            return false;
+        };
+        // The alias path is absolute from the crate root, so the local
+        // module's absolute path is the test file's own module path plus the
+        // inline chain.
+        let file_module = super::test_file_module_path(self.index, &test.test.file);
+        let mut wanted: Vec<&str> = file_module
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .collect();
+        wanted.extend(
+            alias_module
+                .split('/')
+                .filter(|segment| !segment.is_empty()),
+        );
+        if wanted.is_empty() {
+            return false;
+        }
+        let scopes = crate::analysis::classify::module_scopes(&facts.source);
+        lines.iter().any(|line| {
+            scopes
+                .module_chain_at(*line)
+                .is_some_and(|chain| chain == wanted)
+        })
+    }
+
+    /// Whether every call of `call_name` in `test` is bound to a direct-owner
+    /// import alias of a *different* function, so a same-named local function
+    /// is not the callee (#14508 review). A test that also spells a genuine
+    /// local call of the name keeps the generic direct-call credit.
+    pub(in crate::analysis::test_grip_evidence) fn alias_spelling_binds_other_owner(
+        &self,
+        test: &TestSummary,
+        call_name: &str,
+        owner_name: &str,
+    ) -> bool {
+        let mut alias_lines = BTreeSet::new();
+        for (imported_name, entries) in &self.tests_by_direct_owner_alias {
+            if imported_name == owner_name {
+                continue;
+            }
+            for entry in entries {
+                if entry.alias == call_name
+                    && self
+                        .tests
+                        .get(entry.test_index)
+                        .is_some_and(|indexed| std::ptr::eq(indexed.test, test))
+                {
+                    alias_lines.insert(entry.call_line);
+                }
+            }
+        }
+        if alias_lines.is_empty() {
+            return false;
+        }
+        let mut saw_call = false;
+        for call in test.calls.iter().filter(|call| call.name == call_name) {
+            saw_call = true;
+            if !alias_lines.contains(&call.line) {
+                return false;
+            }
+        }
+        saw_call
+    }
+
     /// Pay the whole-index macro-site scan once, before the seam workers
     /// start, so it fans out over the pool instead of running in line on
     /// the first worker that needs it while the others wait (#9211).
@@ -325,6 +575,8 @@ impl<'a> CompactGripContext<'a> {
     ) -> Result<Self, E> {
         checkpoint()?;
         let mut tests_by_call_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut tests_by_direct_owner_alias: BTreeMap<String, Vec<DirectOwnerAliasEntry>> =
+            BTreeMap::new();
         let mut tests_by_helper_owner_call_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_free_helper_owner_call_name: BTreeMap<String, Vec<usize>> =
             BTreeMap::new();
@@ -378,6 +630,10 @@ impl<'a> CompactGripContext<'a> {
             context_build_phase("direct_helper_import_aliases_by_file", || {
                 direct_helper_import_aliases_by_file(index, &helper_owner_calls_by_module_path)
             });
+        let direct_owner_import_aliases_by_file =
+            context_build_phase("direct_owner_import_aliases_by_file", || {
+                direct_owner_import_aliases_by_file(index)
+            });
         checkpoint()?;
         let production_helper_owner_calls_by_package =
             context_build_phase("production_helper_owner_calls_by_package", || {
@@ -403,6 +659,7 @@ impl<'a> CompactGripContext<'a> {
         checkpoint()?;
         let SharedIndexTables {
             function_names_by_file,
+            local_function_starts_by_file,
             module_import_aliases_by_file,
             unambiguous_production_owner_names_by_package,
             ..
@@ -463,6 +720,35 @@ impl<'a> CompactGripContext<'a> {
                     .iter()
                     .map(|call| call.name.clone())
                     .collect::<BTreeSet<_>>();
+                if let Some(owner_aliases) = direct_owner_import_aliases_by_file.get(&test.file) {
+                    for call in &test.calls {
+                        // The alias names a free function and only the bare
+                        // `alias(..)` spelling binds to the import. A qualified
+                        // `rival::dt(..)` names that module's function even
+                        // when the module name is lowercase (#14508 review).
+                        if !crate::analysis::classify::call_text_spells_bare_free_call(
+                            &call.text, &call.name,
+                        ) {
+                            continue;
+                        }
+                        if let Some(binding) = owner_aliases
+                            .get(&call.name)
+                            .and_then(|alias| alias.binding_at(call.line))
+                        {
+                            tests_by_direct_owner_alias
+                                .entry(binding.name.clone())
+                                .or_default()
+                                .push(DirectOwnerAliasEntry {
+                                    test_index,
+                                    module_path: binding.module_path.clone(),
+                                    crate_relative: binding.crate_relative,
+                                    alias: call.name.clone(),
+                                    call_line: call.line,
+                                    module_depth: binding.module_depth,
+                                });
+                        }
+                    }
+                }
                 let mut assertion_tokens = BTreeSet::new();
                 for assertion in &test.assertions {
                     for token in extract_identifier_tokens(&assertion.text) {
@@ -639,6 +925,8 @@ impl<'a> CompactGripContext<'a> {
             index,
             tests,
             tests_by_call_name,
+            tests_by_direct_owner_alias,
+            local_function_starts_by_file,
             tests_by_helper_owner_call_name,
             tests_by_free_helper_owner_call_name,
             tests_by_target_affinity_owner_call_name,
@@ -1404,10 +1692,17 @@ impl ScopedModuleImportAlias {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::analysis::test_grip_evidence) struct ScopedImportedFunctionBinding {
+    /// Slash-separated module segments (`pricing/inner`), never `::`.
     pub(in crate::analysis::test_grip_evidence) module_path: String,
+    /// The import was written `crate::`-relative, so it resolves against the
+    /// crate that compiles the test file, not the owner's package (#14508
+    /// review).
+    pub(in crate::analysis::test_grip_evidence) crate_relative: bool,
     pub(in crate::analysis::test_grip_evidence) name: String,
     start_line: usize,
     end_line: usize,
+    /// Number of enclosing `mod` scopes at the import (#14508 review).
+    module_depth: usize,
     /// Lines inside nested module bodies are not covered by this import.
     nested_module_lines: Vec<(usize, usize)>,
     /// The owning scope closes part-way through `end_line`, with code after
@@ -1595,6 +1890,7 @@ pub(in crate::analysis::test_grip_evidence) fn free_spelling_target_affinity_own
 /// four rescans of every source's `use` statements per context.
 pub(in crate::analysis::test_grip_evidence) struct SharedIndexTables {
     function_names_by_file: BTreeMap<PathBuf, BTreeSet<String>>,
+    local_function_starts_by_file: BTreeMap<PathBuf, BTreeMap<String, Vec<usize>>>,
     module_import_aliases_by_file: ModuleImportAliasesByFile,
     direct_function_import_aliases_by_file: ScopedDirectFunctionImportAliasesByFile,
     unambiguous_production_owner_names_by_package: ProductionOwnerNamesByPackage,
@@ -1616,6 +1912,7 @@ impl SharedIndexTables {
                 || {
                     (
                         local_function_names_by_file(index),
+                        local_function_starts_by_file(index),
                         unambiguous_production_owner_names_by_package(index),
                         production_owner_names_by_module_path(index),
                         production_owner_names_by_package_and_module_path(index),
@@ -1625,6 +1922,7 @@ impl SharedIndexTables {
             );
         let (
             function_names_by_file,
+            local_function_starts_by_file,
             unambiguous_production_owner_names_by_package,
             owner_names_by_module_path,
             owner_names_by_package_and_module_path,
@@ -1632,6 +1930,7 @@ impl SharedIndexTables {
         ) = rest;
         Self {
             function_names_by_file,
+            local_function_starts_by_file,
             module_import_aliases_by_file,
             direct_function_import_aliases_by_file,
             unambiguous_production_owner_names_by_package,
@@ -2738,9 +3037,11 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
                 .bindings
                 .push(ScopedImportedFunctionBinding {
                     module_path: imported.module_path,
+                    crate_relative: true,
                     name: imported.name,
                     start_line: statement.start_line,
                     end_line,
+                    module_depth: statement.module_depth,
                     nested_module_lines: nested_module_lines.clone(),
                     end_is_partial: scan.end_is_partial(end_line),
                 });
@@ -2935,6 +3236,212 @@ pub(in crate::analysis::test_grip_evidence) fn normalize_module_import_path(
     Some(path.to_string())
 }
 
+/// Normalize the module path of a direct function import for the owner-alias
+/// table (#14508). Unlike [`normalize_module_import_path`], this accepts an
+/// external package path (`subject::pricing`) as well as a crate-relative one
+/// (`crate::pricing`), because an integration test imports the library by its
+/// package name. `crate` alone is the crate root (empty path).
+///
+/// Segments are normalized to `/` on both sides of the comparison: the
+/// owner's module path comes from `module_path_for_index`, which joins with
+/// `/`, while the import is written with `::`. Without one representation a
+/// nested owner (`pricing/inner`) never matched its `crate::pricing::inner`
+/// import (#14508 review).
+fn normalize_direct_owner_module_path(path: &str) -> Option<OwnerModulePath> {
+    let path = path.trim();
+    if path == "crate" {
+        return Some(OwnerModulePath {
+            module_path: String::new(),
+            crate_relative: true,
+        });
+    }
+    if let Some(rest) = path.strip_prefix("crate::") {
+        let rest = rest.trim();
+        return (!rest.is_empty()).then(|| OwnerModulePath {
+            module_path: rest.replace("::", "/"),
+            crate_relative: true,
+        });
+    }
+    if path.is_empty()
+        || path.starts_with("self::")
+        || path.starts_with("super::")
+        || path.starts_with("::")
+    {
+        return None;
+    }
+    Some(OwnerModulePath {
+        module_path: path.replace("::", "/"),
+        crate_relative: false,
+    })
+}
+
+/// A direct-owner import's module path, normalized to `/` segments, plus
+/// whether it was written `crate::`-relative (#14508 review).
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnerModulePath {
+    module_path: String,
+    crate_relative: bool,
+}
+
+/// An imported owner function alias before it is scoped to a call line.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnerImportedFunctionAlias {
+    module_path: String,
+    crate_relative: bool,
+    name: String,
+}
+
+fn collect_direct_owner_import_aliases_from_use(
+    import: &str,
+) -> Option<BTreeMap<String, OwnerImportedFunctionAlias>> {
+    let import = import.trim_end_matches(';').trim();
+    let mut aliases = BTreeMap::new();
+    if let Some((base, rest)) = import.split_once("::{") {
+        let module = normalize_direct_owner_module_path(base)?;
+        let body = rest.strip_suffix('}')?;
+        for item in body.split(',').map(str::trim) {
+            if item.contains("::") || item.contains('{') || item.contains('}') {
+                continue;
+            }
+            collect_owner_function_alias(item, &module, &mut aliases);
+        }
+        return Some(aliases);
+    }
+    let (module_path, item) = import.rsplit_once("::")?;
+    let module = normalize_direct_owner_module_path(module_path)?;
+    collect_owner_function_alias(item.trim(), &module, &mut aliases);
+    Some(aliases)
+}
+
+fn collect_owner_function_alias(
+    item: &str,
+    module: &OwnerModulePath,
+    aliases: &mut BTreeMap<String, OwnerImportedFunctionAlias>,
+) {
+    let mut parsed = BTreeMap::new();
+    collect_direct_function_import_alias(item, &module.module_path, &mut parsed);
+    for (alias, imported) in parsed {
+        aliases.insert(
+            alias,
+            OwnerImportedFunctionAlias {
+                module_path: imported.module_path,
+                crate_relative: module.crate_relative,
+                name: imported.name,
+            },
+        );
+    }
+}
+
+/// Scoped direct-import aliases for the owner-call relation (#14508). This is
+/// the same shape as [`direct_function_import_aliases`] but accepts external
+/// package paths, so `use subject::owner as alias;` resolves as well as
+/// `use crate::owner as alias;`.
+pub(in crate::analysis::test_grip_evidence) fn direct_owner_import_aliases(
+    source: &str,
+) -> BTreeMap<String, ScopedImportedFunctionAlias> {
+    let scan = scan_lexical_use_statements(source);
+    let mut aliases: BTreeMap<String, ScopedImportedFunctionAlias> = BTreeMap::new();
+    for statement in &scan.statements {
+        let end_line = scan.end_line(statement);
+        let mut nested_module_lines = nested_module_line_ranges(
+            &scan.line_module_depths,
+            statement.start_line,
+            end_line,
+            statement.module_depth,
+        );
+        for line in &scan.module_open_lines {
+            if statement.start_line <= *line && *line <= end_line {
+                nested_module_lines.push((*line, *line));
+            }
+        }
+        let Some(parsed) = collect_direct_owner_import_aliases_from_use(&statement.text) else {
+            // A nearer import that binds the same spelling but names an
+            // unsupported module path (`self::`, `super::`, `::`) still
+            // shadows an outer owner alias. Record a binding that can never
+            // match an owner module, so the call fails closed (#14508 review).
+            for alias in use_statement_alias_names(&statement.text) {
+                aliases
+                    .entry(alias)
+                    .or_insert_with(|| ScopedImportedFunctionAlias {
+                        bindings: Vec::new(),
+                    })
+                    .bindings
+                    .push(ScopedImportedFunctionBinding {
+                        module_path: String::new(),
+                        crate_relative: false,
+                        name: String::new(),
+                        start_line: statement.start_line,
+                        end_line,
+                        module_depth: statement.module_depth,
+                        nested_module_lines: nested_module_lines.clone(),
+                        end_is_partial: scan.end_is_partial(end_line),
+                    });
+            }
+            continue;
+        };
+        if parsed.is_empty() {
+            continue;
+        }
+        for (alias, imported) in parsed {
+            aliases
+                .entry(alias)
+                .or_insert_with(|| ScopedImportedFunctionAlias {
+                    bindings: Vec::new(),
+                })
+                .bindings
+                .push(ScopedImportedFunctionBinding {
+                    module_path: imported.module_path,
+                    crate_relative: imported.crate_relative,
+                    name: imported.name,
+                    start_line: statement.start_line,
+                    end_line,
+                    module_depth: statement.module_depth,
+                    nested_module_lines: nested_module_lines.clone(),
+                    end_is_partial: scan.end_is_partial(end_line),
+                });
+        }
+    }
+    aliases
+}
+
+/// The `as` aliases a `use` statement binds, even when its module path is not
+/// a supported owner path. A nearer unsupported import still shadows an outer
+/// owner alias (#14508 review). A non-aliased import binds the imported name
+/// itself, which the bare-call reading already handles.
+fn use_statement_alias_names(import: &str) -> Vec<String> {
+    let import = import.trim_end_matches(';').trim();
+    let items: Vec<&str> = match import.split_once("::{") {
+        Some((_, rest)) => rest
+            .strip_suffix('}')
+            .map(|body| body.split(',').map(str::trim).collect())
+            .unwrap_or_default(),
+        None => import
+            .rsplit_once("::")
+            .map(|(_, item)| vec![item.trim()])
+            .unwrap_or_default(),
+    };
+    items
+        .into_iter()
+        .filter(|item| !item.contains("::") && !item.contains('{') && !item.contains('}'))
+        .filter_map(|item| item.split_once(" as ").map(|(_, alias)| alias.trim()))
+        .filter(|alias| !alias.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+pub(in crate::analysis::test_grip_evidence) fn direct_owner_import_aliases_by_file(
+    index: &RustIndex,
+) -> ScopedDirectFunctionImportAliasesByFile {
+    index
+        .files()
+        .iter()
+        .filter_map(|(file, facts)| {
+            let aliases = direct_owner_import_aliases(&facts.source);
+            (!aliases.is_empty()).then_some((file.clone(), aliases))
+        })
+        .collect()
+}
+
 pub(in crate::analysis::test_grip_evidence) fn unambiguous_production_owner_names_by_package(
     index: &RustIndex,
 ) -> ProductionOwnerNamesByPackage {
@@ -2984,6 +3491,32 @@ pub(in crate::analysis::test_grip_evidence) fn local_function_names_by_file(
             .insert(function.name.clone());
     }
     names_by_file
+}
+
+/// Per test file: the start lines of every indexed non-test function, keyed
+/// by name. The alias shadow guard needs the declaration's line to tell a
+/// same-module (or enclosing-module) function from a sibling module's
+/// same-named one (#14508 review).
+pub(in crate::analysis::test_grip_evidence) fn local_function_starts_by_file(
+    index: &RustIndex,
+) -> BTreeMap<PathBuf, BTreeMap<String, Vec<usize>>> {
+    let mut starts_by_file: BTreeMap<PathBuf, BTreeMap<String, Vec<usize>>> = BTreeMap::new();
+    let actual_tests = actual_test_keys(index);
+    for function in index.functions().iter().filter(|function| {
+        !actual_tests.contains(&ActualTestKey {
+            file: &function.file,
+            name: &function.name,
+            start_line: function.start_line,
+        })
+    }) {
+        starts_by_file
+            .entry(function.file.clone())
+            .or_default()
+            .entry(function.name.clone())
+            .or_default()
+            .push(function.start_line);
+    }
+    starts_by_file
 }
 
 /// Borrowed (file, name, start_line) identity of a function that is an
