@@ -404,6 +404,17 @@ only reaches the owner without a bound exact assertion stays below `exposed`.
   string quotes stripped, so a computed `"a_b"` compares equal to a
   literal `"ab"`. The normalization is pre-existing and applies
   identically to parameter operands.
+- A flat owner prelude (#12771) may rebind what a boundary local reads.
+  Every statement between the owner's opening brace and the local's `let`
+  must be either `let NAME = !NAME;` for a parameter or
+  `const NAME: <integer type> = <decimal literal>;`. There must be no
+  braces, calls, macros or other statements, and no macro anywhere in the
+  body. Each rebound name may be mentioned elsewhere in the owner only in
+  the local's own initializer. A negated flag may appear there only as the
+  `if` condition, which is then read flipped. A constant replaces the
+  file's constant of that name. Any other shape keeps the earlier
+  rebinding refusal (`local-boundary-flag-loop`'s `for si in [false]`
+  stays unresolved).
 
 - A local that folds to a plain integer is compared only against an
   integer cell of the other operand's parameter. A string cell is the
@@ -447,14 +458,21 @@ only reaches the owner without a bound exact assertion stays below `exposed`.
 8. Reject: the same local with tests at `(1_000, true)` and `(1_024,
    false)`: each input is the other flag's boundary, no row sits on
    `unit`, and the verdict stays a gap (`local-boundary-flag-trap`).
-9. Reject: `let si = !si;` before the same local, with tests at
-   `(1_024, true)`: the flag the local reads is the opposite of the
-   caller's literal, so the pinned 1_024 is not the boundary and the
-   verdict stays unresolved (`local-boundary-flag-shadowed`).
+9. Accept: `let si = !si;` before the same local, with tests at
+   `(1_024, true)`, `(1_023, true)` and `(999, true)`: the flag the local
+   reads is the opposite of the caller's literal, so `unit` is `1000` under
+   every row, the pinned 1_024 is not the boundary, no row sits on `unit`,
+   and the verdict is a gap (`local-boundary-flag-shadowed`, #12771). The
+   rebinding is read only in a flat owner prelude (see Required guards);
+   any other rebinding shape keeps the verdict unresolved.
 10. Reject: `for si in [false] { let unit = if si { KIB } else { KB }; .. }`
     with tests at `(1_024, true)` (`local-boundary-flag-loop`).
-11. Reject: a function-local `const KB: u64 = 2_000;` shadowing the file's
-    `KB` (`local-boundary-flag-alias`).
+11. Accept: a function-local `const KB: u64 = 2_000;` shadowing the file's
+    `KB`, read by `let unit = KB;`: `unit` is `2000`, the rows at `1_000`
+    and `2_500` are off it, and the verdict is a gap
+    (`local-boundary-flag-alias`, #12771). Only a plain decimal integer
+    `const` item in a flat owner prelude replaces the file constant; any
+    other declaration keeps the verdict unresolved.
 12. Reject: the real `bytesize` edit `bytes < unit` to `bytes <= unit`,
     whose only direct row binds `bytes` to a string literal: the verdict
     stays `infection_unknown` (`bytesize-format-unit-first-run`).
