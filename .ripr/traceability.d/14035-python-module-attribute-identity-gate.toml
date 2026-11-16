@@ -1,0 +1,13 @@
+# Registers the module-attribute identity gate (#14035) under RIPR-SPEC-0028.
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::a_shadowed_module_constant_boundary_is_not_exposed",
+  "crates/ripr/src/analysis/language/python/transitive_reach.rs::tests::shadowed_module_import_construction_names_no_limitation",
+  "crates/ripr/src/analysis/language/python/literal_patch_tests.rs::a_shadowed_patch_target_module_keeps_the_limit",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/boundary.rs",
+  "crates/ripr/src/analysis/language/python/transitive_reach.rs",
+  "crates/ripr/src/analysis/language/python/literal_patch.rs",
+]

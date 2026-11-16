@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python module identity: module-attribute reads (`import pricing; pricing.LIMIT` as a boundary value, `import table; table.Table` as a transitive-reach witness) and `patch("clock.time.time", ...)` target prefixes now go through the shared module-identity gate, so a same-named test-local helper module or a rival src-layout module no longer earns the owner's credit there (#14035).
