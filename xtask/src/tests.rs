@@ -6819,6 +6819,8 @@ fn rust_conversion_candidates_derive_retention_from_the_enforced_owner() -> Resu
         "tools/test-activate-rust.sh",
         "tools/ci/shard-verifier-artifact.py",
         "tools/ci/test_shard_verifier_artifact.py",
+        "tools/ci/main-qualification.py",
+        "tools/ci/test_main_qualification.py",
     ] {
         let enforced_reason = non_rust_programming_retention_reason(path)
             .ok_or_else(|| format!("approved boundary must be enforced-retained: {path}"))?;
@@ -6871,6 +6873,11 @@ fn rust_conversion_candidates_keep_neighboring_unapproved_paths_actionable() -> 
         ".agents/skills/finish-pr/scripts/other.rb",
         "tools/python/installed-provider-recovery/other.py",
         "tools/python/other.py",
+        "tools/ci/main-qualification-extra.py",
+        "tools/ci/test_main_qualification_extra.py",
+        "tools/ci/nested/main-qualification.py",
+        "tools/ci/main-qualification.py.extra.py",
+        "tools/ci/main-qualification.sh",
         "benchmarks/muse-plugin/fixtures/typescript-weak-assertion/src/other.rb",
         "scripts/check.py",
     ] {
@@ -9733,7 +9740,12 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             None,
             RoutedRustEventRoute::WorkflowNotTriggered,
         ),
-        ("push", None, None, RoutedRustEventRoute::LaunchFullGate),
+        (
+            "push",
+            None,
+            None,
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
         (
             "workflow_dispatch",
             None,
@@ -54172,8 +54184,9 @@ fn require_single_bare_precommit_line(lines: &[String], context: &str) -> Result
 /// The routed Rust lanes must delegate the required gate table to the shared
 /// reusable workflow, not inline a lane-only gate command where it could drift
 /// from `.github/workflows/rust-gates.yml`. The reusable workflow enumerates
-/// each gate as its own named per-producer step; the per-step shape (exact
-/// command, unconditional, ordered, outcome-reported) is owned by
+/// standalone producers; dependency, process and network policy remain required
+/// inside `ci-policy`. The producer shape (exact command, unconditional, ordered,
+/// outcome-reported) and collected leaf ownership are guarded by
 /// `xtask/tests/rust_gate_workflow_contract.rs`. `cargo xtask precommit` and
 /// the lightweight `cargo policy preflight` stay inline in the docs-gate job,
 /// which `routed_rust_docs_gate_runs_full_precommit_table` covers.
@@ -54197,11 +54210,7 @@ fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
     let reusable = reusable_rust_workflow_text()?;
     for lane_only in [
         "cargo xtask check-evidence-promotion-honesty",
-        "cargo xtask check-dependencies",
-        "cargo xtask check-process-policy",
-        "cargo xtask check-network-policy",
-        "cargo xtask goldens check",
-        "cargo xtask fixtures",
+        "cargo xtask goldens check-with-fixtures",
     ] {
         let count = reusable.matches(lane_only).count();
         if count != 1 {
