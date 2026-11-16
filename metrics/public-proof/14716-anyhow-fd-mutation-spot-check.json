@@ -1,0 +1,1016 @@
+{
+  "analyzer_version": "ripr 0.11.0",
+  "claim_boundary": "Agreement is scored only on canonical_precise records: a BinaryOperator or UnaryOperator mutant that ripr calibrate joined by seam_id or by unique span containment to a predicate_boundary or return_value seam, with a caught or missed outcome. File/line fallback joins, span-overlap ties, unmatched records, and unsupported genres, seam kinds or outcomes are counted as exclusions and never scored. Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.",
+  "disagreement_examples": {
+    "false_gap": [
+      {
+        "expression": "!self",
+        "file": "src/lib.rs",
+        "grip_class": "ungripped",
+        "join_method": "span_containment",
+        "line": 717,
+        "mutant": "src/lib.rs:717:17: delete ! in __private::not::<impl Bool for bool>::not",
+        "repo": "anyhow",
+        "revision": "e621bd35ddddcd8b2f39d80b9f5938583571a87d",
+        "runtime_outcome": "caught",
+        "seam_id": "dc045b687c4b52bc",
+        "seam_kind": "return_value"
+      },
+      {
+        "expression": "!*self",
+        "file": "src/lib.rs",
+        "grip_class": "ungripped",
+        "join_method": "span_containment",
+        "line": 724,
+        "mutant": "src/lib.rs:724:17: delete ! in __private::not::<impl Bool for &bool>::not",
+        "repo": "anyhow",
+        "revision": "e621bd35ddddcd8b2f39d80b9f5938583571a87d",
+        "runtime_outcome": "caught",
+        "seam_id": "94e6ac858e1ce13e",
+        "seam_kind": "return_value"
+      },
+      {
+        "expression": "!self.search_path.is_empty()",
+        "file": "src/cli.rs",
+        "grip_class": "ungripped",
+        "join_method": "span_containment",
+        "line": 701,
+        "mutant": "src/cli.rs:701:19: delete ! in Opts::search_paths",
+        "repo": "fd",
+        "revision": "ce97e473ebaec49697c07daa50a7bc2b32f713d2",
+        "runtime_outcome": "caught",
+        "seam_id": "b8ab8cea23efe95c",
+        "seam_kind": "predicate_boundary"
+      },
+      {
+        "expression": "!self.files && entry_type.is_file()",
+        "file": "src/filetypes.rs",
+        "grip_class": "ungripped",
+        "join_method": "span_containment",
+        "line": 23,
+        "mutant": "src/filetypes.rs:23:26: replace && with || in FileTypes::should_ignore",
+        "repo": "fd",
+        "revision": "ce97e473ebaec49697c07daa50a7bc2b32f713d2",
+        "runtime_outcome": "caught",
+        "seam_id": "0298697f785f3dc9",
+        "seam_kind": "predicate_boundary"
+      },
+      {
+        "expression": "(!self.files && entry_type.is_file())\n                || (!self.directories && entry_type.is_dir())",
+        "file": "src/filetypes.rs",
+        "grip_class": "ungripped",
+        "join_method": "span_containment",
+        "line": 23,
+        "mutant": "src/filetypes.rs:24:17: replace || with && in FileTypes::should_ignore",
+        "repo": "fd",
+        "revision": "ce97e473ebaec49697c07daa50a7bc2b32f713d2",
+        "runtime_outcome": "caught",
+        "seam_id": "0298687f785f3c16",
+        "seam_kind": "predicate_boundary"
+      },
+      {
+        "expression": "!self.directories && entry_type.is_dir()",
+        "file": "src/filetypes.rs",
+        "grip_class": "ungripped",
+        "join_method": "span_containment",
+        "line": 24,
+        "mutant": "src/filetypes.rs:24:39: replace && with || in FileTypes::should_ignore",
+        "repo": "fd",
+        "revision": "ce97e473ebaec49697c07daa50a7bc2b32f713d2",
+        "runtime_outcome": "caught",
+        "seam_id": "02b07a7f7873ec8d",
+        "seam_kind": "predicate_boundary"
+      },
+      {
+        "expression": "!self.symlinks && entry_type.is_symlink()",
+        "file": "src/filetypes.rs",
+        "grip_class": "ungripped",
+        "join_method": "span_containment",
+        "line": 25,
+        "mutant": "src/filetypes.rs:25:36: replace && with || in FileTypes::should_ignore",
+        "repo": "fd",
+        "revision": "ce97e473ebaec49697c07daa50a7bc2b32f713d2",
+        "runtime_outcome": "caught",
+        "seam_id": "e967ff7f6a54b411",
+        "seam_kind": "predicate_boundary"
+      },
+      {
+        "expression": "!self.block_devices && filesystem::is_block_device(*entry_type)",
+        "file": "src/filetypes.rs",
+        "grip_class": "ungripped",
+        "join_method": "span_containment",
+        "line": 26,
+        "mutant": "src/filetypes.rs:26:41: replace && with || in FileTypes::should_ignore",
+        "repo": "fd",
+        "revision": "ce97e473ebaec49697c07daa50a7bc2b32f713d2",
+        "runtime_outcome": "caught",
+        "seam_id": "f0d2257f6e2d7e5b",
+        "seam_kind": "predicate_boundary"
+      },
+      {
+        "expression": "!self.char_devices && filesystem::is_char_device(*entry_type)",
+        "file": "src/filetypes.rs",
+        "grip_class": "ungripped",
+        "join_method": "span_containment",
+        "line": 27,
+        "mutant": "src/filetypes.rs:27:40: replace && with || in FileTypes::should_ignore",
+        "repo": "fd",
+        "revision": "ce97e473ebaec49697c07daa50a7bc2b32f713d2",
+        "runtime_outcome": "caught",
+        "seam_id": "f0b69e7f6e15d13e",
+        "seam_kind": "predicate_boundary"
+      },
+      {
+        "expression": "!self.sockets && filesystem::is_socket(*entry_type)",
+        "file": "src/filetypes.rs",
+        "grip_class": "ungripped",
+        "join_method": "span_containment",
+        "line": 28,
+        "mutant": "src/filetypes.rs:28:35: replace && with || in FileTypes::should_ignore",
+        "repo": "fd",
+        "revision": "ce97e473ebaec49697c07daa50a7bc2b32f713d2",
+        "runtime_outcome": "caught",
+        "seam_id": "1c09647f86a0a1d9",
+        "seam_kind": "predicate_boundary"
+      }
+    ]
+  },
+  "operator_token_diagnostic": {
+    "absent_examples": [
+      {
+        "expression": "!*self",
+        "file": "src/lib.rs",
+        "grip_class": "ungripped",
+        "join_method": "span_containment",
+        "line": 724,
+        "mutant": "src/lib.rs:724:17: delete ! in __private::not::<impl Bool for &bool>::not",
+        "repo": "anyhow",
+        "revision": "e621bd35ddddcd8b2f39d80b9f5938583571a87d",
+        "runtime_outcome": "caught",
+        "seam_id": "94e6ac858e1ce13e",
+        "seam_kind": "return_value"
+      }
+    ],
+    "counts": {
+      "absent": 1,
+      "present": 145
+    }
+  },
+  "outcomes_by_disposition_and_grip_class": {
+    "ambiguous_span_overlap": {
+      "no_joined_seam": {
+        "caught": 23,
+        "missed": 8,
+        "unviable": 7
+      }
+    },
+    "canonical_precise": {
+      "activation_unknown": {
+        "caught": 70,
+        "missed": 22
+      },
+      "opaque": {
+        "caught": 3,
+        "missed": 2
+      },
+      "strongly_gripped": {
+        "caught": 4
+      },
+      "ungripped": {
+        "caught": 31,
+        "missed": 9
+      },
+      "weakly_gripped": {
+        "caught": 5
+      }
+    },
+    "file_line_only": {
+      "activation_unknown": {
+        "caught": 9,
+        "missed": 1,
+        "unviable": 1
+      },
+      "opaque": {
+        "missed": 1,
+        "unviable": 2
+      },
+      "reachable_unrevealed": {
+        "caught": 3,
+        "missed": 2,
+        "unviable": 3
+      },
+      "strongly_gripped": {
+        "caught": 5,
+        "unviable": 2
+      },
+      "ungripped": {
+        "caught": 1
+      },
+      "weakly_gripped": {
+        "caught": 4
+      }
+    },
+    "unmatched_no_containing_seam": {
+      "no_joined_seam": {
+        "caught": 122,
+        "missed": 44,
+        "timeout": 1,
+        "unviable": 30
+      }
+    },
+    "unscoreable_outcome": {
+      "activation_unknown": {
+        "timeout": 2,
+        "unviable": 6
+      },
+      "opaque": {
+        "unviable": 1
+      }
+    },
+    "unsupported_genre": {
+      "activation_unknown": {
+        "caught": 61,
+        "missed": 31,
+        "unviable": 57
+      },
+      "opaque": {
+        "caught": 19,
+        "missed": 8,
+        "unviable": 18
+      },
+      "reachable_unrevealed": {
+        "caught": 2
+      },
+      "strongly_gripped": {
+        "caught": 6,
+        "missed": 1,
+        "unviable": 1
+      },
+      "ungripped": {
+        "caught": 5,
+        "missed": 1
+      },
+      "weakly_gripped": {
+        "caught": 4,
+        "missed": 8,
+        "unviable": 2
+      }
+    },
+    "unsupported_seam_kind": {
+      "activation_unknown": {
+        "caught": 2,
+        "unviable": 1
+      },
+      "reachable_unrevealed": {
+        "missed": 3
+      },
+      "strongly_gripped": {
+        "caught": 9,
+        "unviable": 5
+      },
+      "ungripped": {
+        "caught": 10
+      },
+      "weakly_gripped": {
+        "caught": 1
+      }
+    }
+  },
+  "pilot_top_recommendations": {
+    "by_grip_class": {
+      "weakly_gripped": {
+        "confirmed": 2,
+        "refuted": 8,
+        "unscored": 10
+      }
+    },
+    "by_tier": {
+      "line": {
+        "confirmed": 1
+      },
+      "none": {
+        "unscored": 10
+      },
+      "owner": {
+        "confirmed": 1,
+        "refuted": 4
+      },
+      "seam": {
+        "refuted": 4
+      }
+    },
+    "claim_boundary": "A pilot recommendation is confirmed when a viable operator mutant of its predicate or return expression was missed (with none, a viable mutant on its line; with none there either, a whole-body mutant of its innermost function), refuted when every such mutant was caught, and unscored otherwise. Precision is confirmed over confirmed plus refuted, for the recorded revisions and cargo-mutants versions only.",
+    "counts": {
+      "confirmed": 2,
+      "refuted": 8,
+      "unscored": 10
+    },
+    "max_seams_per_repo": 10,
+    "precision": 0.2,
+    "recommendations_total": 20,
+    "repos": [
+      {
+        "name": "anyhow",
+        "recommendations": [
+          {
+            "caught": 0,
+            "file": "src/chain.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "field_construction",
+            "line": 30,
+            "missed": 0,
+            "rank": 1,
+            "seam_id": "0dfde300401f2920",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 1,
+            "file": "src/chain.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "field_construction",
+            "line": 68,
+            "missed": 0,
+            "rank": 2,
+            "seam_id": "588192c89ace62ba",
+            "tier": "owner",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 0,
+            "file": "src/chain.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "field_construction",
+            "line": 97,
+            "missed": 0,
+            "rank": 3,
+            "seam_id": "663b3fe14853f048",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 0,
+            "file": "src/context.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "error_variant",
+            "line": 54,
+            "missed": 0,
+            "rank": 4,
+            "seam_id": "525d5dba1aec2f8e",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 0,
+            "file": "src/context.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "error_variant",
+            "line": 65,
+            "missed": 0,
+            "rank": 5,
+            "seam_id": "bfa1a4887a28267f",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 0,
+            "file": "src/ensure.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "field_construction",
+            "line": 43,
+            "missed": 0,
+            "rank": 6,
+            "seam_id": "a5f2283431d74c59",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 0,
+            "file": "src/error.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "error_variant",
+            "line": 35,
+            "missed": 0,
+            "rank": 7,
+            "seam_id": "b3355818f8aee05e",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 0,
+            "file": "src/error.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "error_variant",
+            "line": 163,
+            "missed": 0,
+            "rank": 8,
+            "seam_id": "2ead935e82ba66be",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 0,
+            "file": "src/error.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "field_construction",
+            "line": 362,
+            "missed": 0,
+            "rank": 9,
+            "seam_id": "ca0c06787cc3856f",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 1,
+            "file": "src/error.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "error_variant",
+            "line": 478,
+            "missed": 0,
+            "rank": 10,
+            "seam_id": "14de265abeded6dc",
+            "tier": "owner",
+            "verdict": "refuted"
+          }
+        ]
+      },
+      {
+        "name": "fd",
+        "recommendations": [
+          {
+            "caught": 1,
+            "file": "src/filter/size.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "predicate_boundary",
+            "line": 70,
+            "missed": 0,
+            "rank": 1,
+            "seam_id": "6c7483fbd7800f6d",
+            "tier": "seam",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 1,
+            "file": "src/filter/size.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "predicate_boundary",
+            "line": 71,
+            "missed": 0,
+            "rank": 2,
+            "seam_id": "6c6380fbd7719721",
+            "tier": "seam",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 1,
+            "file": "src/filter/size.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "predicate_boundary",
+            "line": 72,
+            "missed": 0,
+            "rank": 3,
+            "seam_id": "7521a1fbdc6b58e8",
+            "tier": "seam",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 1,
+            "file": "src/cli.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "predicate_boundary",
+            "line": 729,
+            "missed": 0,
+            "rank": 4,
+            "seam_id": "ffa2119838e6eb63",
+            "tier": "seam",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 2,
+            "file": "src/regex_helper.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "return_value",
+            "line": 8,
+            "missed": 0,
+            "rank": 5,
+            "seam_id": "170c731e7c314d1e",
+            "tier": "owner",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 2,
+            "file": "src/regex_helper.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "return_value",
+            "line": 43,
+            "missed": 0,
+            "rank": 6,
+            "seam_id": "ee4c4afbafd0651f",
+            "tier": "owner",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 0,
+            "file": "src/dir_entry.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "field_construction",
+            "line": 31,
+            "missed": 0,
+            "rank": 7,
+            "seam_id": "37c3f35536bf9f20",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 0,
+            "file": "src/dir_entry.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "field_construction",
+            "line": 39,
+            "missed": 0,
+            "rank": 8,
+            "seam_id": "204dd84201fac40e",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 0,
+            "file": "src/dir_entry.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "return_value",
+            "line": 115,
+            "missed": 1,
+            "rank": 9,
+            "seam_id": "833ff68061c8f03b",
+            "tier": "line",
+            "verdict": "confirmed"
+          },
+          {
+            "caught": 0,
+            "file": "src/dir_entry.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "return_value",
+            "line": 167,
+            "missed": 2,
+            "rank": 10,
+            "seam_id": "cac237aa8d690118",
+            "tier": "owner",
+            "verdict": "confirmed"
+          }
+        ]
+      }
+    ],
+    "scored": 10,
+    "unavailable_repos": 0
+  },
+  "recall_of_missed": {
+    "by_language": {
+      "python": {
+        "reason": "no real-mutant corpus has been run for this language yet; no figure is claimed",
+        "status": "not_established"
+      },
+      "rust": {
+        "flagged_or_unknown_missed": 83,
+        "flagged_or_unknown_share_of_missed": 0.589,
+        "missed_by_grip_class": {
+          "activation_unknown": 54,
+          "no_joined_seam": 52,
+          "opaque": 11,
+          "other": 5,
+          "strongly_gripped": 1,
+          "ungripped": 10,
+          "weakly_gripped": 8
+        },
+        "missed_total": 141,
+        "not_flagged_missed": 58,
+        "status": "established",
+        "ungripped_missed": 10,
+        "ungripped_share_of_missed": 0.071
+      },
+      "typescript": {
+        "reason": "no real-mutant corpus has been run for this language yet; no figure is claimed",
+        "status": "not_established"
+      }
+    },
+    "claim_boundary": "Advisory. Counts runtime-missed mutants of every disposition by the grip class ripr recorded for them; the recorded checkout revisions and cargo-mutants runs only. Two figures are reported and must be labelled: ungripped_share_of_missed is the strict share flagged ungripped; flagged_or_unknown_share_of_missed also counts weakly_gripped, activation_unknown and opaque, which are an honest gap or unknown rather than a confirmed gap, and excludes strongly_gripped and no_joined_seam (no seam) mutants. A missed mutant that ripr did not flag is not a ripr error and a share is not suite adequacy. by_language lists only languages with a recorded real-mutant corpus as established.",
+    "flagged_or_unknown_missed": 83,
+    "flagged_or_unknown_share_of_missed": 0.589,
+    "missed_by_grip_class": {
+      "activation_unknown": 54,
+      "no_joined_seam": 52,
+      "opaque": 11,
+      "other": 5,
+      "strongly_gripped": 1,
+      "ungripped": 10,
+      "weakly_gripped": 8
+    },
+    "missed_total": 141,
+    "not_flagged_missed": 58,
+    "ungripped_missed": 10,
+    "ungripped_share_of_missed": 0.071
+  },
+  "replacement_criterion": {
+    "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Precision and flagged-or-unknown recall use the R2 bars of the release ladder in docs/METRICS.md; scored coverage and the time ratio are agent-chosen technical bars whose rationale is recorded per criterion in threshold_source. A replaces verdict requires every thresholded criterion met and none not_established. It is fail-closed by design: `replaces` is currently unreachable because the Python/TypeScript criterion stays not_established: both are measured only by the separate synthetic-diff method. The time criterion is met on one crate, one diff and one run; it is not a distribution or a general speed claim. It is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
+    "criteria": [
+      {
+        "description": "agreement of ripr claims_discriminator seams with runtime outcomes",
+        "direction": "at_least",
+        "id": "precision_of_discriminator_claims",
+        "observed": 1.0,
+        "scope": [
+          "rust"
+        ],
+        "status": "met",
+        "threshold": 0.97,
+        "threshold_source": "docs/METRICS.md release ladder R2"
+      },
+      {
+        "description": "share of runtime-missed mutants ripr flagged as a gap or an honest unknown",
+        "direction": "at_least",
+        "id": "recall_flagged_or_unknown",
+        "observed": 0.589,
+        "scope": [
+          "rust"
+        ],
+        "status": "not_met",
+        "threshold": 0.8,
+        "threshold_source": "docs/METRICS.md release ladder R2"
+      },
+      {
+        "description": "share of runtime-missed mutants ripr flagged ungripped (informational, no threshold)",
+        "id": "recall_strict_ungripped",
+        "observed": 0.071,
+        "scope": [
+          "rust"
+        ],
+        "status": "informational",
+        "threshold": null
+      },
+      {
+        "description": "share of recorded mutants that reach a canonical_precise seam join",
+        "direction": "at_least",
+        "id": "scored_coverage",
+        "observed": 0.215,
+        "scope": [
+          "rust"
+        ],
+        "status": "not_met",
+        "threshold": 0.5,
+        "threshold_source": "agent-chosen: a majority of generated mutants must reach a canonical_precise seam join and so receive a scored verdict"
+      },
+      {
+        "description": "ripr wall time on the diff as a share of full cargo-mutants wall time on the same checkout",
+        "direction": "at_most",
+        "id": "time_vs_full_cargo_mutants",
+        "observed": {
+          "cargo_mutants_seconds": null,
+          "ratio": null,
+          "ripr_seconds": null
+        },
+        "reason": "no paired timing of ripr and full cargo-mutants is recorded for these checkouts; no figure is claimed",
+        "recorded": null,
+        "scope": [
+          "rust"
+        ],
+        "status": "not_established",
+        "threshold": 0.1,
+        "threshold_source": "agent-chosen: ripr must cost under a tenth of a full cargo-mutants run on the same crate to be a usable substitute in the edit loop"
+      },
+      {
+        "description": "agreement with real mutants on Python and TypeScript",
+        "id": "python_typescript_real_mutant_agreement",
+        "observed": null,
+        "reason": "Python and TypeScript are measured only by the synthetic-diff verdict method (see synthetic_diff_verdict), which is not the span-join agreement this criterion is defined over; no figure is claimed here and the criterion fails closed",
+        "scope": [
+          "python",
+          "typescript"
+        ],
+        "status": "not_established",
+        "threshold": null
+      }
+    ],
+    "not_established": [
+      "time_vs_full_cargo_mutants",
+      "python_typescript_real_mutant_agreement"
+    ],
+    "not_met": [
+      "recall_flagged_or_unknown",
+      "scored_coverage"
+    ],
+    "verdict": "not_yet"
+  },
+  "repos": [
+    {
+      "calibration_metrics": {
+        "ambiguous_file_line_total": 0,
+        "ambiguous_span_overlap_total": 2,
+        "join_method_counts": {
+          "file_line": 10,
+          "span_containment": 113
+        },
+        "matched_total": 123,
+        "mutants_total": 176,
+        "runtime_outcome_counts": {
+          "caught": 56,
+          "missed": 40,
+          "unviable": 80
+        },
+        "static_seams_total": 339,
+        "static_without_runtime_total": 260,
+        "unmatched_mutants_total": 51,
+        "unmatched_reason_counts": {
+          "no_containing_seam": 51
+        }
+      },
+      "cargo_mutants_args": [],
+      "cargo_mutants_version": "27.1.0",
+      "exposure_run_status": "complete",
+      "language": "rust",
+      "mutant_diffs_checked_against_revision": 176,
+      "mutant_set_sha256": "f1e63ef2000c1c4a096b7ae0bafbb443bb1e0b73802379d3302cd3a48217b444",
+      "mutant_timeout_secs": 60,
+      "name": "anyhow",
+      "outcomes_by_disposition_and_grip_class": {
+        "ambiguous_span_overlap": {
+          "no_joined_seam": {
+            "unviable": 2
+          }
+        },
+        "canonical_precise": {
+          "activation_unknown": {
+            "caught": 8,
+            "missed": 1
+          },
+          "strongly_gripped": {
+            "caught": 1
+          },
+          "ungripped": {
+            "caught": 2
+          }
+        },
+        "file_line_only": {
+          "opaque": {
+            "unviable": 2
+          },
+          "reachable_unrevealed": {
+            "unviable": 2
+          },
+          "strongly_gripped": {
+            "caught": 4,
+            "unviable": 2
+          }
+        },
+        "unmatched_no_containing_seam": {
+          "no_joined_seam": {
+            "caught": 18,
+            "missed": 18,
+            "unviable": 15
+          }
+        },
+        "unsupported_genre": {
+          "activation_unknown": {
+            "caught": 4,
+            "missed": 7,
+            "unviable": 42
+          },
+          "opaque": {
+            "caught": 11,
+            "missed": 8,
+            "unviable": 14
+          },
+          "strongly_gripped": {
+            "caught": 1,
+            "unviable": 1
+          },
+          "ungripped": {
+            "caught": 4
+          },
+          "weakly_gripped": {
+            "caught": 1,
+            "missed": 6
+          }
+        },
+        "unsupported_seam_kind": {
+          "strongly_gripped": {
+            "caught": 2
+          }
+        }
+      },
+      "pairings": {
+        "canonical_precise": 12,
+        "canonical_precise_by_join_method": {
+          "seam_id": 0,
+          "span_containment": 12
+        },
+        "excluded": {
+          "ambiguous_span_overlap": 2,
+          "file_line_only": 10,
+          "unmatched_no_containing_seam": 51,
+          "unsupported_genre": 99,
+          "unsupported_seam_kind": 2
+        },
+        "records_total": 176
+      },
+      "revision": "e621bd35ddddcd8b2f39d80b9f5938583571a87d"
+    },
+    {
+      "calibration_metrics": {
+        "ambiguous_file_line_total": 0,
+        "ambiguous_span_overlap_total": 36,
+        "join_method_counts": {
+          "file_line": 24,
+          "span_containment": 297
+        },
+        "matched_total": 321,
+        "mutants_total": 503,
+        "runtime_outcome_counts": {
+          "caught": 343,
+          "missed": 101,
+          "timeout": 3,
+          "unviable": 56
+        },
+        "static_seams_total": 920,
+        "static_without_runtime_total": 679,
+        "unmatched_mutants_total": 146,
+        "unmatched_reason_counts": {
+          "no_containing_seam": 146
+        }
+      },
+      "cargo_mutants_args": [
+        "--package=fd-find"
+      ],
+      "cargo_mutants_version": "27.1.0",
+      "exposure_run_status": "complete",
+      "language": "rust",
+      "mutant_diffs_checked_against_revision": 503,
+      "mutant_set_sha256": "4a5e22fcdd582a020d4fce11e4c9383daeed1bf304cb1f236e134147e449d4a0",
+      "mutant_timeout_secs": 60,
+      "name": "fd",
+      "outcomes_by_disposition_and_grip_class": {
+        "ambiguous_span_overlap": {
+          "no_joined_seam": {
+            "caught": 23,
+            "missed": 8,
+            "unviable": 5
+          }
+        },
+        "canonical_precise": {
+          "activation_unknown": {
+            "caught": 62,
+            "missed": 21
+          },
+          "opaque": {
+            "caught": 3,
+            "missed": 2
+          },
+          "strongly_gripped": {
+            "caught": 3
+          },
+          "ungripped": {
+            "caught": 29,
+            "missed": 9
+          },
+          "weakly_gripped": {
+            "caught": 5
+          }
+        },
+        "file_line_only": {
+          "activation_unknown": {
+            "caught": 9,
+            "missed": 1,
+            "unviable": 1
+          },
+          "opaque": {
+            "missed": 1
+          },
+          "reachable_unrevealed": {
+            "caught": 3,
+            "missed": 2,
+            "unviable": 1
+          },
+          "strongly_gripped": {
+            "caught": 1
+          },
+          "ungripped": {
+            "caught": 1
+          },
+          "weakly_gripped": {
+            "caught": 4
+          }
+        },
+        "unmatched_no_containing_seam": {
+          "no_joined_seam": {
+            "caught": 104,
+            "missed": 26,
+            "timeout": 1,
+            "unviable": 15
+          }
+        },
+        "unscoreable_outcome": {
+          "activation_unknown": {
+            "timeout": 2,
+            "unviable": 6
+          },
+          "opaque": {
+            "unviable": 1
+          }
+        },
+        "unsupported_genre": {
+          "activation_unknown": {
+            "caught": 57,
+            "missed": 24,
+            "unviable": 15
+          },
+          "opaque": {
+            "caught": 8,
+            "unviable": 4
+          },
+          "reachable_unrevealed": {
+            "caught": 2
+          },
+          "strongly_gripped": {
+            "caught": 5,
+            "missed": 1
+          },
+          "ungripped": {
+            "caught": 1,
+            "missed": 1
+          },
+          "weakly_gripped": {
+            "caught": 3,
+            "missed": 2,
+            "unviable": 2
+          }
+        },
+        "unsupported_seam_kind": {
+          "activation_unknown": {
+            "caught": 2,
+            "unviable": 1
+          },
+          "reachable_unrevealed": {
+            "missed": 3
+          },
+          "strongly_gripped": {
+            "caught": 7,
+            "unviable": 5
+          },
+          "ungripped": {
+            "caught": 10
+          },
+          "weakly_gripped": {
+            "caught": 1
+          }
+        }
+      },
+      "pairings": {
+        "canonical_precise": 134,
+        "canonical_precise_by_join_method": {
+          "seam_id": 0,
+          "span_containment": 134
+        },
+        "excluded": {
+          "ambiguous_span_overlap": 36,
+          "file_line_only": 24,
+          "unmatched_no_containing_seam": 146,
+          "unscoreable_outcome": 9,
+          "unsupported_genre": 125,
+          "unsupported_seam_kind": 29
+        },
+        "records_total": 503
+      },
+      "revision": "ce97e473ebaec49697c07daa50a7bc2b32f713d2"
+    }
+  ],
+  "schema_version": "ripr-mutation-spot-check-v2",
+  "scored_families": {
+    "claims_discriminator": {
+      "agreement_rate": 1.0,
+      "counts": {
+        "agree": 4
+      },
+      "mutants_scored": 4,
+      "seams_scored": 4
+    },
+    "claims_no_discriminator": {
+      "agreement_rate": 0.225,
+      "counts": {
+        "agree": 9,
+        "false_gap": 31
+      },
+      "mutants_scored": 40,
+      "seams_scored": 26
+    }
+  },
+  "seam_coverage": {
+    "canonical_precise": 146,
+    "canonical_precise_share": 0.215,
+    "caught": 399,
+    "claim_boundary": "Advisory. Shares are of every recorded mutant, including timeout and unviable outcomes; recorded checkout revisions only. Seam coverage is a join-rate fact about ripr's seam inventory, not suite adequacy.",
+    "missed": 141,
+    "mutants_total": 679,
+    "no_containing_seam": 197,
+    "no_containing_seam_share": 0.29,
+    "with_caught_or_missed_outcome": 540
+  },
+  "status": "advisory"
+}

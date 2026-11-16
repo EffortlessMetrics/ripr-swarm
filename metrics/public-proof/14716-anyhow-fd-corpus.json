@@ -1,0 +1,95 @@
+{
+  "schema_version": "ripr-named-corpus-receipt-v1",
+  "status": "advisory",
+  "corpus_label": "anyhow+fd increment at db01ef5618: two-repository pilot, not a replacement for the five-crate receipt or the named anyhow+fd+bat population",
+  "analyzer_version": "ripr 0.11.0",
+  "analyzer_checkout_revision": "db01ef5618f43a6af4291d94e3b849c27c581b9b",
+  "analyzer_version_note": "The WSL-built binary reported `ripr 0.11.0` without checkout metadata; the analyzer worktree was separately verified at `db01ef5618f43a6af4291d94e3b849c27c581b9b`.",
+  "completed_in_one_lane_job": true,
+  "runner_wall_seconds": 784.49,
+  "runner_wall_minutes": 13.075,
+  "command": "cargo xtask mutation-spot-check --repo anyhow=<checkout> --repo fd=<checkout> --mutants-arg fd=--package=fd-find --run-mutants --jobs 3 --mutant-timeout-secs 60",
+  "jobs": 3,
+  "mutant_timeout_secs": 60,
+  "tmp_dir": "/tmp",
+  "cargo_mutants_version": "27.1.0",
+  "repositories": [
+    {
+      "name": "anyhow",
+      "revision": "e621bd35ddddcd8b2f39d80b9f5938583571a87d",
+      "cargo_mutants_version": "27.1.0",
+      "mutant_diffs_checked_against_revision": 176,
+      "cargo_mutants_args": []
+    },
+    {
+      "name": "fd",
+      "revision": "ce97e473ebaec49697c07daa50a7bc2b32f713d2",
+      "cargo_mutants_version": "27.1.0",
+      "mutant_diffs_checked_against_revision": 503,
+      "cargo_mutants_args": [
+        "--package=fd-find"
+      ]
+    }
+  ],
+  "mutant_counts": {
+    "total": 679,
+    "caught": 399,
+    "missed": 141,
+    "timeout": 3,
+    "unviable": 136,
+    "with_caught_or_missed_outcome": 540,
+    "canonical_precise": 146,
+    "no_containing_seam": 197,
+    "all_outcomes": {
+      "caught": 399,
+      "missed": 141,
+      "timeout": 3,
+      "unviable": 136
+    }
+  },
+  "pilot_tiers": [
+    {
+      "tier": "seam",
+      "confirmed": 0,
+      "refuted": 4,
+      "unscored": 0,
+      "scored_denominator": 4,
+      "recommendations_total": 4,
+      "confirmed_fraction": "0/4"
+    },
+    {
+      "tier": "line",
+      "confirmed": 1,
+      "refuted": 0,
+      "unscored": 0,
+      "scored_denominator": 1,
+      "recommendations_total": 1,
+      "confirmed_fraction": "1/1"
+    },
+    {
+      "tier": "owner",
+      "confirmed": 1,
+      "refuted": 4,
+      "unscored": 0,
+      "scored_denominator": 5,
+      "recommendations_total": 5,
+      "confirmed_fraction": "1/5"
+    },
+    {
+      "tier": "none",
+      "confirmed": 0,
+      "refuted": 0,
+      "unscored": 10,
+      "scored_denominator": 0,
+      "recommendations_total": 10,
+      "confirmed_fraction": null
+    }
+  ],
+  "population_denominator": "Per tier, scored recommendations = confirmed + refuted; unscored rows remain separately reported. The named-population denominator is not inferred from canonical_precise.",
+  "named_population_reference": "Separate named anyhow+fd+bat evidence is 10/14 = 0.714; this two-repository run does not include bat and does not recompute that population",
+  "claim_boundary": "Advisory only, at the recorded analyzer and checkout revisions. This run measures the anyhow+fd increment only. No bat run occurred. The historical named-population label is a reference, not a single precision rate published from this increment.",
+  "raw_receipts": [
+    "14716-anyhow-fd-mutation-spot-check.json",
+    "14716-anyhow-fd-mutation-spot-check.md"
+  ]
+}
