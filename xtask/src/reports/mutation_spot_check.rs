@@ -136,13 +136,22 @@ const MIN_SCORED_FOR_ESTABLISHED: usize = 30;
 const RUST_DIFF_MODE: &str = "rust_diff_mode";
 const RUST_DIFF_MODE_SECTION: &str = "rust_diff_mode_verdict";
 const RUST_DIFF_MODE_BOUNDARY: &str = "Advisory and never mixed with the Rust span-join figures, which score the same cargo-mutants mutants against repo-exposure seams. Here each mutant's own recorded cargo-mutants diff is applied to a scratch copy of the checkout and run through `ripr check --diff` (the product path), and the classification on the mutated lines is read back. Only pairs with a caught or missed outcome and exactly one classification and owner on the mutated lines are scored: exposed claims a discriminator (a missed mutant is an overclaim); reachable_unrevealed and no_static_path claim none (a caught mutant is a false gap); weakly_exposed and the unknown classes are counted but not scored. Every other mutant is an exclusion with its reason, and canonical_precise plus the exclusions equals records_total. A line with findings of different classes (a predicate and a return value, say) is excluded as ambiguous. Missed mutants that are excluded (ambiguous, no finding, a recorded diff that no longer matches, beyond the sampling cap) still count in recall_of_missed missed_total as not flagged, so the rust_diff_mode recall is a lower bound that depends on the cap. A mutated line is not a seam; the figures bind to the recorded revisions and cargo-mutants versions and are not suite adequacy.";
+const VALIDATE_STRYKER_USAGE: &str =
+    "usage: cargo xtask mutation-spot-check --validate-stryker-report <mutation.json>";
 const REDERIVE_USAGE: &str =
-    "usage: cargo xtask mutation-spot-check --rederive-summaries <mutation-spot-check.json>";
-const USAGE: &str = "usage: cargo xtask mutation-spot-check --repo <name>=<checkout> [--repo ...] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]
+    "usage: cargo xtask mutation-spot-check --rederive-summaries <mutation-spot-check.json> [--committed-language <language>]";
+const USAGE: &str = "usage: cargo xtask mutation-spot-check [--repo <name>=<checkout> [--repo ...]] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--limitation <name>=<reason>] [--committed-language <language>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]
   TypeScript (real Stryker outcomes, synthetic-diff verdict join): --repo <name>=<checkout> --stryker-report <name>=<mutation.json> [--max-mutants <n>]
   Python (real cosmic-ray outcomes, same join): --repo <name>=<checkout> --cosmic-ray-dump <name>=<cosmic-ray dump output> [--cosmic-ray-version <v>] [--max-mutants <n>]
-  One run scores one synthetic-diff language; do not mix --stryker-report and --cosmic-ray-dump.
+  One run scores one synthetic-diff language; do not mix --stryker-report and --cosmic-ray-dump. A run with only --limitation entries writes an explicit zero-scored receipt.
   Rust diff mode: add --rust-diff-mode to also score every cargo-mutants mutant through `ripr check --diff` with its recorded diff (capped by --max-mutants), reported apart from the span join.";
+const LIMITATION_REASONS: &[&str] = &[
+    "leg_incomplete",
+    "mutants_timeout",
+    "runner_shutdown",
+    "missing_stryker_report",
+    "invalid_stryker_report",
+];
 
 fn harness_owned_mutants_arg(arg: &str) -> bool {
     if let Some(bundle) = arg.strip_prefix('-').filter(|rest| !rest.starts_with('-')) {
@@ -171,13 +180,40 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
         println!("{USAGE}");
         return Ok(());
     }
-    if let Some(index) = args.iter().position(|arg| arg == "--rederive-summaries") {
+    if let Some(index) = args
+        .iter()
+        .position(|arg| arg == "--validate-stryker-report")
+    {
         if args.len() != 2 || index != 0 {
             return Err(format!(
-                "--rederive-summaries takes exactly one path and no other argument; {REDERIVE_USAGE}"
+                "--validate-stryker-report takes exactly one path and no other argument; {VALIDATE_STRYKER_USAGE}"
             ));
         }
-        return rederive_summaries(Path::new(&args[1]));
+        return validate_stryker_report(Path::new(&args[1]));
+    }
+    if let Some(index) = args.iter().position(|arg| arg == "--rederive-summaries") {
+        if args.len() < 2 || index != 0 {
+            return Err(format!(
+                "--rederive-summaries needs exactly one path followed only by optional --committed-language flags; {REDERIVE_USAGE}"
+            ));
+        }
+        let mut committed_languages = BTreeSet::new();
+        let mut index = 2;
+        while index < args.len() {
+            if args[index] != "--committed-language" {
+                return Err(format!(
+                    "unexpected --rederive-summaries argument `{}`; {REDERIVE_USAGE}",
+                    args[index]
+                ));
+            }
+            index += 1;
+            committed_languages.insert(
+                parse_evidence_language(required_arg(args, index, "--committed-language")?)?
+                    .to_string(),
+            );
+            index += 1;
+        }
+        return rederive_summaries(Path::new(&args[1]), &committed_languages);
     }
     let options = parse_options(args)?;
     let binary = match &options.ripr {
@@ -239,7 +275,8 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
         repos.push(run.span_join);
         repos.extend(run.diff_mode);
     }
-    let report = build_report(&repos, options.examples, &analyzer);
+    let mut report = build_report(&repos, options.examples, &analyzer);
+    apply_run_envelope(&mut report, &options);
     let json_text = serde_json::to_string_pretty(&report)
         .map_err(|err| format!("serialize mutation spot check: {err}"))?;
     crate::write_report("mutation-spot-check.json", &format!("{json_text}\n"))?;
@@ -260,6 +297,11 @@ struct Options {
     cosmic_ray_dumps: BTreeMap<String, PathBuf>,
     /// The cosmic-ray version that produced the dumps; a dump does not say.
     cosmic_ray_version: Option<String>,
+    /// Selected repositories that produced no scoreable run, with the reason.
+    limitations: BTreeMap<String, String>,
+    /// Languages whose evidence in this receipt is explicitly promoted from an
+    /// Actions artifact to the committed public-proof snapshot.
+    committed_languages: BTreeSet<String>,
     max_mutants: usize,
     /// Also score cargo-mutants repos through `ripr check --diff`.
     rust_diff_mode: bool,
@@ -278,6 +320,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         stryker_reports: BTreeMap::new(),
         cosmic_ray_dumps: BTreeMap::new(),
         cosmic_ray_version: None,
+        limitations: BTreeMap::new(),
+        committed_languages: BTreeSet::new(),
         max_mutants: synthetic_diff::DEFAULT_MAX_MUTANTS,
         rust_diff_mode: false,
         run_mutants: false,
@@ -338,6 +382,31 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                 index += 1;
                 options.cosmic_ray_version = Some(required_arg(args, index, flag)?.to_string());
             }
+            "--limitation" => {
+                index += 1;
+                let value = required_arg(args, index, flag)?;
+                let Some((name, reason)) = value.split_once('=').filter(|(name, reason)| {
+                    is_repo_name(name.trim()) && LIMITATION_REASONS.contains(&reason.trim())
+                }) else {
+                    return Err(format!(
+                        "--limitation expects <name>=<reason>, with reason one of {}; got `{value}`",
+                        LIMITATION_REASONS.join(", ")
+                    ));
+                };
+                if options
+                    .limitations
+                    .insert(name.trim().to_string(), reason.trim().to_string())
+                    .is_some()
+                {
+                    return Err(format!("duplicate --limitation name `{name}`"));
+                }
+            }
+            "--committed-language" => {
+                index += 1;
+                options.committed_languages.insert(
+                    parse_evidence_language(required_arg(args, index, flag)?)?.to_string(),
+                );
+            }
             "--max-mutants" | "--stryker-max-mutants" => {
                 index += 1;
                 options.max_mutants =
@@ -370,10 +439,17 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         }
         index += 1;
     }
-    if options.repos.is_empty() {
+    if options.repos.is_empty() && options.limitations.is_empty() {
         return Err(format!(
-            "mutation-spot-check needs at least one --repo; {USAGE}"
+            "mutation-spot-check needs at least one --repo or --limitation; {USAGE}"
         ));
+    }
+    for name in options.limitations.keys() {
+        if options.repos.iter().any(|(repo, _)| repo == name) {
+            return Err(format!(
+                "--limitation `{name}` also names a scored --repo; a selected repository cannot be both"
+            ));
+        }
     }
     for name in options.mutants_out.keys() {
         if !options.repos.iter().any(|(repo, _)| repo == name) {
@@ -456,6 +532,19 @@ fn is_repo_name(name: &str) -> bool {
         && name
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+}
+
+fn parse_evidence_language(language: &str) -> Result<&'static str, String> {
+    RECALL_LANGUAGES
+        .iter()
+        .copied()
+        .find(|candidate| *candidate == language)
+        .ok_or_else(|| {
+            format!(
+                "--committed-language expects one of {}; got `{language}`",
+                RECALL_LANGUAGES.join(", ")
+            )
+        })
 }
 
 fn parse_positive(value: &str, flag: &str) -> Result<u64, String> {
@@ -915,6 +1004,14 @@ fn run_text(
 pub(crate) fn read_json(path: &Path) -> Result<Value, String> {
     let text = fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
     serde_json::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))
+}
+
+/// Validate one raw Stryker report offline before selecting it for scoring.
+/// This rejects malformed JSON, including isolated UTF-16 surrogates that
+/// JavaScript's parser accepts but exact Rust source reconstruction cannot.
+fn validate_stryker_report(path: &Path) -> Result<(), String> {
+    let report = read_json(path)?;
+    stryker::parse_stryker_report(&report).map(|_| ())
 }
 
 fn path_arg(path: &Path) -> String {
@@ -1406,6 +1503,58 @@ fn build_report(all_repos: &[RepoRun], examples: usize, analyzer: &str) -> Value
     report
 }
 
+/// Publication state belongs to this receipt, not to the analyzer. Fresh runs
+/// are artifact-only until a reviewer explicitly promotes their language with
+/// `--committed-language` during the public-proof refresh.
+fn apply_language_evidence(report: &mut Value, committed_languages: &BTreeSet<String>) {
+    let states = RECALL_LANGUAGES
+        .iter()
+        .map(|language| {
+            let state = if committed_languages.contains(*language) {
+                "committed"
+            } else {
+                "artifact_only"
+            };
+            ((*language).to_string(), json!(state))
+        })
+        .collect::<serde_json::Map<_, _>>();
+    report["language_evidence"] = Value::Object(states);
+}
+
+fn apply_corpus_envelope(report: &mut Value) {
+    let scored = report
+        .get("repos")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let limitations = report
+        .get("limitations")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    report["corpus"] = json!({
+        "selected": scored + limitations,
+        "scored": scored,
+        "limitations": limitations,
+    });
+}
+
+fn apply_run_envelope(report: &mut Value, options: &Options) {
+    report["limitations"] = json!(options
+        .limitations
+        .iter()
+        .map(|(name, reason)| json!({"name": name, "reason": reason}))
+        .collect::<Vec<_>>());
+    apply_corpus_envelope(report);
+    apply_language_evidence(report, &options.committed_languages);
+}
+
+fn apply_recorded_envelope(report: &mut Value, committed_languages: &BTreeSet<String>) {
+    if report.get("limitations").is_none() {
+        report["limitations"] = json!([]);
+    }
+    apply_corpus_envelope(report);
+    apply_language_evidence(report, committed_languages);
+}
+
 /// One repo's entry in the receipt's `repos` array.
 fn repo_entry(repo: &RepoRun) -> Value {
     let methods: &[&str] = if repo.synthetic.is_some() {
@@ -1864,8 +2013,12 @@ fn seam_coverage(outcomes: &Value) -> Value {
 
 /// Offline path: recompute the derived summary rows of a recorded report from
 /// its own `outcomes_by_disposition_and_grip_class`, without re-running
-/// mutation testing. Only `recall_of_missed`, `seam_coverage` and `replacement_criterion` change.
-fn rederive_summaries(path: &Path) -> Result<(), String> {
+/// mutation testing. Derived summaries and the corpus/publication envelope are
+/// refreshed; measured repository outcomes stay unchanged.
+fn rederive_summaries(
+    path: &Path,
+    committed_languages: &BTreeSet<String>,
+) -> Result<(), String> {
     let text = fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
     let mut report: Value =
         serde_json::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))?;
@@ -1896,6 +2049,7 @@ fn rederive_summaries(path: &Path) -> Result<(), String> {
     );
     report["recall_of_missed"] = recall;
     report["seam_coverage"] = coverage;
+    apply_recorded_envelope(&mut report, committed_languages);
     let json_text = serde_json::to_string_pretty(&report)
         .map_err(|err| format!("serialize {}: {err}", path.display()))?;
     fs::write(path, format!("{json_text}\n"))
@@ -2026,6 +2180,51 @@ fn rate(numerator: usize, denominator: usize) -> Value {
 
 fn spot_check_markdown(report: &Value) -> String {
     let mut out = String::from("# Mutation spot check\n\n");
+    let repository_count = report
+        .get("repos")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let limitation_count = report
+        .get("limitations")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let scored = report
+        .pointer("/corpus/scored")
+        .and_then(Value::as_u64)
+        .unwrap_or(repository_count as u64);
+    let selected = report
+        .pointer("/corpus/selected")
+        .and_then(Value::as_u64)
+        .unwrap_or((repository_count + limitation_count) as u64);
+    out.push_str(&format!(
+        "Scored {scored} of {selected} selected repositories.\n\n"
+    ));
+    if let Some(languages) = report.get("language_evidence").and_then(Value::as_object) {
+        let states = languages
+            .iter()
+            .map(|(language, state)| format!("{language} {}", state.as_str().unwrap_or("unknown")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&format!(
+            "Evidence state for this receipt: {states}. `committed` means promoted into `metrics/public-proof`; `artifact_only` means not established as committed evidence.\n\n"
+        ));
+    }
+    if let Some(limitations) = report.get("limitations").and_then(Value::as_array) {
+        out.push_str("## Selected repositories not scored\n\n");
+        if limitations.is_empty() {
+            out.push_str("None.\n\n");
+        } else {
+            out.push_str("| Repository | Reason |\n| --- | --- |\n");
+            for row in limitations {
+                out.push_str(&format!(
+                    "| {} | `{}` |\n",
+                    row.get("name").and_then(Value::as_str).unwrap_or(""),
+                    row.get("reason").and_then(Value::as_str).unwrap_or("")
+                ));
+            }
+            out.push('\n');
+        }
+    }
     if let Some(boundary) = report.get("claim_boundary").and_then(Value::as_str) {
         out.push_str(&format!("{boundary}\n\n"));
     }
@@ -2651,7 +2850,7 @@ mod tests {
         };
         // Old receipt, no language recorded: backfilled rust, aggregate used.
         write(json!([{"name": "a"}, {"name": "b"}]))?;
-        rederive_summaries(&path)?;
+        rederive_summaries(&path, &BTreeSet::new())?;
         let out: Value =
             serde_json::from_str(&fs::read_to_string(&path).map_err(|err| err.to_string())?)
                 .map_err(|err| err.to_string())?;
@@ -2667,7 +2866,7 @@ mod tests {
         // Mixed languages without per-repo tables cannot be split honestly.
         write(json!([{"name": "a", "language": "rust"}, {"name": "b", "language": "python"}]))?;
         assert!(
-            rederive_summaries(&path).is_err_and(|err| err.contains("per-repo outcome tables"))
+            rederive_summaries(&path, &BTreeSet::new()).is_err_and(|err| err.contains("per-repo outcome tables"))
         );
         // With per-repo tables the split is exact.
         write(json!([
@@ -2676,7 +2875,7 @@ mod tests {
             {"name": "b", "language": "python", "outcomes_by_disposition_and_grip_class":
                 {"canonical_precise": {"opaque": {"missed": 1}}}}
         ]))?;
-        rederive_summaries(&path)?;
+        rederive_summaries(&path, &BTreeSet::new())?;
         let out: Value =
             serde_json::from_str(&fs::read_to_string(&path).map_err(|err| err.to_string())?)
                 .map_err(|err| err.to_string())?;
@@ -2722,9 +2921,9 @@ mod tests {
             fs::write(&path, report.to_string()).map_err(|err| err.to_string())
         };
         write("ripr-mutation-spot-check-v1")?;
-        assert!(rederive_summaries(&path).is_err_and(|err| err.contains("expected")));
+        assert!(rederive_summaries(&path, &BTreeSet::new()).is_err_and(|err| err.contains("expected")));
         write(SCHEMA_VERSION)?;
-        rederive_summaries(&path)?;
+        rederive_summaries(&path, &BTreeSet::new())?;
         let out: Value =
             serde_json::from_str(&fs::read_to_string(&path).map_err(|err| err.to_string())?)
                 .map_err(|err| err.to_string())?;
@@ -2787,6 +2986,92 @@ mod tests {
             assert!(err.contains("letters, digits"), "{err}");
         }
         Ok(())
+    }
+
+    #[test]
+    fn offline_stryker_validation_rejects_isolated_surrogates() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-validate-stryker-{}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let valid = dir.join("valid.json");
+        let invalid = dir.join("invalid.json");
+        fs::write(
+            &valid,
+            r#"{"files":{"src/a.ts":{"source":"\ud83d\ude00","mutants":[]}}}"#,
+        )
+        .map_err(|err| err.to_string())?;
+        fs::write(
+            &invalid,
+            r#"{"files":{"src/a.ts":{"source":"\ud800","mutants":[]}}}"#,
+        )
+        .map_err(|err| err.to_string())?;
+        validate_stryker_report(&valid)?;
+        let error = validate_stryker_report(&invalid)
+            .err()
+            .ok_or("an isolated surrogate must not reach scoring")?;
+        assert!(error.contains("hex escape"), "{error}");
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_envelope_names_unscored_repositories_and_publication_state() -> Result<(), String> {
+        let strings = |values: &[&str]| values.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        let options = parse_options(&strings(&[
+            "--limitation",
+            "ufo=invalid_stryker_report",
+            "--committed-language",
+            "rust",
+        ]))?;
+        let mut report = build_report(&[], 5, TEST_ANALYZER);
+        apply_run_envelope(&mut report, &options);
+        assert_eq!(report["corpus"]["selected"], 1);
+        assert_eq!(report["corpus"]["scored"], 0);
+        assert_eq!(report["limitations"][0]["name"], "ufo");
+        assert_eq!(
+            report["limitations"][0]["reason"],
+            "invalid_stryker_report"
+        );
+        assert_eq!(report["language_evidence"]["rust"], "committed");
+        assert_eq!(report["language_evidence"]["python"], "artifact_only");
+        assert_eq!(report["language_evidence"]["typescript"], "artifact_only");
+        let markdown = spot_check_markdown(&report);
+        assert!(markdown.contains("Scored 0 of 1 selected repositories"));
+        assert!(markdown.contains("ufo"));
+        assert!(markdown.contains("rust committed"));
+
+        let options = parse_options(&strings(&[
+            "--repo",
+            "hex=/tmp/hex",
+            "--limitation",
+            "glob=leg_incomplete",
+        ]))?;
+        let mut report = build_report(&[repo_run(Vec::new())], 5, TEST_ANALYZER);
+        apply_run_envelope(&mut report, &options);
+        assert_eq!(report["corpus"]["selected"], 2);
+        assert_eq!(report["corpus"]["scored"], 1);
+        assert!(spot_check_markdown(&report).contains("Scored 1 of 2 selected repositories"));
+
+        for bad in [
+            strings(&["--repo", "hex=/tmp/hex", "--limitation", "hex=leg_incomplete"]),
+            strings(&["--limitation", "glob=not_a_reason"]),
+            strings(&["--committed-language", "javascript"]),
+        ] {
+            assert!(parse_options(&bad).is_err(), "{bad:?} should be refused");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn recorded_envelope_preserves_limitations_and_marks_only_explicit_commits() {
+        let mut report = json!({
+            "repos": [{"name": "hex"}],
+            "limitations": [{"name": "glob", "reason": "runner_shutdown"}],
+        });
+        apply_recorded_envelope(&mut report, &BTreeSet::from(["rust".to_string()]));
+        assert_eq!(report["corpus"]["selected"], 2);
+        assert_eq!(report["limitations"][0]["name"], "glob");
+        assert_eq!(report["language_evidence"]["rust"], "committed");
+        assert_eq!(report["language_evidence"]["typescript"], "artifact_only");
     }
 
     #[test]
@@ -3531,7 +3816,7 @@ mod tests {
         fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
         let path = dir.join("report.json");
         fs::write(&path, with.to_string()).map_err(|err| err.to_string())?;
-        rederive_summaries(&path)?;
+        rederive_summaries(&path, &BTreeSet::new())?;
         let out: Value =
             serde_json::from_str(&fs::read_to_string(&path).map_err(|err| err.to_string())?)
                 .map_err(|err| err.to_string())?;
@@ -3986,7 +4271,7 @@ mod tests {
             "outcomes_by_disposition_and_grip_class": baseline_outcomes(),
         });
         fs::write(&path, receipt.to_string()).map_err(|err| err.to_string())?;
-        rederive_summaries(&path)?;
+        rederive_summaries(&path, &BTreeSet::new())?;
         let out: Value =
             serde_json::from_str(&fs::read_to_string(&path).map_err(|e| e.to_string())?)
                 .map_err(|err| err.to_string())?;

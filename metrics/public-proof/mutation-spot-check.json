@@ -1,6 +1,11 @@
 {
   "analyzer_version": "ripr 0.11.0 (731e36ef5a75b50b7dd38fc78c8fbb2a23c11d43)",
   "claim_boundary": "Agreement is scored only on canonical_precise records: a BinaryOperator or UnaryOperator mutant that ripr calibrate joined by seam_id or by unique span containment to a predicate_boundary or return_value seam, with a caught or missed outcome. File/line fallback joins, span-overlap ties, unmatched records, and unsupported genres, seam kinds or outcomes are counted as exclusions and never scored. Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.",
+  "corpus": {
+    "limitations": 0,
+    "scored": 5,
+    "selected": 5
+  },
   "disagreement_examples": {
     "overclaim": [
       {
@@ -31,6 +36,12 @@
       }
     ]
   },
+  "language_evidence": {
+    "python": "artifact_only",
+    "rust": "committed",
+    "typescript": "artifact_only"
+  },
+  "limitations": [],
   "operator_token_diagnostic": {
     "absent_examples": [],
     "counts": {
@@ -677,7 +688,7 @@
     "ungripped_share_of_missed": 0.106
   },
   "replacement_criterion": {
-    "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Precision and flagged-or-unknown recall use the R2 bars of the release ladder in docs/METRICS.md; scored coverage and the time ratio are agent-chosen technical bars whose rationale is recorded per criterion in threshold_source. A replaces verdict requires every thresholded criterion met and none not_established. It is fail-closed by design: `replaces` is currently unreachable because the Python/TypeScript criterion is not_established until a real-mutant corpus exists. The time criterion is met on one crate, one diff and one run; it is not a distribution or a general speed claim. It is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
+    "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Precision and flagged-or-unknown recall use the R2 bars of the release ladder in docs/METRICS.md; scored coverage and the time ratio are agent-chosen technical bars whose rationale is recorded per criterion in threshold_source. A replaces verdict requires every thresholded criterion met and none not_established. It is fail-closed by design: `replaces` is currently unreachable because the Python/TypeScript criterion stays not_established: both are measured only by the separate synthetic-diff method. The time criterion is met on one crate, one diff and one run; it is not a distribution or a general speed claim. It is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
     "criteria": [
       {
         "description": "agreement of ripr claims_discriminator seams with runtime outcomes",
@@ -765,7 +776,7 @@
         "description": "agreement with real mutants on Python and TypeScript",
         "id": "python_typescript_real_mutant_agreement",
         "observed": null,
-        "reason": "no real-mutant corpus has been run for Python or TypeScript; no figure is claimed",
+        "reason": "Python and TypeScript are measured only by the synthetic-diff verdict method (see synthetic_diff_verdict), which is not the span-join agreement this criterion is defined over; no figure is claimed here and the criterion fails closed",
         "scope": [
           "python",
           "typescript"
