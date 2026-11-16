@@ -135,9 +135,34 @@ fn diagnose(label: &str, output: &Output) -> String {
 }
 
 fn run_ripr(root: &Path, args: &[&str]) -> Result<Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .current_dir(root)
-        .args(args)
+    run_ripr_env(root, args, &[])
+}
+
+/// `run_ripr` with explicit environment overrides. The GitHub Actions run
+/// variables `reports ci-packet` reads are removed first, so a hosted test
+/// run cannot leak its own event into the packet under test.
+fn run_ripr_env(root: &Path, args: &[&str], env: &[(&str, &str)]) -> Result<Output, String> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command.current_dir(root).args(args);
+    if !env.is_empty() {
+        for name in [
+            "GITHUB_EVENT_NAME",
+            "GITHUB_EVENT_PATH",
+            "GITHUB_BASE_REF",
+            "GITHUB_REPOSITORY",
+            "GITHUB_ACTOR",
+            "RIPR_GATE_BASELINE",
+            "RIPR_COMMENT_MODE",
+            "RIPR_UPLOAD_SARIF",
+            "RIPR_PILOT_TIMEOUT_MS",
+        ] {
+            command.env_remove(name);
+        }
+        for (name, value) in env {
+            command.env(name, value);
+        }
+    }
+    command
         .output()
         .map_err(|error| format!("spawn ripr {args:?} in {}: {error}", root.display()))
 }
@@ -289,6 +314,36 @@ fn check_json_review_comments_gate_chain_blocks_and_exits_3() -> Result<(), Stri
         return Err(format!(
             "blocked gate decision must exit 3 (docs/EXIT_CODES.md), got {exit:?}\ngate={gate}\n{}",
             diagnose("gate evaluate --pr-guidance", &gate_output)
+        ));
+    }
+
+    // #14841: the CI packet runs this same gate as a required step and must
+    // pass the blocked decision through as exit 3, not flatten it to the
+    // could-not-complete exit 2. This drives the binary's real dispatch.
+    let packet_output = run_ripr_env(
+        &fixture.0,
+        &[
+            "reports",
+            "ci-packet",
+            "--root",
+            ".",
+            "--step",
+            "Evaluate RIPR gate decision",
+        ],
+        &[("RIPR_GATE_MODE", "acknowledgeable")],
+    )?;
+    let packet_gate = read_json(&gate_path)?;
+    if packet_gate.get("status").and_then(Value::as_str) != Some("blocked") {
+        return Err(format!(
+            "ci-packet gate step should have written a blocked decision: {packet_gate}\n{}",
+            diagnose("reports ci-packet --step", &packet_output)
+        ));
+    }
+    if packet_output.status.code() != Some(3) {
+        return Err(format!(
+            "ci-packet with a blocked gate must exit 3 (docs/EXIT_CODES.md), got {:?}\n{}",
+            packet_output.status.code(),
+            diagnose("reports ci-packet --step", &packet_output)
         ));
     }
     Ok(())
