@@ -2358,11 +2358,16 @@ fn triage_rank<'a>(
 /// finding over a higher-confidence one in the Start here order: on semver
 /// `ce1fef1` a format-string literal linked to `test_digit_after_wildcard`
 /// by a shared word led the new `self.0 == '\0'` predicate (#14734).
+/// `Opaque` ranks below `Low`, so it does not count either; no producer
+/// writes it today, but a stored artifact may carry it.
 /// A row from an older artifact (no relation confidence) keeps counting.
 fn has_linked_oracle_test(finding: &Finding) -> bool {
-    finding
-        .oracle_related_tests()
-        .any(|test| test.relation_confidence != Some(RelationConfidence::Low))
+    finding.oracle_related_tests().any(|test| {
+        !matches!(
+            test.relation_confidence,
+            Some(RelationConfidence::Low | RelationConfidence::Opaque)
+        )
+    })
 }
 
 /// A stable finding ranks by its repair route; a preview finding only by the
@@ -4191,6 +4196,18 @@ mod tests {
             "test_digit_after_wildcard",
             RelationReason::FixtureOwnerAffinity,
             Some(RelationConfidence::Low),
+        )];
+        assert_eq!(
+            selected(vec![literal.clone(), predicate.clone()]),
+            Some("finding:predicate".to_string())
+        );
+
+        // `Opaque` ranks below `Low`, so a stored row carrying it does not
+        // count either.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::SameTestFile,
+            Some(RelationConfidence::Opaque),
         )];
         assert_eq!(
             selected(vec![literal.clone(), predicate.clone()]),
