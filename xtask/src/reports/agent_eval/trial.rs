@@ -124,7 +124,13 @@ fn hold_agent_lib(root: &Path) -> Result<String, String> {
     let lib_path = root.join("src/lib.rs");
     let current = fs::read_to_string(&lib_path)
         .map_err(|err| format!("failed to read {}: {err}", lib_path.display()))?;
-    write_file(&copy_path, &current)?;
+    // Publish the copy whole or not at all: a copy truncated by an interrupt
+    // or a full disk would win on the next run and overwrite the agent's
+    // intact file. Only a renamed, complete copy is ever trusted.
+    let partial = root.join(format!("{AGENT_LIB_COPY}.partial"));
+    write_file(&partial, &current)?;
+    fs::rename(&partial, &copy_path)
+        .map_err(|err| format!("failed to move {} into place: {err}", partial.display()))?;
     Ok(current)
 }
 
@@ -350,6 +356,23 @@ mod tests {
                 .as_deref(),
             Some(agent_lib.as_str())
         );
+
+        // A staging file left by an interrupted copy write is never trusted:
+        // the intact file wins, and the copy is published whole.
+        assert_eq!(error_of(release_agent_lib(&root, &agent_lib)), None);
+        let partial = root.join(format!("{AGENT_LIB_COPY}.partial"));
+        assert_eq!(error_of(fs::write(&partial, "")), None);
+        assert_eq!(
+            hold_agent_lib(&root).ok().as_deref(),
+            Some(agent_lib.as_str())
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(AGENT_LIB_COPY))
+                .ok()
+                .as_deref(),
+            Some(agent_lib.as_str())
+        );
+        assert!(!partial.exists());
         let _ = fs::remove_dir_all(&dir);
     }
 }

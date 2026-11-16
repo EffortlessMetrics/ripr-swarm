@@ -116,10 +116,10 @@ command still exits 0. A run that cannot be measured at all (cargo missing, a
 timeout, a signal), a missing repository or a scoring error leaves that
 repository at zero caught, still in the denominator, and makes the command
 exit nonzero. While it scores, the scorer keeps the agent's `src/lib.rs` in
-`.trial-score-agent-lib.rs` and puts it back on every path; if a score is
-interrupted, the next run restores from that copy first. Controls: a fresh
-setup scores 0/6, the reference tests score 6/6, and the weak tests score
-0/6.
+`.trial-score-agent-lib.rs` (published whole through a staging file) and
+puts it back on every path; if a score is interrupted, the next run restores
+from that copy first. Controls: a fresh setup scores 0/6, the reference tests
+score 6/6, and the weak tests score 0/6.
 
 Limits: agents must put tests under `tests/` (a `#[cfg(test)]` module in
 `src/lib.rs` counts as a production edit). The scorer does not check
