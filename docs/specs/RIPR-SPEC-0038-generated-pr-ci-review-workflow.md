@@ -236,6 +236,9 @@ that generated CI can create tests, edit source, or run provider-backed repair.
 - A missing optional calibration report is a warning, not a workflow failure.
 - A configured blocked gate points to `gate-decision.md` as authority and does
   not treat the job summary as the gate.
+- A configured blocked gate makes `ripr reports ci-packet` exit `3` (the gate's
+  decision exit) when no other required step failed; any other required
+  failure exits `2`, even when the gate also blocked (docs/EXIT_CODES.md).
 - A TypeScript preview packet groups advisory evidence under a preview label,
   includes separately labeled JavaScript preview evidence when present, reports
   actionability and repair-packet-ready counts, and keeps gate impact at none.

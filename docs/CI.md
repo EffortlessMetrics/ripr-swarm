@@ -2024,7 +2024,9 @@ ambient Git configuration cannot change the bytes RIPR analyzes, #4005), the
 PR guidance, the comment plan, SARIF and badge renders, the gate, the ledgers,
 start-here, the report index, and the changed-line annotations, each as a log
 group named after the step it replaced. `ripr help reports` lists its
-failure rules, and `--step NAME` reruns one step locally.
+failure rules, and `--step NAME` reruns one step locally. The packet exits
+`3` when the gate blocked and nothing else required failed, and `2` when a
+required step could not complete ([EXIT_CODES.md](EXIT_CODES.md#ci-integration)).
 
 When `ripr agent start` exits 3 for the top seam, the packet logs `RIPR agent
 loop skipped: ... declined` and moves on. Exit 3 means ripr declined (see
