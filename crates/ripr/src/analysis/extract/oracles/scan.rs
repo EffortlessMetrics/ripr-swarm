@@ -2444,14 +2444,16 @@ fn delimiter_depth(text: &str) -> i32 {
 /// (RIPR-SPEC-0106, Part A).
 pub(crate) fn unwrap_err_bound_variables(body: &str) -> std::collections::BTreeSet<String> {
     let mut vars = std::collections::BTreeSet::new();
-    // Split into statement-sized chunks on `;`/`{`/`}` so a
+    // Split into statement-sized chunks on a depth-0 `;` or a brace so a
     // `let <ident> = <expr>.unwrap_err()` binding is recognized regardless of
-    // source formatting — not only when `let` begins a trimmed source line.
+    // source formatting - not only when `let` begins a trimmed source line.
     // Without this, a single-line test body (`fn t() { let e = f().unwrap_err();
     // assert_eq!(e, E::V); }`, e.g. un-rustfmt'd) hides the binding, the
     // assertion is never upgraded to ExactErrorVariant, and the seam carries a
     // contradictory `missing_discriminators` line despite being discriminated.
-    for stmt in body.split([';', '{', '}']) {
+    // The split is depth-aware (#14810 round 3), so `f(&[1; 3]).unwrap_err()`
+    // stays one statement.
+    for stmt in split_statements(body) {
         if let Some(binding) = let_binding_substring(stmt)
             && let Some(var) = extract_unwrap_err_binding(binding)
         {
@@ -2785,11 +2787,7 @@ fn find_top_level_eq(text: &str) -> Option<usize> {
                     angle += 1;
                 }
             }
-            '>' => {
-                if angle > 0 && prev != Some('-') && prev != Some('=') {
-                    angle -= 1;
-                }
-            }
+            '>' if angle > 0 && prev != Some('-') && prev != Some('=') => angle -= 1,
             '=' if depth == 0 && angle == 0 => return Some(i),
             _ => {}
         }
@@ -2874,8 +2872,12 @@ fn extract_unwrap_err_binding(line: &str) -> Option<String> {
     let after_var = rest[ident_end..].trim_start();
     // Allow optional type annotation: `let err: MyError = ...`
     let after_colon = if after_var.starts_with(':') {
-        // Skip the type annotation up to the `=`
-        after_var.find('=').map(|i| &after_var[i..])?
+        // Skip the type annotation up to the binding `=` at depth 0. This is
+        // consistency with `let_binding_parts`, not a fixed defect: the tail
+        // after any `=` still ends in `.unwrap_err()`, so the return value is
+        // the same either way (#14810 round 3).
+        let eq = find_top_level_eq(after_var)?;
+        &after_var[eq..]
     } else {
         after_var
     };
@@ -3635,6 +3637,21 @@ mod spec_0106_scan_tests {
         assert!(
             vars.contains("err"),
             "bound variable 'err' must be collected from unwrap_err() binding"
+        );
+    }
+
+    #[test]
+    fn unwrap_err_binding_survives_a_semicolon_inside_an_array_argument() {
+        // #14810 round 3: the statement split is depth-aware, so the `;` in
+        // `&[1; 3]` does not cut the binding in half.
+        let body = r"
+            let err = compute(&[1; 3]).unwrap_err();
+            assert_eq!(err, CalcError::Negative);
+        ";
+        let vars = unwrap_err_bound_variables(body);
+        assert!(
+            vars.contains("err"),
+            "a `;` inside an array argument must not hide the unwrap_err binding: {vars:?}"
         );
     }
 
