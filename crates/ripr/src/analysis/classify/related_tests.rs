@@ -8122,7 +8122,12 @@ pub(in crate::analysis) fn call_text_spells_bare_free_call(text: &str, name: &st
         .map(|(at, _)| at)
         .filter(|&at| is_free_function_call_at(&masked, at, name))
         .peekable();
-    calls.peek().is_some() && calls.all(|at| !masked[..at].trim_end().ends_with("::"))
+    calls.peek().is_some()
+        && calls.all(|at| {
+            let qualifier = masked[..at].trim_end();
+            let qualifier = qualifier.strip_suffix("r#").unwrap_or(qualifier);
+            !qualifier.trim_end().ends_with("::")
+        })
 }
 
 /// The text a captured call named like `owner` contributes as an owner

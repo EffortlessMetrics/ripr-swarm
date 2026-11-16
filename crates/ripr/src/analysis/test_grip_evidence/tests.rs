@@ -23098,7 +23098,7 @@ fn given_direct_owner_alias_when_a_qualified_call_shares_the_alias_then_owner_ta
     // otherwise accepts. The relation still credits the owner through the bare
     // alias, but the qualified call's arguments must not become its values.
     let prod_src = "pub mod rival;\n\npub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }\n";
-    let rival_src = "pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 777 }\n";
+    let rival_src = "pub fn dt(_amount: i32, _threshold: i32) -> i32 { 777 }\n";
     let tests_src = "use lib_proptest::discounted_total as dt;\nuse lib_proptest::rival;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    assert_eq!(rival::dt(7, 7), 777);\n}\n";
     let root = alias_workspace_root("lib_proptest")?;
     fs::write(root.join("src/lib.rs"), prod_src).map_err(|error| error.to_string())?;
@@ -23138,6 +23138,94 @@ fn given_direct_owner_alias_when_a_qualified_call_shares_the_alias_then_owner_ta
             .iter()
             .any(|fact| fact.value == "100"),
         "the free alias call's argument is the owner's activation value: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_raw_escaped_qualified_call_shares_the_alias_then_owner_takes_no_value_from_it()
+-> Result<(), String> {
+    // The raw identifier is still module-qualified, so its arguments belong
+    // to the rival and not to the genuine bare alias call beside it.
+    let prod_src = "pub mod rival;\n\npub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }\n";
+    let rival_src = "pub fn r#dt(_amount: i32, _threshold: i32) -> i32 { 777 }\n";
+    let tests_src = "use lib_proptest::discounted_total as dt;\nuse lib_proptest::rival;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    assert_eq!(rival::r#dt(7, 7), 777);\n}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("src/lib.rs", prod_src),
+            ("src/rival.rs", rival_src),
+            ("tests/boundary.rs", tests_src),
+        ],
+    )?;
+    let files = [
+        "src/lib.rs",
+        "src/rival.rs",
+        "tests/boundary.rs",
+    ]
+    .map(PathBuf::from);
+    let evidence = evidence_for_alias_seam(&root, &files, "src/lib.rs")?;
+    assert_eq!(direct_owner_call_tests(&evidence), vec!["mixed"]);
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .all(|fact| fact.value != "7"),
+        "a qualified `rival::r#dt(..)` must not lend the owner its argument: {:?}",
+        evidence.observed_values
+    );
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .any(|fact| fact.value == "100"),
+        "the bare alias call still supplies the owner's activation value: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_external_import_crate_root_redirects_with_path_then_original_owner_gets_no_related_test()
+-> Result<(), String> {
+    // `lib_proptest::pricing` resolves to the redirected file as rustc does,
+    // not to the original physical `src/pricing.rs` owner.
+    let owner = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            (
+                "src/lib.rs",
+                "#[path = \"redirected_pricing.rs\"]\npub mod pricing;\n",
+            ),
+            ("src/pricing.rs", owner),
+            (
+                "src/redirected_pricing.rs",
+                "pub fn owner(amount: i32) -> i32 { amount }\n",
+            ),
+            (
+                "tests/boundary.rs",
+                "use lib_proptest::pricing::owner as dt;\n\n#[test]\nfn redirected() {\n    assert_eq!(dt(7), 7);\n}\n",
+            ),
+        ],
+    )?;
+    let files = [
+        "src/lib.rs",
+        "src/pricing.rs",
+        "src/redirected_pricing.rs",
+        "tests/boundary.rs",
+    ]
+    .map(PathBuf::from);
+    let evidence = evidence_for_alias_seam(&root, &files, "src/pricing.rs")?;
+    assert!(
+        direct_owner_call_tests(&evidence).is_empty()
+            && evidence
+                .observed_values
+                .iter()
+                .all(|fact| fact.value != "7"),
+        "the redirected import must not credit the original physical owner: {:?} / {:?}",
+        evidence.related_tests,
         evidence.observed_values
     );
     Ok(())

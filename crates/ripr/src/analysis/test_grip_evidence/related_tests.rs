@@ -517,7 +517,10 @@ fn direct_owner_alias_module_matches(
     }
     match rest {
         None => owner_is_crate_root,
-        Some(rest) => rest.strip_suffix("/mod").unwrap_or(rest) == owner_module,
+        Some(rest) => owner_file.is_some_and(|owner_file| {
+            resolve_module_chain(index, Path::new(&owner_root), rest)
+                .is_some_and(|resolved| normalize_path(&resolved) == normalize_path(owner_file))
+        }),
     }
 }
 
