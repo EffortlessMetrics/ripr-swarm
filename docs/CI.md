@@ -1956,6 +1956,12 @@ ripr review-comments \
   --out target/ripr/review/comments.json
 ```
 
+To honor a repository suppression policy in the gate, add
+`--suppression-policy .ripr/suppressions.toml` here and to the `ripr check`
+step. The default `.ripr/suppressions.toml` is never applied implicitly;
+matching seams move to the `suppressed` array and `ripr gate evaluate` reads
+them as non-blocking. See [coming from cargo-mutants](FROM_CARGO_MUTANTS.md#suppressing-in-ci).
+
 That renderer writes JSON and Markdown under `target/ripr/review/` and does
 not post to GitHub by itself. Teams replacing a cargo-mutants exit-`2` CI gate
 can pair it with `ripr gate evaluate --mode acknowledgeable`; see

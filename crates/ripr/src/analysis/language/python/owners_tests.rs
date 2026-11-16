@@ -1593,7 +1593,7 @@ pub(super) fn collect_imports_from_statements(
     imports
 }
 
-fn import_source_module(file: &Path, import: &ast::StmtImportFrom) -> String {
+pub(super) fn import_source_module(file: &Path, import: &ast::StmtImportFrom) -> String {
     let module = import
         .module
         .as_ref()

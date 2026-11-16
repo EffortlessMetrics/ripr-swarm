@@ -415,6 +415,7 @@ mod no_behavior;
 mod oracles;
 mod owner_exact;
 mod owners_tests;
+mod package_aliases;
 mod param_fixtures;
 mod parametrize;
 mod parse_budget;
@@ -1682,6 +1683,15 @@ impl PythonAdapter {
         }
         fixtures::attach_fixture_defs(&mut all_tests, &fixture_defs_by_file);
         helper_assertions::apply_helper_assertions(&mut all_tests, &helper_modules_by_file);
+        // `from . import X` where the test package's `__init__.py` binds `X`
+        // by import (#13927). After the helper substitution, which keeps its
+        // own stricter module-attribute rule (RIPR-SPEC-0238 rule 32), and
+        // before every reach and oracle reader of test imports.
+        package_aliases::apply_package_import_aliases(
+            &mut all_tests,
+            &workspace_read.sources,
+            |path| options.root.join(path).exists(),
+        );
         // A chain conftest that exists but was never read (capped, excluded or
         // unreadable) cannot be ruled out.
         let unreadable_conftest = |conftest: &Path| {
@@ -2643,6 +2653,8 @@ mod python_tests;
 
 #[cfg(test)]
 mod layout_tests;
+#[cfg(test)]
+mod package_alias_tests;
 #[cfg(test)]
 mod reexport_tests;
 

@@ -1597,6 +1597,75 @@ mutant calibrates the rule; ripr reports only the static shape.
     keyword arguments. Over-refusal is accepted: a wrong substituted assertion
     would be a wrong credit.
 
+33. **A name the test package binds by import reaches what it binds**
+    (#13927). `from . import X` (or `from P import X`, or `as alias`) where
+    `X` is not a module file or directory of package `P` reads as the import
+    `P/__init__.py` performed to bind `X`: `import tomli as tomllib` there
+    makes `from . import tomllib` in a test read as `import tomli as
+    tomllib`, and `from M import Y as X` there reads as `from M import Y`
+    under the test's local name. Every reach and oracle reader then sees the
+    same evidence the direct import gives. The initializer must be read and
+    parse and bind `X` exactly once, through one unconditional top-level
+    import statement with one alias binding that name (counted by the name
+    Python binds, so `import a as X, X.sub` binds `X` twice, and an
+    unaliased dotted `import X.sub` is refused); up to three package
+    initializers are followed, each a package of the test file's own
+    package chain (its directory and each parent while it has an
+    `__init__.py`). A dotted name is read from the workspace root, and pytest
+    imports a test package from the parent of its topmost package, so a
+    root-relative spelling is the package Python imports only when it is one
+    of those directories (pytest's default prepend import mode; an ini
+    `pythonpath`, append or importlib mode, or an installed package of the
+    same name are not modelled). The import keeps its unresolved reading (no link)
+    when: the package is outside that chain, or its first name also names
+    another directory on the test's path (`tests/project/tests/...`, where
+    another import root can carry `tests`); the
+    initializer is missing, unread or unparsable; `X` is also bound by an
+    assignment, `def`, `class`, loop, `with`, `del`, `try`/`if` branch or a
+    second import, or only inside such a branch; the initializer has a star
+    import, a `match` or `type` statement at any depth the module body
+    executes (outside `def` and `class` bodies), or names a dynamic namespace
+    writer anywhere, even in a comment, as an identifier token so spacing
+    (`vars ()`) cannot hide it (`globals`, `locals`, `vars`, `exec`, `eval`,
+    `setattr`, `__dict__`, `global`, `__getattr__`, any `modules`; any
+    token containing `setattr`, `delattr`, `globals`, `locals`, `frame`,
+    `import_module`, `importlib` or `runpy`; `__import__`), a walrus `:=`,
+    a non-ASCII character (Python NFKC-folds identifiers), `X` as an
+    attribute anywhere (`.X`, as in `tests.X = other`, which replaces the
+    package attribute through any receiver), or any top-level statement
+    besides the binding import that is not a docstring, `pass`, an
+    `__all__` of string literals, or an absolute import of a module that
+    is not in the workspace (at the root or under `src`): a call, a `def`
+    or `class`, or an import of workspace code can run code that writes
+    the attribute; any other read workspace module (test module, conftest,
+    helper), read by its code tokens so comments and plain strings do not
+    count, spells `.X` or a non-ASCII attribute, has an f-string the
+    initializer rule would refuse, or has a reference writer (`setattr`,
+    `delattr`, `__dict__`, `vars`, `globals`, `locals`, a frame, `exec`,
+    `eval`, `modules`) at all, since its target can be computed
+    (`sys.modules[__package__]`), or names the package as an identifier,
+    spells `.__class__`, uses `__import__`, `builtins`, `meta_path`,
+    `path_hooks`, `reload`, `patch`, `monkeypatch`, `gc`,
+    `get_referents`, `get_referrers`, `get_objects`, `ctypes`,
+    `__globals__`, `f_back`, `tb_frame`, `__path__`, `__spec__` or
+    `submodule_search_locations`, `path_importer_cache` or `FileFinder`
+    (a search-path or finder edit lets an import load another `X`), or
+    has a string that is `X` or has it as a dotted component after the
+    first (`".X"`, `"pkg.X.sub"`), a string equal to
+    the package or a dotted path under it, or one containing `setattr`,
+    `delattr`, `__dict__`, `__class__`, `__import__` or `__path__`. Not modelled, as for every
+    directly imported module: modules the bounded read skipped, code inside
+    installed packages, and a write through a reference and attribute name
+    both computed at run time (`importlib.import_module` of a built name
+    then a built dunder lookup), which can equally patch a directly
+    imported module's function; or `P`
+    has a submodule or subpackage named `X`, which an import elsewhere could
+    load over the binding. A followed `from M import Y as X` is a rename
+    the package re-export reading does not follow; it is followed here
+    because the test names the bound `X` itself. This runs after the rule 32
+    helper substitution, which keeps its own module-attribute rule, and
+    fixture definitions' imports are not rewritten.
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
@@ -2421,6 +2490,8 @@ strong assertions is retained.
 - `oracles.rs` (`is_property_compare`: idempotence and loop-variable identity
   checks, rule 25), pinned by `property_assertion_tests.rs` and the
   `py-grid-*-property` corpus cases.
+- `crates/ripr/src/analysis/language/python/package_aliases.rs`: rule 33,
+  pinned by `package_alias_tests.rs`.
 - `crates/ripr/src/analysis/language/python/param_fixtures.rs` (literal
   `params=` rows and the unpack rewrite) with `fixtures.rs` (isolation) and
   `static_limits.rs` (direct parametrize argnames): L8, example 42.
