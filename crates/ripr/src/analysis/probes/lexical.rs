@@ -1094,6 +1094,10 @@ mod tests {
             "const { other::assert!(N <= 249) };",
             "const { asserts!(N <= 249) };",
             "const { assert!(N <= 249); \"small\" > \"a\" };",
+            // Masking blanks the literal tail; only the literal-span check
+            // keeps this value-yielding block out.
+            "const { assert!(N <= 249); \"small\" };",
+            "const { assert!(N <= 249); 'x' };",
         ] {
             assert!(
                 classify_changed_line(line).contains(&ProbeFamily::Predicate),
