@@ -411,10 +411,18 @@ Known limits of this pass: directories a pytest `pythonpath` setting
 `sys.path` are not read, so a shadowing module reachable only through one is not
 detected; the model is one pytest invocation per project, so cross-project
 `sys.path` and `sys.modules` effects of a repository-wide run are not modeled,
-nor is a subproject directory used as the working directory; and the
-module-attribute credit sites (`boundary.rs`, `transitive_reach.rs`) match
-`owner_module_paths` directly and are not gated by the shadow, the same as the
-pre-existing rival-module case (#4566).
+nor is a subproject directory used as the working directory.
+The module-attribute sites go through the same identity gate (#14035): a module
+constant read as `pricing.LIMIT` binds a boundary value, `table.Table` after
+`import table` witnesses the owner's class for the same-class transitive-reach
+limitation, and the target prefix of a `patch("clock.time.time",
+return_value=...)` substitution or of a callee-only patch such as
+`patch("pricing.rate", return_value=3)` names the owner's module only while
+that module name identifies the owner for the test, so a test-local shadow
+(#13706) or a rival src-layout module (#4566) of that name gives none of them.
+The source-import reachability walk of `imported_call_operator` is deliberately
+not gated: a stricter walk would find fewer withholding operator definitions
+and so widen credit.
 A test that imports a free-function owner's name from a workspace module that
 defines its own function of that name, when no import reaches the owner's module,
 is not related to the owner even if its call text matches the name (#8759). The
