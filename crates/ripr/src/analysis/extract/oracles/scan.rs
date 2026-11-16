@@ -2480,7 +2480,7 @@ pub(crate) fn unwrap_err_bound_variables(body: &str) -> std::collections::BTreeS
 pub(crate) fn placeholder_bound_variables(body: &str) -> std::collections::BTreeSet<String> {
     let masked = mask_comments_and_strings(body);
     let mut seen: std::collections::BTreeMap<String, bool> = std::collections::BTreeMap::new();
-    for stmt in masked.split([';', '{', '}']) {
+    for stmt in split_statements(&masked) {
         let Some(binding) = let_binding_substring(stmt) else {
             continue;
         };
@@ -2734,6 +2734,70 @@ fn split_top_level(text: &str, sep: char) -> Vec<&str> {
     parts
 }
 
+/// Split a masked body into statement-sized chunks: a `;` at paren/bracket
+/// depth 0, or any brace (a block boundary, which also resets the depth).
+/// A `;` inside a type such as `[i32; 3]` is not a boundary, and neither is
+/// a `,` or `=` inside a generic (#14810 round 3).
+fn split_statements(text: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0;
+    for (i, ch) in text.char_indices() {
+        match ch {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            '{' | '}' => {
+                parts.push(&text[start..i]);
+                start = i + ch.len_utf8();
+                depth = 0;
+            }
+            ';' if depth == 0 => {
+                parts.push(&text[start..i]);
+                start = i + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    parts.push(&text[start..]);
+    parts
+}
+
+/// The first `=` at bracket depth 0, counting `()[]{}` and generic `<>`.
+/// `->` and `=>` do not close a generic, and `<=`/`<<` do not open one, so a
+/// type like `Box<dyn Iterator<Item = u8>>` yields the binding `=`, not the
+/// one inside `Item = u8` (#14810 round 3).
+fn find_top_level_eq(text: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut angle = 0i32;
+    let mut prev: Option<char> = None;
+    let mut iter = text.char_indices().peekable();
+    while let Some((i, ch)) = iter.next() {
+        let next = iter.peek().map(|(_, c)| *c);
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            '<' => {
+                let opens = next != Some('=')
+                    && next != Some('<')
+                    && prev
+                        .is_some_and(|p| p.is_alphanumeric() || p == '_' || p == ':' || p == '>');
+                if opens {
+                    angle += 1;
+                }
+            }
+            '>' => {
+                if angle > 0 && prev != Some('-') && prev != Some('=') {
+                    angle -= 1;
+                }
+            }
+            '=' if depth == 0 && angle == 0 => return Some(i),
+            _ => {}
+        }
+        prev = Some(ch);
+    }
+    None
+}
+
 /// The `let` binding's `(name, initializer)` when `line` is
 /// `let [mut] <ident>[: <type>] = <initializer>`.
 fn let_binding_parts(line: &str) -> Option<(&str, &str)> {
@@ -2754,7 +2818,8 @@ fn let_binding_parts(line: &str) -> Option<(&str, &str)> {
     let after_var = rest[ident_end..].trim_start();
     // Allow an optional type annotation: `let expected: i32 = todo!(..)`.
     let after_colon = if after_var.starts_with(':') {
-        after_var.find('=').map(|i| &after_var[i..])?
+        let eq = find_top_level_eq(after_var)?;
+        &after_var[eq..]
     } else {
         after_var
     };
@@ -5973,6 +6038,44 @@ fn price_boundary_discriminator() {
         if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
             return Err(format!(
                 "a message word must not lower a concrete assertion: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_semicolon_inside_the_type_does_not_hide_the_placeholder() -> Result<(), String> {
+        // #14810 round 3: the statement split must not break on the `;` in
+        // `[i32; 3]`, or the initializer is never seen.
+        let body = r#"
+fn t() {
+    let expected: [i32; 3] = todo!("x");
+    assert_eq!(price(10), expected);
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.strength != OracleStrength::Unknown {
+            return Err(format!(
+                "a `;` inside the type must not hide the placeholder: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_equals_inside_the_generic_does_not_hide_the_placeholder() -> Result<(), String> {
+        // #14810 round 3: the binding `=` must be the one at bracket depth 0,
+        // not the `=` in `Item = u8`.
+        let body = r#"
+fn t() {
+    let expected: Box<dyn Iterator<Item = u8>> = todo!("x");
+    assert_eq!(price(10), expected);
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.strength != OracleStrength::Unknown {
+            return Err(format!(
+                "an `=` inside the generic must not hide the placeholder: {fact:?}"
             ));
         }
         Ok(())
