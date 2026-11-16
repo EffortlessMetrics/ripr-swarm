@@ -1655,6 +1655,22 @@ on another fixture, a factory call, a statement that seeds the instance), a work
 test leave the parameter unresolved: the instance the test sees may not be
 the fresh one the constructor builds.
 
+**Rule 24. A change that moves two field values on one line is not witnessed
+by a read of a third, untouched field (#14814, #14857).** When a `return`
+line builds a literal of simple `key: value` fields and two or more values
+differ from the removed line, the change cannot be reduced to one changed
+field. A strong assertion whose outermost plain field read off the owner's
+result names a field the edit did not change (`f().timeout` while `retries`
+and `verbose` moved) reads a value the change never touched, so it cannot
+witness it: the finding drops to `weakly_exposed` with the observation
+unconfirmed, not `exposed`. A read that names either changed field
+(`f().retries`, `f().verbose`), a path that reads through a changed field
+(`f().retries.n`) and a whole-result assertion (`expect(f()).toEqual(...)`)
+keep the existing credit. This is the two-value shape; the single-field
+sibling rule (#14814) covers exactly one changed value. A key-list change, a
+shorthand or spread member, a computed key and a literal of fewer than two
+fields are not this shape and keep their old reading.
+
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)
 from a module that the owner file imports (`TypeScriptOwner.imports`),

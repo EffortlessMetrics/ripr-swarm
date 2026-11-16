@@ -1643,36 +1643,57 @@ pub(crate) struct TypeScriptChangedField {
     pub(crate) value: String,
 }
 
-/// The changed field of `return { a: 1, b: 2 }` against the old line: both
-/// lines return a literal of simple `key: value` fields with the same keys
-/// in the same order, and exactly one value differs. A shorthand or spread
-/// member, a computed key, a different key list or two changed values read
-/// `None`, so the caller keeps the first-field reading.
-pub(crate) fn ts_changed_object_field(
+/// Every field of `return { a: 1, b: 2 }` whose value changed against the old
+/// line: both lines return a literal of simple `key: value` fields with the
+/// same keys in the same order. A shorthand or spread member, a computed key,
+/// a different key list or fewer than two fields read `None`, so the caller
+/// keeps the first-field reading. `Some(vec![])` means the shapes match and no
+/// value differs.
+///
+/// #14857: the caller needs the whole set, not just the single-field case, so
+/// a change that moves two values on one line can still tell a read of a
+/// changed field from a read of an untouched sibling.
+pub(crate) fn ts_changed_object_fields(
     old_line: Option<&str>,
     new_line: &str,
-) -> Option<TypeScriptChangedField> {
+) -> Option<Vec<TypeScriptChangedField>> {
     let old = returned_object_fields(old_line?)?;
     let new = returned_object_fields(new_line)?;
     if old.len() != new.len() || old.len() < 2 {
         return None;
     }
-    let mut changed = None;
+    let mut changed = Vec::new();
     for ((old_key, old_value), (new_key, new_value)) in old.iter().zip(&new) {
         if old_key != new_key {
             return None;
         }
         if old_value != new_value {
-            if changed.is_some() {
-                return None;
-            }
-            changed = Some(TypeScriptChangedField {
+            changed.push(TypeScriptChangedField {
                 key: new_key.clone(),
                 value: new_value.clone(),
             });
         }
     }
-    changed
+    Some(changed)
+}
+
+/// The one changed field of `return { a: 1, b: 2 }` against the old line.
+/// `None` when the shape is not a simple literal, or when two or more values
+/// differ (the caller then reads [`ts_changed_object_fields`]).
+///
+/// Production reads the whole set; this single-field form is kept for the
+/// unit tests that pin the shape contract.
+#[cfg(test)]
+pub(crate) fn ts_changed_object_field(
+    old_line: Option<&str>,
+    new_line: &str,
+) -> Option<TypeScriptChangedField> {
+    let mut changed = ts_changed_object_fields(old_line, new_line)?;
+    if changed.len() == 1 {
+        changed.pop()
+    } else {
+        None
+    }
 }
 
 /// `(key, value)` per field of the object literal a `return` line returns,
