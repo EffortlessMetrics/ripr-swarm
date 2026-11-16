@@ -15246,58 +15246,79 @@ fn initializer_calls_owner(initializer: &str, name: &str, call: &PinCall) -> boo
 /// masked initializer: one parse per file per index. Items a macro call
 /// declares (`thread_local!`, `lazy_static!`) and items of a file that does
 /// not parse cleanly are read from their text.
+///
+/// The per-file parses are independent, so they go through [`map_scans`]:
+/// off the pool (the single-seam review stage of a cold `ripr check`) they
+/// fan out instead of parsing the whole corpus on one thread, and on a pool
+/// worker they stay in line under the #8756 memo-lock guard. Results are
+/// folded in index file order, so the table is the same either way.
 fn workspace_constant_table(index: &RustIndex) -> ConstantTable {
+    let files: Vec<(&PathBuf, &str)> = index
+        .files()
+        .iter()
+        .map(|(path, facts)| (path, facts.data().source.as_ref()))
+        .collect();
+    let per_file = map_scans(&files, |(_, source)| file_constants(source));
     let mut table = ConstantTable::new();
-    for (path, facts) in index.files().iter() {
-        let source = &facts.source;
-        if !source.contains("const") && !source.contains("static") {
-            continue;
-        }
-        let mut add = |name: &str, initializer: String, declared: Option<String>| {
-            let name = name.strip_prefix("r#").unwrap_or(name);
+    for ((path, _), constants) in files.iter().zip(per_file) {
+        for (name, initializer, declared) in constants {
             table
-                .entry(name.to_string())
+                .entry(name)
                 .or_default()
-                .push((path.clone(), initializer, declared));
-        };
-        let Some(parsed) = parse_clean_source_file(source) else {
-            for (name, initializer) in text_declared_constants(&mask_comments_and_strings(source)) {
-                let declared = declared_type(&initializer).map(str::to_string);
-                add(&name, initializer, declared);
-            }
-            continue;
-        };
-        for node in parsed.tree().syntax().descendants() {
-            let item = if let Some(item) = ast::Const::cast(node.clone()) {
-                item.name()
-                    .zip(item.body())
-                    .map(|(name, body)| (name, body, item.ty()))
-            } else if let Some(item) = ast::Static::cast(node.clone()) {
-                item.name()
-                    .zip(item.body())
-                    .map(|(name, body)| (name, body, item.ty()))
-            } else {
-                if let Some(macro_call) = ast::MacroCall::cast(node)
-                    && let Some(tokens) = macro_call.token_tree()
-                {
-                    let text = mask_comments_and_strings(&tokens.syntax().to_string());
-                    for (name, initializer) in text_declared_constants(&text) {
-                        let declared = declared_type(&initializer).map(str::to_string);
-                        add(&name, initializer, declared);
-                    }
-                }
-                None
-            };
-            if let Some((item_name, body, ty)) = item {
-                add(
-                    item_name.text(),
-                    mask_comments_and_strings(&body.syntax().to_string()),
-                    ty.map(|ty| mask_comments_and_strings(&ty.syntax().to_string())),
-                );
-            }
+                .push(((*path).clone(), initializer, declared));
         }
     }
     table
+}
+
+/// One file's `const`/`static` items for [`workspace_constant_table`], in
+/// source order: `(name, masked initializer, declared type)`.
+fn file_constants(source: &str) -> Vec<(String, String, Option<String>)> {
+    let mut found = Vec::new();
+    if !source.contains("const") && !source.contains("static") {
+        return found;
+    }
+    let mut add = |name: &str, initializer: String, declared: Option<String>| {
+        let name = name.strip_prefix("r#").unwrap_or(name);
+        found.push((name.to_string(), initializer, declared));
+    };
+    let Some(parsed) = parse_clean_source_file(source) else {
+        for (name, initializer) in text_declared_constants(&mask_comments_and_strings(source)) {
+            let declared = declared_type(&initializer).map(str::to_string);
+            add(&name, initializer, declared);
+        }
+        return found;
+    };
+    for node in parsed.tree().syntax().descendants() {
+        let item = if let Some(item) = ast::Const::cast(node.clone()) {
+            item.name()
+                .zip(item.body())
+                .map(|(name, body)| (name, body, item.ty()))
+        } else if let Some(item) = ast::Static::cast(node.clone()) {
+            item.name()
+                .zip(item.body())
+                .map(|(name, body)| (name, body, item.ty()))
+        } else {
+            if let Some(macro_call) = ast::MacroCall::cast(node)
+                && let Some(tokens) = macro_call.token_tree()
+            {
+                let text = mask_comments_and_strings(&tokens.syntax().to_string());
+                for (name, initializer) in text_declared_constants(&text) {
+                    let declared = declared_type(&initializer).map(str::to_string);
+                    add(&name, initializer, declared);
+                }
+            }
+            None
+        };
+        if let Some((item_name, body, ty)) = item {
+            add(
+                item_name.text(),
+                mask_comments_and_strings(&body.syntax().to_string()),
+                ty.map(|ty| mask_comments_and_strings(&ty.syntax().to_string())),
+            );
+        }
+    }
+    found
 }
 
 /// `const NAME: T = init;` and `static [ref] [mut] NAME: T = init;` read
