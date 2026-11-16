@@ -2404,6 +2404,19 @@ impl<'a> GeneratedRustSources<'a> {
         self.is_convention_excluded(path) || self.has_stronger_exclusion(path)
     }
 
+    /// Whether the repository's own `[languages.rust] generated_file_patterns`
+    /// excludes this path (#13894). That is scope the operator configured, as
+    /// opposed to the built-in naming conventions, generator headers and
+    /// vendor markers the operator did not ask for.
+    pub(crate) fn is_configured_pattern_exclusion(&self, path: &Path) -> bool {
+        route(path) == Some(LanguageId::Rust)
+            && self
+                .config
+                .generated_file_patterns
+                .iter()
+                .any(|pattern| generated_pattern_matches(pattern, path))
+    }
+
     /// Whether an exact handwritten declaration can recover this skipped path.
     pub(crate) fn is_convention_only_exclusion(&self, path: &Path) -> bool {
         self.is_convention_excluded(path) && !self.has_stronger_exclusion(path)
@@ -2623,14 +2636,15 @@ impl RustAdapter {
         }
         let (rust_files, unreadable_dirs) =
             workspace::discover_rust_files_tolerating_unreadable(&options.root)?;
-        let mut unreadable_unchanged_paths = unreadable_dirs
-            .into_iter()
-            .map(|(path, _)| path)
-            .collect::<Vec<_>>();
         let changed_paths = changed_files
             .iter()
             .map(|file| file.path.clone())
             .collect::<BTreeSet<_>>();
+        workspace::refuse_unreadable_dir_over_changed_path(&unreadable_dirs, &changed_paths)?;
+        let mut unreadable_unchanged_paths = unreadable_dirs
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect::<Vec<_>>();
         let (rust_files, unreadable_files) =
             workspace::split_unreadable_unchanged_files(&options.root, rust_files, &changed_paths);
         unreadable_unchanged_paths.extend(unreadable_files);

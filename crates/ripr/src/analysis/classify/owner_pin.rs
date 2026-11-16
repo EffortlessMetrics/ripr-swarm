@@ -1240,7 +1240,26 @@ impl OwnerPinSyntax {
                 } else {
                     self.macro_binding_site(test, assertion.line, &name, index)
                 };
-                AssertionRefusal::MacroBinding { name, site }
+                let roots = self.target_roots(index);
+                let carries = |file: &Path| self.file_may_carry_glob_chain(file, index);
+                let jumps = |file: &Path| self.file_may_skip_glob_parent(file, index);
+                let placement_include = match site.as_ref() {
+                    Some((path, site))
+                        if path != &test.file
+                            && matches!(&site.kind, MacroBindingKind::ForeignGlob(_))
+                            && placement_include_explains(
+                                site, path, &test.file, roots, index, &carries, &jumps,
+                            ) =>
+                    {
+                        roots.workspace_include.clone()
+                    }
+                    _ => None,
+                };
+                AssertionRefusal::MacroBinding {
+                    name,
+                    site,
+                    placement_include,
+                }
             }
             refusal => refusal,
         })
@@ -2628,6 +2647,25 @@ struct ModuleLocalBinding {
 /// syntax retain the refusal; otherwise follow possible single-parent chains.
 /// Without the ancestry the binding keeps its crate-local
 /// reach: every test of its crate roots, or every test when unrooted.
+/// Whether a private file-level foreign glob declared in `glob_file` reaches
+/// the test through module edges alone, i.e. with placement established.
+/// A private `use` is not inherited by a child module, but a qualified glob,
+/// macro expansion or unknown syntax can hide that chain.
+fn glob_reaches_through_modules(
+    glob_file: &Path,
+    ancestry: &ModuleAncestry,
+    carries: &dyn Fn(&Path) -> bool,
+    jumps: &dyn Fn(&Path) -> bool,
+) -> bool {
+    ancestry.files.contains(glob_file)
+        && (glob_file == ancestry.test_file
+            || ancestry
+                .files
+                .iter()
+                .any(|child| child != glob_file && jumps(child))
+            || glob_chain_reaches(glob_file, ancestry, carries))
+}
+
 fn module_binding_reaches(
     file: &Path,
     binding: &ModuleLocalBinding,
@@ -2637,15 +2675,7 @@ fn module_binding_reaches(
     jumps: &dyn Fn(&Path) -> bool,
 ) -> bool {
     match ancestry {
-        Some(ancestry) => {
-            ancestry.files.contains(file)
-                && (file == ancestry.test_file
-                    || ancestry
-                        .files
-                        .iter()
-                        .any(|child| child != file && jumps(child))
-                    || glob_chain_reaches(file, ancestry, carries))
-        }
+        Some(ancestry) => glob_reaches_through_modules(file, ancestry, carries, jumps),
         None => match (test_roots, binding.roots.as_ref()) {
             (Some(test), Some(site)) => !test.is_disjoint(site),
             _ => true,
@@ -2802,6 +2832,52 @@ fn module_confined(
         && roots.roots(path, index).is_some()
 }
 
+/// Whether an include is the only reason this site is not module-confined:
+/// every input [`module_confined`] checks holds except `!roots.disabled`, the
+/// scan is disabled by the include alone, and the glob would not reach the
+/// test even with placement on. A public glob (not `crate_local`) is
+/// unconfined by construction and a scoped import is confined lexically, so
+/// for those the include is not the cause; the same holds for a file no
+/// recognized crate places, one whose own out-of-line modules did not
+/// resolve, one whose ambiguity has another disabling cause, and a glob that
+/// reaches the assertion through module edges anyway. Naming the include
+/// there would repeat the unrelated-cause defect this disclosure exists to
+/// remove.
+fn placement_include_explains(
+    site: &MacroBindingSite,
+    path: &Path,
+    test_file: &Path,
+    roots: &TargetRoots,
+    index: &RustIndex,
+    carries: &dyn Fn(&Path) -> bool,
+    jumps: &dyn Fn(&Path) -> bool,
+) -> bool {
+    site.crate_local
+        && site.module_local
+        && site.scope.is_none()
+        && roots.disabled
+        && index.execution_context(path).is_some()
+        // What `roots` would answer with placement on: the file is in a
+        // recognized crate that the include does not taint, so the disabled
+        // scan is the only reason this glob is not confined.
+        && target_context_roots(path, index, &roots.src_dirs)
+            .is_some_and(|placed| placed.is_disjoint(&roots.tainted))
+        // The include must be the whole reason placement is off: a lexical
+        // fallback, unknown `#[path]` or unseen member elsewhere keeps it off
+        // after the include is removed.
+        && !roots.non_include_disabled
+        // And the glob must be ambiguous only because placement is off. With
+        // placement on it is confined to the test's module subtree, so it
+        // would still refuse if it reaches the assertion from an ancestor
+        // module or along the module chain.
+        && {
+            let test_context = index.execution_context(test_file);
+            placed_module_ancestry(&test_context, test_file, roots, index).is_some_and(|ancestry| {
+                !glob_reaches_through_modules(path, &ancestry, carries, jumps)
+            })
+        }
+}
+
 /// The files whose module subtree holds `file`: itself and every ancestor
 /// along the approved `mod` edges. `None` when ancestry is not established
 /// (an unresolved composition anywhere, an `include!` fragment, a file with
@@ -2823,6 +2899,45 @@ fn module_ancestry(
         .edges
         .iter()
         .any(|edge| edge.kind != SourceRoleProvenanceEdgeKind::Module)
+    {
+        return None;
+    }
+    let mut ancestors: BTreeSet<PathBuf> = context.roots.clone();
+    ancestors.insert(file.to_path_buf());
+    for edge in &context.edges {
+        ancestors.insert(edge.parent.clone());
+        ancestors.insert(edge.child.clone());
+    }
+    Some(ModuleAncestry {
+        files: ancestors,
+        edges: context
+            .edges
+            .iter()
+            .map(|edge| (edge.parent.clone(), edge.child.clone()))
+            .collect(),
+        test_file: file.to_path_buf(),
+    })
+}
+
+/// The ancestry `file` would have with placement available: its module
+/// composition resolved and its recognized root clear of every include the
+/// scan cannot place. `None` when placement would still be unavailable.
+fn placed_module_ancestry(
+    context: &Option<ExecutionContext>,
+    file: &Path,
+    roots: &TargetRoots,
+    index: &RustIndex,
+) -> Option<ModuleAncestry> {
+    let context = context.as_ref()?;
+    if context
+        .edges
+        .iter()
+        .any(|edge| edge.kind != SourceRoleProvenanceEdgeKind::Module)
+    {
+        return None;
+    }
+    if !target_context_roots(file, index, &roots.src_dirs)
+        .is_some_and(|placed| placed.is_disjoint(&roots.tainted))
     {
         return None;
     }
@@ -2938,6 +3053,16 @@ struct TargetRoots {
     /// mount other crates that way, may compile any file into another
     /// crate, so no file is charged to one root.
     disabled: bool,
+    /// A lexical fallback, unknown module target, or unseen unindexed member
+    /// also disabled placement. When one is present, the include is not the
+    /// sole reason confinement is unavailable and must not be named as it.
+    non_include_disabled: bool,
+    /// The first include limitation whose paste reaches the workspace. This
+    /// explains placement loss without blaming an inert include or a separate
+    /// unresolved `#[path]` / unindexed member; it is disclosed only for a
+    /// glob that would otherwise be module-confined
+    /// ([`placement_include_explains`]).
+    workspace_include: Option<RustIncludeLimitation>,
     /// #14116: integration test, bench and example roots holding an
     /// `include!` whose inert fragment may bind an assertion macro. The
     /// binding lands in that crate only and nothing imports it, so files
@@ -3350,14 +3475,17 @@ impl TargetRoots {
             .collect();
         let mut tainted = BTreeSet::new();
         let mut include_reaches_workspace = false;
+        let mut workspace_include = None;
         for limitation in &index.include_limitations {
             match include_limitation_reach(index, limitation, &src_dirs) {
-                IncludeReach::Workspace => include_reaches_workspace = true,
+                IncludeReach::Workspace => {
+                    include_reaches_workspace = true;
+                    workspace_include.get_or_insert_with(|| limitation.clone());
+                }
                 IncludeReach::Roots(roots) => tainted.extend(roots),
             }
         }
-        let disabled = include_reaches_workspace
-            || unindexed_member_is_unseen_compilation_target(index)
+        let non_include_disabled = unindexed_member_is_unseen_compilation_target(index)
             || index.files().iter().any(|(_, facts)| {
                 facts.used_lexical_fallback
                     || facts
@@ -3366,7 +3494,9 @@ impl TargetRoots {
                         .any(|declaration| declaration.path_target == ModulePathTarget::Unknown)
             });
         Self {
-            disabled,
+            disabled: include_reaches_workspace || non_include_disabled,
+            non_include_disabled,
+            workspace_include,
             tainted,
             src_dirs,
             memo: SyncMemo::default(),
@@ -3836,6 +3966,10 @@ pub(in crate::analysis) enum AssertionRefusal {
     MacroBinding {
         name: String,
         site: Option<(PathBuf, MacroBindingSite)>,
+        /// The first include that disabled placement, when a private unscoped
+        /// foreign glob that would otherwise be module-confined is ambiguous
+        /// because it cannot be. `None` when placement is not the cause.
+        placement_include: Option<RustIncludeLimitation>,
     },
     /// The test's only `return` sits under `if <condition> { return; }`,
     /// whose condition compares `subject` (the call the assertion compares)
@@ -4042,10 +4176,24 @@ impl AssertionRefusal {
                 "an earlier `if {condition} {{ return; }}` spares the value the assertion expects, so whether the assertion runs depends on the value of `{subject}`, which ripr does not evaluate"
             ),
             Self::ExpectedPanicUnresolved => "the expected-panic matches check has an unresolved panic source or expected diagnostic, which ripr cannot establish".into(),
-            Self::MacroBinding { name, site } => match site {
+            Self::MacroBinding {
+                name,
+                site,
+                placement_include,
+            } => match site {
                 None => format!("`{name}!` may be redefined somewhere in the workspace"),
                 Some((path, site)) => {
                     let place = at(path, site.line);
+                    if let (Some(limitation), MacroBindingKind::ForeignGlob(import)) =
+                        (placement_include, &site.kind)
+                    {
+                        return format!(
+                            "`{import}` at {place} could not be confined to its module because placement is unavailable, so it may bring in a different `{name}!`; first include limitation: `{}` at {} ({})",
+                            limitation.expression,
+                            at(&limitation.parent, limitation.line),
+                            limitation.reason_code
+                        );
+                    }
                     match &site.kind {
                         MacroBindingKind::Unparsed => format!(
                             "{} did not parse cleanly, so it may redefine `{name}!`",
