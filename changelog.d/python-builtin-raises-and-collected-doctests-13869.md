@@ -9,10 +9,3 @@
   cannot evaluate, such as one for a function with an `if`, now reads
   `static_unknown` instead of `no_static_path`. Before, ripr claimed no test
   reached code the doctest runs (#13869).
-- Python: a FastAPI-style `TestClient` test over the owner's own app that
-  pins the changed key of the handler's returned dict, with
-  `assert response.json()["total"] == 190` or
-  `self.assertEqual(response.json()["total"], 190)`, now reads `exposed`.
-  Before, ripr reported a gap even though the test already checked the
-  changed value. A `status_code` check, another key, another route or an
-  unidentified app still never reads `exposed` (#13869).

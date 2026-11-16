@@ -519,10 +519,16 @@ Relations, first match wins (rank, oracle-eligible):
   test binds one name once, to a call of an accepted verb on a client over
   the owner's own application with a first argument the route accepts, and
   an exact assertion (`assert` with one `==`, or `self.assertEqual` with two
-  plain arguments) compares that name's `.json()`, whole or with one quoted
-  key subscript, with the other side. The changed-key gate still decides
-  which key observes the edit. Another key, a rebound or inline response, an
-  arithmetic or other expression around the read, another route or verb, an
+  plain arguments) compares that name's `.json()` with one quoted key
+  subscript against the other side. The changed-key gate still decides
+  which key observes the edit. The handler must return its body as is:
+  every decorator is a static route decorator whose keywords cannot reshape
+  the body (no `response_model` or `response_class`), there is no return
+  annotation other than a bare `dict` (FastAPI reads one as a response
+  model), and the function has exactly one `return`, of a dict literal, and
+  no `yield`. A whole-body comparison (which can match an error body the
+  changed `return` never produced), another key, a rebound or inline
+  response, an expression around the read, another route or verb, an
   unidentified or rival application, or an inequality grants no credit
   (`strong_oracle_observes_route_response`, #13869);
 - R4: `construct_call` (4, eligible): a `__call__` owner invoked as

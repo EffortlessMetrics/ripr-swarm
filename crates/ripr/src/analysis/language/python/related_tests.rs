@@ -2926,7 +2926,7 @@ pub(super) fn identified_route_response_names(
                 let http_verb = ["get", "post", "put", "patch", "delete", "options", "head"]
                     .contains(&verb.as_str());
                 if http_verb
-                    && (verbs.is_empty() || verbs.iter().any(|accepted| *accepted == verb))
+                    && (verbs.is_empty() || verbs.contains(&verb))
                     && python_route_matches_call_path(route, &path)
                     && super::route_client::single_call_bindings(
                         &test.body_text,

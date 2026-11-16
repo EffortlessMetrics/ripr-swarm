@@ -1666,10 +1666,10 @@ fn sink_alignment_and_rows(
     )
 }
 
-/// Whether an exact assertion compares `name.json()` (the whole body, or one
-/// subscript of it) with `==`: `response.json()["total"] == 195` or
-/// `{"total": 195} == response.json()`. Any other comparison, or a read of
-/// another attribute of the response (`status_code`, `text`), is not it.
+/// Whether an exact assertion compares one quoted key of `name.json()` with
+/// `==` or `self.assertEqual`: `response.json()["total"] == 195`. Any other
+/// comparison, the whole body, or a read of another attribute of the response
+/// (`status_code`, `text`) is not it.
 fn reads_response_json(text: &str, name: &str) -> bool {
     let text = text.trim();
     let (left, right) = if let Some(arguments) = text
@@ -1693,10 +1693,12 @@ fn reads_response_json(text: &str, name: &str) -> bool {
     let target = format!("{name}.json()");
     let reads = |side: &str| {
         let side = side.trim();
-        side.strip_prefix(target.as_str()).is_some_and(|rest| {
-            let rest = rest.trim_start();
-            rest.is_empty() || plain_key_subscript(rest)
-        })
+        // Only a read of one key: a whole-body comparison can match an error
+        // body (a validation failure, a raised HTTP error) that never reaches
+        // the changed `return`, and the changed-key gate accepts any whole
+        // comparison.
+        side.strip_prefix(target.as_str())
+            .is_some_and(|rest| plain_key_subscript(rest.trim_start()))
     };
     reads(left) || reads(right)
 }

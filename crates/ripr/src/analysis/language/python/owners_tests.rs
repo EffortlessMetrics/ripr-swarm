@@ -169,24 +169,32 @@ pub(super) fn collect_owners_from_statements(
 
 fn push_function_owner(stmt: &Stmt, context: PythonOwnerContext<'_>, out: &mut Vec<PythonOwner>) {
     match stmt {
-        Stmt::FunctionDef(function) => out.push(owner_from_function(
-            context,
-            function.name.as_str(),
-            function.range,
-            &function.decorator_list,
-            &function.args,
-            &function.body,
-            false,
-        )),
-        Stmt::AsyncFunctionDef(function) => out.push(owner_from_function(
-            context,
-            function.name.as_str(),
-            function.range,
-            &function.decorator_list,
-            &function.args,
-            &function.body,
-            true,
-        )),
+        Stmt::FunctionDef(function) => {
+            let mut owner = owner_from_function(
+                context,
+                function.name.as_str(),
+                function.range,
+                &function.decorator_list,
+                &function.args,
+                &function.body,
+                false,
+            );
+            owner.route_returns_body &= body_returning_annotation(function.returns.as_deref());
+            out.push(owner);
+        }
+        Stmt::AsyncFunctionDef(function) => {
+            let mut owner = owner_from_function(
+                context,
+                function.name.as_str(),
+                function.range,
+                &function.decorator_list,
+                &function.args,
+                &function.body,
+                true,
+            );
+            owner.route_returns_body &= body_returning_annotation(function.returns.as_deref());
+            out.push(owner);
+        }
         _ => {}
     }
 }
@@ -2170,9 +2178,11 @@ pub(super) fn decorator_names(decorators: &[Expr]) -> Vec<String> {
 }
 
 /// Whether a route handler's response body is the dict it returns (#13869):
-/// each static route decorator is a call whose keywords cannot reshape the
-/// body, and the function has one `return`, of a dict literal, and no
-/// `yield`. Nested functions and classes are not searched.
+/// every decorator is a static route decorator call whose keywords cannot
+/// reshape the body (any other decorator may wrap and rewrite it), and the
+/// function has one `return`, of a dict literal, and no `yield`. Nested
+/// functions and classes are not searched. The caller also requires
+/// [`body_returning_annotation`].
 fn route_returns_body(decorators: &[Expr], body: &[Stmt]) -> bool {
     const BODY_NEUTRAL_KEYWORDS: [&str; 7] = [
         "methods",
@@ -2185,10 +2195,10 @@ fn route_returns_body(decorators: &[Expr], body: &[Stmt]) -> bool {
     ];
     let decorators_ok = decorators.iter().all(|decorator| {
         let Some(name) = expr_full_name(decorator) else {
-            return true;
+            return false;
         };
         if !is_static_route_decorator(&name) {
-            return true;
+            return false;
         }
         let Expr::Call(call) = decorator else {
             return false;
@@ -2265,6 +2275,15 @@ fn collect_returns<'a>(body: &'a [Stmt], returns: &mut Vec<Option<&'a Expr>>, yi
             _ => {}
         }
     }
+}
+
+/// Whether a handler's return annotation leaves its returned dict as the
+/// body: none, or a bare `dict`. FastAPI reads any other annotation as an
+/// implicit response model that filters and coerces the dict (#13869).
+fn body_returning_annotation(returns: Option<&Expr>) -> bool {
+    returns.is_none_or(
+        |annotation| matches!(annotation, Expr::Name(name) if name.id.as_str() == "dict"),
+    )
 }
 
 fn collect_static_route_paths(source: &str, decorators: &[Expr]) -> Vec<String> {

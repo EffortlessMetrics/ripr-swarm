@@ -197,7 +197,7 @@ const STYLES: &[Style] = &[
         edit: PRICE_EDIT,
         weak: "from fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\ndef test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.status_code == 200\n",
         strong_before: "from fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\ndef test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 190\n",
-        strong_after: "from fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\ndef test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json() == {\"total\": 195, \"count\": 3}\n",
+        strong_after: "from fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\ndef test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 195\n",
     },
     Style {
         name: "unittest assertEqual on a TestClient response",
@@ -423,6 +423,38 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
         ),
     ] {
         let finding = check_style(name, &[("src/app.py", app)], edit, &strong)?;
+        if finding.class == ExposureClass::Exposed {
+            failures.push(format!("{name}: read exposed"));
+        }
+    }
+    // A whole-body comparison can match a body the changed `return` never
+    // produced (here a validation error for a missing parameter).
+    let error_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price(qty: int):\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let whole = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json() == {{\"detail\": \"missing\"}}\n"
+    );
+    let finding = check_style(
+        "whole error body",
+        &[("src/app.py", error_app)],
+        PRICE_EDIT,
+        &whole,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        failures.push("whole error body: read exposed".to_string());
+    }
+    // A return annotation is an implicit response model, and a decorator
+    // under the route may rewrite what the handler returns.
+    for (name, app) in [
+        (
+            "return annotation",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\n@app.get(\"/price\")\ndef price() -> Price:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "wrapping decorator",
+            "from fastapi import FastAPI\n\nfrom src.wrap import redact\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\n@redact\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+    ] {
+        let finding = check_style(name, &[("src/app.py", app)], PRICE_EDIT, &strong)?;
         if finding.class == ExposureClass::Exposed {
             failures.push(format!("{name}: read exposed"));
         }
