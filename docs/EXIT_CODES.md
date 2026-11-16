@@ -9,6 +9,12 @@ ripr uses three ordinary command exit codes, plus standalone Unix check interrup
 | `3`  | ripr declined: the command ran and reached a blocking result, or a request it will not run (the output says why). |
 | `130` | Supported standalone Unix `check` analysis was interrupted. |
 
+A command family run without a subcommand (for example `ripr cache`,
+`ripr agent` or `ripr reports`) is its own catalogued command: it prints that
+family's surface on stdout and exits `0`, as bare `ripr` and `ripr help` do.
+A script that builds the subcommand from a variable should check the variable
+is set; an empty one runs the surface listing, not an action.
+
 `ripr check` is advisory: it exits `0` whether or not it found gaps, including
 `exposed` and `weakly_exposed` findings. A non-zero exit from `check` means the
 analysis did not complete, not that it disapproved of your diff. The blocking
@@ -192,7 +198,8 @@ reached the caller.
 
 - **Gate failure**: `ripr gate evaluate` or `ripr gate check` evaluated
   successfully and blocked the PR; the full report was still written to
-  `--out`.
+  `--out`. `ripr reports ci-packet` passes that exit through when the gate
+  blocked and no other required step failed.
 - **Doctor findings**: `ripr doctor` completed its diagnosis and at least
   one check failed; the full report was already written (human screen or
   `--json` document) and stderr names `doctor found issues` (#5102). A
@@ -401,10 +408,14 @@ ledgers, start-here, the report index, and the changed-line annotations,
 each as a log group named after the step it replaced ([docs/CI.md](CI.md)
 keeps the full recipe). Advisory steps log a failure and continue. The diff
 capture and the gate evaluation are required, so a failed diff capture,
-gate evaluation, or blocking-mode producer makes the command exit nonzero
-after the rest of the packet is written: the step fails instead of passing
-on an incomplete analysis, and the later `always()` steps still upload the
-artifacts and the step summary.
+gate evaluation, or blocking-mode producer makes the command exit `2` after
+the rest of the packet is written: the step fails instead of passing on an
+incomplete analysis, and the later `always()` steps still upload the
+artifacts and the step summary. A gate that evaluated and blocked, with no
+other required step failing, makes the packet exit `3`, the same decision
+exit `ripr gate evaluate` uses, so a blocked pull request is not reported as
+a could-not-complete failure. Any other required failure keeps the packet at
+`2` even when the gate also blocked.
 
 The exit code reaches the merge gate through `RIPR_GATE_MODE`, not through
 a check step. The generated job carries

@@ -3458,7 +3458,10 @@ JSON fields:
   (`gap:rust:<path>:<owner>:<behavior_kind>:<probe_kind>:<normalized_discriminator>`,
   #5268): the normalized discriminator is derived from the changed line
   itself, so a comparison seam names the same equality boundary the
-  classifier's missing-discriminator statement renders. Static-limit
+  classifier's missing-discriminator statement renders. A compound
+  `&&`/`||` predicate with exactly one top-level comparison names that
+  comparison's boundary (`a && s.len() > 1` gives `s.len==1`, #14719);
+  other predicate shapes keep the whole-line reading. Static-limit
   findings and probes with no owner identity may omit this field until a
   non-actionable gap-state projection exists. TypeScript preview findings
   that carry a preview card state the content-addressed
@@ -10973,10 +10976,16 @@ Field contract:
   `navigation_only_cross_language_target`, `nearby_test_changed`,
   `summary_cap`, `missing_verification_command`. Free-text values are
   forbidden per RIPR-SPEC-0068; adding a new token requires amending the spec.
-- `suppressed[]` - bounded records for recommendations hidden by caps or
-  nearby test changes on non-headline-eligible seams. Nearby test changes do
-  not hide unresolved headline-eligible recommendations or strengthen their
-  evidence; `summary.unchanged_tests` still records that tests changed.
+- `suppressed[]` - bounded records for recommendations hidden by caps,
+  nearby test changes on non-headline-eligible seams, or an explicit
+  suppression policy. Nearby test changes do not hide unresolved
+  headline-eligible recommendations or strengthen their evidence;
+  `summary.unchanged_tests` still records that tests changed. A record with
+  `reason: "suppressed_by_policy"` was matched by `--suppression-policy` (or a
+  suppression recorded in `--check-output`) and its `message` names the entry;
+  `gate evaluate` reads such records as non-blocking. Seam records carry the
+  optional `canonical_gap_id` when the seam has one, so a suppressed gap that
+  moved still matches its baseline entry instead of reading as resolved.
 - `warnings[]` - selection warnings from the agent brief selection path.
 - `limits_note` - static-evidence boundary text for downstream summaries.
 

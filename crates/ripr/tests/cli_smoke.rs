@@ -103,6 +103,9 @@ mod mutation_calibration_provenance;
 mod native_fanout;
 #[path = "cli_smoke/next_action.rs"]
 mod next_action;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/offline_network.rs"]
+mod offline_network;
 #[path = "cli_smoke/output_leaf_identity.rs"]
 mod output_leaf_identity;
 #[cfg(all(

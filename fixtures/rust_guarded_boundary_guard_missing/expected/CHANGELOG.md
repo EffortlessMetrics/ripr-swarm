@@ -26,7 +26,7 @@ Updated:
 ## Pending — rust_guarded_boundary_guard_missing (3)
 
 Reason:
-RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+RIPR-SPEC-0158: a single-comparison compound predicate's gap id names its one comparison (#14719); the bool guard no longer joins the discriminator
 
 Command:
 `cargo xtask goldens bless rust_guarded_boundary_guard_missing --reason "..."`

@@ -11,16 +11,16 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:ad5e29a4",
-      "canonical_gap_id": "gap:rust:src/lib.rs:shipping_cost:predicate_boundary:predicate:order_cents==free_over_cents!express",
+      "canonical_gap_id": "gap:rust:src/lib.rs:shipping_cost:predicate_boundary:predicate:order_cents==free_over_cents",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:shipping_cost:predicate_boundary:predicate:order_cents==free_over_cents!express",
+        "id": "gap:rust:src/lib.rs:shipping_cost:predicate_boundary:predicate:order_cents==free_over_cents",
         "language": "rust",
         "file": "src/lib.rs",
         "owner": "shipping_cost",
         "behavior_kind": "predicate_boundary",
         "probe_kind": "predicate",
-        "normalized_discriminator": "order_cents==free_over_cents!express"
+        "normalized_discriminator": "order_cents==free_over_cents"
 
       },
       "classification": "infection_unknown",

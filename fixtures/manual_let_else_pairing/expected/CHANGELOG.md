@@ -61,12 +61,10 @@ Updated:
 ## Pending — manual_let_else_pairing (6)
 
 Reason:
-RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
-Also records the current repair-start spot count (45 -> 49) that the analyzer already produces at the merged main base (this PR changes only next-step text); the golden was stale.
+RIPR-SPEC-0122: a Hidden row whose long reason repeats the row above prints same as above (#14308)
 
 Command:
 `cargo xtask goldens bless manual_let_else_pairing --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`

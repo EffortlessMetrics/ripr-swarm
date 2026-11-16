@@ -531,11 +531,10 @@ Updated:
 ## Pending — recursive_controls (43)
 
 Reason:
-RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+RIPR-SPEC-0122: a Hidden row whose long reason repeats the row above prints same as above (#14308)
 
 Command:
 `cargo xtask goldens bless recursive_controls --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`
