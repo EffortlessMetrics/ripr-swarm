@@ -2875,8 +2875,12 @@ fn extract_unwrap_err_binding(line: &str) -> Option<String> {
         // Skip the type annotation up to the binding `=` at depth 0. This is
         // consistency with `let_binding_parts`, not a fixed defect: the tail
         // after any `=` still ends in `.unwrap_err()`, so the return value is
-        // the same either way (#14810 round 3).
-        let eq = find_top_level_eq(after_var)?;
+        // the same either way (#14810 round 3). Comments are masked first: an
+        // unbalanced `<` in a comment or a nested generic would otherwise
+        // leave the angle depth open and hide the `=`. Masking preserves byte
+        // length, so the index still slices `after_var`.
+        let masked = crate::analysis::extract::mask::mask_comments_and_strings(after_var);
+        let eq = find_top_level_eq(&masked)?;
         &after_var[eq..]
     } else {
         after_var
@@ -3652,6 +3656,21 @@ mod spec_0106_scan_tests {
         assert!(
             vars.contains("err"),
             "a `;` inside an array argument must not hide the unwrap_err binding: {vars:?}"
+        );
+    }
+
+    #[test]
+    fn unwrap_err_binding_survives_an_unbalanced_angle_in_a_comment() {
+        // #14810 round 3: the comment's `<` must not leave the angle depth
+        // open and hide the binding `=`.
+        let body = r"
+            let err: MyErr /* Array<T */ = compute(-1).unwrap_err();
+            assert_eq!(err, CalcError::Negative);
+        ";
+        let vars = unwrap_err_bound_variables(body);
+        assert!(
+            vars.contains("err"),
+            "an unbalanced `<` in a comment must not hide the unwrap_err binding: {vars:?}"
         );
     }
 
@@ -6153,6 +6172,78 @@ fn t() {
         if fact.strength != OracleStrength::Unknown {
             return Err(format!(
                 "a misplaced `=` split must not hide the placeholder: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_string_literal_operand_is_not_a_read() -> Result<(), String> {
+        // #14810 round 3: `"expected"` is text, not a read of the local.
+        let body = r#"
+fn t() {
+    let expected: i32 = todo!("x");
+    assert_eq!(result(), "expected");
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
+            return Err(format!(
+                "a string literal operand must not lower the assertion: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_comment_inside_an_operand_is_not_a_read() -> Result<(), String> {
+        // #14810 round 3: a comment is not a read of the local.
+        let body = r#"
+fn t() {
+    let expected: i32 = todo!("x");
+    assert_eq!(result(), 7 /* expected */);
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
+            return Err(format!(
+                "a comment inside an operand must not lower the assertion: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_escaped_brace_in_a_format_string_is_not_a_read() -> Result<(), String> {
+        // #14810 round 3: `{{expected}}` is the literal text `{expected}`.
+        let body = r#"
+fn t() {
+    let expected: i32 = todo!("x");
+    assert_eq!(result(), format!("{{expected}}"));
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.strength != OracleStrength::Strong {
+            return Err(format!(
+                "an escaped brace must not lower the assertion: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_format_spec_interpolation_is_a_read() -> Result<(), String> {
+        // #14810 round 3: `{expected:?}` still reads the local.
+        let body = r#"
+fn t() {
+    let expected: i32 = todo!("x");
+    assert_eq!(result(), format!("{expected:?}"));
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.strength != OracleStrength::Unknown {
+            return Err(format!(
+                "a format-spec interpolation reads the placeholder: {fact:?}"
             ));
         }
         Ok(())
