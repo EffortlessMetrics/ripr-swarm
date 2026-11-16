@@ -177,6 +177,26 @@ exercised boundary from a missing one.
   `end == start` discriminator with `observed end values: unknown`.
 - Char literals in test-call arguments are extracted as exact inputs
   (lifetimes are not).
+- Compound predicate boundary (#9637): comparison binds tighter than `&&`
+  and `||`, so the equality-boundary reading of a predicate with a top-level
+  connective uses only its one comparison operand, never the whole text
+  split at the first comparison operator. `s.starts_with('-') && s.len() > 1`
+  reads `s.len()` against `1`, not `s.starts_with('-') && s.len()`, which no
+  input can equal. The connective scan skips brackets and string and char
+  literals. A quoted operator (`s.starts_with('>')`) is not a comparison,
+  and whitespace inside a literal stays significant when the pre-edit
+  operand is compared. Two or more comparison operands, an operand the pre-edit text
+  already holds unchanged (`x > 1 && a` to `x > 1 && b`), an empty operand
+  (including a continuation line that starts with `&&` or `||`), a block
+  comment, or text the scan cannot balance, with or without a connective,
+  give no boundary reading, so the stage falls back to its existing unknown
+  or connective-change reason. A `//` line comment ends the scanned text.
+  A balanced predicate with no top-level connective and no block comment is
+  read whole, as before. A
+  single-comparison compound is newly readable, so a test input at that
+  comparison's boundary can be observed there. Masking by a sibling operand
+  stays with propagation: the predicate finding of `label == "beta" && on`
+  called only with `on = false` reads `propagation_unknown`, not `exposed`.
 - Literal byte-length boundary (#9637): diff analysis also reads one closed
   owner shape, `fn f(text: &str, width: usize) -> bool { let end =
   text.as_bytes().len(); end <= width }`, with immutable parameters and local,
@@ -510,6 +530,10 @@ only reaches the owner without a bound exact assertion stays below `exposed`.
     reached) stay `infection_unknown`.
 
 ## Test Mapping
+
+Compound predicate boundary: `analysis/classify/activation.rs`
+`a_compound_predicate_reads_only_its_one_changed_comparison` and
+`crates/ripr/tests/compound_predicate_boundary.rs`.
 
 `analysis/classify/argument_fold.rs` `tests` (every fold and refusal above);
 `rust-verdict-corpus` cases `spec0158-modfold-const-operand`,

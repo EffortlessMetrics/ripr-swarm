@@ -1036,9 +1036,10 @@ fn names_identifier(text: &str, name: &str) -> bool {
 }
 
 /// Resolve the selected route plus typed ambiguities for the eligible rows
-/// inside the same bounded Hidden window the default human report displays.
-/// Uses the stub command's root config, disk guard and resolver. A shared seam
-/// index is reused when it covers a file; alternating files may replace it.
+/// from the first 20 omitted findings in report order, the stub-route cutoff
+/// rather than the displayed Hidden window. Uses the stub command's root
+/// config, disk guard and resolver. A shared seam index is reused when it
+/// covers a file; alternating files may replace it.
 pub(crate) fn check_stub_routes(
     root: &Path,
     check_config: &RiprConfig,

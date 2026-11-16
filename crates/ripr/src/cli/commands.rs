@@ -2111,7 +2111,9 @@ fn non_empty_string_arg(
 ) -> Result<String, String> {
     let value = expect_value(args, index, flag)?;
     if value.trim().is_empty() {
-        Err(format!("{command} {flag} requires a non-empty value"))
+        let message = format!("{command} {flag} requires a non-empty value");
+        crate::cli::usage_refusal::note_missing_value(flag, &message);
+        Err(message)
     } else {
         Ok(value.to_string())
     }
