@@ -34,7 +34,7 @@ fn all_tests(index: &RustIndex) -> Vec<TestFact> {
 fn prefetched_credit_equals_the_fold_alone() -> Result<(), Box<dyn Error>> {
     let source = every_fold_path();
     let _ = take_prefetch_runs();
-    let alone = without_prefetch(|| index_for(&source))?;
+    let alone = with_fold_alone(|| index_for(&source))?;
     assert_eq!(take_prefetch_runs(), 0, "the fold alone");
     let prefetched = index_for(&source)?;
     assert_eq!(take_prefetch_runs(), 1, "the build prefetched");
@@ -91,7 +91,7 @@ fn prefetch_leaves_the_fold_no_parse_of_its_own() -> Result<(), Box<dyn Error>> 
     // Alone, the fold parses each test and helper body itself: the plain
     // call's closure check and oracles, and the callback helper's invoked
     // parameters, the test's closure positions and its oracles.
-    without_prefetch(|| credit_same_file_assertion_helpers(&mut index));
+    with_fold_alone(|| credit_same_file_assertion_helpers(&mut index));
     assert_eq!(last_fold_parses(), 5);
 
     // Prefetched, every one of those bodies was parsed before the fold

@@ -665,7 +665,7 @@ thread_local! {
     /// Clean parses the serial fold itself made on this thread in the last
     /// pass, the prefetch excluded.
     static LAST_FOLD_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// Set by [`without_prefetch`]: the fold alone, the equivalence oracle.
+    /// Set by [`with_fold_alone`]: the fold alone, the equivalence oracle.
     static PREFETCH_DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -678,7 +678,7 @@ pub(crate) fn last_fold_parses() -> usize {
 /// `work` with the prefetch skipped on this thread, so a test can compare
 /// the fold alone against the prefetched fold.
 #[cfg(test)]
-pub(crate) fn without_prefetch<T>(work: impl FnOnce() -> T) -> T {
+pub(crate) fn with_fold_alone<T>(work: impl FnOnce() -> T) -> T {
     let previous = PREFETCH_DISABLED.with(|disabled| disabled.replace(true));
     let result = work();
     PREFETCH_DISABLED.with(|disabled| disabled.set(previous));
