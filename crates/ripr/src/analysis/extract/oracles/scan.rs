@@ -6201,7 +6201,7 @@ fn t() {
 }
 "#;
         let fact = only_fact(body)?;
-        if fact.strength != OracleStrength::Unknown {
+        if fact.kind != OracleKind::Unknown || fact.strength != OracleStrength::Unknown {
             return Err(format!(
                 "a misplaced `=` split must not hide the placeholder: {fact:?}"
             ));
