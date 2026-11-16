@@ -15,8 +15,8 @@ on:
     # the exact queued merge commit. Both requests coexist while the repository
     # cuts over to the queue; the label request is then retired.
     types: [checks_requested]
-  push:
-    branches: [main, master]
+  # Ordinary landed commits consume their native G qualification; no replay.
+  # Existing H qualification and actual G remain required during App bootstrap.
   workflow_dispatch:
 
 permissions:
@@ -28,7 +28,7 @@ concurrency:
   # A repeated merge-ready request means the prior admission transaction was
   # revoked. Nonrequest label events use a unique group so an ordinary label
   # can never cancel an in-flight qualification. Preserve independent
-  # main/manual work.
+  # queue/manual work.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -912,7 +912,7 @@ jobs:
           retention-days: 5
 
   result:
-    # Static `Ripr Rust Small Result` only for main/manual runs and an explicit
+    # Static `Ripr Rust Small Result` only for queue/manual runs and an explicit
     # merge-ready request. Any other pull_request label event is a nonrequest
     # under a different name so the required context is never satisfied by it.
     name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}

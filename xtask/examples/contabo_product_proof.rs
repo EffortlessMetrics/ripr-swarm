@@ -46,9 +46,9 @@ fn self_hosted_build_jobs(route: &str, value: &str) -> Result<NonZeroUsize, Stri
             "consumer requires the owned route and a positive Cargo build-job bound".into(),
         );
     }
-    value
-        .parse()
-        .map_err(|_| "consumer Cargo build-job bound must be a positive integer".into())
+    value.parse().map_err(|error| {
+        format!("consumer Cargo build-job bound must be a positive integer: {error}")
+    })
 }
 
 fn portfolio(source: &str, build_jobs: NonZeroUsize) -> Result<Vec<Step>, String> {
@@ -586,36 +586,50 @@ mod tests {
         let h = "a".repeat(40);
         let b = "b".repeat(40);
         let event = json!({"inputs":{"expected_sha":h,"base_sha":b}});
-        assert!(
+        assert_eq!(
             subject(
                 &event,
                 "workflow_dispatch",
                 &h,
                 "EffortlessMetrics/ripr-swarm"
-            )
-            .is_ok()
+            ),
+            Ok((b.clone(), h.clone()))
         );
         for name in ["pull_request", "ready_for_review", "push", "merge_group"] {
-            assert!(subject(&event, name, &h, "EffortlessMetrics/ripr-swarm").is_err());
+            assert_eq!(
+                subject(&event, name, &h, "EffortlessMetrics/ripr-swarm")
+                    .err()
+                    .as_deref(),
+                Some("only reviewed owned workflow_dispatch rehearsal is supported")
+            );
         }
-        assert!(
+        assert_eq!(
             subject(
                 &event,
                 "workflow_dispatch",
                 &b,
                 "EffortlessMetrics/ripr-swarm"
             )
-            .is_err()
+            .err()
+            .as_deref(),
+            Some("subject/base must be distinct full SHAs and subject must equal event SHA")
         );
-        assert!(subject(&event, "workflow_dispatch", &h, "fork/ripr-swarm").is_err());
-        assert!(
+        assert_eq!(
+            subject(&event, "workflow_dispatch", &h, "fork/ripr-swarm")
+                .err()
+                .as_deref(),
+            Some("only reviewed owned workflow_dispatch rehearsal is supported")
+        );
+        assert_eq!(
             subject(
                 &json!({}),
                 "workflow_dispatch",
                 &h,
                 "EffortlessMetrics/ripr-swarm"
             )
-            .is_err()
+            .err()
+            .as_deref(),
+            Some("missing expected_sha")
         );
     }
     #[test]
@@ -644,7 +658,7 @@ mod tests {
                 .environment
                 .contains(&("RIPR_PR_EVIDENCE_TIMEOUT_SECS".into(), "3600".into()))
         );
-        assert!(
+        assert_eq!(
             portfolio(
                 &source.replace(
                     "      - name: Required Rust doctests\n",
@@ -652,7 +666,9 @@ mod tests {
                 ),
                 jobs
             )
-            .is_err()
+            .err()
+            .as_deref(),
+            Some("missing selected owner step: Required Rust doctests")
         );
         Ok(())
     }
@@ -677,56 +693,67 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let source = fs::read_to_string(root.join(OWNER)).map_err(|e| e.to_string())?;
         let jobs = self_hosted_build_jobs("true", "6")?;
-        for changed in [
-            source.replace(
+        for (changed, expected) in [
+            (source.replace(
                 "BASE_SHA: ${{ steps.admitted.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
                 "BASE_SHA: ${{ secrets.UNKNOWN }}",
-            ),
-            source.replace("id: formatting", "id: formatting\n        shell: pwsh"),
-            source.replace(
+            ), "unsupported event projection: BASE_SHA"),
+            (source.replace("id: formatting", "id: formatting\n        shell: pwsh"),
+             "unsupported selected owner metadata: Formatting preflight: shell: pwsh"),
+            (source.replace(
                 "id: formatting",
                 "id: formatting\n        working-directory: other",
-            ),
-            source.replace("id: formatting", "id: formatting\n        if: false"),
-            source.replace(
+            ), "unsupported selected owner metadata: Formatting preflight: working-directory: other"),
+            (source.replace("id: formatting", "id: formatting\n        if: false"),
+             "unsupported selected owner metadata: Formatting preflight: if: false"),
+            (source.replace(
                 "if: inputs.test-shards == 1",
                 "if: inputs.test-shards == 4",
-            ),
-            source.replace(
+            ), "unsupported selected owner metadata: Required Rust tests: if: inputs.test-shards == 4"),
+            (source.replace(
                 "id: formatting",
                 "id: formatting\n        if: inputs.test-shards == 1",
-            ),
-            source.replace(
+            ), "unsupported selected owner metadata: Formatting preflight: if: inputs.test-shards == 1"),
+            (source.replace(
                 "if: github.event_name == 'pull_request' || github.event_name == 'merge_group'",
                 "if: false",
-            ),
+            ), "unsupported selected owner metadata: PR evidence: if: false"),
         ] {
             assert_ne!(source, changed);
-            assert!(portfolio(&changed, jobs).is_err());
+            assert_eq!(portfolio(&changed, jobs).err().as_deref(), Some(expected));
         }
         Ok(())
     }
 
     #[test]
-    fn build_jobs_require_the_owned_route_and_a_positive_profile_bound() {
-        for value in ["1", "6", "8", "16"] {
-            assert!(self_hosted_build_jobs("true", value).is_ok());
+    fn build_jobs_require_the_owned_route_and_a_positive_profile_bound() -> Result<(), String> {
+        for (value, expected) in [("1", 1), ("6", 6), ("8", 8), ("16", 16)] {
+            assert_eq!(self_hosted_build_jobs("true", value)?.get(), expected);
         }
         for route in ["", "false", "True", "unknown"] {
-            assert!(self_hosted_build_jobs(route, "6").is_err());
+            assert_eq!(
+                self_hosted_build_jobs(route, "6").err().as_deref(),
+                Some("consumer requires the owned route and a positive Cargo build-job bound")
+            );
         }
-        for value in [
-            "",
-            "0",
-            "-1",
-            "+1",
-            "6.0",
-            " 6",
-            "six",
-            "999999999999999999999999999",
-        ] {
-            assert!(self_hosted_build_jobs("true", value).is_err());
+        for value in ["", "-1", "+1", "6.0", " 6", "six"] {
+            assert_eq!(
+                self_hosted_build_jobs("true", value).err().as_deref(),
+                Some("consumer requires the owned route and a positive Cargo build-job bound")
+            );
         }
+        for value in ["0", "999999999999999999999999999"] {
+            let error = self_hosted_build_jobs("true", value)
+                .err()
+                .ok_or_else(|| format!("accepted invalid build-job bound {value}"))?;
+            assert!(
+                error.starts_with("consumer Cargo build-job bound must be a positive integer: ")
+            );
+            assert!(
+                error.len() > "consumer Cargo build-job bound must be a positive integer: ".len()
+            );
+        }
+        Ok(())
     }
 
     #[test]
@@ -768,19 +795,23 @@ mod tests {
         ] {
             let changed = source.replace(CLIPPY_BUILD_JOBS, value);
             assert_ne!(changed, source);
-            assert!(portfolio(&changed, jobs).is_err());
+            assert_eq!(
+                portfolio(&changed, jobs).err().as_deref(),
+                Some("unsupported build-job projection: Strict workspace Clippy")
+            );
         }
-        for changed in [
-            source.replace(
+        for (changed, expected) in [
+            (source.replace(
                 "id: formatting",
                 &format!(
                     "id: formatting\n        env:\n          CARGO_BUILD_JOBS: {CLIPPY_BUILD_JOBS}"
                 ),
-            ),
-            source.replace("CARGO_BUILD_JOBS:", "RUSTFLAGS:"),
+            ), "unsupported build-job projection: Formatting preflight"),
+            (source.replace("CARGO_BUILD_JOBS:", "RUSTFLAGS:"),
+             "unsupported event projection: RUSTFLAGS"),
         ] {
             assert_ne!(changed, source);
-            assert!(portfolio(&changed, jobs).is_err());
+            assert_eq!(portfolio(&changed, jobs).err().as_deref(), Some(expected));
         }
         Ok(())
     }
@@ -791,19 +822,28 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let source = fs::read_to_string(root.join(OWNER)).map_err(|error| error.to_string())?;
         let jobs = self_hosted_build_jobs("true", "6")?;
-        for expression in [
-            "${{ steps.admitted.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
-            "${{ steps.admitted.outputs.head || github.event.pull_request.head.sha || github.event.merge_group.head_sha }}",
-            "${{ github.event_name }}",
-            "${{ inputs.admission-reason }}",
-            "${{ inputs.admission-head }}",
-            "${{ inputs.history-sync-source }}",
-            "${{ inputs.history-sync-base }}",
+        for (expression, key) in [
+            (
+                "${{ steps.admitted.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
+                "BASE_SHA",
+            ),
+            (
+                "${{ steps.admitted.outputs.head || github.event.pull_request.head.sha || github.event.merge_group.head_sha }}",
+                "HEAD_SHA",
+            ),
+            ("${{ github.event_name }}", "EVENT_NAME"),
+            ("${{ inputs.admission-reason }}", "ADMISSION_REASON"),
+            ("${{ inputs.admission-head }}", "ADMISSION_HEAD"),
+            ("${{ inputs.history-sync-source }}", "SYNC_SOURCE"),
+            ("${{ inputs.history-sync-base }}", "SYNC_BASE"),
         ] {
             for replacement in ["${{ inputs.unknown }}", "history_sync_admitted"] {
                 let changed = source.replace(expression, replacement);
                 assert_ne!(changed, source);
-                assert!(portfolio(&changed, jobs).is_err());
+                assert_eq!(
+                    portfolio(&changed, jobs).err(),
+                    Some(format!("unsupported event projection: {key}"))
+                );
             }
         }
         Ok(())
@@ -1001,20 +1041,24 @@ mod tests {
     #[test]
     fn wrong_toolchain_or_missing_component_is_not_a_test_skip() {
         let mut calls = 0;
-        assert!(
+        assert_eq!(
             prepare_matching_llvm("1.95.0", "1.98.1", |_, _| {
                 calls += 1;
                 Ok(String::new())
             })
-            .is_err()
+            .err()
+            .as_deref(),
+            Some("LLVM setup requires the exact repository-selected Rust toolchain")
         );
         assert_eq!(calls, 0);
-        assert!(
+        assert_eq!(
             prepare_matching_llvm("1.95.0", "1.95.0", |_, _| {
                 calls += 1;
                 Err("component unavailable".into())
             })
-            .is_err()
+            .err()
+            .as_deref(),
+            Some("component unavailable")
         );
         assert_eq!(
             calls, 1,

@@ -63,7 +63,9 @@ jobs:
           tool: nextest@0.9.149
 
       # Separate dependency cache from the gates job; the action defaults exclude
-      # workspace test binaries. One shard on main is enough to write the cache.
+      # workspace test binaries. Existing default-branch entries are best-effort
+      # reads; a miss still builds all tests. Only shard 1 of an already-selected
+      # manual main qualification may save; no ordinary push or extra warmer.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: ripr-swarm-rust-shards-${{ runner.os }}

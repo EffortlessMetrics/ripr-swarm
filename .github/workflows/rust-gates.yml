@@ -296,6 +296,9 @@ jobs:
         run: echo 'CARGO_PROFILE_DEV_DEBUG=0' >> "$GITHUB_ENV"
 
       - name: Restore hosted Rust cache
+        # Best-effort existing default-branch entries; misses always recompute.
+        # Only an already-selected manual main qualification may refresh these
+        # entries. No ordinary push, recurring warmer, or broadened PR/G saves.
         if: ${{ !inputs.use-scratch }}
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:

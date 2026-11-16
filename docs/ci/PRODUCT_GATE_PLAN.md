@@ -10,11 +10,9 @@ changing required-check routing.
 
 The current producer is `.github/workflows/rust-gates.yml`, called by the
 CX43, CPX42, CX53, and GitHub-hosted routes in `routed-rust.yml`. The required
-predicates are not copied into each runner route. Dependency, process and
-network policy share the mandatory `ci-policy` producer rather than running
-again as separate steps; their canonical leaf commands remain available for
-focused reruns. Runner identity and matrix shape are route details, not product
-meaning.
+predicates are shared across routes. `ci-policy` owns dependency, process and
+network policy once; standalone leaves remain available for local reruns.
+Runner identity and matrix shape do not change product obligations.
 
 | Canonical gate | Canonical command | Role | Surface |
 | --- | --- | --- | --- |
@@ -32,13 +30,9 @@ meaning.
 | `product.evidence.goldens` | `cargo xtask goldens check` | required | evidence |
 | `product.evidence.fixtures` | `cargo xtask fixtures` | required | evidence |
 
-Golden and fixture contracts remain separate required obligations. Their one
-`goldens_fixtures` producer runs `cargo xtask goldens check-with-fixtures`,
-evaluates the corpus once, writes both report families and fails if either
-obligation fails. The typed definitions and table retain their standalone
-commands for local use; the workflow contract recognizes only the exact
-combined command as satisfying both rows. The step summary reports one combined
-outcome, not two independent executions.
+Only `cargo xtask goldens check-with-fixtures` satisfies both rows in one run.
+It writes both reports, fails if either obligation fails, and reports one
+`goldens_fixtures` outcome. Standalone commands remain available locally.
 
 `product.rust.clippy` also carries the plain workspace type-check. `cargo clippy
 --workspace --all-targets` and `cargo check --workspace --all-targets` build the
@@ -147,13 +141,9 @@ release-specific evidence until a separate contract promotes them.
 ## Execution order and diagnostics
 
 Formatting remains before CI-tool installation and hosted-cache restoration.
-After setup, agent-skill preflight, repository `ci-policy`, and promotion honesty
-run before the later workspace check, Clippy, and nextest stages. Dependency,
-process, and network predicates run once within `ci-policy`, not as additional
-workflow steps. The first xtask invocation still builds xtask and its normal
-dependencies; this is not a zero-build preflight. Required producers do not
-suppress failures. A failing policy step prevents the later stages from starting
-rather than spending those stages before discovering the same policy error.
+After setup, preflight, `ci-policy` and promotion honesty run first in gates.
+Policy predicates run once and propagate failures before later gate steps.
+The first xtask call compiles the driver; hosted shards run independently.
 
 The required nextest step retains #3852's `rust-tests` ID, explicit `ci` profile,
 fresh JUnit/context generation, original exit status, and two-file upload
@@ -163,13 +153,10 @@ schedule another test suite.
 Each named step exposes its own timing and outcome in the Actions job view and
 workflow-jobs API. `Write gate summary` runs with `always()` and records the
 workflow commit, subject head, run/attempt, route, and the actual outcomes for
-the executed producer steps plus PR evidence. Dependency, process and network
-policy share the `precommit` step outcome; their existing leaf reports retain
-individual diagnostics without fabricating separate step outcomes. A push skips
-PR evidence by design; `skipped`, `cancelled`, and missing (`not_reported`)
-outcomes are never promoted to success. A terminated or unavailable runner can
-still prevent any summary from being written; the summary is not independent
-execution proof.
+the executed producers plus PR evidence. Dependency, process and network share
+`precommit`'s outcome; leaf reports retain diagnostics. Non-PR evidence skips.
+Skipped, cancelled and missing outcomes never count as success. A lost runner
+can prevent a summary; the summary is not independent execution proof.
 
 `Ripr Rust Small Result` remains the required check. Runner routing,
 scratch-tempfail fallback, advisory reporting, artifact selection, and job
@@ -254,12 +241,9 @@ outside its scope, and writes `ci-policy.{json,md}` without replacing the local
 | Formatting | existing aggregate and retained standalone step | existing step outcome and summary |
 | Full default-feature workspace/all-target strict Clippy | explicit unchanged `cargo clippy --workspace --all-targets -- -D warnings` | `clippy` outcome |
 
-The #7826 composition retained the later standalone dependency/process/network
-steps. The #8198 exact-once follow-up removes those three duplicate launches:
-all three predicates remain mandatory in `ci-policy`, with their original
-reports and failure propagation. Evidence-promotion honesty remains separate.
-Formatting deduplication is a separate change; the convenience route's
-impact-selected Clippy remains outside `ci-policy`.
+#8198 removes #7826's repeated dependency/process/network launches, retaining
+their mandatory predicates, diagnostics and failure propagation. Formatting
+deduplication and local impact-selected Clippy remain outside this change.
 Tests, doctests, all-features checks, platform routes, event admission, stable
 required-check identity, runner configuration, diagnostics and owned process
 draining are unchanged. A bounded trace can establish argv/count composition;
