@@ -255,24 +255,44 @@ impl AssertKind {
             .any(|(_, needle)| body.contains(needle))
     }
 
-    /// The expression signals match whole code tokens (#14875): `async`,
-    /// `await`, and a `spawn` or `spawn_*` name (`spawn_blocking`,
-    /// `spawn_local`). `respawn_limit`, `awaiting_ack` and a `"async"`
-    /// string do not mark a task boundary.
+    /// The expression signals match whole name segments (#14875): an
+    /// identifier is split at `_` and at lower-to-upper case steps, and a
+    /// segment must equal `async`, `await` or `spawn` (or be `asyncio`).
+    /// `async move`, `.await`, `spawn_blocking`, `async_trait`, `spawnSync`
+    /// and `asyncio.run` count; `respawn_limit`, `awaiting_ack`,
+    /// `asynchronous_mode` and a `"async"` string or comment do not.
     fn matches_in_expression(expression: &str) -> bool {
         let masked = crate::analysis::extract::mask_comments_and_strings(expression);
         masked
             .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-            .any(|token| {
-                Self::EXPRESSION_SIGNALS.iter().any(|(kind, needle)| {
-                    token == *needle
-                        || (*kind == Self::SpawnKeyword
-                            && token
-                                .strip_prefix(needle)
-                                .is_some_and(|rest| rest.starts_with('_')))
-                })
+            .flat_map(name_segments)
+            .any(|segment| {
+                segment.eq_ignore_ascii_case("asyncio")
+                    || Self::EXPRESSION_SIGNALS
+                        .iter()
+                        .any(|(_, needle)| segment.eq_ignore_ascii_case(needle))
             })
     }
+}
+
+/// The `_`- and case-separated segments of one identifier:
+/// `spawn_blocking` is `spawn`, `blocking`; `readFileAsync` is `read`,
+/// `File`, `Async`.
+fn name_segments(token: &str) -> Vec<&str> {
+    let mut segments = Vec::new();
+    for part in token.split('_').filter(|part| !part.is_empty()) {
+        let mut begin = 0;
+        let mut previous_lower = false;
+        for (index, ch) in part.char_indices() {
+            if ch.is_uppercase() && previous_lower {
+                segments.extend(part.get(begin..index));
+                begin = index;
+            }
+            previous_lower = ch.is_lowercase() || ch.is_ascii_digit();
+        }
+        segments.extend(part.get(begin..));
+    }
+    segments
 }
 
 pub(in crate::analysis) fn stop_reasons(
@@ -1628,10 +1648,10 @@ mod tests {
     }
 
     /// #14875: an expression marks a task boundary only through a whole
-    /// `async`/`await` token or a `spawn`/`spawn_*` name, never through a
-    /// longer identifier, a string or a comment that contains the word.
+    /// `async`/`await`/`spawn` name segment, never through a longer word,
+    /// a string or a comment that contains it.
     #[test]
-    fn async_boundary_signals_match_whole_code_tokens() {
+    fn async_boundary_signals_match_whole_name_segments() {
         for expression in [
             "async fn run() {}",
             "async move { work() }",
@@ -1640,7 +1660,12 @@ mod tests {
             "tokio::task::spawn_blocking(work)",
             "spawn_local(fut)",
             "value.await",
-            "fetch().await?",
+            "load().await?",
+            "#[async_trait]",
+            "asyncio.run(main())",
+            "proc.spawnSync(cmd)",
+            "readFileAsync(path)",
+            "r#async",
             "async spawn await",
         ] {
             assert!(
@@ -1655,6 +1680,8 @@ mod tests {
             "awaiting_ack == 0",
             "spawned_count + 1",
             "spawner.len()",
+            "respawnLimit > n",
+            "asynchronousMode",
             "log(\"async done\")",
             "x > 1 // await later",
         ] {
