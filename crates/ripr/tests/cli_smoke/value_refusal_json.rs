@@ -161,7 +161,7 @@ fn empty_values_under_json_name_the_flag_on_command_parsers() -> Result<(), Stri
             "ripr check --help --all",
         ),
         (
-            &["check", "--format", "json", "--write-artifact", " "],
+            &["check", "--json", "--write-artifact", " "],
             "--write-artifact",
             "ripr check --help --all",
         ),
