@@ -109,22 +109,27 @@ cargo xtask agent-eval trial-score <fresh-dir>   # judges what it left behind
 `trial-score` does not ask ripr. For every keyed gap it puts that one changed
 line back to its base text and runs `cargo test`. The gap counts as caught
 only when the suite passes on the changed code, fails with the line reverted,
-and `src/lib.rs` was left as committed. A run that does not compile or
-report a test result (for example a revert that breaks the build) is
-recorded as not established and never counts as a catch. A run that cannot be
-measured at all (cargo missing, a timeout, a signal), a missing repository or
-a scoring error leaves that repository at zero caught, still in the
-denominator, and makes the command exit nonzero. `src/lib.rs` is restored
-to what the agent left on every path. Controls: a fresh setup scores 0/6, and the
-reference tests score 6/6.
+and `src/lib.rs` still matches the scenario's head text. A run that does
+not compile or report a test result (for example a revert that breaks the
+build) is recorded as not established and never counts as a catch; the
+command still exits 0. A run that cannot be measured at all (cargo missing, a
+timeout, a signal), a missing repository or a scoring error leaves that
+repository at zero caught, still in the denominator, and makes the command
+exit nonzero. While it scores, the scorer keeps the agent's `src/lib.rs` in
+`.trial-score-agent-lib.rs` and puts it back on every path; if a score is
+interrupted, the next run restores from that copy first. Controls: a fresh
+setup scores 0/6, the reference tests score 6/6, and the weak tests score
+0/6.
 
 Limits: agents must put tests under `tests/` (a `#[cfg(test)]` module in
 `src/lib.rs` counts as a production edit). The scorer does not check
-`Cargo.toml`, `build.rs` or edits to `tests/existing.rs`, and a test that
+`Cargo.toml`, `build.rs`, `.cargo/config.toml` or edits to
+`tests/existing.rs`, and a test that
 asserts the source text itself (`include_str!`) would count as a catch, so
 read the agent's tests before trusting a surprising score. Record each
 arm's tokens and tool calls next to its score. Use a fresh directory per arm
-and per run.
+and per run; if `trial-setup` stops partway, delete the directory and run it
+again.
 
 ### First pilot (2026-11-11, one run per cell, Haiku 5.5, debug ripr with sources at main `2ab9f908`)
 
