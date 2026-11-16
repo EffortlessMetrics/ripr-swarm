@@ -507,10 +507,18 @@ fn mention_is_value(
     let defined = before.ends_with("fn") && ends_at_boundary(&before[..before.len() - 2]);
     let method = before.ends_with('.');
     let called = after.starts_with(['(', '!']) || after.starts_with("::<");
+    // #10604: a mention that continues a path (`thr::internal::thr(50)`, where
+    // the crate or module is spelled like the owner) is a qualifier segment,
+    // not the owner passed as a value: a value use is never followed by `::`
+    // and another segment. `::<` stays the turbofish call read above.
+    let qualifier = after
+        .strip_prefix("::")
+        .is_some_and(|rest| rest.trim_start().starts_with(is_ident_char));
     let field_label = after.starts_with(':') && !after.starts_with("::");
     !(defined
         || method
         || called
+        || qualifier
         || field_label
         || typed_fn_pointer_initializer(code, reference_at)
         || !qualifier_may_name_owner(before, owner_names))
@@ -1308,6 +1316,29 @@ mod tests {
         assert!(!value("use super::inc;\n", "inc"));
         assert!(!value("S { inc: 1 };", "inc"));
         assert!(!value("let increment = 3;", "inc"));
+    }
+
+    /// #10604: a path qualifier spelled like the owner is not the owner passed
+    /// as a value. In `thr::internal::thr(50)` the first `thr` names the crate
+    /// and the second is the call; only a mention that ends the path can be a
+    /// value.
+    #[test]
+    fn a_path_qualifier_spelled_like_the_owner_is_not_a_value() {
+        assert!(!value("assert!(!thr::internal::thr(50));", "thr"));
+        assert!(!value("f(thr::internal::thr(500));", "thr"));
+        // A single-segment qualifier is the same shape: a module or crate
+        // spelled like the owner, then a path into it.
+        assert!(!value("assert_eq!(thr::LIMIT, 1);", "thr"));
+        assert!(!value("f(thr::helper());", "thr"));
+        // Control 1: a genuine value keeps the limit.
+        assert!(value("let g = thr; g(50);", "thr"));
+        assert!(value(
+            "assert_eq!(rows.into_iter().map(thr).count(), 1);",
+            "thr"
+        ));
+        // Control 2: real calls and the turbofish are unchanged.
+        assert!(!value("assert!(thr(50));", "thr"));
+        assert!(!value("assert!(thr::<u8>(50));", "thr"));
     }
 
     #[test]
