@@ -110,7 +110,11 @@ pub(super) fn bare_string_statement_text(
     source: Option<&str>,
 ) -> Option<String> {
     let (open, close) = span?;
-    if !is_python_no_behavior_line_at(line_text, false) || line_text.trim().is_empty() {
+    // Inside brackets a trailing comma separates arguments, so `"msg",` is
+    // the same bare string argument as `"msg"`.
+    let bare = line_text.trim_end();
+    let bare = bare.strip_suffix(',').unwrap_or(bare);
+    if !is_python_no_behavior_line_at(bare, false) || bare.trim().is_empty() {
         return None;
     }
     let lines: Vec<&str> = source?

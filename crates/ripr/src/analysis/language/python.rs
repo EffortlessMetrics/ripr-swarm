@@ -2245,7 +2245,12 @@ impl PythonAdapter {
                                 || line_is_in_ranges(removed.line, &old_docstring_ranges)
                                 || line_is_in_ranges(removed.line, &old_import_ranges)
                                 || is_python_import_line(&removed.text)
-                                || is_python_no_behavior_line(&removed.text)
+                                || is_python_no_behavior_line_at(
+                                    &removed.text,
+                                    old_bracket_ranges.as_deref().is_none_or(|ranges| {
+                                        line_is_in_ranges(removed.line, ranges)
+                                    }),
+                                )
                                 || is_python_structural_line(&removed.text)
                         }))
                     || is_added_import(added)
