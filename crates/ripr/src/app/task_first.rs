@@ -183,6 +183,7 @@ pub(crate) fn decide_repair_start(
         restart_route,
         check_case: None,
         check_repair_route: None,
+        check_scope_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),
@@ -337,7 +338,45 @@ fn repair_refusal(
     if let Some(reason) = policy.omission_reason_for_class(entry.class, Some(entry.seam.file())) {
         return Some((RefusalKind::Other, reason));
     }
+    // #14084: the before phase selects its seam through the agent brief, which
+    // withholds a gap-class seam whose evidence is unknown or opaque at a
+    // stage. The route readiness above does not read every stage, so without
+    // this the picker and `ripr check` offered a start the before phase then
+    // refused. The brief's own predicate decides; this only words it.
+    if super::agent_brief::agent_brief_withholds(entry, policy) {
+        return Some((RefusalKind::Other, evidence_limited_reason(entry)));
+    }
     proposal_start_refusal(entry, &eligibility.readiness)
+}
+
+/// The refusal for a gap-class seam the agent brief withholds because one of
+/// its evidence stages is unknown or opaque (#14084). It names the first such
+/// stage in plain words; wording only, the brief owns the decision.
+fn evidence_limited_reason(entry: &crate::analysis::ClassifiedSeam) -> String {
+    use crate::domain::StageState;
+    let evidence = &entry.evidence;
+    let unclear = [
+        (&evidence.reach, "whether a test runs this code"),
+        (
+            &evidence.activate,
+            "which test input makes this change take effect",
+        ),
+        (
+            &evidence.propagate,
+            "whether the changed value reaches a result a test can check",
+        ),
+        (&evidence.observe, "whether a test reads the changed result"),
+        (
+            &evidence.discriminate,
+            "whether an existing assertion would notice the change",
+        ),
+    ]
+    .into_iter()
+    .find(|(stage, _)| matches!(stage.state, StageState::Unknown | StageState::Opaque))
+    .map_or("what a test would have to check here", |(_, what)| what);
+    format!(
+        "ripr does not start an automatic repair here because it cannot tell from reading the code {unclear}; write the test by hand"
+    )
 }
 
 /// #12867 / #13203 A0: the start publishes an attempt and then renders the
@@ -521,7 +560,7 @@ fn route_not_ready_reason(
             ""
         };
         label.push_str(&format!(
-            ": write the boundary test by hand — `ripr agent stub{root_flag} --at {at} --kind predicate` writes a fill-in skeleton for the changed comparison{module_note}; the boundary input is prefilled when it derives, otherwise fill the todo!() values, then rerun `ripr repair`"
+            ": write the boundary test by hand, or run `ripr agent stub{root_flag} --at {at} --kind predicate` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
     // #10701: a changed return value or error with no test ripr can
@@ -2130,6 +2169,8 @@ impl RepairStartRefusal {
 pub(crate) struct RepairStartGate {
     root: std::path::PathBuf,
     state: std::cell::OnceCell<GateState>,
+    /// Build the inventory without mutating the seam cache (#13945).
+    cache_read_only: bool,
     /// Unit-test builds only: seam ids admitted regardless of the inventory.
     #[cfg(test)]
     admitted: Vec<String>,
@@ -2157,9 +2198,20 @@ impl RepairStartGate {
         Self {
             root: root.to_path_buf(),
             state: std::cell::OnceCell::new(),
+            cache_read_only: false,
             #[cfg(test)]
             admitted: Vec::new(),
         }
+    }
+
+    /// The gate a read-only command uses: its inventory is computed without
+    /// writing, pruning or sweeping anything under the seam cache. `ripr agent
+    /// status` is read-only with respect to repair-attempt custody, and an
+    /// attempt's bound verdict may list `target/ripr/cache` files that an
+    /// ordinary inventory would rewrite or prune (#13945).
+    pub(crate) fn read_only(mut self) -> Self {
+        self.cache_read_only = true;
+        self
     }
 
     /// The gate every production caller uses.
@@ -2220,7 +2272,9 @@ impl RepairStartGate {
         if self.admitted.iter().any(|id| id == seam_id) {
             return None;
         }
-        let state = self.state.get_or_init(|| load_gate_state(&self.root));
+        let state = self
+            .state
+            .get_or_init(|| load_gate_state(&self.root, self.cache_read_only));
         check_state(&self.root, state, seam_id)
     }
 
@@ -2251,7 +2305,9 @@ impl RepairStartGate {
         if matches!(self.state.get(), Some(GateState::Open)) {
             return None;
         }
-        let state = self.state.get_or_init(|| load_gate_state(&self.root));
+        let state = self
+            .state
+            .get_or_init(|| load_gate_state(&self.root, self.cache_read_only));
         let GateState::Loaded { classified, .. } = state else {
             return None;
         };
@@ -2268,7 +2324,12 @@ impl RepairStartGate {
     }
 }
 
-fn load_gate_state(root: &Path) -> GateState {
+fn load_gate_state(root: &Path, cache_read_only: bool) -> GateState {
+    let _suppressed = cache_read_only.then(|| {
+        crate::atomic_file::CacheMutationSuppressed::under(
+            &crate::analysis::seam_cache::cache_base_dir(root),
+        )
+    });
     let config = match load_for_root(root) {
         Ok(config) => config,
         Err(error) => {
@@ -2408,7 +2469,19 @@ fn start_refusal_with_next(reason: &str, next: &str) -> String {
 /// `ripr repair`, the agent card and the MCP admission so every surface names
 /// the same cause (#11397).
 pub(crate) fn held_inline_reason(file: &str) -> String {
-    format!("the inline test target `{file}` has uncommitted changes; commit or stash them first")
+    format!("{HELD_INLINE_OPENING}{file}{HELD_INLINE_CLOSING}")
+}
+
+const HELD_INLINE_OPENING: &str = "the inline test target `";
+const HELD_INLINE_CLOSING: &str = "` has uncommitted changes; commit or stash them first";
+
+impl RepairStartRefusal {
+    /// Whether the start is held only because its inline test target has
+    /// uncommitted changes ([`held_inline_reason`]). Undoing or committing
+    /// those changes lifts this hold, unlike a refusal about the gap itself.
+    pub(crate) fn held_by_uncommitted_target(&self) -> bool {
+        self.reason.starts_with(HELD_INLINE_OPENING) && self.reason.ends_with(HELD_INLINE_CLOSING)
+    }
 }
 
 /// What the human agent card says when the shared start gate holds a seam
@@ -2681,49 +2754,16 @@ fn uncommitted_production_files(
     dirty_paths_outside_surface(root, &policy)
 }
 
-/// The dirty tracked paths the start's own premise check refuses, respelled
-/// relative to `root`.
+/// The dirty tracked paths the start's own premise check refuses. The check
+/// already spells them relative to `root` (paths outside it as `../x`), which
+/// is where the user runs the printed `git commit` (#10698, #13947).
 fn dirty_paths_outside_surface(
     root: &Path,
     policy: &crate::edit_cage::EditCagePolicy,
 ) -> Result<Vec<String>, String> {
     let head = crate::agent::artifact::current_git_head(root).map_err(|e| e.to_string())?;
-    let violations =
-        crate::app::repair_attempt::trusted_head_surface_violations(root, policy, &[], &head)
-            .map_err(|e| e.to_string())?;
-    let prefix = repo_prefix(root)?;
-    Ok(violations
-        .iter()
-        .map(|path| relative_to_cwd_root(path, &prefix))
-        .collect())
-}
-
-/// `git rev-parse --show-prefix`: the analyzed root's path inside its
-/// repository (empty at the top, otherwise `dir/sub/`).
-fn repo_prefix(root: &Path) -> Result<String, String> {
-    crate::git::run_git_output_with_deadline_and_limit(
-        root,
-        &["rev-parse", "--show-prefix"],
-        std::time::Duration::from_secs(10),
-        64 * 1024,
-    )
-    .ok()
-    .filter(|output| output.status.success())
-    .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-    .ok_or_else(|| "could not resolve repository prefix".to_string())
-}
-
-/// A repository-root-relative path respelled relative to the analyzed root,
-/// which is where the user runs the printed `git commit`.
-fn relative_to_cwd_root(path: &str, prefix: &str) -> String {
-    if prefix.is_empty() {
-        return path.to_string();
-    }
-    if let Some(rest) = path.strip_prefix(prefix) {
-        return rest.to_string();
-    }
-    let depth = prefix.split('/').filter(|part| !part.is_empty()).count();
-    format!("{}{path}", "../".repeat(depth))
+    crate::app::repair_attempt::trusted_head_surface_violations(root, policy, &[], &head)
+        .map_err(|e| e.to_string())
 }
 
 /// The gap-bound start the default human `ripr check` would print for this
@@ -2917,7 +2957,11 @@ pub(crate) fn check_repair_route(
         // no-card refusal adds nothing to its screen (its limitation
         // guidance is the whole story); only a finding that would otherwise
         // have been offered a start names it.
-        if static_limited && reason == NO_TEST_TARGET_REASON {
+        // #14084: the same holds for a seam the before phase withholds as
+        // evidence-limited; the finding's own limitation guidance covers it.
+        if static_limited
+            && (reason == NO_TEST_TARGET_REASON || reason == evidence_limited_reason(entry))
+        {
             return CheckRepairRoute::Silent;
         }
         // A bound seam carries a canonical gap id, which a strongly gripped
@@ -3181,24 +3225,33 @@ pub(crate) fn non_rust_repair_guidance(
         .map(|entry| entry.language)
         .collect::<Vec<_>>()
         .join(" and ");
+    // #13790: short lines that say what is true. Only the seam flow behind
+    // `ripr repair` is Rust-only; a TypeScript or Python preview gap can still
+    // start the delegated loop by gap id, but only through the start `ripr
+    // check` prints, which that check prints only when the shared readiness
+    // owner accepts the gap. No start command is composed here.
     let head = format!(
-        "the changed code under {root_display} is {languages}, and `ripr repair` works from Rust gaps only"
+        "the changed code under {root_display} is {languages}.\nThe `ripr repair` seam flow is Rust only."
     );
+    let check = format!("`ripr check --root {root_display}`");
     if !changed.iter().any(|entry| entry.adds_code) {
         return format!(
-            "{head}. The change only removes code, so `ripr check --root {root_display}` names no gap for it; look at the tests of the remaining behavior by hand"
+            "{head}\nThe change only removes code, so {check} names no gap for it.\nLook at the tests of the remaining behavior by hand."
         );
     }
-    let start = if changed
+    let gap_bound = changed
         .iter()
-        .any(|entry| !gap_bound_start_pointer(entry.language).is_empty())
-    {
-        "; once it is committed and the repair packet is complete, `ripr check` also prints a `ripr agent repair --gap-id <gap> --base <base> --phase before` start"
-    } else {
-        ""
-    };
+        .filter(|entry| entry.adds_code && !gap_bound_start_pointer(entry.language).is_empty())
+        .map(|entry| entry.language)
+        .collect::<Vec<_>>();
+    if gap_bound.is_empty() {
+        return format!(
+            "{head}\nAdd the test by hand: {check} names the test and its verify command."
+        );
+    }
+    let gap_bound = gap_bound.join(" and ");
     format!(
-        "{head}. Run `ripr check --root {root_display}` for the test to add by hand and its verify command{start}"
+        "{head}\n{gap_bound} preview gaps start with the `ripr agent repair --gap-id ...` command that {check} prints when one is ready.\nOtherwise, add the test by hand: {check} names the test and its verify command."
     )
 }
 
@@ -3271,6 +3324,124 @@ pub(crate) fn gap_bound_start_pointer(language: &str) -> &'static str {
     } else {
         ""
     }
+}
+
+/// The preview languages of a scope's changed files when that scope is
+/// TypeScript/Python preview code only (#13791): every routed file is a
+/// TypeScript or Python file whose adapter `enabled` analyzes, and none is
+/// Rust or another language. Routing is the shared language router's;
+/// unrouted files (docs, config) are ignored. Empty means the scope is not
+/// preview-only, so callers keep their generic wording.
+pub(crate) fn preview_only_scope_languages(
+    files: &[std::path::PathBuf],
+    enabled: &[crate::domain::LanguageId],
+) -> Vec<&'static str> {
+    use crate::domain::LanguageId;
+    let mut languages: Vec<&'static str> = Vec::new();
+    for file in files {
+        let Some(id) = crate::analysis::route(file) else {
+            continue;
+        };
+        if !matches!(id, LanguageId::TypeScript | LanguageId::Python) || !enabled.contains(&id) {
+            return Vec::new();
+        }
+        // The TypeScript adapter also analyzes JavaScript; name the files'
+        // own language so a JavaScript-only scope is not called TypeScript.
+        let javascript = id == LanguageId::TypeScript
+            && file
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| {
+                    matches!(
+                        ext.to_ascii_lowercase().as_str(),
+                        "js" | "mjs" | "cjs" | "jsx"
+                    )
+                });
+        let name = if javascript {
+            "JavaScript"
+        } else {
+            id.display_name()
+        };
+        if !languages.contains(&name) {
+            languages.push(name);
+        }
+    }
+    languages.sort_unstable();
+    languages
+}
+
+/// The TypeScript/Python subset of [`non_rust_item_language`] (#13791): the
+/// preview languages whose finding and gap ids the seam surfaces route to
+/// `ripr check --format agent`. Other non-Rust ids keep their terminal
+/// no-seam-inventory wording.
+pub(crate) fn preview_item_language(item: &str) -> Option<&'static str> {
+    non_rust_item_language(item).filter(|language| matches!(*language, "TypeScript" | "Python"))
+}
+
+/// The input a preview route's `ripr check --format agent` replays (#13791).
+/// A brief that selected a saved patch replays that patch, a `--base` brief
+/// replays its base, and a `--files` brief can only point at the current
+/// diff, which the wording qualifies instead of presenting as equivalent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PreviewCheckInput<'a> {
+    /// No working set to replay: `check`'s own default diff.
+    Default,
+    /// The brief's `--base` revision.
+    Base(&'a str),
+    /// The brief's saved patch, already resolved by the brief's own diff
+    /// path owner; rendered absolute so it reads the same from any cwd.
+    Diff(&'a Path),
+    /// A `--files` selection: `check` reads the current diff, which need not
+    /// match the selected files.
+    CurrentDiffNotFiles,
+}
+
+/// The single owner of the preview route's `ripr check ... --format agent`
+/// command (#13791). The brief warning, the card/packet prose and the card's
+/// typed `remedy_route` all render it here so their machine remedies agree.
+pub(crate) fn preview_check_command(root: &Path, input: PreviewCheckInput<'_>) -> String {
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let scope = match input {
+        PreviewCheckInput::Base(base) => format!(" --base {}", shell_arg(base)),
+        PreviewCheckInput::Diff(diff) => {
+            format!(
+                " --diff {}",
+                shell_arg(&bound_root(&diff.to_string_lossy()))
+            )
+        }
+        PreviewCheckInput::Default | PreviewCheckInput::CurrentDiffNotFiles => String::new(),
+    };
+    format!("ripr check --root {root_arg}{scope} --format agent")
+}
+
+/// The one-line working route for a seam-addressed agent command (`agent
+/// brief`, `agent card`, `agent packet`) whose subject is TypeScript/Python
+/// preview code (#13791). The seam inventory those commands read covers
+/// Rust files only, so no seam exists and no config change adds one; the
+/// route that works is `ripr check --format agent` over the same input,
+/// then the gap-bound start `check` prints only when the shared readiness
+/// owner admits it. This names that start conditionally and never claims
+/// one is ready.
+pub(crate) fn preview_seam_route(
+    root: &Path,
+    input: PreviewCheckInput<'_>,
+    languages: &[&str],
+) -> String {
+    let subject = format!("{} preview code", languages.join(" and "));
+    let command = preview_check_command(root, input);
+    let base_value = match input {
+        PreviewCheckInput::Base(base) => shell_arg(base),
+        _ => "<base>".to_string(),
+    };
+    let findings = match input {
+        PreviewCheckInput::CurrentDiffNotFiles => {
+            "for the current diff's findings (that diff need not match the --files selection)"
+        }
+        _ => "for its findings",
+    };
+    format!(
+        "run `{command}` {findings}, and when that prints a `ripr agent repair --gap-id <gap> --base {base_value} --phase before` start, run that start. The seam inventory behind `agent brief`, `agent card` and `agent packet` covers Rust files only, so no seam exists for {subject} and no config change adds one",
+    )
 }
 
 fn unknown_repair_item(root: &Path, item: &str) -> String {
@@ -4086,7 +4257,7 @@ pub(crate) mod tests {
         let (classified, _) = inventory_for_repair(&control_root, &control_config)?;
         assert!(!classified.is_empty(), "fixture must classify seams");
         assert!(matches!(
-            load_gate_state(&control_root),
+            load_gate_state(&control_root, false),
             GateState::Loaded { .. }
         ));
 
@@ -4113,7 +4284,7 @@ pub(crate) mod tests {
             };
             assert!(start.contains("producer_failure"), "{start}");
 
-            match load_gate_state(&root) {
+            match load_gate_state(&root, false) {
                 GateState::Unavailable(why) => assert!(why.contains("producer_failure"), "{why}"),
                 _ => return Err(format!("point {point}: the gate must be unavailable")),
             }
@@ -4134,6 +4305,105 @@ pub(crate) mod tests {
                 "point {point}: the selector must be undecided, not a clean miss"
             );
         }
+        Ok(())
+    }
+
+    /// #13945: the status gate's inventory must not rewrite, prune or add any
+    /// seam-cache file, because a repair attempt's bound verdict can list those
+    /// files. The same inventory with the default gate does write them, so the
+    /// unchanged snapshot is attributable to the read-only gate.
+    #[test]
+    fn read_only_gate_inventory_leaves_the_seam_cache_untouched() -> Result<(), String> {
+        fn snapshot(
+            dir: &Path,
+            out: &mut std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>,
+        ) -> Result<(), String> {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return Ok(());
+            };
+            for entry in entries {
+                let path = entry.map_err(|error| error.to_string())?.path();
+                if path.is_dir() {
+                    snapshot(&path, out)?;
+                } else {
+                    let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+                    out.insert(path, bytes);
+                }
+            }
+            Ok(())
+        }
+        let cache_files = |root: &Path| -> Result<_, String> {
+            let mut files = std::collections::BTreeMap::new();
+            snapshot(
+                &crate::analysis::seam_cache::cache_base_dir(root),
+                &mut files,
+            )?;
+            Ok(files)
+        };
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("ripr-readonly-gate-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        let _guard = TempRootGuard { root: root.clone() };
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"gate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let lib = root.join("src/lib.rs");
+        std::fs::write(
+            &lib,
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )
+        .map_err(|error| error.to_string())?;
+
+        // Cold cache: the read-only gate still loads the inventory and writes
+        // nothing.
+        assert!(matches!(
+            load_gate_state(&root, true),
+            GateState::Loaded { .. }
+        ));
+        assert!(
+            cache_files(&root)?.is_empty(),
+            "a read-only gate must not create cache files"
+        );
+
+        // Discriminating control: the default gate populates the cache.
+        assert!(matches!(
+            load_gate_state(&root, false),
+            GateState::Loaded { .. }
+        ));
+        let warm = cache_files(&root)?;
+        assert!(!warm.is_empty(), "the default gate must populate the cache");
+
+        // New source bytes miss every cache key. The read-only gate leaves the
+        // warm snapshot byte-identical; the default gate then changes it.
+        std::fs::write(
+            &lib,
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount > threshold }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert!(matches!(
+            load_gate_state(&root, true),
+            GateState::Loaded { .. }
+        ));
+        assert_eq!(
+            cache_files(&root)?,
+            warm,
+            "read-only gate mutated the cache"
+        );
+        assert!(matches!(
+            load_gate_state(&root, false),
+            GateState::Loaded { .. }
+        ));
+        assert_ne!(
+            cache_files(&root)?,
+            warm,
+            "the default gate must record the changed source"
+        );
         Ok(())
     }
 
@@ -4208,7 +4478,7 @@ pub(crate) mod tests {
         assert_eq!(classified.len(), plain.total);
 
         // Agent-status gate: same answer, not withheld as truncated.
-        let gate = load_gate_state(&root);
+        let gate = load_gate_state(&root, false);
         assert!(
             matches!(
                 gate,
@@ -5145,6 +5415,67 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Only the uncommitted-target hold is one that undoing a change lifts.
+    #[test]
+    fn held_by_uncommitted_target_reads_only_the_held_inline_reason() {
+        let refusal = |reason: String| RepairStartRefusal {
+            reason,
+            related_test: None,
+            kind: RefusalKind::Other,
+        };
+        assert!(refusal(held_inline_reason("src/lib.rs")).held_by_uncommitted_target());
+        assert!(!refusal(GRIPPED_SPOT_REASON.to_string()).held_by_uncommitted_target());
+        assert!(!refusal(NO_TEST_TARGET_REASON.to_string()).held_by_uncommitted_target());
+    }
+
+    /// #14084: the gate words the first unknown or opaque stage of a seam the
+    /// agent brief withholds, and the brief's predicate (not this wording)
+    /// makes the decision.
+    #[test]
+    fn evidence_limited_reason_names_the_first_unclear_stage() {
+        use crate::analysis::seams::SeamGripClass;
+        use crate::domain::{Confidence, StageEvidence, StageState};
+        let config = crate::config::RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let unclear = |state| StageEvidence::new(state, Confidence::Low, "test stage");
+
+        let clear = gate_entry(
+            SeamGripClass::ReachableUnrevealed,
+            vec![weak_related_test()],
+        );
+        assert!(!crate::app::agent_brief::agent_brief_withholds(
+            &clear, policy
+        ));
+
+        let mut propagate = gate_entry(
+            SeamGripClass::ReachableUnrevealed,
+            vec![weak_related_test()],
+        );
+        propagate.evidence.propagate = unclear(StageState::Unknown);
+        assert!(crate::app::agent_brief::agent_brief_withholds(
+            &propagate, policy
+        ));
+        assert_eq!(
+            evidence_limited_reason(&propagate),
+            "ripr does not start an automatic repair here because it cannot tell from reading the code whether the changed value reaches a result a test can check; write the test by hand"
+        );
+
+        // The earliest unclear stage is the one named.
+        let mut observe = gate_entry(
+            SeamGripClass::ReachableUnrevealed,
+            vec![weak_related_test()],
+        );
+        observe.evidence.observe = unclear(StageState::Opaque);
+        observe.evidence.discriminate = unclear(StageState::Unknown);
+        assert!(
+            evidence_limited_reason(&observe).contains(
+                "it cannot tell from reading the code whether a test reads the changed result;"
+            ),
+            "{}",
+            evidence_limited_reason(&observe)
+        );
+    }
+
     /// An opaque seam is still refused (class and eligibility unchanged), but
     /// the refusal names the candidate test ripr found instead of ending at
     /// "no automatic repair for this kind of finding".
@@ -5248,6 +5579,16 @@ pub(crate) mod tests {
                 && refusal
                     .reason
                     .contains("new test proposal blocked: no governed inline cfg-test module"),
+            "{}",
+            refusal.reason
+        );
+        // #14308: the route names the stub once, in the same short shape as
+        // the return-value route.
+        let printed_root = shell_arg(&bound_root(&root.to_string_lossy()));
+        assert!(
+            refusal.reason.contains(&format!(
+                "or run `ripr agent stub --root {printed_root} --at src/pricing.rs:88 --kind predicate` for a fill-in skeleton"
+            )) && refusal.reason.ends_with("the stub adds one), then rerun `ripr repair`"),
             "{}",
             refusal.reason
         );
@@ -5766,9 +6107,7 @@ pub(crate) mod tests {
                 "ripr agent stub --root {printed_root} --at src/pricing.rs:88 --kind predicate"
             )) && refusal
                 .reason
-                .contains("writes a fill-in skeleton for the changed comparison")
-                && refusal.reason.contains("prefilled when it derives")
-                && refusal.reason.contains("then rerun `ripr repair`"),
+                .contains("--kind predicate` for a fill-in skeleton, then rerun `ripr repair`"),
             "{}",
             refusal.reason
         );
@@ -6121,6 +6460,125 @@ pub(crate) mod tests {
                 && !rust.contains("covers Rust files only"),
             "{rust}"
         );
+    }
+
+    /// #13791: only a scope whose routed changed files are all enabled
+    /// TypeScript/Python preview files reads as preview-only; any Rust or
+    /// other-language file, or a disabled adapter, keeps the generic
+    /// wording.
+    #[test]
+    fn preview_only_scope_languages_requires_every_routed_file_to_be_enabled_preview() {
+        use crate::domain::LanguageId::{Python, Rust, TypeScript};
+        use std::path::PathBuf;
+        let files = |paths: &[&str]| paths.iter().map(PathBuf::from).collect::<Vec<_>>();
+        let all = [Rust, TypeScript, Python];
+        assert_eq!(
+            preview_only_scope_languages(&files(&["src/a.ts", "README.md", "t/a.test.ts"]), &all),
+            vec!["TypeScript"]
+        );
+        assert_eq!(
+            preview_only_scope_languages(&files(&["b.py", "a.ts"]), &all),
+            vec!["Python", "TypeScript"]
+        );
+        assert_eq!(
+            preview_only_scope_languages(&files(&["web/app.js", "web/a.mjs"]), &all),
+            vec!["JavaScript"]
+        );
+        assert_eq!(
+            preview_only_scope_languages(&files(&["web/app.js", "src/a.ts"]), &all),
+            vec!["JavaScript", "TypeScript"]
+        );
+        for (scope, enabled) in [
+            (files(&["src/a.ts", "src/lib.rs"]), &all[..]),
+            (files(&["src/lib.rs"]), &all[..]),
+            (files(&["lib/Pricing.pm", "a.py"]), &all[..]),
+            (files(&["src/a.ts"]), &[Rust][..]),
+            (files(&["README.md"]), &all[..]),
+            (Vec::new(), &all[..]),
+        ] {
+            assert!(
+                preview_only_scope_languages(&scope, enabled).is_empty(),
+                "{scope:?} under {enabled:?} must not read as preview-only"
+            );
+        }
+    }
+
+    /// #13791: the route names `check --format agent` first (the remedy a
+    /// refusal envelope derives) and the gap-bound start only conditionally.
+    #[test]
+    fn preview_seam_route_names_check_agent_first_and_the_start_conditionally() {
+        let route = preview_seam_route(
+            Path::new("repo"),
+            PreviewCheckInput::Base("main"),
+            &["TypeScript"],
+        );
+        assert!(
+            route.starts_with("run `ripr check --root ")
+                && route.contains(" --base main --format agent` for its findings")
+                && route.contains("when that prints a `ripr agent repair --gap-id <gap> --base main --phase before` start")
+                && route.contains("no seam exists for TypeScript preview code")
+                && route.contains("covers Rust files only")
+                && !route.contains("current config")
+                && !route.contains('\n'),
+            "{route}"
+        );
+        let unbased =
+            preview_seam_route(Path::new("repo"), PreviewCheckInput::Default, &["Python"]);
+        assert!(
+            unbased.starts_with("run `ripr check --root ")
+                && unbased.contains("repo --format agent` for its findings")
+                && unbased.contains("--base <base> --phase before"),
+            "{unbased}"
+        );
+    }
+
+    /// #13791 review: a saved-patch brief's route replays that patch with
+    /// `--diff <absolute path>` (never `--base`), and a `--files` brief's
+    /// route says the current diff need not match the selection.
+    #[test]
+    fn preview_seam_route_replays_a_saved_patch_and_qualifies_a_files_scope() {
+        let diff = Path::new("/work/repo dir/change.diff");
+        let route = preview_seam_route(
+            Path::new("repo"),
+            PreviewCheckInput::Diff(diff),
+            &["TypeScript"],
+        );
+        let expected = preview_check_command(Path::new("repo"), PreviewCheckInput::Diff(diff));
+        assert!(
+            route.starts_with(&format!("run `{expected}` for its findings"))
+                && expected.ends_with(&format!(
+                    " --diff {} --format agent",
+                    shell_arg(&bound_root("/work/repo dir/change.diff"))
+                ))
+                && (cfg!(windows) || expected.contains(" --diff '/work/repo dir/change.diff' "))
+                && !expected.contains("--base")
+                && route.contains("--base <base> --phase before")
+                && !route.contains('\n'),
+            "{route}"
+        );
+        let files = preview_seam_route(
+            Path::new("repo"),
+            PreviewCheckInput::CurrentDiffNotFiles,
+            &["Python"],
+        );
+        assert!(
+            files.contains("repo --format agent` for the current diff's findings (that diff need not match the --files selection)")
+                && !files.contains("--diff")
+                && !files.contains(" --base main"),
+            "{files}"
+        );
+        assert_eq!(
+            preview_check_command(Path::new("repo"), PreviewCheckInput::Base("main")),
+            preview_check_command(Path::new("repo"), PreviewCheckInput::Default)
+                .replace(" --format agent", " --base main --format agent")
+        );
+        assert_eq!(
+            preview_item_language("probe:src_a.ts:typescript_preview:abcd1234"),
+            Some("TypeScript")
+        );
+        assert_eq!(preview_item_language("gap:python:a.py:f:x"), Some("Python"));
+        assert_eq!(preview_item_language("probe:src_lib.rs:12:predicate"), None);
+        assert_eq!(preview_item_language("seam-discount"), None);
     }
 
     #[test]
@@ -6627,14 +7085,63 @@ pub(crate) mod tests {
         Ok(())
     }
 
-    /// #10698: the commit hint is spelled relative to the analyzed root, which
-    /// may be a subdirectory of the repository.
+    /// #10698, #13947: the commit hint is spelled relative to the analyzed
+    /// root exactly once, even when the root is a subdirectory of the
+    /// repository.
     #[test]
-    fn commit_hint_paths_are_relative_to_the_analyzed_root() {
-        assert_eq!(relative_to_cwd_root("a.py", ""), "a.py");
-        assert_eq!(relative_to_cwd_root("svc/src/a.py", "svc/"), "src/a.py");
-        assert_eq!(relative_to_cwd_root("other/b.py", "svc/"), "../other/b.py");
-        assert_eq!(relative_to_cwd_root("b.py", "svc/deep/"), "../../b.py");
+    fn commit_hint_paths_are_relative_to_a_subdirectory_root() -> Result<(), String> {
+        use crate::testing::fixture_git::fixture_git_ok as run_git;
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("test clock failed: {error}"))?
+            .as_nanos();
+        let repo = std::env::temp_dir().join(format!(
+            "ripr-task-first-subdir-hint-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(repo.join("svc"))
+            .map_err(|error| format!("create {} failed: {error}", repo.display()))?;
+        let repo = repo
+            .canonicalize()
+            .map_err(|error| format!("canonicalize {} failed: {error}", repo.display()))?;
+        let _guard = TempRootGuard { root: repo.clone() };
+        run_git(&repo, &["init"])?;
+        run_git(
+            &repo,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        run_git(&repo, &["config", "user.name", "RIPR Test"])?;
+        for file in ["pricing.py", "svc/pricing.py"] {
+            std::fs::write(repo.join(file), "x = 1\n")
+                .map_err(|error| format!("write {file} failed: {error}"))?;
+        }
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        for file in ["pricing.py", "svc/pricing.py"] {
+            std::fs::write(repo.join(file), "x = 2\n")
+                .map_err(|error| format!("rewrite {file} failed: {error}"))?;
+        }
+
+        let packet = serde_json::json!({
+            "packets": [{
+                "seam_id": "gap-1",
+                "allowed_edit_surface": ["tests/test_pricing.py"],
+                "forbidden_files": ["pricing.py"],
+                "recommended_test": {"file": "tests/test_pricing.py", "name": "tests/test_pricing.py::t"}
+            }]
+        });
+        let policy =
+            crate::app::repair_attempt::edit_cage_policy_from_packet(&packet.to_string(), "gap-1")?;
+
+        let mut paths = dirty_paths_outside_surface(&repo.join("svc"), &policy)?;
+        paths.sort();
+        assert_eq!(
+            paths,
+            vec!["../pricing.py".to_string(), "pricing.py".to_string()],
+            "the root's own file is spelled root-relative once and the repo-level namesake outside it as ../"
+        );
+        Ok(())
     }
 
     /// Implicit continue skips trust-bound awaiting attempts: the façade

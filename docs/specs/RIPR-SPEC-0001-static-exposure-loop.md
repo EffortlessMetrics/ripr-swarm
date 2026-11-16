@@ -18,7 +18,11 @@ legend cost, independent of encounter order. The selected set shares the field
 overhead once; marginal byte savings alone do not admit an entry. The 24-byte
 threshold is UTF-8 length, which may differ from schema character length. Singletons
 stay inline. Its marker is always emitted; token cost and overall byte savings
-are not guaranteed. The precise fields, alias behavior, and decoding rules are
+are not guaranteed. A finding-level `observed_values` or `missing_discriminators`
+array is omitted only when it is non-empty and equal to the same array in that
+finding's `activation`, and each omitted alias name is listed once in
+`dropped_aliases` so the value is restored from `activation`; unequal, empty or
+activation-less copies stay verbatim. `canonical_gap_id` is likewise omitted when it equals `canonical_gap.id`, and `evidence_stages` when it is exactly the basis-free five rows `ripr` yields; both are listed in `dropped_aliases`. The precise fields, alias behavior, and decoding rules are
 specified in [Output Schema](../OUTPUT_SCHEMA.md#json-terse-semantically-compacted-check-json).
 
 Given a Rust/Cargo workspace and a diff, `ripr` identifies changed Rust behavior,
@@ -70,6 +74,17 @@ of the block carries a comment delimiter (`/*`, `*/`) or an odd number of `"`.
 Only `name: value,` field lines may cross an edited line, since they may move
 within their literal. Text is compared exactly apart from a trailing `\r`.
 
+A `match` rewritten as `let ... else` (clippy `manual_let_else`) keeps its
+diverging statement: a removed single-line `None => return R,` arm and the
+added `return R;` seed no probe on either side when the `match` scrutinee and
+the `let ... else` scrutinee are the same text, the added statement is the
+first added line after its opener, and each text occurs exactly once in the
+window (#14428). A changed scrutinee, a changed return value, a multi-line
+`None => { .. }` arm, or a repeated statement keeps both probes. A pattern
+that itself holds ` = ` inside a string literal (`let Some("a = b") = s else
+{ .. }`) is not split from its scrutinee, so it fails closed and both probes
+stay; `a_pattern_with_an_equals_sign_never_pairs` pins that limit.
+
 A changed `struct`, `enum`, `union` or `trait` header that opens its body on the
 same line (`enum Operator<P, Q: Ord + Copy> {`, with any visibility or `unsafe`
 prefix) declares bounds and runs nothing, so it is one `static_unknown` probe
@@ -91,6 +106,45 @@ does not establish that every edit was represented. Uneven blocks, unrepresented
 families and ambiguous edits retain historical evidence. This rule changes
 removed-side reconciliation only; parser selection and constructor identities
 remain separate authorities.
+
+A change confined to one range expression or range pattern whose values feed an
+absorbing consumer (a method on the range's chain outside the length-preserving
+set such as `sum`, `contains`, `find` or `take`, a `for` header, or a match range
+pattern) reads infection `yes` only when an `assert_eq!`-family or bare boolean
+`assert!` holds a bare literal call of the owner (or its `.await`) whose folded
+result differs between the old and new range (#14419), compared against a
+literal equal to the current result. A helper, or a binding that is reassigned or
+read elsewhere, could move in lockstep with the owner, an `#[ignore]` test never
+runs, and a `#[should_panic]` test can pass on both versions, so none earns credit. A relational or
+`assert_ne!` check at such an input, or every asserted call agreeing on both
+versions, reads infection `weak`. The second case is not claimed for an
+equivalent rewrite or when the owner has other callers. A range handed to a call
+(`Iterator::sum(0..n)`) is gated like an absorbing method, `v.get(a..b)` and its
+unchecked or mutable forms slice like `v[a..b]`, and an assertion that
+never runs (a literal-false block, an uncalled closure, after a `return`, even
+on the same line as live code) reads nothing. Any other gated change, including an input ripr cannot fold, reads
+`unknown`, except a moved match range pattern: whenever the fold does not
+establish what the tests see (arms it cannot read such as `&str` results, or
+rebound assertion macros), it keeps the ordinary arm-routing reading (#5992).
+So `(0..n).sum()` to `(0..=n).sum()` tested only by `sum_to(0)` is not
+`exposed`. A `sum` or
+`product` folds only when the owner's return type is written as a fixed-width
+integer (`u8` to `u64`, `i8` to `i64`) and no cast follows it; an unresolved
+alias such as `type Byte = u8` or a cast could wrap to the old value, so it is
+not folded. A test whose body
+rebinds or imports the owner's name supplies no separating input. Ranges feeding
+length-preserving chains (`.iter().map(..).collect()`, slicing, `.len()`,
+`.count()`) keep the ordinary reading, since an element more shows at every
+non-empty input. A set collect or an input where both ranges are empty is the
+known limit there.
+
+A removed line that is one bare literal (a number, `true`/`false`, or one
+quoted string or char, optionally followed by `,` or `;`) adds no removed-side
+`static_unknown` probe when its positional replacement in the same block
+already carries a modeled-family probe whose `before` is that literal
+(#14325). That probe judges the replaced value; a base-side catch-all would
+keep verification refused for code no test can reach. An equal literal
+deleted with no replacement keeps its own probe.
 
 ## Required Evidence
 
@@ -147,6 +201,18 @@ initializer or discriminant `=`. Declared limit: a bare path such as `None` or
 `Foo` is indistinguishable from a type, so `value: None,` inside an item macro
 reads as a declaration; so does `A + B` between two bound names and a
 parenthesised single path `(a)`.
+A parameter line of a `fn` written in a macro call body (`feature! { fn f(
+a: u32, ) {} }`) is a declaration under the same type-syntax allowlist
+(#13983). Its `( .. )` tree must directly follow `fn name` or `fn name<..>`;
+the generic list must balance, may hold `Item = u8` and `Fn() -> u8` bounds,
+and fails closed on `;` or `=>`. The parameter list must sit in an item
+position of the macro call: the call's own token tree, or below it only
+`{ .. }` trees that are each an `impl`, `trait` or `mod` body or the body of a
+nested `name! { .. }` call, at most eight levels deep. A fn-pointer type
+(`fn(..)`), a call argument (`make(a: 1,)`), a macro arm, a struct literal and
+a default value (`d: u32 = 1,`) keep their probes. Declared limits: a receiver
+line (`&self,`) has no type and is not classified by this rule, and a fn nested
+inside another fn body in a macro keeps `field_construction`.
 
 Finding IDs remain content-addressed by path, probe family, owner and normalized
 expression. Line movement, checkout root, diff/discovery order and unrelated
@@ -393,6 +459,19 @@ an oracle, not an input, so it must not produce `infection yes`; RIPR reports
 owner's inputs. A `mut`, shadowed, string, or computed binding is not an
 exact input value.
 
+Every readable direct free-owner call contributes its own input row, including
+repeated or nested calls on one source line (#13373). The source line shared by
+call facts is a location, not a limit of one input. A nested call's input is
+separate from its result: reading the inner literal does not evaluate the outer
+call argument. Same-named methods, sibling owners, shadowed names, strings and
+comments cannot supply the changed free owner's input; unresolved identity keeps
+the existing conservative reading.
+On a multi-call free-owner line, boundary pairing selects the call occurrence
+whose return is actually observed. It does not borrow an inner call from a call
+argument, arithmetic, a message or an unsupported wrapper/operator. A readable
+inner input remains evidence; a missing observer association is not a missing
+boundary input. An independently observed direct boundary call retains credit.
+
 An edit that adds or removes a `&&` or `||` operand (`other > 0 && 100 <=
 points` to `100 < points`, in an `if` or a match guard) changes more than the
 surviving comparison. An input at that comparison's boundary says nothing
@@ -405,10 +484,22 @@ credit: an unresolved boundary keeps its own reason, and a predicate with no
 input at its boundary keeps its weak reading. An edit inside one operand of
 an unchanged chain keeps its boundary credit. Because it compares only the
 connectives, swapping one operand for another (`a && 100 <= p` to `100 < p
-&& b`) or regrouping a chain is not yet caught. The rule reads one changed
-line: a chain that rustfmt splits across lines (`if other > 0` over `&&
-100 <= points`) pairs only its first old line as `before`, so it is not yet
-covered (#7945).
+&& b`) or regrouping a chain is not yet caught. A chain that rustfmt split
+across removed lines (`if other > 0` over `&& 100 <= points`) is read whole
+(#7945): when a predicate's replacement block removes two or more consecutive
+old lines and one of them starts or ends with `&&` or `||` outside strings
+and comments, the predicate's old text is the whole block, joined into its
+one-line spelling, instead of the one removed line that pairing names. A
+block holding a comment keeps its line breaks and is compared uncut. A block
+holding more than one statement head (outside strings and comments it holds
+a `;`, a `}` or more than one `{`) is not read whole, because its connectives
+belong to several predicates; it keeps the single-line pairing, and its
+lines keep their own probes. The chain's old lines
+(each line that starts or ends with a connective, and the neighbour it
+continues) are the predicate's old side, so they get no deleted-line probe of
+their own: one operand of the old chain is not a predicate an input at its
+boundary can expose. A new-side chain that spans several added lines still
+reads its probe's own shape text.
 
 A computed argument or operand is not the literal it contains. An owner-call,
 table-row, or builder-method argument that applies a binary arithmetic,
@@ -584,9 +675,95 @@ owner's own source file through the shared named-constant lookup in
   the constant's value; repo-seam grip reports activation unknown with the
   boundary-constant limitation and no actionable repair packet.
 
+Appended string-equality arm example (#14388):
+
+```rust
+pub fn options_from_flag(flag: &str) -> Options {
+    Options { retries: 3, verbose: flag == "-v" || flag == "--verbose" }
+}
+```
+
+When the diff appends one `|| param == "lit"` arm to a chain of string
+equalities on the same parameter (base `flag == "-v"`), a related test that
+calls the owner with exactly the new literal (`options_from_flag("--verbose")`)
+reads infection `yes` (medium confidence): distinct literals make every
+original arm false on that input and the new arm true. The reading is
+fail-closed and every other shape keeps the ordinary reading. It requires:
+
+- every arm to be a plain `==` between the one parameter and an escape-free
+  string literal, joined only by `||`, with distinct literals and the base
+  chain equal to the head chain minus its last arm;
+- the parameter to be declared `&str`, `&'a str`, `String` or `&String`
+  (another type may implement `PartialEq<&str>` differently), never
+  rebound, and the owner to have no other callers;
+- an owner-call argument fact binding the parameter to exactly the new
+  literal, and no assertion macro name rebound anywhere in the indexed
+  workspace, since a rebound macro could discard the call. This is a
+  workspace-wide condition, as in RIPR-SPEC-0353;
+- the chain to be the owner's first decision and to end its expression. No
+  `if`, `match`, loop, `return`, `break`, `continue`, `?`, `=>`, closure,
+  `&&`, macro, call, index, `/` or `%` precedes it, and `,`, `;` or `}`
+  follows it.
+
+Guarded boundary rule (#13037): a changed comparison joined by top-level
+`&&` to guards that are each a bare owner parameter or its negation
+(`order_cents >= FREE_OVER_CENTS && !express`) compares the parameter with
+the boundary; the guards are not part of either operand. The boundary must
+be a literal or a constant the rules above resolve, the compared parameter
+and every guard must be parameters the owner never rebinds, nothing
+before the changed line may divert a row, and the edit must leave the
+guards as they were (same names and polarity): an edit that adds, removes
+or flips a guard is not read this way, since rows that hold the new guards
+may behave the same on both sides, and keeps the general reading. Every
+related row must spell each guard as a literal. A shape with unchanged bare
+parameter guards that misses another condition is declined, as listed
+below. Then:
+
+- only a test call that holds every guard as a literal (`express = false`)
+  and sits on the boundary value activates the boundary, and same-test
+  pairing reads each observed call (and each bound result) on its own, so a
+  boundary call that misses a guard never pairs with an exact assertion;
+- a boundary row tells the versions apart only when the edit changed just
+  the operator and the old and new operators disagree at equality (`>` to
+  `>=`, not `>=` to `<=`), or when an equality test (`==` or `!=`) kept its
+  operator and changed only the compared value (`x == 4000` to
+  `x == 5000`), whose new-value row takes the other branch in each version;
+  a moved ordering threshold (`x >= 5` to `x >= 6`) is not read this way;
+- a pure insertion is read only for a non-strict operator (`>=`, `<=`,
+  `==`), whose boundary row enters the inserted branch, as for a lone
+  inserted guard (#12414);
+- when readable rows exist but none holding the guards sits on the
+  boundary, the boundary is unresolved (`infection unknown`) with the guard
+  and boundary value named. It is never reported as an actionable missing
+  discriminator, because this narrow reading cannot tell a fixture or
+  builder input it does not see from a missing one;
+- a guarded shape this rule declines is unresolved (`infection unknown`)
+  with the guards named, never an actionable gap. That covers a `mut` or
+  rebound guard, a compared side that is not a plain owner parameter (a
+  field, a local, a call or arithmetic), a boundary whose value the owner's
+  file does not show, an earlier branch or early return before the changed
+  line, a moved ordering threshold, operators that agree at the boundary, a
+  strict inserted comparison, and rows that do not spell each guard as a
+  literal. It does not fall
+  through to the compound-predicate reading (#9637, RIPR-SPEC-0158), which
+  reads the comparison without its guards and would credit a boundary row
+  with `express = true`, a row neither version tells apart;
+- any other compound shape (`||`, a guard that is a call or a comparison,
+  two comparisons) keeps the previous reading unchanged.
+
+Fixture `fixtures/rust_guarded_boundary_guard_missing` and honesty-corpus
+case `rust_guarded_boundary_guard_missing_not_promoted` pin the guard-missing
+boundary row as `infection_unknown`.
+
 ## Test Mapping
 
 Fixture coverage:
+
+- `crates/ripr/tests/guarded_boundary_13037.rs` (guarded boundary rule: a
+  guard-holding boundary pin is exposed; guard-missing rows, no boundary
+  row, split tests, a guard-missing bound result (also beside a same-line
+  sibling), an added guard, a moved threshold, operators that agree at the
+  boundary, a strict insertion and a rebound guard are not credited)
 
 - `unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim`
 - `weak_direct_owner_assertion_keeps_exact_value_advice`
@@ -624,6 +801,7 @@ Fixture coverage:
 - `unresolved_boundary_input_is_unknown_not_weak`
 - `computed_comparison_operand_is_not_its_contained_literal`
 - `given_constant_minus_offset_boundary_then_boundary_is_the_offset_value_not_the_offset`
+- `given_field_assignment_to_named_constant_then_reversed_predicate_credits_boundary`
 - `constant_offset_operands_name_the_constant_and_signed_offset`
 - `offset_integer_values_add_only_to_plain_decimal_constants`
 - `given_computed_helper_hop_argument_then_boundary_is_unresolved_not_missing`
@@ -657,6 +835,7 @@ Fixture coverage:
 - `fallible_slice_observations_cannot_credit_later_rows`
 - `fixtures/rust_slice_table_boundary`
 - `fixtures/rust_slice_table_zero_elements`
+- `fixtures/rust_multi_line_dropped_conjunct`
 - `fixtures/rust_slice_table_try_exit`
 - `fixtures/rust_slice_table_call_exit`
 - `infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes`
@@ -704,17 +883,47 @@ Fixture coverage:
 - `lone_else_split_hunk_is_not_no_behavioral_candidates`
 - `multi_line_attribute_entries_seed_no_probe_but_the_same_text_as_code_does`
 - `attribute_continuation_lines_cover_the_span_and_fail_closed`
+- `multi_line_use_entries_seed_no_probe_but_the_same_text_as_code_does`
+- `use_continuation_lines_cover_the_span_and_fail_closed`
 - `an_identical_line_inside_a_replacement_block_seeds_no_probe`
 - `identical_line_suppression_is_fail_closed`
 - `identical_line_pairing_never_hides_reorders_or_block_moves`
+- `a_manual_let_else_rewrite_pairs_its_diverging_statement`
+- `manual_let_else_pairing_is_fail_closed`
+- `a_reversed_let_else_pattern_never_pairs`
+- `a_neighbouring_functions_arm_never_pairs`
+- `a_scrutinee_with_an_equals_sign_still_pairs`
+- `a_pattern_with_an_equals_sign_never_pairs`
 - `multiline_builder_chain_setup_row_is_dropped_beside_the_assertion`
 - `multiline_setup_row_stays_unless_it_is_a_bare_unwrap_chain_beside_an_assertion`
 - `keyword_probe_tokens_do_not_relate_tests_by_name`
+
+A private, plain `extern crate name;` line seeds no probe: like a private `use`
+import it only links a crate and holds no behavior a test could notice
+(#14403). A visibility-qualified form (`pub extern crate foo;`) re-exports the
+crate under the module's path, like a visible `use`, and keeps its probe; so do
+the renaming form (`extern crate core as std;`, `extern crate self as name;`)
+and a line with any trailing code. The rule reads one line on either diff side, so a removed
+`#[macro_use]` + `extern crate foo;` pair also seeds no probe, matching the
+existing `#[macro_use] mod name;` behavior; a macro that pair brought into scope
+is a known limitation, not a reported change.
+- `plain_extern_crate_is_ignored_but_a_rename_is_not`
+- `diff_producer_ignores_plain_extern_crate_but_probes_a_rename`
 
 The entries of a multi-line `#![..]`/`#[..]` attribute (a lint list, a `cfg_attr`
 argument list) are attribute text, like the single-line form, and seed no probe
 on either diff side (#10089). The closing line counts only when nothing follows
 the bracket, and an unclosed attribute marks nothing.
+
+The entries of a multi-line `use a::{ .. };` or `pub use a::{ .. };` declaration
+are import text, like the single-line form, and seed no probe on either diff
+side (#8389). The openers are exactly the single-line forms already skipped, so
+a visibility-qualified re-export (`pub(crate) use`) keeps its probes on every
+line. The closing line counts only when nothing follows the `;`, and a
+declaration that never closes, closes outside its braces, or holds a character
+no `use` tree can hold marks nothing. Import-shaped tokens inside a
+token-observing macro such as `stringify!` are that macro's data and keep
+their probes.
 
 Related-test name tokens come from the changed expression's identifiers. A Rust
 keyword (`return`, `while`, `loop`, ...) is syntax and never a name token, and
@@ -740,6 +949,15 @@ no body brace, `;` or `fn ` is the first line of a rustfmt-wrapped `impl` header
 lines). It declares only, so it seeds a single `static_unknown` probe like a
 one-line `impl ... {` header (#8389) and never `field_construction` for a
 const-generic bound or `call_deletion` for a generic attribute (#10244).
+
+A one-line `type` item (a trait's associated type `type Eq: CmpEq;` or
+`type Item;`, an impl binding `type Eq = __m128i;`, or a type alias
+`pub type Map<K> = BTreeMap<K, u8>;`) declares a type and runs nothing. It
+seeds a single `static_unknown` probe, like an item header, and never
+`field_construction` for its `name: Bound` text (#14429). A line that does not
+end the item with `;`, joins a second statement, or whose type holds an
+expression (a block, a macro, or any array length such as `[T; 4]`) keeps its
+ordinary families.
 
 ## Implementation Mapping
 

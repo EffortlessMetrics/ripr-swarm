@@ -4,6 +4,7 @@ mod classify;
 mod diff;
 mod expectations;
 mod family;
+mod identifier_rename;
 mod ids;
 mod lexical;
 mod macro_definition;
@@ -105,6 +106,8 @@ impl SeededProbe {
 
 #[cfg(test)]
 mod error_return_boundary_tests;
+#[cfg(test)]
+mod identifier_rename_tests;
 #[cfg(test)]
 mod parameter_boundary_tests;
 #[cfg(test)]

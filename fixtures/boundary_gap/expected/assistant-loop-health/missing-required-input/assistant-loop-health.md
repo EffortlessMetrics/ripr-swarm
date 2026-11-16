@@ -18,7 +18,7 @@ Top warnings:
 - missing_required_input: 1
 
 Next repair queue:
-- `regenerate_proof` - regenerate proof; supply selected seam and before/after static movement context.
+- `regenerate_proof` - regenerate proof: Proof input is missing selected seam and before/after movement context.
 
 Limits:
 - Static RIPR evidence only.

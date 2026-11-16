@@ -31,7 +31,7 @@ Start here:
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach no: No static test path found for the changed owner
+    - reach no: No static test path found for the changed owner (unreferenced in workspace)
     - infection unknown: No tests were found, so activation/infection cannot be estimated
     - 4 more detail line(s) in --format human-full
 
@@ -46,7 +46,7 @@ Write a test for it:
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:12 (no path); kind: predicate; reason: No detected boundary input for the changed predicate
-    - ./src/lib.rs:20 (no path); kind: predicate; reason: No detected boundary input for the changed predicate
+    - ./src/lib.rs:20 (no path); kind: predicate; reason: same as above
   Hidden classes:
     no path = no test path was found
   Full evidence: rerun with --format human-full

@@ -157,11 +157,7 @@ pub(crate) const fn stage_token(stage: AnalysisProgressStage) -> &'static str {
 }
 
 pub(crate) const fn scope_token(scope: AnalysisProgressScope) -> &'static str {
-    match scope {
-        AnalysisProgressScope::Diff => "diff",
-        AnalysisProgressScope::Worktree => "worktree",
-        AnalysisProgressScope::Repo => "repo",
-    }
+    scope.as_str()
 }
 
 pub(crate) const fn stage_is_terminal(stage: AnalysisProgressStage) -> bool {

@@ -16,7 +16,10 @@ use std::path::Path;
 /// like the unittest route's `python -m unittest`: inside a virtual
 /// environment, where pytest is normally installed, `python` names the
 /// environment's interpreter on Linux, macOS and Windows alike, while
-/// `python3` is absent from Windows virtual environments.
+/// `python3` is absent from Windows virtual environments. This is the
+/// fallback when no project virtual environment is found; on POSIX the Python
+/// producer substitutes a project `.venv/bin/python` or `venv/bin/python`
+/// (see [`PYTEST_VERIFY_INTERPRETERS`], #13801).
 pub const PYTEST_VERIFY_PROGRAM: &str = "python -m pytest";
 
 /// Whether a verify command runs pytest.
@@ -25,10 +28,26 @@ pub const PYTEST_VERIFY_PROGRAM: &str = "python -m pytest";
 /// `pytest ...` form earlier artifacts and recorded evals carry, so a
 /// consumer reading either keeps its pytest-specific behavior.
 pub fn is_pytest_verify_command(command: &str) -> bool {
-    command
-        .strip_prefix(PYTEST_VERIFY_PROGRAM)
-        .or_else(|| command.strip_prefix("pytest"))
-        .is_some_and(|rest| rest.starts_with(' '))
+    pytest_verify_interpreter(command).is_some()
+        || command
+            .strip_prefix("pytest")
+            .is_some_and(|rest| rest.starts_with(' '))
+}
+
+/// Interpreters a generated pytest verify command may name (#13801): PATH
+/// `python`, or the root-relative POSIX interpreter of a project virtualenv
+/// that the Python producer found statically at the selected root.
+pub const PYTEST_VERIFY_INTERPRETERS: [&str; 3] = ["python", ".venv/bin/python", "venv/bin/python"];
+
+/// The interpreter of a generated `<interpreter> -m pytest <selector>`
+/// command, when it is one of [`PYTEST_VERIFY_INTERPRETERS`].
+pub fn pytest_verify_interpreter(command: &str) -> Option<&'static str> {
+    PYTEST_VERIFY_INTERPRETERS.into_iter().find(|interpreter| {
+        command
+            .strip_prefix(interpreter)
+            .and_then(|rest| rest.strip_prefix(" -m pytest "))
+            .is_some_and(|selector| !selector.trim().is_empty())
+    })
 }
 
 /// The set of source languages an adapter can report.
@@ -508,6 +527,12 @@ pub enum StaticLimitKind {
     /// to the change, so a finding that would claim `no_static_path` is
     /// withheld as `static_unknown`. See RIPR-SPEC-0240 / #11985.
     TypescriptWorkspaceReadLimited,
+    /// Every Rust test that reaches the changed `async fn` owner creates its
+    /// future and drops it without polling it: no `.await`, no executor or
+    /// runtime call, no async test attribute. The owner's body never runs in
+    /// those tests, so reach is not claimed. The gap is withheld and the class
+    /// is `static_unknown`; no runtime is chosen. See RIPR-SPEC-0240 / #13702.
+    RustFutureNeverPolled,
 }
 
 impl StaticLimitKind {
@@ -586,6 +611,7 @@ impl StaticLimitKind {
                 "typescript_workspace_discovery_truncated"
             }
             StaticLimitKind::TypescriptWorkspaceReadLimited => "typescript_workspace_read_limited",
+            StaticLimitKind::RustFutureNeverPolled => "rust_future_never_polled",
         }
     }
 
@@ -787,6 +813,12 @@ impl StaticLimitKind {
                  this change, so ripr does not claim that no test reaches it; this is a named \
                  limitation, not a coverage claim."
             }
+            StaticLimitKind::RustFutureNeverPolled => {
+                "Future created but never polled: the Rust tests that call this `async fn` build \
+                 its future and drop it without `.await`, an executor or an async test \
+                 attribute, so the changed body does not run in them. ripr does not claim reach \
+                 or a gap; this is a named limitation, not a coverage claim."
+            }
         }
     }
 }
@@ -840,6 +872,27 @@ mod tests {
     }
 
     #[test]
+    fn pytest_verify_interpreter_names_path_or_project_venv_python_only() {
+        let node = " -m pytest tests/test_pricing.py::test_boundary";
+        for interpreter in PYTEST_VERIFY_INTERPRETERS {
+            let command = format!("{interpreter}{node}");
+            assert_eq!(pytest_verify_interpreter(&command), Some(interpreter));
+            assert!(is_pytest_verify_command(&command));
+        }
+        for other in [
+            "python3 -m pytest tests",
+            "/usr/bin/python -m pytest tests",
+            "env/bin/python -m pytest tests",
+            ".venv/bin/python -m pytest ",
+            ".venv/bin/python -m unittest tests.test_x",
+            ".venv/bin/pythonx -m pytest tests",
+            "pytest tests",
+        ] {
+            assert_eq!(pytest_verify_interpreter(other), None, "{other}");
+        }
+    }
+
+    #[test]
     fn language_id_wire_strings_are_stable() {
         assert_eq!(LanguageId::Rust.as_str(), "rust");
         assert_eq!(LanguageId::TypeScript.as_str(), "typescript");
@@ -878,7 +931,7 @@ mod tests {
 
     #[test]
     fn language_feature_availability_matches_build() {
-        assert!(LanguageId::Rust.is_available());
+        assert_eq!(LanguageId::Rust.is_available(), cfg!(feature = "lang-rust"));
         assert_eq!(
             LanguageId::TypeScript.is_available(),
             cfg!(feature = "lang-typescript")
@@ -1158,6 +1211,10 @@ mod tests {
             StaticLimitKind::TypescriptWorkspaceReadLimited.as_str(),
             "typescript_workspace_read_limited"
         );
+        assert_eq!(
+            StaticLimitKind::RustFutureNeverPolled.as_str(),
+            "rust_future_never_polled"
+        );
     }
 
     #[test]
@@ -1197,6 +1254,7 @@ mod tests {
             StaticLimitKind::RustInherentReceiverUnestablished,
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
             StaticLimitKind::TypescriptWorkspaceReadLimited,
+            StaticLimitKind::RustFutureNeverPolled,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

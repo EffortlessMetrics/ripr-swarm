@@ -148,6 +148,12 @@ pub struct RustIndex {
     /// All module parents approved by composition, independently of its
     /// canonical role explanation. Transient: rebuilt after file-cache reads.
     pub(crate) execution_module_parents: Option<BTreeMap<PathBuf, Vec<SourceRoleProvenanceEdge>>>,
+    /// Files whose module context passes through an exact `#[cfg(kani)]`
+    /// out-of-line module declaration (#13736): compiled only by the Kani
+    /// verifier, so verification source rather than production. Set by the
+    /// composition pass; transient like `execution_module_parents`, and
+    /// cleared on any membership change so a stale verdict cannot linger.
+    pub(crate) cfg_kani_module_files: BTreeSet<PathBuf>,
     pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     pub include_limitations: Vec<RustIncludeLimitation>,
     pub non_utf8_sources: BTreeSet<PathBuf>,
@@ -186,6 +192,12 @@ pub struct RustIndex {
     /// Transient VP3R resource edges; rebuilt during index construction (#5171).
     pub(crate) resource_dependencies: super::resource_dependencies::ResourceDependencyFacts,
     pub(super) bolero_receipts: BTreeMap<(PathBuf, usize, String), super::bolero::BoleroReceipt>,
+    /// Tests whose same-file helper asserts after forwarding the test's
+    /// closure to a call the helper-credit pass cannot show runs it (#9981),
+    /// keyed by (file, start line, name). Transient: rebuilt by every run of
+    /// that pass, never serialized.
+    pub(super) forwarded_callback_limits:
+        BTreeMap<(PathBuf, usize, String), super::test_helpers::ForwardedCallbackLimit>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -550,6 +562,19 @@ impl RustIndex {
 }
 
 impl RustIndex {
+    /// The forwarded-closure limit the helper-credit pass recorded for one
+    /// test (#9981), when its helper asserts after forwarding the test's
+    /// closure to a call that pass cannot show runs it.
+    pub(crate) fn forwarded_callback_limit(
+        &self,
+        file: &Path,
+        start_line: usize,
+        name: &str,
+    ) -> Option<&super::test_helpers::ForwardedCallbackLimit> {
+        self.forwarded_callback_limits
+            .get(&(file.to_path_buf(), start_line, name.to_string()))
+    }
+
     /// Crate names of the workspace's own members: `workspace_crates` when
     /// the build computed it, else `package_names`.
     pub(crate) fn workspace_member_crates(&self) -> &BTreeSet<String> {
@@ -626,6 +651,7 @@ impl RustIndex {
     /// equal names, coordinates and bodies never collapse two occurrences.
     pub fn insert_file(&mut self, path: PathBuf, facts: FileFacts, flat: bool) {
         self.execution_module_parents = None;
+        self.cfg_kani_module_files.clear();
         self.call_identity_memos.clear();
         self.bump_membership_revision();
         let FileFacts {
@@ -697,6 +723,9 @@ impl RustIndex {
         self.insert_file(path, facts, false);
     }
     pub fn push_function(&mut self, fact: FunctionFact) {
+        // Per-index memos (such as the function-name buckets) index function
+        // order, so a new function invalidates them.
+        self.call_identity_memos.clear();
         self.bump_membership_revision();
         let id = self.function_facts.allocate(fact);
         self.function_positions
@@ -719,6 +748,7 @@ impl RustIndex {
         };
         self.call_identity_memos.clear();
         self.execution_module_parents = None;
+        self.cfg_kani_module_files.clear();
         // Purge the flat memberships too: `finalize` keeps every record a
         // flat order names, so a removed file's tests and functions would
         // otherwise survive as evidence (and a changed file would appear
@@ -747,6 +777,8 @@ impl RustIndex {
         self.proptest_metadata_failures
             .retain(|(file, _, _), _| file.as_path() != path);
         self.bolero_receipts
+            .retain(|(file, _, _), _| file.as_path() != path);
+        self.forwarded_callback_limits
             .retain(|(file, _, _), _| file.as_path() != path);
         // Positions follow the retained orders; rebuild them now so slot
         // lookups never answer from the pre-removal layout.

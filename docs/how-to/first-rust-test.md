@@ -177,7 +177,7 @@ Bash or zsh:
 ```bash
 mkdir -p target/ripr &&
   git diff --no-ext-diff --submodule=short --output=target/ripr/production.diff HEAD -- src/lib.rs &&
-  ripr check --root . --diff target/ripr/production.diff --mode fast
+  ripr check --root . --diff target/ripr/production.diff
 ```
 
 PowerShell, including Windows PowerShell 5.1:
@@ -186,7 +186,7 @@ PowerShell, including Windows PowerShell 5.1:
 New-Item -ItemType Directory -Force -Path target/ripr -ErrorAction Stop | Out-Null
 git diff --no-ext-diff --submodule=short --output=target/ripr/production.diff HEAD -- src/lib.rs
 if ($LASTEXITCODE -ne 0) { throw "git diff failed with exit $LASTEXITCODE" }
-ripr check --root . --diff target/ripr/production.diff --mode fast
+ripr check --root . --diff target/ripr/production.diff
 if ($LASTEXITCODE -ne 0) { throw "ripr check did not complete; read its diagnostic" }
 ```
 
@@ -198,11 +198,12 @@ regenerate it if you change production code or choose a different baseline.
 Read the finding for `src/lib.rs` and `discounted_total`. The checked example
 has one predicate finding with `weakly_exposed` evidence: tests call the
 function and compare results, but neither uses `amount == discount_threshold`.
-A newer human renderer may call this “partly noticed.” Use JSON to inspect the
-classification without depending on the display wording:
+The human summary calls this “partly noticed”; `weakly_exposed` is the schema
+value. Use JSON to inspect the classification without depending on the display
+wording:
 
 ```text
-ripr check --root . --diff target/ripr/production.diff --mode fast --json
+ripr check --root . --diff target/ripr/production.diff --json
 ```
 
 Look for these facts in your own report:
@@ -267,7 +268,7 @@ saved patch.
 Run the same analysis command again, from the same project root:
 
 ```text
-ripr check --root . --diff target/ripr/production.diff --mode fast
+ripr check --root . --diff target/ripr/production.diff
 ```
 
 Only the tests changed since the first analysis. The patch still describes the

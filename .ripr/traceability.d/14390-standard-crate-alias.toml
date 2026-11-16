@@ -1,0 +1,6 @@
+[[extend]]
+id = "RIPR-SPEC-0005"
+code = ["crates/ripr/src/analysis/syntax/owner_pin.rs"]
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros",
+]

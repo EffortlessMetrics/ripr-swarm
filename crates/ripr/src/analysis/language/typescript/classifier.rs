@@ -413,6 +413,22 @@ pub(crate) fn ts_candidate_changed_sink_observation(
                     workspace_root,
                 )
             };
+            // #14814: a read of a SIBLING field of the returned literal
+            // observes a different field, so it cannot witness this change.
+            // `expect(f().verbose)` while the edit moves `retries` must not
+            // inherit the blanket owner-call confirmation below.
+            if let Some(field) = changed_field
+                && ts_value_observed_reads_sibling_field(
+                    observed,
+                    field,
+                    &owner_names,
+                    owner_is_method,
+                    &namespace_receivers,
+                )
+            {
+                merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
+                continue;
+            }
             if ts_masked_observes_owner(
                 &observed_code,
                 &owner_names,
@@ -722,6 +738,160 @@ fn ts_effect_observed_is_affirmatively_foreign(
         return true;
     }
     ts_effect_call_callee_is_foreign(observed, owner_names, changed_tokens, test)
+}
+
+/// #14814: whether `observed` reads a SIBLING field of the owner's returned
+/// literal: the outermost plain field read of an expression whose base is the
+/// owner call (or an admitted owner alias) names a field other than the
+/// changed one.
+///
+/// `expect(f().verbose)` while the edit moves `retries` observes a different
+/// field, so it cannot witness the changed one. Only a plain trailing field
+/// read counts: a method call (`f().format()`), a nested read whose outermost
+/// field IS the changed one (`f().config.retries`) and the whole result (`f()`)
+/// keep the existing credit.
+fn ts_value_observed_reads_sibling_field(
+    observed: &str,
+    changed: &TypeScriptChangedField,
+    owner_names: &[&str],
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+) -> bool {
+    fn is_ident_char(ch: char) -> bool {
+        ch.is_alphanumeric() || ch == '_' || ch == '$'
+    }
+    let normalized = ts_normalize_bracket_field_reads(observed.trim());
+    let masked = ts_mask_literals_and_comments(&normalized);
+    let Some((base, read)) = masked.rsplit_once('.') else {
+        return false;
+    };
+    let read = read.trim();
+    if read.is_empty()
+        || read == changed.key
+        || !read
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_alphabetic() || ch == '_' || ch == '$')
+        || !read.chars().all(is_ident_char)
+    {
+        return false;
+    }
+    let base = base.trim();
+    if base.is_empty() {
+        return false;
+    }
+    // The read path must not name the changed field anywhere: `f().retries.n`
+    // reads THROUGH `retries`, so the outermost `n` is a projection of the
+    // changed field, not a sibling. Only a path that never names it is a
+    // sibling read (#14814 F3).
+    //
+    // The occurrence must be a MEMBER segment of an owner-rooted chain, not
+    // any identifier that happens to spell the key. `f().retries || f().verbose`
+    // reads the changed field off the owner and keeps the credit; a local
+    // named `retries` in `retries && f().verbose` is not a field read and must
+    // not, or the guard is skipped and the sibling is credited (#14814 round 3).
+    if ts_masked_reads_changed_field_as_member(
+        &masked,
+        changed.key.as_str(),
+        owner_names,
+        owner_is_method,
+        namespace_receivers,
+    ) {
+        return false;
+    }
+    ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers)
+}
+
+/// #14814 round 3: whether `masked` reads `key` as a member segment of a chain
+/// rooted at the owner. A bare identifier that merely spells the key — a local,
+/// a parameter, a name inside a masked literal — is not a field read, so it
+/// must not keep the credit the sibling guard is about to withdraw.
+///
+/// `f().retries || f().verbose` and `f().retries?.n` qualify (the segment hangs
+/// off the owner call); `retries && f().verbose` with a local `retries` does
+/// not, and `other.retries` does not either, because its chain is not the
+/// owner's.
+fn ts_masked_reads_changed_field_as_member(
+    masked: &str,
+    key: &str,
+    owner_names: &[&str],
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+) -> bool {
+    fn is_ident_char(ch: char) -> bool {
+        ch.is_alphanumeric() || ch == '_' || ch == '$'
+    }
+    if key.is_empty() {
+        return false;
+    }
+    masked.match_indices(key).any(|(at, _)| {
+        let before = masked.get(..at).unwrap_or("");
+        let after = masked.get(at + key.len()..).unwrap_or("");
+        let whole_identifier = before
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_ident_char(ch))
+            && after.chars().next().is_none_or(|ch| !is_ident_char(ch));
+        if !whole_identifier {
+            return false;
+        }
+        // A member segment: `.key` or `?.key`, with optional whitespace.
+        let Some(prefix) = before.trim_end().strip_suffix('.') else {
+            return false;
+        };
+        let prefix = prefix.trim_end().strip_suffix('?').unwrap_or(prefix);
+        ts_masked_observes_owner(prefix, owner_names, owner_is_method, namespace_receivers)
+    })
+}
+
+/// Rewrite bracket string-literal field reads (`f()["verbose"]`) as dotted
+/// ones (`f().verbose`) so the sibling-field guard sees a field read in either
+/// syntax (#14814 F1). Only a bracket whose contents are a bare identifier is
+/// rewritten; index expressions, computed keys and keys with spaces are left
+/// alone.
+fn ts_normalize_bracket_field_reads(text: &str) -> String {
+    fn is_ident_char(ch: char) -> bool {
+        ch.is_alphanumeric() || ch == '_' || ch == '$'
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let (head, tail) = rest.split_at(open);
+        out.push_str(head);
+        let after_bracket = &tail[1..];
+        let quote = match after_bracket.chars().next() {
+            Some(quote @ ('"' | '\'')) => quote,
+            _ => {
+                out.push('[');
+                rest = after_bracket;
+                continue;
+            }
+        };
+        let inner = &after_bracket[quote.len_utf8()..];
+        let Some(close) = inner.find(quote) else {
+            out.push('[');
+            rest = after_bracket;
+            continue;
+        };
+        let name = &inner[..close];
+        let after_name = &inner[close + quote.len_utf8()..];
+        let bare_identifier = !name.is_empty()
+            && name
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_alphabetic() || ch == '_' || ch == '$')
+            && name.chars().all(is_ident_char);
+        if bare_identifier && after_name.starts_with(']') {
+            out.push('.');
+            out.push_str(name);
+            rest = &after_name[1..];
+        } else {
+            out.push('[');
+            rest = after_bracket;
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// `true` when `text` is a bare identifier reference (no member access, call,
@@ -4858,9 +5028,23 @@ pub(crate) fn owner_namespace_receivers(
                             .default_member_only_locals_in_file
                             .iter()
                             .any(|(local, member)| *local == import.local && *member == owner.name)
+                        && !test
+                            .default_member_only_locals_in_file
+                            .iter()
+                            .any(|(local, member)| {
+                                *local == import.local
+                                    && owner.default_object_unsafe_siblings.contains(member)
+                            })
                         && import_source_matches_owner(
                             import,
                             &test.file,
+                            owner,
+                            alias_map,
+                            workspace_root,
+                        )
+                        && !super::related_tests::default_object_second_binding(
+                            import,
+                            test,
                             owner,
                             alias_map,
                             workspace_root,
@@ -6905,6 +7089,10 @@ pub(crate) struct OwnerLineContext<'a> {
     /// Whole-file one-for-one replacement established by the diff-owning driver.
     /// A per-line old counterpart alone cannot rule out other removed calls.
     pub(crate) single_line_replacement: bool,
+    /// More exports of other modules call the owner than
+    /// `MAX_CROSS_MODULE_ENTRIES`, so none were followed (#13592); a
+    /// `no_static_path` finding says so.
+    pub(crate) cross_module_fan_in_limited: bool,
 }
 
 pub(crate) fn owner_line_context<'a>(
@@ -6946,6 +7134,7 @@ pub(crate) fn owner_line_context<'a>(
         named_limitations_from_ownership,
         named_limitations_from_spy,
         single_line_replacement: false,
+        cross_module_fan_in_limited: false,
     }
 }
 
@@ -7451,6 +7640,39 @@ pub(crate) fn classify_resolved_owner(
             .iter()
             .filter(|candidate| candidate.relation.uses_oracle())
             .all(|candidate| candidate.relation == TypeScriptRelationKind::ModuleEntryCall);
+    // #13592: reach only through exports of OTHER modules that call the owner
+    // by an imported binding is two modules removed from the assertion, so a
+    // weak oracle there is unknown too, never an actionable gap.
+    let reach_only_through_cross_module_entry = reach_only_through_module_entry
+        && related_candidates
+            .iter()
+            .filter(|candidate| candidate.relation.uses_oracle())
+            .all(|candidate| {
+                module_entry_reach_is_cross_module_only(
+                    candidate,
+                    owner,
+                    reexport_index,
+                    alias_map,
+                    workspace_root,
+                )
+            });
+    // Mixed entry reach: some related test reaches the owner through another
+    // module's export, but not every one does, so neither "same-module" nor
+    // "cross-module" alone describes it.
+    let reach_through_mixed_module_entries = reach_only_through_module_entry
+        && !reach_only_through_cross_module_entry
+        && related_candidates
+            .iter()
+            .filter(|candidate| candidate.relation.uses_oracle())
+            .any(|candidate| {
+                module_entry_reach_includes_cross_module(
+                    candidate,
+                    owner,
+                    reexport_index,
+                    alias_map,
+                    workspace_root,
+                )
+            });
     // Owner-call evidence is broader than trusted relation credit: a test
     // whose relation was denied by the #4102/#4103 gates still observes an
     // owner-name call, so its oracle classification and missing-discriminator
@@ -7759,6 +7981,26 @@ pub(crate) fn classify_resolved_owner(
                 owner.name
             )],
         )
+    } else if related.is_empty() && context.cross_module_fan_in_limited {
+        // #13592: more than `MAX_CROSS_MODULE_ENTRIES` exports of other
+        // modules call the owner and none was followed, so an empty relation
+        // set says nothing about whether a test reaches it through one of
+        // them. Unknown, not the confident negative `no_static_path` would be.
+        (
+            ExposureClass::StaticUnknown,
+            StageState::Unknown,
+            StageState::Unknown,
+            StageState::Unknown,
+            {
+                let mut missing = vec![cross_module_fan_in_limit_missing(owner)];
+                // #4550: an unresolved alias on the owner's own import still
+                // names its specific cause, after the limit.
+                if let Some(gap) = &alias_gap {
+                    missing.push(gap.no_static_path_missing(&owner.name));
+                }
+                missing
+            },
+        )
     } else if related.is_empty() {
         (
             ExposureClass::NoStaticPath,
@@ -7808,8 +8050,9 @@ pub(crate) fn classify_resolved_owner(
         // missing stronger assertion is actionable on any reach.
         // The strong oracle must observe a computed value: a constant exact
         // assertion in the same test says nothing about the entry's result.
-        let entry_oracle_is_strong = strongest_strength >= OracleStrength::Strong.rank()
-            && ts_entry_result_is_asserted(related_candidates);
+        let entry_oracle_is_strong = (strongest_strength >= OracleStrength::Strong.rank()
+            && ts_entry_result_is_asserted(related_candidates))
+            || reach_only_through_cross_module_entry;
         let (class, observe, discriminate) = if entry_oracle_is_strong {
             (
                 ExposureClass::StaticUnknown,
@@ -7962,8 +8205,14 @@ pub(crate) fn classify_resolved_owner(
     // Same unknown arm, different cause: the registration, not an assertion
     // callback, is what static analysis cannot resolve (#10438, #10501).
     let private_member_unknown = ladder_unresolved_unknown && is_private_member_owner(owner);
+    // #13592: the fan-in-limit arm, the only other empty-relation unknown.
+    let fan_in_limited_unknown = ladder_unresolved_unknown
+        && !private_member_unknown
+        && related.is_empty()
+        && context.cross_module_fan_in_limited;
     let conditional_registration_unknown = ladder_unresolved_unknown
         && !private_member_unknown
+        && !fan_in_limited_unknown
         && only_conditionally_registered_tests(related_candidates);
     let post_ladder_context = TsPostLadderContext {
         all_tests,
@@ -8171,8 +8420,9 @@ pub(crate) fn classify_resolved_owner(
         .chars()
         .map(|c| if c == '/' || c == '\\' { '_' } else { c })
         .collect();
-    let family = probe_shape.family.clone();
-    let delta = probe_shape.delta.clone();
+    // #14381: an unrecognised plain value declaration presents as a value;
+    // every analysis decision above and below reads `probe_shape`.
+    let (family, delta) = presented_typescript_shape(&probe_shape, line_text);
     let expected_sinks = if probe_shape.specific {
         probes::expected_sinks(line_text, &family)
     } else {
@@ -8286,12 +8536,22 @@ pub(crate) fn classify_resolved_owner(
         "TypeScript preview adapter: every exposing test file mocks a module the changed line calls; discriminate unknown (RIPR-SPEC-0243 rule 8).".to_string()
     } else if loop_count_unknown {
         "TypeScript preview adapter: the changed counted-loop header is observed only through a mock call count; the iteration count is not modeled, so discriminate unknown (RIPR-SPEC-0246 rule 8).".to_string()
+    } else if ladder_entry_unknown && reach_only_through_cross_module_entry {
+        // #13592: the caller is an export of another module that imports and
+        // calls the owner (RIPR-SPEC-0243).
+        "TypeScript preview adapter: the related tests reach the changed owner only through an exported function of another module that imports and calls it; discriminate unknown (RIPR-SPEC-0243).".to_string()
+    } else if ladder_entry_unknown && reach_through_mixed_module_entries {
+        "TypeScript preview adapter: the related tests reach the changed owner only through same-module callers or exported functions of other modules that import and call it; discriminate unknown (RIPR-SPEC-0243).".to_string()
     } else if ladder_entry_unknown {
         "TypeScript preview adapter: the related tests reach the changed owner only through a same-module caller; discriminate unknown (RIPR-SPEC-0027).".to_string()
     } else if hook_owner_unknown {
         "TypeScript preview adapter: a synchronous mocha setup hook calls the changed owner outside every test body; discriminate unknown (RIPR-SPEC-0246 rule 7).".to_string()
     } else if private_member_unknown {
         "TypeScript preview adapter: the changed owner is a `#private` class member no test can call by name; discriminate unknown (RIPR-SPEC-0243).".to_string()
+    } else if fan_in_limited_unknown {
+        format!(
+            "TypeScript preview adapter: more than {MAX_CROSS_MODULE_ENTRIES} exported functions of other modules import and call the changed owner, past the limit ripr follows, so reach through them was not checked; discriminate unknown (RIPR-SPEC-0243)."
+        )
     } else if conditional_registration_unknown {
         "TypeScript preview adapter: every related test is registered under a condition or loop static analysis cannot evaluate; discriminate unknown (RIPR-SPEC-0243).".to_string()
     } else if ladder_unresolved_unknown {
@@ -8371,6 +8631,16 @@ pub(crate) fn classify_resolved_owner(
         ExposureClass::ReachableUnrevealed if infection.is_some() => {
             "TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted.".to_string()
         }
+        ExposureClass::StaticUnknown
+            if ladder_entry_unknown && reach_only_through_cross_module_entry =>
+        {
+            "TypeScript preview advisory: the related test reaches the changed owner only through an exported function of another module that imports and calls it, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
+        }
+        ExposureClass::StaticUnknown
+            if ladder_entry_unknown && reach_through_mixed_module_entries =>
+        {
+            "TypeScript preview advisory: the related tests reach the changed owner only through same-module callers or exported functions of other modules that import and call it, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
+        }
         ExposureClass::StaticUnknown if ladder_entry_unknown => {
             "TypeScript preview advisory: the related test reaches the changed owner only through a same-module caller, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
         }
@@ -8382,6 +8652,11 @@ pub(crate) fn classify_resolved_owner(
         }
         ExposureClass::StaticUnknown if private_member_unknown => {
             "TypeScript preview advisory: the changed owner is a `#private` class member, so no test can reference it directly and reach through a public method is not established; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
+        }
+        ExposureClass::StaticUnknown if fan_in_limited_unknown => {
+            format!(
+                "TypeScript preview advisory: more than {MAX_CROSS_MODULE_ENTRIES} exported functions of other modules import and call the changed owner, so reach through them was not checked; no new assertion is needed on that evidence, and no repair packet is emitted."
+            )
         }
         ExposureClass::StaticUnknown if conditional_registration_unknown => {
             "TypeScript preview advisory: every related test is registered under a condition or loop static analysis cannot evaluate, so whether it runs is not established; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
@@ -10401,6 +10676,16 @@ fn observed_evidence_label(related: &[RelatedTest]) -> &'static str {
 
 /// Describe the missing static relation without inferring that no test exists.
 /// The ordinary-owner fallback has no specific import-resolution failure cause.
+/// Disclosure for an owner whose callers in other modules were not followed
+/// because more than `MAX_CROSS_MODULE_ENTRIES` of them call it (#13592,
+/// RIPR-SPEC-0243).
+pub(crate) fn cross_module_fan_in_limit_missing(owner: &TypeScriptOwner) -> String {
+    format!(
+        "More than {MAX_CROSS_MODULE_ENTRIES} exported functions of other modules import and call `{}`, past the limit ripr follows, so reach through one of them was not checked.",
+        owner.name
+    )
+}
+
 pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
     match owner.owner_kind {
         OwnerKind::Method => format!(
@@ -10493,24 +10778,20 @@ fn module_entry_reach_summary(
     workspace_root: Option<&Path>,
     discriminator_unknown: bool,
 ) -> String {
-    let called: Vec<String> = owner
-        .module_entries
+    // Each candidate's reached entries were recorded when it was related
+    // (#13592), so naming them costs no further relation scan.
+    let mut called_entries: Vec<&TypeScriptModuleEntry> = candidates
         .iter()
-        .filter(|entry| !entry.instance_factory)
-        .filter(|entry| {
-            let entry_owner = module_entry_owner(owner, entry);
-            candidates.iter().any(|candidate| {
-                candidate.relation == TypeScriptRelationKind::ModuleEntryCall
-                    && owner_call_relation(
-                        candidate.test,
-                        &entry_owner,
-                        reexport_index,
-                        alias_map,
-                        workspace_root,
-                    )
-                    .is_some_and(TypeScriptRelationKind::uses_oracle)
-            })
+        .filter(|candidate| candidate.relation == TypeScriptRelationKind::ModuleEntryCall)
+        .flat_map(|candidate| {
+            candidate_reached_entries(candidate, owner, reexport_index, alias_map, workspace_root)
         })
+        .filter(|entry| !entry.instance_factory)
+        .collect();
+    called_entries.sort();
+    called_entries.dedup();
+    let called: Vec<String> = called_entries
+        .iter()
         .map(|entry| format!("`{}`", entry.name))
         .collect();
     let entries = if called.is_empty() {
@@ -10518,8 +10799,20 @@ fn module_entry_reach_summary(
     } else {
         called.join(", ")
     };
+    let cross_module_called = called_entries
+        .iter()
+        .filter(|entry| entry.cross_module.is_some())
+        .count();
     let scope = if owner.class_name.is_some() {
         "same-class"
+    } else if cross_module_called > 0 && cross_module_called == called_entries.len() {
+        // #13592: every entry the tests call is an export of another module
+        // that reaches the owner through an imported binding.
+        "cross-module"
+    } else if cross_module_called > 0 {
+        // Some tests reach it through a same-module caller, others through
+        // another module's export.
+        "same-module or cross-module"
     } else {
         "same-module"
     };

@@ -360,8 +360,9 @@ one changed raise only (#12952); the general class-only table row stays weak.
    Finding-specific class identity (#12952): a sole-line replacement from
    `raise OldError(...)` to `raise NewError(...)`, with identical indentation
    and literal constructor arguments and no cause or keywords, can read
-   `with pytest.raises(NewError): owner(<literal arguments>)` as
-   `exact_error_variant` / strong for that finding. `OldError` and `NewError`
+   `with pytest.raises(NewError): owner(<literal arguments>)` (or
+   `raises(OldError)`, see below) as `exact_error_variant` / strong for that
+   finding. `OldError` and `NewError`
    must be distinct, single-bound top-level classes in the owner's module,
    each directly extending the unshadowed builtin `Exception` with only
    `pass` or literal-string body statements. Bases, decorators, metaclasses,
@@ -373,7 +374,8 @@ one changed raise only (#12952); the general class-only table row stays weak.
    bindings; this reading does not promise to resolve those wider scopes.
 
    The plain argument-free pytest test imports `pytest` canonically and the
-   owner and new class directly, without aliases, from the exact owner module.
+   owner and the local class its context names directly, without aliases,
+   from the exact owner module.
    Both symbols must use the same module spelling: `src.fx.core` and
    `fx.core` can load separate class objects from the same source file.
    Its selected context has one item, no `raises` keywords, and exactly one
@@ -384,6 +386,26 @@ one changed raise only (#12952); the general class-only table row stays weak.
    Decorators, fixtures, parametrization, deferred bodies, dynamic namespace
    access, visible class/framework/builtin writes and unresolved identity
    refuse this reading.
+   Builtin classes (#13869): either class may instead be a builtin whose
+   hierarchy is fixed and whose constructor accepts any positional constants
+   and returns exactly that class: `ArithmeticError`, `AssertionError`,
+   `AttributeError`, `BufferError`, `EOFError`, `ImportError`,
+   `LookupError`, `NameError`, `RuntimeError`, `TypeError`, `ValueError`
+   and their listed subclasses `FloatingPointError`, `OverflowError`,
+   `ZeroDivisionError`, `ModuleNotFoundError`, `IndexError`, `KeyError`,
+   `UnboundLocalError`, `NotImplementedError` and `RecursionError`. The
+   name must be unbound in the owner module before and after the edit, not
+   written by another workspace file, and neither bound nor star-imported by
+   the test. The two classes must be disjoint: neither is the other's
+   listed ancestor (`KeyError` to `LookupError` stays weak), and a local
+   sibling class is disjoint from every listed builtin. `OSError` and its
+   subclasses (an `errno` argument selects a subclass), the `Unicode*Error`
+   classes (fixed constructor arity), `StopIteration` and `SyntaxError` are
+   not listed and keep the general reading.
+   The context may name either class. Naming the new class passes after the
+   edit and fails before; naming the class raised before the edit (a test
+   written before the diff) passes before and fails after. Both distinguish
+   the edit, and the evidence names which class the context rejects.
    Module identity needs a separate positive per-file admission, defaulting
    to false and computed from the raw foreign-module view before legacy path
    refusal flags. Every supported dotted spelling is checked at all known
@@ -428,12 +450,13 @@ one changed raise only (#12952); the general class-only table row stays weak.
    observed sink. The related-test row reports `exact_error_variant` /
    strong, alignment is `direct` with reason
    `strong_oracle_observes_changed_exception_variant`, and
-   `exception_variant_read` evidence names the rejected old and accepted new
-   classes. Another strong assertion cannot donate its call or hide this
-   context. A broad base class, old/wrong class, tuple, alias, reexport,
-   subclass relation, unresolved class, unchanged class or message-only edit
-   receives no such credit. Callable-form assertions, `unittest`, builtin
-   exception swaps and arbitrary class hierarchies remain outside this
+   `exception_variant_read` evidence names the class the context rejects
+   and the class it accepts. Another strong assertion cannot donate its call
+   or hide this context. A broad base class, a class other than the two
+   swapped ones, tuple, alias, reexport, subclass relation, unresolved
+   class, unchanged class or message-only edit receives no such credit.
+   Callable-form assertions, `unittest`, builtin swaps outside the listed
+   disjoint builtins and arbitrary class hierarchies remain outside this
    bounded reading. Static limits and the shared repair validator remain
    authoritative; no support-tier or schema change follows from this credit.
 
@@ -729,7 +752,13 @@ effect-channel credit need module identity. An empty owner or changed-sink token
 set does not itself establish observation. All owners, including `<module>` and
 one-letter free functions, require an assertion that satisfies a credit branch
 under rule 4. A genuine short-function output assertion can still credit the
-existing module-identified call branch. With no crediting branch, a strong oracle
+existing module-identified call branch. For an exception assertion, which
+compares no operand (rule 4), that branch reads the module-qualified owner call
+in the assertion's `with` body or rule 13 callable instead of an asserted
+operand, so `levels.parse("")` and an imported `parse("")` under the same
+`pytest.raises(ValueError, match=...)` read alike (#14090). A body holding a
+`lambda` or a nested `def`/`class` is not read, since the call may be deferred.
+With no crediting branch, a strong oracle
 is `orthogonal`; without an admitted strong oracle alignment stays `unknown`.
 This reverses the legacy no-token observing exception (#7526), which could
 credit an unrelated strong assertion. Ordinary module-import links retain their
@@ -1033,29 +1062,61 @@ mutant calibrates the rule; ripr reports only the static shape.
     row selects passes an explicit band, `approx(expected, rel=...)`,
     `abs=...`, a positional second or third argument, or a `*` or `**`
     spread that may carry one (a literal `None` counts as absent), the
-    band may admit the pre-change value. One shape is evaluated: the owner
-    is an undecorated one-statement function whose changed line is
-    `return <expr>` over numeric literals, its own parameters and
-    `+ - * /`, and the assertion is `<owner>(<numeric literals>) ==
-    approx(<number>, rel=<number>, abs=<number>)` in either operand order
-    (only `rel`, `abs` and `nan_ok` keywords). The old and new results are
-    compared with pytest's tolerance (`abs` alone, else the larger of
+    band may admit the pre-change value. These shapes are evaluated. The
+    owner's result is `+ - * /` arithmetic over numeric literals and its
+    own parameters, read from: an undecorated one-statement function whose
+    changed line is `return <expr>`; the same function decorated only by
+    `functools.lru_cache` (bare, or called with a literal `maxsize` and
+    `typed` and nothing else) or `functools.cache`, the name resolving to
+    `functools` and bound once in the module, with no attribute write in
+    the owner's or the test's module naming the decorator
+    (`functools.lru_cache = ...` replaces it under a bound `functools`),
+    which returns the function's own result (#13723); a function whose body
+    is single-line `name = <expr>` assignments then `return <expr>`, when
+    the file's whole diff is the changed line and exactly one body statement spells it, so the old
+    body is the new body with the old line put back (#13723); or a
+    one-statement method of a module-level class bound once, with no
+    decorator, base or class keyword, whose body holds only undecorated
+    non-dunder `def`s, a docstring or `pass`, whose method name no
+    attribute write in the module names and with no dunder attribute write
+    in the module (`Rates.__getattribute__ = ...` redirects the lookup),
+    called as `Class().<method>(...)`
+    with no constructor arguments, `Class` imported under its own name from
+    the owner's module and never rebound or attribute-written, nor any
+    dunder attribute written, by the test module (#13723). The assertion is `<call>(<numeric literals>) ==
+    approx(<expected>, <rel>, <abs>, <nan_ok>)` in either operand order,
+    the band by keyword or positionally in pytest's parameter order (a
+    positional `nan_ok` must be `True` or `False`, and a parameter passed
+    twice is not read). The `approx` must be pytest's own: `pytest.approx`
+    through a plain `import pytest`, or `approx` through `from pytest import
+    approx`, bound once in the test's module, not shadowed by the test and
+    not attribute-patched; a project helper also named `approx` may read
+    its arguments differently (an absolute tolerance), so its band is not
+    read (#13723). The expected value and each band are numeric
+    literals or constants of the test's own module that the test-module
+    constant reading of RIPR-SPEC-0028 (#10707) holds at their value
+    (#13723). The old and new results are compared with pytest's tolerance (`abs` alone, else the larger of
     `rel * |expected|` and `abs`, default `1e-12`). An old result inside
     the band and a new result outside it is `exposed`
-    (`py-idioms-approx-constant-outside-tolerance`); both inside, for
+    (`py-idioms-approx-constant-outside-tolerance`,
+    `py-bands-positional-band-outside`); both inside, for
     every selected strong assertion and with no unbanded strong
-    assertion, is `weakly_exposed` naming the band
+    assertion, is `weakly_exposed` naming the band, whatever the changed
+    line's probe family
     (`py-idioms-approx-constant-within-tolerance`, whose old reading as
-    `exposed` was a false exposed). Everything else stays
+    `exposed` was a false exposed, and `py-bands-positional-band-within`,
+    `py-bands-non-literal-band`, `py-bands-decorated-owner`,
+    `py-bands-longer-body`, `py-bands-method-owner`). Everything else stays
     `static_unknown` with the static limit `unsupported_syntax` naming the
     band: an old result already outside the band, a result within `1e-9`
-    (relative) of the band edge, a non-literal argument, a positional
-    band, `**`, a longer body, a method or decorated owner, and a run
-    without the old line (repo mode). The `py-bands-*` cases pin the
-    abstentions: a positional band (an edit the band absorbs and one it
-    rejects, the latter a documented missed credit), a `**` spread,
-    named constants for the expected value and band, a two-statement
-    owner, a method owner and a decorated owner.
+    (relative) of the band edge, a non-literal argument, a `*` or `**`
+    spread, a constant the test or its module may rebind, any other
+    decorator, a body with any other statement or more than one changed
+    line, a method on a class with an initializer, dunder, base or
+    decorator, a receiver built with arguments or held in a name, and a
+    run without the old line (repo mode). `py-bands-spread-band` pins the
+    `**` spread abstention: a dict constant is mutable and its keys are
+    not read.
 22. **A `caplog.text` membership check on a changed log call is
     evaluated where it is decidable, else abstains.** When the changed
     line is a logging call (`<receiver>.debug`, `.info`, `.warning`,
@@ -1166,7 +1227,57 @@ mutant calibrates the rule; ripr reports only the static shape.
     same way a `@pytest.mark.skip` decorator does (a condition is not
     evaluated, so a `skipif` on a name or comparison that is false on the
     host still abstains): the finding is `static_unknown` with
-    `decorator_indirection`. Two things are decidable from the source and
+    `decorator_indirection`. A control that provably keeps the body from
+    running under the default invocation is the exception: an unconditional
+    `@pytest.mark.skip` or `@unittest.skip`, a module-level
+    `pytest.skip(..., allow_module_level=True)`,
+    an empty literal parametrize table, a parametrize mark pytest refuses at
+    collection, and a later non-loop binding of the test name (rule 23). Such a test can
+    fail on no edit, so it is no evidence either way: it does not raise the
+    limit, and a finding no other test relates to is a gap (`weakly_exposed`,
+    with `related_test_never_runs` evidence and a missing check that says to
+    remove the control or add an active test), the way an `#[ignore]`d Rust
+    test is. Gap cases: `py-trap-skipped-test`, `py-idioms-skipped-test`,
+    `py-trap-empty-table`, `py-trap-shadowed-test`, and the `py-unrun-*`
+    module-level `pytest.skip` and empty tuple table. The exception is narrowed
+    wherever the test could still run: a unittest-style test counts only
+    `unittest.skip`, a module-level `pytest.skip` and a later binding (the
+    `python -m unittest` verify command ignores pytest marks, parametrize and
+    `__test__`), and so does a test in a class with any base this file does
+    not define other than `object` (it may be a `TestCase` the adapter cannot
+    see, such as `IsolatedAsyncioTestCase` or a project base, or a base name
+    the file binds more than once); a `__test__ = False` switch never counts
+    (a class one is the abstract-suite idiom, re-enabled by a subclass in this
+    file or another, and a literal `False` is recorded apart from an unresolved
+    binding only as evidence); a module-site skip (`pytestmark`) never counts, because pytest also collects a test
+    another module imports (even a module with no tests of its own) without
+    them; and a rebinding counts only when it is not a `for` target (a loop may
+    bind nothing), the earlier definition has no decorator other than a pytest
+    or unittest mark (a registering decorator may keep and run it), and every
+    mention of the name in the file is a statement that binds it (an alias
+    such as `kept = test_x` keeps the definition collected). A finding beside any other
+    controlled test keeps the limit. Conditional `skipif`/`skipIf`/`skipUnless`,
+    every `xfail` (its outcome depends on `strict`, `raises` and the project's
+    `xfail_strict`), `unittest.expectedFailure`, `importorskip`, an
+    unresolved `__test__` binding and the project-level collection rules
+    below (which a command line naming the file can bypass) stay
+    unestablished. Not modelled: `-p no:skipping` in `addopts` (which turns
+    skip marks off) and `empty_parameter_set_mark = xfail` (which runs the
+    body with `NOTSET` arguments, a call no exact assertion pins); both are
+    named limits, not claims that the tests run. Pytest before 7.2, which
+    applies only the first base's `pytestmark` under multiple inheritance, is
+    another named limit. A
+    skip whose decorator root name the file also binds outside an import
+    (`def skip(...)`, `skip = ...`, at any block depth) is not counted, nor
+    is a module-level `pytest.skip` called through a root the file rebinds
+    or patches through an attribute (`pytest.skip = ...`).
+    A pytest mark (skip, empty or refused parametrize) on a test that also
+    carries a decorator other than a pytest mark or unittest decorator is not
+    counted: that wrapper may return a fresh callable without the mark, which
+    pytest collects and runs; nor is any parametrize collection error on such
+    a test, since a class/method duplicate may come from the discarded mark.
+    `unittest.skip` replaces the body itself, so it still counts under such a
+    wrapper. Two things are decidable from the source and
     leave the test active: a condition that is itself the boolean literal
     that never triggers the mark and is the only condition, given with the
     string `reason` the runner requires for a boolean
@@ -1182,8 +1293,8 @@ mutant calibrates the rule; ripr reports only the static shape.
     (`py-trap-module-skipped`, `py-trap-empty-table`,
     `py-trap-skipif-false`, `py-trap-module-loaded`, #9691; the `py-unrun-*`
     cases add a module `pytestmark` skip, a module-level `pytest.skip`, an
-    `importorskip` of a missing module and an empty tuple table, which
-    abstain, and `xfail(False, reason=...)` and
+    `importorskip` of a missing module, which abstains, and an empty tuple
+    table, which is a gap, and `xfail(False, reason=...)` and
     `unittest.skipUnless(True, ...)`, which stay active and credited).
     A test pytest never collects is controlled the same way
     (`pytest.collection(...)`, #11527): a class or module that binds `__test__`
@@ -1200,7 +1311,12 @@ mutant calibrates the rule; ripr reports only the static shape.
     parse-everything-or-refuse: a collection form the adapter cannot
     evaluate (a computed `collect_ignore`, a collection hook, a character
     class, an unparsable or unreadable file, `-o`, `-c` or `--rootdir` in
-    `addopts`) withholds credit for its scope. Not modelled, so credit is
+    `addopts`) withholds credit for its scope. A `norecursedirs` entry with
+    exactly one trailing `/` and no other `/` (`env/`) is read as the
+    basename pattern without the slash; every other `/`-bearing entry
+    (`a/b/`, `/`, `env//`) still refuses the config as unevaluated. This
+    deliberately over-withholds relative to pytest, whose path-pattern match
+    likely excludes nothing for `env/`; it never grants credit. Not modelled, so credit is
     unchanged: the default `norecursedirs`, `-k`, `-m` and `--deselect`,
     `pytest_collection_modifyitems`, and command-line arguments. Known
     limits: `testpaths` is assumed to govern collection (an invocation that
@@ -1267,10 +1383,15 @@ mutant calibrates the rule; ripr reports only the static shape.
     (`truncate("abc", 5)` is `'abc'` before and after an off-by-one cut),
     so a closed evaluator runs the example on the old and the new function
     and keeps it only when the old result equals the expected value and the
-    new one differs; a function it cannot run (anything beyond a single
-    `return` over integer, boolean and printable-ASCII string operations)
-    drops the example; strings are capped at 4 KiB and expressions at 48
-    levels so a reviewed diff cannot exhaust the analyzer. A credited
+    new one differs. A function it cannot run (anything beyond a single
+    `return` over integer, boolean and printable-ASCII string operations, or
+    a decorated one) leaves the example undecided: it is kept as an opaque
+    comparison (`assert_doctest_output_matches(call, expected)`, an unknown
+    custom helper), so the collected example reaches the owner and the
+    finding abstains (`static_unknown`, `opaque_custom_assertion_helper`)
+    instead of claiming no test path (#13869). An example that calls another
+    function is not read for the owner. Strings are capped at 4 KiB and
+    expressions at 48 levels so a reviewed diff cannot exhaust the analyzer. A credited
     example advertises no verification command, because pytest has no node
     for the synthetic test (`py-idioms-doctest-separator` credited,
     `py-idioms-doctest-short-input` stays a gap, #9619).
@@ -1456,6 +1577,94 @@ mutant calibrates the rule; ripr reports only the static shape.
     `outer.inner`". A call whose value may be returned, bound, passed or
     asserted keeps the credit, and so does a related test that calls the
     nested name itself.
+32. **An assertion helper called as a module attribute reads like an
+    imported helper only when the module binding is provably stable**
+    (#13629). A call statement `module.helper(args)` substitutes `helper`'s
+    single straight-line assertion, exactly as `from M import helper` does,
+    when `module` is bound by exactly one import in the test file and that
+    import names a workspace module file: `from . import conftest`, a
+    relative import inside a nested package, `from pkg import helpers` or
+    `import pkg.helpers as helpers`. It stays unresolved (no assertion) when:
+    any other import, `del`, assignment or walrus binds `module` anywhere in
+    the test file; the test file assigns or deletes the helper attribute; the
+    test file or the helper's own module has a star import, a walrus, or names
+    a patcher or dynamic namespace writer (`patch`, `setattr`, `globals`,
+    `sys.modules`, ...) anywhere, which covers module-level patches, autouse
+    fixtures and decorators; the package `__init__` binds the same name by
+    assignment, def, import or star import; the import is an undotted absolute
+    module (`import conftest`, `import conftest as c`), which resolves through
+    `sys.path`; a relative import escapes the package; or the call passes
+    keyword arguments. Over-refusal is accepted: a wrong substituted assertion
+    would be a wrong credit.
+
+33. **A name the test package binds by import reaches what it binds**
+    (#13927). `from . import X` (or `from P import X`, or `as alias`) where
+    `X` is not a module file or directory of package `P` reads as the import
+    `P/__init__.py` performed to bind `X`: `import tomli as tomllib` there
+    makes `from . import tomllib` in a test read as `import tomli as
+    tomllib`, and `from M import Y as X` there reads as `from M import Y`
+    under the test's local name. Every reach and oracle reader then sees the
+    same evidence the direct import gives. The initializer must be read and
+    parse and bind `X` exactly once, through one unconditional top-level
+    import statement with one alias binding that name (counted by the name
+    Python binds, so `import a as X, X.sub` binds `X` twice, and an
+    unaliased dotted `import X.sub` is refused); up to three package
+    initializers are followed, each a package of the test file's own
+    package chain (its directory and each parent while it has an
+    `__init__.py`). A dotted name is read from the workspace root, and pytest
+    imports a test package from the parent of its topmost package, so a
+    root-relative spelling is the package Python imports only when it is one
+    of those directories (pytest's default prepend import mode; an ini
+    `pythonpath`, append or importlib mode, or an installed package of the
+    same name are not modelled). The import keeps its unresolved reading (no link)
+    when: the package is outside that chain, or its first name also names
+    another directory on the test's path (`tests/project/tests/...`, where
+    another import root can carry `tests`); the
+    initializer is missing, unread or unparsable; `X` is also bound by an
+    assignment, `def`, `class`, loop, `with`, `del`, `try`/`if` branch or a
+    second import, or only inside such a branch; the initializer has a star
+    import, a `match` or `type` statement at any depth the module body
+    executes (outside `def` and `class` bodies), or names a dynamic namespace
+    writer anywhere, even in a comment, as an identifier token so spacing
+    (`vars ()`) cannot hide it (`globals`, `locals`, `vars`, `exec`, `eval`,
+    `setattr`, `__dict__`, `global`, `__getattr__`, any `modules`; any
+    token containing `setattr`, `delattr`, `globals`, `locals`, `frame`,
+    `import_module`, `importlib` or `runpy`; `__import__`), a walrus `:=`,
+    a non-ASCII character (Python NFKC-folds identifiers), `X` as an
+    attribute anywhere (`.X`, as in `tests.X = other`, which replaces the
+    package attribute through any receiver), or any top-level statement
+    besides the binding import that is not a docstring, `pass`, an
+    `__all__` of string literals, or an absolute import of a module that
+    is not in the workspace (at the root or under `src`): a call, a `def`
+    or `class`, or an import of workspace code can run code that writes
+    the attribute; any other read workspace module (test module, conftest,
+    helper), read by its code tokens so comments and plain strings do not
+    count, spells `.X` or a non-ASCII attribute, has an f-string the
+    initializer rule would refuse, or has a reference writer (`setattr`,
+    `delattr`, `__dict__`, `vars`, `globals`, `locals`, a frame, `exec`,
+    `eval`, `modules`) at all, since its target can be computed
+    (`sys.modules[__package__]`), or names the package as an identifier,
+    spells `.__class__`, uses `__import__`, `builtins`, `meta_path`,
+    `path_hooks`, `reload`, `patch`, `monkeypatch`, `gc`,
+    `get_referents`, `get_referrers`, `get_objects`, `ctypes`,
+    `__globals__`, `f_back`, `tb_frame`, `__path__`, `__spec__` or
+    `submodule_search_locations`, `path_importer_cache` or `FileFinder`
+    (a search-path or finder edit lets an import load another `X`), or
+    has a string that is `X` or has it as a dotted component after the
+    first (`".X"`, `"pkg.X.sub"`), a string equal to
+    the package or a dotted path under it, or one containing `setattr`,
+    `delattr`, `__dict__`, `__class__`, `__import__` or `__path__`. Not modelled, as for every
+    directly imported module: modules the bounded read skipped, code inside
+    installed packages, and a write through a reference and attribute name
+    both computed at run time (`importlib.import_module` of a built name
+    then a built dunder lookup), which can equally patch a directly
+    imported module's function; or `P`
+    has a submodule or subpackage named `X`, which an import elsewhere could
+    load over the binding. A followed `from M import Y as X` is a rename
+    the package re-export reading does not follow; it is followed here
+    because the test names the bound `X` itself. This runs after the rule 32
+    helper substitution, which keeps its own module-attribute rule, and
+    fixture definitions' imports are not rewritten.
 
 ### Verdict ladder
 
@@ -1468,6 +1677,7 @@ the first matching row wins (reach / observe / discriminate):
 | --- | --- | --- | --- |
 | 1 | a static limit | `static_unknown` | no / no / no with no related test; else yes (eligible) or weak (heuristic only) / same / unknown |
 | 2 | no related test | `no_static_path` | no / no / no |
+| 2a | no static limit, no oracle-eligible relation, and every related test replaces the owner itself via `monkeypatch`/`patch` (#13632) | `reachable_unrevealed`, never a credit | weak / no / no |
 | 3 | only heuristic relations | `weakly_exposed`, no repair card | weak / weak / weak |
 | 4 | strong, credited, gates pass | `exposed` | yes / yes / yes |
 | 5 | strong, credited, changed default always overridden | `weakly_exposed` | yes / weak / weak |
@@ -1476,8 +1686,9 @@ the first matching row wins (reach / observe / discriminate):
 | 8 | weaker than strong | `weakly_exposed` | yes / weak / weak |
 
 Confidence is 0.6 for `exposed`, 0.2 for `static_unknown` and 0.4
-otherwise. Python never emits `reachable_unrevealed` or
-`infection_unknown`. The ladder is the existing behavior and is normative.
+otherwise. Python emits `reachable_unrevealed` only for row 2a, where every
+related test replaces the owner itself so none runs the changed code; the
+class never carries credit. Python never emits `infection_unknown`. The ladder is the existing behavior and is normative.
 
 ### Decisions
 
@@ -1508,7 +1719,9 @@ rejected alternative. Any can be reversed later without touching the rest.
    does not resolve that hierarchy. Adopted for #12952: rule 6's bounded
    sibling-class proof resolves both identities and the exact changed-raise
    activation, while subtype/base and unknown-identity controls keep the
-   general reading weak.
+   general reading weak. Extended for #13869: the fixed builtin hierarchy is resolved
+   statically for a listed set of builtins, so a swap between two disjoint
+   builtins (`ValueError` to `TypeError`) reads the same way.
 4. **`raises(...) as exc` with a value assertion on `exc.value`.**
    Adopted (amended 2026-10-04, #6603): rule 14 promotes the bound
    `with` item to `exact_error_variant` / strong when the test compares
@@ -1643,7 +1856,7 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 ## Required Evidence
 
-- The eight `specific_exception_variant_*` classifier tests in
+- The `specific_exception_variant_*` and `a_builtin_exception_swap_*` classifier tests in
   `crates/ripr/src/analysis/language/python/exception_variant_tests.rs` pin
   rule 6's class-only credit and refusal cases: exact context retention,
   sibling versus subtype/base identity, import/rebinding custody, builtin
@@ -1960,7 +2173,13 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `account.deposit(50)` / `assert account.balance == 150`: the same
     verdict as `account = Account(100)` inlined in the test body (today
     `static_unknown`, `unresolved_pytest_fixture`; L8,
-    `py-fixtures-deposit`). A `yield`, an extra statement, a fixture
+    `py-fixtures-deposit`). An argument may also be a list, tuple, set or
+    dict display built only from literals (`Cart([3, 4])`,
+    `Account(balance=[100])`): a display names no variable and calls
+    nothing, so the fixture still builds the value the inlined construction
+    would. A display that names a variable, calls something, stars an
+    element or is a comprehension is a non-literal argument. A `yield`, an
+    extra statement, a fixture
     parameter, decorator arguments, a second decorator, an `async def`, a
     non-literal or starred argument, another class, a class from another
     module, a renamed import, a second binding of the class or the
@@ -2177,6 +2396,22 @@ and the test is `tests/test_subject.py`, which imports each owner from
   the decorated control, the conftest, same-module and single-name forms,
   the off-boundary parity and every negative shape of example 42;
   `classify/tests.rs` `an_indirect_parametrize_argname_is_an_unresolved_fixture`.
+- Rule 21's `approx` band shapes (#13723):
+  `crates/ripr/src/analysis/language/python/approx_band_tests.rs` pins the
+  positional band (`a_positional_band_is_read_in_pytests_parameter_order`,
+  `a_positional_band_outside_the_read_shape_keeps_abstaining`), pytest's own
+  `approx` (`only_pytests_own_approx_band_is_read`), the named band constant
+  (`a_band_named_by_test_module_constants_is_read`,
+  `a_named_band_that_may_differ_at_the_assertion_keeps_abstaining`), the
+  memoized owner (`functools_memoization_returns_the_decorated_result`,
+  `a_decorator_that_may_change_the_result_keeps_abstaining`), the longer
+  body (`a_straight_line_body_is_rebuilt_when_the_line_is_the_whole_diff`,
+  `a_body_that_cannot_be_rebuilt_keeps_abstaining`), the method owner
+  (`a_method_called_on_a_fresh_plain_instance_is_read`,
+  `a_method_whose_instance_may_differ_keeps_abstaining`), a replaced cache
+  decorator or class dunder
+  (`a_replaced_cache_decorator_or_class_dunder_keeps_abstaining`) and the
+  async owner (`an_async_owner_keeps_abstaining`).
 
 ## Numeric factor reorders
 
@@ -2211,6 +2446,9 @@ strong assertions is retained.
 
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/language/python/approx_band.rs`: rule 21, the
+  `pytest.approx` band reader (owner edit, band, owner definition and the
+  argument binding).
 - `crates/ripr/src/analysis/language/python/doctest_tests.rs` and
   `doctest_eval.rs`: rule 26, collection detection, example reading and the
   evaluator gate.
@@ -2252,6 +2490,8 @@ strong assertions is retained.
 - `oracles.rs` (`is_property_compare`: idempotence and loop-variable identity
   checks, rule 25), pinned by `property_assertion_tests.rs` and the
   `py-grid-*-property` corpus cases.
+- `crates/ripr/src/analysis/language/python/package_aliases.rs`: rule 33,
+  pinned by `package_alias_tests.rs`.
 - `crates/ripr/src/analysis/language/python/param_fixtures.rs` (literal
   `params=` rows and the unpack rewrite) with `fixtures.rs` (isolation) and
   `static_limits.rs` (direct parametrize argnames): L8, example 42.

@@ -382,8 +382,8 @@ pub(super) fn attach_changed_binding_predicate_evidence(
         _ => format!("`{}`", relation.initializer),
     };
     finding.evidence.push(format!(
-        "binding_predicate_relation: changed binding `{}` initializer {initializer_range} flows into predicate operand at line {}",
-        relation.binding, relation.predicate_line
+        "binding_predicate_relation: changed binding `{}` initializer {initializer_range} flows into predicate operand at line {} (changed `let {}` declared at line {})",
+        relation.binding, relation.predicate_line, relation.binding, relation.binding_line
     ));
     if !literal_byte_length_resolves(finding, relation)
         && let BindingValueResolution::Unresolved { earliest_operation } =
@@ -1306,6 +1306,7 @@ mod tests {
 
         let relation = ChangedBindingPredicateUse {
             binding: "end".to_string(),
+            binding_line: 2,
             initializer: "input.rfind(delim).map_or(0, |idx| idx)".to_string(),
             predicate_expression: "end == start".to_string(),
             predicate_line: 4,
@@ -1319,7 +1320,7 @@ mod tests {
         assert_eq!(finding.static_limit_kind, None);
         assert!(finding.stop_reasons.is_empty());
         assert!(finding.evidence.iter().any(|line| {
-            line == "binding_predicate_relation: changed binding `end` initializer `input.find(delim).map_or(0, |idx| idx)` -> `input.rfind(delim).map_or(0, |idx| idx)` flows into predicate operand at line 4"
+            line == "binding_predicate_relation: changed binding `end` initializer `input.find(delim).map_or(0, |idx| idx)` -> `input.rfind(delim).map_or(0, |idx| idx)` flows into predicate operand at line 4 (changed `let end` declared at line 2)"
         }));
         assert!(finding.evidence.iter().any(|line| {
             line.contains("binding_predicate_value_unresolved: operand value of `end` unresolved at earliest initializer operation `rfind`")

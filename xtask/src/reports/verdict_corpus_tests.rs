@@ -156,6 +156,13 @@ fn retarget_relation_matches_an_initializer_containing_backticks() {
     );
     assert_eq!(let_initializer("let x: Vec<Vec<u8>>= v"), Some("v"));
     assert_eq!(let_initializer("let ok = a <= b"), Some("a <= b"));
+    // #12118: the changed-`let` suffix does not break anchor matching.
+    let suffixed = "binding_predicate_relation: changed binding `cut` initializer `input.find('`')` -> `input.rfind('`')` flows into predicate operand at line 13 (changed `let cut` declared at line 9)";
+    assert!(is_anchor_relation(
+        suffixed,
+        "    let cut = input.rfind('`');",
+        "cut"
+    ));
     // Without a distinct old initializer the relation names the new one alone.
     let single = "binding_predicate_relation: changed binding `cut` initializer `input.rfind('`')` flows into predicate operand at line 13";
     assert!(is_anchor_relation(
@@ -1530,6 +1537,75 @@ fn one_test_name_accepts_a_doctest_name_and_refuses_lists() {
 }
 
 #[test]
+fn expected_report_rejects_rows_that_change_scoring_definition() -> Result<(), String> {
+    let dir = per_record_corpus("verdict-definition-integrity", &["a-case"])?;
+    let corpus = load_corpus(&dir)?;
+    let case = corpus.cases.first().ok_or("fixture has no case")?;
+    assert_eq!(case.truth.state, TruthState::Discriminated);
+    let mut gap = finding(
+        "weakly_exposed",
+        case.anchor.line as u64,
+        "candidate_current",
+    );
+    gap["probe"]["file"] = json!(case.anchor.file);
+    let report = build_report(
+        &corpus,
+        &[(case.case_id.clone(), json!({"findings": [gap]}))],
+        &BTreeMap::new(),
+    )?;
+    bless(&dir.join("expected"), &report)?;
+    let valid = expected_report(&dir)?;
+    assert_eq!(valid.false_actionable_rate.numerator, 1);
+    assert_eq!(valid.false_actionable_rate.denominator, 1);
+    assert_eq!(valid.rows[0].origin, SubjectOrigin::Authored);
+    let path = dir.join("expected/rows/a-case.json");
+    let original = parse_json(&path)?;
+    let mut accepted = Vec::new();
+    for (field, value) in [
+        ("outcome", json!("ideal")),
+        ("truth", json!("not_discriminated")),
+        ("origin", json!("upstream")),
+        ("subject_id", json!("unrelated-subject")),
+        ("anchor", json!("other.rs:99")),
+        ("ideal_verdict", json!("gap")),
+        ("packet_provenance", json!("producer")),
+    ] {
+        let mut changed = original.clone();
+        changed[field] = value;
+        crate::tests::write(&path, &format!("{changed:#}"));
+        match expected_report(&dir) {
+            Ok(_) => accepted.push(field),
+            Err(err) => assert!(
+                err.contains("a-case") && err.contains("scoring definition"),
+                "{field}: {err}"
+            ),
+        }
+    }
+    assert!(
+        accepted.is_empty(),
+        "accepted inconsistent fields: {accepted:?}"
+    );
+    crate::tests::write(&path, &format!("{original:#}"));
+    assert_eq!(
+        render_report_json(&expected_report(&dir)?)?,
+        render_report_json(&valid)?
+    );
+    // Definitions, not the row's copied subject id, establish origin.
+    let case_path = dir.join("cases/a-case.json");
+    let mut missing_subject = parse_json(&case_path)?;
+    missing_subject["subject_id"] = json!("missing-subject");
+    crate::tests::write(&case_path, &format!("{missing_subject:#}"));
+    let err = expected_report(&dir)
+        .err()
+        .ok_or("accepted a missing subject")?;
+    assert!(
+        err.contains("a-case") && err.contains("missing-subject"),
+        "{err}"
+    );
+    Ok(())
+}
+
+#[test]
 fn summary_derived_from_blessed_rows_equals_the_run_summary() -> Result<(), String> {
     let dir = per_record_corpus("verdict-derived-summary", &["a-case", "b-case"])?;
     let corpus = load_corpus(&dir)?;
@@ -2019,6 +2095,205 @@ fn language_option_parses_in_any_position_and_refuses_misuse() -> Result<(), Str
         assert!(err.contains(refusal), "{given:?}: {err}");
     }
     Ok(())
+}
+
+#[test]
+fn check_affected_parser_accepts_one_source_and_refuses_misuse() -> Result<(), String> {
+    for given in [
+        args(&["check-affected", "--paths", "a.rs,b.py"]),
+        args(&["check-affected", "--paths-file", "paths.txt"]),
+        args(&["check-affected", "--paths-file", "-"]),
+        args(&["--paths", "a.rs", "check-affected"]),
+    ] {
+        let parsed = parse_corpus_args(&given)?;
+        assert_eq!(parsed.sub, "check-affected", "{given:?}");
+    }
+    for (given, refusal) in [
+        (args(&["check-affected"]), "exactly one"),
+        (
+            args(&["check-affected", "--paths", "a.rs", "--paths", "b.rs"]),
+            "twice",
+        ),
+        (
+            args(&["check-affected", "--paths-file", "x", "--paths-file", "y"]),
+            "twice",
+        ),
+        (
+            args(&["check-affected", "--paths", "a.rs", "--paths-file", "x"]),
+            "exactly one",
+        ),
+        (
+            args(&["check-affected", "--paths", "a.rs", "--language", "rust"]),
+            "--language",
+        ),
+        (
+            args(&["check-affected", "--paths", "a.rs", "--out", "x"]),
+            "--out",
+        ),
+        (
+            args(&["check-affected", "--paths", "a.rs", "--cases", "c1"]),
+            "--cases",
+        ),
+        (args(&["check", "--paths", "a.rs"]), "check-affected"),
+        (args(&["check-affected", "--paths"]), "--paths needs"),
+    ] {
+        let err = parse_corpus_args(&given)
+            .err()
+            .ok_or(format!("{given:?} was accepted"))?;
+        assert!(err.contains(refusal), "{given:?}: {err}");
+    }
+    Ok(())
+}
+
+#[test]
+fn check_affected_normalization_refuses_no_changed_paths() {
+    for raw in [Vec::new(), args(&["", "  ", "./"]), args(&[","])] {
+        let err = normalize_affected_paths(&raw).err().unwrap_or_default();
+        assert!(err.contains("no changed paths"), "{raw:?}: {err}");
+    }
+    assert_eq!(
+        normalize_affected_paths(&args(&[
+            "./crates\\ripr\\src\\lib.rs",
+            "crates/ripr/src/lib.rs"
+        ])),
+        Ok(vec!["crates/ripr/src/lib.rs".to_string()])
+    );
+}
+
+#[test]
+fn check_affected_classification_matrix() {
+    use AffectedPath::{All, Ignored, Language};
+    let lang = |name: &str| Language(name.to_string());
+    for (path, expected) in [
+        ("fixtures/rust-verdict-corpus/cases/a.json", lang("rust")),
+        (
+            "fixtures/typescript-verdict-corpus/cases/a.json",
+            lang("typescript"),
+        ),
+        (
+            "fixtures/python-verdict-corpus/cases/a.json",
+            lang("python"),
+        ),
+        // Perl packets are JSON but route to Perl by corpus, never by a
+        // global *.json rule.
+        ("fixtures/perl-verdict-corpus/packets/a.json", lang("perl")),
+        ("fixtures/go-verdict-corpus/cases/a.json", All),
+        (
+            "crates/ripr/src/analysis/language/rust/mod.rs",
+            lang("rust"),
+        ),
+        (
+            "crates/ripr/src/analysis/language/typescript/mod.rs",
+            lang("typescript"),
+        ),
+        (
+            "crates/ripr/src/analysis/language/python.rs",
+            lang("python"),
+        ),
+        (
+            "crates/ripr/src/analysis/language/python/mod.rs",
+            lang("python"),
+        ),
+        (
+            "crates/ripr/src/analysis/language/perl/mod.rs",
+            lang("perl"),
+        ),
+        ("crates/ripr/src/analysis/language/mod.rs", All),
+        ("crates/ripr/src/analysis/language/router.rs", All),
+        ("crates/ripr/src/analysis/language/adapter.rs", All),
+        ("crates/ripr/src/analysis/language/id.rs", All),
+        ("crates/ripr/src/analysis/language/other/mod.rs", All),
+        ("src/lib.rs", lang("rust")),
+        ("tools/tool.py", lang("python")),
+        ("web/app.tsx", lang("typescript")),
+        ("web/app.mjs", lang("typescript")),
+        ("web/app.cts", lang("typescript")),
+        ("lib/Mod.pm", lang("perl")),
+        ("t/test.t", lang("perl")),
+        ("app.psgi", lang("perl")),
+        ("script.pl", lang("perl")),
+        // Extensions are case-sensitive per production route().
+        ("src/LIB.RS", All),
+        ("data.json", All),
+        ("main.go", All),
+        ("no_extension", All),
+        ("crates/ripr/src/domain/model.rs", All),
+        ("crates/ripr-contract/src/analysis/source_kind.rs", All),
+        ("crates/ripr/src/analysis/classifier.rs", All),
+        ("crates/ripr/src/output/human.rs", All),
+        ("crates/ripr/src/app/check.rs", All),
+        ("crates/ripr/src/cli/mod.rs", All),
+        ("crates/ripr/src/config/mod.rs", All),
+        ("Cargo.toml", All),
+        ("crates/ripr/Cargo.lock", All),
+        ("crates/ripr/build.rs", All),
+        ("rust-toolchain.toml", All),
+        (".cargo/config.toml", All),
+        ("xtask/src/reports/verdict_corpus.rs", All),
+        ("xtask/src/reports/verdict_corpus_tests.rs", All),
+        ("xtask/src/reports/fixtures.rs", All),
+        ("xtask/src/command.rs", All),
+        ("xtask/src/dispatch.rs", All),
+        ("docs/specs/RIPR-SPEC-0001.md", All),
+        (".github/workflows/rust-gates.yml", All),
+        ("schemas/report.json", All),
+        ("docs/guide.md", Ignored),
+        ("editors/vscode/src/main.ts", Ignored),
+        ("plugins/ripr/tool.rs", Ignored),
+        ("README.md", Ignored),
+        ("CHANGELOG.md", Ignored),
+        ("badges/coverage.svg", Ignored),
+        ("metrics/report.json", Ignored),
+        ("examples/demo.rs", Ignored),
+        // The ignored allowlist is root-anchored: a nested segment in a
+        // source tree still selects its language.
+        ("xtask/src/metrics/foo.rs", lang("rust")),
+        ("crates/x/examples/y.rs", lang("rust")),
+        ("tools/metrics/x.py", lang("python")),
+        // Crate-root and cross-language helpers feed every corpus.
+        ("crates/ripr/src/bounded_input.rs", All),
+        ("crates/ripr/src/lsp/backend.rs", All),
+        ("crates/ripr/src/lib.rs", All),
+        ("fixtures/some-fixture/input.rs", Ignored),
+    ] {
+        assert_eq!(classify_affected_path(path), expected, "{path}");
+    }
+}
+
+#[test]
+fn check_affected_selection_and_output_lines() {
+    let selected = select_affected(&args(&["src/a.rs", "docs/guide.md", "tools/b.py"]));
+    assert_eq!(
+        selected,
+        AffectedSelection::Languages(BTreeSet::from(["python".to_string(), "rust".to_string()]))
+    );
+    let discovered = args(&["perl", "python", "rust", "typescript"]);
+    assert_eq!(
+        affected_lines(&selected, &discovered, 2),
+        vec![
+            "verdict-corpus: check-affected selected: python, rust".to_string(),
+            "verdict-corpus: checked 2 corpora".to_string(),
+            "verdict-corpus: perl, typescript not run (not a pass)".to_string(),
+        ]
+    );
+    let widened = select_affected(&args(&["src/a.rs", "crates/ripr/src/domain/model.rs"]));
+    assert_eq!(
+        affected_lines(&widened, &discovered, 4)
+            .first()
+            .map(String::as_str),
+        Some(
+            "verdict-corpus: check-affected selected: all (widened: crates/ripr/src/domain/model.rs)"
+        )
+    );
+    let none = select_affected(&args(&["docs/guide.md"]));
+    assert_eq!(
+        affected_lines(&none, &discovered, 0),
+        vec![
+            "verdict-corpus: check-affected selected: none".to_string(),
+            "verdict-corpus: checked 0 corpora".to_string(),
+            "verdict-corpus: perl, python, rust, typescript not run (not a pass)".to_string(),
+        ]
+    );
 }
 
 #[test]
@@ -2819,6 +3094,26 @@ fn issue_5332_upstream_not_discriminated_and_partially_discriminated_floors() ->
     Ok(())
 }
 
+#[test]
+fn unreferenced_in_workspace_no_static_path_reads_as_a_gap_unless_limited() {
+    let mut unreferenced = finding("no_static_path", 10, "candidate_current");
+    unreferenced["ripr"]["reach"]["summary"] =
+        json!("No test is seen calling f; tests share only its file (unreferenced in workspace)");
+    assert_eq!(finding_verdict(&unreferenced), Verdict::Gap);
+
+    let mut plain = finding("no_static_path", 10, "candidate_current");
+    plain["ripr"]["reach"]["summary"] = json!("No test is seen calling f");
+    assert_eq!(finding_verdict(&plain), Verdict::Limited);
+
+    let mut limited = unreferenced.clone();
+    limited["static_limit_kind"] = json!("rust_subprocess_binary_reach_unresolved");
+    assert_eq!(finding_verdict(&limited), Verdict::Limited);
+
+    let mut other_class = unreferenced;
+    other_class["classification"] = json!("static_unknown");
+    assert_eq!(finding_verdict(&other_class), Verdict::Limited);
+}
+
 fn abstention_row(
     ideal: &str,
     observed: &str,
@@ -2935,4 +3230,55 @@ fn abstention_by_cause_is_kept_per_origin_and_sums_to_each_abstention_count() ->
     assert!(count(&authored.abstention_by_cause) > 0, "{markdown}");
     assert!(markdown.contains(&row), "{row}\n{markdown}");
     Ok(())
+}
+
+/// Observe the environment at the real process boundary, including concurrent
+/// case-local caches; comparing a list of intended environment pairs is weaker.
+#[test]
+fn corpus_child_has_one_worker_and_its_own_cache_without_mutating_parent() -> Result<(), String> {
+    let _guard = crate::acquire_test_cwd_read_guard();
+    let parent_workers = std::env::var_os("RAYON_NUM_THREADS");
+    let parent_cache = std::env::var_os(CACHE_ENV);
+    #[cfg(windows)]
+    let (program, args) = (
+        "cmd",
+        vec![
+            "/D".to_string(),
+            "/C".to_string(),
+            "echo %RAYON_NUM_THREADS%:%RIPR_CACHE_DIR%".to_string(),
+        ],
+    );
+    #[cfg(not(windows))]
+    let (program, args) = (
+        "sh",
+        vec![
+            "-c".to_string(),
+            "printf '%s:%s' \"$RAYON_NUM_THREADS\" \"$RIPR_CACHE_DIR\"".to_string(),
+        ],
+    );
+    let caches = ["corpus cache/case-a", "corpus cache/case-b"];
+    let outputs: Vec<Result<String, String>> = caches
+        .par_iter()
+        .map(|cache| run_case_output(program, &args, cache))
+        .collect();
+    for (cache, output) in caches.iter().zip(outputs) {
+        assert_eq!(output?.trim(), format!("1:{cache}"));
+    }
+    assert_eq!(std::env::var_os("RAYON_NUM_THREADS"), parent_workers);
+    assert_eq!(std::env::var_os(CACHE_ENV), parent_cache);
+    Ok(())
+}
+
+#[test]
+fn corpus_child_failure_is_not_promoted_to_a_report() {
+    let _guard = crate::acquire_test_cwd_read_guard();
+    #[cfg(windows)]
+    let (program, args) = (
+        "cmd",
+        vec!["/D".to_string(), "/C".to_string(), "exit /b 37".to_string()],
+    );
+    #[cfg(not(windows))]
+    let (program, args) = ("sh", vec!["-c".to_string(), "exit 37".to_string()]);
+    let result = run_case_output(program, &args, "failure-case-cache");
+    assert!(matches!(result, Err(ref message) if message.contains("37")));
 }
