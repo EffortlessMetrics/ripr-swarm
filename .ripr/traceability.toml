@@ -14,6 +14,9 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/tests/output_determinism.rs::rust_check_output_is_byte_identical_across_runs_workers_and_write_order",
+  "crates/ripr/tests/output_determinism.rs::python_check_output_is_byte_identical_across_runs_workers_and_write_order",
+  "crates/ripr/tests/output_determinism.rs::typescript_check_output_is_byte_identical_across_runs_workers_and_write_order",
   "crates/ripr/tests/private_inherent_receiver.rs::unique_private_inherent_receiver_keeps_real_calls_and_refuses_serde_decoys",
   "crates/ripr/tests/private_inherent_receiver.rs::public_inherent_method_keeps_cross_target_receiver_attribution",
   "crates/ripr/tests/private_inherent_receiver.rs::raw_call_line_comment_cannot_supply_inherent_receiver",
@@ -1424,6 +1427,7 @@ tests = [
   "crates/ripr/src/output/doctor.rs::tests::ancestor_package_from_src_passes_cargo_toml",
   "crates/ripr/src/output/doctor.rs::tests::cargo_toml_walk_does_not_cross_the_git_top_level",
   "crates/ripr/src/output/doctor.rs::tests::nested_cargo_toml_walk_does_not_follow_directory_symlinks",
+  "crates/ripr/src/output/doctor.rs::tests::nested_cargo_toml_walk_under_the_cap_is_name_ordered",
   "crates/ripr/tests/cli_smoke.rs::doctor_git_root_with_nested_workspace_passes_cargo_toml",
   "crates/ripr/src/output/doctor.rs::tests::source_build_missing_toolchain_names_install_fix_and_keeps_other_failures",
   "crates/ripr/src/output/doctor.rs::tests::doctor_wait_failure_stays_off_the_source_build_install_route",
