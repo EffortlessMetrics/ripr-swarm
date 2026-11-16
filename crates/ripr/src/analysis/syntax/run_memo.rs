@@ -41,6 +41,8 @@ pub(crate) enum Product {
     DeclaredValueNames,
     IncludeDirectives,
     EmbedFileScan,
+    StrippedFileImports,
+    ItemSyntax,
 }
 
 impl Product {
@@ -61,6 +63,8 @@ impl Product {
             Self::DeclaredValueNames => "declared_value_names",
             Self::IncludeDirectives => "include_directives",
             Self::EmbedFileScan => "embed_file_scan",
+            Self::StrippedFileImports => "stripped_file_imports",
+            Self::ItemSyntax => "item_syntax",
         }
     }
 }

@@ -790,7 +790,11 @@ fn paths_equal_or_below(root: &Path, candidate: &Path) -> bool {
     )
 }
 
-fn paths_equal_or_below_on(root: &Path, candidate: &Path, case_insensitive: bool) -> bool {
+pub(super) fn paths_equal_or_below_on(
+    root: &Path,
+    candidate: &Path,
+    case_insensitive: bool,
+) -> bool {
     if case_insensitive {
         let fold = |path: &Path| {
             path.components()

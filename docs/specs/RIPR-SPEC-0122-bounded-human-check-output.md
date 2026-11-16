@@ -418,7 +418,12 @@ selector is deterministic:
    compared even when step 4 put both findings in the same repair-route
    band, so two candidates equal through confidence order
    `reachable_unrevealed`, `weakly_exposed`, `no_static_path`, the unknown
-   classes, then `exposed`, rather than by file path (#14266).
+   classes, then `exposed`, rather than by file path (#14266). The
+   related-test key counts only a decision-set row linked above `low`
+   relation confidence: a row joined by a shared name token or fixture
+   affinity is advisory, so it does not lift a finding over a
+   higher-confidence one (#14734). A row with no recorded relation
+   confidence (an older artifact) still counts.
 
 Apart from the same-behavior shadowing in step 2, verdict order within one
 file role is unchanged: an unshadowed production unknown still leads a
