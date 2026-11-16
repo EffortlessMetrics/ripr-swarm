@@ -530,9 +530,11 @@ fn extends_leftward(previous: &str) -> bool {
 }
 
 /// Whether `previous` ends with a closure parameter list (`|x|`,
-/// `move |a, b: u8|`) rather than a bit-or operand: the opening `|` follows
-/// an expression start (`(`, `,`, `=`, `{`, `;`, the line start or `move`),
-/// not a left operand as in `m | n | a > b`.
+/// `move |a, b: u8|`, `|x: &Vec<u8>|`) rather than a bit-or operand: the
+/// opening `|` follows an expression start (`(`, `,`, `=`, `=>`, `{`, `;`,
+/// `[`, the line start, `move`, `return` or another closure's parameters),
+/// not a left operand as in `m | n | a > b`. A binary `|` always has a left
+/// operand, so the parameter text itself needs no check.
 fn closes_closure_parameters(previous: &str) -> bool {
     let Some(head) = previous.strip_suffix('|') else {
         return false;
@@ -540,18 +542,18 @@ fn closes_closure_parameters(previous: &str) -> bool {
     let Some(open) = head.rfind('|') else {
         return false;
     };
-    let params = head.get(open + 1..).unwrap_or_default();
-    let param_char =
-        |ch: char| ch.is_alphanumeric() || matches!(ch, '_' | ',' | ' ' | ':' | '&' | '(' | ')');
-    if !params.chars().all(param_char) {
-        return false;
-    }
     let before = head.get(..open).unwrap_or_default().trim_end();
-    before.is_empty()
-        || before.ends_with(['(', ',', '=', '{', ';'])
-        || before
-            .strip_suffix("move")
+    let ends_with_word = |word: &str| {
+        before
+            .strip_suffix(word)
             .is_some_and(|rest| !rest.ends_with(|ch: char| ch.is_alphanumeric() || ch == '_'))
+    };
+    before.is_empty()
+        || before.ends_with(['(', ',', '=', '{', ';', '['])
+        || before.ends_with("=>")
+        || ends_with_word("move")
+        || ends_with_word("return")
+        || closes_closure_parameters(before)
 }
 
 /// A record field must be a whole syntactic unit, not the head or tail of a
@@ -2397,6 +2399,11 @@ mod tests {
             "(m << a > b, c)",
             "(m | n | a > b, c)",
             "(f(x) | a > b, c)",
+            "(m, n | k | a > b)",
+            "x = m | n | a > b;",
+            "{ m | n | a > b }",
+            "(remove |x| a > b, c)",
+            "(x || y | a > b, c)",
         ] {
             assert_eq!(count(extended), 0, "{extended}");
         }
@@ -2412,6 +2419,15 @@ mod tests {
             "(v.any(|x| a > b), c)",
             "(move |x, y: u8| a > b, c)",
             "let f = |x| a > b;",
+            "|x| a > b",
+            "(c, |x| a > b)",
+            "{ |x| a > b }",
+            "(v.any(|x: &Vec<u8>| a > b), c)",
+            "(v.any(|[x, _]: [u8; 2]| a > b), c)",
+            "(v.any(|x: &'a T| a > b), c)",
+            "x => |x| a > b,",
+            "return |x| a > b;",
+            "(|x| |y| a > b, c)",
             "(x && a > b, c) // note",
             "x && a > b // a / b",
             "(/* why */ a > b, c)",
