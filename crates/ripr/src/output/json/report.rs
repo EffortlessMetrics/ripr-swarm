@@ -1395,10 +1395,13 @@ fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
     ) {
         return crate::output::related_test_miss::typescript_script_preview_related_test(finding);
     }
+    // #14483: the shared observation tier leads, so the summary never
+    // describes a row whose assertion cannot observe the change while a row
+    // that can is listed; strength then picks within the tier.
     finding
         .related_tests
         .iter()
-        .max_by_key(|test| test.oracle_strength.rank())
+        .max_by_key(|test| (test.observation_tier(), test.oracle_strength.rank()))
 }
 
 /// The observed values the check JSON renders for a finding: every value up

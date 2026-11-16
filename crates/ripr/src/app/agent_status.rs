@@ -1787,6 +1787,61 @@ struct PilotDeclinedOnly {
     evidence_failed: bool,
 }
 
+/// Paths a complete `ripr pilot` run skipped because they were unreadable
+/// (#13624), read from the summary's `inventory_evidence_limitations`. Pilot
+/// ranks and offers nothing then, so a rerun changes nothing until read
+/// access is restored. Not a failed evidence pass and not transient.
+fn pilot_unreadable_paths(root: &Path) -> Option<(usize, Vec<String>)> {
+    let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
+    let summary = serde_json::from_str::<Value>(&text).ok()?;
+    let complete = summary.pointer("/status").and_then(Value::as_str) == Some("complete");
+    let no_seams = summary
+        .pointer("/top_actionable_seams")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    let no_repair_start = summary
+        .pointer("/next/repair_command")
+        .is_some_and(Value::is_null);
+    if !(complete && no_seams && no_repair_start) {
+        return None;
+    }
+    let entries = summary
+        .pointer("/inventory_evidence_limitations")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter(|entry| {
+            entry.pointer("/category").and_then(Value::as_str)
+                == Some(
+                    crate::analysis_outcome::AnalysisLimitationKind::LanguageScopeUnsupported
+                        .as_str(),
+                )
+        })
+        .collect::<Vec<_>>();
+    // A refused name (for example `C:locked.rs`) degrades to a pathless entry;
+    // it still counts, and is described without a name.
+    let paths = entries
+        .iter()
+        .filter_map(|entry| entry.pointer("/path").and_then(Value::as_str))
+        .map(|path| crate::terminal_text::terminal_safe(path.to_string()))
+        .collect::<Vec<_>>();
+    (!entries.is_empty()).then_some((entries.len(), paths))
+}
+
+fn pilot_unreadable_paths_message(total: usize, paths: &[String]) -> String {
+    let unnamed = total.saturating_sub(paths.len());
+    let mut parts = paths.iter().take(3).cloned().collect::<Vec<_>>();
+    if paths.len() > 3 {
+        parts.push(format!("{} more", paths.len() - 3));
+    }
+    if unnamed > 0 {
+        parts.push(format!("{unnamed} path(s) whose name could not be shown"));
+    }
+    let listed = parts.join(", ");
+    format!(
+        "the last complete `ripr pilot` run ranked no gap because it could not read {listed}: a gap may only be a test hidden in an unreadable path, so none is ranked or offered. This is an unreadable path, not a failed evidence pass: restore read access, then rerun `ripr pilot`. `target/ripr/pilot/pilot-summary.json` lists them under `inventory_evidence_limitations`"
+    )
+}
+
 fn pilot_declined_only(root: &Path) -> Option<PilotDeclinedOnly> {
     let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
     let summary = serde_json::from_str::<Value>(&text).ok()?;
@@ -2281,6 +2336,16 @@ fn legacy_next_command(
                     message: pilot_rust_excluded_message(&excluded),
                 });
             }
+            return None;
+        }
+        // #13624: pilot skipped an unreadable Rust path and ranked nothing,
+        // so a rerun changes nothing until read access is restored.
+        if let Some((total, paths)) = pilot_unreadable_paths(root) {
+            warnings.push(AgentStatusWarning {
+                kind: "pilot_unreadable_rust_path_no_repair_target".to_string(),
+                artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                message: pilot_unreadable_paths_message(total, &paths),
+            });
             return None;
         }
         // #5497: pilot withheld every seam as a static limitation, so a
@@ -4259,6 +4324,43 @@ mod tests {
         );
         std::fs::remove_dir_all(&empty).map_err(|err| format!("remove: {err}"))?;
         std::fs::remove_dir_all(&cargo).map_err(|err| format!("remove: {err}"))?;
+        Ok(())
+    }
+
+    /// #13624: a named and a pathless (refused name) unreadable-path
+    /// limitation are both detected by category, and neither reads as a failed
+    /// evidence pass or a "rerun pilot" recommendation.
+    #[test]
+    fn pilot_unreadable_paths_detects_named_and_pathless_entries() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("unreadable-paths");
+        let summary = |limitations: &str| {
+            format!(
+                r#"{{"status":"complete","top_actionable_seams":[],"next":{{"repair_command":null}},"inventory_evidence_limitations":[{limitations}]}}"#
+            )
+        };
+        let named = r#"{"category":"language_scope_unsupported","path":"src/locked"}"#;
+        let pathless = r#"{"category":"language_scope_unsupported"}"#;
+        let other = r#"{"category":"producer_failure"}"#;
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary(&format!("{named},{pathless}")),
+        )?;
+        let (total, paths) = pilot_unreadable_paths(&root).ok_or("both entries must match")?;
+        let message = pilot_unreadable_paths_message(total, &paths);
+        assert_eq!((total, paths.clone()), (2, vec!["src/locked".to_string()]));
+        assert!(
+            message.contains("src/locked, 1 path(s) whose name could not be shown"),
+            "{message}"
+        );
+        assert!(message.contains("restore read access"), "{message}");
+        assert!(!message.contains("transient"), "{message}");
+        write_file(&root.join(PILOT_SUMMARY_ARTIFACT), &summary(pathless))?;
+        let (total, paths) = pilot_unreadable_paths(&root).ok_or("pathless must match")?;
+        assert_eq!((total, paths.len()), (1, 0));
+        assert!(pilot_unreadable_paths_message(total, &paths).contains("1 path(s) whose name"));
+        write_file(&root.join(PILOT_SUMMARY_ARTIFACT), &summary(other))?;
+        assert!(pilot_unreadable_paths(&root).is_none());
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove: {err}"))?;
         Ok(())
     }
 

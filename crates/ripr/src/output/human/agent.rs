@@ -32,8 +32,7 @@ use super::triage::{self, HumanTriage};
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
 use crate::domain::{
-    ExposureClass, Finding, NextActionCheckCase, OracleStrength, RelatedTest, RelatedTestMiss,
-    RelationConfidence,
+    ExposureClass, Finding, NextActionCheckCase, OracleStrength, RelatedTest, RelationConfidence,
 };
 use crate::output::next_action::render_next_action_plain_at_root;
 use crate::output::path::repository_display_path;
@@ -1016,10 +1015,10 @@ fn strongest_test(finding: &Finding) -> Option<&RelatedTest> {
             (
                 test.relation_confidence
                     .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
-                // #14454: within a confidence tier, a row whose assertion
-                // cannot observe the change is never the test to edit while
-                // another row can.
-                test.miss == Some(RelatedTestMiss::AssertionNotObserving),
+                // #14454, #14483: within a confidence tier, a row whose
+                // assertion cannot observe the change is never the test to
+                // edit while another row can (the shared observation tier).
+                std::cmp::Reverse(test.observation_tier()),
                 strength_rank(&test.oracle_strength),
             )
         })
@@ -1028,7 +1027,10 @@ fn strongest_test(finding: &Finding) -> Option<&RelatedTest> {
 /// The related test a `done=` line names as the one that appears to notice
 /// the change: the strongest oracle leads, so a direct caller holding only a
 /// smoke check is never named as the noticer over a test that pins the value;
-/// relation confidence breaks ties (#13603 review).
+/// relation confidence breaks ties (#13603 review). The shared observation
+/// tier leads (#14483), so a strong oracle on a test with no established path
+/// to the change is never named as the noticer while a reaching test is
+/// listed.
 fn noticing_test(finding: &Finding) -> Option<&RelatedTest> {
     finding
         .related_tests
@@ -1036,6 +1038,7 @@ fn noticing_test(finding: &Finding) -> Option<&RelatedTest> {
         .filter(|test| test.is_contributing())
         .min_by_key(|test| {
             (
+                std::cmp::Reverse(test.observation_tier()),
                 strength_rank(&test.oracle_strength),
                 test.relation_confidence
                     .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
@@ -1176,6 +1179,24 @@ fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missin
         .or_else(|| finding.missing.first().map(String::as_str))
         .filter(|_| with_missing)
         .unwrap_or("-");
+    // The row shows one fact; `(+N more)` tells a reader that explain has the
+    // rest, so a single code value is never mistaken for the whole check.
+    // Counts distinct discriminator values; `finding.missing` prose lines are
+    // generic labels, not further facts.
+    // A plain loop: a map/collect chain here sends ripr's own PR-evidence
+    // check past its time budget (#13884).
+    let mut values: Vec<&str> = Vec::new();
+    for fact in &finding.activation.missing_discriminators {
+        if !values.contains(&fact.value.as_str()) {
+            values.push(fact.value.as_str());
+        }
+    }
+    let more = values.len().saturating_sub(1);
+    let missing = if with_missing && more > 0 {
+        format!("{} (+{more} more)", clip(missing))
+    } else {
+        clip(missing)
+    };
     let test = test_ref.map_or_else(|| "-".to_string(), |index| format!("t{index}"));
     format!(
         "{}|{}|{}|missing={}|test={}|id={}",
@@ -1185,7 +1206,7 @@ fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missin
             finding,
             &finding.probe.expression
         ))),
-        field(&clip(missing)),
+        field(&missing),
         test,
         finding.id
     )

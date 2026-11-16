@@ -67,9 +67,7 @@ queued commit's tree must also equal the live head merged onto the group base
 (`git merge-tree --write-tree <base> <head>`, with the head fetched from the
 PR's own `refs/pull/<n>/head` and required to match the head read from the API).
 A different head, extra content, a merge conflict, a moved PR ref or missing
-history refuses. Admission is per PR, so the queue must use a group size of 1; the queued commit must be a single
-squash commit of the queued PR sitting directly on the group's `base_sha`, or
-admission refuses it, so a batch fails closed even if the ruleset is misconfigured. Batching needs per-PR admission (#8082) and is a follow-up. The
+history refuses. Admission is per constituent PR in `merge_group.base_sha..merge_group.head_sha` (#8082): every constituent commit must form a linear single-parent squash chain, bind to its live PR head (`git merge-tree --write-tree <prev> <head>`) and `mergeQueueEntry`, pass candidate/cut/review/thread admission, and belong to the base repository before self-hosted runners are selected. The
 `merge-ready` label request below still works until the label request is
 retired in a follow-up, after the repository's merge queue is enabled.
 
@@ -1958,6 +1956,12 @@ ripr review-comments \
   --out target/ripr/review/comments.json
 ```
 
+To honor a repository suppression policy in the gate, add
+`--suppression-policy .ripr/suppressions.toml` here and to the `ripr check`
+step. The default `.ripr/suppressions.toml` is never applied implicitly;
+matching seams move to the `suppressed` array and `ripr gate evaluate` reads
+them as non-blocking. See [coming from cargo-mutants](FROM_CARGO_MUTANTS.md#suppressing-in-ci).
+
 That renderer writes JSON and Markdown under `target/ripr/review/` and does
 not post to GitHub by itself. Teams replacing a cargo-mutants exit-`2` CI gate
 can pair it with `ripr gate evaluate --mode acknowledgeable`; see
@@ -3016,7 +3020,7 @@ Those remain separate qualification and rollout obligations.
 The ordinary size envelope (files and changed lines) counts only what a human
 has to review. Generated files are declared once, with `linguist-generated` in
 `.gitattributes` (dependency lockfiles, blessed `expected/` rows and goldens,
-public-proof metrics, verdict-corpus producer fact packets, honesty-corpus repo-exposure captures), and their lines and files are not counted. The
+public-proof metrics, the canonical DX scoreboard report `metrics/dx-scoreboard/baseline.json`, verdict-corpus producer fact packets, honesty-corpus repo-exposure captures), and their lines and files are not counted. The
 declaration is read from the PR's base commit, so a PR cannot label its own
 files; a `.gitattributes` edit is itself counted in full. Three guards keep the
 label from hiding hand-written code: only declarable shapes count (lockfiles,

@@ -2358,11 +2358,16 @@ fn triage_rank<'a>(
 /// finding over a higher-confidence one in the Start here order: on semver
 /// `ce1fef1` a format-string literal linked to `test_digit_after_wildcard`
 /// by a shared word led the new `self.0 == '\0'` predicate (#14734).
+/// `Opaque` ranks below `Low`, so it does not count either; no producer
+/// writes it today, but a stored artifact may carry it.
 /// A row from an older artifact (no relation confidence) keeps counting.
 fn has_linked_oracle_test(finding: &Finding) -> bool {
-    finding
-        .oracle_related_tests()
-        .any(|test| test.relation_confidence != Some(RelationConfidence::Low))
+    finding.oracle_related_tests().any(|test| {
+        !matches!(
+            test.relation_confidence,
+            Some(RelationConfidence::Low | RelationConfidence::Opaque)
+        )
+    })
 }
 
 /// A stable finding ranks by its repair route; a preview finding only by the
@@ -2547,8 +2552,14 @@ pub(super) fn limit_leaves_weak_assertion_open(finding: &Finding) -> bool {
 /// `owner_named_test`, `import_path_affinity`, `fixture_owner_affinity`,
 /// `seam_callee_call` and `assertion_target_affinity` still count as bound to
 /// the owner here. This is a reasoned choice, not measured against a corpus.
+///
+/// Among the bound weak rows, the first of the best shared
+/// [`crate::domain::RelatedTest::observation_tier`] is named (#14483), so a
+/// listed-first row with no call path never names the test to open while a
+/// weak row that reaches the change is listed. Whether a row exists is
+/// unchanged.
 pub(super) fn weak_assertion_row(finding: &Finding) -> Option<&crate::domain::RelatedTest> {
-    finding.related_tests.iter().find(|test| {
+    let bound_weak = finding.related_tests.iter().filter(|test| {
         test.is_contributing()
             && !test
                 .relation_reason
@@ -2557,7 +2568,9 @@ pub(super) fn weak_assertion_row(finding: &Finding) -> Option<&crate::domain::Re
                 test.oracle_strength,
                 crate::domain::OracleStrength::Weak | crate::domain::OracleStrength::Smoke
             )
-    })
+    });
+    // `min_by_key` keeps the first of equal keys.
+    bound_weak.min_by_key(|test| std::cmp::Reverse(test.observation_tier()))
 }
 
 pub(super) fn is_preview_limited(finding: &Finding) -> bool {
@@ -4185,6 +4198,18 @@ mod tests {
             "test_digit_after_wildcard",
             RelationReason::FixtureOwnerAffinity,
             Some(RelationConfidence::Low),
+        )];
+        assert_eq!(
+            selected(vec![literal.clone(), predicate.clone()]),
+            Some("finding:predicate".to_string())
+        );
+
+        // `Opaque` ranks below `Low`, so a stored row carrying it does not
+        // count either.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::SameTestFile,
+            Some(RelationConfidence::Opaque),
         )];
         assert_eq!(
             selected(vec![literal.clone(), predicate.clone()]),

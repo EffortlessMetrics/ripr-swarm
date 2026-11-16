@@ -307,14 +307,16 @@ pub(in crate::app) fn location_miss_hint(
         return None;
     }
     // `file:line:column` splits as file `file:line`; matching is per line.
-    let (selector_file, column_given) = match selector_file.rsplit_once(':') {
-        Some((file, line)) if !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()) => {
-            (file, true)
-        }
-        _ => (selector_file, false),
+    let (selector_file, column_given) = match location_column_form_file(selector_file) {
+        Some(file) => (file, true),
+        None => (selector_file, false),
     };
     let wanted = normalize_locator_path(selector_file);
-    if wanted.is_empty() || !(wanted.contains(['/', '.'])) {
+    // A bare `word:N` may be an opaque id, so it needs a path shape; the
+    // three-part `file:N:M` form is location-shaped by itself, and the
+    // explain cause defers to this hint for it, so an extensionless file
+    // (`Makefile:3:5`) must still get one (#14511).
+    if wanted.is_empty() || !(column_given || wanted.contains(['/', '.'])) {
         return None;
     }
     let column_note = if column_given {
@@ -455,6 +457,17 @@ pub(in crate::app) fn location_miss_hint(
     Some(format!(
         " No finding in this scope is in {wanted:?}; findings are in {files}{more}.{column_note}"
     ))
+}
+
+/// The one `file:line:column` detector (#14511). `selector_file` is the text
+/// before a selector's last `:`; when it ends in `:<digits>` the selector is
+/// the column form and this returns the file part. The explain miss cause
+/// and the location hint both read it, so they never disagree on which
+/// selectors are column forms.
+pub(in crate::app) fn location_column_form_file(selector_file: &str) -> Option<&str> {
+    selector_file.rsplit_once(':').and_then(|(file, line)| {
+        (!line.is_empty() && line.bytes().all(|b| b.is_ascii_digit())).then_some(file)
+    })
 }
 
 /// Normalize a path for locator matching: convert `\` to `/`, drop a leading

@@ -4,7 +4,9 @@
   "foreign_entry_count": 1,
   "foreign_total_size_bytes": 64,
   "real_cache_dir": null,
-  "schema_version": "0.2",
+  "reclaimable_entry_count": 3,
+  "reclaimable_size_bytes": 2048,
+  "schema_version": "0.3",
   "status": "ok",
   "total_size_bytes": 48211,
   "via_symlink": false

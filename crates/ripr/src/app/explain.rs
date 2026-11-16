@@ -464,6 +464,20 @@ fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<LocationM
     location_miss_cause_text(selector, output)
 }
 
+/// The [`MAX_NEARBY_FINDING_LOCATIONS`] locations nearest `wanted_line`,
+/// listed in file/line order, and how many were listed.
+fn nearest_locations(mut locations: Vec<(usize, String)>, wanted_line: usize) -> (String, usize) {
+    locations.sort_by_key(|(line, file)| (line.abs_diff(wanted_line), *line, file.clone()));
+    locations.truncate(MAX_NEARBY_FINDING_LOCATIONS);
+    locations.sort();
+    let listed = locations
+        .iter()
+        .map(|(line, file)| format!("{file}:{line}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    (listed, locations.len())
+}
+
 /// A [`location_miss_cause`] clause, whether it already names the same
 /// file's other finding lines (so the #14384 hint must not repeat them),
 /// and whether it already says the analysis was incomplete (so the hint
@@ -497,11 +511,8 @@ fn location_miss_cause_text(selector: &str, output: &CheckOutput) -> Option<Loca
     let wanted_line = selector_line.parse::<usize>().ok()?;
     // A `file:line:column` selector would read its line as part of the path
     // and be told the path is misspelled; the #14384 hint names the column
-    // form instead.
-    if selector_file
-        .rsplit_once(':')
-        .is_some_and(|(_, line)| !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()))
-    {
+    // form instead, through the same detector (#14511).
+    if super::selector::location_column_form_file(selector_file).is_some() {
         return None;
     }
     let wanted_file = super::selector::normalize_locator_path(selector_file);
@@ -533,31 +544,53 @@ fn location_miss_cause_text(selector: &str, output: &CheckOutput) -> Option<Loca
     nearby.sort();
     nearby.dedup();
     if !nearby.is_empty() {
-        let total = nearby.len();
-        nearby.sort_by_key(|(line, file)| (line.abs_diff(wanted_line), *line, file.clone()));
-        nearby.truncate(MAX_NEARBY_FINDING_LOCATIONS);
-        nearby.sort();
-        let listed = nearby
-            .iter()
-            .map(|(line, file)| format!("{file}:{line}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let scope = if total > nearby.len() {
-            format!("the {} nearest of {total} are", nearby.len())
-        } else if total == 1 {
-            "it is at".to_string()
-        } else {
-            "they are at".to_string()
+        // #14492: retry advice names only a location that selects exactly
+        // one finding; a line several findings share would refuse the retry
+        // as ambiguous, so those lines point at probe ids instead.
+        let (unique, shared): (Vec<_>, Vec<_>) = nearby.into_iter().partition(|(line, file)| {
+            matches!(
+                super::selector::select_finding(&output.findings, &format!("{file}:{line}")),
+                super::selector::FindingSelection::Unique(_)
+            )
+        });
+        let shared_count = shared.len();
+        let noun = match (unique.len() + shared_count, shared_count) {
+            (1, 0) => "a finding at another line",
+            (1, _) => "findings at another line",
+            _ => "findings at other lines",
         };
-        let noun = if total == 1 {
-            "a finding at another line"
+        let shared_note = if shared_count == 0 {
+            String::new()
         } else {
-            "findings at other lines"
+            let verb = if shared_count == 1 {
+                "holds"
+            } else {
+                "each hold"
+            };
+            let (listed, _) = nearest_locations(shared, wanted_line);
+            let lead = if unique.is_empty() { "" } else { "; " };
+            format!("{lead}{listed} {verb} several findings, so select one there by its probe id")
+        };
+        let text = if unique.is_empty() {
+            format!(
+                "No finding is at line {wanted_line}, but this run has {noun} of that file: {shared_note}"
+            )
+        } else {
+            let count = unique.len();
+            let (listed, shown) = nearest_locations(unique, wanted_line);
+            let scope = if count > shown {
+                format!("the {shown} nearest of {count} are")
+            } else if count == 1 {
+                "it is at".to_string()
+            } else {
+                "they are at".to_string()
+            };
+            format!(
+                "No finding is at line {wanted_line}, but this run has {noun} of that file: {scope} {listed}. Retry with one of those locations{shared_note}"
+            )
         };
         return Some(LocationMissCause {
-            text: format!(
-                "No finding is at line {wanted_line}, but this run has {noun} of that file: {scope} {listed}. Retry with one of those locations"
-            ),
+            text,
             names_same_file_lines: true,
             names_incomplete: false,
         });
@@ -987,6 +1020,175 @@ mod tests {
             message.contains("probe:src_lib.rs:side_effect:3ceb2918"),
             "ambiguous refusal must name the second candidate: {message}"
         );
+    }
+
+    fn fixture_check_output(name: &str) -> Result<CheckOutput, String> {
+        let mut input = fixture_diff_input(name);
+        let config = crate::config::load_for_root(&input.root)?;
+        crate::config::apply_to_check_input(
+            &mut input,
+            &config,
+            crate::config::CheckInputExplicit::default(),
+        );
+        check_with_progress(input, &config, AnalysisProgressScope::Diff, None)
+    }
+
+    /// Every `file:line` the same-file clause tells the user to retry with:
+    /// the list after `is at` / `are at`, up to `. Retry with`.
+    fn advised_retry_locations(cause: &str) -> Vec<String> {
+        let Some((head, _)) = cause.split_once(". Retry with one of those locations") else {
+            return Vec::new();
+        };
+        // After `of that file: ` comes `it is at`, `they are at` or the
+        // bounded `the 5 nearest of 7 are`, then the list.
+        let scope = head
+            .split_once("of that file: ")
+            .map_or("", |(_, scope)| scope);
+        let listed = scope
+            .strip_prefix("it is at ")
+            .or_else(|| scope.strip_prefix("they are at "))
+            .or_else(|| scope.split_once(" are ").map(|(_, listed)| listed))
+            .unwrap_or("");
+        listed
+            .split(", ")
+            .filter(|location| !location.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// #14492: `collection_argument_plain` has two findings at
+    /// `src/lib.rs:3` and none elsewhere. A miss on another line of that
+    /// file must not tell the user to retry `src/lib.rs:3`, which refuses as
+    /// ambiguous; it points at probe ids instead. With a uniquely held line
+    /// added, only that line is offered for retry.
+    #[test]
+    fn same_file_retry_advice_names_only_uniquely_selectable_lines() -> Result<(), String> {
+        let mut output = fixture_check_output("collection_argument_plain")?;
+        let shared: Vec<_> = output
+            .findings
+            .iter()
+            .filter(|finding| finding.probe.location.line == 3)
+            .collect();
+        if shared.len() != 2 || output.findings.len() != 2 {
+            return Err(format!(
+                "fixture must hold exactly two findings, both at line 3: {:?}",
+                output
+                    .findings
+                    .iter()
+                    .map(|finding| (&finding.id, finding.probe.location.line))
+                    .collect::<Vec<_>>()
+            ));
+        }
+        if !matches!(
+            super::super::selector::select_finding(&output.findings, "src/lib.rs:3"),
+            FindingSelection::Ambiguous(_)
+        ) {
+            return Err("src/lib.rs:3 must be ambiguous in the fixture".to_string());
+        }
+
+        let cause = location_miss_cause("src/lib.rs:1", &output)
+            .map(|cause| cause.text)
+            .ok_or("a same-file miss must carry a cause")?;
+        require_contains(
+            &cause,
+            "src/lib.rs:3 holds several findings, so select one there by its probe id",
+        )?;
+        require_not_contains(&cause, "Retry with one of those locations")?;
+
+        // Add a uniquely held line: it is offered, the shared one is not.
+        let mut unique = output.findings[0].clone();
+        unique.id = "probe:src_lib.rs:unique_line:00000007".to_string();
+        unique.probe.id = crate::domain::ProbeId(unique.id.clone());
+        unique.probe.location.line = 7;
+        unique.canonical_gap = None;
+        output.findings.push(unique);
+        let cause = location_miss_cause("src/lib.rs:5", &output)
+            .map(|cause| cause.text)
+            .ok_or("a same-file miss must carry a cause")?;
+        let advised = advised_retry_locations(&cause);
+        if advised.is_empty() {
+            return Err(format!("the uniquely held line must be offered: {cause}"));
+        }
+        for location in &advised {
+            if !matches!(
+                super::super::selector::select_finding(&output.findings, location),
+                FindingSelection::Unique(_)
+            ) {
+                return Err(format!(
+                    "advised retry {location:?} does not select exactly one finding: {cause}"
+                ));
+            }
+        }
+        require_contains(
+            &cause,
+            "it is at src/lib.rs:7. Retry with one of those locations",
+        )?;
+        require_contains(
+            &cause,
+            "; src/lib.rs:3 holds several findings, so select one there by its probe id",
+        )?;
+
+        // More uniquely held lines than the clause lists: the bounded form
+        // still offers only unique locations, and the shared line stays out.
+        for line in [20, 21, 22, 23, 24, 25] {
+            let mut extra = output.findings[0].clone();
+            extra.id = format!("probe:src_lib.rs:unique_line:000000{line}");
+            extra.probe.id = crate::domain::ProbeId(extra.id.clone());
+            extra.probe.location.line = line;
+            extra.canonical_gap = None;
+            output.findings.push(extra);
+        }
+        let cause = location_miss_cause("src/lib.rs:30", &output)
+            .map(|cause| cause.text)
+            .ok_or("a same-file miss must carry a cause")?;
+        require_contains(&cause, "the 5 nearest of 7 are ")?;
+        let advised = advised_retry_locations(&cause);
+        if advised.len() != 5 {
+            return Err(format!("the bounded list must offer 5 locations: {cause}"));
+        }
+        for location in &advised {
+            if !matches!(
+                super::super::selector::select_finding(&output.findings, location),
+                FindingSelection::Unique(_)
+            ) {
+                return Err(format!(
+                    "advised retry {location:?} does not select exactly one finding: {cause}"
+                ));
+            }
+        }
+        require_contains(
+            &cause,
+            "; src/lib.rs:3 holds several findings, so select one there by its probe id",
+        )
+    }
+
+    /// #14511: the cause defers a `file:line:column` selector to the hint
+    /// through the shared detector, and an all-digit extensionless path is
+    /// not mistaken for a column form.
+    #[test]
+    fn column_forms_defer_to_the_hint_and_digit_paths_keep_a_cause() -> Result<(), String> {
+        let output = fixture_check_output("collection_argument_plain")?;
+        for selector in ["src/lib.rs:3:5", "Makefile:3:5"] {
+            if location_miss_cause(selector, &output).is_some() {
+                return Err(format!(
+                    "{selector} is a column form; the hint speaks for it"
+                ));
+            }
+            let hint = super::super::selector::location_miss_hint(
+                &output.findings,
+                &output.root,
+                selector,
+                super::super::selector::ScopeCompleteness::Complete,
+            )
+            .ok_or_else(|| format!("{selector}: a column form must get a hint"))?;
+            require_contains(&hint, "Selectors are file:line; drop the column.")?;
+        }
+        for selector in ["src/2024:10", "2024:10"] {
+            if location_miss_cause(selector, &output).is_none() {
+                return Err(format!("{selector} is file:line and must keep a cause"));
+            }
+        }
+        Ok(())
     }
 
     /// #8166 Slice B: a unique canonical gap identity resolves exactly the

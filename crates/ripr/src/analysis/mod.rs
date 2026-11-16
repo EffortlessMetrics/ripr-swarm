@@ -32,6 +32,7 @@ pub(crate) mod new_test_target;
 pub(crate) mod owner_opt_out;
 pub(crate) mod path_glob;
 mod pipeline;
+pub(crate) mod python_env;
 pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
 // Source-role recognition stays with the cfg-predicate authority (#3530/#3534);
 // consumers outside `analysis` ask it instead of matching attribute text.
@@ -169,6 +170,8 @@ pub(crate) use seam_classification::SeamGripClassCounts;
 pub(crate) use seam_classification::classify_seam;
 #[cfg(test)]
 pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
+#[cfg(test)]
+pub(crate) use seam_inventory::evaluation_probe;
 pub(crate) use seam_inventory::file_fact_store_failure_rows;
 #[cfg(test)]
 pub(crate) use seam_inventory::hold_seam_limit_mutators;
@@ -189,7 +192,7 @@ pub(crate) use seam_inventory::{
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_bound_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
-    inventory_diff_scoped_streamed_seams_at_with_config,
+    inventory_diff_scoped_seam_at_with_config, inventory_diff_scoped_streamed_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_with_optional_prepared,
     inventory_file_guidance_at_with_config, inventory_pilot_seams_report_at_with_config,
     inventory_seams_at_with_config, locate_seam_file_at_with_config,
@@ -281,8 +284,21 @@ pub(crate) fn root_has_no_inspectable_workspace(root: &Path) -> bool {
 
 /// Re-export workspace Rust file discovery for the output layer so it can
 /// check whether a workspace has any Rust source.
+///
+/// An unreadable subdirectory or file is skipped, not turned into an empty
+/// set: use [`workspace_has_rust_source`] for a "no Rust here" verdict.
 pub(crate) fn workspace_rust_files(root: &Path) -> Vec<PathBuf> {
-    workspace::discover_rust_files(root).unwrap_or_default()
+    workspace::discover_readable_rust_files(root, &Default::default())
+        .map(|(files, _)| files)
+        .unwrap_or_default()
+}
+
+/// Whether the root holds any Rust source, counting a path the walk could not
+/// read: an unreadable directory may hold Rust, so it never reads as "no Rust
+/// files" (an unreadable root still does, as before).
+pub(crate) fn workspace_has_rust_source(root: &Path) -> bool {
+    workspace::discover_readable_rust_files(root, &Default::default())
+        .is_ok_and(|(files, unreadable)| !files.is_empty() || !unreadable.is_empty())
 }
 
 /// Why a ledger-supplied rerun anchor is not strictly root-relative, or `None`

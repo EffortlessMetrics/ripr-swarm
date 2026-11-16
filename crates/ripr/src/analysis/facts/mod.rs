@@ -582,6 +582,7 @@ pub use model::{
 pub(crate) use model::WorkspaceFileAuthority;
 #[cfg(test)]
 pub(crate) use model::WorkspaceRootAuthority;
+pub(crate) use model::probe_shape_position;
 pub(crate) use model::source_digest;
 
 /// Phase tracing extends the existing opt-in latency stream; normal output is
