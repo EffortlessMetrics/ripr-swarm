@@ -1732,8 +1732,15 @@ fn json_normal_form(value: &str) -> Option<String> {
     let compact: String = value.chars().filter(|ch| !ch.is_whitespace()).collect();
     // A plain integer is compared exactly (`literal_scalar`), not through the
     // `f64` arithmetic below, which merges integers past 2^53.
+    // A bounded length bounds the evaluator's recursion; a longer value is
+    // not established.
+    if compact.chars().count() > 256 {
+        return None;
+    }
     let unsigned = compact.strip_prefix(['-', '+']).unwrap_or(&compact);
-    if !unsigned.is_empty() && unsigned.chars().all(|ch| ch.is_ascii_digit() || ch == '_') {
+    if unsigned.starts_with(|ch: char| ch.is_ascii_digit())
+        && unsigned.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
+    {
         return literal_scalar(&compact);
     }
     if !compact.is_empty()
@@ -1826,9 +1833,12 @@ fn literal_scalar(token: &str) -> Option<String> {
     ]
     .iter()
     .find_map(|(prefix, radix)| {
-        magnitude
-            .strip_prefix(prefix)
-            .map(|rest| i128::from_str_radix(rest, *radix).ok())
+        magnitude.strip_prefix(prefix).map(|rest| {
+            rest.chars()
+                .all(|ch| ch.is_ascii_alphanumeric())
+                .then(|| i128::from_str_radix(rest, *radix).ok())
+                .flatten()
+        })
     });
     let integer = match token {
         "None" => return Some("null".to_string()),
@@ -1843,7 +1853,11 @@ fn literal_scalar(token: &str) -> Option<String> {
         },
     };
     if let Some(integer) = integer {
-        let integer = if negative { -integer } else { integer };
+        let integer = if negative {
+            integer.checked_neg()?
+        } else {
+            integer
+        };
         // Python compares integers exactly; beyond 2^53 a float would merge
         // neighbours, so the digits themselves are the form.
         return if integer.unsigned_abs() < EXACT_FLOAT_INTEGER {
@@ -1874,8 +1888,15 @@ fn canonical_number(number: f64) -> Option<String> {
     })
 }
 
+/// Whether an arithmetic value is exact in `f64` (below 2^53), checked at
+/// every step so an intermediate past it cannot round a result.
+fn exact(value: f64) -> Option<f64> {
+    (value.is_finite() && value.abs() < EXACT_FLOAT_INTEGER as f64).then_some(value)
+}
+
 /// `sum := product (('+' | '-') product)*` over a whitespace-free numeric
-/// expression.
+/// expression, with Python's precedence: `**` binds tighter than a unary
+/// sign on its left (`-2**2` is -4) and looser on its right (`2**-1`).
 fn arithmetic_sum(chars: &[char], at: &mut usize) -> Option<f64> {
     let mut value = arithmetic_product(chars, at)?;
     while let Some(&op) = chars.get(*at) {
@@ -1884,17 +1905,17 @@ fn arithmetic_sum(chars: &[char], at: &mut usize) -> Option<f64> {
         }
         *at += 1;
         let rhs = arithmetic_product(chars, at)?;
-        value = if op == '+' { value + rhs } else { value - rhs };
+        value = exact(if op == '+' { value + rhs } else { value - rhs })?;
     }
     Some(value)
 }
 
-/// `product := power (('*' | '/' | '//' | '%') power)*`.
+/// `product := unary (('*' | '/' | '//' | '%') unary)*`.
 fn arithmetic_product(chars: &[char], at: &mut usize) -> Option<f64> {
-    let mut value = arithmetic_power(chars, at)?;
+    let mut value = arithmetic_unary(chars, at)?;
     loop {
         let op = match (chars.get(*at), chars.get(*at + 1)) {
-            (Some('*'), Some('*')) => break,
+            (Some('*'), Some('*')) => return None,
             (Some('/'), Some('/')) => "//",
             (Some('*'), _) => "*",
             (Some('/'), _) => "/",
@@ -1902,32 +1923,21 @@ fn arithmetic_product(chars: &[char], at: &mut usize) -> Option<f64> {
             _ => break,
         };
         *at += op.len();
-        let rhs = arithmetic_power(chars, at)?;
+        let rhs = arithmetic_unary(chars, at)?;
         if matches!(op, "/" | "//" | "%") && rhs == 0.0 {
             return None;
         }
-        value = match op {
+        value = exact(match op {
             "*" => value * rhs,
             "/" => value / rhs,
             "//" => (value / rhs).floor(),
             _ => value - rhs * (value / rhs).floor(),
-        };
+        })?;
     }
     Some(value)
 }
 
-/// `power := unary ('**' power)?`.
-fn arithmetic_power(chars: &[char], at: &mut usize) -> Option<f64> {
-    let base = arithmetic_unary(chars, at)?;
-    if chars.get(*at) == Some(&'*') && chars.get(*at + 1) == Some(&'*') {
-        *at += 2;
-        let exponent = arithmetic_power(chars, at)?;
-        return Some(base.powf(exponent));
-    }
-    Some(base)
-}
-
-/// `unary := ('+' | '-')* atom`, `atom := number | '(' sum ')'`.
+/// `unary := ('+' | '-') unary | power`.
 fn arithmetic_unary(chars: &[char], at: &mut usize) -> Option<f64> {
     match chars.get(*at) {
         Some('-') => {
@@ -1938,36 +1948,53 @@ fn arithmetic_unary(chars: &[char], at: &mut usize) -> Option<f64> {
             *at += 1;
             arithmetic_unary(chars, at)
         }
-        Some('(') => {
+        _ => arithmetic_power(chars, at),
+    }
+}
+
+/// `power := atom ('**' unary)?`.
+fn arithmetic_power(chars: &[char], at: &mut usize) -> Option<f64> {
+    let base = arithmetic_atom(chars, at)?;
+    if chars.get(*at) == Some(&'*') && chars.get(*at + 1) == Some(&'*') {
+        *at += 2;
+        let exponent = arithmetic_unary(chars, at)?;
+        return exact(base.powf(exponent));
+    }
+    Some(base)
+}
+
+/// `atom := number | '(' sum ')'`; a number starts with a digit or `.`
+/// (`_5` is a name).
+fn arithmetic_atom(chars: &[char], at: &mut usize) -> Option<f64> {
+    if chars.get(*at) == Some(&'(') {
+        *at += 1;
+        let value = arithmetic_sum(chars, at)?;
+        (chars.get(*at) == Some(&')')).then_some(())?;
+        *at += 1;
+        return Some(value);
+    }
+    let start = *at;
+    if !chars
+        .get(start)
+        .is_some_and(|&ch| ch.is_ascii_digit() || ch == '.')
+    {
+        return None;
+    }
+    while let Some(&ch) = chars.get(*at) {
+        let exponent_sign =
+            matches!(ch, '+' | '-') && *at > start && matches!(chars.get(*at - 1), Some('e' | 'E'));
+        if ch.is_ascii_digit() || matches!(ch, '.' | '_' | 'e' | 'E') || exponent_sign {
             *at += 1;
-            let value = arithmetic_sum(chars, at)?;
-            (chars.get(*at) == Some(&')')).then_some(())?;
-            *at += 1;
-            Some(value)
-        }
-        _ => {
-            let start = *at;
-            while let Some(&ch) = chars.get(*at) {
-                let exponent_sign = matches!(ch, '+' | '-')
-                    && *at > start
-                    && matches!(chars.get(*at - 1), Some('e' | 'E'));
-                if ch.is_ascii_digit() || matches!(ch, '.' | '_' | 'e' | 'E') || exponent_sign {
-                    *at += 1;
-                } else {
-                    break;
-                }
-            }
-            let text: String = chars
-                .get(start..*at)?
-                .iter()
-                .filter(|&&ch| ch != '_')
-                .collect();
-            if text.is_empty() || !text.starts_with(|ch: char| ch.is_ascii_digit() || ch == '.') {
-                return None;
-            }
-            text.parse::<f64>().ok()
+        } else {
+            break;
         }
     }
+    let text: String = chars
+        .get(start..*at)?
+        .iter()
+        .filter(|&&ch| ch != '_')
+        .collect();
+    exact(text.parse::<f64>().ok()?)
 }
 
 /// Whether `side` is a literal expected value: numbers, strings without

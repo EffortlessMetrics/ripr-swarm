@@ -537,16 +537,18 @@ Relations, first match wins (rank, oracle-eligible):
   undercount the routes the owners record, a route call is applied directly
   (`app.get("/p")(view)`, on one line or several), a route method is used
   without being called (`partial(app.get, "/p")`), a route call is bound to
-  a name that is later called or used as a decorator, or any source has an
-  exception
+  a name that is later called or used as a decorator (comments are not
+  read; an unclosed call is opaque), or any source has an exception
   handler, middleware, a request hook, `dependency_overrides`, a custom
   route class, an imperative or declarative route registration, a router
   or blueprint inclusion, a mount, a `:path` catch-all, a route object
-  (`Route(...)`, `APIRoute` as a value or base, `routes += [...]`) or a patch
-  naming the `json` attribute. A changed key
+  (`Route(...)`, `APIRoute` as a value or base, `routes += [...]`), a route
+  verb named as a string argument (`getattr(app, "get")`), or a patch of
+  the `json` attribute or a response class (`"json"` or `"….json"` argument,
+  `.json = ...`, `__class__`). A changed key
   whose old and new values may give one JSON body to a Python comparison
   (either quote style; numbers or `+ - * / // % **` expressions of one
-  value, with `True`/`False` as 1/0, integers compared exactly; lists of
+  value under Python's precedence, every step below 2^53, with `True`/`False` as 1/0, integers compared exactly; lists of
   such values) or whose value is not established as a literal (a tuple, a
   dict, a name, a prefixed, escaped or adjacent string, a float at or past
   2^53) is not a changed key for this read, and the run

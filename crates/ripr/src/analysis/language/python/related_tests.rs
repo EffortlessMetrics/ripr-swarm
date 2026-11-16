@@ -1072,10 +1072,12 @@ fn route_patterns_overlap(left: &str, right: &str) -> bool {
 /// custom route class, an imperative or declarative route registration, a
 /// router or blueprint inclusion or prefix, a mount, a catch-all `:path`
 /// parameter, a route object (`Route(...)`, `APIRoute` used as a value or
-/// base, `routes += [...]`), or a patch naming the `json` attribute
-/// (`monkeypatch.setattr(Response, "json", ...)`).
+/// base, `routes += [...]`), a route verb named in a string (`getattr(app,
+/// "get")`), or a patch of the `json` attribute or a response class
+/// (`monkeypatch.setattr(Response, "json", ...)`, `"httpx.Response.json"`,
+/// `Response.json = ...`, `response.__class__ = ...`).
 pub(super) fn workspace_reshapes_responses(source: &str) -> bool {
-    const MARKERS: [&str; 23] = [
+    const MARKERS: [&str; 27] = [
         "exception_handler",
         "errorhandler(",
         "middleware",
@@ -1099,6 +1101,10 @@ pub(super) fn workspace_reshapes_responses(source: &str) -> bool {
         ".routes[",
         ",\"json\"",
         ",'json'",
+        ".json=",
+        ".json\"",
+        ".json'",
+        "__class__",
     ];
     // Whitespace may sit inside a call (`app.add_api_route ("/x", f)`), so
     // the markers are matched against the source without it.
@@ -1107,6 +1113,39 @@ pub(super) fn workspace_reshapes_responses(source: &str) -> bool {
         || compact
             .match_indices("APIRoute")
             .any(|(at, _)| !compact[at + "APIRoute".len()..].starts_with('r'))
+        // A route verb named as a call's last string argument (`getattr(app,
+        // "get")`, `attrgetter("post")`) reaches the route method dynamically.
+        || ROUTE_VERBS.iter().any(|verb| {
+            let name = verb.trim_start_matches('.').trim_end_matches('(');
+            compact.contains(&format!("\"{name}\")")) || compact.contains(&format!("'{name}')"))
+        })
+}
+
+/// A physical line without its `#` comment (a `#` inside a one-line string
+/// is kept). A string spanning lines is read as code, which can only add
+/// refusals.
+fn strip_line_comment(line: &str) -> &str {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (at, ch) in line.char_indices() {
+        match quote {
+            Some(open) => {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == open {
+                    quote = None;
+                }
+            }
+            None => match ch {
+                '"' | '\'' => quote = Some(ch),
+                '#' => return line.get(..at).unwrap_or(line),
+                _ => {}
+            },
+        }
+    }
+    line
 }
 
 /// The route-registering method calls the owners record (#13869).
@@ -1149,13 +1188,21 @@ pub(super) fn route_decorator_lines(source: &str) -> usize {
 pub(super) fn workspace_registers_routes_indirectly<'a>(
     sources: impl Iterator<Item = &'a str> + Clone,
 ) -> bool {
-    let compact =
-        |source: &str| -> Vec<char> { source.chars().filter(|ch| !ch.is_whitespace()).collect() };
+    let compact = |source: &str| -> Vec<char> {
+        source
+            .lines()
+            .flat_map(|line| strip_line_comment(line).chars())
+            .filter(|ch| !ch.is_whitespace())
+            .collect()
+    };
     let identifier = |ch: char| ch.is_alphanumeric() || ch == '_';
-    let mut aliases: Vec<Vec<char>> = Vec::new();
+    let mut aliases: std::collections::BTreeSet<Vec<char>> = std::collections::BTreeSet::new();
     for source in sources.clone() {
         for line in source.lines() {
-            let line: String = line.chars().filter(|ch| !ch.is_whitespace()).collect();
+            let line: String = strip_line_comment(line)
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect();
             let Some((target, value)) = line.split_once('=') else {
                 continue;
             };
@@ -1171,7 +1218,7 @@ pub(super) fn workspace_registers_routes_indirectly<'a>(
                     .all(|ch| identifier(ch) || matches!(ch, '.' | '('))
                 && ROUTE_VERBS.iter().any(|verb| callee.ends_with(verb))
             {
-                aliases.push(name.chars().collect());
+                aliases.insert(name.chars().collect());
             }
         }
     }
@@ -1214,7 +1261,8 @@ pub(super) fn workspace_registers_routes_indirectly<'a>(
                             }
                             index += 1;
                         }
-                        if chars.get(index + 1) == Some(&'(') {
+                        // An unclosed call or quote is not established.
+                        if index >= chars.len() || chars.get(index + 1) == Some(&'(') {
                             return true;
                         }
                     }
@@ -1224,18 +1272,50 @@ pub(super) fn workspace_registers_routes_indirectly<'a>(
                 at = after;
             }
         }
-        for alias in &aliases {
+        // One pass over identifier tokens of the comment-stripped source with
+        // its whitespace kept (compaction would merge `@alias` with the next
+        // `def`): an alias token called or after `@` uses the route call.
+        if !aliases.is_empty() {
+            let spaced: Vec<char> = source
+                .lines()
+                .flat_map(|line| {
+                    strip_line_comment(line)
+                        .chars()
+                        .chain(std::iter::once('\n'))
+                })
+                .collect();
+            let neighbour = |mut index: usize, forward: bool| loop {
+                let ch = *spaced.get(index)?;
+                if !ch.is_whitespace() {
+                    return Some(ch);
+                }
+                index = if forward {
+                    index + 1
+                } else {
+                    index.checked_sub(1)?
+                };
+            };
             let mut at = 0;
-            while at + alias.len() <= chars.len() {
-                let end = at + alias.len();
-                let starts = at == 0 || chars.get(at - 1).is_some_and(|&ch| !identifier(ch));
-                if starts
-                    && chars[at..end] == alias[..]
-                    && (chars.get(end) == Some(&'(') || (at > 0 && chars.get(at - 1) == Some(&'@')))
+            while at < spaced.len() {
+                if !spaced.get(at).is_some_and(|&ch| identifier(ch)) {
+                    at += 1;
+                    continue;
+                }
+                let start = at;
+                while spaced.get(at).is_some_and(|&ch| identifier(ch)) {
+                    at += 1;
+                }
+                if spaced
+                    .get(start..at)
+                    .is_some_and(|token| aliases.contains(token))
+                    && (neighbour(at, true) == Some('(')
+                        || start
+                            .checked_sub(1)
+                            .and_then(|before| neighbour(before, false))
+                            == Some('@'))
                 {
                     return true;
                 }
-                at += 1;
             }
         }
     }

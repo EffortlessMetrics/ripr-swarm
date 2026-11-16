@@ -567,6 +567,16 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
     let partial_route_app = "from functools import partial\n\nfrom fastapi import FastAPI\n\napp = FastAPI()\nprice_route = partial(app.get, \"/price\")\n\n\n@price_route()\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
     let route_object_app = "from fastapi import FastAPI\nfrom fastapi.routing import APIRoute\n\napp = FastAPI()\n\n\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\napp.router.routes += [APIRoute(\"/price\", legacy, methods=[\"GET\"])]\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
     let patched_json_app = "import pytest\nfrom fastapi import FastAPI\nfrom starlette.responses import Response\n\napp = FastAPI()\n\n\n@pytest.fixture(autouse=True)\ndef fake_json(monkeypatch):\n    monkeypatch.setattr(Response, \"json\", lambda self: {\"total\": 190})\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let commented_call_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\napp.get(\n    \"/price\",  # don't cache\n)(legacy)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let getattr_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\ngetattr(app, \"get\")(\"/price\")(legacy)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let class_json_app = "import httpx\nfrom fastapi import FastAPI\n\napp = FastAPI()\nhttpx.Response.json = lambda self: {\"total\": 190}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let dotted_patch_app = "import pytest\nfrom fastapi import FastAPI\n\napp = FastAPI()\n\n\n@pytest.fixture(autouse=True)\ndef fake_json(monkeypatch):\n    monkeypatch.setattr(\"httpx.Response.json\", lambda self: {\"total\": 190})\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let name_app = "from fastapi import FastAPI\n\napp = FastAPI()\n_10 = 10\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": _10, \"count\": 3}\n";
+    let name_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": _10, \"count\": 3}",
+        new: "    return {\"total\": 10, \"count\": 3}",
+    };
     let flag_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 10, \"status\": \"ok\"}\n";
     let list_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": [5], \"count\": 3}\n";
     let list_edit = |new: &'static str| Edit {
@@ -875,6 +885,60 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             flag_app,
             flag_edit(
                 "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 100**0.5, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == 10"),
+        ),
+        (
+            "applied route call with a comment",
+            commented_call_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "route method read through getattr",
+            getattr_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "json replaced on the response class",
+            class_json_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "json patched by dotted path",
+            dotted_patch_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "response class swapped",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "response.__class__ = type(\"Fake\", (), {})\n    assert response.json()[\"total\"] == 190",
+            ),
+        ),
+        (
+            "underscore name read as a number",
+            name_app,
+            name_edit,
+            read("assert response.json()[\"total\"] == 10"),
+        ),
+        (
+            "unary minus under a power",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": -2**2 + 14, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == 10"),
+        ),
+        (
+            "intermediate past 2^53",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 2**53 + 1 - 2**53 + 9, \"status\": \"ok\"}",
             ),
             read("assert response.json()[\"ten\"] == 10"),
         ),
