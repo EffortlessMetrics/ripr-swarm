@@ -3052,20 +3052,13 @@ fn seam_commit_step_refusal(
 }
 
 /// The dirty production files the seam start refuses today (#13636): every
-/// path the shared before-phase preflight reports, none dropped, respelled
-/// relative to the analyzed `root` for the printed commit step (paths outside
-/// it as `../...`, as the gap-bound route spells them). A non-empty list means
-/// the start refuses; an empty one means the preflight found no dirty premise.
+/// path the shared before-phase preflight reports, none dropped. The
+/// preflight already spells them relative to the analyzed `root` (paths
+/// outside it as `../...`, #13962), which is where the user runs the printed
+/// commit step. A non-empty list means the start refuses; an empty one means
+/// the preflight found no dirty premise.
 fn seam_start_uncommitted_files(root: &Path) -> Result<Vec<String>, String> {
-    let violations = crate::app::repair_attempt::seam_start_dirty_premise(root)?;
-    if violations.is_empty() {
-        return Ok(violations);
-    }
-    let prefix = repo_prefix(root)?;
-    Ok(violations
-        .iter()
-        .map(|path| relative_to_cwd_root(path, &prefix))
-        .collect())
+    crate::app::repair_attempt::seam_start_dirty_premise(root)
 }
 
 fn ineligible_repair_item(root: &Path, item: &str, seam_id: &str, reason: &str) -> String {
@@ -5114,6 +5107,7 @@ pub(crate) mod tests {
             value_origins: Default::default(),
             harness_projections: Vec::new(),
             owner_opt_outs: Vec::new(),
+            file_fact_cache: None,
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
             mode: crate::app::Mode::Fast,

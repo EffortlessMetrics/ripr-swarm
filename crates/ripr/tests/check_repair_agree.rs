@@ -1137,16 +1137,21 @@ fn outer_repo_with_subdir_root(commit_change: bool) -> Result<Repo, String> {
 /// reports, including one outside the analyzed root, spelled `../...` as the
 /// gap route spells it, so `ripr check --root <subdir>` never reports `ready`
 /// for a start that refuses. The outside file is the repository-level
-/// `src/lib.rs`, which the shared preflight reports for root `crate` (#13795:
-/// its content sniff resolves the repository-relative path under the root,
-/// where `crate/src/lib.rs` exists).
+/// `src/lib.rs`, which the shared preflight reads at its true path and reports
+/// as `../src/lib.rs` for root `crate` (#13962), beside the root's own dirty
+/// `src/lib.rs`.
 #[test]
 fn commit_step_names_dirty_files_outside_the_analyzed_root() -> Result<(), String> {
     let repo = outer_repo_with_subdir_root(false)?;
     let check = repo.ripr(&["check", "--root", "crate", "--base", "HEAD"])?;
+    let commit_line = check
+        .lines()
+        .skip_while(|line| !line.contains("Commit your production change first"))
+        .nth(1)
+        .ok_or_else(|| format!("check must name the commit step:\n{check}"))?;
     assert!(
-        check.contains("Commit your production change first") && check.contains("-- ../src/lib.rs"),
-        "a dirty file outside the root that blocks the start must be named:\n{check}"
+        commit_line.ends_with(" -- src/lib.rs ../src/lib.rs"),
+        "the commit step must name the root's file and the outside file:\n{check}"
     );
     let seam_id = check
         .split("\n  ripr repair ")

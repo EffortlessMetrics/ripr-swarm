@@ -5525,9 +5525,9 @@ pub(crate) fn conservative_dirty_premise_violations(
 /// with the default store, the same policy-free preflight the before phase
 /// applies before any inventory. Consumers that print a repair start (the
 /// `ripr check` route) ask this instead of re-deriving dirtiness. Paths are
-/// repository-root relative. Being a subset of the exact before-phase check,
-/// a non-empty answer means the start refuses; an empty one does not promise
-/// it starts.
+/// relative to `root` (outside it as `../...`, #13962). Being a subset of the
+/// exact before-phase check, a non-empty answer means the start refuses; an
+/// empty one does not promise it starts.
 pub(crate) fn seam_start_dirty_premise(root: &Path) -> Result<Vec<String>, String> {
     let head = crate::agent::artifact::current_git_head(root)?;
     conservative_dirty_premise_violations(root, &head, None, None)
