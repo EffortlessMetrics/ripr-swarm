@@ -19525,6 +19525,30 @@
           "class": "infection_unknown"
         }
       ]
+    },
+    {
+      "id": "rust_guard_return_changed_guard_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_guard_return_changed_guard",
+      "vector": "guard_return_closed_pin_cannot_credit_when_the_guard_condition_also_changed",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }

@@ -2597,6 +2597,41 @@ render cap; preserve the original rows and count the new row. Otherwise retain
 unknown. Runtime mutation results are evidence for the fixture truth and are
 not themselves a static propagation proof.
 
+### Guard returns the closed subset separates (#14387)
+
+A changed early `return <value>;` inside a guard is credited to an exact
+owner pin when both versions of the owner fall inside the closed integer
+subset (`owner_value`, #12716). That subset covers integer parameters of one
+type, guards of the form `if COND { return RET; }`, and an integer or
+`Ok`/`Some`/`Err`/`None` tail. The changed line must be the whole statement,
+and the old and new texts must both be `return <value>`. The diff must replace
+that one line and change no other line of the owner, and the diff's old text
+must match the line the gate rebuilds. Only that guard's returned value moves,
+so every condition and every other exit are the same in both versions. A diff
+that also moves a guard condition (`t > 500` to `t > 200`) refuses, because
+the old owner is then not the new one with the return line swapped back
+(`fixtures/rust_guard_return_changed_guard`, an evidence-promotion honesty
+case).
+
+The subset reads integer types and the prelude variants by spelling, so the
+owner's file must bind none of `Ok`, `Err`, `Some`, `None` as a value, declare
+or import no integer type name (`type u32 = u8;` would narrow the range), and
+glob-import nothing beyond `use super::*;`.
+
+The pin holds per call:
+- the pinned call is a bare owner call with plain decimal literal arguments;
+- the typed evaluator runs both versions on those arguments without overflow
+  or division by zero, and they return different values;
+- the pinned value is one of the two, so the assertion passes on one version
+  and fails on the other.
+
+A literal that takes an earlier guard or the tail, a pinned value that
+neither version returns, a non-literal argument, an `Err(..)` result whose
+payload the subset leaves unevaluated, and two versions that agree at the
+pinned input (`100 / 5` and `100 - 80`) all keep their earlier reading.
+Anything the subset cannot read refuses. The tail `if`/`else` form waits on
+the branch probe of #14385.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`

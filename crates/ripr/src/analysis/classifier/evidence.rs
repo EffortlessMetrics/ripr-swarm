@@ -852,7 +852,11 @@ impl ClassifiedProbeEvidence {
         };
         let owner_return_pin = context
             .owner_fn
-            .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
+            .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index))
+            // #14387: a guard-return pin reads the old owner as the new one
+            // with only the changed line swapped back, which holds only when
+            // the diff changes no other line of the owner.
+            .filter(|pin| pin.closed_guard_old_line_matches(context.owner_sole_change.as_deref()));
         // RIPR-SPEC-0229: which owner-call input selects a changed arm.
         // A same-named function elsewhere (a trait method on another enum
         // with the same variant names) makes a direct call ambiguous; a

@@ -122,7 +122,18 @@ equivalent rewrite or when the owner has other callers. A range handed to a call
 (`Iterator::sum(0..n)`) is gated like an absorbing method, `v.get(a..b)` and its
 unchecked or mutable forms slice like `v[a..b]`, and an assertion that
 never runs (a literal-false block, an uncalled closure, after a `return`, even
-on the same line as live code) reads nothing. Any other gated change, including an input ripr cannot fold, reads
+on the same line as live code) reads nothing. An assertion inside code that may
+run zero times or not at all (a nested `fn` or `macro_rules!`, a closure, an
+`async` block, an `if` or `match`, a `for`, `while` or `loop` body, or a
+`#[cfg]`-gated statement) reads nothing too (#14538). A line where several
+ranges change at once is gated unless every changed range keeps a
+length-preserving reading with no range nested inside it. An edit inside a
+macro input (`matches!(n, 1..=5)`) or on a line that does not parse is gated
+when a range's written endpoints or operator differ between the versions
+(an edit beside the ranges, or a change in how many ranges the line holds, is
+not gated), and a
+moved char endpoint
+(`'a'..='z'` to `'b'..='y'`) is gated like an integer one (#14538). Any other gated change, including an input ripr cannot fold, reads
 `unknown`, except a moved match range pattern: whenever the fold does not
 establish what the tests see (arms it cannot read such as `&str` results, or
 rebound assertion macros), it keeps the ordinary arm-routing reading (#5992).
