@@ -1,6 +1,7 @@
-//! The trusted admission bundle must be pinned to the live base the judged
-//! tree is built on, not the PR's recorded base. A stale recorded base pins an
-//! older admission script than the merge ref is judged against.
+//! The trusted admission bundle must be pinned to the base of the judged tree:
+//! the first parent of the pull_request merge ref. The anchor is local and
+//! immutable for the run, so a moving base branch cannot change it. There is
+//! no `gh` call in this step, so there is no empty-`gh` case to exercise.
 #![cfg(target_os = "linux")]
 
 use std::fs;
@@ -8,8 +9,9 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 const WORKFLOW: &str = include_str!("../../../.github/workflows/routed-rust.yml");
-const RECORDED_BASE: &str = "96cd1c58aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const LIVE_BASE: &str = "290e3850bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const MERGE: &str = "cd6f0d2faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const BASE: &str = "3b280022bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const HEAD: &str = "041b9d44cccccccccccccccccccccccccccccccc";
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 fn step_shell(source: &str, name: &str) -> Result<String, String> {
@@ -27,7 +29,7 @@ fn step_shell(source: &str, name: &str) -> Result<String, String> {
     Ok(shell)
 }
 
-fn run(shell: &str, overrides: &[(&str, &str)]) -> Result<(i32, String), String> {
+fn run(shell: &str, parents: &str, overrides: &[(&str, &str)]) -> Result<(i32, String), String> {
     let temp_root = std::env::temp_dir();
     fs::create_dir_all(&temp_root).map_err(|e| e.to_string())?;
     let scratch = temp_root.join(format!(
@@ -38,10 +40,10 @@ fn run(shell: &str, overrides: &[(&str, &str)]) -> Result<(i32, String), String>
     fs::create_dir(&scratch).map_err(|e| e.to_string())?;
     let output = scratch.join("output");
     fs::write(&output, "").map_err(|e| e.to_string())?;
-    // The step resolves the live base ref through gh; the recorded base is
-    // deliberately different so the two pins are distinguishable.
+    // The anchor is local: fetch succeeds and rev-list returns the scripted
+    // parent line. No gh call exists in this step.
     let script = format!(
-        "gh() {{ [[ \"$1\" = api ]] || return 90; [[ \"$2\" == *git/ref/heads/* ]] || return 91; printf '%s\\n' \"$LIVE_BASE\"; }}\n{shell}"
+        "git() {{ case \"$1\" in fetch) return 0 ;; rev-list) printf '%s\\n' \"$PARENTS\" ;; *) return 90 ;; esac; }}\n{shell}"
     );
     let result = Command::new("timeout")
         .args([
@@ -56,12 +58,9 @@ fn run(shell: &str, overrides: &[(&str, &str)]) -> Result<(i32, String), String>
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
         .env("EVENT_NAME", "pull_request")
-        .env("PR_BASE_SHA", RECORDED_BASE)
-        .env("PR_BASE_REF", "main")
+        .env("EVENT_SHA", MERGE)
         .env("GROUP_BASE_SHA", "")
-        .env("EVENT_SHA", "")
-        .env("REPOSITORY", "EffortlessMetrics/ripr-swarm")
-        .env("LIVE_BASE", LIVE_BASE)
+        .env("PARENTS", parents)
         .env("GITHUB_WORKSPACE", &scratch)
         .env("GITHUB_OUTPUT", &output)
         .envs(overrides.iter().copied())
@@ -76,15 +75,31 @@ fn run(shell: &str, overrides: &[(&str, &str)]) -> Result<(i32, String), String>
 }
 
 #[test]
-fn pull_request_pins_the_live_base_not_the_recorded_base() -> Result<(), String> {
+fn pull_request_pins_the_base_of_the_judged_tree() -> Result<(), String> {
     let shell = step_shell(WORKFLOW, "Select trusted admission source")?;
-    let (status, output) = run(&shell, &[])?;
+    let (status, output) = run(&shell, &format!("{MERGE} {BASE} {HEAD}"), &[])?;
     assert_eq!(status, 0, "step failed: {output}");
     assert_eq!(
         output,
-        format!("sha={LIVE_BASE}\n"),
-        "the trusted bundle must follow the live base, not the recorded base"
+        format!("sha={BASE}\n"),
+        "the trusted bundle must follow the judged tree's base"
     );
+    Ok(())
+}
+
+#[test]
+fn a_one_parent_commit_is_refused() -> Result<(), String> {
+    let shell = step_shell(WORKFLOW, "Select trusted admission source")?;
+    let (status, output) = run(&shell, &format!("{HEAD} {BASE}"), &[])?;
+    assert_ne!(status, 0, "a one-parent commit must refuse: {output}");
+    Ok(())
+}
+
+#[test]
+fn a_three_parent_commit_is_refused() -> Result<(), String> {
+    let shell = step_shell(WORKFLOW, "Select trusted admission source")?;
+    let (status, output) = run(&shell, &format!("{MERGE} {BASE} {HEAD} {HEAD}"), &[])?;
+    assert_ne!(status, 0, "a three-parent commit must refuse: {output}");
     Ok(())
 }
 
@@ -93,9 +108,10 @@ fn merge_group_still_pins_the_group_base() -> Result<(), String> {
     let shell = step_shell(WORKFLOW, "Select trusted admission source")?;
     let (status, output) = run(
         &shell,
-        &[("EVENT_NAME", "merge_group"), ("GROUP_BASE_SHA", LIVE_BASE)],
+        &format!("{MERGE} {BASE} {HEAD}"),
+        &[("EVENT_NAME", "merge_group"), ("GROUP_BASE_SHA", BASE)],
     )?;
     assert_eq!(status, 0, "step failed: {output}");
-    assert_eq!(output, format!("sha={LIVE_BASE}\n"));
+    assert_eq!(output, format!("sha={BASE}\n"));
     Ok(())
 }
