@@ -133,7 +133,7 @@ map is:
 | `ripr receipt write/check` | `schema_version` | `0.1` |
 | `ripr feedback record/export` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.8` |
-| `ripr cache status --json` (published as `schemas/ripr/cache-status.schema.json`) | `schema_version` | `0.2` |
+| `ripr cache status --json` (published as `schemas/ripr/cache-status.schema.json`) | `schema_version` | `0.3` |
 | `ripr cache export` success stdout | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v5`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
@@ -167,7 +167,7 @@ records that distinction.
 
 | Published schema | Current version | Version owner and rationale |
 | --- | --- | --- |
-| `schemas/ripr/cache-status.schema.json` | `0.2` | `crates/ripr/src/cli/commands/cache.rs`; cache status report (`ripr cache status --json`) |
+| `schemas/ripr/cache-status.schema.json` | `0.3` | `crates/ripr/src/cli/commands/cache.rs`; cache status report (`ripr cache status --json`) |
 | `schemas/ripr/capabilities.schema.json` | `0.1` | `crates/ripr-contract/src/domain/language_capability.rs`; language capability registry (`ripr capabilities --json`, #5531, #14067) |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
 | `schemas/ripr/check-timeout-refusal.schema.json` | `0.3` | `crates/ripr/src/app.rs`; analysis-timeout refusal envelope with input context (RIPR-SPEC-0241 amendment #10796) |
@@ -287,6 +287,7 @@ terse document rewrites repeated content. Exactly what differs:
 | `assertion_texts` values | assertion source lines | long values coded the same way |
 | `ripr.<stage>.summary` (#13673) | stage prose, usually repeated verbatim in `evidence` | coded the same way and sharing the `evidence` code; `state` and `confidence` stay verbatim |
 | `related_tests[].oracle` and `related_tests[].why` (#13673) | each related-test row's assertion line and miss sentence, repeated across findings that list the same test | coded the same way; an oracle line shares the code of the identical `assertion_texts` value; every other row field stays verbatim |
+| Related-test row cores (#13673) | every finding's `related_tests` rows repeat the same test's `name`, `file`, `line`, `oracle`, `oracle_kind` and `oracle_strength` | a core that appears in two or more rows is emitted once in the document-level `related_test_table`; each row that used it omits those fields and carries `table_row`, the zero-based table index, next to its per-finding `relation_reason`, `relation_confidence`, `miss` and `why`. A core seen once stays verbatim. `table_row` is a reference only when `related_test_table` is present: if any producer row already has a `table_row` key, nothing is hoisted |
 | `evidence_legend` | absent | code → full template, emitted only when useful, in first-appearance order; codes avoid literal values on coded surfaces |
 | Next-action alias | both keys emitted | `suggested_next_action` is omitted only when its value equals `recommended_next_step` and is at least 24 UTF-8 bytes; the alias is listed once in `dropped_aliases` |
 | Activation aliases (#13673) | finding-level `observed_values` and `missing_discriminators` repeat `activation` | each is omitted only when it is non-empty and equal to the same-named array in that finding's `activation`; each dropped alias is listed once in `dropped_aliases` |
@@ -304,8 +305,10 @@ Guarantees and limits, stated precisely:
   the terse document alone. Restore an omitted `suggested_next_action` from
   that finding's `recommended_next_step`, an omitted `observed_values` or
   `missing_discriminators` from that finding's `activation`, an omitted
-  `canonical_gap_id` from `canonical_gap.id`, and an omitted `evidence_stages`
-  from `ripr` as described above. All other fields remain verbatim
+  `canonical_gap_id` from `canonical_gap.id`, an omitted `evidence_stages`
+  from `ripr` as described above, and a row carrying `table_row` by merging
+  `related_test_table[table_row]` back into it and removing `table_row` (a
+  table `oracle` may itself be a legend code). All other fields remain verbatim
   even when their strings coincide. The schema permits omitting
   `suggested_next_action` only when both `rendering: "terse"` and the known
   alias declaration are present; full JSON continues to require it. The
@@ -321,7 +324,8 @@ Guarantees and limits, stated precisely:
   the coded surfaces in #13673: on a four-finding `dtolnay/semver` diff each
   long stage summary appeared in `ripr` and again in `evidence`. Related-test
   `oracle` and `why` strings followed: on the five-gap budget fixture every
-  finding lists the same five test rows.)
+  finding lists the same five test rows; their repeated row cores then moved
+  into `related_test_table`.)
 - The transform runs on the stamped `json` document (including the CLI's
   canonical next-action member when present) and fails closed: an
   unparseable producer document aborts the run instead of emitting an
@@ -954,18 +958,19 @@ environment field above reproduces `ripr.toml` source text.
 The published schema for `ripr cache status --json` is
 [`schemas/ripr/cache-status.schema.json`](../schemas/ripr/cache-status.schema.json).
 It also states the two cross-field rules below: `via_symlink` agrees with
-`real_cache_dir`, and a `not_found` or `unavailable` report has all four
+`real_cache_dir`, and a `not_found` or `unavailable` report has all six
 counts at `0`. `crates/ripr/tests/cache_clear_safety.rs` validates the bytes
 the real command writes against it.
 
-`ripr cache status --json` (schema `0.2`) prints one object with
+`ripr cache status --json` (schema `0.3`) prints one object with
 `schema_version`, `cache_dir` (the directory as resolved from
 `RIPR_CACHE_DIR` or the workspace default), `real_cache_dir` (the resolved
 real directory when the configured cache path traverses a symlink or
 junction — as its leaf or through an ancestor component — otherwise
 `null`), `via_symlink` (`true` exactly when `real_cache_dir` is present),
-`status`, `entry_count`, `total_size_bytes`, `foreign_entry_count`, and
-`foreign_total_size_bytes`. `entry_count` and `total_size_bytes` cover only
+`status`, `entry_count`, `total_size_bytes`, `foreign_entry_count`,
+`foreign_total_size_bytes`, `reclaimable_entry_count`, and
+`reclaimable_size_bytes` (see below). `entry_count` and `total_size_bytes` cover only
 the recognized ripr cache layers — the recognized top-level layer
 directories, exactly the set `ripr cache clear` removes (schema `0.2`,
 #5987; earlier versions counted every regular file under the cache root). A
@@ -976,16 +981,25 @@ foreign layers, stray notes, stale-schema orphans — are disclosed
 separately as `foreign_entry_count` / `foreign_total_size_bytes`; clear
 preserves them. That `schema_version` versions this status report, not the
 on-disk cache layers (those carry their own versions in their directory
-names). `status` is `ok`, `not_found` (no cache directory yet; all four
+names). `status` is `ok`, `not_found` (no cache directory yet; all six
 counts are `0`), `partial` (some directories or entries, including the
 cache directory itself, could not be read, so the counts are lower bounds),
 or `unavailable` (the inspected path is not a directory, is a broken
-symlink, or its metadata could not be read; all four counts are `0`). A
+symlink, or its metadata could not be read; all six counts are `0`). A
 cache path that traverses a symlink or junction is resolved to the real
 directory for inspection (#5989), matching the directory `ripr check` reads
 and writes through the alias; `cache clear` keeps its fail-closed symlink
 refusal for the leaf and for symlinked ancestors, and names the real path
 or offending component it protects.
+
+Schema `0.3` is additive on `0.2` (#7047): `reclaimable_entry_count` and
+`reclaimable_size_bytes` count the per-file fact entries (Rust, TypeScript,
+Python) that the next run writing facts to a usable cache removes (a
+Git-tracked cache is never pruned): entries from older cache
+schemas, and entries from other ripr builds other than the two most recently
+used and any that served a cache hit in the last 7 days. Kept entries,
+including any newer cache schema, are not counted. They are a subset of the
+recognized-layer totals.
 
 `ripr cache export [--root PATH] --out NEW_DIRECTORY` prints a success JSON object
 with `schema_version: "0.1"`, `cache_dir` (absolute export directory),
@@ -1650,6 +1664,19 @@ this kind still marks the outcome incomplete — consumers gating on
 `analysis_complete` see these runs as partial; letting it ride a complete
 outcome is a separate, consumer-visible design decision (#8714 review).
 
+`requested_scope_excluded` (#13894) is the scope note for files the operator
+left out on purpose: `--path`/`--exclude` on `ripr check`, a configured
+`[languages.rust] generated_file_patterns` entry, or a configured preview
+`excluded_file_patterns` entry. The requested scope was analyzed in full, so
+this kind rides on a complete outcome (`analysis_complete: true`) like
+`eol_only_churn` and is not an incomplete-analysis limitation. It names the
+count and a bounded list of the files and the source of the exclusion, and the
+human report prints it as a `Scope note` line. The `missed-txt` and `github`
+streams do not repeat it, so a fully analyzed scoped run stays zero bytes.
+Built-in, non-configurable generated-file skips, unsupported languages, parse
+failures, budgets and refused files keep their incomplete kinds
+(`language_scope_unsupported` and the others), so they stay fail-closed.
+
 When an *unchanged* Rust test file is indexed by lexical fallback after the
 reference parser refuses it, and a classified owner consults that file for
 related-test evidence (a related test came from it, or the file source calls
@@ -1909,20 +1936,28 @@ classes are:
 - an unknown flag or stray positional argument;
 - an unrecognized enum-style value rejected by the CLI's shared unknown-value
   builder (for example `check --format yaml`), and `explain --format json`;
+- a value flag with no value or an empty one, caught by the CLI's shared
+  value reader (for example `check --json --base` with nothing after it), as
+  `missing_value` with the flag as `token` (#11979);
+- a malformed number caught by the CLI's shared numeric parsers (for example
+  `context --max-related-tests zz` or `check --timeout zz`), as
+  `invalid_value` with the typed value as `token` (#11979);
 - a `context --at`/`--finding` selector that matched no finding, matched
   more than one, or could not be decided.
 
 Every other argv usage error keeps empty stdout even under a JSON request,
-with the cause on stderr only: a flag missing its value, a malformed value
-(for example a non-numeric number), conflicting or disagreeing flags, an
-unrecognized value rejected outside the CLI's shared builder (for example a
-gate mode), and any other argv error. These are a named gap, not a clean
-result.
+with the cause on stderr only: a missing required flag (`requires --X`),
+a missing or malformed value rejected by a command's own parser rather than
+the shared readers (for example `impacted-evidence`, or most `agent`
+subcommands given an empty value), conflicting or disagreeing flags, an unrecognized value
+rejected outside the CLI's shared builder (for example a gate mode), and any
+other argv error. These are a named gap, not a clean result.
 
 The document carries `schema_version`, `tool`, `status: "refused"` and
 `error {code, message, token?, next}` with `code` one of `unknown_argument`,
-`unknown_command`, `unknown_value`, `selector_miss`. `token` is the offending
-argument, command, value or selector; `next` is a fixed help pointer
+`unknown_command`, `unknown_value`, `missing_value`, `invalid_value`,
+`selector_miss`. `token` is the offending argument, command, flag, value or
+selector (an empty malformed value has none); `next` is a fixed help pointer
 (`list_valid_arguments`, `list_valid_commands`) or `null`; `selector_miss`
 always carries `next: null`, because its message embeds the caller's selector
 and nothing is lifted from caller-controlled text. No argv echo and no
@@ -2700,7 +2735,12 @@ The evidence-first fields are additive in schema `0.2`:
   which decision paths consume a row, and the role is not runtime execution
   evidence.
 - `oracle_kind` and `oracle_strength` summarize the strongest related oracle
-  currently visible to the finding.
+  currently visible to the finding among the rows best placed to observe the
+  change (`RelatedTest::observation_tier`, RIPR-SPEC-0224, #14483): a
+  `no_call_path` row or an `assertion_not_observing` row speaks for the finding only
+  when no better-placed row is listed, so the summary can read `weak` or
+  `none` while an unreached test holds a strong oracle. TypeScript and
+  JavaScript findings summarize the shared preview row instead.
 - `suggested_next_action` mirrors `recommended_next_step` for action-oriented
   integrations.
 - Both are always present and may be the empty string, which is the producer's
@@ -5796,8 +5836,20 @@ Field contract:
     `control` and `repair_route` name that inventory control.
   - `category: "producer_failure"` identifies the failed seam-evidence pass
     when `run_status` is `"limited_seam_evidence"` (#13340). It is pass-wide
-    and names no file: `producer_stage`, `scope: "pass_wide"`, optional
+    and carries no `path`: `producer_stage`, `scope: "pass_wide"`, optional
     bounded `detail`, and `repair_route`. Absent from a healthy run.
+  - `category: "language_scope_unsupported"` in the same `limitations[]`
+    (with `run_status: "limited_seam_evidence"`) names an unchanged Rust
+    directory or file the repo walk could not read (permissions) and skipped
+    instead of aborting (#13624): it carries the same fields, with `scope:
+    "path"` (not `"pass_wide"`) and the skipped `path`.
+    Tests or owners in that path are not part of the evidence, so the run is
+    never `complete`. An unreadable scan root is still an error. `repo-seams-*`
+    has no limitation channel and still refuses.
+    An unreadable directory counts as possible Rust source (conservative), so
+    it never reads as "no Rust files". `pilot` ranks no gap and offers no repair
+    while such a path was skipped. `repo-sarif` carries the same `scope` and `path` in its
+    `limitations` and notification properties.
   - `category: "rust_files_declined"` names the declined Rust files:
     `declined_file_count`, up to three `declined_files[]` entries of
     `{path, reason}` (the typed static-limit reason), `declined_files_omitted`
@@ -16682,7 +16734,8 @@ Field contract:
   failed.
 - `version` - requested release version from `--version`.
 - `checks[].id` - stable check identifier such as `package-list`,
-  `publish-dry-run`, `package-install`, `installed-command-surface`,
+  `publish-dry-run`, `package-upload-size`, `package-install`,
+  `installed-command-surface`,
   `pilot-boundary-fixture`, `outcome-boundary-fixture`,
   `agent-verify-boundary-fixture`, `agent-receipt-boundary-fixture`,
   `repo-exposure-latency`, `lsp-cockpit`, `github-workflow-defaults`,
@@ -21244,7 +21297,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.60",
+    "schema_version": "1.61",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,

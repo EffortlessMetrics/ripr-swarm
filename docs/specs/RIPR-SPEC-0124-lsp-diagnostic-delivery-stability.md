@@ -96,6 +96,10 @@ continues to count per-refresh plan clears only.
    diagnostic identity or normalized payload digest.
 4. A removed diagnostic URI receives one clear call and surviving URIs are not
    cleared.
+5. A refresh queued behind a running attempt is answered immediately: the
+   queued response does not wait for a pull-marker re-serve, even when the
+   client never answers `workspace/diagnostic/refresh`, and the queued
+   generation still runs after the active attempt.
 
 ## Test Mapping
 
@@ -119,6 +123,9 @@ continues to count per-refresh plan clears only.
 - `crates/ripr/src/lsp/tests.rs::shutdown_clear_tests::shutdown_after_root_change_publishes_no_duplicates`
   — a root change drains tracking, so a later shutdown republishes
   nothing (#5202).
+- `crates/ripr/src/lsp/tests.rs::framed_pull_client_queued_refresh_answers_without_answering_diagnostic_refresh`
+  — a queued refresh answers promptly while the client never answers the
+  diagnostic refresh request (#14526).
 
 ## Claim boundary
 
