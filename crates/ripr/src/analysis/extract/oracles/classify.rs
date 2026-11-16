@@ -78,7 +78,12 @@ pub(crate) fn without_unfilled_expected(
     if classification.strength != OracleStrength::Strong || placeholders.is_empty() {
         return classification;
     }
-    let tokens = crate::analysis::extract::text::extract_identifier_tokens(assertion);
+    // #14810 round 3: mask comments and string literals before matching. The
+    // token scanner is a raw word split, so an assertion message that happens
+    // to contain the placeholder's name (`assert_eq!(price(10), 7, "expected
+    // total")`) would otherwise match a local the assertion never reads.
+    let masked = crate::analysis::extract::mask::mask_comments_and_strings(assertion);
+    let tokens = crate::analysis::extract::text::extract_identifier_tokens(&masked);
     if !placeholders
         .iter()
         .any(|name| tokens.iter().any(|token| token == name))
@@ -89,6 +94,22 @@ pub(crate) fn without_unfilled_expected(
         kind: OracleKind::Unknown,
         strength: OracleStrength::Unknown,
     }
+}
+
+/// [`without_unfilled_expected`] for a caller that holds the kind and strength
+/// as separate fields (the line-scanned oracle path, #14810 round 3).
+pub(crate) fn without_unfilled_expected_parts(
+    kind: OracleKind,
+    strength: OracleStrength,
+    assertion: &str,
+    placeholders: &std::collections::BTreeSet<String>,
+) -> (OracleKind, OracleStrength) {
+    let classification = without_unfilled_expected(
+        OracleClassification { kind, strength },
+        assertion,
+        placeholders,
+    );
+    (classification.kind, classification.strength)
 }
 
 fn classify_assertion_against(line: &str, decls: &LocalDecls) -> OracleClassification {

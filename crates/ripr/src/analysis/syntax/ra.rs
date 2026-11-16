@@ -50,6 +50,7 @@ use crate::analysis::rust_index::{
     extract_return_facts, guarded_result_match_scan_with_shadow_authority,
     is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
     placeholder_bound_variables, unwrap_err_bound_variables, without_unfilled_expected,
+    without_unfilled_expected_parts,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3088,7 +3089,7 @@ fn extract_parser_oracles(
             let_bindings: &let_bindings,
         },
     );
-    for oracle in extract_line_scanned_oracles(&function_text, function_start)
+    for mut oracle in extract_line_scanned_oracles(&function_text, function_start)
         .into_iter()
         .filter(|oracle| !guarded_matches.match_start_lines.contains(&oracle.line))
         .filter(|oracle| {
@@ -3098,6 +3099,18 @@ fn extract_parser_oracles(
             })
         })
     {
+        // #14810 round 3: the line-scanned path must lower an assertion that
+        // names an unfilled placeholder local, exactly as the parser path
+        // does. Without this an `ensure!`-style helper keeps strong credit
+        // while the same assertion through the parser reads unknown.
+        let (kind, strength) = without_unfilled_expected_parts(
+            oracle.kind,
+            oracle.strength,
+            &oracle.text,
+            &placeholder_vars,
+        );
+        oracle.kind = kind;
+        oracle.strength = strength;
         assertions.push(oracle);
     }
     for oracle in guarded_matches.oracles {
@@ -3555,6 +3568,60 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// #14810 round 3: the line-scanned path must lower an assertion that
+    /// names an unfilled placeholder local, exactly as the parser path does.
+    /// Without the filter an `ensure!`-style helper keeps strong credit while
+    /// the same assertion through the parser reads unknown.
+    #[test]
+    fn a_line_scanned_assertion_naming_a_placeholder_lowers() -> Result<(), String> {
+        let source = concat!(
+            "#[test]\n",
+            "fn t() {\n",
+            "    let expected: i32 = todo!(\"x\");\n",
+            "    ensure!(price(10) == expected, \"price\");\n",
+            "}\n",
+        );
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        let fact = facts
+            .tests
+            .iter()
+            .flat_map(|test| test.assertions.iter())
+            .find(|fact| fact.text.contains("ensure!"))
+            .ok_or_else(|| "expected a line-scanned ensure oracle".to_string())?;
+        if fact.strength != crate::domain::OracleStrength::Unknown {
+            return Err(format!(
+                "a line-scanned assertion naming a placeholder must lower: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The control: the same line-scanned shape with a real expected value
+    /// keeps its strong credit.
+    #[test]
+    fn a_line_scanned_assertion_with_a_real_expected_value_keeps_strong() -> Result<(), String> {
+        let source = concat!(
+            "#[test]\n",
+            "fn t() {\n",
+            "    let expected: i32 = 7;\n",
+            "    ensure!(price(10) == expected, \"price\");\n",
+            "}\n",
+        );
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        let fact = facts
+            .tests
+            .iter()
+            .flat_map(|test| test.assertions.iter())
+            .find(|fact| fact.text.contains("ensure!"))
+            .ok_or_else(|| "expected a line-scanned ensure oracle".to_string())?;
+        if fact.strength != crate::domain::OracleStrength::Strong {
+            return Err(format!(
+                "a real expected value must keep strong credit: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
 
     /// #10363: the declaration table is built once per file, not once per
     /// function or assertion, so a large test file stays linear.

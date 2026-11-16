@@ -5959,6 +5959,26 @@ fn price_boundary_discriminator() {
     }
 
     #[test]
+    fn a_message_word_that_matches_the_placeholder_keeps_its_credit() -> Result<(), String> {
+        // #14810 round 3: the token scan must not read the assertion message.
+        // `expected` here is a word in the message, not a read of the local.
+        let body = r#"
+fn price_boundary_discriminator() {
+    use super::*;
+    let expected: u32 = todo!("x");
+    assert_eq!(price(10), 7, "expected total");
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
+            return Err(format!(
+                "a message word must not lower a concrete assertion: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn a_filled_expected_value_keeps_its_strong_credit() -> Result<(), String> {
         let filled = STUB_BODY.replace(
             r#"let expected: u32 = todo!("ripr: write the value `price` should return");"#,

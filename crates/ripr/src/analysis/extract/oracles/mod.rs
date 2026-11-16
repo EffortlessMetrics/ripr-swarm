@@ -10,7 +10,8 @@ pub(crate) use arguments::{
     assertion_oracle_text, equality_assertion_arguments, outer_assertion_condition,
 };
 pub(crate) use classify::{
-    classify_assertion, classify_assertion_with, is_inequality_assertion, without_unfilled_expected,
+    classify_assertion, classify_assertion_with, is_inequality_assertion,
+    without_unfilled_expected, without_unfilled_expected_parts,
 };
 pub(crate) use pattern_admission::LazyDecls;
 #[cfg(test)]

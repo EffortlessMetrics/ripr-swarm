@@ -717,7 +717,11 @@ Two pattern terms are used below.
     so it creates no path to `exposed`. A filled initializer
     (`let expected: i32 = 9_990;`), a computed one
     (`let expected = price(amount, threshold);`) and an assertion that
-    never names the placeholder keep their exact credit.
+    never names the placeholder keep their exact credit. The match runs on
+    the assertion with comments and string literals masked, so a message
+    that merely contains the placeholder's name does not lower it, and the
+    rule applies on both extraction paths: the parser adapter and the
+    line-scanned `ensure!`/custom-helper path.
 
 ### Reveal admission of an excluded sibling
 
@@ -866,7 +870,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Rule 11: acceptance examples 45 to 48 read as stated, through the public
   API. Every negative control is the credited twin with exactly one thing
   changed. The golden fixture `rust_stub_todo_expected_value` pins the
-  finding verdict (`weakly_exposed`, assertion stage `unknown`), and the
+  finding verdict (`weakly_exposed`; the test's oracle grade is `unknown`
+  and the discriminate stage stays `weak`, not `unknown`), and the
   `scan.rs` unit tests pin the four placeholder macros, the filled and
   computed controls, and the two ambiguity controls.
 
@@ -1108,7 +1113,9 @@ rejected alternative. Any can be reversed later without touching the rest.
   predicate-family contrast.
 - Rule 11: `crates/ripr/src/analysis/extract/oracles/scan.rs`
   (`unfilled_expected_tests`: the four placeholder macros, the filled and
-  computed controls, and the two ambiguity controls) and the golden fixture
+  computed controls, the two ambiguity controls, and the message-word
+  control), `crates/ripr/src/analysis/syntax/ra.rs` (the line-scanned
+  `ensure!` lowering and its real-value control) and the golden fixture
   `fixtures/rust_stub_todo_expected_value` for the finding verdict.
 - Existing: `crates/ripr/src/analysis/extract/oracles/classify.rs` unit tests.
 - Existing: `classify.rs` unit test for `ensure!(s != X)` changes with
