@@ -1789,7 +1789,10 @@ impl PythonAdapter {
                 || workspace_read
                     .sources
                     .values()
-                    .any(|source| related_tests::workspace_reshapes_responses(source)),
+                    .any(|source| related_tests::workspace_reshapes_responses(source))
+                || related_tests::workspace_registers_routes_indirectly(
+                    workspace_read.sources.values().map(String::as_str),
+                ),
             workspace_read
                 .sources
                 .values()

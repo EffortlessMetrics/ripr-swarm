@@ -1692,9 +1692,10 @@ fn sink_alignment_and_rows(
 }
 
 /// The unquoted keys of a dict-literal change whose old and new values
-/// serialize to the same JSON (#13869): a tuple and a list (`(1, 2)` and
-/// `[1, 2]`), or numbers of one value (`5`, `5.0`, `5.00`), give one
-/// response body, so a response read cannot tell them apart.
+/// serialize to JSON that a Python comparison cannot tell apart (#13869): a
+/// tuple and a list (`(1, 2)` and `[1, 2]`), one string in either quote
+/// style, or numbers of one value (`5`, `5.0`, `1_0` and `10`, `1e1`, `0`
+/// and `-0.0`, `1` and `True`), or a value whose string is not established.
 fn json_equivalent_keys(old_line: Option<&str>, new_line: &str) -> Vec<String> {
     let (Some(old), Some(new)) = (
         old_line.and_then(parse_dict_literal_fields),
@@ -1702,53 +1703,106 @@ fn json_equivalent_keys(old_line: Option<&str>, new_line: &str) -> Vec<String> {
     ) else {
         return Vec::new();
     };
-    let json_form = |value: &str| {
-        // Outside string literals only: whitespace is dropped and tuple
-        // brackets read as list brackets; string contents stay as written.
-        let mut normal = String::new();
-        let mut quote: Option<char> = None;
-        for ch in value.trim().chars() {
-            match quote {
-                Some(open) => {
-                    normal.push(ch);
-                    if ch == open {
-                        quote = None;
-                    }
-                }
-                None => match ch {
-                    '"' | '\'' => {
-                        quote = Some(ch);
-                        normal.push(ch);
-                    }
-                    '(' => normal.push('['),
-                    ')' => normal.push(']'),
-                    ch if ch.is_whitespace() => {}
-                    other => normal.push(other),
-                },
-            }
-        }
-        let value = if quote.is_none() {
-            normal.replace(",]", "]")
-        } else {
-            normal
-        };
-        let numeric = value.strip_prefix('-').unwrap_or(&value);
-        if numeric.contains('.')
-            && numeric.chars().all(|ch| ch.is_ascii_digit() || ch == '.')
-            && numeric.matches('.').count() == 1
-        {
-            let trimmed = value.trim_end_matches('0').trim_end_matches('.');
-            return trimmed.to_string();
-        }
-        value
-    };
     new.iter()
         .filter_map(|(key, new_value)| {
             let (_, old_value) = old.iter().find(|(k, _)| k == key)?;
-            (old_value != new_value && json_form(old_value) == json_form(new_value))
+            let (old_form, new_form) = (json_normal_form(old_value), json_normal_form(new_value));
+            (old_value != new_value
+                && (old_form.is_none() || new_form.is_none() || old_form == new_form))
                 .then(|| key.trim_matches(|c| c == '"' || c == '\'').to_string())
         })
         .collect()
+}
+
+/// A comparison-level normal form of a Python literal's JSON body (#13869).
+/// Outside strings, whitespace is dropped, tuple brackets read as list
+/// brackets, a trailing comma before a closing bracket is dropped, and each
+/// scalar token that reads as a number (`True`/`False` as 1/0, underscores
+/// ignored, hex/octal/binary integers) is replaced by its value. A string is
+/// rewritten in double quotes. `None` when a string holds an escape, the
+/// other quote character or no closing quote: its value is not established,
+/// so the caller treats the key as unchanged (fail closed).
+fn json_normal_form(value: &str) -> Option<String> {
+    fn scalar(token: &str) -> String {
+        let digits = token.replace('_', "");
+        let (sign, magnitude) = match digits.strip_prefix('-') {
+            Some(rest) => (-1.0, rest),
+            None => (1.0, digits.strip_prefix('+').unwrap_or(&digits)),
+        };
+        let radix = |prefix: [&str; 2], radix: u32| {
+            prefix
+                .iter()
+                .find_map(|p| magnitude.strip_prefix(p))
+                .and_then(|rest| i64::from_str_radix(rest, radix).ok())
+                .map(|n| sign * n as f64)
+        };
+        let numeric = match token {
+            "True" => Some(1.0),
+            "False" => Some(0.0),
+            _ => radix(["0x", "0X"], 16)
+                .or_else(|| radix(["0o", "0O"], 8))
+                .or_else(|| radix(["0b", "0B"], 2))
+                .or_else(|| digits.parse::<f64>().ok()),
+        };
+        match numeric {
+            Some(number) if number.is_finite() => {
+                if number == 0.0 {
+                    "0".to_string()
+                } else {
+                    format!("{number}")
+                }
+            }
+            _ => token.to_string(),
+        }
+    }
+    let mut normal = String::new();
+    let mut token = String::new();
+    let mut chars = value.trim().chars();
+    while let Some(ch) = chars.next() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '+' | '-') {
+            token.push(ch);
+            continue;
+        }
+        if !token.is_empty() {
+            normal.push_str(&scalar(&token));
+            token.clear();
+        }
+        match ch {
+            '"' | '\'' => {
+                let mut closed = false;
+                normal.push('"');
+                for inner in chars.by_ref() {
+                    if inner == ch {
+                        closed = true;
+                        break;
+                    }
+                    if matches!(inner, '\\' | '"' | '\'') {
+                        return None;
+                    }
+                    normal.push(inner);
+                }
+                if !closed {
+                    return None;
+                }
+                normal.push('"');
+            }
+            '(' => normal.push('['),
+            ')' | ']' | '}' => {
+                // A string always ends in its closing quote, so a comma at
+                // the end here is a structural trailing comma.
+                if normal.ends_with(',') {
+                    normal.pop();
+                }
+                normal.push(if ch == ')' { ']' } else { ch });
+            }
+            ch if ch.is_whitespace() => {}
+            other => normal.push(other),
+        }
+    }
+    if !token.is_empty() {
+        normal.push_str(&scalar(&token));
+    }
+    Some(normal)
 }
 
 /// Whether `side` is a literal expected value: numbers, strings without
@@ -1772,10 +1826,29 @@ fn literal_expected(side: &str) -> bool {
             stripped.push(ch);
         }
     }
-    let stripped = stripped
-        .replace("True", "0")
-        .replace("False", "0")
-        .replace("None", "0");
+    // Each identifier must be a whole `True`, `False` or `None` token, so a
+    // name such as `TrueFalse` or `None_` is not a literal.
+    let mut literal = String::new();
+    let mut word = String::new();
+    for ch in stripped.chars().chain(std::iter::once(' ')) {
+        if ch.is_alphanumeric() || ch == '_' {
+            if word.is_empty() && ch.is_ascii_digit() {
+                literal.push(ch);
+            } else {
+                word.push(ch);
+            }
+            continue;
+        }
+        if !word.is_empty() {
+            if !matches!(word.as_str(), "True" | "False" | "None") {
+                return false;
+            }
+            literal.push('0');
+            word.clear();
+        }
+        literal.push(ch);
+    }
+    let stripped = literal;
     !stripped.trim().is_empty()
         && stripped
             .chars()

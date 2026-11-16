@@ -558,7 +558,22 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
         old: "    return {\"total\": (1, 2), \"count\": 3}",
         new: "    return {\"total\": [1, 2], \"count\": 4}",
     };
-    let other_receiver_app = "from fastapi import APIRouter, FastAPI\n\napp = FastAPI()\nitems_router = APIRouter()\n\n\n@items_router.get(\"/price\")\ndef cached():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let other_receiver_app = "from fastapi import APIRouter, FastAPI\n\napp = FastAPI()\nshop = APIRouter()\n\n\n@shop.get(\"/price\")\ndef cached():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let direct_call_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\napp.get(\"/price\")(legacy)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let alias_app = "from fastapi import FastAPI\n\napp = FastAPI()\nlegacy_route = app.get(\"/price\")\n\n\n@legacy_route\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let websocket_app = "from fastapi import FastAPI\n\napp = FastAPI()\napplication = app\n\n\n@app.websocket(\"/ws\")\nasync def ws(websocket):\n    await websocket.accept()\n\n\n@application.get(\"/price\")\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let flag_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 10, \"status\": \"ok\"}\n";
+    let list_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": [5], \"count\": 3}\n";
+    let list_edit = |new: &'static str| Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": [5], \"count\": 3}",
+        new,
+    };
+    let flag_edit = |new: &'static str| Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 10, \"status\": \"ok\"}",
+        new,
+    };
     let prefix_app = "from fastapi import APIRouter, FastAPI\n\napp = FastAPI()\nrouter = APIRouter()\n\n\n@router.get(\"/{item}\")\ndef cached(item: str):\n    return {\"total\": 190, \"count\": 3}\n\n\napp.include_router(router, prefix=\"/items\")\n\n\n@app.get(\"/items/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
     let prefix_test = format!(
         "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/items/price\")\n    assert response.json()[\"total\"] == 190\n"
@@ -663,6 +678,22 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             ),
         ),
         (
+            "json method replaced in a tuple assignment",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "response.json, other = (lambda: {\"total\": 190}), None\n    assert response.json()[\"total\"] == 190",
+            ),
+        ),
+        (
+            "expected side named like a literal",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "TrueFalse = response.json()[\"total\"]\n    assert response.json()[\"total\"] == TrueFalse",
+            ),
+        ),
+        (
             "json method replaced through setattr",
             PRICE_APP,
             PRICE_EDIT,
@@ -717,6 +748,70 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             read("assert response.json()[\"total\"] == 190"),
         ),
         (
+            "route applied by a direct call",
+            direct_call_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "route bound to an alias decorator",
+            alias_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "websocket route balancing an unrecorded route",
+            websocket_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "quote style only",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 10, \"status\": 'ok'}",
+            ),
+            read("assert response.json()[\"status\"] == \"ok\""),
+        ),
+        (
+            "one to True",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": True, \"zero\": 0, \"ten\": 10, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"flag\"] == 1"),
+        ),
+        (
+            "zero to negative zero float",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": -0.0, \"ten\": 10, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"zero\"] == 0"),
+        ),
+        (
+            "underscore and exponent spellings",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 1e1, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == 10"),
+        ),
+        (
+            "nested int to float",
+            list_app,
+            list_edit("    return {\"total\": [5.0], \"count\": 3}"),
+            read("assert response.json()[\"total\"] == [5]"),
+        ),
+        (
+            "exponent spelling",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1e0, \"zero\": 0, \"ten\": 10, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"flag\"] == 1"),
+        ),
+        (
             "static route before a parameter route",
             overlap_app,
             overlap_edit,
@@ -728,6 +823,34 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
         if finding.class == ExposureClass::Exposed {
             failures.push(format!("{name}: read exposed"));
         }
+    }
+    // Control: a genuinely different nested value is still a changed key.
+    let finding = check_style(
+        "nested value change",
+        &[("src/app.py", list_app)],
+        list_edit("    return {\"total\": [6], \"count\": 3}"),
+        &read("assert response.json()[\"total\"] == [6]"),
+    )?;
+    if finding.class != ExposureClass::Exposed {
+        failures.push(format!("nested value change: read {:?}", finding.class));
+    }
+    // Control: punctuation inside a string is part of the value.
+    let comma_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": \"a,]b\", \"count\": 3}\n";
+    let finding = check_style(
+        "string punctuation change",
+        &[("src/app.py", comma_app)],
+        Edit {
+            owner: "src/app.py",
+            old: "    return {\"total\": \"a,]b\", \"count\": 3}",
+            new: "    return {\"total\": \"a]b\", \"count\": 3}",
+        },
+        &read("assert response.json()[\"total\"] == \"a]b\""),
+    )?;
+    if finding.class != ExposureClass::Exposed {
+        failures.push(format!(
+            "string punctuation change: read {:?}",
+            finding.class
+        ));
     }
     // A test file that registers its own route on the app.
     let test_route = format!(

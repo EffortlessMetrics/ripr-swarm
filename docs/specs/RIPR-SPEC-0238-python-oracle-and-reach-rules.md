@@ -522,22 +522,27 @@ Relations, first match wins (rank, oracle-eligible):
   plain arguments) compares that name's `.json()` with one quoted key
   subscript against the other side, and that key is one the edit changed
   (an unchanged sibling field, or a changed key only on the expected side,
-  is not). The other side must be a literal (numbers, strings, `True`,
+  is not). The other side must be a literal (numbers, strings without escapes, `True`,
   `False`, `None`, and lists, tuples or dicts of them): a name, call or
   attribute may carry the route's own response. A test with a `match`
-  statement, a walrus or an assignment to `.json` grants no credit. The
+  statement, a walrus, an assignment to `.json` or a `setattr` grants no credit. The
   handler must not share a request with another route of the workspace
   (verbs that can meet and paths that can match one request, a segment
   holding any parameter matching anything; dispatch order is not read). The
   credit is off for the whole run when any file was not read or a changed
   file did not parse, any owner has a dynamic route decorator, the route
-  decorator lines of the read sources (test files included) outnumber or
-  undercount the routes the owners record, or any source has an exception
+  decorator lines of the read sources (test files included, counting the
+  same verbs the owners record, `websocket` among them) outnumber or
+  undercount the routes the owners record, a route call is applied directly
+  (`app.get("/p")(view)`) or bound to a name a decorator uses, or any
+  source has an exception
   handler, middleware, a request hook, `dependency_overrides`, a custom
   route class, an imperative or declarative route registration, a router
   or blueprint inclusion, a mount or a `:path` catch-all. A changed key
-  whose old and new values serialize to the same JSON (a tuple and a list,
-  numbers of one value) is not a changed key for this read, and the run
+  whose old and new values a Python comparison of the JSON body cannot tell
+  apart (a tuple and a list, either quote style, numbers of one value in
+  any spelling with `True`/`False` as 1/0) or whose string value is not
+  established (an escape) is not a changed key for this read, and the run
   needs the old line (repo mode, which has none, never earns it). The handler must return its body as is:
   every decorator is a static route decorator whose keywords cannot reshape
   the body (no `response_model` or `response_class`), there is no return
