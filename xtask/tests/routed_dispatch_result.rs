@@ -21,6 +21,28 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
+/// A `max-changed-*` value the workflow wires, so the extracted action body
+/// certifies the same limits the gate uses instead of a third copy (#14513).
+fn wired_input(name: &str) -> Result<String, String> {
+    let workflow = fs::read_to_string(root().join(".github/workflows/routed-rust.yml"))
+        .map_err(|e| e.to_string())?;
+    let key = format!("{name}:");
+    let mut values = Vec::new();
+    for rest in workflow.split(&key).skip(1) {
+        let rest = rest.trim_start();
+        let rest = rest
+            .strip_prefix('\'')
+            .ok_or_else(|| format!("{name} value must be quoted"))?;
+        let end = rest
+            .find('\'')
+            .ok_or_else(|| format!("{name} value must close"))?;
+        values.push(rest[..end].to_string());
+    }
+    assert_eq!(values.len(), 2, "expected two {name} inputs");
+    assert_eq!(values[0], values[1], "{name} inputs disagree");
+    Ok(values[0].clone())
+}
+
 struct Scratch(PathBuf);
 
 impl Scratch {
@@ -533,6 +555,14 @@ fn manual_admission_producer_does_not_supply_pr_qualification() -> Result<(), St
         .env("GITHUB_STEP_SUMMARY", scratch.0.join("summary"))
         .env("ADMISSION_MODE", "admit")
         .env("ADMISSION_PR_NUMBER", "")
+        .env(
+            "ADMISSION_MAX_CHANGED_FILES",
+            wired_input("max-changed-files")?,
+        )
+        .env(
+            "ADMISSION_MAX_CHANGED_LINES",
+            wired_input("max-changed-lines")?,
+        )
         .output()
         .map_err(|e| e.to_string())?;
     assert!(output.status.success(), "{output:?}");

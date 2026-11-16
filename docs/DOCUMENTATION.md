@@ -328,6 +328,7 @@ Current explanation docs:
 - [Experience roadmap](roadmap/experience.md)
 - [False-verdict ledger](roadmap/false-verdicts.md)
 - [Agent-as-user runs](AGENT_AS_USER_RUNS.md)
+- [Agent A/B eval](AGENT_AB_EVAL.md)
 - [Deferred decisions](DEFERRED.md)
 - [Agent handoff protocol](reference/AGENT_HANDOFF_PROTOCOL.md)
 - [Handoff ledger](handoffs/README.md)

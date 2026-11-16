@@ -39,6 +39,8 @@ pub(crate) enum Product {
     ReceiverLetBindings,
     MacroSites,
     DeclaredValueNames,
+    StrippedFileImports,
+    ItemSyntax,
 }
 
 impl Product {
@@ -57,6 +59,8 @@ impl Product {
             Self::ReceiverLetBindings => "receiver_let_bindings",
             Self::MacroSites => "macro_sites",
             Self::DeclaredValueNames => "declared_value_names",
+            Self::StrippedFileImports => "stripped_file_imports",
+            Self::ItemSyntax => "item_syntax",
         }
     }
 }

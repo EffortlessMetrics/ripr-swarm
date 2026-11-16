@@ -10,17 +10,21 @@ fn parse_positive_integer<T>(value: &str, flag: &str) -> Result<T, String>
 where
     T: std::str::FromStr + Eq + From<u8>,
 {
-    let parsed = value.parse::<T>().map_err(|_parse_err| {
-        format!(
-            "{flag} requires a positive integer; pass a whole number of 1 or more, got {value:?}"
-        )
-    })?;
-    if parsed == T::from(0) {
-        return Err(format!(
-            "{flag} requires a positive integer; pass a whole number of 1 or more, got {value:?}"
-        ));
+    match value.parse::<T>() {
+        Ok(parsed) if parsed != T::from(0) => Ok(parsed),
+        _ => Err(invalid_value(
+            value,
+            format!(
+                "{flag} requires a positive integer; pass a whole number of 1 or more, got {value:?}"
+            ),
+        )),
     }
-    Ok(parsed)
+}
+
+/// #11979: the typed code and value travel to the JSON-requested boundary.
+fn invalid_value(value: &str, message: String) -> String {
+    crate::cli::usage_refusal::note_invalid_value(value, &message);
+    message
 }
 
 pub(super) fn parse_positive_usize(value: &str, flag: &str) -> Result<usize, String> {
@@ -35,9 +39,14 @@ pub(super) fn parse_positive_usize(value: &str, flag: &str) -> Result<usize, Str
 /// the explicit flag keeps its deliberate per-invocation contract. Only a
 /// malformed or overflowing value is an error here.
 pub(super) fn parse_non_negative_usize(value: &str, flag: &str) -> Result<usize, String> {
-    value
-        .parse::<usize>()
-        .map_err(|_parse_err| format!("{flag} requires a non-negative integer; pass a whole number of 0 or more, got {value:?}"))
+    value.parse::<usize>().map_err(|_parse_err| {
+        invalid_value(
+            value,
+            format!(
+                "{flag} requires a non-negative integer; pass a whole number of 0 or more, got {value:?}"
+            ),
+        )
+    })
 }
 
 pub(super) fn parse_positive_u64(value: &str, flag: &str) -> Result<u64, String> {

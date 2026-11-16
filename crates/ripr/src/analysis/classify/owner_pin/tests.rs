@@ -6362,9 +6362,38 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         None
     );
 
+    // The body may invoke a trusted name or the wrapper itself: each
+    // resolves as the same call passed in the arguments would. httparse's
+    // `req!` forwards to its own second arm and asserts with `assert_eq!`.
+    assert_eq!(
+        refusal(&format!(
+            "{}{call}",
+            definition.replace("check(1);", "check(1); assert!(true);")
+        )),
+        None
+    );
+    let recursive = "macro_rules! case {\n    ($name:ident, |$v:ident| $body:block) => {\n        case! { $name, 1, |$v| $body }\n    };\n    ($name:ident, $want:expr, |$v:ident| $body:block) => {\n        #[test]\n        fn $name() { assert_eq!(1, $want); let check = |$v: u32| $body; check(1); }\n    };\n}\n";
+    assert_eq!(refusal(&format!("{recursive}{call}")), None);
+    // The body may call a trusted name that nothing rebinds.
+    let forwards = "macro_rules! case { ($n:ident) => { vec!($n); }; }\ncase!(assert_eq);\n";
+    assert_eq!(refusal(forwards), None);
+    // A macro called inside a function body between them defines nothing
+    // outside that body, so ordinary tests may sit between calls.
+    assert_eq!(
+        refusal(&format!(
+            "{definition}#[test]\nfn plain() {{ assert_eq!(1, 1); generate!(); }}\nfn build() -> Vec<u32> {{ vec![1] }}\n{call}"
+        )),
+        None
+    );
+
     // Each way the wrapper may still bind a name keeps the argument
     // ambiguous.
-    let bang = definition.replace("check(1);", "check(1); assert!(true);");
+    let bang = definition.replace("check(1);", "check(1); generate!();");
+    // A fragment named like a trusted macro still expands to any name.
+    let fragment_bang = definition
+        .replace("($name:ident,", "($name:ident, $assert_eq:ident,")
+        .replace("check(1);", "check(1); $assert_eq!();");
+    let path_bang = definition.replace("check(1);", "check(1); std::assert!(true);");
     let defines = definition.replace("#[test]", "macro_rules! inner { () => {} }\n#[test]");
     let imports = definition.replace("#[test]", "use other::*;\n#[test]");
     let attributed = format!("#[allow(unused)]\n{definition}");
@@ -6384,6 +6413,13 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         format!("{definition}crate::case!(one, |v| {{ assert_eq!(v, 1); }});\n"),
         // The definition invokes a macro or holds a binding word.
         format!("{bang}{call}"),
+        format!("{fragment_bang}case!(one, generate, |v| {{ assert_eq!(v, 1); }});\n"),
+        format!("{path_bang}{call}"),
+        // A body call of a trusted name that this file rebinds receives the
+        // arguments through a fragment, so its own scan never sees them:
+        // an imported `vec!` may define `assert_eq` from `$n`.
+        format!("use ext::vec;\n{forwards}"),
+        format!("{forwards}use ext::vec;\n"),
         format!("{defines}{call}"),
         format!("{imports}{call}"),
         // An attribute on the definition may change it.
@@ -6412,8 +6448,13 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         // A macro expanded between the definition and the call may emit a
         // shadowing `macro_rules! case`.
         format!("{definition}generate!();\n{call}"),
-        // Even a trusted name may be a local macro that emits one.
-        format!("{definition}fn build() -> Vec<u32> {{ vec![1] }}\n{call}"),
+        // Even a trusted name may be a local macro that emits one, and an
+        // `impl` block is no block expression: it does not confine one.
+        format!("{definition}vec! {{ 1 }}\n{call}"),
+        format!("{definition}impl S {{ generate!(); }}\n{call}"),
+        // A block confines what it defines only from calls outside it: a
+        // call later in the same block may see a shadowing `case`.
+        format!("{definition}fn setup() {{ generate!(); {call}}}\n"),
         // A module between them may carry a shadowing definition, even
         // without an outer attribute (`#![macro_use]` in its own file).
         format!("{definition}#[macro_use]\nmod shadow;\n{call}"),
