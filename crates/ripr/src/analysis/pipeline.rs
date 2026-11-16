@@ -299,7 +299,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
         // #10796: the candidate subject is the requested input source; the
         // exact-tree identity below is what a deadline refusal may echo.
         super::publish_input_source_fact(super::InputSource::GitCandidate);
-        if crate::is_verbose() {
+        if crate::stderr_diagnostics() {
             eprintln!(
                 "ripr: immutable git candidate resolved: {}",
                 super::git_candidate_execution::subject_identity(&resolved)
@@ -441,7 +441,7 @@ fn committed_history_overlay(
     let Some(overlay) = committed_source::probe(&options.root, options.git_timeout)? else {
         return Ok(None);
     };
-    if crate::is_verbose() {
+    if crate::stderr_diagnostics() {
         let dirty = overlay.dirty_paths().collect::<Vec<_>>();
         eprintln!(
             "{}",
