@@ -4004,29 +4004,35 @@ least one seam was withheld, so a workspace without the attribute keeps
 byte-identical repo output and no schema version changes:
 
 ```json
-"owner_opt_outs": {"withheld": 2, "reason": "owner_mutants_skip", "seam_ids": ["seam:...", "seam:..."]}
+"owner_opt_outs": {"withheld": 2, "reason": "owner_mutants_skip", "seam_ids": ["...", "..."], "owners": ["src/lib.rs::fn_level"]}
 ```
 
 `withheld` counts seams (not findings or canonical gaps); `seam_ids` names each
-withheld seam, sorted.
+withheld seam and `owners` each withheld seam's `owner` (`file::name`, the same
+key every repo seam records), both sorted.
 
 `ripr outcome` and `ripr agent verify` compare two snapshots by seam id. A seam
-id named in either snapshot's `owner_opt_outs.seam_ids` is excluded from both
-sides before matching, so a seam withheld on one side only (a `ripr pilot`
-snapshot, which keeps every seam, against a `ripr check` one, or the attribute
-added between two snapshots) is never reported as removed, resolved or new.
-Those documents then add the same top-level `owner_opt_outs` member (with
+is excluded from both sides before matching when either snapshot names its id
+in `owner_opt_outs.seam_ids` or its recorded `owner` in `owner_opt_outs.owners`.
+The owner match is what covers an inserted attribute line: a seam id hashes the
+seam's byte offset, so inserting `#[mutants::skip]` gives the owner's seams new
+ids on the withheld side, and the other snapshot's old ids are matched by owner.
+A seam withheld on one side only (a `ripr pilot` snapshot, which keeps every
+seam, against a `ripr check` one, or the attribute added or removed between two
+snapshots) is therefore never reported as removed, resolved or new. Those
+documents then add a top-level `owner_opt_outs` member (`withheld`, `reason`,
+`seam_ids` and `owners` of everything excluded, with
 `"excluded_from": "both_snapshots"`), the Markdown summary and the review
 receipt's `what_changed` name the excluded count, and nothing changes when no
-snapshot withheld a seam. A snapshot whose `owner_opt_outs` counts withheld
-seams without naming every one in `seam_ids` is refused, as byte-bounded and
-seam-limited snapshots are.
+snapshot withheld a seam. A snapshot whose `owner_opt_outs` does not name every
+withheld seam in `seam_ids` and at least one owner in `owners` is refused, as
+byte-bounded and seam-limited snapshots are.
 
 Other consumers of a check-produced `repo-exposure-json` read only its
 remaining `seams` and do not read `owner_opt_outs`: `ripr gate
 --repo-exposure`, gap ledgers and the baselines derived from them never see a
 withheld seam, and a baseline entry recorded before the attribute was added
-reads as resolved there (not reconciled yet). The Markdown formats
+reads as resolved there (not reconciled yet; tracked in #14898). The Markdown formats
 print one `Withheld by owner opt-out (owner_mutants_skip): N seam(s) ...` line
 under the summary table (`repo-exposure-md`) or the seam total
 (`repo-seams-md`). The repo badges withhold the seams from their count and add

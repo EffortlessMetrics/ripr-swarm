@@ -188,10 +188,11 @@ fn assert_disclosed(document: &Value, withheld: usize, format: &str) -> Result<(
         || disclosure["reason"] != REASON
         || ids.len() != withheld
         || !sorted_unique
-        || disclosure.as_object().map(serde_json::Map::len) != Some(3)
+        || disclosure["owners"] != serde_json::json!(["src/lib.rs::fn_level"])
+        || disclosure.as_object().map(serde_json::Map::len) != Some(4)
     {
         return Err(format!(
-            "{format}: owner_opt_outs should be {{withheld: {withheld}, reason: {REASON}, seam_ids: [{withheld} sorted ids]}}, got {disclosure}"
+            "{format}: owner_opt_outs should be {{withheld: {withheld}, reason: {REASON}, seam_ids: [{withheld} sorted ids]}}, owners: [src/lib.rs::fn_level]}}, got {disclosure}"
         ));
     }
     Ok(())
@@ -645,6 +646,59 @@ fn outcome_still_reports_real_movement_on_the_plain_owner() -> Result<(), String
         return Err(format!(
             "control's deleted seams must still read as removed: {outcome}"
         ));
+    }
+    Ok(())
+}
+
+/// #14139 review N1: really inserting the attribute line shifts every
+/// `fn_level` offset, so the after snapshot's withheld ids differ from the
+/// before ids. The comparison must still exclude the old ids (matched by
+/// owner) rather than report them removed.
+#[test]
+fn outcome_does_not_resolve_seams_whose_ids_moved_when_the_attribute_is_inserted()
+-> Result<(), String> {
+    // `control` comes first so the inserted line moves only fn_level's
+    // offsets; any seam below an inserted line gets a new id regardless.
+    let source = |attr: &str| {
+        format!(
+            "pub fn control(level: u32) -> bool {{\n    level > 3\n}}\n\n{attr}pub fn fn_level(level: u32) -> bool {{\n    level > 3\n}}\n"
+        )
+    };
+    let repo = Repo::new(source("").as_bytes())?;
+    let before = repo.snapshot("before.json")?;
+    let before_json: Value =
+        serde_json::from_str(&fs::read_to_string(&before).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    let old_ids = seam_ids_owned_by(&before_json, "fn_level")?;
+    repo.write_lib(source("#[mutants::skip]\n").as_bytes())?;
+    let after = repo.snapshot("after.json")?;
+    let after_json: Value =
+        serde_json::from_str(&fs::read_to_string(&after).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    let new_ids = disclosed_ids(&after_json)?;
+    // Fixture: the insertion really moved the ids.
+    if old_ids.is_empty() || new_ids.len() != old_ids.len() || !old_ids.is_disjoint(&new_ids) {
+        return Err(format!(
+            "fixture: inserting the attribute must move fn_level's ids: before {old_ids:?}, withheld {new_ids:?}"
+        ));
+    }
+    let outcome = repo.outcome(&before, &after)?;
+    let removed: BTreeSet<String> = outcome["removed"]
+        .as_array()
+        .map(|seams| {
+            seams
+                .iter()
+                .filter_map(|seam| seam["seam_id"].as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !removed.is_disjoint(&old_ids) {
+        return Err(format!("fn_level's old ids read as removed: {outcome}"));
+    }
+    let excluded: BTreeSet<String> = old_ids.union(&new_ids).cloned().collect();
+    assert_outcome_excludes(&outcome, &excluded, "inserted attribute")?;
+    if outcome["owner_opt_outs"]["owners"] != serde_json::json!(["src/lib.rs::fn_level"]) {
+        return Err(format!("outcome must name the withheld owner: {outcome}"));
     }
     Ok(())
 }

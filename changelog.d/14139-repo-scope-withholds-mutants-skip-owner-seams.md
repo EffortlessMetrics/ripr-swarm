@@ -7,7 +7,8 @@
   through `cfg_attr`) as exposure gaps. They are withheld from the seam lists
   and every count, and the JSON formats disclose the number in a top-level
   `owner_opt_outs` member (`{"withheld": N, "reason": "owner_mutants_skip",
-  "seam_ids": [...]}`) emitted only when something was withheld. `ripr outcome`
-  and `ripr agent verify` exclude a seam withheld in either snapshot from both
-  sides and disclose it, so a withheld seam is never reported as resolved
-  (#14139).
+  "seam_ids": [...], "owners": [...]}`) emitted only when something was
+  withheld. `ripr outcome` and `ripr agent verify` exclude a seam withheld in
+  either snapshot, by id or by owner, from both sides and disclose it, so a
+  withheld seam is never reported as resolved, even when inserting the
+  attribute line moved its ids (#14139).

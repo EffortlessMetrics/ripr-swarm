@@ -102,6 +102,11 @@ pub(crate) struct RepoOwnerOptOuts {
     /// Ids of the seams removed from the inventory the format renders,
     /// sorted and unique.
     pub(crate) seam_ids: Vec<String>,
+    /// The withheld seams' owners (`RepoSeam::owner`, `file::name`), sorted
+    /// and unique. A seam id hashes its byte offset, so adding the attribute
+    /// line moves the owner's ids; a snapshot comparison matches the owner
+    /// instead.
+    pub(crate) owners: Vec<String>,
 }
 
 impl RepoOwnerOptOuts {
@@ -131,16 +136,19 @@ pub(crate) fn withhold_repo_owner_opt_outs<T>(
     seam_of: impl Fn(&T) -> &crate::analysis::seams::RepoSeam,
 ) -> RepoOwnerOptOuts {
     let mut seam_ids = std::collections::BTreeSet::new();
+    let mut owners = std::collections::BTreeSet::new();
     entries.retain(|entry| {
         let seam = seam_of(entry);
         if seam.owner_opt_out().is_none() {
             return true;
         }
         seam_ids.insert(seam.id().as_str().to_string());
+        owners.insert(seam.owner().to_string());
         false
     });
     RepoOwnerOptOuts {
         seam_ids: seam_ids.into_iter().collect(),
+        owners: owners.into_iter().collect(),
     }
 }
 

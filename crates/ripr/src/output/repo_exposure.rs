@@ -1737,6 +1737,7 @@ pub(crate) fn repo_owner_opt_outs_json(owner_opt_outs: &RepoOwnerOptOuts) -> Opt
             "withheld": owner_opt_outs.withheld(),
             "reason": owner_opt_outs.reason().as_str(),
             "seam_ids": owner_opt_outs.seam_ids,
+            "owners": owner_opt_outs.owners,
         })
     })
 }
