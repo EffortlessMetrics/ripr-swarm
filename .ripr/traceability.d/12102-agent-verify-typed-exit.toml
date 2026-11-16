@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0011"
+tests = [
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::verify_exit_class_follows_refusal_kind_not_reworded_message",
+]
+code = [
+  "crates/ripr/src/cli/commands/agent.rs::classify_verify_movement_error",
+]

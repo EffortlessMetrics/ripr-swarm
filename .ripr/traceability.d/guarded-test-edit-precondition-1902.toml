@@ -4,6 +4,11 @@ id = "RIPR-SPEC-0320"
 name = "guarded test-only assertion edit precondition"
 spec = "docs/specs/RIPR-SPEC-0320-guarded-test-edit-precondition.md"
 tests = [
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_absent_document_version_never_verifies",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_range_must_cover_the_retained_text",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_decoded_path_is_canonical",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_lsp_line_breaks",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_advisory_refs_do_not_change_identity",
   "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_builds_broad_error_precondition",
   "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_boundary_value_fixture",
   "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_fail_closed_reason_fixture",

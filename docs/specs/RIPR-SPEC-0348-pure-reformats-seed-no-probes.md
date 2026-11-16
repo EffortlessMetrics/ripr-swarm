@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #9450 (ux(check): formatting-only rewraps and reindents seed probes and lead Start-here)
+- #14760 (Start here picks a line that only uses a table renamed in the diff)
 
 Linked PRs:
 
@@ -131,6 +132,36 @@ computed directly from source position.
 
 A token change inside a rewrap (`a + b` -> `a + c`) still seeds its probe.
 
+### Rule 4: a line that only applies an in-file rename the diff establishes is neutral
+
+A 1:1 replaced pair whose only differences are identifiers renamed at their
+declaration in the same file's diff seeds no probe on either side, and the
+declaration line itself seeds none (`static HEADER_NAME_MAP` ->
+`static TOKEN_MAP` with `HEADER_NAME_MAP[b as usize]` -> `TOKEN_MAP[b as
+usize]`). `crates/ripr/src/analysis/probes/identifier_rename.rs` owns the
+decision. The rename is established only when all of these hold:
+
+- exactly one `static`, `const`, `fn` or `type` declaration line changes
+  only its name (`struct`/`enum` names reach derived `Debug`; `main` and
+  foreign items inside an `extern "ABI" { .. }` block are bound by
+  spelling);
+- the whole item, through its item-level `;` or a `fn` body's closing `}`,
+  is byte-identical after the respelling;
+- the old name no longer appears in the new file's code and the new name
+  did not appear in the old file's code;
+- every attribute directly above the declaration, across blank lines, is
+  name-blind (`inline`, `cfg`, `allow`, doc, ...);
+- neither name is spelled after `.` or `::`, as a field, inside any macro
+  invocation or `macro_rules!` body, or inside a `struct`/`enum`/`union`
+  body, where the same spelling may name something else or be printed;
+- neither file names an identifier starting with `stringify`,
+  `concat_idents`, `type_name`, `paste` or `function_name`.
+
+A use-site pair is neutral only when every differing identifier is an
+established rename and the rest of the raw line is byte-identical. A
+rename whose declaration and use sites sit in different files stays
+probed.
+
 ## Required Evidence
 
 - Unit: `is_behavior_neutral_rewrap` accepts `["let a = b;"]` against
@@ -159,6 +190,12 @@ A token change inside a rewrap (`a + b` -> `a + c`) still seeds its probe.
    no probe.
 5. A rewrap whose block contains a string literal or a `stringify!`
    continuation: still probed.
+6. A table renamed at its declaration with its values unchanged and its use
+   site respelled: no probe on either line; the diff's real change keeps
+   its probe.
+7. The same rename with a changed body, a pre-existing new name, a remaining
+   old-name use, a name-observing attribute, a same-spelled field, method,
+   variant or macro token: the use site keeps its probe.
 
 ## Test Mapping
 
@@ -181,6 +218,13 @@ A token change inside a rewrap (`a + b` -> `a + c`) still seeds its probe.
   `rewrap_keeps_separated_dots_apart` (example 5 family).
 - `numeric_dot_split_and_join_keep_their_probes` keeps changed numeric-dot
   tokens probed in both directions through the production block route.
+- `crates/ripr/src/analysis/probes/identifier_rename_tests.rs` (Rule 4, real
+  Git fixtures): `a_proven_rename_seeds_no_probe_but_the_real_change_does`
+  (example 6), `a_renamed_function_and_its_callers_seed_no_probe`,
+  `a_use_site_that_changes_more_than_the_name_stays_probed`,
+  `the_same_use_site_edit_without_a_proven_rename_is_probed` and
+  `a_rename_that_may_not_mean_the_same_item_stays_probed` (example 7),
+  `renaming_an_entry_point_is_never_proven`.
 
 ## Implementation Mapping
 
@@ -189,6 +233,9 @@ A token change inside a rewrap (`a + b` -> `a + c`) still seeds its probe.
   comparison via `squeeze_bracket_spaces`; `is_behavior_neutral_respelling`
   treats raw-differing, trim-equal pairs as neutral. Call sites in
   `probes_for_file_with_relations` are unchanged.
+- `crates/ripr/src/analysis/probes/identifier_rename.rs`:
+  `rename_only_lines` (Rule 4), applied in `probes_for_file_with_relations`
+  beside the respelling and whitespace replacement-pair filters.
 
 ## Metrics
 

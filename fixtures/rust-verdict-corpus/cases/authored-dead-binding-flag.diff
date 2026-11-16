@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..0000000 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ pub fn flag_hit(n: u32) -> u32 {
+-    let _flag = n == 5;
++    let _flag = n == 6;
+     7
+ }
+

@@ -75,6 +75,8 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "first-action",
     "first-pr",
     "gate",
+    "gate evaluate",
+    "gate check",
     "impacted-evidence",
     "init",
     "lsp",
@@ -156,7 +158,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "feedback record" => FEEDBACK_RECORD_HELP,
         "first-action" => FIRST_ACTION_HELP,
         "first-pr" => FIRST_PR_HELP,
-        "gate" => GATE_HELP,
+        "gate" | "gate check" | "gate evaluate" => GATE_HELP,
         "impacted-evidence" => IMPACTED_EVIDENCE_HELP,
         "init" => INIT_HELP,
         "lsp" => LSP_HELP,
@@ -295,7 +297,7 @@ fn push_catalog_example(examples: &mut Vec<&'static str>, path: &str) {
 
 /// The catalog `example` field for one command path: the catalog row looked up
 /// by path, then the metadata row joined on the catalog id.
-fn catalog_example(path: &str) -> Option<&'static str> {
+pub(super) fn catalog_example(path: &str) -> Option<&'static str> {
     let entry = crate::cli::command_catalog::catalog()
         .iter()
         .find(|entry| entry.path == path)?;
@@ -331,17 +333,23 @@ pub(super) fn print_review_comments_help() {
 }
 
 pub(super) fn print_gate_help() {
-    // `ripr gate evaluate --help` prints this same body; the catalog carries a
-    // richer example for that nested path than the bare `gate` row.
-    println!("{}", render_command_help(GATE_HELP, &["gate evaluate"]));
+    // `ripr gate evaluate --help` and `ripr gate check --help` print this same
+    // body; the catalog carries richer examples for those nested paths than
+    // the bare `gate` row.
+    println!(
+        "{}",
+        render_command_help(GATE_HELP, &["gate evaluate", "gate check"])
+    );
 }
 
-/// Help for a group command (`policy`, `reports`, `baseline`, `pr-comments`).
+/// Help for a group command (`policy`, `reports`, `baseline`, `pr-comments`,
+/// `assistant-loop`).
 ///
 /// The group shares one body across its leaves. When the first argument names
-/// a registered leaf (`policy readiness`), the body's lead sentence is replaced
-/// by that leaf's one-line catalog summary, the same sentence `ripr help --all`
-/// shows; otherwise the group help prints unchanged.
+/// a registered leaf (`policy readiness`), only that leaf's help prints: its
+/// catalog summary, its own usage lines, its own options section, its catalog
+/// example, and a pointer to the whole family (#14314, see `help_leaf`).
+/// Otherwise the group help prints unchanged.
 pub(super) fn print_group_help(group: &str, args: &[String]) {
     let prefix = format!("{group} ");
     let Some(group_body) = registered_command_paths()
@@ -351,22 +359,21 @@ pub(super) fn print_group_help(group: &str, args: &[String]) {
     else {
         return;
     };
-    let rendered = render_command_help(group_body, &[]);
-    let leaf_summary = args.first().and_then(|leaf| {
+    let leaf_help = args.first().and_then(|leaf| {
         let path = format!("{group} {leaf}");
         if !registered_command_paths().contains(&path.as_str()) {
             return None;
         }
-        catalog_summary(&path)
+        crate::cli::help_leaf::leaf_help(&path)
     });
-    match (leaf_summary, rendered.split_once('\n')) {
-        (Some(summary), Some((_, rest))) => println!("{summary}\n{rest}"),
-        _ => println!("{rendered}"),
+    match leaf_help {
+        Some(scoped) => println!("{scoped}"),
+        None => println!("{}", render_command_help(group_body, &[])),
     }
 }
 
 /// The catalog `summary` field for one command path.
-fn catalog_summary(path: &str) -> Option<&'static str> {
+pub(super) fn catalog_summary(path: &str) -> Option<&'static str> {
     let entry = crate::cli::command_catalog::catalog()
         .iter()
         .find(|entry| entry.path == path)?;
@@ -869,6 +876,14 @@ mod tests {
                     .to_string(),
             );
         }
+        // The header describes the route; the refusal remedy for extra
+        // arguments belongs only in the refusal itself.
+        if header.contains("drop the extra arguments") {
+            return Err(
+                "the help --all header should not carry the extra-arguments refusal remedy"
+                    .to_string(),
+            );
+        }
         if !header.contains("except on ripr help --json") {
             return Err(
                 "the help --all global-flags paragraph should except the machine catalog route"
@@ -940,7 +955,7 @@ mod tests {
         assert!(CHECK_HELP.contains("processed_<n>_of_<total>"));
         assert!(CHECK_HELP.contains("does not mean analysis is faster"));
         assert!(CHECK_HELP.contains("json, json-compact, sarif,"));
-        assert!(CHECK_HELP.contains("github) keep stdout byte-clean"));
+        assert!(CHECK_HELP.contains("github, missed-txt) keep stdout byte-clean"));
         assert!(!CHECK_HELP.contains("json, sarif, markdown"));
         assert!(DIFF_HELP.contains("Usage: ripr diff"));
         assert!(DIFF_HELP.contains("full-repo-limited"));
@@ -1192,7 +1207,7 @@ mod tests {
         assert!(SWARM_INGEST_HELP.contains("edited_forbidden_file"));
         assert!(EXPLAIN_HELP.starts_with("Print why ripr flagged"));
         assert!(EXPLAIN_HELP.contains("Usage: ripr explain"));
-        assert!(CONTEXT_HELP.starts_with("Print the per-change context packet"));
+        assert!(CONTEXT_HELP.starts_with("Print one finding's changed code and related tests"));
         assert!(CONTEXT_HELP.contains("Usage: ripr context"));
         assert!(DOCTOR_HELP.starts_with("Diagnose the local ripr setup"));
         assert!(DOCTOR_HELP.contains("Usage: ripr doctor [--root PATH]"));
@@ -1472,11 +1487,11 @@ mod tests {
     const SWARM_INGEST_PARSER_RS: &str = include_str!("commands/swarm/ingest.rs");
     const RERUN_PARSER_RS: &str = include_str!("rerun.rs");
     const MCP_PARSER_RS: &str = include_str!("../mcp/mod.rs");
-    const PR_SUMMARY_PARSER_RS: &str = include_str!("../app/pr_summary/mod.rs");
-    const ANNOTATIONS_PARSER_RS: &str = include_str!("../app/annotations.rs");
-    const PR_EVIDENCE_PARSER_RS: &str = include_str!("../app/pr_evidence.rs");
-    const IMPACTED_EVIDENCE_PARSER_RS: &str = include_str!("../app/impacted_evidence.rs");
-    const RIPR_PLUS_PARSER_RS: &str = include_str!("../app/ripr_plus.rs");
+    const PR_SUMMARY_PARSER_RS: &str = include_str!("commands/pr_summary.rs");
+    const ANNOTATIONS_PARSER_RS: &str = include_str!("commands/annotations.rs");
+    const PR_EVIDENCE_PARSER_RS: &str = include_str!("commands/pr_evidence.rs");
+    const IMPACTED_EVIDENCE_PARSER_RS: &str = include_str!("commands/impacted_evidence.rs");
+    const RIPR_PLUS_PARSER_RS: &str = include_str!("commands/ripr_plus.rs");
     const FIRST_PR_PARSER_RS: &str = include_str!("commands/first_pr.rs");
     const ASSISTANT_LOOP_PARSER_RS: &str = include_str!("commands/assistant_loop.rs");
     const FIRST_ACTION_PARSER_RS: &str = include_str!("commands/first_action.rs");
@@ -1540,11 +1555,7 @@ mod tests {
             AGENT_PARSER_RS,
             &["parse_agent_verify_execute_options"],
         ),
-        (
-            "annotations",
-            ANNOTATIONS_PARSER_RS,
-            &["run_annotations", "parse_options"],
-        ),
+        ("annotations", ANNOTATIONS_PARSER_RS, &["parse_options"]),
         (
             "assistant-loop health",
             ASSISTANT_LOOP_PARSER_RS,
@@ -1628,21 +1639,19 @@ mod tests {
         ),
         ("first-pr", FIRST_PR_PARSER_RS, &["parse_options"]),
         ("gate", GATE_PARSER_RS, &["parse_gate_options"]),
+        ("gate evaluate", GATE_PARSER_RS, &["parse_gate_options"]),
+        ("gate check", GATE_PARSER_RS, &["parse_gate_check_plan"]),
         (
             "impacted-evidence",
             IMPACTED_EVIDENCE_PARSER_RS,
-            &["run_impacted_evidence", "parse_options"],
+            &["parse_options"],
         ),
         ("init", INIT_PARSER_RS, &["parse_init_options"]),
         ("lsp", LSP_PARSER_RS, &["lsp_with_serve"]),
         ("mcp", MCP_PARSER_RS, &["run"]),
         ("outcome", CLI_COMMANDS_RS, &["parse_outcome_options"]),
         ("pilot", PILOT_PARSER_RS, &["parse_pilot_options"]),
-        (
-            "plus",
-            RIPR_PLUS_PARSER_RS,
-            &["run_ripr_plus", "parse_options"],
-        ),
+        ("plus", RIPR_PLUS_PARSER_RS, &["parse_options"]),
         (
             "policy history",
             POLICY_PARSE_RS,
@@ -1698,11 +1707,7 @@ mod tests {
             PR_COMMENTS_GITHUB_PARSER_RS,
             &["parse_pr_comments_summary_options"],
         ),
-        (
-            "pr-evidence",
-            PR_EVIDENCE_PARSER_RS,
-            &["run_pr_evidence", "parse_options"],
-        ),
+        ("pr-evidence", PR_EVIDENCE_PARSER_RS, &["parse_options"]),
         (
             "pr-ledger record",
             CLI_COMMANDS_RS,
@@ -1713,11 +1718,7 @@ mod tests {
             CLI_COMMANDS_RS,
             &["parse_pr_review_front_panel_options"],
         ),
-        (
-            "pr-summary",
-            PR_SUMMARY_PARSER_RS,
-            &["run_pr_summary", "parse_options"],
-        ),
+        ("pr-summary", PR_SUMMARY_PARSER_RS, &["parse_options"]),
         (
             "receipt check",
             RECEIPT_PARSER_RS,
@@ -1812,7 +1813,13 @@ mod tests {
             if !line.starts_with(' ') {
                 continue;
             }
-            if let Some(rest) = trimmed.strip_prefix("--") {
+            // A comma after the opening flag continues a list of flags that
+            // share one description (`--root, --label, --out`); known_flags
+            // reads every member, so this miner does too (#14086).
+            for token in trimmed.split_whitespace() {
+                let Some(rest) = token.strip_prefix("--") else {
+                    break;
+                };
                 let name: String = rest
                     .chars()
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
@@ -1822,6 +1829,9 @@ mod tests {
                     if !flags.contains(&flag) {
                         flags.push(flag);
                     }
+                }
+                if !token.ends_with(',') {
+                    break;
                 }
             }
         }

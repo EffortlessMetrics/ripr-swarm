@@ -178,6 +178,7 @@ const PYTHON_PREVIEW_AUTHORITY_BOUNDARY: &str = "preview_advisory_only";
 /// Run-level result disclosures carried into the SARIF property bag.
 struct SarifRunDisclosures<'a> {
     omitted_not_current: usize,
+    withheld_by_owner_opt_out: usize,
     folded_same_line: usize,
     results_bound: Option<&'a SarifResultsBound>,
 }
@@ -201,9 +202,25 @@ pub(crate) fn render_findings_sarif_with_budget(
         .iter()
         .filter(|finding| !finding.is_candidate_actionable())
         .count();
+    // #13819: a finding whose changed owner carries `#[mutants::skip]` is
+    // withheld from actionable output, so it opens no code-scanning alert.
+    // Policy suppressions keep their SARIF-native `suppressions` marking
+    // below; only owner opt-outs are dropped, and the run discloses how many.
+    let owner_withheld: std::collections::BTreeSet<&str> = output
+        .owner_opt_outs
+        .iter()
+        .map(|opt_out| opt_out.finding_id.as_str())
+        .collect();
+    let withheld_by_owner_opt_out = output
+        .findings
+        .iter()
+        .filter(|finding| finding.is_candidate_actionable())
+        .filter(|finding| owner_withheld.contains(finding.id.as_str()))
+        .count();
     let results = output
         .findings
         .iter()
+        .filter(|finding| !owner_withheld.contains(finding.id.as_str()))
         // Candidate-actionable eligibility (#3281): a SARIF result is a
         // current diagnostic for CI annotation consumers; base-side
         // evidence and unresolved subjects stay visible on the check JSON
@@ -221,6 +238,7 @@ pub(crate) fn render_findings_sarif_with_budget(
         output.analyzed_revisions.as_ref(),
         SarifRunDisclosures {
             omitted_not_current,
+            withheld_by_owner_opt_out,
             folded_same_line,
             results_bound: results_bound.as_ref(),
         },
@@ -430,14 +448,22 @@ fn minify_sarif_document(pretty: &str) -> String {
 /// limitation rides in the notification's and the run's property bags.
 const SARIF_EVIDENCE_FAILED_NOTIFICATION_ID: &str = "seam_evidence_limited";
 
-fn evidence_limitation_value(limitation: &AnalysisLimitation) -> Value {
+pub(crate) fn evidence_limitation_value(limitation: &AnalysisLimitation) -> Value {
     let mut entry = Map::new();
     entry.insert("category".to_string(), json!(limitation.kind.as_str()));
     entry.insert(
         "producer_stage".to_string(),
         json!(limitation.producer_stage.as_str()),
     );
-    entry.insert("scope".to_string(), json!("pass_wide"));
+    entry.insert(
+        "scope".to_string(),
+        json!(crate::output::repo_exposure::evidence_limitation_scope(
+            limitation
+        )),
+    );
+    if let Some(path) = limitation.path.as_deref() {
+        entry.insert("path".to_string(), json!(path));
+    }
     if let Some(detail) = limitation.bounded_detail.as_deref() {
         entry.insert("detail".to_string(), json!(detail));
     }
@@ -534,10 +560,16 @@ fn insert_evidence_failed_notification(run: &mut Value, limitations: &[AnalysisL
             json!({
                 "level": "warning",
                 "descriptor": { "id": SARIF_EVIDENCE_FAILED_NOTIFICATION_ID },
-                "message": { "text": format!(
-                    "The seam-evidence pass failed; every seam is an opaque stand-in and this inventory is not a complete result. {}",
-                    limitation.recovery.detail
-                ) },
+                "message": { "text": match limitation.path.as_deref() {
+                    Some(path) => format!(
+                        "Rust path `{path}` could not be read and was skipped; tests and owners in it are not considered, so this inventory is not a complete result. {}",
+                        limitation.recovery.detail
+                    ),
+                    None => format!(
+                        "The seam-evidence pass failed; every seam is an opaque stand-in and this inventory is not a complete result. {}",
+                        limitation.recovery.detail
+                    ),
+                } },
                 "properties": evidence_limitation_value(limitation)
             })
         })
@@ -546,7 +578,7 @@ fn insert_evidence_failed_notification(run: &mut Value, limitations: &[AnalysisL
         {
             "id": SARIF_EVIDENCE_FAILED_NOTIFICATION_ID,
             "shortDescription": {
-                "text": "The shared seam-evidence pass failed; the inventory is limited, not complete."
+                "text": "The seam-evidence pass failed or a Rust path was unreadable; the inventory is limited, not complete."
             }
         }
     ]);
@@ -623,6 +655,13 @@ fn sarif_document(
             json!(disclosures.omitted_not_current),
         );
     }
+    // Additive and absent when no owner opted out (#13819).
+    if disclosures.withheld_by_owner_opt_out > 0 {
+        properties.insert(
+            "withheld_by_owner_opt_out".to_string(),
+            json!(disclosures.withheld_by_owner_opt_out),
+        );
+    }
     if disclosures.folded_same_line > 0 {
         properties.insert(
             "folded_same_line_results".to_string(),
@@ -685,13 +724,41 @@ pub(crate) fn render_refusal_sarif(
     root: &Path,
     base: Option<&str>,
 ) -> String {
+    render_refusal_sarif_scoped(notice, root, base, "finding")
+}
+
+/// The `repo-sarif` refusal (#14499): the same refusal run as
+/// [`render_refusal_sarif`], with the `repo_seam` scope its results use.
+pub(crate) fn render_repo_refusal_sarif(
+    notice: &crate::core_error::RefusalNotice,
+    root: &Path,
+    base: Option<&str>,
+) -> String {
+    render_refusal_sarif_scoped(notice, root, base, "repo_seam")
+}
+
+/// [`render_repo_refusal_sarif`], minified like `repo-sarif-compact`.
+pub(crate) fn render_repo_refusal_sarif_compact(
+    notice: &crate::core_error::RefusalNotice,
+    root: &Path,
+    base: Option<&str>,
+) -> String {
+    minify_sarif_document(&render_repo_refusal_sarif(notice, root, base))
+}
+
+fn render_refusal_sarif_scoped(
+    notice: &crate::core_error::RefusalNotice,
+    root: &Path,
+    base: Option<&str>,
+    scope: &str,
+) -> String {
     let mut properties = Map::new();
     properties.insert("tool".to_string(), json!("ripr"));
     properties.insert(
         "schema_version".to_string(),
         json!(RIPR_SARIF_SCHEMA_VERSION),
     );
-    properties.insert("scope".to_string(), json!("finding"));
+    properties.insert("scope".to_string(), json!(scope));
     properties.insert("run_status".to_string(), json!("refused"));
     properties.insert("refusal_identity".to_string(), json!(notice.identity));
     properties.insert("repair_route".to_string(), json!(notice.repair_route));
@@ -1991,6 +2058,7 @@ mod tests {
                 None,
                 SarifRunDisclosures {
                     omitted_not_current: 0,
+                    withheld_by_owner_opt_out: 0,
                     folded_same_line: 0,
                     results_bound: None,
                 },
@@ -3635,9 +3703,12 @@ weakly_gripped = "note"
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }

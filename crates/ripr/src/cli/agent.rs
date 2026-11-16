@@ -203,6 +203,9 @@ pub(super) struct AgentRepairOptions {
     /// phase's progress narration and `wrote <path>` lines. `RIPR_QUIET`
     /// does the same without the flag. Results and refusal prose always print.
     pub(super) quiet: bool,
+    /// Started through the `ripr repair <item>` façade (#14394): a refusal
+    /// that names a restart names that spelling, not `ripr agent repair`.
+    pub(super) facade_start: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -744,6 +747,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         store,
         json,
         quiet: false,
+        facade_start: false,
     }))
 }
 
@@ -1499,9 +1503,12 @@ fn parse_files_value(value: &str) -> Result<Vec<PathBuf>, String> {
 fn parse_max_seams(value: &str) -> Result<usize, String> {
     let parsed = super::commands_numeric::parse_positive_usize(value, "--max-seams")?;
     if parsed > AGENT_BRIEF_HARD_MAX_SEAMS {
-        return Err(format!(
-            "invalid --max-seams: maximum is {AGENT_BRIEF_HARD_MAX_SEAMS}; pass a value of {AGENT_BRIEF_HARD_MAX_SEAMS} or less"
-        ));
+        // #8835: name the typed value, like the shared numeric refusals.
+        let message = format!(
+            "--max-seams takes at most {AGENT_BRIEF_HARD_MAX_SEAMS}; pass a whole number from 1 to {AGENT_BRIEF_HARD_MAX_SEAMS}, got {value:?}"
+        );
+        super::usage_refusal::note_invalid_value(value, &message);
+        return Err(message);
     }
     Ok(parsed)
 }
@@ -1911,6 +1918,7 @@ mod tests {
                 store: None,
                 json: false,
                 quiet: false,
+                facade_start: false,
             }))
         );
         assert_eq!(
@@ -1947,6 +1955,7 @@ mod tests {
                 store: None,
                 json: false,
                 quiet: false,
+                facade_start: false,
             }))
         );
     }
@@ -1989,6 +1998,7 @@ mod tests {
                 store: Some(PathBuf::from("target/ripr/alt-attempts")),
                 json: false,
                 quiet: false,
+                facade_start: false,
             }))
         );
         assert_eq!(
@@ -2131,6 +2141,7 @@ mod tests {
                 store: None,
                 json: false,
                 quiet: false,
+                facade_start: false,
             }))
         );
     }
@@ -2641,7 +2652,10 @@ mod tests {
                 "--max-seams",
                 "11",
             ])),
-            Err("invalid --max-seams: maximum is 10; pass a value of 10 or less".to_string())
+            Err(
+                "--max-seams takes at most 10; pass a whole number from 1 to 10, got \"11\""
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_agent_brief_options(&args(&["--files", "src/lib.rs,", "--json"])),

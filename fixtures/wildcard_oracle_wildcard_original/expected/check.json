@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"high"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach score: observes_score", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: value + 1", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "local flow reaches returned value: value + 1 (line 2)", "related test src/lib.rs:8 observes_score uses weak relational check oracle: assert!(matches!(value, _));", "source function argument value value = 1 at line 9"],
       "flow_sinks": [
         {"kind":"return_value","text":"value + 1","line":2}

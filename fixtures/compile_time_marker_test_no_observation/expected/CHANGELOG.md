@@ -134,3 +134,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — compile_time_marker_test_no_observation (11)
+
+Reason:
+RIPR-SPEC-0122: describe unestablished test reach without claiming owner invocation (#7330)
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — compile_time_marker_test_no_observation (12)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

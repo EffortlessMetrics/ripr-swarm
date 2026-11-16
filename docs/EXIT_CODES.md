@@ -13,7 +13,9 @@ ripr uses three ordinary command exit codes, plus standalone Unix check interrup
 `exposed` and `weakly_exposed` findings. A non-zero exit from `check` means the
 analysis did not complete, not that it disapproved of your diff. The blocking
 decision belongs to `ripr gate evaluate`, which exits `3` when the gate blocks
-after writing its report. Do not build a CI gate on `check`'s exit code; read
+after writing its report. `ripr gate check --base REV` runs `review-comments`
+and then the same evaluation, with the same exit codes. If `review-comments`
+cannot complete, gate check exits `2` (config_error); it never passes. In `calibrated-gate` mode a changed file the parser could not read also blocks (exit `3`), since no seam was judged for it; the other modes report it as an `advisory` warning (#14485). Do not build a CI gate on `check`'s exit code; read
 its output, or run the gate.
 
 ## Why codes 2 and 3?
@@ -70,8 +72,13 @@ reached the caller.
 ## When you see exit code 2
 
 - **Analysis error**: the diff could not be read (a missing or unreadable
-  `--diff` path, or a directory), the diff exceeded the hard
-  `RIPR_MAX_DIFF_*` guards (`diff_scope_oversized` with no analysis run), the
+  `--diff` path, or a directory), the diff exceeded a hard language-neutral
+  guard (the parse guards such as `RIPR_MAX_DIFF_CHANGED_LINES`, or the
+  index guard `RIPR_MAX_DIFF_INDEX_FILES`: `diff_scope_oversized` with no
+  analysis run), no changed file fits its language's changed-line limit
+  (`RIPR_MAX_DIFF_CHANGED_RUST_LINES`, `_PYTHON_LINES` or
+  `_TYPESCRIPT_LINES`; when any file fits, the run degrades into a partial
+  scope that exits `0`, #13641), the
   base ref could not be resolved, or the workspace root could not be
   determined. A read diff whose typed outcome is `unsupported_input`
   (for example malformed input or a truncated declared hunk) exits `2`
@@ -86,8 +93,10 @@ reached the caller.
   drill-in commands rather than pointing to that unwritten artifact.
   A run that analyzed only
   part of its scope also exits `0`, with `partial_with_limitations`: a diff
-  over the smaller partial budget (its limitation is also named
-  `diff_scope_oversized`), a changed Rust file the parser refused and read
+  over the partial budget or over a per-language changed-line limit while
+  some file still fits (a `limited_partial_scope` run; its limitation is
+  named `diff_scope_oversized`, and files over their own limit are listed in
+  `over_limit_files`), a changed Rust file the parser refused and read
   lexically, or a changed file whose language adapter is unavailable. The
   parser follows stable Rust, so a changed file using nightly-only syntax it
   cannot parse (guard patterns, never patterns) also makes the run partial.
@@ -113,15 +122,31 @@ reached the caller.
   `message: "refused: <identity>"`, repair route in the first warning,
   `analysis_outcome: null`; no `run_status` field), and
   `repo-exposure-json` and `agent-seam-packets-json` render their format's
-  refused envelope (zeroed counts, `run_status: "refused"`). Machine formats without an
-  honest refusal shape yet — `repo-sarif`, `badge-shields`, `badge-plus-*`,
-  `repo-badge-*`, `repo-seams-*`, `repo-exposure-md`, and
-  `repo-exposure-summary-json` — write
-  nothing to stdout and put the prose diagnostic on stderr for now; that
-  gap is a named limitation, not a clean result. These machine formats and
-  usage-class errors keep stdout empty. Usage-class errors include argv
-  errors and `context`/`explain` selector misses or ambiguity; their guidance
-  and retry listing stay on stderr (RIPR-SPEC-0003).
+  refused envelope (zeroed counts, `run_status: "refused"`), and `agent`
+  renders its refused `stop=` / `next=` / `verify=refused` record (#14452;
+  a timed run's bounded retry rides `next=`). Every other machine format
+  (`json-terse`, `check-findings-json`, `repo-sarif`, the Shields and
+  `badge-plus-*` / `repo-badge-*` badges, `repo-seams-json`,
+  `repo-exposure-summary-json`) prints its own refusal document too (#14499);
+  docs/OUTPUT_SCHEMA.md lists each shape. The prose formats (`human`,
+  `human-full`, `repo-seams-md`, `repo-exposure-md`) keep stdout empty and
+  the diagnostic on stderr. Usage-class errors include argv errors and
+  `context`/`explain` selector misses or ambiguity; their guidance and retry
+  listing stay on stderr (RIPR-SPEC-0003). Under an explicit JSON request
+  (`--json` or a JSON `--format`) these covered classes also write a minimal
+  `cli_refusal` document to stdout (#11584, #6834 decision): an unknown
+  command, an unknown flag or stray positional, an unrecognized value
+  rejected by the CLI's shared unknown-value builder, `explain --format
+  json`, a value flag missing its value and a malformed number caught by the
+  CLI's shared value and numeric readers (#11979), and a `context` selector
+  miss or ambiguity. The document carries
+  `schema_version`, `tool`, `status: "refused"` and
+  `error {code, message, token?, next}`. Exit code and stderr are
+  unchanged, and without a JSON request stdout stays empty. Other argv
+  errors keep empty stdout even under a JSON request: a missing required
+  flag, a value rejected by a command's own parser rather than the shared
+  readers, conflicting flags, and a value rejected outside the shared builder
+  (for example a gate mode); see `docs/OUTPUT_SCHEMA.md`.
   Fresh selector misses also retain producer-owned language limitations for
   that run, with the configured-off or unavailable-binary recovery. These
   describe analysis scope rather than prove why the selector missed;
@@ -141,6 +166,20 @@ reached the caller.
   names the root, and does not write `gate-decision.{json,md}`. Evaluation
   does not start. This is distinct from a completed `config_error` decision
   (also exit `2`), which still writes the report before returning.
+- **Unusable report input**: `ripr reports gap-ledger` with a source that
+  is readable but not valid JSON, not that source kind's shape, or a
+  producer refusal (`downstream_consumable: false`, nothing analyzed;
+  #14434); and
+  `ripr policy readiness` with a supplied input that is missing, unreadable,
+  not a JSON object, or empty, a baseline delta, waiver aging, suppression
+  health or previous readiness input whose `kind` names another report, or a
+  gate decision without `status` and `summary`, exit `2` and name the input
+  (the flag for gap-ledger, the input label such as `gate_decision` for
+  readiness), path and cause on stderr. Calibration and repo-config inputs
+  get only the object and non-empty checks. The `blocked` ledger or
+  `config_error` readiness report is still written first, so it replaces an
+  earlier report at `--out` instead of leaving a stale one for a later step
+  to read (#14311).
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
 - **Closed output pipe**: the reader of stdout went away early (for example
   `ripr doctor | head`). ripr stops quietly with `2`, not `0`, because its
@@ -150,8 +189,9 @@ reached the caller.
 
 ## When you see exit code 3
 
-- **Gate failure**: `ripr gate evaluate` evaluated successfully and blocked
-  the PR; the full report was still written to `--out`.
+- **Gate failure**: `ripr gate evaluate` or `ripr gate check` evaluated
+  successfully and blocked the PR; the full report was still written to
+  `--out`.
 - **Doctor findings**: `ripr doctor` completed its diagnosis and at least
   one check failed; the full report was already written (human screen or
   `--json` document) and stderr names `doctor found issues` (#5102). A

@@ -6,7 +6,7 @@ name: Mutation spot check (Python)
 # pinned version) over each package's module path, dumps the session, then runs
 # `cargo xtask mutation-spot-check --cosmic-ray-dump`, which synthesizes a
 # one-hunk diff per mutant, runs `ripr check --diff` on it, and compares the
-# verdict with the real outcome. Runs on demand and weekly, never on a pull
+# verdict with the real outcome. Runs on explicit demand, never on a pull
 # request. Read-only: no secrets, nothing is published or pushed.
 #
 # STATUS: this workflow has NOT run. No package in the corpus has been
@@ -22,14 +22,11 @@ on:
         description: "Comma-separated corpus package names to run (default: all)"
         required: false
         default: ""
-  schedule:
-    - cron: "43 5 * * 4"
-
 permissions:
   contents: read
 
 concurrency:
-  group: mutation-spot-check-python-${{ github.ref }}
+  group: mutation-spot-check-python-${{ github.ref }}-${{ inputs.packages }}
   cancel-in-progress: true
 
 jobs:

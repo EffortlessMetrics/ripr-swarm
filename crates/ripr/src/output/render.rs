@@ -94,6 +94,7 @@ pub(crate) fn render_check_with_config_and_progress(
             super::check_findings::render_check_findings_json_with_context(output, config, &context)
         }
         OutputFormat::Github => Ok(github::render_with_config(output, config)),
+        OutputFormat::MissedTxt => Ok(super::missed_txt::render_with_config(output, config)),
         OutputFormat::Agent => Ok(human::terminal_safe(
             human::render_agent_with_config_and_navigation(
                 output,
@@ -512,8 +513,7 @@ fn detect_ts_full_repo_guidance(
     // Guard: if there are Rust files, the empty-seam result is a legitimate
     // Rust analysis outcome (e.g. a workspace with no production shapes), not
     // a TS-first scan gap. Only fire when Rust is absent.
-    let rust_files = analysis::workspace_rust_files(root);
-    if !rust_files.is_empty() {
+    if analysis::workspace_has_rust_source(root) {
         return None;
     }
 
@@ -548,7 +548,7 @@ fn detect_python_repo_exposure_guidance(
     if python_file_count == 0 {
         return None;
     }
-    if !analysis::workspace_rust_files(root).is_empty() {
+    if analysis::workspace_has_rust_source(root) {
         return None;
     }
 
@@ -2401,9 +2401,12 @@ fn happy_path_passes() {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }

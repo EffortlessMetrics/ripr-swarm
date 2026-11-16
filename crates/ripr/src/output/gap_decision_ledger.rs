@@ -83,6 +83,63 @@ pub(crate) struct GapDecisionLedgerReport {
     pub(crate) records: Vec<GapRecord>,
     warnings: Vec<String>,
     limits: Vec<String>,
+    /// Why the supplied source could not be read as this source kind (not
+    /// JSON, or not a gap-ledger input shape). Not rendered: the CLI writes
+    /// the `blocked` ledger, then refuses the run with it (#14311).
+    source_parse_error: Option<String>,
+    /// Why a source that parsed is a producer refusal (`downstream_consumable:
+    /// false`): nothing was analyzed. Not rendered: the CLI writes the
+    /// `blocked` ledger, then refuses the run with it (#14434).
+    source_refusal: Option<String>,
+    /// The `repair_route` the refusing source records, when it records one
+    /// (`analysis_scope` or a non-consumable `run_limitations[]` entry). A
+    /// saved `blocked` ledger keeps `run_limitations[]` (and any route in
+    /// it), but a refusal disclosed only in `analysis_scope` is saved with a
+    /// marker-only entry, so this is `None` when that ledger is fed back
+    /// (#14434).
+    source_refusal_repair_route: Option<String>,
+}
+
+impl GapDecisionLedgerReport {
+    /// The parse failure of the supplied source, when it was readable but
+    /// was not a valid input of the selected source kind.
+    pub(crate) fn source_parse_error(&self) -> Option<&str> {
+        self.source_parse_error.as_deref()
+    }
+
+    /// The producer refusal the supplied source discloses, when it parsed
+    /// but nothing was analyzed (#14434).
+    pub(crate) fn source_refusal(&self) -> Option<&str> {
+        self.source_refusal.as_deref()
+    }
+
+    /// The repair route the refusing source records, if any (#14434).
+    pub(crate) fn source_refusal_repair_route(&self) -> Option<&str> {
+        self.source_refusal_repair_route.as_deref()
+    }
+}
+
+/// The `repair_route` a refusing source records: `analysis_scope` first,
+/// then the first non-consumable `run_limitations[]` entry that carries one.
+fn recorded_refusal_repair_route(value: &Value) -> Option<String> {
+    let route = |entry: &Value| {
+        entry
+            .get("repair_route")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|route| !route.is_empty())
+            .map(ToOwned::to_owned)
+    };
+    value.get("analysis_scope").and_then(route).or_else(|| {
+        value
+            .get("run_limitations")
+            .and_then(Value::as_array)?
+            .iter()
+            .filter(|entry| {
+                entry.get("downstream_consumable").and_then(Value::as_bool) == Some(false)
+            })
+            .find_map(route)
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -672,6 +729,9 @@ pub(crate) fn build_gap_decision_ledger_report(
     let mut parsed_cleanly = false;
     let mut source_value_snapshot = None;
     let mut source_content_committed = false;
+    let mut source_parse_error = None;
+    let mut source_refusal = None;
+    let mut source_refusal_repair_route = None;
     let mut records = match input.records_json {
         Ok(contents) => {
             let source_value = serde_json::from_str::<Value>(&contents).ok();
@@ -713,6 +773,7 @@ pub(crate) fn build_gap_decision_ledger_report(
                 }
                 Err(err) => {
                     warnings.push(format!("parse {} failed: {err}", input.records_path));
+                    source_parse_error = Some(err);
                     Vec::new()
                 }
             };
@@ -752,8 +813,12 @@ pub(crate) fn build_gap_decision_ledger_report(
             .as_ref()
             .is_some_and(crate::output::gate::discloses_non_consumable_record)
     {
+        source_refusal_repair_route = source_value_snapshot
+            .as_ref()
+            .and_then(recorded_refusal_repair_route);
         match refusal_status {
             Some(status) => {
+                source_refusal = Some(format!("a producer refusal (run_status: {status})"));
                 warnings.push(format!(
                     "gap decision ledger input {} is a producer refusal (run_status: {status}, \
                      downstream_consumable: false): nothing was analyzed, so no gap records can \
@@ -763,6 +828,7 @@ pub(crate) fn build_gap_decision_ledger_report(
                 ));
             }
             None => {
+                source_refusal = Some("a non-consumable producer record".to_string());
                 warnings.push(format!(
                     "gap decision ledger input {} discloses a non-consumable producer record \
                      (downstream_consumable: false) with no known typed run status: nothing \
@@ -913,6 +979,9 @@ pub(crate) fn build_gap_decision_ledger_report(
         analysis_coverage,
         records,
         warnings,
+        source_parse_error,
+        source_refusal,
+        source_refusal_repair_route,
         limits: vec![
             "Advisory static gap decisions only.".to_string(),
             "Gate-decision artifacts remain the only configured pass/fail authority.".to_string(),
@@ -2697,10 +2766,16 @@ fn gap_record_from_python_no_repair_card_finding(
     // exists. Name that operand instead of the generic line; routing stays
     // fail-closed (no gap id, no card). The extraction is shared with the
     // human triage surface so the two wordings cannot drift.
-    let unresolved_operand =
-        crate::output::human::unresolved_boundary_operand(&string_array_at(finding, &["missing"]));
+    let missing = string_array_at(finding, &["missing"]);
+    let unresolved_operand = crate::output::human::unresolved_boundary_operand(&missing);
+    // #13790: a predicate with several comparisons names that reason, through
+    // the same extraction the human triage and the agent refusal use.
+    let multi_comparison = crate::output::human::multi_comparison_predicate(&missing)
+        .filter(|_| first_missing_discriminator_value(finding).is_none());
     let reason = if let Some(repo_reason) = repo_reason.as_deref() {
         repo_reason.to_string()
+    } else if let Some(predicate) = multi_comparison {
+        predicate.reason()
     } else if let Some(operand) = unresolved_operand {
         format!(
             "static evidence cannot bind `{operand}` to a test input, so the boundary equality cannot become a repair target"
@@ -5700,7 +5775,16 @@ mod tests {
         // #12952: the framework-shadow and dotted-module honesty fixtures each
         // retain one weak `no_strong_oracle` error-path card. Their exact
         // exception credit is withheld; both cards remain packet-eligible.
-        if (direct, no_strong, orthogonal, family_selection) != (22, 38, 31, 1) {
+        // #13621: `python_guarded_field_value_untaken` downgrades a guarded
+        // field value no test enters; its weak card names the `total < 0`
+        // discriminator, one more direct-aligned card.
+        // #12126: `python_coarse_{sign, residue, text_length}` keep a coarse
+        // projection of the changed owner result weakly exposed; each weak
+        // finding carries one orthogonal card, three more in total.
+        // #13869: `python_error_path_shape` pins a builtin `TypeError` ->
+        // `ValueError` swap with `pytest.raises(ValueError)`, which now reads as
+        // an exact error variant; its `no_strong_oracle` card is gone.
+        if (direct, no_strong, orthogonal, family_selection) != (23, 37, 34, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
@@ -6297,6 +6381,39 @@ mod tests {
             )
         );
         assert!(records[0].repair_route.is_none());
+        Ok(())
+    }
+
+    // #13790: a several-comparison predicate names that reason in the record
+    // detail; the record stays a non-delegatable static limitation.
+    #[test]
+    fn check_output_python_no_repair_card_names_a_multi_comparison_predicate() -> Result<(), String>
+    {
+        let mut payload: Value = serde_json::from_str(&python_no_repair_card_check_output())
+            .map_err(|error| format!("parse fixture check output: {error}"))?;
+        let findings = payload["findings"]
+            .as_array_mut()
+            .ok_or_else(|| "findings missing".to_string())?;
+        for finding in findings
+            .iter_mut()
+            .filter(|finding| finding["classification"] == "weakly_exposed")
+        {
+            finding["missing_discriminators"] = serde_json::json!([]);
+            finding["missing"] = serde_json::json!([
+                "A strong Python oracle reaches `discount`, but static evidence does not place a related test input at the changed predicate boundary. The changed predicate `rate < 0 or rate >= 1` holds 2 relational comparisons; static evidence cannot establish which boundary a related test call pins."
+            ]);
+        }
+        let report = check_output_ledger(payload.to_string());
+        let records = python_no_repair_card_records(&report);
+        assert_eq!(records.len(), 1, "{:?}", report.records);
+        assert_eq!(
+            records[0].static_limit_detail.as_deref(),
+            Some(
+                "this Python preview finding has no repair card (the changed predicate `rate < 0 or rate >= 1` holds 2 comparisons, so static evidence cannot tell which boundary a test pins), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
+            )
+        );
+        assert!(records[0].repair_route.is_none());
+        assert!(!projection_eligible(records[0], "agent_packet"));
         Ok(())
     }
 

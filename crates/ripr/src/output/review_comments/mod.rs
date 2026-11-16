@@ -23,7 +23,10 @@ mod scope;
 pub(crate) use scope::ReviewCommentsAnalysisScope;
 use scope::ReviewPlacement;
 
-pub(crate) use placement::{normalize_path_text, placement_for, placement_json};
+pub(crate) use placement::{
+    displaced_seam_location, displaced_seam_prefix, normalize_path_text, placement_for,
+    placement_json,
+};
 pub(crate) use render::display_paths;
 
 use publish_plan::{
@@ -204,6 +207,11 @@ pub(crate) fn render_review_comments_json_with_scope(
     // from a producer that predates the disclosure.
     scope_json["cap_omitted_seams"] = json!(selection.omitted_by_cap);
     scope_json["omitted_by_policy"] = json!(selection.omitted_by_policy);
+    // #14082: the part of the policy omissions ripr could not judge. Emitted
+    // only when nonzero so documents with nothing withheld stay byte-stable.
+    if selection.omitted_static_limited > 0 {
+        scope_json["static_limited_omitted_seams"] = json!(selection.omitted_static_limited);
+    }
     let value = json!({
         "schema_version": REVIEW_COMMENTS_SCHEMA_VERSION,
         "tool": "ripr",
@@ -817,6 +825,7 @@ mod tests {
                 .iter()
                 .map(|seam| AgentBriefSelectedSeam {
                     seam,
+                    arm_result: None,
                     why_now: AgentBriefWhyNow {
                         reason: AgentBriefWhyNowReason::ChangedLineIntersectsSeam,
                         confidence: AgentBriefWhyNowConfidence::High,
@@ -827,6 +836,7 @@ mod tests {
             warnings: Vec::new(),
             omitted_by_cap: 0,
             omitted_by_policy: 0,
+            omitted_static_limited: 0,
         }
     }
 
@@ -1811,6 +1821,7 @@ mod tests {
             hard_cap: 10,
             top_seams: vec![AgentBriefSelectedSeam {
                 seam: &seams[0],
+                arm_result: None,
                 why_now: AgentBriefWhyNow {
                     reason: AgentBriefWhyNowReason::RepoActionableFallback,
                     confidence: AgentBriefWhyNowConfidence::Low,
@@ -1820,6 +1831,7 @@ mod tests {
             warnings: Vec::new(),
             omitted_by_cap: 0,
             omitted_by_policy: 0,
+            omitted_static_limited: 0,
         };
 
         let rendered = render_review_comments_json(
@@ -2148,6 +2160,44 @@ mod tests {
         assert_eq!(
             value["analysis_outcome"]["outcome"]["kind"],
             "complete_no_findings"
+        );
+        Ok(())
+    }
+
+    /// #13894: a complete outcome that carries only the requested-scope note
+    /// stays `advisory`; the note is projected, not turned into `incomplete`.
+    /// The negative control is `review_comments_projects_typed_outcome_without_
+    /// strengthening_incomplete_input`, whose partial outcomes stay incomplete.
+    #[test]
+    fn review_comments_keeps_complete_outcome_with_requested_scope_note_advisory()
+    -> Result<(), String> {
+        let note = AnalysisLimitation::new(
+            AnalysisLimitationKind::RequestedScopeExcluded,
+            AnalysisStage::DiffLoad,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "rerun without --exclude")?,
+        );
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteWithFindings,
+            Default::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                candidate_line_count: 1,
+                probe_count: 1,
+                finding_count: 1,
+            },
+            vec![note],
+        )?;
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let value = render_value_with_outcome(&working_set, &[classified(88)], &outcome)?;
+        assert_eq!(value["status"], "advisory");
+        assert_eq!(value["analysis_outcome"]["analysis_complete"], true);
+        assert_eq!(
+            value["analysis_outcome"]["outcome"]["limitations"][0]["kind"],
+            "requested_scope_excluded"
         );
         Ok(())
     }
@@ -3222,6 +3272,7 @@ mod tests {
             )],
             omitted_by_cap: 0,
             omitted_by_policy: 0,
+            omitted_static_limited: 0,
         };
         assert_json_fixture(
             "configured-off",

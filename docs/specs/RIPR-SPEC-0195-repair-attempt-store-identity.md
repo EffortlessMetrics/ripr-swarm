@@ -120,8 +120,12 @@ Resolution law:
   the link and the removal) only under the default store
   `target/ripr/repair-attempts/`. The same shape under any other writable path,
   including other `target/ripr` subtrees and source files, is an unaccounted
-  second name and stays refused (#12847). An explicit store's interrupted pair
-  is not yet accepted; that follow-up is tracked in #13553.
+  second name and stays refused (#12847). A directory or file whose name only
+  shares the store's name as a prefix (`repair-attempts-old`, a plain file named
+  `repair-attempts`) is not the store. An explicit store outside `target/ripr`
+  accepts the same pair only inside its own `<store>/<attempt>` subtree, which
+  the capture reads from the policy's operational writes; a sibling attempt, a
+  sibling store and an exact-file operational write stay refused (#13553).
 - Store identity does not prove an attempt is current, correct, or useful.
 
 Python trust/verify and edit-cage consumers share this resolver. There is no

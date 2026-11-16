@@ -515,3 +515,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — propagate_stdout_macro (31)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless propagate_stdout_macro --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — propagate_stdout_macro (32)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless propagate_stdout_macro --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — propagate_stdout_macro (33)
+
+Reason:
+RIPR-SPEC-0162: the check digest states the analyzer limit once; a Why hint that the Analyzer limit line repeats word for word is dropped (#14308)
+
+Command:
+`cargo xtask goldens bless propagate_stdout_macro --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

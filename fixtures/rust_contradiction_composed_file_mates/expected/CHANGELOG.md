@@ -25,3 +25,53 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_contradiction_composed_file_mates (3)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless rust_contradiction_composed_file_mates --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_contradiction_composed_file_mates (4)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless rust_contradiction_composed_file_mates --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_contradiction_composed_file_mates (5)
+
+Reason:
+RIPR-SPEC-0122: the check digest states each fact once (no Why hint the Analyzer limit line repeats; no stage detail that repeats the missing-evidence line)
+
+Command:
+`cargo xtask goldens bless rust_contradiction_composed_file_mates --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_contradiction_composed_file_mates (6)
+
+Reason:
+RIPR-SPEC-0224 #14483: the JSON oracle summary and the Related test headline rank rows by the shared observation tier, so a no_call_path or assertion_not_observing row no longer speaks for the finding while a row that reaches the change is listed
+
+Command:
+`cargo xtask goldens bless rust_contradiction_composed_file_mates --reason "..."`
+
+Updated:
+- `expected/check.json`
