@@ -285,9 +285,10 @@ fn reused_call(
 }
 
 /// Whether the stub scope declares an item, or imports a name, that could
-/// bind `base_name` to something other than the owner's type. Only
-/// `use super::Type;` (the owner sits in the scope module's parent, since an
-/// owner in a nested module is refused earlier) is known to name the owner.
+/// bind `base_name` to something other than the owner's type, including
+/// through a glob. Only `use super::Type;` and `use super::*;` outside any
+/// nested module (the owner sits in that module's parent, since an owner
+/// in a nested module is refused earlier) are known to name the owner.
 /// An unparsed scope counts as shadowing.
 fn scope_shadows(scope: &StubScope<'_>, base_name: &str) -> bool {
     if scope.range.is_empty() {
@@ -320,13 +321,35 @@ fn scope_shadows(scope: &StubScope<'_>, base_name: &str) -> bool {
                     .and_then(|path| path.segment())
                     .and_then(|segment| segment.name_ref())
                     .is_some_and(|name| name.text() == base_name);
-                return names_base
-                    && tree.use_tree_list().is_none()
-                    && !(tree.rename().is_none()
-                        && full_use_path(&tree) == format!("super::{base_name}"));
+                let glob = tree.star_token().is_some();
+                if tree.use_tree_list().is_some() || !(names_base || glob) {
+                    return false;
+                }
+                // A glob can import the name too. Only `use super::*;` or
+                // `use super::Type;` in the test module (or a function body
+                // in it, as a written stub has) reaches the owner's module;
+                // inside a nested module `super` means something else
+                // (#14825 review).
+                let owner_path = if glob {
+                    "super".to_string()
+                } else {
+                    format!("super::{base_name}")
+                };
+                let top_level = !tree
+                    .syntax()
+                    .ancestors()
+                    .take_while(|ancestor| {
+                        let range = ancestor.text_range();
+                        range.start() >= start && range.end() <= end
+                    })
+                    .any(|ancestor| ast::Module::can_cast(ancestor.kind()));
+                return !(tree.rename().is_none()
+                    && top_level
+                    && full_use_path(&tree) == owner_path);
             }
             ast::Item::cast(node).is_some_and(|item| {
                 let name = match &item {
+                    ast::Item::Module(it) => it.name(),
                     ast::Item::Struct(it) => it.name(),
                     ast::Item::Enum(it) => it.name(),
                     ast::Item::Union(it) => it.name(),

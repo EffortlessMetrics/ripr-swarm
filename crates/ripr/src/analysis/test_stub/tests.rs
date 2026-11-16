@@ -2186,8 +2186,9 @@ mod tests {{
 }
 
 /// #14825 CodeRabbit review: a call under `cfg` is not copied, a scope that
-/// imports another `Bucket` blocks the no-argument fallback too, and
-/// `use super::Bucket;` names the owner, so reuse still applies under it.
+/// imports another `Bucket` (by name or glob, or `super::` from a nested
+/// module, or a `mod Bucket`) blocks the no-argument fallback too, and
+/// `use super::Bucket;` outside a nested module names the owner, so reuse still applies under it.
 #[test]
 fn receiver_skips_cfg_calls_and_shadowed_fallbacks() -> Result<(), String> {
     let build = |ctor: &str, tests: &str| {
@@ -2220,6 +2221,26 @@ mod tests {{
             no_argument,
             "    use super::*;\n    use crate::other::Bucket;\n",
             None,
+        ),
+        (
+            with_capacity,
+            "    use crate::other::*;\n    #[test]\n    fn t() { let _b = Bucket::new(\"x\"); }\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    use super::*;\n    mod inner {\n        use super::Bucket;\n    }\n    #[test]\n    fn t() { let _b = Bucket::new(5); }\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    use super::*;\n    mod Bucket { pub fn new(_s: &str) -> u8 { 0 } }\n    #[test]\n    fn t() { let _x: u8 = Bucket::new(\"x\"); }\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    #[test]\n    fn drains() {\n        use super::*;\n        let _b = Bucket::new(5);\n    }\n",
+            Some("subject = Bucket::new(5), as in the existing test `drains`"),
         ),
         (
             with_capacity,

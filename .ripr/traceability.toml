@@ -11321,6 +11321,7 @@ tests = [
   "crates/ripr/src/analysis/test_stub/tests.rs::receiver_skips_namesake_default_and_closure_calls",
   "crates/ripr/src/analysis/test_stub/tests.rs::receiver_reads_nested_std_imports_and_skips_async_and_control_literals",
   "crates/ripr/src/analysis/test_stub/tests.rs::receiver_skips_cfg_calls_and_shadowed_fallbacks",
+  "crates/ripr/src/cli/commands/agent_stub.rs::tests::stub_detail_lines_escape_repository_controls",
   "crates/ripr/tests/agent_stub_compiles.rs::check_routes_a_continuation_line_finding_to_the_line_the_stub_targets",
   "crates/ripr/tests/agent_stub_compiles.rs::check_prints_no_route_when_the_nearest_gap_line_is_ambiguous",
   "crates/ripr/tests/agent_stub_compiles.rs::check_routes_a_changed_constant_to_the_consumer_seam_line",

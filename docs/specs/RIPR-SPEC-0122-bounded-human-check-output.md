@@ -522,14 +522,17 @@ constructor instead of a labelled `todo!()` when one is established
 of the same self type, beside the owner's impl in the same module, that takes
 no `self`, has no type or const generics, is not `async`, `unsafe` or
 cfg-gated, and returns `Self` or the type. No receiver is built when the
-target test module declares or imports another item of the type's name; only
-`use super::Type;` is known to name the owner. In order:
+target test module declares or imports another item of the type's name,
+including a module, a glob import or an import in a nested module; only
+`use super::Type;` and `use super::*;` outside a nested module are known to
+name the owner.
+In order:
 
 1. the first call in the target test module to such a constructor whose
    arguments are all literals with no control characters, written directly in
    a `#[test]` function body (not inside a closure or `async` block) that is not `should_panic`
-   and is not a ripr stub, and not under `cfg` on the test, a statement or a
-   nested module; the call is copied with its arguments;
+   and is not a ripr stub, and not under `cfg` or `cfg_attr` on the test, a
+   statement or a nested module; the call is copied with its arguments;
 2. a no-argument constructor named `new`, `empty` or `default`, in that order;
 3. `<Type as ::core::default::Default>::default()` for a `#[derive(Default)]`
    type spelled without generic arguments, in a file that declares or imports
