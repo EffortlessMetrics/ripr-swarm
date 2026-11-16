@@ -154,6 +154,22 @@ This is a shallow clone that tracks a single branch: widen it with `git remote s
 
 In GitHub Actions, set `fetch-depth: 0` on actions/checkout instead.
 
+### A partial clone has no network
+
+```text
+This is a partial clone (for example `--filter=blob:none`): the file contents for this range were never downloaded
+```
+
+Exit code `2`. ripr makes no network requests and runs fully offline, but a
+blob-filtered clone stores only the files it checked out. To diff against an
+older base, Git downloads the missing contents from the clone's remote on
+demand, and here it could not: the remote was unreachable, refused access, or
+no longer has them. Re-run where Git can reach that remote, or
+analyze a full clone (in GitHub Actions, remove `filter:` from
+actions/checkout). ripr's Git calls never prompt on the terminal or open a
+Git Credential Manager window, so an unreachable or unauthenticated remote
+fails at once (a `GIT_ASKPASS` helper you configured still runs).
+
 ### The directory is not a Git repository
 
 ```text
