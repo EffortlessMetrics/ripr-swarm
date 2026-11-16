@@ -2185,6 +2185,64 @@ mod tests {{
     Ok(())
 }
 
+/// #14825 CodeRabbit review: a call under `cfg` is not copied, a scope that
+/// imports another `Bucket` blocks the no-argument fallback too, and
+/// `use super::Bucket;` names the owner, so reuse still applies under it.
+#[test]
+fn receiver_skips_cfg_calls_and_shadowed_fallbacks() -> Result<(), String> {
+    let build = |ctor: &str, tests: &str| {
+        format!(
+            "pub struct Bucket {{ tokens: u32 }}
+impl Bucket {{
+{ctor}    pub fn allow(&self, n: u32) -> bool {{ self.tokens > n }}
+}}
+
+#[cfg(test)]
+mod tests {{
+{tests}}}
+"
+        )
+    };
+    let with_capacity = "    pub fn new(capacity: u32) -> Self { Bucket { tokens: capacity } }\n";
+    let no_argument = "    pub fn new() -> Self { Bucket { tokens: 0 } }\n";
+    let cases = [
+        (
+            with_capacity,
+            "    use super::*;\n    #[cfg(any())]\n    #[test]\n    fn off() { let _b = Bucket::new(\"wrong\"); }\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    use super::*;\n    #[test]\n    fn on() {\n        #[cfg(any())]\n        let _b = Bucket::new(\"wrong\");\n    }\n",
+            None,
+        ),
+        (
+            no_argument,
+            "    use super::*;\n    use crate::other::Bucket;\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    use super::Bucket;\n    #[test]\n    fn drains() { let _b = Bucket::new(5); }\n",
+            Some("subject = Bucket::new(5), as in the existing test `drains`"),
+        ),
+    ];
+    for (ctor, tests, expected) in cases {
+        let source = build(ctor, tests);
+        let seam = seam_at(
+            "src/lib.rs",
+            &source,
+            "self.tokens > n",
+            SeamKind::PredicateBoundary,
+            boundary("self.tokens == n"),
+        )?;
+        let stub =
+            rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
+        assert_eq!(stub.receiver_setup.as_deref(), expected, "{}", stub.text);
+    }
+    Ok(())
+}
+
 /// #14825 re-review: the reused-from-a-test origin is stable on rerun, and a
 /// no-argument constructor with a non-neutral name (`connect`) is not used.
 #[test]

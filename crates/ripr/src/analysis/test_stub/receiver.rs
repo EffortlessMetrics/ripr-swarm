@@ -127,6 +127,12 @@ pub(super) fn receiver_construction(
         .filter_map(|function| constructor(&function, &self_ty, &base_name))
         .collect();
 
+    // A scope that declares or imports another item named like the type
+    // binds that name in the test module, so neither a copied call nor a
+    // fallback would reach the owner's type (#14825 review).
+    if scope_shadows(scope, &base_name) {
+        return None;
+    }
     if let Some(found) = reused_call(scope, &base_name, &constructors) {
         return Some(found.with_path(type_path));
     }
@@ -189,8 +195,7 @@ impl Reused {
 /// constructor's arity, inside a `#[test]` function that is not
 /// `should_panic` and is not a ripr stub (#14825 review: reusing a stub's own
 /// receiver would change its comment on the next run and break the
-/// already-written check). `None` when the scope declares or imports its own
-/// item named `Type`, which could shadow the owner's type.
+/// already-written check), and not under `cfg`.
 fn reused_call(
     scope: &StubScope<'_>,
     base_name: &str,
@@ -206,31 +211,6 @@ fn reused_call(
         let range = node.text_range();
         range.start() >= start && range.end() <= end
     };
-    let shadowed = parse
-        .tree()
-        .syntax()
-        .descendants()
-        .filter(|node| in_scope(node))
-        .any(|node| {
-            if let Some(item) = ast::Use::cast(node.clone()) {
-                return item.syntax().descendants().any(|token_node| {
-                    ast::Name::cast(token_node.clone()).is_some_and(|name| name.text() == base_name)
-                        || ast::NameRef::cast(token_node)
-                            .is_some_and(|name| name.text() == base_name)
-                });
-            }
-            ast::Item::cast(node).is_some_and(|item| match item {
-                ast::Item::Struct(it) => it.name().is_some_and(|n| n.text() == base_name),
-                ast::Item::Enum(it) => it.name().is_some_and(|n| n.text() == base_name),
-                ast::Item::Union(it) => it.name().is_some_and(|n| n.text() == base_name),
-                ast::Item::TypeAlias(it) => it.name().is_some_and(|n| n.text() == base_name),
-                ast::Item::Trait(it) => it.name().is_some_and(|n| n.text() == base_name),
-                _ => false,
-            })
-        });
-    if shadowed {
-        return None;
-    }
     parse
         .tree()
         .syntax()
@@ -275,6 +255,18 @@ fn reused_call(
             {
                 return None;
             }
+            // A call under `cfg` (on the test, a statement, or a nested
+            // module) may never be compiled, so it proves nothing about the
+            // constructor's argument types (#14825 review).
+            if call
+                .syntax()
+                .ancestors()
+                .take_while(|node| in_scope(node))
+                .filter_map(ast::AnyHasAttrs::cast)
+                .any(|owner| has_cfg(owner.attrs()))
+            {
+                return None;
+            }
             let function = call.syntax().ancestors().find_map(ast::Fn::cast)?;
             if !has_test_attribute(&function)
                 || function
@@ -288,6 +280,61 @@ fn reused_call(
                 constructor: name,
                 arguments,
                 test: function.name()?.text().to_string(),
+            })
+        })
+}
+
+/// Whether the stub scope declares an item, or imports a name, that could
+/// bind `base_name` to something other than the owner's type. Only
+/// `use super::Type;` (the owner sits in the scope module's parent, since an
+/// owner in a nested module is refused earlier) is known to name the owner.
+/// An unparsed scope counts as shadowing.
+fn scope_shadows(scope: &StubScope<'_>, base_name: &str) -> bool {
+    if scope.range.is_empty() {
+        return false;
+    }
+    let Some(parse) = parse_clean_source_file(scope.parse_unit) else {
+        return true;
+    };
+    let (Ok(start), Ok(end)) = (
+        TextSize::try_from(scope.range.start),
+        TextSize::try_from(scope.range.end),
+    ) else {
+        return true;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter(|node| {
+            let range = node.text_range();
+            range.start() >= start && range.end() <= end
+        })
+        .any(|node| {
+            if let Some(rename) = ast::Rename::cast(node.clone()) {
+                return rename.name().is_some_and(|name| name.text() == base_name);
+            }
+            if let Some(tree) = ast::UseTree::cast(node.clone()) {
+                let names_base = tree
+                    .path()
+                    .and_then(|path| path.segment())
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|name| name.text() == base_name);
+                return names_base
+                    && tree.use_tree_list().is_none()
+                    && !(tree.rename().is_none()
+                        && full_use_path(&tree) == format!("super::{base_name}"));
+            }
+            ast::Item::cast(node).is_some_and(|item| {
+                let name = match &item {
+                    ast::Item::Struct(it) => it.name(),
+                    ast::Item::Enum(it) => it.name(),
+                    ast::Item::Union(it) => it.name(),
+                    ast::Item::TypeAlias(it) => it.name(),
+                    ast::Item::Trait(it) => it.name(),
+                    _ => None,
+                };
+                name.is_some_and(|name| name.text() == base_name)
             })
         })
 }
