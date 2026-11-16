@@ -126,6 +126,9 @@ pub(in crate::analysis) fn unary_tail_change(
     *baseline_lines.get_mut(offset)? = old_line.to_string();
     let baseline = baseline_lines.join("\n");
 
+    if !owner_identity_is_unchanged(owner, changed, index) {
+        return None;
+    }
     let current = OwnerTail::read(owner.body.as_str(), offset)?;
     let base = OwnerTail::read(&baseline, offset)?;
     if current.name != owner.name
@@ -155,6 +158,89 @@ pub(in crate::analysis) fn unary_tail_change(
         line,
         baseline,
     })
+}
+
+/// Interim base-owner identity guard (#14815 review F1). The line pairing
+/// inside the owner's span says nothing about which function the removed
+/// line belonged to: swapping two same-name functions between modules, or
+/// swapping their `#[cfg]`s, replaces one line inside the current owner's
+/// span while the old line came from the other function. So the reading
+/// requires that the file declares exactly one `fn` of the owner's name on
+/// both the current and the reconstructed base side, and that no added or
+/// removed line touches the header (from its first attribute to its opening
+/// brace) of the owner or of any enclosing item. Anything unreadable refuses.
+fn owner_identity_is_unchanged(
+    owner: &FunctionSummary,
+    changed: &ChangedFile,
+    index: &RustIndex,
+) -> bool {
+    let Some(facts) = crate::analysis::rust_index::find_file_facts(index, &owner.file) else {
+        return false;
+    };
+    let source: &str = &facts.source;
+    let Some(old_source) = crate::analysis::diff::reconstruct_old_source(source, changed) else {
+        return false;
+    };
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    let Some(old_parse) = parse_clean_source_file(&old_source) else {
+        return false;
+    };
+    let named = |function: &ast::Fn| {
+        function
+            .name()
+            .is_some_and(|name| name.text() == owner.name.as_str())
+    };
+    let functions: Vec<ast::Fn> = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(named)
+        .collect();
+    let old_count = old_parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(named)
+        .count();
+    let [function] = functions.as_slice() else {
+        return false;
+    };
+    if old_count != 1 {
+        return false;
+    }
+    let line_of =
+        |offset: usize| -> Option<usize> { Some(source.get(..offset)?.matches('\n').count() + 1) };
+    // Header spans of the owner and each enclosing item: first line of the
+    // node (attributes included) through the line of its first `{`.
+    let mut headers = Vec::new();
+    for node in
+        std::iter::once(function.syntax().clone()).chain(function.syntax().ancestors().skip(1))
+    {
+        if ast::SourceFile::can_cast(node.kind()) {
+            break;
+        }
+        let start = usize::from(node.text_range().start());
+        let text = node.text().to_string();
+        let Some(brace) = text.find('{') else {
+            // An enclosing item with no block (it cannot hold the owner)
+            // or an unreadable shape: refuse.
+            return false;
+        };
+        let (Some(first), Some(last)) = (line_of(start), line_of(start + brace)) else {
+            return false;
+        };
+        headers.push(first..=last);
+    }
+    let touches = |line: usize| headers.iter().any(|span| span.contains(&line));
+    !changed
+        .added_lines
+        .iter()
+        .chain(&changed.removed_lines)
+        .any(|line| touches(line.new_side_line))
 }
 
 /// The operator and whether `new` holds it, when `old` and `new` differ by

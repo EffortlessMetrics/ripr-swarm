@@ -309,3 +309,239 @@ fn a_float_tail_is_not_exposed() -> Result<(), String> {
     assert!(!matches!(class, ExposureClass::Exposed), "{finding:?}");
     Ok(())
 }
+
+/// The `return_value` finding for the tail `x` on `line` of a whole-file
+/// `lib` changed by `patch`, which must not read `exposed`.
+fn assert_tail_not_exposed(lib: &str, patch: &str, line: usize) -> Result<(), String> {
+    let findings = TempRepo::create(lib, patch)?.findings()?;
+    let finding = tail_finding(&findings, line, "x")?;
+    assert!(
+        !matches!(finding.class, ExposureClass::Exposed),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+/// #14815 review F1: swapping two modules that each hold a `fn f` pairs the
+/// unchanged header across them, so the removed `-x` inside the current
+/// `b::f` span came from `a::f`. `b::f` returned `x` on both sides.
+#[test]
+fn a_same_name_function_swapped_between_modules_is_not_exposed() -> Result<(), String> {
+    let lib = "pub mod b {
+    pub fn f(x: i32) -> i32 {
+        x
+    }
+}
+
+pub mod a {
+    pub fn f(x: i32) -> i32 {
+        -x
+    }
+}
+
+#[cfg(test)]
+mod tests_b {
+    use crate::b::f;
+    #[test]
+    fn pins_b() {
+        assert_eq!(f(5), 5);
+    }
+}
+";
+    let patch = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,12 +1,12 @@
+-pub mod a {
++pub mod b {
+     pub fn f(x: i32) -> i32 {
+-        -x
++        x
+     }
+ }
+ 
+-pub mod b {
++pub mod a {
+     pub fn f(x: i32) -> i32 {
+-        x
++        -x
+     }
+ }
+ 
+";
+    assert_tail_not_exposed(lib, patch, 3)
+}
+
+/// Swapping which of two same-name functions is compiled (`#[cfg]` moved
+/// between them) leaves the compiled `f` returning `x` on both sides.
+#[test]
+fn a_cfg_swapped_same_name_function_is_not_exposed() -> Result<(), String> {
+    let lib = "#[cfg(not(any()))]
+pub fn f(x: i32) -> i32 {
+    x
+}
+
+#[cfg(any())]
+pub fn f(x: i32) -> i32 {
+    -x
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn pins() {
+        assert_eq!(f(5), 5);
+    }
+}
+";
+    let patch = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,11 +1,11 @@
+-#[cfg(any())]
++#[cfg(not(any()))]
+ pub fn f(x: i32) -> i32 {
+-    -x
++    x
+ }
+ 
+-#[cfg(not(any()))]
++#[cfg(any())]
+ pub fn f(x: i32) -> i32 {
+-    x
++    -x
+ }
+ 
+";
+    assert_tail_not_exposed(lib, patch, 3)
+}
+
+/// The same swap through the enclosing module's `#[cfg]`.
+#[test]
+fn an_ancestor_cfg_swap_is_not_exposed() -> Result<(), String> {
+    let lib = "#[cfg(not(any()))]
+pub mod m {
+    pub fn f(x: i32) -> i32 {
+        x
+    }
+}
+
+#[cfg(any())]
+pub mod m {
+    pub fn f(x: i32) -> i32 {
+        -x
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::m::f;
+    #[test]
+    fn pins() {
+        assert_eq!(f(5), 5);
+    }
+}
+";
+    let patch = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,14 +1,14 @@
+-#[cfg(any())]
++#[cfg(not(any()))]
+ pub mod m {
+     pub fn f(x: i32) -> i32 {
+-        -x
++        x
+     }
+ }
+ 
+-#[cfg(not(any()))]
++#[cfg(any())]
+ pub mod m {
+     pub fn f(x: i32) -> i32 {
+-        x
++        -x
+     }
+ }
+ 
+";
+    assert_tail_not_exposed(lib, patch, 4)
+}
+
+/// The changed `f` is compiled only outside tests; the tests call a
+/// `#[cfg(test)]` twin that returns `x` on both sides.
+#[test]
+fn a_cfg_test_twin_is_not_exposed() -> Result<(), String> {
+    let lib = "#[cfg(not(test))]
+pub fn f(x: i32) -> i32 {
+    x
+}
+
+#[cfg(test)]
+pub fn f(x: i32) -> i32 {
+    x
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn pins() {
+        assert_eq!(f(5), 5);
+    }
+}
+";
+    let patch = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,6 @@
+ #[cfg(not(test))]
+ pub fn f(x: i32) -> i32 {
+-    -x
++    x
+ }
+ 
+ #[cfg(test)]
+";
+    assert_tail_not_exposed(lib, patch, 3)
+}
+
+/// The only `f` moved to another module: the test's path names a function
+/// that did not exist on the base side, so the old body is not this owner's.
+#[test]
+fn a_renamed_enclosing_module_is_not_exposed() -> Result<(), String> {
+    let lib = "pub mod b {
+    pub fn f(x: i32) -> i32 {
+        x
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::b::f;
+    #[test]
+    fn pins() {
+        assert_eq!(f(5), 5);
+    }
+}
+";
+    let patch = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+-pub mod a {
++pub mod b {
+     pub fn f(x: i32) -> i32 {
+-        -x
++        x
+     }
+ }
+";
+    assert_tail_not_exposed(lib, patch, 3)
+}
