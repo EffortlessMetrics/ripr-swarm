@@ -40,6 +40,10 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
     outputs:
       router_target: ${{ steps.route.outputs.router_target }}
       router_reason: ${{ steps.route.outputs.router_reason }}
@@ -62,6 +66,7 @@ jobs:
         id: route
         env:
           GH_TOKEN: ${{ secrets.EM_RUNNER_READ_TOKEN || github.token }}
+          PR_READ_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || '' }}
           GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
@@ -72,7 +77,8 @@ jobs:
           cx43_online=not_available cx43_idle_ready=not_available cpx42_online=not_available cpx42_idle_ready=not_available cx53_online=not_available cx53_idle_ready=not_available
           count() { printf '%s' "$runners" | jq -s "$1"; }
           # #8858: the inventory call is a single shared-API read that fails transiently
-          # under load. Retry it a bounded number of times before recording a failure.
+          # under load. Retry transient failures, but a rejected credential (401)
+          # cannot recover with the same request and must fall back without delay.
           # Only a digit-only HTTP status is kept from stderr, never the raw text.
           runner_query_attempts=0 runner_query_http=none
           query_runners() {
@@ -85,6 +91,7 @@ jobs:
               rc=$?
               status="$(grep -Eo 'HTTP [0-9]{3}' /tmp/runners.err 2>/dev/null | tail -n 1 | cut -d' ' -f2 || true)"
               runner_query_http="${status:-none}"
+              [ "$runner_query_http" != 401 ] || return "$rc"
               [ "$attempt" -lt 3 ] || return "$rc"
               sleep "$delay"
               attempt=$((attempt + 1)) delay=$((delay * 2))
@@ -95,7 +102,7 @@ jobs:
             # A queued PR is built from the base repository's queue branch, so a
             # fork-authored PR is only visible through the PR itself.
             [[ "$GROUP_HEAD_REF" =~ /pr-([0-9]+)-[0-9a-f]{40}$ ]] || HEAD_REPO="unresolved"
-            [ "$HEAD_REPO" = "unresolved" ] || HEAD_REPO="$(gh api "repos/${REPOSITORY}/pulls/${BASH_REMATCH[1]}" --jq '.head.repo.full_name // "unresolved"' 2>/dev/null || echo unresolved)"
+            [ "$HEAD_REPO" = "unresolved" ] || HEAD_REPO="$(GH_TOKEN="$PR_READ_TOKEN" gh api "repos/${REPOSITORY}/pulls/${BASH_REMATCH[1]}" --jq '.head.repo.full_name // "unresolved"' 2>/dev/null || echo unresolved)"
           fi
           if { [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; } && [ "$HEAD_REPO" != "$REPOSITORY" ]; then
             reason=fork_or_untrusted_pr runner_query=skipped_untrusted_pr
@@ -274,7 +281,7 @@ jobs:
         with:
           mode: self-test
           max-changed-files: '160'
-          max-changed-lines: '3000'
+          max-changed-lines: '3700'
       - name: Resolve queued PR
         id: entry
         env:
@@ -334,7 +341,7 @@ jobs:
           expected-head: ${{ steps.entry.outputs.head }}
           docs-only: ${{ needs.detect-docs-only.outputs.docs_only || 'false' }}
           max-changed-files: '160'
-          max-changed-lines: '3000'
+          max-changed-lines: '3700'
       - name: Select admitted qualification scope
         id: scope
         shell: bash
@@ -378,7 +385,7 @@ jobs:
       # request time so a missing attestation does not cost a full test run; the
       # Result job repeats the read from the same trusted bundle after the tests.
       - name: Require source review disposition at request time
-        if: github.event_name == 'pull_request' && steps.candidate.outputs.status == 'admitted'
+        if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && steps.candidate.outputs.status == 'admitted'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -393,10 +400,11 @@ jobs:
       # instead, naming the threads. A read failure is only a warning: the final
       # recheck remains the authority and fails closed on its own.
       - name: Refuse unresolved review threads at request time
-        if: github.event_name == 'pull_request' && steps.candidate.outputs.status == 'admitted'
+        if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && steps.candidate.outputs.status == 'admitted'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ steps.entry.outputs.pr }}
         run: |
           set -uo pipefail
@@ -421,7 +429,11 @@ jobs:
           threads=$(printf '%s' "$threads" | sed '/^$/d')
           if [ -n "$threads" ]; then
             count=$(printf '%s\n' "$threads" | wc -l)
-            echo "::error::PR #$PR_NUMBER has $count unresolved review thread(s); the final eligibility recheck would fail this run after the tests finish. Reply to and resolve every thread (bot threads included), then remove and re-add the merge-ready label."
+            if [ "$EVENT_NAME" = "merge_group" ]; then
+              echo "::error::PR #$PR_NUMBER has $count unresolved review thread(s); the final eligibility recheck would fail this run after the tests finish. Reply to and resolve every thread (bot threads included), then re-enqueue the PR."
+            else
+              echo "::error::PR #$PR_NUMBER has $count unresolved review thread(s); the final eligibility recheck would fail this run after the tests finish. Reply to and resolve every thread (bot threads included), then remove and re-add the merge-ready label."
+            fi
             printf '%s\n' "$threads"
             exit 1
           fi
@@ -529,14 +541,27 @@ jobs:
       run-advisory-reports: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
       upload-success-artifacts: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
 
-  # The hosted required test phase as four nextest partitions, after every
-  # hosted gate passed (#10507). The self-hosted routes keep the one-command step
-  # inside their own rust-gates job, so this runs only behind a succeeded
-  # rust-github job; `result` fails the required context unless it passes too.
+  # The hosted required test phase as four nextest partitions (#10507). It starts
+  # with the hosted gates job, not after it: the merge queue ejects an entry
+  # whose required context is still pending at its status-check timeout, and
+  # gates-then-shards (about 44 + 32 minutes) outlived it on every code entry
+  # (#4838). The condition is the hosted gates job's own, so the shards run
+  # exactly when that job does; `result` still fails the required context unless
+  # both pass. A gate failure now costs the shard minutes already spent (#10346
+  # traded for latency). The self-hosted routes keep the one-command step inside
+  # their own rust-gates job.
   rust-github-tests:
     name: Ripr Rust Small tests on GitHub Hosted
-    needs: [rust-github]
-    if: ${{ !cancelled() && needs.rust-github.result == 'success' }}
+    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]
+    if: >-
+      !cancelled() &&
+      needs.admission.result == 'success' &&
+      needs.detect-docs-only.result == 'success' &&
+      needs.admission.outputs.docs_only != 'true' &&
+      (needs.route.outputs.router_target == 'github' ||
+      (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') ||
+      (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') ||
+      (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))
     uses: ./.github/workflows/rust-test-shards.yml
     with:
       artifact-name: ripr-rust-small-github
@@ -617,7 +642,11 @@ jobs:
     needs: [admission, detect-docs-only]
     if: needs.admission.result == 'success' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.admission.outputs.docs_only == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 45min: the full precommit table on a cold merge_group cache builds the
+    # covered_by test binaries and runs workspace Clippy, which does not fit the
+    # old 20min cap. Runs 43635293436, 43635494995, 43636266395 and 43638224810
+    # were all cancelled at ~20m17s with step 6 still running. Advances #14644.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:

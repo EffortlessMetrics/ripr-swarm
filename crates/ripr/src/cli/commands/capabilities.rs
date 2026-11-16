@@ -24,9 +24,7 @@ pub(in crate::cli) fn capabilities(args: &[String]) -> Result<(), String> {
             "--language" => {
                 let value = match arguments.next().map(String::as_str) {
                     Some("--help" | "-h" | "--json" | "--language") | None => {
-                        return Err(
-                            "missing value for --language; pass a value right after it".to_string()
-                        );
+                        return Err(crate::cli::parse::missing_value("--language"));
                     }
                     Some(value) => value,
                 };

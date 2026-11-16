@@ -446,7 +446,14 @@ fn check_with_progress_and_origins_run(
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        eprintln!("ripr: mode = {:?}", scope);
+        // The report header calls the effort profile "mode" (`mode: draft`),
+        // so this line uses the same word for the same value and names the
+        // diff scope separately, with the token the progress lines print.
+        eprintln!(
+            "ripr: mode = {}; scope = {}",
+            input.mode.as_str(),
+            scope.as_str()
+        );
     }
 
     progress.emit(AnalysisProgressStage::Analyzing);

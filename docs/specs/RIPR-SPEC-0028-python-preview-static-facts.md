@@ -198,7 +198,30 @@ Test discovery:
   flat-layout package at the repository root imports without a `pythonpath`
   setting; bare `pytest path::node` fails collection there with
   `ModuleNotFoundError`. Both forms spell the interpreter `python`, which names
-  the virtual environment's interpreter on every platform
+  the virtual environment's interpreter on every platform when one is active;
+  the next item replaces it with a project venv interpreter when one exists
+- the pytest verify route's interpreter and confidence are decided once by the
+  Python producer, before findings leave the adapter (#13801). When the
+  selected root holds a project `.venv/bin/python` or `venv/bin/python`
+  (POSIX only; Windows keeps `python`), every generated pytest command
+  (`suggested_verify_command` and each `test_verify_command`) names that
+  root-relative interpreter, for example
+  `.venv/bin/python -m pytest path::node`. The venv's pytest is read
+  statically from its `site-packages` listing and `pyvenv.cfg`; nothing in
+  the checkout is executed. `suggested_verify_command_confidence` stays at the
+  classifier's value when pytest is present, becomes `low` when the venv
+  statically lacks pytest, and `medium` when its layout cannot be read
+  statically (system site-packages included, ambiguous `lib/python3.X`); the
+  fact rides as `suggested_verify_venv_pytest: present|missing|unknown`.
+  With no project venv the command keeps PATH `python` at its existing
+  confidence: a static producer cannot know whether system Python has pytest,
+  and a runtime probe would make reports and goldens host-dependent, so
+  `ripr doctor` checks PATH `python -m pytest` instead (RIPR-SPEC-0007). The
+  unittest route is unchanged. JSON (`evidence`, `repair_placement`,
+  `python_repair_card`), SARIF, GitHub, human, pilot and MCP gap evidence all
+  carry this one decision; renderers never read the filesystem, and the
+  native pytest route accepts only `python`, `.venv/bin/python` or
+  `venv/bin/python` as its program
 
 The default name prefix is case-sensitive and does not require an underscore:
 `test`, `testCamelCase`, and `test_with_underscore` all qualify. `_test_private`,
@@ -1374,7 +1397,11 @@ read-out: the boolean the classifier uses is derived from the surfaced
   asserts a local the same test bound once to such a call as its whole value
   (`result = utils.sign(0)`, not `result = utils.sign(0) or 1`; #4567). The
   call or local must be an asserted operand: nested in another call
-  (`always_true(utils.sign(0))`) it is not the compared value. A later import
+  (`always_true(utils.sign(0))`) it is not the compared value. An exception
+  assertion compares no operand, so for it the call is read in the code the
+  assertion runs: its `with` body or its rule 13 callable
+  (`with pytest.raises(ValueError, match="blank"): utils.sign(0)`; #14090),
+  not when a `lambda` or nested `def`/`class` in that body defers it. A later import
   of the same name inside the test replaces the earlier binding, and the
   test's own `import pkg.mod as alias` is not a rebinding of `alias`. Those calls also bind boundary activation, so the
   relational-boundary gate still applies to them.

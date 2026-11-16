@@ -107,9 +107,8 @@ fn contract(source: &str) -> bool {
 fn exact_checkout_and_full_platform_shell_payload_are_preserved() {
     assert!(contract(WORKFLOW));
     assert!(WORKFLOW.contains("schedule:\n    - cron: \"43 5 * * *\""));
-    assert!(
-        WORKFLOW.contains("  pull_request:\n    types: [opened, synchronize, reopened, labeled]")
-    );
+    assert!(!WORKFLOW.contains("  pull_request:"));
+    assert!(WORKFLOW.contains("  workflow_call:"));
     assert!(WORKFLOW.contains("  workflow_dispatch:"));
     assert!(!WORKFLOW.contains("  push:"));
     assert!(!WORKFLOW.contains("pull_request_target:"));

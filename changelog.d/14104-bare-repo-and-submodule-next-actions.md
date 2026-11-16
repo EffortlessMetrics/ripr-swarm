@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr check` in a bare repository now says the root has no work tree and to check one out (`git worktree add` or `git clone`) and pass it as `--root`, where it used to print a raw `git status` failure. The skipped-submodule notice now says to run `ripr check --base <old-commit>` from inside the submodule, with the commit recorded before the change, to check its changes (#14104).

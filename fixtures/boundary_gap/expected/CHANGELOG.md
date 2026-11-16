@@ -1,5 +1,50 @@
 # Golden Output Changes
 
+## Pending - branch-local return-value grip (#14496)
+
+A `return_value` seam inside a branch the pinned call does not take no longer
+keeps strong grip. In the portable unchanged-attempt snapshots the two tail
+`if`/`else` branch values now credit only the call that reaches them: the
+non-reaching oracle reads `weak` and sorts after the reaching one, so
+`related_tests`, `nearest_test_to_imitate`, `related_test` and the `reach`
+summary move for `src/lib.rs:3` and `src/lib.rs:5`. Refresh the artifact content
+commitment, then the dependent verify commitments and receipt byte hashes. The
+predicate seam, its weak grip, unchanged movement, historical currentness,
+incomplete receipt status and fail-closed first-action routing remain unchanged.
+No other fixture output is regenerated.
+
+## Pending - tail `if`/`else` branch-value seams (#14385)
+
+The portable unchanged-attempt snapshots now list the owner's two tail
+`if`/`else` branch values (`src/lib.rs:3` and `src/lib.rs:5`) as strongly
+gripped, non-headline `return_value` seams beside the predicate seam. Refresh the
+snapshot metrics and artifact content commitment, the verify artifact's
+unchanged seams and commitments, and the receipt byte hashes. The predicate seam,
+its weak grip, unchanged movement, historical currentness, incomplete receipt
+status and fail-closed first-action routing remain unchanged. No other fixture
+output is regenerated. The snapshots carry cache generation 1.181 from
+main (#12801).
+
+## Pending — corpus cache generation 1.181 after #12757 (#12801)
+
+Success-only assertions no longer discriminate a failure seam, which bumps the
+analyzer cache schema to 1.181. Move the portable unchanged-attempt snapshots
+to 1.181, recompute the `raw_json_placeholder_v1` artifact content commitment,
+then the dependent verify commitments and receipt byte hashes. Weak grip,
+unchanged movement, historical currentness, incomplete receipt status and
+fail-closed first-action routing remain unchanged. No other fixture output is
+regenerated.
+
+## Pending — corpus cache generation 1.180 after #14326
+
+A constructed field spelled with a logical-or no longer reads as an opaque
+closure, which bumps the analyzer cache schema to 1.180. Move the portable
+unchanged-attempt snapshots to 1.180, recompute the `raw_json_placeholder_v1`
+artifact content commitment, then the dependent verify commitments and receipt
+byte hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain unchanged. No other
+fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.177 after #13432 (#13956)
 
 #13432 bumped the analyzer cache schema to 1.177 but left the portable

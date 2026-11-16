@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Analysis: a test that binds the owner's result and checks it with a plain `assert!(v == 4)` (`let v = score(2); assert!(v == 4);`) is now credited like its `assert_eq!(v, 4)` twin instead of reading `weakly_exposed` with "assertion too weak"; a `mut` or reused binding, a binding named again in a message argument, and any condition that is not one `==` keep their gap (#14085).

@@ -25,6 +25,8 @@ mod python_module_reader_packets;
 #[cfg(feature = "lang-python")]
 mod python_packet_eligibility;
 #[cfg(feature = "lang-python")]
+mod python_project_venv_verify_route;
+#[cfg(feature = "lang-python")]
 mod python_repo_mode_repair_failclosed;
 #[cfg(feature = "lang-python")]
 mod python_test_style_matrix;

@@ -31,7 +31,7 @@ const SHOW_OUTPUT = 'Show Output';
 const RETRY = 'Retry';
 const OPEN_SETTINGS = 'Open Settings';
 
-const NON_INSTALL_KINDS: ResolveFailureKind[] = ['download', 'http', 'checksum', 'manifest', 'other'];
+const NON_INSTALL_KINDS: ResolveFailureKind[] = ['download', 'network', 'http', 'checksum', 'manifest', 'other'];
 
 suite('Missing-server message actions (#8588)', () => {
   test('Copy Install Command is offered only for a missing binary', () => {
@@ -98,13 +98,83 @@ suite('Missing-server message actions (#8588)', () => {
     );
     assert.strictEqual(classifyDownloadFailureKind('Server manifest is not an object.'), 'manifest');
     assert.strictEqual(
-      classifyDownloadFailureKind('Timed out while fetching https://sentinel.invalid/ripr.'),
+      classifyDownloadFailureKind('Refusing server archive member with unsafe path "../ripr".'),
       'download'
     );
     assert.strictEqual(
       classifyDownloadFailureKind('No prebuilt ripr server target is known for serenity/arm.'),
       'missing_binary'
     );
+  });
+
+  test('a download that never reached its host is a network failure (#13638)', () => {
+    for (const message of [
+      'Timed out while fetching https://sentinel.invalid/ripr.',
+      'Could not fetch https://sentinel.invalid/manifest.json: getaddrinfo ENOTFOUND sentinel.invalid',
+      'Could not fetch https://sentinel.invalid/manifest.json: getaddrinfo EAI_AGAIN sentinel.invalid',
+      'Could not fetch https://sentinel.invalid/ripr.tar.gz: connect ECONNREFUSED 127.0.0.1:443',
+      'Could not fetch https://sentinel.invalid/ripr.tar.gz: read ECONNRESET',
+      'Could not fetch https://sentinel.invalid/ripr.tar.gz: socket hang up',
+      'Manifest response from https://sentinel.invalid/manifest.json closed before completion.'
+    ]) {
+      assert.strictEqual(classifyDownloadFailureKind(message), 'network', message);
+    }
+    // An answer from the host, or a local refusal, is not a connection problem.
+    for (const [message, kind] of [
+      ['GET https://sentinel.invalid/manifest.json failed with HTTP 503.', 'http'],
+      ['Server manifest is missing a string version or asset map.', 'manifest'],
+      ['Refusing redirect from https://sentinel.invalid/a to disallowed host evil.invalid.', 'download'],
+      ['Response body exceeds the 1024 byte limit while fetching https://sentinel.invalid/ripr.', 'download'],
+      ['Downloaded server failed its version probe: spawn EACCES', 'download']
+    ] as const) {
+      assert.strictEqual(classifyDownloadFailureKind(message), kind, message);
+    }
+  });
+
+  test('network guidance names the connection and the offline route, other kinds do not (#13638)', () => {
+    const failure = (kind: ResolveFailureKind): ResolveFailure => ({
+      message: 'ripr server is not available.',
+      detail: `${kind} sentinel`,
+      kind
+    });
+    for (const autoDownload of [true, false]) {
+      const guidance = resolutionFailureGuidance(failure('network'), autoDownload);
+      assert.ok(/network connection or proxy/.test(guidance), guidance);
+      assert.ok(/offline/.test(guidance), guidance);
+      assert.ok(guidance.includes('ripr.server.path'), guidance);
+      assert.ok(guidance.includes('ripr.server.downloadBaseUrl'), guidance);
+    }
+    for (const kind of ['missing_binary', 'download', 'http', 'checksum', 'manifest', 'other'] as const) {
+      const guidance = resolutionFailureGuidance(failure(kind), true);
+      assert.ok(!/offline|network connection/.test(guidance), `${kind}: ${guidance}`);
+    }
+    // An explicit remedy (a configured path that failed) still wins.
+    assert.strictEqual(
+      resolutionFailureGuidance({ ...failure('network'), remedy: 'Fix ripr.server.path.' }, true),
+      'Fix ripr.server.path.'
+    );
+  });
+
+  test('a network resolution failure shows the offline route in the popup (#13638)', async () => {
+    const errorCalls: Array<{ message: string; items: string[] }> = [];
+    const { controller } = controllerForFailure(
+      {
+        message: 'ripr server is not available.',
+        detail: 'Could not fetch https://sentinel.invalid/manifest.json: getaddrinfo ENOTFOUND sentinel.invalid',
+        kind: 'network'
+      },
+      errorCalls,
+      []
+    );
+
+    await controller.start();
+    await controller.settleServerMessage();
+
+    assert.strictEqual(errorCalls.length, 1, `expected one error popup, got ${JSON.stringify(errorCalls)}`);
+    assert.ok(errorCalls[0].message.includes('ENOTFOUND sentinel.invalid'), errorCalls[0].message);
+    assert.ok(/To work offline, set ripr\.server\.path/.test(errorCalls[0].message), errorCalls[0].message);
+    assert.ok(!errorCalls[0].message.includes('cargo install ripr'), errorCalls[0].message);
+    assert.deepStrictEqual(errorCalls[0].items, [OPEN_SETTINGS, COPY_DIAGNOSTIC, SHOW_OUTPUT, RETRY]);
   });
 
   test('a checksum resolution failure does not offer Copy Install Command', async () => {
