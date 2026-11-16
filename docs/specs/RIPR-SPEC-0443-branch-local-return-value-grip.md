@@ -26,6 +26,7 @@ Linked issues:
 Linked PRs:
 
 - #14534 (this contract)
+- #13037 amendment (reached computed tail)
 
 Amends RIPR-SPEC-0231 (Rust oracle kind and strength admission) for the
 `return_value` seam kind only.
@@ -203,6 +204,64 @@ refuses.
     discriminate stage is not `Yes`, and its summary reads "kind matches; the
     call does not reach the seam's branch".
 
+## Amendment (#13037): a reached computed tail is observed by its exact pin
+
+`ripr check` read a changed computed return (`base * 2` under `if express`)
+as `weakly_exposed` even when a test pinned the exact value that branch
+returns: observation of a `return_value` probe was confirmed only by an
+assertion that repeats a token of the changed expression, and `800` names no
+token of `base * 2`. The repo seam view `ripr repair` reads already credited
+the same pin, so the two commands disagreed.
+
+An exact pin now also confirms observation when
+`return_seam_tail_reached_by_call` (same file as the gate above) holds. It is
+strict where the gate above keeps today's credit: every unreadable shape
+answers no credit.
+
+- The assertion is an equality (`assert_eq!`, not `assert_ne!`) and exactly
+  one compared operand is a bare owner call (no wrapper, no local argument)
+  whose arguments are integer literals or `true`/`false`.
+- The owner's name is unique in a complete workspace index (so the bare
+  call cannot reach a same-named free function, test stub or associated
+  function), and its plain, non-`mut` parameters are typed `bool` or a
+  recognized integer type and are never rebound or mutated. The owner body
+  carries no attribute (a `#[cfg]` could swap a statement the fold reads).
+- The seam is the whole tail of exactly one branch of the `if` chain that is
+  itself the owner body's tail, so the branch value is the returned value.
+- Every statement before that tail is either `let NAME = EXPR;` whose
+  initializer folds (it calls nothing, so it cannot exit or panic), which
+  binds `NAME` for later conditions, or an `if COND { .. }` without `else`
+  whose condition folds false.
+- Every condition on the path folds, reading the parameters, those bindings
+  and constants declared once at the top level of the owner's file with a
+  literal initializer and named in no `use`, and selects the seam's branch.
+  Every integer the fold produces must fit the narrowest integer parameter
+  type, since with overflow checks off the runtime wraps where the fold
+  would not.
+
+The admission is the bool field pin's: the test is not `should_panic`, the
+assertion macros are the standard ones, and no `use` rebinds the owner's
+name. The import and cross-package owner defeats apply as for every other
+owner pin. The rule only confirms observation; it adds no oracle kind or strength.
+
+Acceptance:
+
+1. `assert_eq!(shipping_cost(100, 10, true), 800)` on `base * 2`:
+   `exposed`.
+2. `assert_eq!(shipping_cost(100, 10, false), 400)` only: not `exposed`.
+3. `assert_ne!(shipping_cost(100, 10, true), 1200)`: not `exposed`.
+4. An earlier `if order_cents >= FREE_OVER_CENTS { return 0; }` the call
+   takes (`(100, 9000, true)`): not `exposed`; `(100, 10, true)`: `exposed`.
+5. A computed constant (`5 * 1_000`), a constant named in a `use` or
+   declared only inside a nested module, a `let` that calls a function, an
+   attributed statement, a same-named function elsewhere, a rebound
+   parameter, a computed operand (`f(..) / 2`) or a local argument: not
+   `exposed`.
+
+Fixtures `fixtures/rust_computed_return_tail_reached` (promoted) and
+`fixtures/rust_computed_return_tail_other_branch` (not promoted) pin both
+sides in the evidence-promotion honesty corpus.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_not_strongly_gripped_by_an_else_branch_test`
@@ -224,6 +283,13 @@ refuses.
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_strongly_gripped_by_a_reaching_test`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_in_the_taken_branch_stays_strong`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::committed_boundary_gap_fixture_stays_strongly_gripped`
+- `crates/ripr/tests/computed_return_tail_13037.rs::an_exact_pin_from_a_call_that_reaches_the_branch_is_exposed`
+- `crates/ripr/tests/computed_return_tail_13037.rs::a_pin_from_the_other_branch_only_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_13037.rs::an_inequality_pins_no_value`
+- `crates/ripr/tests/computed_return_tail_13037.rs::an_earlier_return_the_call_takes_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_13037.rs::shapes_the_fold_cannot_read_keep_todays_reading`
+- `crates/ripr/tests/computed_return_tail_13037.rs::a_constant_declared_only_inside_the_test_module_does_not_resolve`
+- `crates/ripr/tests/computed_return_tail_13037.rs::a_wrapped_or_computed_operand_is_not_a_bare_pin`
 
 ## Implementation Mapping
 
@@ -233,6 +299,11 @@ refuses.
 - `crates/ripr/src/analysis/test_grip_evidence.rs`: `branch_gate_withholds`,
   its call in `oracle_discriminates_seam_in_test`, and the per-test
   downgrade in `best_oracle`.
+- `crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs`:
+  `return_seam_tail_reached_by_call` (#13037).
+- `crates/ripr/src/analysis/classifier/evidence.rs`: the `reached_tail_pin`
+  admission; `crates/ripr/src/analysis/classify/reveal.rs`: its use in
+  observation confirmation.
 
 ## Metrics
 

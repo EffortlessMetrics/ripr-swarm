@@ -22,13 +22,24 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_strongly_gripped_by_a_reaching_test",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_in_the_taken_branch_stays_strong",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::committed_boundary_gap_fixture_stays_strongly_gripped",
+  "crates/ripr/tests/computed_return_tail_13037.rs::an_exact_pin_from_a_call_that_reaches_the_branch_is_exposed",
+  "crates/ripr/tests/computed_return_tail_13037.rs::a_pin_from_the_other_branch_only_is_not_credited",
+  "crates/ripr/tests/computed_return_tail_13037.rs::an_inequality_pins_no_value",
+  "crates/ripr/tests/computed_return_tail_13037.rs::an_earlier_return_the_call_takes_is_not_credited",
+  "crates/ripr/tests/computed_return_tail_13037.rs::shapes_the_fold_cannot_read_keep_todays_reading",
+  "crates/ripr/tests/computed_return_tail_13037.rs::a_constant_declared_only_inside_the_test_module_does_not_resolve",
+  "crates/ripr/tests/computed_return_tail_13037.rs::a_wrapped_or_computed_operand_is_not_a_bare_pin",
 ]
 fixtures = [
   "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/branch-local-else-only",
+  "fixtures/rust_computed_return_tail_reached",
+  "fixtures/rust_computed_return_tail_other_branch",
 ]
 code = [
   "crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs",
   "crates/ripr/src/analysis/test_grip_evidence.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
+  "crates/ripr/src/analysis/classify/reveal.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0443-branch-local-return-value-grip.md",

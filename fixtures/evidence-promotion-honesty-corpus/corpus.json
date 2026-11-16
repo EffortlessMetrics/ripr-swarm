@@ -19576,6 +19576,54 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "rust_computed_return_tail_reached_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_computed_return_tail_reached",
+      "vector": "exact_pin_of_a_call_that_statically_reaches_the_changed_computed_tail",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_computed_return_tail_other_branch_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_computed_return_tail_other_branch",
+      "vector": "exact_pin_of_the_other_branch_cannot_confirm_the_changed_computed_tail",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }

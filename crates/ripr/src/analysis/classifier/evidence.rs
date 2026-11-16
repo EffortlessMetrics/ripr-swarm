@@ -1232,6 +1232,43 @@ impl ClassifiedProbeEvidence {
             .as_deref()
             .filter(|_| matches!(context.probe.family, ProbeFamily::Predicate))
             .and_then(|line| predicate_initialized_field(line, &context.probe.expression));
+        // #13037: an exact pin of a bare owner call whose literal arguments
+        // statically run the owner into the branch returning the changed
+        // expression observes that expression's value. Same execution,
+        // macro-binding and `use` admission as the bool field pin; reveal adds
+        // the import and cross-package defeats. The owner's name must also be
+        // unique in a complete index, so a bare call cannot reach a same-named
+        // free function, test stub or associated function instead (#8059).
+        let owner_constants = context.owner_fn.and_then(|owner| {
+            context
+                .index
+                .files()
+                .get(&owner.file)
+                .map(|facts| facts.source.to_string())
+        });
+        let owner_name_unique = context.workspace_complete
+            && context
+                .owner_fn
+                .is_some_and(|owner| callee_is_unique(&owner.name, context.index));
+        let reached_tail_pin = |test: &TestSummary, assertion: &OracleFact| {
+            matches!(context.probe.family, ProbeFamily::ReturnValue)
+                && owner_name_unique
+                && bool_field_pin_admitted(test, assertion)
+                && context.owner_fn.is_some_and(|owner| {
+                    crate::analysis::test_grip_evidence::return_seam_tail_reached_by_call(
+                        owner,
+                        &context.probe.expression,
+                        context.probe.location.line,
+                        &assertion.text,
+                        test,
+                        &|name| {
+                            owner_constants
+                                .as_deref()
+                                .and_then(|source| top_level_constant(source, name))
+                        },
+                    )
+                })
+        };
         let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
@@ -1295,6 +1332,7 @@ impl ClassifiedProbeEvidence {
                                 )
                             })
                 },
+                reached_tail_pin: &reached_tail_pin,
                 assertion_admitted: &assertion_admitted,
                 assertion_has_known_implicit_observer: &|test, assertion| {
                     if !matches!(
@@ -3082,6 +3120,47 @@ pub(in crate::analysis) fn assertion_text_with_local_initializers(
         start = end;
     }
     text
+}
+
+/// #13037: the initializer text of `name` when the file declares it exactly
+/// once, as a top-level (unindented) literal constant the owner reads by its
+/// bare name, and imports no other binding of that name. A declaration nested
+/// in a `mod`, `impl` or fn, or a `use` naming it, could be a different
+/// binding from the one the owner sees, so it does not resolve.
+fn top_level_constant(source: &str, name: &str) -> Option<String> {
+    let value = crate::analysis::value_resolution::named_constant(source, name)
+        .value()?
+        .to_string();
+    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    let mut top_level = 0usize;
+    for line in masked.lines() {
+        let words: Vec<&str> = line
+            .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .filter(|word| !word.is_empty())
+            .collect();
+        if !words.contains(&name) {
+            continue;
+        }
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("use ")
+            || trimmed.starts_with("pub use ")
+            || words.first() == Some(&"use")
+        {
+            return None;
+        }
+        let declares = ["const", "static"].iter().any(|keyword| {
+            words
+                .windows(2)
+                .any(|pair| pair[0] == *keyword && pair[1] == name)
+        });
+        if declares {
+            if line.starts_with(char::is_whitespace) {
+                return None;
+            }
+            top_level += 1;
+        }
+    }
+    (top_level == 1).then_some(value)
 }
 
 #[cfg(test)]

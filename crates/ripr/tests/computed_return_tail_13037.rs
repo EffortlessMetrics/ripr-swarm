@@ -1,0 +1,232 @@
+//! #13037: a changed computed return (`base * 2` under `if express`) read
+//! `weakly_exposed` in `ripr check` even when a test pinned the exact value
+//! that branch returns (`assert_eq!(shipping_cost(100, 10, true), 800)`):
+//! no assertion text names `base * 2`, and only a token match could confirm
+//! observation. The repo seam view `ripr repair` reads already credited it.
+//!
+//! Credit now also comes from an exact pin of a bare owner call whose literal
+//! arguments statically run the owner into the branch whose tail returns the
+//! changed expression. Every statement before that tail must fold (a `let`
+//! that calls nothing, or an `if` guard whose condition folds false), and
+//! every condition on the path must fold. Any shape the fold cannot read
+//! keeps today's `weakly_exposed`.
+
+use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, ProbeFamily, check_workspace};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+const AFTER: &str = "pub const FREE_OVER_CENTS: u32 = 5_000;
+
+pub fn shipping_cost(weight_g: u32, order_cents: u32, express: bool) -> u32 {
+    if order_cents >= FREE_OVER_CENTS && !express {
+        return 0;
+    }
+    let base = if weight_g <= 500 { 400 } else { 900 };
+    if express {
+        base * 2
+    } else {
+        base
+    }
+}
+";
+
+const PATCH: &str = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -8,3 +8,3 @@ pub fn shipping_cost(weight_g: u32, order_cents: u32, express: bool) -> u32 {
+     if express {
+-        base * 3
++        base * 2
+     } else {
+";
+
+struct TempRepo {
+    root: PathBuf,
+}
+
+impl TempRepo {
+    fn create(source: &str, tests: &str) -> Result<Self, String> {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-computed-tail-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create source directory failed: {error}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"computed-tail\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+        )
+        .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
+        let lib =
+            format!("{source}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{tests}\n}}\n");
+        std::fs::write(root.join("src/lib.rs"), lib)
+            .map_err(|error| format!("write source failed: {error}"))?;
+        std::fs::write(root.join("diff.patch"), PATCH)
+            .map_err(|error| format!("write diff failed: {error}"))?;
+        Ok(Self { root })
+    }
+
+    fn computed_finding(&self) -> Result<Finding, String> {
+        let output = check_workspace(CheckInput {
+            root: self.root.clone(),
+            base: None,
+            diff_file: Some(self.root.join("diff.patch")),
+            mode: Mode::Ready,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let mut computed = output.findings.into_iter().filter(|finding| {
+            finding.probe.family == ProbeFamily::ReturnValue
+                && finding.probe.location.line == 9
+                && finding.probe.expression == "base * 2"
+        });
+        match (computed.next(), computed.next()) {
+            (Some(finding), None) => Ok(finding),
+            other => Err(format!(
+                "premise: exactly one return_value finding for `base * 2`, got {other:?}"
+            )),
+        }
+    }
+}
+
+impl Drop for TempRepo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn test_fn(body: &str) -> String {
+    format!("    #[test]\n    fn pins() {{\n        {body}\n    }}\n")
+}
+
+fn class_of(source: &str, body: &str) -> Result<ExposureClass, String> {
+    Ok(TempRepo::create(source, &test_fn(body))?
+        .computed_finding()?
+        .class)
+}
+
+#[test]
+fn premise_the_patch_changes_only_the_computed_tail() {
+    let line = AFTER.lines().nth(8);
+    assert_eq!(line, Some("        base * 2"));
+}
+
+#[test]
+fn an_exact_pin_from_a_call_that_reaches_the_branch_is_exposed() -> Result<(), String> {
+    assert_eq!(
+        class_of(AFTER, "assert_eq!(shipping_cost(100, 10, true), 800);")?,
+        ExposureClass::Exposed
+    );
+    // The guard before the tail reads the same-file constant and folds false.
+    assert_eq!(
+        class_of(AFTER, "assert_eq!(shipping_cost(600, 9000, true), 1800);")?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_pin_from_the_other_branch_only_is_not_credited() -> Result<(), String> {
+    let class = class_of(AFTER, "assert_eq!(shipping_cost(100, 10, false), 400);")?;
+    assert_ne!(class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn an_inequality_pins_no_value() -> Result<(), String> {
+    let class = class_of(AFTER, "assert_ne!(shipping_cost(100, 10, true), 1200);")?;
+    assert_ne!(class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn an_earlier_return_the_call_takes_is_not_credited() -> Result<(), String> {
+    let source = AFTER.replace(
+        "order_cents >= FREE_OVER_CENTS && !express",
+        "order_cents >= FREE_OVER_CENTS",
+    );
+    let class = class_of(&source, "assert_eq!(shipping_cost(100, 9000, true), 0);")?;
+    assert_ne!(class, ExposureClass::Exposed);
+    // Control: the same owner with a call under the threshold is credited.
+    assert_eq!(
+        class_of(&source, "assert_eq!(shipping_cost(100, 10, true), 800);")?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn shapes_the_fold_cannot_read_keep_todays_reading() -> Result<(), String> {
+    let call = "assert_eq!(shipping_cost(100, 10, true), 800);";
+    // A computed constant does not resolve, so the guard does not fold.
+    let computed_constant = AFTER.replace(
+        "pub const FREE_OVER_CENTS: u32 = 5_000;",
+        "pub const FREE_OVER_CENTS: u32 = 5 * 1_000;",
+    );
+    // A `let` that calls a function may not return (or may panic).
+    let called = AFTER.replace(
+        "let base = if weight_g <= 500 { 400 } else { 900 };",
+        "let base = rate(weight_g);",
+    ) + "\nfn rate(weight_g: u32) -> u32 {\n    if weight_g <= 500 { 400 } else { 900 }\n}\n";
+    // A rebound parameter makes the call's arguments stale (kept on the
+    // `let` line so the changed tail stays on the patched line).
+    let rebound = AFTER.replace(
+        "    let base = if",
+        "    let weight_g = weight_g + 1; let base = if",
+    );
+    // A same-named stub could take the bare call instead of the owner.
+    let stub = AFTER.to_string()
+        + "\npub mod legacy {\n    pub fn shipping_cost(_w: u32, _o: u32, _e: bool) -> u32 {\n        800\n    }\n}\n";
+    // A `#[cfg]` can swap the statement the fold reads.
+    let attributed = AFTER.replace(
+        "    let base = if",
+        "    #[cfg(not(test))] let base = 0; let base = if",
+    );
+    // A constant also bound by a `use` may not be the one the owner reads.
+    let imported = AFTER.replace(
+        "pub const FREE_OVER_CENTS: u32 = 5_000;",
+        "pub const FREE_OVER_CENTS: u32 = 5_000; use crate::FREE_OVER_CENTS as _;",
+    );
+    for (label, source) in [
+        ("same-named function", stub),
+        ("attributed statement", attributed),
+        ("constant named in a use", imported),
+        ("computed constant", computed_constant),
+        ("called initializer", called),
+        ("rebound parameter", rebound),
+    ] {
+        let class = class_of(&source, call)?;
+        assert_ne!(class, ExposureClass::Exposed, "{label}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_constant_declared_only_inside_the_test_module_does_not_resolve() -> Result<(), String> {
+    // The owner reads a constant the file never declares at top level; the
+    // test module's own `FREE_OVER_CENTS` is a different binding.
+    let source = AFTER.replace(
+        "pub const FREE_OVER_CENTS: u32 = 5_000;",
+        "use limits::FREE_OVER_CENTS;",
+    ) + "\nmod limits {\n    pub const FREE_OVER_CENTS: u32 = 5_000;\n}\n";
+    let body = "assert_eq!(shipping_cost(100, 10, true), 800);";
+    let class = class_of(&source, body)?;
+    assert_ne!(class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_or_computed_operand_is_not_a_bare_pin() -> Result<(), String> {
+    for body in [
+        "assert_eq!(shipping_cost(100, 10, true) / 2, 400);",
+        "let weight = 100;\n        assert_eq!(shipping_cost(weight, 10, true), 800);",
+    ] {
+        let class = class_of(AFTER, body)?;
+        assert_ne!(class, ExposureClass::Exposed, "{body}");
+    }
+    Ok(())
+}
