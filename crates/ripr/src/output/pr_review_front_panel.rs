@@ -1007,7 +1007,11 @@ fn select_candidate(
             placement: "changed_line".to_string(),
         };
     }
-    if has_suppressed(parsed) {
+    // SPEC-0020: a suppressed or withheld entry stays visible but does not
+    // outrank an actionable card elsewhere in the PR.
+    if has_suppressed(parsed)
+        && first_action_status(parsed.first_action.as_ref()) != Some("actionable")
+    {
         return Candidate {
             top_issue: top_issue_from_gate_decision(input, parsed, "suppressed"),
             top_issue_state: "baseline_only".to_string(),
@@ -1865,6 +1869,13 @@ fn top_issue_from_gate_decision(
         .iter()
         .find(|item| string_path(item, &["decision"]).as_deref() == Some(decision))?;
     let seam_id = string_path(item, &["seam_id"]);
+    // A suppressed entry reports its own class in public exposure words (a
+    // withheld static limitation is not a weak exposure); others keep the
+    // gate's weak-exposure claim.
+    let suppressed_class = (decision == "suppressed")
+        .then(|| string_path(item, &["static_class"]))
+        .flatten()
+        .map(normalize_class);
     // Only an acknowledged decision keeps a repair handoff; suppressed and
     // other decisions name none. The command is carried from the gate route.
     let repair_command = (decision == "acknowledged")
@@ -1886,9 +1897,12 @@ fn top_issue_from_gate_decision(
             (Some(item), &["placement", "line"]),
             (Some(item), &["line"]),
         ]),
-        classification: Some("weakly_exposed".to_string()),
+        classification: suppressed_class
+            .clone()
+            .or_else(|| Some("weakly_exposed".to_string())),
         changed_behavior: string_path(item, &["evidence", "changed_behavior"]),
-        current_evidence_strength: current_evidence_strength_from_sources(&[Some(item)])
+        current_evidence_strength: suppressed_class
+            .or_else(|| current_evidence_strength_from_sources(&[Some(item)]))
             .or_else(|| Some("weakly_exposed".to_string())),
         missing_discriminator: string_path(item, &["evidence", "missing_discriminator"]),
         no_action_reason: None,
@@ -2707,6 +2721,88 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    fn suppressed_panel_input(first_action_json: Option<String>) -> PrReviewFrontPanelInput {
+        let gate = serde_json::json!({
+            "status": "advisory",
+            "decisions": [{
+                "id": "gate-1",
+                "decision": "suppressed",
+                "seam_id": "withheld-seam",
+                "static_class": "ungripped",
+                "placement": { "path": "src/lib.rs", "line": 6 }
+            }]
+        });
+        PrReviewFrontPanelInput {
+            root: ".".to_string(),
+            generated_at: "2026-11-09T00:00:00Z".to_string(),
+            out_md_path: "target/ripr/reports/pr-review-front-panel.md".to_string(),
+            pr_guidance_path: None,
+            first_action_path: first_action_json
+                .as_ref()
+                .map(|_| "first-action.json".to_string()),
+            assistant_proof_path: None,
+            assistant_health_path: None,
+            ledger_path: None,
+            baseline_delta_path: None,
+            zero_status_path: None,
+            gate_decision_path: Some("gate-decision.json".to_string()),
+            recommendation_calibration_path: None,
+            mutation_calibration_path: None,
+            coverage_frontier_path: None,
+            receipt_path: None,
+            pr_guidance_json: None,
+            first_action_json: first_action_json.map(Ok),
+            assistant_proof_json: None,
+            assistant_health_json: None,
+            ledger_json: None,
+            baseline_delta_json: None,
+            zero_status_json: None,
+            gate_decision_json: Some(Ok(gate.to_string())),
+            recommendation_calibration_json: None,
+            mutation_calibration_json: None,
+            coverage_frontier_json: None,
+            receipt_json: None,
+        }
+    }
+
+    #[test]
+    fn suppressed_entry_does_not_outrank_an_actionable_first_action() {
+        // #13892: a withheld static-limitation entry lands in `suppressed`;
+        // it must not replace the PR's actionable card as the top issue.
+        let first_action = serde_json::json!({
+            "status": "actionable",
+            "selected": {
+                "seam_id": "actionable-seam",
+                "path": "src/lib.rs",
+                "line": 2,
+                "classification": "weakly_exposed"
+            }
+        });
+        let report = build_pr_review_front_panel_report(suppressed_panel_input(Some(
+            first_action.to_string(),
+        )));
+        assert_eq!(report.summary.top_issue_state, "actionable");
+        let top = report.top_issue.as_ref().map(|issue| issue.seam_id.clone());
+        assert_eq!(top, Some(Some("actionable-seam".to_string())));
+    }
+
+    #[test]
+    fn suppressed_top_issue_reports_the_decision_static_class() {
+        let report = build_pr_review_front_panel_report(suppressed_panel_input(None));
+        assert_eq!(report.summary.top_issue_state, "baseline_only");
+        let issue = report.top_issue.as_ref();
+        // The internal grip word is presented in exposure vocabulary, and the
+        // evidence-strength line agrees with the class line.
+        assert_eq!(
+            issue.and_then(|issue| issue.classification.as_deref()),
+            Some("no_static_path")
+        );
+        assert_eq!(
+            issue.and_then(|issue| issue.current_evidence_strength.as_deref()),
+            Some("no_static_path")
+        );
     }
 
     #[test]

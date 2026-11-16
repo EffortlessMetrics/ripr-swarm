@@ -11005,6 +11005,16 @@ Field contract:
   `gate evaluate` reads such records as non-blocking. Seam records carry the
   optional `canonical_gap_id` when the seam has one, so a suppressed gap that
   moved still matches its baseline entry instead of reading as resolved.
+  A gap-class seam on a changed line or in a changed owner that selection
+  withholds as a static limitation is itemized here with `seam_id`, `file`,
+  `line`, its grip `class` (`ungripped`, `weakly_gripped`, ...; the vocabulary
+  gate policy reads), `reason = "static_limitation"` and a `message` naming the
+  limitation category in exposure words (for example `no_static_path`) (#13892).
+  `ripr check` can list such a seam (for example as `no_static_path` when no
+  test calls the changed owner), so it is disclosed instead of appearing only
+  in `warnings[]` and `omitted_by_policy`. The record is not a repair card and
+  does not mean the gap is resolved; `ripr gate evaluate --pr-guidance`
+  evaluates it as `suppressed` under that reason and never blocks on it.
 - `warnings[]` - selection warnings from the agent brief selection path.
 - `limits_note` - static-evidence boundary text for downstream summaries.
 
@@ -11993,7 +12003,9 @@ Field contract:
   for the optional `static_limited_omitted_seams` (an integer, present only
   when nonzero): the part of `omitted_by_policy` that was withheld because
   static evidence is opaque or unknown at a stage. Those changed seams are not
-  gate candidates, so a nonzero or malformed value adds a gate warning and the
+  blocking candidates (the changed-line or changed-owner gap seams among them
+  are itemized in `suppressed[]` and evaluated as `suppressed`, #13892), so a
+  nonzero or malformed value adds a gate warning and the
   status is never `pass`; seams omitted because they are configured off or are
   not gaps do not count. A gate decision without `analysis_scope` (a build before #9301),
   or with a malformed one, makes every absent baseline entry `not_evaluated`.
