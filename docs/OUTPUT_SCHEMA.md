@@ -3458,7 +3458,10 @@ JSON fields:
   (`gap:rust:<path>:<owner>:<behavior_kind>:<probe_kind>:<normalized_discriminator>`,
   #5268): the normalized discriminator is derived from the changed line
   itself, so a comparison seam names the same equality boundary the
-  classifier's missing-discriminator statement renders. Static-limit
+  classifier's missing-discriminator statement renders. A compound
+  `&&`/`||` predicate with exactly one top-level comparison names that
+  comparison's boundary (`a && s.len() > 1` gives `s.len==1`, #14719);
+  other predicate shapes keep the whole-line reading. Static-limit
   findings and probes with no owner identity may omit this field until a
   non-actionable gap-state projection exists. TypeScript preview findings
   that carry a preview card state the content-addressed

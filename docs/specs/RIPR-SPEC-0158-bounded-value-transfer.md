@@ -202,6 +202,9 @@ exercised boundary from a missing one.
   boundary rule in RIPR-SPEC-0001 (#13037) instead: only a row that holds
   every guard sits on its boundary, and a guarded shape that rule declines
   gets no boundary reading here.
+  The Rust canonical gap discriminator reads the same single comparison
+  (#14719), so `a && s.len() > 1` mints `s.len==1`; every other predicate
+  shape keeps the whole-line discriminator it minted before.
 - Literal byte-length boundary (#9637): diff analysis also reads one closed
   owner shape, `fn f(text: &str, width: usize) -> bool { let end =
   text.as_bytes().len(); end <= width }`, with immutable parameters and local,
