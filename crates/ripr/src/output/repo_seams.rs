@@ -62,7 +62,7 @@ pub(crate) fn render_repo_seams_json_with_owner_opt_outs(
     use std::io::Write as _;
 
     let placeholder = repo_seams_artifact_metadata(context, CONTENT_SHA256_PLACEHOLDER)?;
-    let hashed = render_repo_seams_json_document(seams, owner_opt_outs, Some(&placeholder));
+    let hashed = render_repo_seams_json_document(seams, &owner_opt_outs, Some(&placeholder));
     let mut hasher = Sha256Writer::new();
     hasher
         .write_all(hashed.as_bytes())
@@ -72,14 +72,14 @@ pub(crate) fn render_repo_seams_json_with_owner_opt_outs(
     metadata["content_sha256"] = serde_json::Value::String(content_sha256);
     Ok(render_repo_seams_json_document(
         seams,
-        owner_opt_outs,
+        &owner_opt_outs,
         Some(&metadata),
     ))
 }
 
 fn render_repo_seams_json_document(
     seams: &[RepoSeam],
-    owner_opt_outs: RepoOwnerOptOuts,
+    owner_opt_outs: &RepoOwnerOptOuts,
     artifact: Option<&serde_json::Value>,
 ) -> String {
     let mut out = String::new();
@@ -192,7 +192,7 @@ pub(crate) fn render_repo_seams_md_with_owner_opt_outs(
     out.push_str(&format!("Schema version: {}\n", REPO_SEAMS_SCHEMA_VERSION));
     out.push_str("Scope: repo\n");
     out.push_str(&format!("Total seams: {}\n", seams.len()));
-    if let Some(line) = repo_owner_opt_outs_md(owner_opt_outs) {
+    if let Some(line) = repo_owner_opt_outs_md(&owner_opt_outs) {
         out.push_str(&line);
     }
     out.push('\n');
@@ -466,7 +466,7 @@ mod tests {
             end_line: 88,
             end_column: 41,
         });
-        let json = render_repo_seams_json_document(&[seam], RepoOwnerOptOuts::default(), None);
+        let json = render_repo_seams_json_document(&[seam], &RepoOwnerOptOuts::default(), None);
         for needle in [
             "\"line\": 88",
             "\"column\": 12",
@@ -483,7 +483,7 @@ mod tests {
         // the line-only shape: the header goes straight from "line" to
         // "owner" and the emitter invents no coordinates.
         let json =
-            render_repo_seams_json_document(&[sample_seam()], RepoOwnerOptOuts::default(), None);
+            render_repo_seams_json_document(&[sample_seam()], &RepoOwnerOptOuts::default(), None);
         assert!(
             json.contains("\"line\": 88,\n      \"owner\""),
             "seam header grew span fields without geometry in: {json}"

@@ -3990,24 +3990,43 @@ the editor supplies no suppression policy (#14610).
 
 The `ripr check --format` repo formats
 `repo-exposure-json`, `repo-exposure-summary-json`, `repo-exposure-md`,
-`repo-seams-json`, `repo-seams-md`, `repo-badge-json` and `repo-badge-shields`
-withhold every seam whose owner function carries the attribute. The decision is
+`repo-seams-json`, `repo-seams-md`, `repo-badge-json`, `repo-badge-shields`,
+`repo-badge-plus-json` and `repo-badge-plus-shields` withhold every seam whose
+owner function carries the attribute. The decision is
 the same parser-backed recognizer, read once when the seam is extracted and
 carried with the seam through the classified seam caches; the cache key's
 `files_content_hash` covers the attribute's bytes, so adding or removing it
 never replays the other state. A withheld seam is removed from the format's
 `seams` list and from every count derived from it (`metrics`, class counts,
-`unsuppressed_exposure_gaps`, `top_files`, the badge count), so baselines and
-`ripr gate --repo-exposure` read the same inventory. It is not reclassified.
-The JSON formats add one top-level member, emitted only when at least one seam
-was withheld, so a workspace without the attribute keeps byte-identical repo
-output and no schema version changes:
+`unsuppressed_exposure_gaps`, `top_files`, the badge count). It is not
+reclassified. The JSON formats add one top-level member, emitted only when at
+least one seam was withheld, so a workspace without the attribute keeps
+byte-identical repo output and no schema version changes:
 
 ```json
-"owner_opt_outs": {"withheld": 2, "reason": "owner_mutants_skip"}
+"owner_opt_outs": {"withheld": 2, "reason": "owner_mutants_skip", "seam_ids": ["seam:...", "seam:..."]}
 ```
 
-`withheld` counts seams (not findings or canonical gaps). The Markdown formats
+`withheld` counts seams (not findings or canonical gaps); `seam_ids` names each
+withheld seam, sorted.
+
+`ripr outcome` and `ripr agent verify` compare two snapshots by seam id. A seam
+id named in either snapshot's `owner_opt_outs.seam_ids` is excluded from both
+sides before matching, so a seam withheld on one side only (a `ripr pilot`
+snapshot, which keeps every seam, against a `ripr check` one, or the attribute
+added between two snapshots) is never reported as removed, resolved or new.
+Those documents then add the same top-level `owner_opt_outs` member (with
+`"excluded_from": "both_snapshots"`), the Markdown summary and the review
+receipt's `what_changed` name the excluded count, and nothing changes when no
+snapshot withheld a seam. A snapshot whose `owner_opt_outs` counts withheld
+seams without naming every one in `seam_ids` is refused, as byte-bounded and
+seam-limited snapshots are.
+
+Other consumers of a check-produced `repo-exposure-json` read only its
+remaining `seams` and do not read `owner_opt_outs`: `ripr gate
+--repo-exposure`, gap ledgers and the baselines derived from them never see a
+withheld seam, and a baseline entry recorded before the attribute was added
+reads as resolved there (not reconciled yet). The Markdown formats
 print one `Withheld by owner opt-out (owner_mutants_skip): N seam(s) ...` line
 under the summary table (`repo-exposure-md`) or the seam total
 (`repo-seams-md`). The repo badges withhold the seams from their count and add
@@ -4016,11 +4035,11 @@ no member, like the diff-scope badges. A seam-limit cut
 `seams_analyzed` counts withheld seams too.
 
 Surfaces that still report withheld findings (not yet wired to the opt-out):
-MCP gaps and repair cards; `ripr explain`; and the repo-scope producers outside
-`ripr check --format repo-*` (`repo-sarif`, `repo-sarif-compact`,
-`agent-seam-packets-json`, and the repo-exposure artifacts
-written by `ripr pilot` and the agent workflow snapshots), which keep every
-seam and carry no `owner_opt_outs` member. The canonical next-action stop
+MCP gaps and repair cards; `ripr explain`; the repo formats `repo-sarif`,
+`repo-sarif-compact` and `agent-seam-packets-json`, which `ripr check` renders
+from the full inventory; and the repo-exposure artifacts written by `ripr
+pilot` and the agent workflow snapshots. Those keep every seam and carry no
+`owner_opt_outs` member. The canonical next-action stop
 case for a run whose every finding is withheld stays `suppressed_by_policy`;
 the human `Safe next action` line names the owner opt-out.
 

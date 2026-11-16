@@ -768,7 +768,7 @@ fn write_repo_exposure_json<W: io::Write>(
             analysis_inputs: None,
             byte_bound,
             evidence_limitations,
-            owner_opt_outs: RepoOwnerOptOuts::default(),
+            owner_opt_outs: &RepoOwnerOptOuts::default(),
         },
         None,
         None,
@@ -827,7 +827,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         analysis_inputs: analysis_inputs.as_ref(),
         byte_bound: None,
         evidence_limitations,
-        owner_opt_outs,
+        owner_opt_outs: &owner_opt_outs,
     };
     // The hash pass streams the document through `Sha256Writer`, which
     // hashes each chunk without buffering it, so no destination I/O
@@ -1090,7 +1090,7 @@ struct RepoExposureJsonDisclosures<'a> {
     evidence_limitations: &'a [AnalysisLimitation],
     /// Seams withheld because their owner opted out (#14139); the top-level
     /// `owner_opt_outs` member renders only when the count is non-zero.
-    owner_opt_outs: RepoOwnerOptOuts,
+    owner_opt_outs: &'a RepoOwnerOptOuts,
 }
 
 fn write_repo_exposure_json_document<W: io::Write>(
@@ -1585,7 +1585,7 @@ pub(crate) fn render_repo_exposure_summary_json_with_owner_opt_outs(
 ) -> String {
     let mut value = repo_exposure_summary_json_value(classified, root, base, mode);
     if let (Some(disclosure), Some(object)) = (
-        repo_owner_opt_outs_json(owner_opt_outs),
+        repo_owner_opt_outs_json(&owner_opt_outs),
         value.as_object_mut(),
     ) {
         object.insert("owner_opt_outs".to_string(), disclosure);
@@ -1731,24 +1731,25 @@ fn repo_exposure_summary_json_value(
 /// shares (#14139): the withheld seam count and its reason token, the same
 /// shape as the diff-scope check JSON member. `None` when nothing was
 /// withheld, so the member is absent and the document unchanged.
-pub(crate) fn repo_owner_opt_outs_json(owner_opt_outs: RepoOwnerOptOuts) -> Option<Value> {
+pub(crate) fn repo_owner_opt_outs_json(owner_opt_outs: &RepoOwnerOptOuts) -> Option<Value> {
     (!owner_opt_outs.is_empty()).then(|| {
         json!({
-            "withheld": owner_opt_outs.withheld,
+            "withheld": owner_opt_outs.withheld(),
             "reason": owner_opt_outs.reason().as_str(),
+            "seam_ids": owner_opt_outs.seam_ids,
         })
     })
 }
 
 /// The repo-scope Markdown disclosure line (#14139), or `None` when nothing
 /// was withheld.
-pub(crate) fn repo_owner_opt_outs_md(owner_opt_outs: RepoOwnerOptOuts) -> Option<String> {
+pub(crate) fn repo_owner_opt_outs_md(owner_opt_outs: &RepoOwnerOptOuts) -> Option<String> {
     (!owner_opt_outs.is_empty()).then(|| {
         format!(
             "Withheld by owner opt-out ({}): {} {} whose owner carries `#[mutants::skip]`; not counted above.\n",
             owner_opt_outs.reason().as_str(),
-            owner_opt_outs.withheld,
-            if owner_opt_outs.withheld == 1 { "seam" } else { "seams" },
+            owner_opt_outs.withheld(),
+            if owner_opt_outs.withheld() == 1 { "seam" } else { "seams" },
         )
     })
 }
@@ -2059,7 +2060,7 @@ pub(crate) fn render_repo_exposure_md_with_owner_opt_outs(
             metrics.count_for(class)
         ));
     }
-    if let Some(line) = repo_owner_opt_outs_md(owner_opt_outs) {
+    if let Some(line) = repo_owner_opt_outs_md(&owner_opt_outs) {
         out.push('\n');
         out.push_str(&line);
     }
@@ -2626,7 +2627,7 @@ pub fn surcharge(total: i32) -> Result<i32, String> {
             analysis_inputs: None,
             byte_bound: None,
             evidence_limitations: &[],
-            owner_opt_outs: RepoOwnerOptOuts::default(),
+            owner_opt_outs: &RepoOwnerOptOuts::default(),
         };
         let document = |budget: usize| -> Result<Vec<u8>, String> {
             let mut out = Vec::new();

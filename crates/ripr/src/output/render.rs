@@ -702,8 +702,10 @@ fn ripr_repo_canonical_actionable_summary(
 }
 
 /// The repo-scope owner opt-out withholding for a classified inventory
-/// (#14139): every `ripr check --format repo-*` arm that renders classified
-/// seams runs its owned inventory through this one call.
+/// (#14139): the repo-exposure (json, summary, md) and repo badge arms run
+/// their owned inventory through this one call. `repo-sarif`,
+/// `repo-sarif-compact` and `agent-seam-packets-json` do not, and keep every
+/// seam (documented in `docs/OUTPUT_SCHEMA.md`).
 pub(crate) fn withhold_repo_classified_owner_opt_outs(
     classified: &mut Vec<analysis::ClassifiedSeam>,
 ) -> crate::analysis::owner_opt_out::RepoOwnerOptOuts {

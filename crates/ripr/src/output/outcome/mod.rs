@@ -171,6 +171,11 @@ pub(crate) struct TargetedTestOutcomeReport {
     regressed: Vec<TargetedTestOutcomeMovement>,
     new: Vec<TargetedTestOutcomeSeam>,
     removed: Vec<TargetedTestOutcomeSeam>,
+    /// #14139: ids of seams either snapshot withheld by an owner opt-out
+    /// (`owner_opt_outs.seam_ids`), sorted. They are excluded from both
+    /// sides before matching, so a withheld seam never reads as removed
+    /// (resolved) or new; the reports disclose them instead.
+    owner_opt_out_seam_ids: Vec<String>,
 }
 
 /// The repository-head identity of the compared snapshot pair, as the
@@ -295,9 +300,9 @@ pub(crate) fn targeted_test_outcome_report_from_json(
     after_path: String,
 ) -> Result<TargetedTestOutcomeReport, String> {
     let heads = OutcomeHeadIdentity::from_snapshots(before_json, after_json);
-    let before = parse_repo_exposure_static_seams(before_json)?;
-    let after = parse_repo_exposure_static_seams(after_json)?;
-    build_targeted_test_outcome_report(&before, &after, before_path, after_path, heads)
+    let before = parse_repo_exposure_static_snapshot(before_json)?;
+    let after = parse_repo_exposure_static_snapshot(after_json)?;
+    build_targeted_test_outcome_report_from_snapshots(before, after, before_path, after_path, heads)
 }
 
 /// Report over caller-validated heads (#5301 item 7). `agent verify`
@@ -319,9 +324,9 @@ pub(crate) fn targeted_test_outcome_report_from_json_with_heads(
         before_repository_head: before_head,
         after_repository_head: after_head,
     };
-    let before = parse_repo_exposure_static_seams(before_json)?;
-    let after = parse_repo_exposure_static_seams(after_json)?;
-    build_targeted_test_outcome_report(&before, &after, before_path, after_path, heads)
+    let before = parse_repo_exposure_static_snapshot(before_json)?;
+    let after = parse_repo_exposure_static_snapshot(after_json)?;
+    build_targeted_test_outcome_report_from_snapshots(before, after, before_path, after_path, heads)
 }
 
 /// Compare explicit static before evidence with current targeted-rerun facts.
@@ -466,10 +471,45 @@ fn parse_rerun_before_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>, 
             })
             .collect();
     }
-    parse_repo_exposure_static_seams(json)
+    // A seam the before snapshot withheld is absent from it, so a selected
+    // current seam with that id is refused below as missing, never matched.
+    parse_repo_exposure_static_snapshot(json).map(|snapshot| snapshot.seams)
 }
 
-fn parse_repo_exposure_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>, String> {
+/// One parsed static snapshot: its comparable seams and the ids of the seams
+/// it withheld by an owner opt-out (#14139).
+struct StaticSnapshot {
+    seams: Vec<StaticSeamRecord>,
+    owner_opt_out_seam_ids: BTreeSet<String>,
+}
+
+/// The ids a repo-exposure snapshot withheld by an owner opt-out (#14139),
+/// read from `owner_opt_outs`. Fail closed: a disclosure that counts
+/// withheld seams without naming each one cannot tell a withheld seam from a
+/// removed one, so the comparison is refused rather than guessed.
+fn repo_exposure_owner_opt_out_seam_ids(value: &Value) -> Result<BTreeSet<String>, String> {
+    let Some(disclosure) = value.get("owner_opt_outs") else {
+        return Ok(BTreeSet::new());
+    };
+    let withheld = disclosure.get("withheld").and_then(Value::as_u64);
+    let ids = disclosure
+        .get("seam_ids")
+        .and_then(Value::as_array)
+        .and_then(|ids| {
+            ids.iter()
+                .map(|id| id.as_str().map(str::to_owned))
+                .collect::<Option<BTreeSet<String>>>()
+        });
+    match (withheld, ids) {
+        (Some(withheld), Some(ids)) if u64::try_from(ids.len()).ok() == Some(withheld) => Ok(ids),
+        _ => Err(
+            "static snapshot withholds seams by owner opt-out (`owner_opt_outs`) without naming every withheld seam in `owner_opt_outs.seam_ids`, so a withheld seam cannot be told from a removed one; regenerate the snapshot with this ripr's `ripr check --format repo-exposure-json`, then compare"
+                .to_string(),
+        ),
+    }
+}
+
+fn parse_repo_exposure_static_snapshot(json: &str) -> Result<StaticSnapshot, String> {
     let value: Value = serde_json::from_str(json)
         .map_err(|err| format!("failed to parse repo exposure JSON: {err}"))?;
     if let Some(seams) = value.get("seams").and_then(Value::as_array) {
@@ -501,10 +541,19 @@ fn parse_repo_exposure_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>,
                 crate::output::repo_exposure::seam_limit_cut_repair(&cut)
             ));
         }
-        return parse_repo_exposure_seams(seams);
+        let owner_opt_out_seam_ids = repo_exposure_owner_opt_out_seam_ids(&value)?;
+        return Ok(StaticSnapshot {
+            seams: parse_repo_exposure_seams(seams)?,
+            owner_opt_out_seam_ids,
+        });
     }
     if let Some(findings) = value.get("findings").and_then(Value::as_array) {
-        return parse_check_output_findings(findings);
+        // Check output keeps a withheld finding listed (`withheld_by`), so
+        // nothing disappears from it.
+        return Ok(StaticSnapshot {
+            seams: parse_check_output_findings(findings)?,
+            owner_opt_out_seam_ids: BTreeSet::new(),
+        });
     }
 
     Err("static snapshot JSON is missing repo-exposure `seams` array or check-output `findings` array".to_string())
@@ -695,6 +744,8 @@ fn typescript_finding_gap_id(finding: &Value) -> Option<String> {
     Some(crate::output::typescript_packet_projection::typescript_canonical_gap_id(id))
 }
 
+/// The slice form the unit tests drive: snapshots that withheld nothing.
+#[cfg(test)]
 fn build_targeted_test_outcome_report(
     before: &[StaticSeamRecord],
     after: &[StaticSeamRecord],
@@ -702,6 +753,44 @@ fn build_targeted_test_outcome_report(
     after_path: String,
     heads: OutcomeHeadIdentity,
 ) -> Result<TargetedTestOutcomeReport, String> {
+    build_targeted_test_outcome_report_from_snapshots(
+        StaticSnapshot {
+            seams: before.to_vec(),
+            owner_opt_out_seam_ids: BTreeSet::new(),
+        },
+        StaticSnapshot {
+            seams: after.to_vec(),
+            owner_opt_out_seam_ids: BTreeSet::new(),
+        },
+        before_path,
+        after_path,
+        heads,
+    )
+}
+
+fn build_targeted_test_outcome_report_from_snapshots(
+    before: StaticSnapshot,
+    after: StaticSnapshot,
+    before_path: String,
+    after_path: String,
+    heads: OutcomeHeadIdentity,
+) -> Result<TargetedTestOutcomeReport, String> {
+    // #14139: a seam withheld on either side is excluded from both, so the
+    // opted-out owner's seams are neither removed nor new nor counted.
+    let withheld: BTreeSet<String> = before
+        .owner_opt_out_seam_ids
+        .union(&after.owner_opt_out_seam_ids)
+        .cloned()
+        .collect();
+    let keep = |seams: Vec<StaticSeamRecord>| -> Vec<StaticSeamRecord> {
+        seams
+            .into_iter()
+            .filter(|seam| !withheld.contains(&seam.seam_id))
+            .collect()
+    };
+    let before = keep(before.seams);
+    let after = keep(after.seams);
+    let (before, after) = (before.as_slice(), after.as_slice());
     let before_by_id = targeted_outcome_seams_by_id(before, "before")?;
     let after_by_id = targeted_outcome_seams_by_id(after, "after")?;
     let mut moved = Vec::new();
@@ -745,6 +834,33 @@ fn build_targeted_test_outcome_report(
         regressed,
         new,
         removed,
+        owner_opt_out_seam_ids: withheld.into_iter().collect(),
+    })
+}
+
+/// The `owner_opt_outs` disclosure an outcome or verify document adds when
+/// either snapshot withheld seams (#14139); `None` otherwise, so every other
+/// document is unchanged.
+fn outcome_owner_opt_outs_json(report: &TargetedTestOutcomeReport) -> Option<Value> {
+    (!report.owner_opt_out_seam_ids.is_empty()).then(|| {
+        serde_json::json!({
+            "withheld": report.owner_opt_out_seam_ids.len(),
+            "reason": crate::analysis::owner_opt_out::OwnerOptOutReason::MutantsSkip.as_str(),
+            "seam_ids": report.owner_opt_out_seam_ids,
+            "excluded_from": "both_snapshots",
+        })
+    })
+}
+
+/// The one-line prose disclosure for the same exclusion.
+fn outcome_owner_opt_outs_line(report: &TargetedTestOutcomeReport) -> Option<String> {
+    let count = report.owner_opt_out_seam_ids.len();
+    (count != 0).then(|| {
+        format!(
+            "Withheld by owner opt-out ({}): {count} {} excluded from both snapshots; not counted as removed, resolved or new.",
+            crate::analysis::owner_opt_out::OwnerOptOutReason::MutantsSkip.as_str(),
+            if count == 1 { "seam" } else { "seams" },
+        )
     })
 }
 
@@ -3906,5 +4022,113 @@ mod tests {
         let markdown = render_targeted_test_outcome_md(&report);
         assert!(markdown.contains("neither snapshot carries a head SHA"));
         Ok(())
+    }
+
+    // --- #14139: seams withheld by an owner opt-out are excluded, not resolved ---
+
+    fn owner_opt_out_snapshot(seam_ids: &[&str], withheld: Option<&str>) -> String {
+        let seams = seam_ids
+            .iter()
+            .map(|id| {
+                format!(
+                    r#"{{"seam_id": "{id}", "kind": "predicate_boundary", "file": "src/lib.rs", "line": 3, "grip_class": "weakly_gripped"}}"#
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let disclosure = withheld.map_or(String::new(), |member| format!(", {member}"));
+        format!(r#"{{"schema_version": "0.5", "scope": "repo", "seams": [{seams}]{disclosure}}}"#)
+    }
+
+    #[test]
+    fn owner_opt_out_withheld_seams_are_excluded_not_resolved() -> Result<(), String> {
+        // Before kept `skipped` (a pilot snapshot, or the attribute not yet
+        // added); after withheld it and names its id.
+        let before = owner_opt_out_snapshot(&["skipped", "plain"], None);
+        let after = owner_opt_out_snapshot(
+            &["plain"],
+            Some(
+                r#""owner_opt_outs": {"withheld": 1, "reason": "owner_mutants_skip", "seam_ids": ["skipped"]}"#,
+            ),
+        );
+        let report = targeted_test_outcome_report_from_json(
+            &before,
+            &after,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        )?;
+        assert!(report.removed.is_empty(), "{:?}", report.removed);
+        assert!(report.new.is_empty(), "{:?}", report.new);
+        assert_eq!(report.unchanged.len(), 1);
+        assert_eq!(report.owner_opt_out_seam_ids, vec!["skipped".to_string()]);
+        assert_eq!(
+            report.before_counts.get("seams_total"),
+            report.after_counts.get("seams_total")
+        );
+
+        let outcome: Value = serde_json::from_str(&render_targeted_test_outcome_json(&report)?)
+            .map_err(|err| err.to_string())?;
+        assert_eq!(outcome["summary"]["removed"], 0);
+        assert_eq!(
+            outcome["owner_opt_outs"],
+            serde_json::json!({"withheld": 1, "reason": "owner_mutants_skip", "seam_ids": ["skipped"], "excluded_from": "both_snapshots"})
+        );
+        let verify: Value = serde_json::from_str(&render_agent_verify_json_with_currentness(
+            &report,
+            None,
+            &test_agent_verify_binding(),
+        )?)
+        .map_err(|err| err.to_string())?;
+        assert_eq!(verify["summary"]["resolved"], 0);
+        assert_eq!(verify["resolved_gaps"], serde_json::json!([]));
+        assert_eq!(
+            verify["owner_opt_outs"]["seam_ids"],
+            serde_json::json!(["skipped"])
+        );
+        let markdown = render_targeted_test_outcome_md(&report);
+        assert!(markdown.contains(
+            "Withheld by owner opt-out (owner_mutants_skip): 1 seam excluded from both snapshots"
+        ));
+
+        // Discriminating control: without the disclosure the same pair reads
+        // the seam as removed, and the documents carry no member.
+        let undisclosed = owner_opt_out_snapshot(&["plain"], None);
+        let report = targeted_test_outcome_report_from_json(
+            &before,
+            &undisclosed,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        )?;
+        assert_eq!(report.removed.len(), 1);
+        let outcome: Value = serde_json::from_str(&render_targeted_test_outcome_json(&report)?)
+            .map_err(|err| err.to_string())?;
+        assert!(outcome.get("owner_opt_outs").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn owner_opt_out_count_without_ids_refuses_the_comparison() {
+        let plain = owner_opt_out_snapshot(&["plain"], None);
+        for member in [
+            r#""owner_opt_outs": {"withheld": 1, "reason": "owner_mutants_skip"}"#,
+            r#""owner_opt_outs": {"withheld": 2, "reason": "owner_mutants_skip", "seam_ids": ["one"]}"#,
+            r#""owner_opt_outs": {"withheld": 1, "reason": "owner_mutants_skip", "seam_ids": [7]}"#,
+        ] {
+            let withheld = owner_opt_out_snapshot(&["plain"], Some(member));
+            for (before, after) in [(&plain, &withheld), (&withheld, &plain)] {
+                let refusal = targeted_test_outcome_report_from_json(
+                    before,
+                    after,
+                    "before.json".to_string(),
+                    "after.json".to_string(),
+                )
+                .err()
+                .unwrap_or_default();
+                assert!(
+                    refusal.contains("owner_opt_outs.seam_ids"),
+                    "{member}: {refusal}"
+                );
+            }
+        }
     }
 }

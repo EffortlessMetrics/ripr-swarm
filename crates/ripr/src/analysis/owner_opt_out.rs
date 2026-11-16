@@ -92,24 +92,32 @@ pub(crate) fn rust_owner_opt_outs(index: &RustIndex, findings: &[Finding]) -> Ve
 }
 
 /// Seams a repo-scope format withheld because their owner opted out
-/// (#14139). The count is disclosed beside the format's own counts, which no
-/// longer include those seams. `withheld == 0` renders nothing, so a
-/// workspace without the attribute keeps byte-identical repo output.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// (#14139). The count and the withheld seam ids are disclosed beside the
+/// format's own counts, which no longer include those seams; the ids let a
+/// snapshot comparison tell a withheld seam from a removed one. Nothing
+/// withheld renders nothing, so a workspace without the attribute keeps
+/// byte-identical repo output.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RepoOwnerOptOuts {
-    /// Seams removed from the inventory the format renders.
-    pub(crate) withheld: usize,
+    /// Ids of the seams removed from the inventory the format renders,
+    /// sorted and unique.
+    pub(crate) seam_ids: Vec<String>,
 }
 
 impl RepoOwnerOptOuts {
+    /// How many seams were withheld.
+    pub(crate) fn withheld(&self) -> usize {
+        self.seam_ids.len()
+    }
+
     /// Whether nothing was withheld (the format renders no disclosure).
-    pub(crate) fn is_empty(self) -> bool {
-        self.withheld == 0
+    pub(crate) fn is_empty(&self) -> bool {
+        self.seam_ids.is_empty()
     }
 
     /// The withholding reason. `MutantsSkip` is the only reason a seam
     /// carries today.
-    pub(crate) fn reason(self) -> OwnerOptOutReason {
+    pub(crate) fn reason(&self) -> OwnerOptOutReason {
         OwnerOptOutReason::MutantsSkip
     }
 }
@@ -122,10 +130,17 @@ pub(crate) fn withhold_repo_owner_opt_outs<T>(
     entries: &mut Vec<T>,
     seam_of: impl Fn(&T) -> &crate::analysis::seams::RepoSeam,
 ) -> RepoOwnerOptOuts {
-    let before = entries.len();
-    entries.retain(|entry| seam_of(entry).owner_opt_out().is_none());
+    let mut seam_ids = std::collections::BTreeSet::new();
+    entries.retain(|entry| {
+        let seam = seam_of(entry);
+        if seam.owner_opt_out().is_none() {
+            return true;
+        }
+        seam_ids.insert(seam.id().as_str().to_string());
+        false
+    });
     RepoOwnerOptOuts {
-        withheld: before.saturating_sub(entries.len()),
+        seam_ids: seam_ids.into_iter().collect(),
     }
 }
 

@@ -35,7 +35,9 @@ pub fn control(level: u32) -> bool {{
 }
 
 const SKIP: &str = "#[mutants::skip]";
-const NO_ATTR: &str = "// no attribute";
+/// Same byte length as [`SKIP`], so swapping one for the other moves no seam
+/// offset and every seam keeps its id across the two snapshots.
+const NO_ATTR: &str = "// no attribute.";
 
 struct Repo {
     base: PathBuf,
@@ -80,23 +82,42 @@ impl Repo {
     }
 
     fn run(&self, format: &str) -> Result<Run, String> {
+        let root = self.root.to_string_lossy().into_owned();
+        self.ripr(&["check", "--root", &root, "--format", format])
+    }
+
+    /// `ripr <args..>` with this fixture's cache directory.
+    fn ripr(&self, args: &[&str]) -> Result<Run, String> {
         let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-            .args(["check", "--root"])
-            .arg(&self.root)
-            .args(["--format", format])
+            .args(args)
             .env("RIPR_CACHE_DIR", self.base.join("cache"))
             .env_remove("RIPR_QUIET")
             .output()
-            .map_err(|e| format!("run ripr check --format {format}: {e}"))?;
+            .map_err(|e| format!("run ripr {args:?}: {e}"))?;
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         if !output.status.success() {
-            return Err(format!(
-                "ripr check --format {format} failed: {}\n{stderr}",
-                output.status
-            ));
+            return Err(format!("ripr {args:?} failed: {}\n{stderr}", output.status));
         }
         let stdout = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
         Ok(Run { stdout, stderr })
+    }
+
+    /// Save a `repo-exposure-json` snapshot of the current source.
+    fn snapshot(&self, name: &str) -> Result<PathBuf, String> {
+        let path = self.base.join(name);
+        fs::write(&path, self.text("repo-exposure-json")?)
+            .map_err(|e| format!("write {name}: {e}"))?;
+        Ok(path)
+    }
+
+    /// `ripr outcome --format json` over two snapshots.
+    fn outcome(&self, before: &std::path::Path, after: &std::path::Path) -> Result<Value, String> {
+        let before = before.to_string_lossy().into_owned();
+        let after = after.to_string_lossy().into_owned();
+        let run = self.ripr(&[
+            "outcome", "--before", &before, "--after", &after, "--format", "json",
+        ])?;
+        serde_json::from_str(&run.stdout).map_err(|e| format!("outcome is not JSON: {e}"))
     }
 
     fn text(&self, format: &str) -> Result<String, String> {
@@ -157,11 +178,20 @@ fn as_u64(value: &Value, what: &str) -> Result<u64, String> {
 }
 
 fn assert_disclosed(document: &Value, withheld: usize, format: &str) -> Result<(), String> {
-    let expected = serde_json::json!({"withheld": withheld, "reason": REASON});
-    if document["owner_opt_outs"] != expected {
+    let disclosure = &document["owner_opt_outs"];
+    let ids: Vec<&str> = disclosure["seam_ids"]
+        .as_array()
+        .map(|ids| ids.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let sorted_unique = ids.windows(2).all(|pair| pair[0] < pair[1]);
+    if disclosure["withheld"] != withheld
+        || disclosure["reason"] != REASON
+        || ids.len() != withheld
+        || !sorted_unique
+        || disclosure.as_object().map(serde_json::Map::len) != Some(3)
+    {
         return Err(format!(
-            "{format}: owner_opt_outs should be {expected}, got {}",
-            document["owner_opt_outs"]
+            "{format}: owner_opt_outs should be {{withheld: {withheld}, reason: {REASON}, seam_ids: [{withheld} sorted ids]}}, got {disclosure}"
         ));
     }
     Ok(())
@@ -366,12 +396,12 @@ fn doc_string_naming_mutants_skip_does_not_withhold() -> Result<(), String> {
     )
 }
 
+/// Not a proof that the decision is parser-backed: a lexically read file
+/// yields no repo seams at all, so this would pass under either decision. It
+/// pins only that such a file discloses nothing. The parser-backed decision
+/// is proved by `analysis::owner_opt_out::tests`.
 #[test]
-fn lexically_read_file_contributes_no_seam_to_withhold() -> Result<(), String> {
-    // A byte that is not UTF-8 keeps the file on the lexical fallback, which
-    // carries no parser-backed attributes and no repo seams: nothing is
-    // withheld or disclosed (the owner decision for a lexical owner is
-    // pinned by the `owner_opt_out` unit tests).
+fn lexically_read_file_yields_no_repo_seams_and_no_disclosure() -> Result<(), String> {
     let mut source = b"// \xFF not utf-8\n".to_vec();
     source.extend_from_slice(lib_source(SKIP).as_bytes());
     let repo = Repo::new(&source)?;
@@ -443,6 +473,177 @@ fn cached_repo_results_follow_the_attribute_being_added_and_removed() -> Result<
     if count_owned(&replayed_json, "fn_level")? != 0 {
         return Err(format!(
             "cached replay must still withhold fn_level: {replayed_json}"
+        ));
+    }
+    Ok(())
+}
+
+/// The ids `owner_opt_outs` names in a repo-exposure snapshot.
+fn disclosed_ids(document: &Value) -> Result<BTreeSet<String>, String> {
+    document["owner_opt_outs"]["seam_ids"]
+        .as_array()
+        .ok_or_else(|| format!("no owner_opt_outs.seam_ids: {document}"))?
+        .iter()
+        .map(|id| {
+            id.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("seam id is not a string: {id}"))
+        })
+        .collect()
+}
+
+fn seam_ids_owned_by(document: &Value, name: &str) -> Result<BTreeSet<String>, String> {
+    Ok(seams(document)?
+        .iter()
+        .filter(|seam| owned_by(seam, name))
+        .filter_map(|seam| seam["seam_id"].as_str().map(str::to_owned))
+        .collect())
+}
+
+fn assert_outcome_excludes(
+    outcome: &Value,
+    withheld: &BTreeSet<String>,
+    label: &str,
+) -> Result<(), String> {
+    for bucket in ["removed", "new"] {
+        let count = as_u64(&outcome["summary"][bucket], bucket)?;
+        if count != 0 {
+            return Err(format!(
+                "{label}: {count} {bucket} seam(s), want 0: {outcome}"
+            ));
+        }
+    }
+    let disclosed: BTreeSet<String> = outcome["owner_opt_outs"]["seam_ids"]
+        .as_array()
+        .map(|ids| {
+            ids.iter()
+                .filter_map(|id| id.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    if &disclosed != withheld
+        || outcome["owner_opt_outs"]["reason"] != REASON
+        || outcome["owner_opt_outs"]["withheld"] != withheld.len()
+    {
+        return Err(format!(
+            "{label}: outcome must disclose the excluded ids {withheld:?}: {}",
+            outcome["owner_opt_outs"]
+        ));
+    }
+    Ok(())
+}
+
+/// #14139 review F1: the attribute added between two `ripr check` snapshots
+/// with no test change must not read the opted-out owner's seams as removed
+/// (resolved). The ids stay equal across the swap, so without the exclusion
+/// every fn_level seam would land in `removed`.
+#[test]
+fn outcome_does_not_resolve_seams_withheld_between_two_check_snapshots() -> Result<(), String> {
+    let repo = Repo::new(lib_source(NO_ATTR).as_bytes())?;
+    let before = repo.snapshot("before.json")?;
+    let before_json: Value =
+        serde_json::from_str(&fs::read_to_string(&before).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    let fn_level_ids = seam_ids_owned_by(&before_json, "fn_level")?;
+    repo.write_lib(lib_source(SKIP).as_bytes())?;
+    let after = repo.snapshot("after.json")?;
+    let after_json: Value =
+        serde_json::from_str(&fs::read_to_string(&after).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    if fn_level_ids.is_empty() || disclosed_ids(&after_json)? != fn_level_ids {
+        return Err(format!(
+            "fixture: the after snapshot must withhold exactly fn_level's ids {fn_level_ids:?}: {}",
+            after_json["owner_opt_outs"]
+        ));
+    }
+    let outcome = repo.outcome(&before, &after)?;
+    assert_outcome_excludes(&outcome, &fn_level_ids, "check -> check")?;
+    let control = seam_ids_owned_by(&before_json, "control")?.len() as u64;
+    if as_u64(&outcome["summary"]["unchanged"], "unchanged")? != control {
+        return Err(format!("control seams must read unchanged: {outcome}"));
+    }
+    // The reverse pair (attribute removed) is excluded the same way.
+    let reversed = repo.outcome(&after, &before)?;
+    assert_outcome_excludes(&reversed, &fn_level_ids, "check -> check reversed")
+}
+
+/// #14139 review F1: a `ripr pilot` snapshot keeps every seam; compared with a
+/// `ripr check` snapshot of the same source, the seams only check withheld
+/// must not read as removed.
+#[test]
+fn outcome_does_not_resolve_seams_a_pilot_snapshot_kept() -> Result<(), String> {
+    let repo = Repo::new(lib_source(SKIP).as_bytes())?;
+    let root = repo.root.to_string_lossy().into_owned();
+    let out = repo.base.join("pilot");
+    let out_arg = out.to_string_lossy().into_owned();
+    repo.ripr(&["pilot", "--root", &root, "--out", &out_arg])?;
+    let pilot = out.join("repo-exposure.json");
+    let pilot_json: Value =
+        serde_json::from_str(&fs::read_to_string(&pilot).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    let fn_level_ids = seam_ids_owned_by(&pilot_json, "fn_level")?;
+    if fn_level_ids.is_empty() || pilot_json.get("owner_opt_outs").is_some() {
+        return Err(format!(
+            "fixture: the pilot snapshot must keep fn_level's seams undisclosed: {pilot_json}"
+        ));
+    }
+    let check = repo.snapshot("check.json")?;
+    let outcome = repo.outcome(&pilot, &check)?;
+    assert_outcome_excludes(&outcome, &fn_level_ids, "pilot -> check")
+}
+
+/// Positive controls: the exclusion is targeted. A real test fix on the plain
+/// `control` owner still moves its seams, and deleting control's predicate
+/// still reads as removed, while fn_level stays withheld on both sides.
+#[test]
+fn outcome_still_reports_real_movement_on_the_plain_owner() -> Result<(), String> {
+    let repo = Repo::new(lib_source(SKIP).as_bytes())?;
+    let before = repo.snapshot("before.json")?;
+    fs::write(
+        repo.root.join("tests/control_boundary.rs"),
+        "#[test]\nfn control_boundary() {\n    assert_eq!(fx::control(3), false);\n    assert_eq!(fx::control(4), true);\n}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let fixed = repo.snapshot("fixed.json")?;
+    let outcome = repo.outcome(&before, &fixed)?;
+    let moved = as_u64(&outcome["summary"]["moved"], "moved")?;
+    let improved = outcome["moved"]
+        .as_array()
+        .map(|moved| {
+            moved
+                .iter()
+                .filter(|movement| {
+                    movement["direction"] == "improved"
+                        && movement["file"]
+                            .as_str()
+                            .is_some_and(|file| file.ends_with("src/lib.rs"))
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    if moved == 0 || improved == 0 {
+        return Err(format!(
+            "a real test fix on control must read as improved: {outcome}"
+        ));
+    }
+    let before_json: Value =
+        serde_json::from_str(&fs::read_to_string(&before).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    let withheld = disclosed_ids(&before_json)?;
+    assert_outcome_excludes(&outcome, &withheld, "test fix")?;
+
+    // Removing control's predicate (same file length is not needed: the
+    // control seams are the last ones) still reads as removed.
+    let source = lib_source(SKIP).replace(
+        "pub fn control(level: u32) -> bool {\n    level > 3\n}\n",
+        "pub fn control(_level: u32) -> bool {\n    true\n}\n",
+    );
+    repo.write_lib(source.as_bytes())?;
+    let rewritten = repo.snapshot("rewritten.json")?;
+    let outcome = repo.outcome(&before, &rewritten)?;
+    if as_u64(&outcome["summary"]["removed"], "removed")? == 0 {
+        return Err(format!(
+            "control's deleted seams must still read as removed: {outcome}"
         ));
     }
     Ok(())
