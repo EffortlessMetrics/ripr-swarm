@@ -722,7 +722,12 @@ pub(in crate::analysis) fn owner_change_visibility(
         // to refuse; it never runs, so it reads nothing here. A line with
         // any dead code (`return; assert_eq!(..)`) reads nothing too, and an
         // unbalanced body reads nothing at all.
-        let unreached = crate::analysis::extract::lines_touching_unreached(test.body.as_str());
+        let unreached = crate::analysis::extract::lines_touching_unreached(test.body.as_str())
+            .zip(deferred_lines(test))
+            .map(|(mut unreached, deferred)| {
+                unreached.extend(deferred);
+                unreached
+            });
         let mut agreed_mentions = 0usize;
         let mut note = |reading: CallReading, exact: bool| -> Option<String> {
             match reading {
@@ -1305,6 +1310,51 @@ pub(super) fn bare_owner_call_is_shadowed(
         return true;
     }
     oracle_owner_call_is_shadowed(test.body.as_str(), oracle_text, owner, test, index) == Some(true)
+}
+
+/// #14538: zero-based line offsets of `test.body` inside code that may run
+/// zero times or not at all: a nested `fn` or `macro_rules!`, a closure, an
+/// `async` block, an `if` or `match`, a `for`, `while` or `loop` body, or a
+/// `#[cfg]`-gated statement (`for _ in 0..0 { .. }`, an unpolled
+/// `async { .. }`, an uncalled `fn check() { .. }`). An assertion there does
+/// not show that its input ran, so it supplies no separating input. `None`
+/// when the body does not parse.
+fn deferred_lines(test: &TestSummary) -> Option<std::collections::BTreeSet<usize>> {
+    let body = test.body.as_str();
+    let parse = crate::analysis::syntax::parse_clean_source_file_memoized(body)?;
+    let root = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let line_of = |offset: usize| {
+        body.get(..offset)
+            .map_or(0, |head| head.bytes().filter(|byte| *byte == b'\n').count())
+    };
+    let mut lines = std::collections::BTreeSet::new();
+    for node in root.syntax().descendants() {
+        let deferred = (ast::Fn::can_cast(node.kind()) && node != *root.syntax())
+            || ast::ClosureExpr::can_cast(node.kind())
+            || ast::BlockExpr::cast(node.clone())
+                .is_some_and(|block| block.async_token().is_some())
+            || ast::ForExpr::can_cast(node.kind())
+            || ast::WhileExpr::can_cast(node.kind())
+            || ast::LoopExpr::can_cast(node.kind())
+            || ast::IfExpr::can_cast(node.kind())
+            || ast::MatchExpr::can_cast(node.kind())
+            || ast::MacroRules::can_cast(node.kind())
+            || (node != *root.syntax()
+                && node.children().any(|child| {
+                    ast::Attr::cast(child).is_some_and(|attr| {
+                        matches!(attr.simple_name().as_deref(), Some("cfg" | "cfg_attr"))
+                    })
+                }));
+        if deferred {
+            let range = node.text_range();
+            lines.extend(line_of(usize::from(range.start()))..=line_of(usize::from(range.end())));
+        }
+    }
+    Some(lines)
 }
 
 /// Whether the test body itself declares a same-name `fn` item: by definition

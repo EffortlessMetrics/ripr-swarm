@@ -14387,6 +14387,81 @@ fn the_workspace_macro_scan_runs_in_line_on_a_pool_worker_and_fans_out_elsewhere
     Ok(())
 }
 
+/// The workspace constant table parses every file that names `const` or
+/// `static`. Off the pool (the cold single-seam review stage) that per-file
+/// work fans out over rayon instead of running the whole corpus on one
+/// thread; on a pool worker it stays in line under the #8756 memo-lock guard.
+/// Either way the table is folded in index file order, so a name declared in
+/// several files lists them in the same order, and files without either
+/// keyword are skipped before any parse.
+#[test]
+fn the_workspace_constant_table_fans_out_off_the_pool_with_the_same_table() -> Result<(), String> {
+    let index = index(&[
+        (
+            "src/a.rs",
+            "pub const LIMIT: u32 = 3;\npub static NAME: &str = \"a\";\n",
+        ),
+        (
+            "src/b.rs",
+            "pub const LIMIT: u64 = 4;\nthread_local! { static T: u8 = 1; }\n",
+        ),
+        ("src/c.rs", "pub fn plain() -> u32 { 1 }\n"),
+        (
+            "src/d.rs",
+            "pub const fn broken( -> u32 { const LIMIT: u8 = 5; }\n",
+        ),
+    ]);
+    let table_and_decision = || {
+        LAST_SCAN_FAN_OUT.with(|last| last.set(None));
+        let table = workspace_constant_table(&index);
+        (table, LAST_SCAN_FAN_OUT.with(std::cell::Cell::get))
+    };
+
+    let (off_pool, decision) = table_and_decision();
+    assert_eq!(
+        decision,
+        Some(true),
+        "the per-file constant scan from a thread outside the pool must fan out"
+    );
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let (on_pool, decision) = pool.install(table_and_decision);
+    assert_eq!(
+        decision,
+        Some(false),
+        "the per-file constant scan on a pool worker must run in line"
+    );
+    assert_eq!(off_pool, on_pool, "fan-out must not change the table");
+
+    let files_of = |name: &str| -> Vec<PathBuf> {
+        off_pool
+            .get(name)
+            .map(|rows| rows.iter().map(|(path, _, _)| path.clone()).collect())
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        files_of("LIMIT"),
+        vec![
+            PathBuf::from("src/a.rs"),
+            PathBuf::from("src/b.rs"),
+            PathBuf::from("src/d.rs"),
+        ],
+        "rows keep index file order, including the text-read unparsed file"
+    );
+    assert_eq!(files_of("NAME"), vec![PathBuf::from("src/a.rs")]);
+    assert_eq!(files_of("T"), vec![PathBuf::from("src/b.rs")]);
+    assert!(
+        off_pool
+            .values()
+            .flatten()
+            .all(|(path, _, _)| path != Path::new("src/c.rs")),
+        "a file without const or static contributes nothing"
+    );
+    Ok(())
+}
+
 /// #9211: the first workspace macro-site lookup on a classify worker ran the
 /// whole-corpus scan in line while holding the memo lock, so every sibling
 /// worker slept on it. Priming pays the scan once, fanned out over the pool

@@ -1843,7 +1843,14 @@ fn collect_nested_cargo_tomls(
             let Ok(entries) = std::fs::read_dir(&dir) else {
                 continue;
             };
-            for entry in entries.flatten() {
+            // `read_dir` order is filesystem-defined (hash order on ext4,
+            // creation order on tmpfs). Sort each level by name so which
+            // directories fit under the cap, and so which manifests are
+            // seen, is a function of the tree, not of how it was written
+            // (#14230).
+            let mut entries: Vec<std::fs::DirEntry> = entries.flatten().collect();
+            entries.sort_by_cached_key(std::fs::DirEntry::file_name);
+            for entry in entries {
                 let path = entry.path();
                 let Ok(file_type) = entry.file_type() else {
                     continue;
@@ -5110,6 +5117,45 @@ mod tests {
         {
             return Err(format!(
                 "a directory symlink must not satisfy cargo_toml: {cargo_toml:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Over the directory cap, which manifests the nested walk sees must
+    /// depend on names, not on `read_dir` order (#14230). The tree has more
+    /// sibling directories than the cap and is written in reverse name
+    /// order, so a walk in listing order would reach `d599` before `d000`
+    /// on a creation-ordered filesystem.
+    #[test]
+    fn nested_cargo_toml_walk_under_the_cap_is_name_ordered() -> Result<(), String> {
+        let root = doctor_scope_root("scope-nested-cap-order", &[])?;
+        let siblings = NESTED_CARGO_TOML_MAX_DIRS + 88;
+        let built = (0..siblings).rev().try_for_each(|index| {
+            let dir = root.join(format!("d{index:03}"));
+            std::fs::create_dir(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
+            if index == 0 || index == siblings - 1 {
+                std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"p\"\n")
+                    .map_err(|err| format!("write manifest: {err}"))?;
+            }
+            Ok::<(), String>(())
+        });
+        let mut workspaces = Vec::new();
+        let mut packages = Vec::new();
+        if built.is_ok() {
+            collect_nested_cargo_tomls(&root, &mut workspaces, &mut packages);
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        built?;
+        let seen: Vec<String> = packages
+            .iter()
+            .filter_map(|path| path.strip_prefix(&root).ok())
+            .map(|path| path.display().to_string().replace('\\', "/"))
+            .collect();
+        if !workspaces.is_empty() || seen != ["d000/Cargo.toml"] {
+            return Err(format!(
+                "the capped walk must visit the first {} directories by name; saw packages {seen:?}, workspaces {workspaces:?}",
+                NESTED_CARGO_TOML_MAX_DIRS - 1
             ));
         }
         Ok(())
