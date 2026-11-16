@@ -111,9 +111,9 @@ fn init_owner_result_with_unread_field_carries_the_fact() -> Result<(), String> 
         "        self.timeout_value = 30",
         test,
     )?;
-    if finding.class == ExposureClass::WeaklyExposed
-        && finding.oracle_alignment.as_deref() == Some("orthogonal")
-        && !finding.evidence.iter().any(|line| {
+    if finding.class != ExposureClass::WeaklyExposed
+        || finding.oracle_alignment.as_deref() != Some("orthogonal")
+        || !finding.evidence.iter().any(|line| {
             line == "python_owner_result_field_unread: r.timeout_value (test_builds_url)"
         })
     {
@@ -289,4 +289,76 @@ fn inexact_or_unbounded_field_reads_are_not_credited() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// The write's effect on the returned instance must stay unread by anything
+/// but the test: a later call or bare `self` can overwrite it, and a read of
+/// the field anywhere in the class can derive another attribute the test
+/// already observes. Each variant keeps the orthogonal reading (asserted as
+/// a precondition) but carries no fact, and an exact read of the field gets
+/// no owner-result credit.
+#[test]
+fn owner_variants_that_overwrite_or_derive_from_the_write_carry_no_fact() -> Result<(), String> {
+    let head = "class Req:\n    def __init__(self, url):\n        self.url = url\n        self.timeout_value = 30\n\n";
+    for (case, body) in [
+        (
+            "a later call can reset the field",
+            "    def timeout(self, t):\n        self.timeout_value = t * 2\n        self._reset()\n        return self\n\n    def _reset(self):\n        self.timeout_value = 30\n",
+        ),
+        (
+            "a later alias of self can overwrite it",
+            "    def timeout(self, t):\n        self.timeout_value = t * 2\n        s = self\n        s.timeout_value = 30\n        return self\n",
+        ),
+        (
+            "setattr can overwrite it",
+            "    def timeout(self, t):\n        self.timeout_value = t * 2\n        setattr(self, 'timeout_value', 30)\n        return self\n",
+        ),
+        (
+            "a later attribute derives from it",
+            "    def timeout(self, t):\n        self.timeout_value = t * 2\n        self.url = self.url + str(self.timeout_value)\n        return self\n",
+        ),
+        (
+            "another method reads it",
+            "    def timeout(self, t):\n        self.timeout_value = t * 2\n        return self\n\n    def describe(self):\n        return self.timeout_value\n",
+        ),
+    ] {
+        let source = format!("{head}{body}");
+        let line = source
+            .lines()
+            .position(|line| line.trim() == NEW_LINE.trim())
+            .map(|index| index + 1)
+            .ok_or_else(|| format!("{case}: changed line missing"))?;
+        let finding = classify_at(&source, line, NEW_LINE, OLD_LINE, UNREAD_TEST)?;
+        if finding.class != ExposureClass::WeaklyExposed
+            || finding.oracle_alignment.as_deref() != Some("orthogonal")
+        {
+            return Err(format!(
+                "{case}: precondition, the orthogonal weak reading: {:?} {:?} {:?}",
+                finding.class, finding.oracle_alignment, finding.alignment_reason
+            ));
+        }
+        assert_orthogonal_without_fact(case, &finding)?;
+        let exact = "from fx.core import Req\n\n\ndef test_builder_sets_url():\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n    assert r.timeout_value == 30\n";
+        let read = classify_at(&source, line, NEW_LINE, OLD_LINE, exact)?;
+        if read.alignment_reason.as_deref() == Some("strong_oracle_observes_owner_result_field") {
+            return Err(format!(
+                "{case}: an exact read must not take the owner-result credit"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A class-level `url = Alias('timeout_value')` may be a custom descriptor
+/// that reads the changed field under the name the test reads.
+#[test]
+fn class_level_call_binding_carries_no_fact() -> Result<(), String> {
+    let source = "class Req:\n    url = Alias('timeout_value')\n\n    def __init__(self, url):\n        self.timeout_value = 30\n\n    def timeout(self, t):\n        self.timeout_value = t * 2\n        return self\n";
+    let line = source
+        .lines()
+        .position(|line| line.trim() == NEW_LINE.trim())
+        .map(|index| index + 1)
+        .ok_or_else(|| "changed line missing".to_string())?;
+    let finding = classify_at(source, line, NEW_LINE, OLD_LINE, UNREAD_TEST)?;
+    assert_orthogonal_without_fact("class-level descriptor", &finding)
 }

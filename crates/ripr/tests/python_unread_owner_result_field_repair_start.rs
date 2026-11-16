@@ -151,6 +151,14 @@ fn a_test_that_reads_the_field_gets_no_start() -> Result<(), String> {
     let repo = Repo::create(
         "from fx.core import Req\n\n\ndef test_builder_sets_url():\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n    assert r.timeout_value > 0\n",
     )?;
+    // Precondition: the gap is still reported and weak, so the missing start
+    // is this shape's refusal rather than a different classification.
+    let finding = repo.finding()?;
+    if str_at(&finding, "classification") != Some("weakly_exposed") {
+        return Err(format!(
+            "precondition, a weak finding on the gap: {finding}"
+        ));
+    }
     let (code, repair) = repo.repair_before()?;
     if code == Some(0) || repair.contains("repair started") {
         return Err(format!(
@@ -165,6 +173,14 @@ fn two_related_tests_get_no_start() -> Result<(), String> {
     let repo = Repo::create(&format!(
         "{UNREAD_TEST}\n\ndef test_builder_sets_url_again():\n    s = Req('http://y').timeout(3)\n    assert s.url == 'http://y'\n"
     ))?;
+    // Precondition: the gap is still reported and weak, so the missing start
+    // is this shape's refusal rather than a different classification.
+    let finding = repo.finding()?;
+    if str_at(&finding, "classification") != Some("weakly_exposed") {
+        return Err(format!(
+            "precondition, a weak finding on the gap: {finding}"
+        ));
+    }
     let (code, repair) = repo.repair_before()?;
     if code == Some(0) || repair.contains("repair started") {
         return Err(format!(

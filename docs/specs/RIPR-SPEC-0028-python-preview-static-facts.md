@@ -1412,13 +1412,18 @@ read-out: the boolean the classifier uses is derived from the surfaced
   `sorted`, `set` and `frozenset` erase the ordering the dunder determines and
   are not transparent here; any other wrapper may ignore the entry
   (`always_true(reversed(Range(0)))` stays `orthogonal`) (#8563).
-  Unread owner-result field (the Python analogue of #13700): a changed
-  one-line, unconditional, top-level `self.<field> = ...` in a plain method
+  Unread owner-result field (#13827, the Python analogue of Rust #13804): a
+  changed unconditional, top-level `self.<field> = ...` statement starting on
+  the changed line (the field not starting with `__`) in a plain method
   whose only `return` is its last statement `return self` (or in `__init__`,
   with no `return`) of a plain top-level class (no base, keyword, decorator, or
   class text naming `__getattr`, `__setattr`, `__delattr`, `__slots__`,
-  `__dict__`, `__new__`, `__class__` or `property`; no class-level binding of
-  the field) stays `orthogonal`, but its `weakly_exposed` finding carries the
+  `__dict__`, `__new__`, `__class__`, `property`, `setattr(` or `vars(`; no
+  class-level binding of the field and no class-level assignment of a call
+  result, which could be a descriptor; no other write of the field in the
+  method; no call and no bare `self` after the changed line besides the final
+  `return self`; and no read of `self.<field>` anywhere in the class, which
+  could derive an attribute the test reads) stays `orthogonal`, but its `weakly_exposed` finding carries the
   evidence line `python_owner_result_field_unread: <binding>.<field> (<test>)`
   when the one related test is a strong, undecorated, fixture-free,
   module-level pytest function whose body is straight-line

@@ -47,7 +47,9 @@ impl UnreadOwnerResultField {
 
 /// Class-text markers that let an attribute read or write run code, or let a
 /// read reach the changed field under another name.
-const CLASS_REFUSAL_MARKERS: [&str; 8] = [
+const CLASS_REFUSAL_MARKERS: [&str; 10] = [
+    "setattr(",
+    "vars(",
     "__getattr",
     "__setattr",
     "__delattr",
@@ -204,6 +206,15 @@ fn changed_self_field(owner: &PythonOwner, source: &str, line: usize) -> Option<
     let (Some(method), None) = (methods.next(), methods.next()) else {
         return None;
     };
+    // A class-level `x = Alias("field")` may be a custom descriptor that
+    // reads the changed field under another name.
+    if class.body.iter().any(|stmt| match stmt {
+        Stmt::Assign(assign) => matches!(assign.value.as_ref(), Expr::Call(_)),
+        Stmt::AnnAssign(assign) => matches!(assign.value.as_deref(), Some(Expr::Call(_))),
+        _ => false,
+    }) {
+        return None;
+    }
     if class
         .body
         .iter()
@@ -268,7 +279,46 @@ fn changed_self_field(owner: &PythonOwner, source: &str, line: usize) -> Option<
             writes += 1;
         }
     });
-    (writes == 1).then_some(field)
+    if writes != 1 {
+        return None;
+    }
+    // Nothing after the changed write may overwrite or derive from it: a
+    // later call (`self._reset()`), a bare `self` (an alias, `setattr(self,
+    // ..)`, `vars(self)`) or any read of `self.<field>` in the class (a derived
+    // `self.timeout_ms = self.timeout_value * 1000` the test already reads)
+    // makes the write's effect on the returned instance unread here.
+    let changed_index = method
+        .body
+        .iter()
+        .position(|stmt| std::ptr::eq(stmt, changed))?;
+    let after = &method.body[changed_index + 1..];
+    let after = match after.split_last() {
+        Some((Stmt::Return(_), rest)) if owner.name != "__init__" => rest,
+        _ => after,
+    };
+    let (mut calls, mut self_names, mut self_bases) = (0usize, 0usize, 0usize);
+    visit_exprs_in_statements(after, &mut |expr| match expr {
+        Expr::Call(_) => calls += 1,
+        Expr::Name(name) if name.id.as_str() == "self" => self_names += 1,
+        Expr::Attribute(attribute) if matches!(attribute.value.as_ref(), Expr::Name(name) if name.id.as_str() == "self") =>
+        {
+            self_bases += 1;
+        }
+        _ => {}
+    });
+    if calls != 0 || self_names != self_bases {
+        return None;
+    }
+    let mut field_reads = 0usize;
+    visit_exprs_in_statements(&class.body, &mut |expr| {
+        if let Expr::Attribute(attribute) = expr
+            && attribute.attr.as_str() == field
+            && attribute.ctx == ExprContext::Load
+        {
+            field_reads += 1;
+        }
+    });
+    (field_reads == 0).then_some(field)
 }
 
 /// The local the test binds once to the owner's returned instance, when the
