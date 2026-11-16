@@ -224,9 +224,15 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ github.sha }}
           VERSION: ${{ inputs.version }}
+          JOURNEY_RESULT: ${{ needs.npm-journey.result }}
         run: |
           set -euo pipefail
           evidence="$RUNNER_TEMP/evidence"; tree=$(git rev-parse 'HEAD^{tree}'); failed=0
+          # A passing receipt from a journey job that then hung, was cancelled
+          # or failed later is not a passing row.
+          if [ "$JOURNEY_RESULT" != "success" ]; then
+            echo "::error::the npm journey matrix finished as $JOURNEY_RESULT, not success"; failed=1
+          fi
           launcher="sha256:$(sha256sum "$RUNNER_TEMP/packages/npm/effortlessmetrics-ripr-${VERSION#v}.tgz" | awk '{print $1}')"
           for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
             receipt="$evidence/ripr-npm-journey-$target/receipt.json"

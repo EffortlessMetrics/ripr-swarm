@@ -388,6 +388,31 @@ test("a step timeout takes down the whole process group", (t) => {
   }
 });
 
+test("cleanup reaps a descendant that outlived a step that exited normally", (t) => {
+  if (!POSIX) {
+    t.skip("process-group reaping is POSIX");
+    return;
+  }
+  const journey = new Journey({});
+  journey.childPath = "/usr/bin:/bin";
+  const result = journey.run("leaves a child", "/bin/sh", ["-c", "sleep 30 >/dev/null 2>&1 & echo $!"], journey.root);
+  assert.equal(result.status, 0);
+  const grandchild = Number.parseInt(String(result.stdout).trim(), 10);
+  assert.ok(grandchild > 0, `expected a grandchild pid, got ${JSON.stringify(result.stdout)}`);
+  assert.doesNotThrow(() => process.kill(grandchild, 0), "the grandchild should still be running before cleanup");
+  assert.equal(journey.cleanup(), "passed");
+  let alive = true;
+  for (let attempt = 0; attempt < 50 && alive; attempt += 1) {
+    try {
+      process.kill(grandchild, 0);
+      spawnSync("/bin/sleep", ["0.1"]);
+    } catch {
+      alive = false;
+    }
+  }
+  assert.equal(alive, false, "cleanup left the step's descendant running");
+});
+
 test("a Windows step timeout fails cleanup closed because descendant teardown is not owned there", () => {
   const journey = new Journey({ stepTimeoutMs: 300 });
   journey.platform = "win32";
