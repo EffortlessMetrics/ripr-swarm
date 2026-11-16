@@ -21573,8 +21573,11 @@ fn execute_command_collect_repair_packet_without_a_packet_source_names_the_route
             assert!(
                 reason.starts_with(subject)
                     && reason.contains("target/ripr/reports/actionable-gaps.json")
-                    && reason.contains("ripr pilot --root ."),
-                "reason must name the sources and the route: {reason}"
+                    && reason.contains("`ripr check --root .`")
+                    && reason.contains("`ripr repair <id> --root .`")
+                    && !reason.contains("ripr pilot")
+                    && !reason.contains("gap-ledger"),
+                "reason must name the sources and the check-then-repair route: {reason}"
             );
         }
         // A first argument that is not an object is a caller error.
