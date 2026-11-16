@@ -105,8 +105,20 @@ script is covered by the bundle hash check). The admission job refuses at reques
 time; the Result job repeats the read before the eligibility recheck. A trusted
 (OWNER/MEMBER/COLLABORATOR) reviewer must post a native APPROVED, or a COMMENT whose
 first line is the readiness marker with an allowed tail; a trusted reviewer's later
-negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding signal;
-free-prose retraction on later lines is best-effort (#12835). A later line changes the
+negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding signal.
+An explicit `VERDICT:` field is recognized only at line start after the same list,
+quote, heading, emphasis or code prefix. Its whole value must be `APPROVE`, with an
+optional 7-40 hexadecimal head SHA, to admit; `BLOCK`, `ABSTAIN`, empty and
+unrecognized values refuse. An `APPROVE`-led value that is not exactly that form
+(such as `APPROVE <sha> — no blocking findings`) is neutral: it neither attests nor
+refuses, so it cannot veto the marker, while one that also names a blocking word
+still refuses. A table row whose first cell is `Verdict` uses that same
+grammar: the trailing pipe is optional, a row whose value side carries more than one
+non-empty cell refuses as ambiguous, and a `Verdict` header row above a delimiter
+row states nothing. An APPROVE field is not a readiness carrier: the
+separate first-line readiness marker is still required. A PR description carrying `VERDICT:` or a first-cell
+`Verdict` table row has a competing field and attests nothing, whatever the value.
+Free-prose retraction on later lines is best-effort (#12835). A later line changes the
 disposition only when it states one: it opens, after list (bulleted, numbered or task),
 quote, heading, emphasis or code markers, with a `disposition:` field or a state token;
 it is a state token alone; it carries a `disposition` field label anywhere (such as
