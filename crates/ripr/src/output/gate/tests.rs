@@ -5399,9 +5399,17 @@ fn temp_dir_allocations_are_unique_per_process_and_allocation() -> Result<(), St
         }));
     }
     for worker in workers {
-        worker
-            .join()
-            .map_err(|_| "temp dir allocator thread panicked".to_string())??;
+        worker.join().map_err(|panic| {
+            // Keep what the allocator thread panicked on: a silent panic here
+            // is the failure this test exists to catch, so the detail is the
+            // diagnostic. A non-string payload keeps a named fallback.
+            let detail = panic
+                .downcast_ref::<&str>()
+                .map(|detail| (*detail).to_string())
+                .or_else(|| panic.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "non-string panic payload".to_string());
+            format!("temp dir allocator thread panicked: {detail}")
+        })??;
     }
     paths.extend(
         shared
