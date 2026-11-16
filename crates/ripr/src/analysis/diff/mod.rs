@@ -8,7 +8,7 @@ mod model;
 mod parse;
 mod path;
 mod source;
-pub(crate) use base_owner::verified_base_owner;
+pub(crate) use base_owner::{ModuleDeclarations, verified_base_owner};
 pub(crate) use source::{reconstruct_old_lines_with_origins, reconstruct_old_source};
 pub mod records;
 
