@@ -12,8 +12,9 @@ mod probe_shapes;
 mod property_macros;
 pub(crate) use closure_callbacks::{
     ForwardedCallbackParam, InvokedCallbackParam, call_making_closure_positions,
-    closure_argument_positions, forwarded_callback_params, invoked_callback_params,
-    macro_call_columns, param_never_mentioned, passes_call_making_closure,
+    closure_argument_positions, closure_argument_positions_many, forwarded_callback_params,
+    invoked_callback_params, invoked_callback_params_many, macro_call_columns,
+    param_never_mentioned, passes_call_making_closure, passes_call_making_closure_many,
     unconditionally_invoked_param_positions,
 };
 use probe_shapes::extract_parser_probe_shapes;
@@ -336,6 +337,27 @@ pub(crate) fn parser_oracles_for_function(
         function_start_line,
         function_text,
         || parser_oracles_for_function_uncached(function_text, function_start_line),
+    )
+}
+
+/// [`parser_oracles_for_function`] for many `(function_text, start_line)`
+/// queries under the same memo key, the scope's misses computed on the rayon
+/// pool (#12947).
+pub(crate) fn parser_oracles_for_functions_many(
+    functions: &[(&str, usize)],
+) -> Vec<Option<Vec<OracleFact>>> {
+    let queries = functions
+        .iter()
+        .map(|(source, start_line)| super::run_memo::MemoQuery {
+            discriminator: *start_line,
+            extra: "",
+            source,
+        })
+        .collect::<Vec<_>>();
+    super::run_memo::memoize_many_with(
+        super::run_memo::Product::FunctionOracles,
+        &queries,
+        |query| parser_oracles_for_function_uncached(query.source, query.discriminator),
     )
 }
 
