@@ -6140,17 +6140,19 @@ fn t() {
     #[test]
     fn an_equality_operator_in_the_initializer_is_not_the_binding() -> Result<(), String> {
         // #14810 round 3: the binding `=` is the first at depth 0, so the
-        // `==` in the initializer is never mistaken for it.
+        // `==` in the initializer is never mistaken for it. The placeholder
+        // must survive that split: reading the last `=` instead would leave
+        // `price(10)` as the initializer and wrongly keep a strong exact credit.
         let body = r#"
 fn t() {
-    let expected: bool = price(10) == 7;
+    let expected: bool = todo!("x") == price(10);
     assert_eq!(flag(), expected);
 }
 "#;
         let fact = only_fact(body)?;
-        if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
+        if fact.strength != OracleStrength::Unknown {
             return Err(format!(
-                "a comparison initializer is not a placeholder: {fact:?}"
+                "a misplaced `=` split must not hide the placeholder: {fact:?}"
             ));
         }
         Ok(())
