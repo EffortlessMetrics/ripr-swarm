@@ -1,3 +1,11 @@
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "shared base-side owner identity; its claim readers (#14852, #14815) wire it in their own commits"
+    )
+)]
+mod base_owner;
 #[cfg(test)]
 mod differential_tests;
 #[cfg(test)]
@@ -7,7 +15,15 @@ mod model;
 mod parse;
 mod path;
 mod source;
-pub(crate) use source::reconstruct_old_source;
+#[cfg_attr(
+    not(test),
+    expect(
+        unused_imports,
+        reason = "shared base-side owner identity; its claim readers (#14852, #14815) wire it in their own commits"
+    )
+)]
+pub(crate) use base_owner::verified_base_owner;
+pub(crate) use source::{reconstruct_old_lines_with_origins, reconstruct_old_source};
 pub mod records;
 
 pub(crate) use load::bare_repository_message;
