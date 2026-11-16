@@ -187,7 +187,13 @@ fn one_prefix_operator_apart(old: &str, new: &str) -> Option<(UnaryOperator, boo
         .as_bytes()
         .get(at + 1)
         .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_');
-    starts_name.then_some((operator, inserted))
+    let after_operand = long
+        .get(..at)?
+        .trim_end()
+        .bytes()
+        .next_back()
+        .is_some_and(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b')' | b']'));
+    (starts_name && !after_operand).then_some((operator, inserted))
 }
 
 /// One owner version read through the parser: a free `fn` whose body holds no
