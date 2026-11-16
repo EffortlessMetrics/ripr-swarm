@@ -1418,12 +1418,14 @@ read-out: the boolean the classifier uses is derived from the surfaced
   whose only `return` is its last statement `return self` (or in `__init__`,
   with no `return`) of a plain top-level class (no base, keyword, decorator, or
   class text naming `__getattr`, `__setattr`, `__delattr`, `__slots__`,
-  `__dict__`, `__new__`, `__class__`, `property`, `setattr(` or `vars(`; no
-  class-level binding of the field and no class-level assignment of a call
-  result, which could be a descriptor; no other write of the field in the
-  method; no call and no bare `self` after the changed line besides the final
-  `return self`; and no read of `self.<field>` anywhere in the class, which
-  could derive an attribute the test reads) stays `orthogonal`, but its `weakly_exposed` finding carries the
+  `__dict__`, `__new__`, `__class__`, `property`, `getattr(`, `attrgetter`,
+  `setattr(` or `vars(`; a class body of only undecorated methods, literal
+  bindings, docstrings and `pass`, since any other class-level value could be a
+  descriptor; no `case` line; no class-level binding of the field; no other
+  write of the field in the method; only plain assignments after the changed
+  line besides the final `return self`, with no call and no bare `self`; and no
+  read of `.<field>` anywhere in the class, which could derive an attribute the
+  test reads) stays `orthogonal`, but its `weakly_exposed` finding carries the
   evidence line `python_owner_result_field_unread: <binding>.<field> (<test>)`
   when the one related test is a strong, undecorated, fixture-free,
   module-level pytest function whose body is straight-line

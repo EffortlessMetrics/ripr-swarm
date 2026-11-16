@@ -47,7 +47,9 @@ impl UnreadOwnerResultField {
 
 /// Class-text markers that let an attribute read or write run code, or let a
 /// read reach the changed field under another name.
-const CLASS_REFUSAL_MARKERS: [&str; 10] = [
+const CLASS_REFUSAL_MARKERS: [&str; 12] = [
+    "getattr(",
+    "attrgetter",
     "setattr(",
     "vars(",
     "__getattr",
@@ -206,13 +208,27 @@ fn changed_self_field(owner: &PythonOwner, source: &str, line: usize) -> Option<
     let (Some(method), None) = (methods.next(), methods.next()) else {
         return None;
     };
-    // A class-level `x = Alias("field")` may be a custom descriptor that
-    // reads the changed field under another name.
-    if class.body.iter().any(|stmt| match stmt {
-        Stmt::Assign(assign) => matches!(assign.value.as_ref(), Expr::Call(_)),
-        Stmt::AnnAssign(assign) => matches!(assign.value.as_deref(), Some(Expr::Call(_))),
+    // Any class-level value but a plain literal may be a descriptor that
+    // reads or writes the changed field under another name (`url =
+    // Alias("timeout_value")`, `url = _alias`, a decorated method), and its
+    // code lives outside the class text. Only undecorated methods, literal
+    // bindings, docstrings and `pass` are read.
+    let plain_class_statement = |stmt: &Stmt| match stmt {
+        Stmt::FunctionDef(function) => function.decorator_list.is_empty(),
+        Stmt::Assign(assign) => matches!(assign.value.as_ref(), Expr::Constant(_)),
+        Stmt::AnnAssign(assign) => assign
+            .value
+            .as_deref()
+            .is_none_or(|value| matches!(value, Expr::Constant(_))),
+        Stmt::Expr(expr) => matches!(expr.value.as_ref(), Expr::Constant(_)),
+        Stmt::Pass(_) => true,
         _ => false,
-    }) {
+    };
+    if !class.body.iter().all(plain_class_statement)
+        || class_text
+            .lines()
+            .any(|line| line.trim_start().starts_with("case "))
+    {
         return None;
     }
     if class
@@ -296,6 +312,16 @@ fn changed_self_field(owner: &PythonOwner, source: &str, line: usize) -> Option<
         Some((Stmt::Return(_), rest)) if owner.name != "__init__" => rest,
         _ => after,
     };
+    // Only plain assignments may follow: a branch, loop, `try` or `match`
+    // hides expressions (a guard, an `except` type) the scan below misses.
+    if !after.iter().all(|stmt| {
+        matches!(
+            stmt,
+            Stmt::Assign(_) | Stmt::AnnAssign(_) | Stmt::AugAssign(_) | Stmt::Pass(_)
+        )
+    }) {
+        return None;
+    }
     let (mut calls, mut self_names, mut self_bases) = (0usize, 0usize, 0usize);
     visit_exprs_in_statements(after, &mut |expr| match expr {
         Expr::Call(_) => calls += 1,

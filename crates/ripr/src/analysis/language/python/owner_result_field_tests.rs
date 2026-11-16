@@ -349,16 +349,61 @@ fn owner_variants_that_overwrite_or_derive_from_the_write_carry_no_fact() -> Res
     Ok(())
 }
 
-/// A class-level `url = Alias('timeout_value')` may be a custom descriptor
-/// that reads the changed field under the name the test reads.
+/// A class-level value other than a plain literal may be a custom
+/// descriptor that reads or writes the changed field under the name the test
+/// reads, and its code lives outside the class; a `match` guard after the
+/// write hides a call. Each keeps the orthogonal reading but carries no fact.
 #[test]
-fn class_level_call_binding_carries_no_fact() -> Result<(), String> {
-    let source = "class Req:\n    url = Alias('timeout_value')\n\n    def __init__(self, url):\n        self.timeout_value = 30\n\n    def timeout(self, t):\n        self.timeout_value = t * 2\n        return self\n";
-    let line = source
-        .lines()
-        .position(|line| line.trim() == NEW_LINE.trim())
-        .map(|index| index + 1)
-        .ok_or_else(|| "changed line missing".to_string())?;
-    let finding = classify_at(source, line, NEW_LINE, OLD_LINE, UNREAD_TEST)?;
-    assert_orthogonal_without_fact("class-level descriptor", &finding)
+fn descriptor_or_hidden_expression_shapes_carry_no_fact() -> Result<(), String> {
+    let method =
+        "    def timeout(self, t):\n        self.timeout_value = t * 2\n        return self\n";
+    let init =
+        "    def __init__(self, url):\n        self.url = url\n        self.timeout_value = 30\n\n";
+    for (case, source) in [
+        (
+            "a class-level call binding",
+            format!("class Req:\n    other = Alias('timeout_value')\n\n{init}{method}"),
+        ),
+        (
+            "a class-level name binding",
+            format!(
+                "_alias = Alias('timeout_value')\n\n\nclass Req:\n    other = _alias\n\n{init}{method}"
+            ),
+        ),
+        (
+            "a decorated method",
+            format!(
+                "class Req:\n{init}{method}\n    @alias('timeout_value')\n    def other(self):\n        return 0\n"
+            ),
+        ),
+        (
+            "a match guard after the write",
+            format!(
+                "class Req:\n{init}    def timeout(self, t):\n        self.timeout_value = t * 2\n        match t:\n            case _ if self._reset() is None:\n                pass\n        return self\n"
+            ),
+        ),
+        (
+            "a read by string name",
+            format!(
+                "class Req:\n{init}{method}\n    def other(self):\n        return getattr(self, 'timeout_value')\n"
+            ),
+        ),
+    ] {
+        let line = source
+            .lines()
+            .position(|line| line.trim() == NEW_LINE.trim())
+            .map(|index| index + 1)
+            .ok_or_else(|| format!("{case}: changed line missing"))?;
+        let finding = classify_at(&source, line, NEW_LINE, OLD_LINE, UNREAD_TEST)?;
+        if finding.class != ExposureClass::WeaklyExposed
+            || finding.oracle_alignment.as_deref() != Some("orthogonal")
+        {
+            return Err(format!(
+                "{case}: precondition, the orthogonal weak reading: {:?} {:?} {:?}",
+                finding.class, finding.oracle_alignment, finding.alignment_reason
+            ));
+        }
+        assert_orthogonal_without_fact(case, &finding)?;
+    }
+    Ok(())
 }
