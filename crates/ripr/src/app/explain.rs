@@ -1203,6 +1203,30 @@ mod tests {
             .ok_or("an unrelated path keeps its cause")?;
         require_contains(&cause, "is not the path of a file from the analyzed root")?;
 
+        // The assembled fresh-run miss the CLI prints: the case hint alone,
+        // with no probe clause from either filesystem outcome.
+        let message = match explain_fixture("collection_argument_plain", "SRC/Lib.rs:9") {
+            Ok(rendered) => return Err(format!("SRC/Lib.rs:9 must miss: {rendered}")),
+            Err(message) => message,
+        };
+        for wanted in [
+            "no finding matched \"SRC/Lib.rs:9\"",
+            "Paths match case-sensitively.",
+            "Findings in src/lib.rs are on line 3",
+        ] {
+            if !message.contains(wanted) {
+                return Err(format!("assembled miss lacks {wanted:?}: {message}"));
+            }
+        }
+        for unwanted in [
+            "exists, but this run has no finding",
+            "is not the path of a file from the analyzed root",
+        ] {
+            if message.contains(unwanted) {
+                return Err(format!("assembled miss carries {unwanted:?}: {message}"));
+            }
+        }
+
         // A bare wrong-case name matching an extensionless finding file gets
         // no hint (the hint needs a path shape), so the cause must stay.
         let mut output = output;
