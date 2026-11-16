@@ -538,8 +538,13 @@ cfg-gated, and returns `Self` or the type. In order:
 Otherwise the receiver stays a `todo!()`. The receiver line carries a comment
 naming its source, and human output prints it on a `Receiver:` line; the JSON
 document is unchanged apart from `text` and one fewer `fill_ins` entry. The
-expected value stays a `todo!()`. A second run over a written stub recomputes
-the same text and reports it already written.
+expected value stays a `todo!()`. A second run over a stub this version wrote
+recomputes the same text and reports it already written. A stub written by an
+earlier version, whose receiver is still a `todo!()`, does not match the new
+text, so a rerun writes a second stub with a `_2` suffix beside it; delete or
+fill in the old stub first. Human output also escapes control and bidi
+characters in the stub text and in the `Inputs`, `Receiver:` and `Fill in:`
+lines, since they carry repository text.
 
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie

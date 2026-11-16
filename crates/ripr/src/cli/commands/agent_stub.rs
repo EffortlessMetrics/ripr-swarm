@@ -255,20 +255,14 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     } else {
         println!("Test stub `{}` for {place}:", stub.test_name);
         println!();
-        print!("{}", stub.text.trim_start_matches('\n'));
+        print!(
+            "{}",
+            crate::terminal_text::terminal_safe(stub.text.trim_start_matches('\n').to_string())
+        );
         println!();
     }
-    if !stub.derived_inputs.is_empty() {
-        println!(
-            "Inputs from the changed comparison: {}",
-            stub.derived_inputs.join(", ")
-        );
-    }
-    if let Some(receiver) = &stub.receiver_setup {
-        println!("Receiver: {receiver}");
-    }
-    for fill_in in &stub.fill_ins {
-        println!("Fill in: {fill_in}");
+    for detail in stub_detail_lines(stub) {
+        println!("{detail}");
     }
     if written.is_none() && !stub.already_present {
         println!("Write it: {}", write_command(&options));
@@ -293,6 +287,28 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
         }
     }
     Ok(())
+}
+
+/// The human lines that follow the stub: the derived inputs, the receiver and
+/// each fill-in. They carry repository text (comparison and constructor
+/// literals, parameter names), so each is spelled single-line and
+/// terminal-safe; the JSON document keeps the raw values.
+fn stub_detail_lines(stub: &crate::analysis::test_stub::RustTestStub) -> Vec<String> {
+    use crate::terminal_text::single_line;
+    let mut lines = Vec::new();
+    if !stub.derived_inputs.is_empty() {
+        lines.push(format!(
+            "Inputs from the changed comparison: {}",
+            single_line(&stub.derived_inputs.join(", "))
+        ));
+    }
+    if let Some(receiver) = &stub.receiver_setup {
+        lines.push(format!("Receiver: {}", single_line(receiver)));
+    }
+    for fill_in in &stub.fill_ins {
+        lines.push(format!("Fill in: {}", single_line(fill_in)));
+    }
+    lines
 }
 
 /// The human "Run it" line: the command, or why none is offered. Only a
@@ -501,6 +517,35 @@ fn stub_grip_omission_reason(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stub_detail_lines_escape_repository_controls() {
+        let stub = crate::analysis::test_stub::RustTestStub {
+            placement: TestStubPlacement::NewIntegrationFile {
+                file: std::path::PathBuf::from("tests/t.rs"),
+            },
+            test_name: "t".to_string(),
+            text: String::new(),
+            already_present: false,
+            fill_ins: vec!["expected \u{1b}[2J value".to_string()],
+            derived_inputs: vec!["x = \"a\u{202e}b\"".to_string()],
+            receiver_setup: Some(
+                "subject = Bucket::new(\"\u{1b}]0;owned\u{7}\"), as in the existing test `t`"
+                    .to_string(),
+            ),
+        };
+        let lines = stub_detail_lines(&stub);
+        assert_eq!(
+            lines,
+            vec![
+                "Inputs from the changed comparison: x = \"a\\u{202e}b\"".to_string(),
+                "Receiver: subject = Bucket::new(\"\\u{1b}]0;owned\\u{07}\"), as in the existing test `t`"
+                    .to_string(),
+                "Fill in: expected \\u{1b}[2J value".to_string(),
+            ]
+        );
+        assert!(lines.iter().all(|line| !line.chars().any(char::is_control)));
+    }
 
     #[test]
     fn human_refusal_carries_the_at_substitution_note() {
