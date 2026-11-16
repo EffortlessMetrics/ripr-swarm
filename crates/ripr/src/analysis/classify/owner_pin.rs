@@ -1216,8 +1216,14 @@ impl OwnerPinSyntax {
         if !gated {
             return true;
         }
-        let refusal =
-            self.assertion_family_refusal(family.clone(), owner, test, assertion, index, matches_context);
+        let refusal = self.assertion_family_refusal(
+            family.clone(),
+            owner,
+            test,
+            assertion,
+            index,
+            matches_context,
+        );
         match refusal {
             None => true,
             // Identical spellings on one line, one of which provably runs
@@ -2353,7 +2359,10 @@ impl OwnerPinSyntax {
             )
     }
 
-    fn refusal_with_value_guard(refusal: AssertionRefusal, assertion: &OracleFact) -> AssertionRefusal {
+    fn refusal_with_value_guard(
+        refusal: AssertionRefusal,
+        assertion: &OracleFact,
+    ) -> AssertionRefusal {
         match refusal {
             AssertionRefusal::Syntax(AssertionContextRefusal::GuardedReturn(condition)) => {
                 match value_guard_subject(&condition, &assertion.text) {

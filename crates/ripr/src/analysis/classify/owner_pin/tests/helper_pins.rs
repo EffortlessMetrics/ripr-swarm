@@ -774,8 +774,8 @@ fn a_predicate_assert_eq_is_admitted_like_the_bare_assert() -> Result<(), String
 /// module-declaration refusal stays and the equality is not credited
 /// (RIPR-SPEC-0197: an unknown gate grants no credit on its own).
 #[test]
-fn a_predicate_assert_eq_reaching_an_ungated_owner_through_a_gated_mod_is_refused(
-) -> Result<(), String> {
+fn a_predicate_assert_eq_reaching_an_ungated_owner_through_a_gated_mod_is_refused()
+-> Result<(), String> {
     let lib = "#[cfg(feature = \"lang-python\")]\nmod python;\n\npub fn gate(value: u32) -> bool {\n    10 <= value\n}\n";
     let python = "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn pins() {\n        assert_eq!(crate::gate(10), true);\n    }\n}\n";
     let index = index(&[(LIB, lib), ("src/python.rs", python)]);
@@ -834,7 +834,7 @@ fn a_gated_predicate_assert_eq_is_still_refused_when_it_is_shadowed() -> Result<
     assert!(
         matches!(
             &refusal,
-            Some(AssertionRefusal::MacroBinding { name, site: Some((path, _)) })
+            Some(AssertionRefusal::MacroBinding { name, site: Some((path, _)), .. })
                 if name == "assert_eq" && path.as_path() == Path::new("src/python.rs")
         ),
         "a shadowed predicate assert_eq! is still refused as MacroBinding (refusal={refusal:?})"
@@ -989,7 +989,8 @@ fn a_gated_predicate_assert_eq_in_a_dead_branch_or_ignored_test_is_still_refused
             .into_iter()
             .find(|oracle| oracle.text.starts_with("assert_eq!(gate("))
             .ok_or_else(|| format!("premise: `{name}`'s assert_eq! parses"))?;
-        let refusal = syntax.equality_assertion_refusal(&probe, Some(owner), test, &assertion, &index);
+        let refusal =
+            syntax.equality_assertion_refusal(&probe, Some(owner), test, &assertion, &index);
         // Assert the variant, not just `is_some()`: `ModuleDeclaration` is also
         // `Some`, so `is_some()` would pass whether the arm skipped the module
         // edge, skipped nothing, or skipped the whole provenance step.
@@ -1036,8 +1037,13 @@ fn a_gated_predicate_assert_eq_value_guard_is_an_analyzer_limit() -> Result<(), 
         .into_iter()
         .find(|oracle| oracle.text.starts_with("assert_eq!(gate(10), 10)"))
         .ok_or("premise: the test's assert_eq! parses")?;
-    let refusal = OwnerPinSyntax::default()
-        .equality_assertion_refusal(&probe, Some(owner), test, &assertion, &index);
+    let refusal = OwnerPinSyntax::default().equality_assertion_refusal(
+        &probe,
+        Some(owner),
+        test,
+        &assertion,
+        &index,
+    );
     assert!(
         matches!(
             &refusal,
@@ -1047,7 +1053,9 @@ fn a_gated_predicate_assert_eq_value_guard_is_an_analyzer_limit() -> Result<(), 
         "the gated-mod retry must preserve the expected-value guard, not report a false gap (refusal={refusal:?})"
     );
     assert!(
-        refusal.as_ref().is_some_and(AssertionRefusal::is_analyzer_limit),
+        refusal
+            .as_ref()
+            .is_some_and(AssertionRefusal::is_analyzer_limit),
         "an expected-value guard is an analyzer limit, not a true false gap (refusal={refusal:?})"
     );
     Ok(())

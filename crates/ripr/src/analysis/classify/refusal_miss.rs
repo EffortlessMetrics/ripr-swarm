@@ -134,8 +134,8 @@ pub(in crate::analysis) fn owner_compiled_only_under_refused_declaration(
     // The shared declaration explains only the provenance refusal: every
     // assertion's own in-file reading must be admitted, an analyzer limit, or
     // the enclosing gate the subset check above shares with the owner.
-    let test_local_admitted = AssertionRefusal::test_local_refusals(test, index)
-        .is_some_and(|refusals| {
+    let test_local_admitted =
+        AssertionRefusal::test_local_refusals(test, index).is_some_and(|refusals| {
             !refusals.is_empty()
                 && refusals.iter().all(|refusal| {
                     refusal.as_ref().is_none_or(|refusal| {
@@ -197,15 +197,13 @@ pub(in crate::analysis) fn split_assertion_not_credited_misses(
         // unproven refusal is admission-unproven, independent of source order.
         let mut split: Option<RelatedTestMiss> = None;
         for assertion in &test.assertions {
-            let Some(refusal) =
-                pin_syntax.equality_assertion_refusal(
-                    probe,
-                    context.owner_fn,
-                    test,
-                    assertion,
-                    context.index,
-                )
-            else {
+            let Some(refusal) = pin_syntax.equality_assertion_refusal(
+                probe,
+                context.owner_fn,
+                test,
+                assertion,
+                context.index,
+            ) else {
                 continue;
             };
             let miss = related_test_miss_for_assertion_refusal(context, test, &refusal);

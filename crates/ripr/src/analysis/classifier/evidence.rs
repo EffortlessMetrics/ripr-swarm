@@ -957,9 +957,8 @@ impl ClassifiedProbeEvidence {
                 test,
                 assertion,
                 context.index,
-            )
-                && (!field_oracle_needs_admission
-                    || pin_syntax.admits(test, assertion, context.index))
+            ) && (!field_oracle_needs_admission
+                || pin_syntax.admits(test, assertion, context.index))
         };
         // RIPR-SPEC-0094 Part D: the state a deleted `self.callee(..)` writes,
         // established once per probe; `None` keeps the Part C reading.
