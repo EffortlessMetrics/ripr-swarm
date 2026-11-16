@@ -387,6 +387,15 @@ const SITUATIONS: &[Situation] = &[
             repo.ripr(&["explain", "tests/t.rs:4"]).map(Some)
         },
     },
+    Situation {
+        section: "Attach a verbose log",
+        exit: 0,
+        reproduce: || {
+            let repo = Scratch::repo()?;
+            repo.write("src/lib.rs", CHANGED_SRC)?;
+            repo.ripr(&["-v", "check"]).map(Some)
+        },
+    },
 ];
 
 fn guide() -> Result<String, String> {
@@ -516,4 +525,68 @@ fn stated_exit_codes_match_the_reproduced_situations() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Digits become `N`, so a timing or a count compares by shape.
+fn shape(line: &str) -> String {
+    let mut out = String::new();
+    let mut in_number = false;
+    for c in line.chars() {
+        if c.is_ascii_digit() {
+            if !in_number {
+                out.push('N');
+            }
+            in_number = true;
+        } else {
+            out.push(c);
+            in_number = false;
+        }
+    }
+    out
+}
+
+/// The full sample log under "Attach a verbose log" (a `console` fence,
+/// whose timings vary) matches the shape of the log the built binary prints
+/// for the same change: every sample line, digits aside, is a line the
+/// binary printed. A truncated `took` or a verdict line without its prefix
+/// or reason cannot pass.
+#[test]
+fn the_sample_verbose_log_has_the_shape_the_binary_prints() -> Result<(), String> {
+    let guide = guide()?;
+    let start = guide
+        .find("### Attach a verbose log\n")
+        .ok_or("the guide has no verbose-log section")?;
+    let section = &guide[start..];
+    let fence = section
+        .find("```console\n")
+        .ok_or("the verbose-log section has no console sample")?;
+    let body = &section[fence + "```console\n".len()..];
+    let end = body.find("```").ok_or("unterminated console sample")?;
+    let sample: Vec<&str> = body[..end]
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    if !sample.iter().any(|l| l.starts_with("ripr: verdict "))
+        || !sample.iter().any(|l| l.starts_with("ripr: timing "))
+    {
+        return Err(format!(
+            "the sample must show timing and verdict lines: {sample:?}"
+        ));
+    }
+    let repo = Scratch::repo()?;
+    repo.write("src/lib.rs", CHANGED_SRC)?;
+    let run = repo.ripr(&["-v", "check"])?;
+    let printed: Vec<String> = run.text.lines().map(shape).collect();
+    let missing: Vec<&&str> = sample
+        .iter()
+        .filter(|line| !printed.contains(&shape(line)))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "sample lines the binary does not print (digits aside): {missing:?}\nbinary printed:\n{}",
+            run.text
+        ))
+    }
 }

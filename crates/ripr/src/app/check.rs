@@ -436,7 +436,7 @@ fn check_with_progress_and_origins_run(
         languages.push(LanguageId::Perl);
     }
 
-    if crate::is_verbose() {
+    if crate::stderr_diagnostics() {
         eprintln!(
             "ripr: analyzing {} language(s): {}",
             languages.len(),
@@ -519,7 +519,7 @@ fn check_with_progress_and_origins_run(
         });
     }
 
-    if crate::is_verbose() {
+    if crate::stderr_diagnostics() {
         let finding_count = analysis.findings.len();
         let probe_count = analysis.summary.probes;
         // #7753: count-aware nouns — a single-probe run says "1 probe, 1 finding".
@@ -570,6 +570,30 @@ fn check_with_progress_and_origins_run(
     // #13819: after the policy, so a finding the policy already suppressed
     // is neither listed nor decremented twice.
     apply_owner_opt_outs(&mut output);
+    // Why each reported finding landed in its class, after suppression and
+    // owner opt-outs so the trace names exactly the findings the output
+    // reports (stderr diagnostics only; bounded per run).
+    if crate::stderr_diagnostics() {
+        // Suppression and owner opt-outs keep the finding in
+        // `output.findings` and record its id; filter them out before the
+        // per-run bound so a withheld finding never displaces a reported one.
+        let withheld = output.withheld_finding_ids();
+        let reported: Vec<&crate::domain::Finding> = output
+            .findings
+            .iter()
+            .filter(|finding| !withheld.contains(finding.id.as_str()))
+            .collect();
+        let left_out = output.findings.len() - reported.len();
+        if left_out > 0 {
+            eprintln!(
+                "ripr: {left_out} finding(s) withheld by suppressions or owner opt-outs; verdict lines cover the {} reported",
+                reported.len()
+            );
+        }
+        for line in super::verbose_trace::verdict_lines(&reported) {
+            eprintln!("{line}");
+        }
+    }
     progress.complete();
     Ok((output, origins, consumed_sources, language_view))
 }

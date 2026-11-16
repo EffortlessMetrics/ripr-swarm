@@ -277,4 +277,51 @@ the causes on this page apply there too. See
 
 Open a [first run report](https://github.com/EffortlessMetrics/ripr-swarm/issues/new?template=first_run_report.yml)
 or a [wrong finding report](https://github.com/EffortlessMetrics/ripr-swarm/issues/new?template=wrong_verdict.yml)
-and include the output of `ripr --version` and `ripr doctor`.
+and include the output of `ripr --version`, `ripr doctor` and a verbose log.
+
+### Attach a verbose log
+
+Add `-v` (or `--verbose`) anywhere on the command line that surprised you and
+save stderr:
+
+```bash
+ripr -v check 2> ripr-debug.log
+```
+
+When you cannot edit the command (the editor extension, an MCP host, a Git
+hook or CI), set `RIPR_VERBOSE=1` in its environment instead. The variable
+adds stderr lines only: stdout, JSON, SARIF and the exit code stay as they
+are. The `-v` flag itself also widens a few screens on stdout (`ripr doctor`,
+`ripr agent card`, `ripr agent status`, the file-cache fields of
+`ripr check --format json`) and writes the `ripr pilot` timings file,
+so use the variable when another tool reads stdout.
+
+```text
+ripr: verbose mode enabled
+ripr: analyzing 1 language(s): rust
+ripr: mode = draft; scope = worktree
+```
+
+For a one-line boundary change the diagnostic lines look like this (the
+`ripr progress:` lines in between are left out; the timings and paths are
+your own):
+
+```console
+ripr: verbose mode enabled
+ripr: analyzing 1 language(s): rust
+ripr: mode = draft; scope = worktree
+ripr: timing [worktree] loading_input took 0 ms
+ripr: analysis complete — 1 probe, 1 finding
+ripr: timing [worktree] analyzing took 74 ms
+ripr: verdict ./src/lib.rs:2 weakly_exposed [reach=yes infect=weak propagate=yes observe=yes discriminate=yes]; first stage short of yes: infect: Related tests contain input values, but the equality-boundary check is missing
+ripr: timing [worktree] building_output took 0 ms
+ripr: timing [worktree] completed after 74 ms total
+```
+
+It names the analyzed languages, the mode and diff scope, how long each phase
+took, and one `ripr: verdict` line per reported finding (at most 50) with its
+class, the five stage states and the first stage that is not `yes`, with the
+reason ripr recorded for it. The log carries file paths and short source excerpts
+from your repository; read it before attaching it to a public issue.
+These diagnostics cost nothing when they are off: a default run neither
+formats nor prints these lines.

@@ -58,8 +58,8 @@ Exit codes: 0 completed, 2 could not complete (usage, configuration, or
 operational error), 3 ripr declined: a blocking result, or a request it will
 not run (the output says why), 130 interrupted standalone check. Full
 contract: docs/EXIT_CODES.md.
-Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: analyzed
-languages, mode, and counts (any position, except on `ripr help --json`).
+Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: timings and
+verdict reasons (any position but `help --json`). RIPR_VERBOSE=1 is stderr-only.
 
 ripr reads your changed code, imagines small bugs in it, and checks whether
 your tests would likely catch them. It does not run mutants or your tests and
@@ -81,10 +81,14 @@ Machine catalog: ripr help --json  (this route accepts no other arguments)
 
 Global flags (accepted in any position, before or after the command, except on ripr help --json):
   -v, --verbose   Extra pipeline diagnostics on stderr: analyzed languages,
-                  mode, and change-point/finding counts; ripr pilot also prints a
+                  mode, scope, change-point/finding counts, per-phase timings,
+                  and one verdict line per finding naming its stage states and
+                  the first stage that is not yes; ripr pilot also prints a
                   per-stage timing table after a complete run. A -v/--verbose
                   token is always this global flag, never another flag's
-                  value.
+                  value. RIPR_VERBOSE=1 turns on the stderr diagnostics only,
+                  without editing argv and without changing stdout (unset,
+                  empty, 0 or false leave it off).
 
 Flag values: `--name value` and `--name=value` are the same on every command;
 tokens after a literal `--` are left as written. Switches take no value, so
