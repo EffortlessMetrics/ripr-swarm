@@ -1002,7 +1002,8 @@ pub enum FunctionSourceRole {
     /// Ordinary production function: no test-defining attribute and not a
     /// member of a test-required module. The historical `is_test == false`.
     Production,
-    /// A manifest- and namespace-verified QuickCheck input generator. It is
+    /// A manifest- and namespace-verified hand-written `Arbitrary` input
+    /// generator (QuickCheck, proptest, or the `arbitrary` crate). It is
     /// stimulus support, not an executable test or production seam. Diff
     /// analysis retains its changes as explicit uncertainty rather than
     /// silently skipping them with ordinary test helpers (#11545).

@@ -241,16 +241,15 @@ fn unsupported_check_keeps_rendered_formats_and_repo_scope() -> TestResult {
 
 #[test]
 fn check_json_malformed_options_never_masquerade_as_analysis_exit_two() -> TestResult {
-    // (args, expected cli_refusal code). `None` means stdout stays empty: a
-    // flag missing its value is a prose-only diagnostic that #6834 item 3 does
-    // not enumerate (unknown command, argument, value or selector miss), so no
-    // typed refusal code exists for it. Exit code and stderr are still pinned.
+    // (args, expected cli_refusal code). Every malformed option under an
+    // explicit JSON request gets the minimal typed refusal; a flag missing its
+    // value is `missing_value` since #11979. Exit code and stderr are pinned.
     let cases: [(Vec<&str>, Option<&str>); 3] = [
         (
             vec!["check", "--json", "--unknown-option-7440"],
             Some("unknown_argument"),
         ),
-        (vec!["check", "--json", "--format"], None),
+        (vec!["check", "--json", "--format"], Some("missing_value")),
         (
             vec!["check", "--json", "--mode", "nonsense"],
             Some("unknown_value"),

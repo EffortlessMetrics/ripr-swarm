@@ -785,6 +785,17 @@ Updated:
 ## Pending — error_variant_boxed_wrapper_downcast_witness (57)
 
 Reason:
+RIPR-SPEC-0224 #14483: the JSON oracle summary and the Related test headline rank rows by the shared observation tier, so a no_call_path or assertion_not_observing row no longer speaks for the finding while a row that reaches the change is listed
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (58)
+
+Reason:
 RIPR-SPEC-0122: grouped Hidden rows name their members' line runs instead of a covering range (#14682)
 
 Command:

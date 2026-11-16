@@ -939,7 +939,7 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
             && (doctor_javascript || doctor_languages.contains(&LanguageId::TypeScript))
             && !doctor_languages.contains(&LanguageId::Python)
             && !doctor_languages.contains(&LanguageId::Rust)
-            && crate::analysis::workspace_rust_files(root).is_empty()
+            && !crate::analysis::workspace_has_rust_source(root)
         {
             let (kind, marker) = if doctor_javascript {
                 ("JavaScript", "jsconfig.json")
@@ -960,7 +960,7 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
         // and doctor loops. Name the languages ripr cannot analyze instead.
         // Rust or preview source below the root (a nested crate) means the
         // root really is wrong, so that case keeps `wrong_root`.
-        let analyzable_below = !crate::analysis::workspace_rust_files(root).is_empty()
+        let analyzable_below = crate::analysis::workspace_has_rust_source(root)
             || !crate::analysis::workspace_preview_language_files(root).is_empty();
         let unanalyzed = crate::analysis::workspace_unanalyzed_source_languages(root);
         if !analyzable_below && !unanalyzed.is_empty() {

@@ -1082,7 +1082,10 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                 i += 1;
                 let value = expect_value(args, i, "--base")?;
                 if value.trim().is_empty() {
-                    return Err("review-comments --base requires a non-empty revision".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--base",
+                        "review-comments --base requires a non-empty revision",
+                    ));
                 }
                 base = Some(value.to_string());
             }
@@ -1090,7 +1093,10 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                 i += 1;
                 let value = expect_value(args, i, "--head")?;
                 if value.trim().is_empty() {
-                    return Err("review-comments --head requires a non-empty revision".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--head",
+                        "review-comments --head requires a non-empty revision",
+                    ));
                 }
                 head = Some(value.to_string());
             }
@@ -1098,9 +1104,10 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                 i += 1;
                 let value = expect_value(args, i, "--gap-ledger")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "review-comments --gap-ledger requires a non-empty path".to_string()
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--gap-ledger",
+                        "review-comments --gap-ledger requires a non-empty path",
+                    ));
                 }
                 gap_ledger = Some(PathBuf::from(value));
             }
@@ -1108,9 +1115,10 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                 i += 1;
                 let value = expect_value(args, i, "--check-output")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "review-comments --check-output requires a non-empty path".to_string()
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--check-output",
+                        "review-comments --check-output requires a non-empty path",
+                    ));
                 }
                 check_output = Some(PathBuf::from(value));
             }
@@ -1118,7 +1126,10 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                 i += 1;
                 let value = expect_value(args, i, "--out")?;
                 if value.trim().is_empty() {
-                    return Err("review-comments --out requires a non-empty path".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--out",
+                        "review-comments --out requires a non-empty path",
+                    ));
                 }
                 out = PathBuf::from(value);
             }
