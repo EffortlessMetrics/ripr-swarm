@@ -1425,17 +1425,22 @@ mutant calibrates the rule; ripr reports only the static shape.
     non-credited, #9619).
 
     Amended (2026-11-16, #13723): a wrapper that provably swallows the
-    helper's failure makes that call hold no assertion. When the whole
-    statement is `wrapper(lambda: helper(args))`, admission skips the
-    wrapper and helper and walks only `args`, so a test with nothing else
-    assertion-like completes as `extraction_complete_no_assertion` (a gap,
-    not a limit). `helper` must be a def of the test module whose body,
-    after a docstring, is only `assert` statements over its parameters,
-    literals and plain operators, with plain positional parameters and no
-    defaults or decorators. It can then raise only `AssertionError`, never
-    a pytest outcome such as `fail` or `skip`, which derive from
-    `BaseException` and escape `except Exception`. `wrapper` has the same
-    parameter, `try` body and binding requirements as above, with no `else`.
+    helper's failure makes that call hold no assertion. Wherever admission
+    meets the call `wrapper(lambda: helper(args))`, it skips the wrapper and
+    helper and walks only `args`. Using the call's result needs an `assert`
+    or `raise`, which are assertion-like themselves. A test with nothing
+    else assertion-like then completes as `extraction_complete_no_assertion`
+    (a gap, not a limit). `helper` must be a def of the test module whose
+    body, after a docstring, is only `assert` statements over its
+    parameters, literals and plain operators, with plain positional
+    parameters and no defaults or decorators. It then raises only
+    `AssertionError`, or an error from an operator such as a `TypeError`
+    after a type change, never a pytest outcome such as `fail` or `skip`,
+    which derive from `BaseException` and escape `except Exception`. A
+    wrapper that re-raises an operator's or the owner's `ValueError` or
+    `TypeError` still lets a crash fail the test, which, as everywhere in
+    this spec, is not a discriminating assertion. `wrapper` has the same
+    parameter and `try` body requirements as above, with no `else`.
     It must swallow in one of two ways. In the first, a `finally` whose only
     statement is `return` of nothing or a literal discards the exception;
     every handler then only passes, re-raises bare or returns a literal. In
@@ -1445,18 +1450,22 @@ mutant calibrates the rule; ripr reports only the static shape.
     handlers for builtin classes unrelated to `AssertionError`, such as
     `ValueError`, `KeyError` or `TypeError`. It ends with `pass`, `return` of
     nothing or a literal, or `if isinstance(<its bound name>, <unrelated
-    builtins>): raise` with no `else`. A module that binds any exception
-    class it names, or `isinstance`, is not read. So is a module that
-    mentions `builtins`, has a star import or a walrus, or binds the wrapper
-    or helper twice, imports it, or mentions it other than as its def and
-    plain calls. A project exception class is not read either. The test
-    scope must not shadow either name. Re-raising `AssertionError` before
-    a swallowing `Exception` handler, a handler that calls anything, a
-    helper that calls `pytest.fail` or a function, and a lambda with a
-    parameter all keep the call assertion-like. Four trap rows move from
-    `limited` to `gap`: `py-trap-wrapped-swallow`,
-    `py-trap-wrapped-partial`, `py-trap-wrapped-conditional` and
-    `py-trap-wrapped-finally`.
+    builtins>): raise` with no `else`. Class names are bare names; a project
+    exception class is not read. The wrapper's parameter and handler `as`
+    names may not spell any of these classes or `isinstance`. Neither may
+    the module bind, delete, declare `global`, capture in a `match`, patch
+    or write through a dynamic namespace writer (`setattr`, `sys.modules`,
+    `globals`, ...) any of these names; nor mention `builtins`,
+    `__builtins__`, `__globals__`, `f_globals`, `f_locals` or `f_builtins`,
+    have a star import or a walrus. The wrapper and helper
+    must each be the module's only binding of their name, not imported, and
+    mentioned only as their def and plain calls; the test scope must not
+    shadow either. Re-raising `AssertionError` before a swallowing
+    `Exception` handler, a handler that calls anything, a helper that calls
+    `pytest.fail` or a function, and a lambda with a parameter all keep the
+    call assertion-like. Four trap rows move from `limited` to `gap`:
+    `py-trap-wrapped-swallow`, `py-trap-wrapped-partial`,
+    `py-trap-wrapped-conditional` and `py-trap-wrapped-finally`.
 
 28. **numpy.testing and assertpy equality helpers are the equality they
     run.** `numpy.testing.assert_array_equal(a, b)`,

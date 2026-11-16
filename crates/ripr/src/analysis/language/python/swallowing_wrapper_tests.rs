@@ -106,6 +106,34 @@ fn given_a_wrapper_that_lets_the_assertion_escape_then_admission_stays_unresolve
             "def quiet(fn):\n    try:\n        return fn()\n    finally:\n        return done()\n",
         ),
         (
+            "returns a call from the handler",
+            "def quiet(fn):\n    try:\n        return fn()\n    except Exception:\n        return report()\n",
+        ),
+        (
+            "calls something in a handler before a swallowing finally",
+            "def quiet(fn):\n    try:\n        return fn()\n    except Exception:\n        report()\n    finally:\n        return None\n",
+        ),
+        (
+            "guards the re-raise with an else",
+            "def quiet(fn):\n    try:\n        return fn()\n    except Exception as exc:\n        if isinstance(exc, ValueError):\n            raise\n        else:\n            pass\n",
+        ),
+        (
+            "binds Exception as an earlier handler name",
+            "def quiet(fn):\n    try:\n        return fn()\n    except ValueError as Exception:\n        raise\n    except Exception:\n        return None\n",
+        ),
+        (
+            "names its parameter Exception",
+            "def quiet(Exception):\n    try:\n        return Exception()\n    except Exception:\n        return None\n",
+        ),
+        (
+            "binds the guarded class as the handler name",
+            "def quiet(fn):\n    try:\n        return fn()\n    except Exception as ValueError:\n        if isinstance(ValueError, ValueError):\n            raise\n",
+        ),
+        (
+            "binds isinstance as the handler name",
+            "def quiet(fn):\n    try:\n        return fn()\n    except Exception as isinstance:\n        if isinstance(isinstance, ValueError):\n            raise\n",
+        ),
+        (
             "is decorated",
             "@wraps\ndef quiet(fn):\n    try:\n        return fn()\n    except Exception:\n        return None\n",
         ),
@@ -171,6 +199,60 @@ fn given_a_rebound_or_unproven_name_then_the_swallowing_read_is_refused() {
         (
             "imports builtins",
             "import builtins",
+            partial,
+            CALL.to_string(),
+        ),
+        (
+            "writes through __builtins__",
+            "__builtins__[\"ValueError\"] = AssertionError",
+            partial,
+            CALL.to_string(),
+        ),
+        (
+            "writes through a function's __globals__",
+            "def _x():\n    pass\n_x.__globals__[\"Exception\"] = KeyError",
+            quiet,
+            CALL.to_string(),
+        ),
+        (
+            "writes through a frame's f_globals",
+            "import sys\nsys._getframe().f_globals[\"Exception\"] = KeyError",
+            quiet,
+            CALL.to_string(),
+        ),
+        (
+            "writes through a frame's f_locals",
+            "import sys\nsys._getframe().f_locals[\"Exception\"] = KeyError",
+            quiet,
+            CALL.to_string(),
+        ),
+        (
+            "writes through a frame's f_builtins",
+            "import inspect\ninspect.currentframe().f_builtins[\"Exception\"] = KeyError",
+            quiet,
+            CALL.to_string(),
+        ),
+        (
+            "captures Exception in a match",
+            "match KeyError:\n    case Exception:\n        pass",
+            quiet,
+            CALL.to_string(),
+        ),
+        (
+            "declares Exception global in a setup hook",
+            "def setup_module():\n    global Exception\n    Exception = KeyError",
+            quiet,
+            CALL.to_string(),
+        ),
+        (
+            "patches Exception through sys.modules",
+            "import sys\nsetattr(sys.modules[__name__], \"Exception\", KeyError)",
+            quiet,
+            CALL.to_string(),
+        ),
+        (
+            "binds the unrelated class with a walrus",
+            "if (ValueError := AssertionError):\n    pass",
             partial,
             CALL.to_string(),
         ),
