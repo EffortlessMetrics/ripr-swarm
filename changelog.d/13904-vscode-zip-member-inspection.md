@@ -1,2 +1,2 @@
 <!-- section: Security -->
-- On Windows, VS Code managed-server downloads now read the zip central directory before `Expand-Archive` runs. They refuse absolute, drive-qualified, `..`, `:` stream, trailing dot/space and reserved device-name member paths, symlink or reparse-point entries, malformed, ZIP64 or comment-smuggled archives, and archives over 1000 members (#13904).
+- The Windows zip pre-extraction check for VS Code managed-server downloads now also refuses `:` stream names, empty names, trailing dot/space segments, and reserved device names (including `COM¹`-style, `CONIN$` and `CONOUT$` aliases). It also refuses ZIP64 records, split entry counts, and an end-of-central-directory record whose comment does not end the file (#13904).

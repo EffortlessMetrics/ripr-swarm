@@ -508,12 +508,14 @@ export function fetchManifestBytesOverHttps(url: string, maxBytes = MANIFEST_MAX
             finish({
               kind: 'transport_failure',
               url: target,
-              message: error instanceof Error ? error.message : String(error)
+              // A body cut off by the peer arrives here as "aborted" with
+              // the reset only in `code`; keep both and name the URL.
+              message: requestErrorMessage(target, error instanceof Error ? error : new Error(String(error)))
             });
           });
         });
         request.on('error', (error) => {
-          finish({ kind: 'transport_failure', url: target, message: error.message });
+          finish({ kind: 'transport_failure', url: target, message: requestErrorMessage(target, error) });
         });
         request.setTimeout(30_000, () => {
           request.destroy(new Error(`Timed out while fetching ${target}.`));
@@ -528,6 +530,27 @@ export function fetchManifestBytesOverHttps(url: string, maxBytes = MANIFEST_MAX
     };
     attempt(url, 0);
   });
+}
+
+/**
+ * The text of a failed request. A raw socket error ("getaddrinfo ENOTFOUND
+ * host") does not say what was being fetched, so the URL is added unless the
+ * error already names it (the fetch timeout does). When a host has several
+ * addresses and every connection attempt fails, Node reports an
+ * AggregateError whose own message is empty and whose cause is only in
+ * `code`; the code is kept so the failure still reads, and still classifies,
+ * as a connection problem (#13638).
+ */
+export function requestErrorMessage(target: string, error: Error): string {
+  const code = (error as NodeJS.ErrnoException).code;
+  const text = error.message.trim();
+  const detail = typeof code === 'string' && code.length > 0 && !text.includes(code)
+    ? `${code} ${text}`.trim()
+    : text;
+  if (detail.includes(target)) {
+    return detail;
+  }
+  return `Could not fetch ${target}: ${detail.length > 0 ? detail : 'the request failed without a reported cause'}`;
 }
 
 async function fetchBuffer(url: string): Promise<Buffer> {
@@ -579,7 +602,10 @@ export function assertSafeTarListing(nameLines: readonly string[], verboseLines:
     throw new Error(`Server archive lists ${names.length} members, over the ${ARCHIVE_MAX_MEMBERS} member limit.`);
   }
   for (const name of names) {
-    assertSafeMemberName(name);
+    const segments = name.split(/[\\/]/);
+    if (/^[\\/]/.test(name) || /^[A-Za-z]:/.test(name) || name.includes('\0') || segments.includes('..')) {
+      throw new Error(`Refusing server archive member with unsafe path ${JSON.stringify(name)}.`);
+    }
   }
   for (const line of verboseLines) {
     if (line.length === 0) {
@@ -597,143 +623,146 @@ export function assertSafeTarListing(nameLines: readonly string[], verboseLines:
   }
 }
 
-/** Shared member-name policy for tar and zip listings. */
-function assertSafeMemberName(name: string): void {
-  const segments = name.split(/[\\/]/);
-  if (/^[\\/]/.test(name) || /^[A-Za-z]:/.test(name) || name.includes('\0') || segments.includes('..')) {
-    throw new Error(`Refusing server archive member with unsafe path ${JSON.stringify(name)}.`);
-  }
-}
-
-/**
- * Reads a zip archive's central directory and refuses unsafe entries before
- * `Expand-Archive` writes anything (#13904), mirroring the tar inspection
- * (#13640). Parsed in TypeScript so the policy is testable on every platform
- * and does not depend on the installed PowerShell version.
- */
-export async function inspectZipArchive(archivePath: string): Promise<void> {
-  assertSafeZipCentralDirectory(await fsp.readFile(archivePath));
+/** One central-directory entry as read from a zip archive. */
+export interface ZipCentralDirectoryEntry {
+  readonly name: string;
+  readonly externalAttributes: number;
 }
 
 const ZIP_EOCD_SIGNATURE = 0x06054b50;
 const ZIP_CENTRAL_SIGNATURE = 0x02014b50;
-const ZIP_EOCD_LENGTH = 22;
-const ZIP_CENTRAL_HEADER_LENGTH = 46;
-const ZIP_HOST_UNIX = 3;
-const UNIX_TYPE_MASK = 0xf000;
-const UNIX_TYPE_FILE = 0x8000;
-const UNIX_TYPE_DIRECTORY = 0x4000;
-const DOS_ATTRIBUTE_REPARSE_POINT = 0x400;
-
-/**
- * Pure policy over zip bytes: one well-formed single-disk, non-ZIP64 central
- * directory whose entries are regular files or directories with safe names
- * (no absolute, drive-qualified, `..`, NUL, `:` stream, trailing dot/space
- * or reserved device-name paths), no Unix
- * symlink/special modes, no Windows reparse points, and at most
- * `ARCHIVE_MAX_MEMBERS` entries. Anything it cannot parse is refused.
- */
-export function assertSafeZipCentralDirectory(bytes: Buffer): void {
-  const eocd = findZipEndOfCentralDirectory(bytes);
-  const diskNumber = bytes.readUInt16LE(eocd + 4);
-  const centralDisk = bytes.readUInt16LE(eocd + 6);
-  const entriesOnDisk = bytes.readUInt16LE(eocd + 8);
-  const totalEntries = bytes.readUInt16LE(eocd + 10);
-  const centralSize = bytes.readUInt32LE(eocd + 12);
-  const centralOffset = bytes.readUInt32LE(eocd + 16);
-  if (totalEntries === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff) {
-    throw new Error('Refusing ZIP64 server archive; the managed server archive is never that large.');
-  }
-  if (diskNumber !== 0 || centralDisk !== 0 || entriesOnDisk !== totalEntries) {
-    throw new Error('Refusing multi-disk server archive.');
-  }
-  if (totalEntries > ARCHIVE_MAX_MEMBERS) {
-    throw new Error(`Server archive lists ${totalEntries} members, over the ${ARCHIVE_MAX_MEMBERS} member limit.`);
-  }
-  const centralEnd = centralOffset + centralSize;
-  if (centralEnd > eocd) {
-    throw new Error('Refusing server archive with a central directory outside the file.');
-  }
-  let cursor = centralOffset;
-  for (let index = 0; index < totalEntries; index += 1) {
-    if (cursor + ZIP_CENTRAL_HEADER_LENGTH > centralEnd || bytes.readUInt32LE(cursor) !== ZIP_CENTRAL_SIGNATURE) {
-      throw new Error(`Refusing server archive with a malformed central directory entry ${index}.`);
-    }
-    const versionMadeBy = bytes.readUInt16LE(cursor + 4);
-    const flags = bytes.readUInt16LE(cursor + 8);
-    const nameLength = bytes.readUInt16LE(cursor + 28);
-    const extraLength = bytes.readUInt16LE(cursor + 30);
-    const commentLength = bytes.readUInt16LE(cursor + 32);
-    const externalAttributes = bytes.readUInt32LE(cursor + 38);
-    const nameStart = cursor + ZIP_CENTRAL_HEADER_LENGTH;
-    const next = nameStart + nameLength + extraLength + commentLength;
-    if (next > centralEnd) {
-      throw new Error(`Refusing server archive with a truncated central directory entry ${index}.`);
-    }
-    // Bit 11 marks UTF-8 names; otherwise CP437, whose ASCII range (all the
-    // separators and dots this policy inspects) matches latin1.
-    const name = bytes.subarray(nameStart, nameStart + nameLength).toString((flags & 0x800) !== 0 ? 'utf8' : 'latin1');
-    if (name.length === 0) {
-      throw new Error(`Refusing server archive member ${index} with an empty name.`);
-    }
-    assertSafeMemberName(name);
-    if (name.includes(':')) {
-      throw new Error(`Refusing server archive member with unsafe path ${JSON.stringify(name)}.`);
-    }
-    assertSafeWindowsMemberName(name);
-    if ((versionMadeBy >> 8) === ZIP_HOST_UNIX) {
-      const fileType = (externalAttributes >>> 16) & UNIX_TYPE_MASK;
-      if (fileType !== 0 && fileType !== UNIX_TYPE_FILE && fileType !== UNIX_TYPE_DIRECTORY) {
-        throw new Error(`Refusing server archive member of unsupported type: ${JSON.stringify(name)}.`);
-      }
-    }
-    if ((externalAttributes & DOS_ATTRIBUTE_REPARSE_POINT) !== 0) {
-      throw new Error(`Refusing server archive reparse-point member: ${JSON.stringify(name)}.`);
-    }
-    cursor = next;
-  }
-  if (cursor !== centralEnd) {
-    throw new Error('Refusing server archive whose central directory size does not match its entries.');
-  }
-}
-
-/**
- * Takes the LAST end-of-central-directory signature, as .NET's ZipArchive and
- * most readers do, and refuses unless its comment ends exactly at end of file.
- * Falling back to an earlier record would let a fake record hidden in the
- * comment make this check and the extractor read different directories.
- */
-function findZipEndOfCentralDirectory(bytes: Buffer): number {
-  const lowest = Math.max(0, bytes.length - ZIP_EOCD_LENGTH - 0xffff);
-  for (let offset = bytes.length - ZIP_EOCD_LENGTH; offset >= lowest; offset -= 1) {
-    if (bytes.readUInt32LE(offset) === ZIP_EOCD_SIGNATURE) {
-      if (offset + ZIP_EOCD_LENGTH + bytes.readUInt16LE(offset + 20) !== bytes.length) {
-        throw new Error('Refusing server archive whose last end-of-central-directory record does not end the file.');
-      }
-      return offset;
-    }
-  }
-  throw new Error('Refusing server archive without a zip end-of-central-directory record.');
-}
-
-// Includes the superscript COM/LPT aliases and CONIN$/CONOUT$; spaces before
-// an extension are trimmed by Win32 device matching, so `CON .txt` is CON.
+/** General-purpose flag bit 11: the member name is UTF-8, not cp437. */
+const ZIP_GP_FLAG_UTF8 = 0x0800;
+/** DOS attribute mask inside `externalAttributes`: FILE_ATTRIBUTE_REPARSE_POINT. */
+const ZIP_DOS_REPARSE_POINT = 0x0400;
+/** Unix mode mask inside the high 16 bits of `externalAttributes`. */
+const ZIP_UNIX_IFMT = 0xf000;
+const ZIP_UNIX_IFREG = 0x8000;
+const ZIP_UNIX_IFDIR = 0x4000;
+const ZIP_MAX_COMMENT_BYTES = 0xffff;
+/** Win32 device names, including superscript-digit and console aliases, with any extension. */
 const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|conin\$|conout\$|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3]) *(\..*)?$/i;
 
 /**
- * Windows-only name rules for zip members: Win32 trims trailing dots and
- * spaces (so `.. ` can become `..`) and maps reserved device names anywhere in
- * a path, so both are refused before Expand-Archive sees them.
+ * Reads the central directory of a zip archive without extracting anything
+ * (#13904): the listing must be validated before `Expand-Archive` writes a
+ * single member, the same pre-extraction contract `inspectTarArchive` keeps
+ * for the tar path (#13640).
  */
-function assertSafeWindowsMemberName(name: string): void {
-  for (const segment of name.split(/[\\/]/)) {
-    if (segment.length === 0) {
-      continue;
-    }
-    if (/[. ]$/.test(segment) || WINDOWS_RESERVED_NAME.test(segment)) {
-      throw new Error(`Refusing server archive member with unsafe path ${JSON.stringify(name)}.`);
+export function listZipCentralDirectoryEntries(archive: Buffer): ZipCentralDirectoryEntry[] {
+  // The end-of-central-directory record can sit anywhere in the last
+  // 22 + 65,535 bytes (the whole trailing comment range).
+  const searchFloor = Math.max(0, archive.length - (22 + ZIP_MAX_COMMENT_BYTES));
+  let eocd = -1;
+  for (let cursor = archive.length - 22; cursor >= searchFloor; cursor -= 1) {
+    if (archive.readUInt32LE(cursor) === ZIP_EOCD_SIGNATURE) {
+      eocd = cursor;
+      break;
     }
   }
+  if (eocd < 0) {
+    throw new Error('Server archive is not a readable zip: end-of-central-directory record not found.');
+  }
+  // The chosen record's comment must end the file exactly. A trailing byte or
+  // an earlier record hidden inside a later comment would let this reader and
+  // the extractor disagree about which directory is real.
+  if (eocd + 22 + archive.readUInt16LE(eocd + 20) !== archive.length) {
+    throw new Error('Refusing server archive: end-of-central-directory comment does not end the file.');
+  }
+  if (archive.readUInt16LE(eocd + 4) !== 0 || archive.readUInt16LE(eocd + 6) !== 0) {
+    throw new Error('Refusing multi-disk server archive.');
+  }
+  const recordedOnDisk = archive.readUInt16LE(eocd + 8);
+  const recordedCount = archive.readUInt16LE(eocd + 10);
+  const centralSize = archive.readUInt32LE(eocd + 12);
+  const centralOffset = archive.readUInt32LE(eocd + 16);
+  // ZIP64 moves the real counts and offsets into another record this reader
+  // does not parse; a managed server archive never needs it.
+  if (recordedCount === 0xffff || recordedOnDisk === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff) {
+    throw new Error('Refusing ZIP64 server archive.');
+  }
+  if (recordedOnDisk !== recordedCount) {
+    throw new Error('Refusing multi-disk server archive.');
+  }
+  if (centralOffset + centralSize > eocd) {
+    throw new Error('Refusing server archive: central directory extends past the end-of-central-directory record.');
+  }
+  const entries: ZipCentralDirectoryEntry[] = [];
+  let cursor = centralOffset;
+  const centralEnd = centralOffset + centralSize;
+  while (cursor < centralEnd) {
+    if (cursor + 46 > centralEnd || archive.readUInt32LE(cursor) !== ZIP_CENTRAL_SIGNATURE) {
+      throw new Error('Refusing server archive: malformed central directory entry.');
+    }
+    const flags = archive.readUInt16LE(cursor + 8);
+    const nameLength = archive.readUInt16LE(cursor + 28);
+    const extraLength = archive.readUInt16LE(cursor + 30);
+    const commentLength = archive.readUInt16LE(cursor + 32);
+    if (46 + nameLength + extraLength + commentLength > centralEnd - cursor) {
+      throw new Error('Refusing server archive: central directory entry extends past the directory end.');
+    }
+    const externalAttributes = archive.readUInt32LE(cursor + 38);
+    const nameBytes = archive.subarray(cursor + 46, cursor + 46 + nameLength);
+    // Expand-Archive reads the same flag; a non-UTF-8 name is decoded as
+    // single bytes here and refused below if it spells anything unsafe.
+    const name = (flags & ZIP_GP_FLAG_UTF8) !== 0 ? nameBytes.toString('utf8') : nameBytes.toString('latin1');
+    entries.push({ name, externalAttributes });
+    cursor += 46 + nameLength + extraLength + commentLength;
+  }
+  if (entries.length !== recordedCount) {
+    throw new Error(`Refusing server archive: central directory holds ${entries.length} entries, expected ${recordedCount}.`);
+  }
+  return entries;
+}
+
+/**
+ * Pure policy over a zip central-directory listing, mirroring
+ * `assertSafeTarListing`: rejects traversal, absolute, drive-qualified or NUL
+ * names, symlink members (Unix mode in the external attributes), NTFS reparse
+ * points (DOS attributes), any other non-file/directory member type, and
+ * oversized member counts.
+ */
+export function assertSafeZipListing(entries: readonly ZipCentralDirectoryEntry[]): void {
+  if (entries.length > ARCHIVE_MAX_MEMBERS) {
+    throw new Error(`Server archive lists ${entries.length} members, over the ${ARCHIVE_MAX_MEMBERS} member limit.`);
+  }
+  for (const entry of entries) {
+    const segments = entry.name.split(/[\\/]/);
+    // A ':' anywhere is a drive prefix or an NTFS alternate data stream on
+    // the Windows extractor; an empty name has no member to write.
+    if (entry.name.length === 0 || /^[\\/]/.test(entry.name) || entry.name.includes(':') || entry.name.includes('\0') || segments.includes('..')) {
+      throw new Error(`Refusing server archive member with unsafe path ${JSON.stringify(entry.name)}.`);
+    }
+    for (const segment of segments) {
+      // Win32 strips trailing dots and spaces (so `.. ` becomes `..`) and maps
+      // device names to devices whatever the extension.
+      if (segment.length > 0 && (/[. ]$/.test(segment) || WINDOWS_RESERVED_NAME.test(segment))) {
+        throw new Error(`Refusing server archive member with unsafe Windows path ${JSON.stringify(entry.name)}.`);
+      }
+    }
+    if ((entry.externalAttributes & ZIP_DOS_REPARSE_POINT) !== 0) {
+      throw new Error(`Refusing server archive reparse-point member: ${JSON.stringify(entry.name)}.`);
+    }
+    const unixMode = (entry.externalAttributes >>> 16) & 0xffff;
+    if (unixMode !== 0) {
+      // Windows tools (Python zipfile.writestr and friends) store permission
+      // bits without a file type, so only a *present* type is classified;
+      // anything typed that is not a regular file or directory is refused,
+      // which catches symlinks (0o120000) and device/fifo members.
+      const fileType = unixMode & ZIP_UNIX_IFMT;
+      if (fileType !== 0 && fileType !== ZIP_UNIX_IFREG && fileType !== ZIP_UNIX_IFDIR) {
+        throw new Error(`Refusing server archive member of unsupported type: ${JSON.stringify(entry.name)}.`);
+      }
+    }
+  }
+}
+
+/**
+ * Lists and validates a zip archive's members before extraction (#13904), so
+ * symlink and reparse-point entries never reach `Expand-Archive`.
+ */
+export async function inspectZipArchive(archivePath: string): Promise<void> {
+  assertSafeZipListing(listZipCentralDirectoryEntries(await fsp.readFile(archivePath)));
 }
 
 function runProcess(command: string, args: string[]): Promise<string> {

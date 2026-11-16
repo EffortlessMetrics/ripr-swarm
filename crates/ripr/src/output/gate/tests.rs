@@ -2928,12 +2928,11 @@ fn gate_changed_test_and_missing_guidance_candidates_stay_advisory() -> Result<(
 
     assert_eq!(report.status, "advisory");
     assert_eq!(report.summary.blocking, 0);
-    assert!(
-        report
-            .decisions
-            .iter()
-            .any(|decision| decision.gate_reason.contains("nearby focused test changed"))
-    );
+    assert!(report.decisions.iter().any(|decision| {
+        decision
+            .gate_reason
+            .contains("a test changed in this PR reaches")
+    }));
     let missing_guidance = write_temp_json(&dir, "missing.json", MISSING_GUIDANCE_JSON)?;
     input.pr_guidance = Some(
         missing_guidance
@@ -2952,12 +2951,69 @@ fn gate_changed_test_and_missing_guidance_candidates_stay_advisory() -> Result<(
     Ok(())
 }
 
-/// #4216 row 2: a review card the producer declared a static limitation
-/// because no test reaches the changed owner must not be headlined with the
-/// PR-wide "nearby focused test changed" reason. The headline follows the
-/// card's own `why_not_actionable`; the nearby-test flag and the advisory
-/// decision are unchanged. A card without a static limitation keeps the
-/// nearby-test reason (control).
+/// #13893: a test changed somewhere in the PR (`unchanged_tests: false`), but
+/// the card names no changed test reaching its owner, so the policy-eligible
+/// gap still blocks: PR or file proximity grants no waiver. The positive
+/// control names a changed reaching test on the same card and stays advisory.
+#[test]
+fn gate_changed_test_waiver_needs_a_changed_test_that_reaches_the_owner() -> Result<(), String> {
+    let dir = temp_dir("gate-changed-test-waiver")?;
+    let (fixture, mut input) = fixture_input(GateMode::Acknowledgeable)?;
+    let source = fixture
+        .path()
+        .join("fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json");
+    let text = std::fs::read_to_string(&source).map_err(|err| err.to_string())?;
+    let mut guidance: Value = serde_json::from_str(&text).map_err(|err| err.to_string())?;
+    assert_eq!(guidance["comments"].as_array().map(Vec::len), Some(1));
+    guidance["summary"]["unchanged_tests"] = json!(false);
+    input.root = dir.clone();
+
+    let pr_wide_only = write_temp_json(&dir, "pr-wide.json", &guidance.to_string())?;
+    input.pr_guidance = Some(
+        pr_wide_only
+            .strip_prefix(&dir)
+            .map_err(|err| err.to_string())?
+            .to_path_buf(),
+    );
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.decisions.len(), 1);
+    assert!(!report.decisions[0].evidence.nearby_test_changed);
+    assert_eq!(
+        report.decisions[0].decision, "blocking",
+        "{}",
+        report.decisions[0].gate_reason
+    );
+    assert_eq!(report.status, "blocked");
+
+    guidance["comments"][0]["changed_reaching_tests"] =
+        json!(["tests/pricing.rs::discounted_total_boundary"]);
+    let reaching = write_temp_json(&dir, "reaching.json", &guidance.to_string())?;
+    input.pr_guidance = Some(
+        reaching
+            .strip_prefix(&dir)
+            .map_err(|err| err.to_string())?
+            .to_path_buf(),
+    );
+    let report = build_gate_decision_report(&input)?;
+    assert!(report.decisions[0].evidence.nearby_test_changed);
+    assert_ne!(report.decisions[0].decision, "blocking");
+    assert!(
+        report.decisions[0]
+            .gate_reason
+            .contains("a test changed in this PR reaches this owner"),
+        "{}",
+        report.decisions[0].gate_reason
+    );
+    assert_eq!(report.summary.blocking, 0);
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+/// #4216 row 2 / #13893: a review card the producer declared a static
+/// limitation because no test reaches the changed owner must never be
+/// headlined with a changed-test waiver, even when some other test changed
+/// in the PR (`unchanged_tests: false`). The waiver is per card: only the
+/// control card, which names a changed test reaching its owner, carries it.
 #[test]
 fn gate_static_limitation_reason_outranks_pr_wide_nearby_test_flag() -> Result<(), String> {
     let dir = temp_dir("gate-no-test-reaches-owner")?;
@@ -2980,19 +3036,26 @@ fn gate_static_limitation_reason_outranks_pr_wide_nearby_test_flag() -> Result<(
             .iter()
             .find(|decision| decision.source_id == "loyalty")
             .ok_or("missing static-limitation decision")?;
+        // With no changed-test waiver the card is headlined by the gate's own
+        // incomplete-route limitation, exactly as when no test changed (the
+        // N3 pin below): the PR-wide flag no longer changes this card.
         assert!(
             limited
                 .gate_reason
-                .contains("no existing test reaches `src/lib.rs::loyalty_price`"),
+                .starts_with("incomplete_repair_route: missing "),
             "{}",
             limited.gate_reason
         );
         assert!(
-            !limited.gate_reason.contains("nearby focused test changed"),
+            !limited
+                .gate_reason
+                .contains("a test changed in this PR reaches"),
             "{}",
             limited.gate_reason
         );
-        assert!(limited.evidence.nearby_test_changed);
+        // #13893: no test reaches this owner, so no changed test can waive it,
+        // whatever the PR-wide `unchanged_tests` flag says.
+        assert!(!limited.evidence.nearby_test_changed);
         assert_ne!(limited.decision, "blocking");
         let control = report
             .decisions
@@ -3000,7 +3063,9 @@ fn gate_static_limitation_reason_outranks_pr_wide_nearby_test_flag() -> Result<(
             .find(|decision| decision.source_id == "changed-test")
             .ok_or("missing control decision")?;
         assert!(
-            control.gate_reason.contains("nearby focused test changed"),
+            control
+                .gate_reason
+                .contains("a test changed in this PR reaches this owner"),
             "{}",
             control.gate_reason
         );
@@ -5537,7 +5602,8 @@ const NO_TEST_REACHES_OWNER_GUIDANCE_JSON: &str = r#"{
           "severity": "warning",
           "missing_discriminator": "amount == discount_threshold",
           "placement": {"path": "src/pricing.rs", "line": 88},
-          "why_not_actionable": "ignored: only static_limitation cards carry a producer reason"
+          "why_not_actionable": "ignored: only static_limitation cards carry a producer reason",
+          "changed_reaching_tests": ["tests/pricing.rs::above_threshold_gets_discount"]
         }
       ]
     }"#;
@@ -5554,7 +5620,8 @@ const INELIGIBLE_GUIDANCE_JSON: &str = r#"{
           "grip_class": "weakly_gripped",
           "severity": "warning",
           "missing_discriminator": "amount == discount_threshold",
-          "placement": {"path": "src/pricing.rs", "line": 88}
+          "placement": {"path": "src/pricing.rs", "line": 88},
+          "changed_reaching_tests": ["tests/pricing.rs::above_threshold_gets_discount"]
         },
         {
           "id": "missing-guidance",
@@ -5726,6 +5793,17 @@ fn e2e_review_comments_doc(
     omitted_by_cap: usize,
     mutate: impl FnOnce(&mut Value),
 ) -> Result<String, String> {
+    e2e_review_comments_doc_with_outcome(changed, omitted_by_cap, None, mutate)
+}
+
+/// [`e2e_review_comments_doc`] rendered with a typed analysis outcome, so the
+/// document carries the producer's real `analysis_outcome` projection.
+fn e2e_review_comments_doc_with_outcome(
+    changed: &[&str],
+    omitted_by_cap: usize,
+    analysis_outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
+    mutate: impl FnOnce(&mut Value),
+) -> Result<String, String> {
     use crate::app::Mode;
     use crate::app::agent_brief::{
         AGENT_BRIEF_HARD_MAX_SEAMS, AgentBriefResolvedWorkingSet, AgentBriefSelection,
@@ -5767,6 +5845,7 @@ fn e2e_review_comments_doc(
         warnings: Vec::new(),
         omitted_by_cap,
         omitted_by_policy: 0,
+        omitted_static_limited: 0,
     };
     let config = crate::config::RiprConfig::default();
     let context = ReviewCommentsRenderContext {
@@ -5775,9 +5854,15 @@ fn e2e_review_comments_doc(
         head: "HEAD",
         mode: &Mode::Draft,
         config: &config,
+        suppression: None,
     };
-    let rendered =
-        render_review_comments_json_with_scope(&context, &working_set, &selection, &scope, None)?;
+    let rendered = render_review_comments_json_with_scope(
+        &context,
+        &working_set,
+        &selection,
+        &scope,
+        analysis_outcome,
+    )?;
     let mut value: Value = serde_json::from_str(&rendered).map_err(|err| err.to_string())?;
     mutate(&mut value);
     serde_json::to_string_pretty(&value).map_err(|err| err.to_string())
@@ -5846,6 +5931,17 @@ fn e2e_gate_json_with_files(
     project_lib_source: Option<&str>,
     extra_files: &[(&str, &str)],
 ) -> Result<String, String> {
+    let report =
+        e2e_gate_report_with_files(pr_guidance, gap_ledger, project_lib_source, extra_files)?;
+    render_gate_decision_json(&report)
+}
+
+fn e2e_gate_report_with_files(
+    pr_guidance: Option<&str>,
+    gap_ledger: Option<&str>,
+    project_lib_source: Option<&str>,
+    extra_files: &[(&str, &str)],
+) -> Result<GateDecisionReport, String> {
     let dir = if project_lib_source.is_some() {
         e2e_fixed_root()?
     } else {
@@ -5883,9 +5979,8 @@ fn e2e_gate_json_with_files(
         acknowledgements: None,
     };
     let report = build_gate_decision_report(&input)?;
-    let gate_json = render_gate_decision_json(&report)?;
     ignore_remove_dir_all(dir);
-    Ok(gate_json)
+    Ok(report)
 }
 
 fn e2e_delta_and_update_with(
@@ -6177,6 +6272,7 @@ fn e2e_real_review_render(lib_source: &str, markdown: bool) -> Result<String, St
         head: "HEAD",
         mode: &crate::app::Mode::Draft,
         config: &config,
+        suppression: None,
     };
     let doc = if markdown {
         crate::output::review_comments::render_review_comments_markdown_with_scope(
@@ -6287,6 +6383,132 @@ fn e2e_real_markdown_lists_parser_declined_files() -> Result<(), String> {
     );
     let clean = e2e_real_review_render("pub fn unrelated() {}\n", true)?;
     assert!(!clean.contains("parser_declined_files"), "{clean}");
+    Ok(())
+}
+
+/// #14082: a changed file the parser declined yields no gate candidate, and
+/// that absence must not read as a clean `pass`. Real producer and real gate.
+#[test]
+fn e2e_real_parser_declined_file_never_reads_as_pass() -> Result<(), String> {
+    // Control: the file parses and holds no seam, so `pass` is earned and
+    // nothing is disclosed.
+    let clean_doc = e2e_real_review_doc("pub fn unrelated() {}\n")?;
+    let clean: Value =
+        serde_json::from_str(&e2e_gate_json(Some(&clean_doc), None)?).map_err(|e| e.to_string())?;
+    assert_eq!(clean["status"], "pass", "{clean}");
+    assert_eq!(clean["warnings"], json!([]), "{clean}");
+
+    // Nesting past the parse budget: lexical fallback, no seams, even for the
+    // `>= 10` boundary that the shallow file alone does produce a candidate for.
+    let shallow = "pub fn early(n: i32) -> bool { n >= 10 }\n";
+    let shallow_gate: Value =
+        serde_json::from_str(&e2e_gate_json(Some(&e2e_real_review_doc(shallow)?), None)?)
+            .map_err(|e| e.to_string())?;
+    assert!(
+        shallow_gate["summary"]["evaluated"].as_u64() >= Some(1),
+        "{shallow_gate}"
+    );
+    let declined_doc = e2e_real_review_doc(&format!(
+        "{shallow}pub fn deep() {{ {}{} }}\n",
+        "{".repeat(400),
+        "}".repeat(400)
+    ))?;
+    let report = e2e_gate_report_with_files(Some(&declined_doc), None, None, &[])?;
+    let declined: Value =
+        serde_json::from_str(&render_gate_decision_json(&report)?).map_err(|e| e.to_string())?;
+    assert_eq!(
+        declined["analysis_scope"]["parser_declined_files"],
+        json!(["src/lib.rs"]),
+        "{declined}"
+    );
+    assert_eq!(declined["summary"]["evaluated"], 0, "{declined}");
+    assert_eq!(declined["status"], "advisory", "{declined}");
+    let warnings = declined["warnings"].as_array().cloned().unwrap_or_default();
+    assert_eq!(warnings.len(), 1, "{declined}");
+    let warning = warnings[0].as_str().unwrap_or_default();
+    assert!(
+        warning.contains("parser_declined_files") && warning.contains("`src/lib.rs`"),
+        "{warning}"
+    );
+    let markdown = render_gate_decision_markdown(&report);
+    assert!(markdown.contains("Decision: advisory"), "{markdown}");
+    assert!(
+        markdown.contains("## Warnings") && markdown.contains("src/lib.rs"),
+        "{markdown}"
+    );
+    Ok(())
+}
+
+/// #14082: the warning follows the disclosed list only. Empty or absent stays
+/// silent, a malformed value warns, and a declined sibling leaves the parsed
+/// file's decisions as they were.
+#[test]
+fn parser_declined_scope_warning_follows_the_disclosed_list() -> Result<(), String> {
+    let with_declined = |doc: &str, value: Value| -> Result<Value, String> {
+        let mut doc: Value = serde_json::from_str(doc).map_err(|e| e.to_string())?;
+        doc["analysis_scope"]["parser_declined_files"] = value;
+        let doc = serde_json::to_string(&doc).map_err(|e| e.to_string())?;
+        serde_json::from_str(&e2e_gate_json(Some(&doc), None)?).map_err(|e| e.to_string())
+    };
+    let clean_doc = e2e_real_review_doc("pub fn unrelated() {}\n")?;
+    let empty = with_declined(&clean_doc, json!([]))?;
+    assert_eq!(empty["status"], "pass", "{empty}");
+    assert_eq!(empty["warnings"], json!([]), "{empty}");
+
+    for malformed in [json!("src/lib.rs"), json!([7]), json!({"a": 1})] {
+        let gate = with_declined(&clean_doc, malformed)?;
+        assert_eq!(gate["status"], "advisory", "{gate}");
+        assert!(
+            gate["warnings"][0]
+                .as_str()
+                .is_some_and(|w| w.contains("malformed parser_declined_files")),
+            "{gate}"
+        );
+    }
+
+    // The same list rule for the static-limitation count: absent or zero is
+    // silent, a positive count warns with the number, anything else is malformed.
+    let with_limited = |value: Value| -> Result<Value, String> {
+        let mut doc: Value = serde_json::from_str(&clean_doc).map_err(|e| e.to_string())?;
+        doc["analysis_scope"]["static_limited_omitted_seams"] = value;
+        let doc = serde_json::to_string(&doc).map_err(|e| e.to_string())?;
+        serde_json::from_str(&e2e_gate_json(Some(&doc), None)?).map_err(|e| e.to_string())
+    };
+    let zero = with_limited(json!(0))?;
+    assert_eq!(zero["status"], "pass", "{zero}");
+    assert_eq!(zero["warnings"], json!([]), "{zero}");
+    let three = with_limited(json!(3))?;
+    assert_eq!(three["status"], "advisory", "{three}");
+    assert!(
+        three["warnings"][0]
+            .as_str()
+            .is_some_and(|w| w.contains("static_limited_omitted_seams: 3 seam(s)")),
+        "{three}"
+    );
+    for malformed in [json!("3"), json!(-1), json!(1.5), json!([3])] {
+        let gate = with_limited(malformed)?;
+        assert_eq!(gate["status"], "advisory", "{gate}");
+        assert!(
+            gate["warnings"][0]
+                .as_str()
+                .is_some_and(|w| w.contains("malformed static_limited_omitted_seams")),
+            "{gate}"
+        );
+    }
+
+    let shallow_doc = e2e_real_review_doc("pub fn early(n: i32) -> bool { n >= 10 }\n")?;
+    let plain: Value = serde_json::from_str(&e2e_gate_json(Some(&shallow_doc), None)?)
+        .map_err(|e| e.to_string())?;
+    let sibling = with_declined(&shallow_doc, json!(["src/other.rs", "src/more.rs"]))?;
+    assert!(plain["summary"]["evaluated"].as_u64() >= Some(1), "{plain}");
+    assert_eq!(sibling["decisions"], plain["decisions"]);
+    assert_eq!(sibling["summary"], plain["summary"]);
+    assert!(
+        sibling["warnings"][0]
+            .as_str()
+            .is_some_and(|w| w.contains("`src/other.rs`, `src/more.rs`")),
+        "{sibling}"
+    );
     Ok(())
 }
 
@@ -7132,6 +7354,80 @@ fn given_advisory_status_with_benign_warning_when_gate_evaluated_then_not_config
     assert_ne!(report.status, "config_error", "{:?}", report.config_errors);
     assert!(report.config_errors.is_empty());
     assert!(!gate_decision_should_fail(&report));
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+/// #13894: a complete outcome carrying only the `requested_scope_excluded`
+/// scope note is rendered by the real review-comments renderer and fed to the
+/// gate, so the typed validator (`is_advisory_disclosure`) decides it. The
+/// negative control is a partial outcome with a `language_scope_unsupported`
+/// limitation, which must still fail closed.
+#[test]
+fn given_real_review_comments_with_requested_scope_note_when_gate_evaluated_then_not_config_error()
+-> Result<(), String> {
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+        AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    let outcome = |kind: AnalysisOutcomeKind, limitation: AnalysisLimitationKind| {
+        AnalysisOutcome::new(
+            kind,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 2,
+                changed_line_count: 2,
+                candidate_line_count: 1,
+                probe_count: 1,
+                finding_count: 0,
+            },
+            vec![
+                AnalysisLimitation::new(
+                    limitation,
+                    AnalysisStage::DiffLoad,
+                    AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "rerun with a wider scope")?,
+                )
+                .with_affected_items(1)?
+                .with_detail("1 changed file(s) were outside the requested scope: src/gen/a.rs")?,
+            ],
+        )
+    };
+    let dir = temp_dir("gate-requested-scope-note")?;
+
+    let scoped = outcome(
+        AnalysisOutcomeKind::CompleteNoFindings,
+        AnalysisLimitationKind::RequestedScopeExcluded,
+    )?;
+    let doc = e2e_review_comments_doc_with_outcome(&["src/a.rs"], 0, Some(&scoped), |_| {})?;
+    let value: Value = serde_json::from_str(&doc).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["analysis_outcome"]["outcome"]["limitations"][0]["kind"], "requested_scope_excluded",
+        "the real renderer must carry the note: {doc}"
+    );
+    assert_eq!(value["analysis_outcome"]["analysis_complete"], true);
+    let input = guidance_only_input(&dir, "scoped.json", &doc)?;
+    let report = build_gate_decision_report(&input)?;
+    assert_ne!(report.status, "config_error", "{:?}", report.config_errors);
+    assert!(
+        report.config_errors.is_empty(),
+        "{:?}",
+        report.config_errors
+    );
+    assert!(!gate_decision_should_fail(&report));
+
+    let incomplete = outcome(
+        AnalysisOutcomeKind::PartialWithLimitations,
+        AnalysisLimitationKind::LanguageScopeUnsupported,
+    )?;
+    let doc = e2e_review_comments_doc_with_outcome(&["src/a.rs"], 0, Some(&incomplete), |_| {})?;
+    let input = guidance_only_input(&dir, "incomplete.json", &doc)?;
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(
+        report.status, "config_error",
+        "negative control must fail closed"
+    );
+    assert!(gate_decision_should_fail(&report));
     ignore_remove_dir_all(dir);
     Ok(())
 }

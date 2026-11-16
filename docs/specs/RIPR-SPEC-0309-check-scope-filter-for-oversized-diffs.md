@@ -23,6 +23,7 @@ Linked issues:
 - #9277
 - #9331
 - #9340
+- #13894
 
 Linked PRs:
 
@@ -38,8 +39,10 @@ Support-tier impact:
 Policy impact:
 
 - Register this spec in `.ripr/traceability.toml`.
-- No schema version bump. The skipped files reuse the existing
-  `language_scope_unsupported` limitation kind.
+- No schema version bump. #13894 adds the advisory `requested_scope_excluded`
+  limitation kind (a scope note that rides on a complete outcome, like
+  `eol_only_churn`); the files an operator leaves out no longer reuse
+  `language_scope_unsupported`.
 
 ## Problem
 
@@ -48,6 +51,12 @@ not say "analyze only `src/lib.rs`", and checked-in generated or garbage `.rs`
 files counted toward the cap that protects runner memory. Raising the cap
 analyzed those files too.
 
+Since #13641 the per-language changed-line caps no longer refuse a diff in
+which some file fits: an over-limit file is left out of a bounded
+`limited_partial_scope` run (`over_limit_files`). A scope still matters
+there, because it decides which files are analyzed rather than disclosed as
+uninspected, and the language-neutral parse guards still refuse outright.
+
 ## Behavior
 
 `ripr check` accepts repeatable repository-relative `--path <pattern>` and
@@ -55,6 +64,9 @@ analyzed those files too.
 (`src/lib.rs`, `crates/api`); a pattern with them uses the shared `/`-separated
 glob dialect. No `--path` admits every file the excludes do not remove;
 `--exclude` wins over `--path`.
+A bare argument that does not start with `-` (`ripr check src/lib.rs`) is
+the same as `--path` with that pattern; an unknown `-`-prefixed token is
+still refused (#14307).
 
 1. The filter is applied once at pipeline intake, before the diff-size guards
    and before any adapter, so the guards measure only the chosen files. It is
@@ -67,9 +79,23 @@ glob dialect. No `--path` admits every file the excludes do not remove;
    chosen files alone exceed a guard, the guard fires with its existing text,
    which now also names `--path`/`--exclude`.
 2. Every changed file the filter removes is named in one
-   `language_scope_unsupported` limitation (stage `diff_load`, recovery
-   `retry`). The outcome is `partial_with_limitations`; a skipped file never
-   yields a finding, a `no_static_path`, or a clean or complete outcome.
+   `requested_scope_excluded` scope note (stage `diff_load`, recovery `retry`;
+   #13894). The operator asked for that scope, so the outcome describes the
+   requested scope: a fully analyzed scoped run is `complete_*`
+   (`analysis_complete: true`), the note is not an incomplete-analysis
+   limitation, and `missed-txt`/`github` do not repeat it (a clean run stays
+   zero bytes). A skipped file still never yields a finding or a
+   `no_static_path`. The same holds for files a configured
+   `[languages.rust] generated_file_patterns` or preview
+   `excluded_file_patterns` entry leaves out. Built-in, non-configurable
+   skips (generated-file names, generator headers, `cargo vendor` crates),
+   unsupported languages, parse failures, budgets and refused files keep their
+   incomplete kinds and stay fail-closed, also when a requested exclusion is
+   present in the same run. A file matching both a built-in rule and a
+   configured pattern is requested scope (note only). When a configured
+   pattern leaves out every changed Rust file, there is nothing left to
+   analyze and nothing the operator did not ask to skip: the run is
+   `no_behavioral_candidates` (complete) with the note, and `missed-txt` is zero bytes.
 3. A filter that leaves no changed file fails closed with
    `scope_filter_matched_nothing`, naming the flags and the files they removed.
    It is not a clean result. Malformed patterns (empty, absolute, containing
@@ -95,16 +121,27 @@ glob dialect. No `--path` admits every file the excludes do not remove;
 ## Required Evidence
 
 - Oversized diff with one real edit: `--exclude` or `--path` yields the real
-  finding, a limitation naming the skipped files, and exit 0.
-- Negative: no finding comes from a skipped file and the outcome is not
-  complete.
+  finding, a scope note naming the skipped files, a complete outcome and
+  exit 0.
+- A fully tested change with `--exclude`, `--path` or a configured
+  `generated_file_patterns` is `analysis_complete: true` and `missed-txt`
+  prints zero bytes.
+- Negative: no finding comes from a skipped file; a built-in generated-name
+  skip, or an unanalyzable kept file beside a requested exclusion, keeps the
+  outcome `partial_with_limitations`.
+- review-comments reports `advisory` (not `incomplete`) and the gate does not
+  fail closed for a complete outcome that carries only the scope note.
 - A scope matching nothing, and one excluding everything, are errors.
-- Scope keeping the oversized file still trips the cap.
+- Scope keeping only the oversized file still refuses (`diff_scope_oversized`);
+  beside a fitting file it is left out as over limit instead (#13641).
 - A diff naming more files than the changed-file bound parses when the scope
   removes the excess, and the limitation reports the exact number removed.
 - A scoped check's printed explain/context/`check --json` lines carry the
-  same `--path`/`--exclude` flags, those commands accept them, and dropping
-  the flags from a printed explain trips `diff_scope_oversized`.
+  same `--path`/`--exclude` flags and those commands accept them. Since
+  #13641, dropping the flags from a printed explain degrades to a partial
+  scope instead of tripping `diff_scope_oversized`, and the same explain
+  excluding the finding's file instead cannot resolve it, so the printed
+  scope stays load-bearing.
 
 ## Non-Goals
 
@@ -118,25 +155,46 @@ glob dialect. No `--path` admits every file the excludes do not remove;
 
 1. `ripr check --base HEAD~1 --exclude src/big.rs --exclude blob.rs` on a
    branch with one `src/lib.rs` edit, a 200k-line `src/big.rs` and a 3 MB
-   `blob.rs`: the `src/lib.rs` finding plus a limitation naming the two files.
+   `blob.rs`: the `src/lib.rs` finding plus a scope note naming the two files.
 2. `ripr check --path nowhere/**`: `scope_filter_matched_nothing`, exit 2.
 3. `ripr check --path ../x`: usage error naming the pattern, exit 2.
 4. After example 1, the printed `ripr explain ... --exclude src/big.rs
-   --exclude blob.rs <id>` line explains the finding; the same line without
-   the exclude flags fails with `diff_scope_oversized`.
+   --exclude blob.rs <id>` line explains the finding. Before #13641 the same
+   line without the exclude flags failed with `diff_scope_oversized`; with
+   only the changed-line cap tripped it now leaves `src/big.rs` out of a
+   partial scope, while a diff over a language-neutral parse guard still
+   refuses.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/diff_scope_filter.rs` tests (pattern semantics).
 - `crates/ripr/src/analysis/pipeline.rs` tests:
-  `scope_narrows_the_diff_before_the_size_guard_and_discloses_what_it_left_out`,
+  `scope_narrows_the_diff_before_the_size_guard_and_notes_what_it_left_out`,
+  `configured_generated_pattern_is_a_scope_note_not_a_limitation`,
+  `built_in_generated_name_skip_stays_a_scope_limitation`,
+  `mixed_configured_and_built_in_skips_split_note_from_limitation`,
   `scope_that_keeps_only_the_oversized_files_still_hits_the_guard`,
   `scope_that_matches_no_changed_file_is_an_error_not_a_clean_result`,
   `excluding_every_changed_file_is_also_an_error`,
   `scope_binds_into_the_input_identity`,
-  `oversized_diff_still_fails_closed_without_a_scope`.
+  `oversized_file_sorting_first_is_left_out_of_a_partial_scope`.
 - `crates/ripr/tests/cli_smoke.rs`:
-  `check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result`.
+  `check_scope_flags_turn_an_oversized_diff_into_a_complete_scoped_result_with_a_note`.
+- `crates/ripr/tests/cli_smoke/requested_scope_complete.rs`:
+  `exclude_flag_is_requested_scope_and_stays_complete`,
+  `path_flag_is_requested_scope_and_stays_complete`,
+  `configured_generated_pattern_is_requested_scope_and_stays_complete`,
+  `built_in_generated_skip_stays_incomplete`,
+  `requested_exclusion_does_not_hide_an_unanalyzed_kept_file`,
+  `every_changed_file_matching_a_configured_pattern_is_complete_and_quiet`.
+- `crates/ripr/src/analysis/pipeline.rs` tests:
+  `diff_whose_every_rust_file_matches_a_configured_pattern_is_complete_with_note`,
+  `file_matching_built_in_and_configured_rules_is_a_note_only`,
+  `preview_excluded_file_pattern_is_a_scope_note_on_a_complete_outcome`.
+- `crates/ripr/src/output/human/agent_tests.rs::agent_scope_note_line_is_single_and_not_counted_as_a_limitation`.
+- `crates/ripr/src/output/review_comments/mod.rs::tests::review_comments_keeps_complete_outcome_with_requested_scope_note_advisory`.
+- `crates/ripr/src/output/gate/tests.rs::given_real_review_comments_with_requested_scope_note_when_gate_evaluated_then_not_config_error`.
+- `crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::a_bare_argument_is_read_as_a_path_scope`.
 - `crates/ripr/src/app/navigation.rs::tests::finding_navigation_appends_path_and_exclude_from_the_run_scope`.
 - `crates/ripr/src/cli/commands.rs::tests::explain_accepts_path_and_exclude_and_rejects_a_dotdot_pattern`.
 - `crates/ripr/src/cli/commands/context.rs::tests::context_accepts_path_and_exclude_and_rejects_a_dotdot_pattern`.
@@ -148,7 +206,9 @@ glob dialect. No `--path` admits every file the excludes do not remove;
 
 - `crates/ripr/src/analysis/diff_scope_filter.rs`: `DiffScopeFilter`.
 - `crates/ripr/src/analysis/pipeline.rs`: intake partition,
-  `scope_matched_nothing_error`, `out_of_scope_limitation`.
+  `scope_matched_nothing_error`, `out_of_scope_limitation`,
+  `configured_exclusion_note`.
+- `crates/ripr/src/analysis_outcome.rs`: `AnalysisLimitationKind::RequestedScopeExcluded`.
 - `crates/ripr/src/cli/commands/check.rs`: `--path`, `--exclude`.
 - `crates/ripr/src/app/navigation.rs`: printed drill-in argv.
 - `crates/ripr/src/cli/commands.rs`: `explain` parser and `bind_diff_scope_flags`.

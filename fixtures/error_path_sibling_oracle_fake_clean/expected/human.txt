@@ -16,7 +16,7 @@ Start here:
   Gap ID (for scripts): gap:rust:src/lib.rs:validate_or_default:error_variant:error_path:err_parseerror_toolong
   Changed behavior: return Err(ParseError::TooLong);
   Missing check (1 of 2): ParseError::TooLong
-  Related test: tests/validation.rs:8 valid_input_returns_valid (no assertion pins `ParseError::TooLong`)
+  Related test: tests/validation.rs:8 valid_input_returns_valid (asserts, but not on the changed value)
   Next step: Assert the exact error variant or payload instead of only is_err()
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

@@ -1,4 +1,4 @@
-use crate::domain::{ExposureClass, Finding, LanguageId, ProbeFamily, RelatedTest};
+use crate::domain::{ExposureClass, Finding, FlowSinkKind, LanguageId, ProbeFamily, RelatedTest};
 use ripr_contract::domain::language_capability::{
     CapabilityFamily, family_established_for_any_framework,
 };
@@ -46,10 +46,15 @@ fn native_pytest_route_parts<'a>(
     allow_qualified: bool,
 ) -> Option<NativePytestRoute<'a>> {
     let name = node.strip_prefix(file)?.strip_prefix("::")?;
+    // The producer chose the interpreter once (#13801): PATH `python`, or a
+    // project venv interpreter it found statically. The route repeats that
+    // choice and never looks at the filesystem itself.
+    let program = crate::domain::pytest_verify_interpreter(raw)?;
     if !safe_qualified_name(&name.replace("::", "."))
         || (!allow_qualified && name.contains("::"))
         || name.rsplit("::").next()? != selected
-        || crate::domain::python_pytest_verify_display(file, name, windows).as_deref() != Some(raw)
+        || crate::domain::python_pytest_verify_display_for(program, file, name, windows).as_deref()
+            != Some(raw)
         || file.chars().chain(node.chars()).any(char::is_control)
         || Path::new(file)
             .components()
@@ -58,7 +63,7 @@ fn native_pytest_route_parts<'a>(
         return None;
     }
     Some(NativePytestRoute {
-        program: "python",
+        program,
         args: ["-m", "pytest", node],
         cwd: ".",
     })
@@ -217,12 +222,21 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
     }
 
     let gap = finding.canonical_gap.as_ref()?;
-    let missing_discriminator = finding
-        .activation
-        .missing_discriminators
-        .first()?
-        .value
-        .clone();
+    let missing = finding.activation.missing_discriminators.first()?;
+    let missing_discriminator = missing.value.clone();
+    // A module constant keeps its existing gap identity, while its producer
+    // can establish a concrete reader-return sink (#12950). Render that
+    // supplied sink as value guidance without making a new reach decision.
+    let repair_family = if matches!(finding.probe.family, ProbeFamily::Predicate)
+        && missing
+            .flow_sink
+            .as_ref()
+            .is_some_and(|sink| sink.kind == FlowSinkKind::ReturnValue)
+    {
+        ProbeFamily::ReturnValue
+    } else {
+        finding.probe.family.clone()
+    };
     let suggested_test_file = evidence_value(finding, "suggested_test_file: ")?.to_string();
     let suggested_test_name = evidence_value(finding, "suggested_test_name: ")?.to_string();
     let suggested_test_node_id =
@@ -230,11 +244,7 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
     let verify_command = evidence_value(finding, "suggested_verify_command: ")?.to_string();
     let verify_command_confidence =
         evidence_value(finding, "suggested_verify_command_confidence: ")?.to_string();
-    let stop_conditions = stop_conditions(
-        &finding.probe.family,
-        &missing_discriminator,
-        &verify_command,
-    );
+    let stop_conditions = stop_conditions(&repair_family, &missing_discriminator, &verify_command);
     let repair_action = evidence_value(finding, "suggested_repair_action: ")
         .unwrap_or("add_or_strengthen_test")
         .to_string();
@@ -255,13 +265,13 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
         current_test_evidence: current_test_evidence(related_test),
         missing_discriminator: missing_discriminator.clone(),
         recommended_test_shape: recommended_test_shape(
-            &finding.probe.family,
+            &repair_family,
             &missing_discriminator,
             &verify_command,
             &repair_action,
         ),
         suggested_assertion: suggested_assertion(
-            &finding.probe.family,
+            &repair_family,
             &missing_discriminator,
             &verify_command,
         ),
@@ -787,6 +797,31 @@ mod tests {
             )
             .is_some()
         );
+    }
+
+    #[test]
+    fn native_route_runs_the_producer_selected_interpreter_only() -> Result<(), String> {
+        let route = super::native_pytest_route_parts;
+        let file = "tests/test_order.py";
+        let node = "tests/test_order.py::test_total";
+        for program in ["python", ".venv/bin/python", "venv/bin/python"] {
+            let raw = format!("{program} -m pytest {node}");
+            let parts = route(file, node, &raw, "test_total", false, false)
+                .ok_or_else(|| format!("`{raw}` must give a native route"))?;
+            assert_eq!(parts.program, program);
+            assert_eq!(parts.args, ["-m", "pytest", node]);
+        }
+        for raw in [
+            "python3 -m pytest tests/test_order.py::test_total",
+            "/tmp/evil/bin/python -m pytest tests/test_order.py::test_total",
+            "../.venv/bin/python -m pytest tests/test_order.py::test_total",
+        ] {
+            assert!(
+                route(file, node, raw, "test_total", false, false).is_none(),
+                "{raw}"
+            );
+        }
+        Ok(())
     }
 
     #[test]

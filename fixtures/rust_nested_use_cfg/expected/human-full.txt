@@ -136,6 +136,7 @@ Evidence
   - source function argument value x = 50 at line 3
   - source function argument value x = 500 at line 8
   - source function argument value x = 101 at line 13
+  - assertion not credited: `assert!` in at at tests/api.rs:13: `pub use other_dep::*;` at src/lib.rs:4 glob-imports from outside the workspace, which may bring in a different `assert!`
 
 Weakness
   - Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown

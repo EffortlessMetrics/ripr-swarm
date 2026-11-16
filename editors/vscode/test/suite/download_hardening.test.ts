@@ -4,17 +4,20 @@ import * as fs from 'fs';
 import * as https from 'https';
 import * as os from 'os';
 import * as path from 'path';
+import * as net from 'net';
 import { rootCertificates } from 'tls';
 import {
   ARCHIVE_MAX_BYTES,
   ARCHIVE_MAX_MEMBERS,
   assertSafeTarListing,
-  assertSafeZipCentralDirectory,
+  assertSafeZipListing,
   inspectTarArchive,
   inspectZipArchive,
+  listZipCentralDirectoryEntries,
   MANIFEST_MAX_BYTES,
   fetchManifestBytesOverHttps,
-  isAllowedHttpsRedirect
+  isAllowedHttpsRedirect,
+  requestErrorMessage
 } from '../../src/downloader';
 import {
   assertExtractedTreeContained,
@@ -22,68 +25,15 @@ import {
   ManagedServerInstallRequest,
   readManagedServerInstallation
 } from '../../src/managedServerInstall';
-
-interface ZipFixtureEntry {
-  readonly name: string;
-  readonly host?: number;
-  readonly external?: number;
-  readonly utf8?: boolean;
-}
-
-/** Minimal stored-entry zip writer: local headers, central directory, EOCD. */
-interface ZipFixtureOptions {
-  readonly totalEntries?: number;
-  readonly entriesOnDisk?: number;
-  readonly diskNumber?: number;
-  readonly centralSize?: number;
-  readonly centralOffset?: number;
-  readonly comment?: Buffer;
-}
-
-function buildZip(entries: readonly ZipFixtureEntry[], options: ZipFixtureOptions = {}): Buffer {
-  const locals: Buffer[] = [];
-  const centrals: Buffer[] = [];
-  let offset = 0;
-  for (const entry of entries) {
-    const name = Buffer.from(entry.name, entry.utf8 ? 'utf8' : 'latin1');
-    const flags = entry.utf8 ? 0x800 : 0;
-    const local = Buffer.alloc(30 + name.length);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(flags, 6);
-    local.writeUInt16LE(name.length, 26);
-    name.copy(local, 30);
-    const central = Buffer.alloc(46 + name.length);
-    central.writeUInt32LE(0x02014b50, 0);
-    central.writeUInt16LE(((entry.host ?? 3) << 8) | 20, 4);
-    central.writeUInt16LE(20, 6);
-    central.writeUInt16LE(flags, 8);
-    central.writeUInt16LE(name.length, 28);
-    central.writeUInt32LE((entry.external ?? (0o100644 << 16)) >>> 0, 38);
-    central.writeUInt32LE(offset, 42);
-    name.copy(central, 46);
-    locals.push(local);
-    centrals.push(central);
-    offset += local.length;
-  }
-  const directory = Buffer.concat(centrals);
-  const comment = options.comment ?? Buffer.alloc(0);
-  const eocd = Buffer.alloc(22);
-  eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(options.diskNumber ?? 0, 4);
-  eocd.writeUInt16LE(options.entriesOnDisk ?? options.totalEntries ?? entries.length, 8);
-  eocd.writeUInt16LE(options.totalEntries ?? entries.length, 10);
-  eocd.writeUInt32LE(options.centralSize ?? directory.length, 12);
-  eocd.writeUInt32LE(options.centralOffset ?? offset, 16);
-  eocd.writeUInt16LE(comment.length, 20);
-  return Buffer.concat([...locals, directory, eocd, comment]);
-}
+import { classifyDownloadFailureKind } from '../../src/serverResolver';
 
 interface FixtureRoute {
   readonly status: number;
   readonly body?: Buffer;
   readonly location?: string;
   readonly contentLength?: string;
+  /** Send the head and body, then drop the connection instead of ending the response. */
+  readonly dropConnectionAfterBody?: boolean;
 }
 
 class HardeningFixtureServer {
@@ -119,6 +69,10 @@ class HardeningFixtureServer {
           headers['content-length'] = route.contentLength;
         }
         response.writeHead(route.status, headers);
+        if (route.dropConnectionAfterBody) {
+          response.write(route.body ?? Buffer.alloc(0), () => request.socket.destroy());
+          return;
+        }
         response.end(route.body ?? Buffer.alloc(0));
       });
       created.on('error', reject);
@@ -302,6 +256,73 @@ suite('VS Code download hardening (#11477 item 5)', () => {
     }
   });
 
+  test('a refused connection names the URL and classifies as a network failure (#13638)', async () => {
+    // Bind then release a loopback port so nothing is listening on it.
+    const port = await new Promise<number>((resolve, reject) => {
+      const probe = net.createServer();
+      probe.once('error', reject);
+      probe.listen(0, '127.0.0.1', () => {
+        const address = probe.address();
+        probe.close(() => resolve(typeof address === 'object' && address ? address.port : 0));
+      });
+    });
+    assert.notStrictEqual(port, 0);
+    const url = `https://127.0.0.1:${port}/ripr-server-manifest-v2.0.0.json`;
+    const outcome = await fetchManifestBytesOverHttps(url, MANIFEST_MAX_BYTES);
+    assert.strictEqual(outcome.kind, 'transport_failure');
+    if (outcome.kind === 'transport_failure') {
+      assert.ok(outcome.message.startsWith(`Could not fetch ${url}: `), outcome.message);
+      assert.match(outcome.message, /ECONNREFUSED/);
+      assert.strictEqual(classifyDownloadFailureKind(outcome.message), 'network');
+    }
+  });
+
+  test('a connection dropped mid-body classifies as a network failure (#13638)', async function () {
+    const server = new HardeningFixtureServer();
+    await server.start(tls.key, tls.cert);
+    try {
+      // The head promises 100 bytes; the server sends 3 and drops the socket.
+      server.route('/dropped.tar.gz', {
+        status: 200,
+        body: Buffer.from('abc'),
+        contentLength: '100',
+        dropConnectionAfterBody: true
+      });
+      const url = `${server.base}/dropped.tar.gz`;
+      const outcome = await fetchManifestBytesOverHttps(url, ARCHIVE_MAX_BYTES);
+      assert.strictEqual(outcome.kind, 'transport_failure');
+      if (outcome.kind === 'transport_failure') {
+        assert.ok(outcome.message.includes(url), outcome.message);
+        assert.strictEqual(classifyDownloadFailureKind(outcome.message), 'network', outcome.message);
+      }
+    } finally {
+      await server.stop();
+    }
+  });
+
+  test('a request error with an empty message keeps its code and still classifies as network (#13638)', () => {
+    const url = 'https://sentinel.invalid/ripr-server-manifest-v2.0.0.json';
+    // Shape of the AggregateError Node raises when every address of a host refuses.
+    const aggregate = Object.assign(new Error(''), { code: 'ECONNREFUSED' });
+    const message = requestErrorMessage(url, aggregate);
+    assert.strictEqual(message, `Could not fetch ${url}: ECONNREFUSED`);
+    assert.strictEqual(classifyDownloadFailureKind(message), 'network');
+    // A code already in the message is not repeated.
+    assert.strictEqual(
+      requestErrorMessage(url, Object.assign(new Error('getaddrinfo ENOTFOUND sentinel.invalid'), { code: 'ENOTFOUND' })),
+      `Could not fetch ${url}: getaddrinfo ENOTFOUND sentinel.invalid`
+    );
+    // An error that already names the URL is left alone.
+    assert.strictEqual(requestErrorMessage(url, new Error(`Timed out while fetching ${url}.`)), `Timed out while fetching ${url}.`);
+    // No message and no code: still a sentence, and not guessed to be a network failure.
+    const bare = requestErrorMessage(url, new Error(''));
+    assert.strictEqual(bare, `Could not fetch ${url}: the request failed without a reported cause`);
+    assert.notStrictEqual(classifyDownloadFailureKind(bare), 'network');
+    // A non-network code is surfaced but stays out of the network kind.
+    const tls = requestErrorMessage(url, Object.assign(new Error('self-signed certificate'), { code: 'DEPTH_ZERO_SELF_SIGNED_CERT' }));
+    assert.notStrictEqual(classifyDownloadFailureKind(tls), 'network');
+  });
+
   test('fetchManifestBytesOverHttps uses a larger cap for archives', async function () {
     assert.ok(ARCHIVE_MAX_BYTES > MANIFEST_MAX_BYTES);
     const server = new HardeningFixtureServer();
@@ -333,6 +354,187 @@ suite('VS Code download hardening (#11477 item 5)', () => {
     assert.throws(() => assertSafeTarListing(Array.from({ length: ARCHIVE_MAX_MEMBERS + 1 }, (_, i) => `f${i}`), []), /member limit/);
   });
 
+  function buildZipCentralDirectory(members: ReadonlyArray<{ name: string; externalAttributes?: number }>): Buffer {
+    const centralChunks: Buffer[] = [];
+    for (const member of members) {
+      const nameBytes = Buffer.from(member.name, 'utf8');
+      const header = Buffer.alloc(46);
+      header.writeUInt32LE(0x02014b50, 0);
+      header.writeUInt16LE(0x0800, 8); // UTF-8 names
+      header.writeUInt16LE(nameBytes.length, 28);
+      header.writeUInt32LE(member.externalAttributes ?? 0, 38);
+      centralChunks.push(header, nameBytes);
+    }
+    const central = Buffer.concat(centralChunks);
+    const eocd = Buffer.alloc(22);
+    eocd.writeUInt32LE(0x06054b50, 0);
+    eocd.writeUInt16LE(members.length, 8);
+    eocd.writeUInt16LE(members.length, 10);
+    eocd.writeUInt32LE(central.length, 12);
+    return Buffer.concat([central, eocd]);
+  }
+
+  const UNIX_REGULAR_FILE = 0o100644 * 0x10000;
+  const UNIX_DIRECTORY = 0o040755 * 0x10000;
+  const UNIX_SYMLINK = 0o120777 * 0x10000;
+  const DOS_REPARSE_POINT = 0x0400;
+
+  test('assertSafeZipListing rejects traversal, symlinks, reparse points, and member floods', () => {
+    assert.doesNotThrow(() => assertSafeZipListing([
+      { name: 'ripr', externalAttributes: UNIX_REGULAR_FILE },
+      { name: 'bin/', externalAttributes: UNIX_DIRECTORY },
+      { name: 'bin/ripr.exe', externalAttributes: 0 }
+    ]));
+    assert.throws(() => assertSafeZipListing([
+      { name: '../evil', externalAttributes: 0 }
+    ]), /unsafe path/);
+    assert.throws(() => assertSafeZipListing([
+      { name: 'a/../../evil', externalAttributes: 0 }
+    ]), /unsafe path/);
+    assert.throws(() => assertSafeZipListing([
+      { name: '/etc/passwd', externalAttributes: 0 }
+    ]), /unsafe path/);
+    assert.throws(() => assertSafeZipListing([
+      { name: '\\etc\\passwd', externalAttributes: 0 }
+    ]), /unsafe path/);
+    assert.throws(() => assertSafeZipListing([
+      { name: '\\\\host\\c$\\evil', externalAttributes: 0 }
+    ]), /unsafe path/);
+    assert.throws(() => assertSafeZipListing([
+      { name: 'C:evil', externalAttributes: 0 }
+    ]), /unsafe path/);
+    assert.throws(() => assertSafeZipListing([
+      { name: 'a\\..\\evil', externalAttributes: 0 }
+    ]), /unsafe path/);
+    assert.throws(() => assertSafeZipListing([
+      { name: 'link', externalAttributes: UNIX_SYMLINK }
+    ]), /unsupported type/);
+    assert.throws(() => assertSafeZipListing([
+      { name: 'mount', externalAttributes: DOS_REPARSE_POINT }
+    ]), /reparse-point/);
+    assert.throws(
+      () => assertSafeZipListing(
+        Array.from({ length: ARCHIVE_MAX_MEMBERS + 1 }, (_, i) => ({ name: `f${i}`, externalAttributes: 0 }))
+      ),
+      /member limit/
+    );
+  });
+
+  test('assertSafeZipListing accepts permission-only modes Windows tools write', () => {
+    // Python zipfile.writestr stores 0o600 << 16: permission bits with no
+    // file type. Those entries are regular files and must not be refused.
+    assert.doesNotThrow(() => assertSafeZipListing([
+      { name: 'ripr.exe', externalAttributes: 0o600 * 0x10000 }
+    ]));
+  });
+
+  test('listZipCentralDirectoryEntries refuses entries spilling past the directory end', () => {
+    const archive = buildZipCentralDirectory([{ name: 'ripr' }]);
+    // Inflate the entry's name-length field so the entry no longer fits the
+    // declared central directory, without touching the directory size.
+    archive.writeUInt16LE(0x4000, 28);
+    assert.throws(
+      () => listZipCentralDirectoryEntries(archive),
+      /extends past the directory end/
+    );
+  });
+
+  test('listZipCentralDirectoryEntries reads names and attributes from a fabricated zip', () => {
+    const archive = buildZipCentralDirectory([
+      { name: 'ripr', externalAttributes: UNIX_REGULAR_FILE },
+      { name: 'bin/', externalAttributes: UNIX_DIRECTORY }
+    ]);
+    const entries = listZipCentralDirectoryEntries(archive);
+    assert.deepStrictEqual(
+      entries.map((entry) => [entry.name, entry.externalAttributes]),
+      [['ripr', UNIX_REGULAR_FILE], ['bin/', UNIX_DIRECTORY]]
+    );
+  });
+
+  test('listZipCentralDirectoryEntries refuses truncated or malformed archives', () => {
+    assert.throws(() => listZipCentralDirectoryEntries(Buffer.from('not a zip')), /not a readable zip/);
+    const good = buildZipCentralDirectory([{ name: 'ripr' }]);
+    assert.throws(() => listZipCentralDirectoryEntries(good.subarray(0, good.length - 10)), /not a readable zip|malformed/);
+    const wrongCount = buildZipCentralDirectory([{ name: 'ripr' }]);
+    wrongCount.writeUInt16LE(2, wrongCount.length - 22 + 8);
+    wrongCount.writeUInt16LE(2, wrongCount.length - 22 + 10);
+    assert.throws(() => listZipCentralDirectoryEntries(wrongCount), /expected 2/);
+  });
+
+  test('listZipCentralDirectoryEntries refuses ZIP64, split counts and records that do not end the file', () => {
+    const eocdField = (archive: Buffer, offset: number): number => archive.length - 22 + offset;
+    const withU16 = (offset: number, value: number): Buffer => {
+      const archive = buildZipCentralDirectory([{ name: 'ripr' }]);
+      archive.writeUInt16LE(value, eocdField(archive, offset));
+      return archive;
+    };
+    const withU32 = (offset: number, value: number): Buffer => {
+      const archive = buildZipCentralDirectory([{ name: 'ripr' }]);
+      archive.writeUInt32LE(value, eocdField(archive, offset));
+      return archive;
+    };
+    assert.throws(() => listZipCentralDirectoryEntries(withU16(10, 0xffff)), /ZIP64/);
+    assert.throws(() => listZipCentralDirectoryEntries(withU16(8, 0xffff)), /ZIP64/);
+    assert.throws(() => listZipCentralDirectoryEntries(withU32(12, 0xffffffff)), /ZIP64/);
+    assert.throws(() => listZipCentralDirectoryEntries(withU32(16, 0xffffffff)), /ZIP64/);
+    assert.throws(() => listZipCentralDirectoryEntries(withU16(8, 0)), /multi-disk/);
+    // A central directory that claims to run into the end record.
+    assert.throws(() => listZipCentralDirectoryEntries(withU32(12, 60)), /past the end-of-central-directory/);
+
+    const good = buildZipCentralDirectory([{ name: 'ripr' }]);
+    assert.throws(
+      () => listZipCentralDirectoryEntries(Buffer.concat([good, Buffer.from([0])])),
+      /does not end the file/
+    );
+    // A genuine trailing comment is accepted when its length reaches EOF.
+    const comment = Buffer.from('release ripr');
+    const commented = Buffer.concat([good, comment]);
+    commented.writeUInt16LE(comment.length, good.length - 22 + 20);
+    assert.deepStrictEqual(listZipCentralDirectoryEntries(commented).map((entry) => entry.name), ['ripr']);
+    // A second directory smuggled inside the comment: the last record found is
+    // the smuggled one, and its own comment length does not reach EOF.
+    const hidden = buildZipCentralDirectory([{ name: 'hidden' }]);
+    const tail = Buffer.concat([hidden, Buffer.from('pad')]);
+    const smuggled = Buffer.concat([good, tail]);
+    smuggled.writeUInt16LE(tail.length, good.length - 22 + 20);
+    assert.throws(() => listZipCentralDirectoryEntries(smuggled), /does not end the file/);
+  });
+
+  test('assertSafeZipListing refuses stream, empty and Windows-special member names', () => {
+    assert.doesNotThrow(() => assertSafeZipListing([
+      { name: 'console.txt', externalAttributes: 0 },
+      { name: 'com10', externalAttributes: 0 },
+      { name: 'bin/ripr.exe', externalAttributes: 0 },
+      { name: 'caf\u00e9/', externalAttributes: 0 }
+    ]));
+    for (const name of ['', 'ripr.exe:stream', ':stream', 'D:evil.dll']) {
+      assert.throws(() => assertSafeZipListing([{ name, externalAttributes: 0 }]), /unsafe path/, JSON.stringify(name));
+    }
+    for (const name of [
+      '.. /evil', 'ripr.exe.', 'ripr.exe ', '.../x', 'CON', 'dir/aux.txt', 'lpt1', 'NUL.tar.gz',
+      'COM\u00b9', 'lpt\u00b2.log', 'CONIN$', 'CONOUT$', 'con .txt'
+    ]) {
+      assert.throws(() => assertSafeZipListing([{ name, externalAttributes: 0 }]), /unsafe Windows path/, JSON.stringify(name));
+    }
+  });
+
+  test('inspectZipArchive accepts a safe fabricated zip and refuses a symlink member', async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'ripr-zip-inspect-'));
+    try {
+      const safePath = path.join(root, 'safe.zip');
+      await fs.promises.writeFile(safePath, buildZipCentralDirectory([
+        { name: 'ripr', externalAttributes: UNIX_REGULAR_FILE },
+        { name: 'bin/', externalAttributes: UNIX_DIRECTORY }
+      ]));
+      await inspectZipArchive(safePath);
+      const unsafePath = path.join(root, 'unsafe.zip');
+      await fs.promises.writeFile(unsafePath, buildZipCentralDirectory([{ name: 'link', externalAttributes: UNIX_SYMLINK }]));
+      await assert.rejects(inspectZipArchive(unsafePath), /unsupported type/);
+    } finally {
+      await fs.promises.rm(root, { recursive: true, force: true });
+    }
+  });
+
   test('inspectTarArchive reads real tar listings and rejects symlink and traversal archives', async function () {
     if (process.platform === 'win32') {
       this.skip();
@@ -360,101 +562,6 @@ suite('VS Code download hardening (#11477 item 5)', () => {
       await fs.promises.writeFile(path.join(root, 'nested', 'evil'), 'x');
       run(['-czPf', path.join(root, 'trav.tgz'), '../evil'], nested);
       await assert.rejects(inspectTarArchive(path.join(root, 'trav.tgz')), /unsafe path/);
-    } finally {
-      await fs.promises.rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test('assertSafeZipCentralDirectory accepts the server archive shape and rejects unsafe entries', () => {
-    const good = [
-      { name: 'LICENSE-MIT' },
-      { name: 'README-server.txt' },
-      { name: 'ripr.exe', external: (0o100755 << 16) },
-      { name: 'docs/', external: (0o040755 << 16) | 0x10 },
-      { name: 'docs\\notes.txt', host: 0, external: 0x20 },
-      { name: 'caf\u00e9.txt', utf8: true },
-      // Unix host with no file-type bits: accepted as a plain file.
-      { name: 'typeless', external: 0o644 << 16 },
-      // DOS host: high attribute bits are not a Unix mode, so a symlink-looking
-      // value must not be read as one.
-      { name: 'dos-high-bits', host: 0, external: 0xa1ff0020 },
-      { name: 'trailing/', external: (0o040755 << 16) | 0x10 },
-      { name: 'console.txt' },
-      { name: 'com10' }
-    ];
-    assert.doesNotThrow(() => assertSafeZipCentralDirectory(buildZip(good)));
-    const rejects = (entry: ZipFixtureEntry, pattern: RegExp): void => {
-      assert.throws(() => assertSafeZipCentralDirectory(buildZip([{ name: 'ok' }, entry])), pattern, entry.name);
-    };
-    rejects({ name: '../evil' }, /unsafe path/);
-    rejects({ name: 'a/../../evil' }, /unsafe path/);
-    rejects({ name: 'a\\..\\evil', host: 0, external: 0x20 }, /unsafe path/);
-    rejects({ name: '/etc/passwd' }, /unsafe path/);
-    rejects({ name: '\\\\host\\c$\\evil', host: 0 }, /unsafe path/);
-    rejects({ name: 'D:evil.dll', host: 0 }, /unsafe path/);
-    rejects({ name: 'ripr.exe:stream', host: 0 }, /unsafe path/);
-    rejects({ name: 'nul\u0000name' }, /unsafe path/);
-    rejects({ name: 'escape', external: (0o120777 << 16) }, /unsupported type/);
-    rejects({ name: 'fifo', external: (0o010644 << 16) }, /unsupported type/);
-    rejects({ name: 'junction', host: 0, external: 0x410 }, /reparse-point/);
-    rejects({ name: '.. /evil', host: 0 }, /unsafe path/);
-    rejects({ name: 'ripr.exe.', host: 0 }, /unsafe path/);
-    rejects({ name: 'ripr.exe ', host: 0 }, /unsafe path/);
-    rejects({ name: '.../x', host: 0 }, /unsafe path/);
-    rejects({ name: 'CON', host: 0 }, /unsafe path/);
-    rejects({ name: 'dir/aux.txt', host: 0 }, /unsafe path/);
-    rejects({ name: 'lpt1', host: 0 }, /unsafe path/);
-    rejects({ name: 'COM\u00b9', utf8: true, host: 0 }, /unsafe path/);
-    rejects({ name: 'lpt\u00b2.log', utf8: true, host: 0 }, /unsafe path/);
-    rejects({ name: 'CONOUT$', host: 0 }, /unsafe path/);
-    rejects({ name: 'con .txt', host: 0 }, /unsafe path/);
-    rejects({ name: '', host: 0 }, /empty name/);
-    assert.throws(
-      () => assertSafeZipCentralDirectory(buildZip(Array.from({ length: ARCHIVE_MAX_MEMBERS + 1 }, (_, i) => ({ name: `f${i}` })))),
-      /member limit/
-    );
-  });
-
-  test('assertSafeZipCentralDirectory refuses archives it cannot fully parse', () => {
-    const good = buildZip([{ name: 'ripr.exe' }]);
-    assert.throws(() => assertSafeZipCentralDirectory(Buffer.alloc(0)), /end-of-central-directory/);
-    assert.throws(() => assertSafeZipCentralDirectory(Buffer.from('not a zip at all, just bytes')), /end-of-central-directory/);
-    // A trailing byte breaks the EOCD comment-length binding.
-    assert.throws(() => assertSafeZipCentralDirectory(Buffer.concat([good, Buffer.from([0])])), /end-of-central-directory/);
-    assert.throws(() => assertSafeZipCentralDirectory(buildZip([{ name: 'ripr.exe' }], { totalEntries: 0xffff })), /ZIP64/);
-    // Count says two, directory holds one: the second header read runs off the directory.
-    assert.throws(() => assertSafeZipCentralDirectory(buildZip([{ name: 'ripr.exe' }], { totalEntries: 2 })), /malformed central directory/);
-    // Count says zero, directory holds one: an unlisted entry must not slip past.
-    assert.throws(() => assertSafeZipCentralDirectory(buildZip([{ name: '../evil' }], { totalEntries: 0 })), /does not match/);
-    assert.throws(() => assertSafeZipCentralDirectory(buildZip([{ name: 'ripr.exe' }], { centralSize: 0xffffffff })), /ZIP64/);
-    assert.throws(() => assertSafeZipCentralDirectory(buildZip([{ name: 'ripr.exe' }], { centralOffset: 0xffffffff })), /ZIP64/);
-    assert.throws(() => assertSafeZipCentralDirectory(buildZip([{ name: 'ripr.exe' }], { diskNumber: 1 })), /multi-disk/);
-    assert.throws(() => assertSafeZipCentralDirectory(buildZip([{ name: 'ripr.exe' }, { name: 'b' }], { entriesOnDisk: 1 })), /multi-disk/);
-    assert.throws(() => assertSafeZipCentralDirectory(buildZip([{ name: 'ripr.exe' }], { centralSize: 1000 })), /outside the file/);
-    // Entry header fits but its name runs past the declared directory end.
-    assert.throws(() => assertSafeZipCentralDirectory(buildZip([{ name: 'ripr.exe' }], { centralSize: 50 })), /truncated/);
-    // A comment is fine on its own...
-    assert.doesNotThrow(() => assertSafeZipCentralDirectory(buildZip([{ name: 'ripr.exe' }], { comment: Buffer.from('release') })));
-    // ...but a fake directory plus end record hidden in the comment is what a
-    // last-signature reader (.NET, Python) would extract, so it is refused
-    // rather than skipped in favour of the earlier, benign record.
-    const hiddenDirectory = buildZip([{ name: '../evil' }]);
-    const fakeTail = Buffer.from(hiddenDirectory.subarray(hiddenDirectory.length - 22));
-    fakeTail.writeUInt16LE(0x1234, 20);
-    const hidden = buildZip([{ name: 'ripr.exe' }], { comment: Buffer.concat([hiddenDirectory.subarray(0, hiddenDirectory.length - 22), fakeTail]) });
-    assert.throws(() => assertSafeZipCentralDirectory(hidden), /last end-of-central-directory record does not end the file/);
-    const corrupt = Buffer.from(good);
-    corrupt.writeUInt32LE(0xdeadbeef, corrupt.length - 22 - (46 + 'ripr.exe'.length));
-    assert.throws(() => assertSafeZipCentralDirectory(corrupt), /malformed central directory/);
-  });
-
-  test('inspectZipArchive reads the archive from disk', async () => {
-    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'ripr-zip-inspect-'));
-    try {
-      await fs.promises.writeFile(path.join(root, 'good.zip'), buildZip([{ name: 'ripr.exe' }]));
-      await inspectZipArchive(path.join(root, 'good.zip'));
-      await fs.promises.writeFile(path.join(root, 'bad.zip'), buildZip([{ name: '..\\evil.exe', host: 0 }]));
-      await assert.rejects(inspectZipArchive(path.join(root, 'bad.zip')), /unsafe path/);
     } finally {
       await fs.promises.rm(root, { recursive: true, force: true });
     }

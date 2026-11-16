@@ -7,8 +7,9 @@ use super::owners_tests::collect_imports_from_statements;
 use super::probe_shape::classify_probe_shape;
 use super::related_tests::TestLookup;
 use super::related_tests::{
-    oracle_operand_calls, oracle_operand_names, oracle_operand_protocol_entry,
-    owner_method_bound_locals, owner_module_callees, owner_result_locals, setup_bound_receivers,
+    exception_body_calls, oracle_operand_calls, oracle_operand_names,
+    oracle_operand_protocol_entry, owner_method_bound_locals, owner_module_callees,
+    owner_result_locals, setup_bound_receivers,
 };
 use super::source_facts::parse_module_result;
 use super::wrapped_call::owner_call_only_inside_opaque_wrapper;
@@ -1347,12 +1348,18 @@ fn sink_alignment_and_rows(
                     return observes;
                 }
                 let callees = owner_module_callees(test, owner);
-                callees
+                // An exception assertion compares no operand: the owner call
+                // it observes is the one its `with` body (or rule 13
+                // callable) makes (RIPR-SPEC-0238 rule 4).
+                let raised_in_body = |callee: &String| {
+                    matches!(unit.kind, OracleKind::ExactErrorVariant)
+                        && exception_body_calls(&unit.text, &unit.reported, callee)
+                };
+                callees.iter().any(|callee| {
+                    oracle_operand_calls(&unit.text, callee) || raised_in_body(callee)
+                }) || owner_result_locals(test, &callees)
                     .iter()
-                    .any(|callee| oracle_operand_calls(&unit.text, callee))
-                    || owner_result_locals(test, &callees)
-                        .iter()
-                        .any(|local| oracle_operand_names(&unit.text, local))
+                    .any(|local| oracle_operand_names(&unit.text, local))
             })
     };
     // Dunder owner invoked through a builtin protocol entry (`reversed(Range(0))`
@@ -2230,6 +2237,7 @@ mod row_sink_alignment_tests {
             reexport_modules: Vec::new(),
             star_exported: false,
             ambiguous_src_modules: Vec::new(),
+            test_local_shadows: Vec::new(),
             rival_definition_modules: Vec::new(),
             module_constants: Vec::new(),
             same_class_callees: Vec::new(),

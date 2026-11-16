@@ -616,7 +616,8 @@ pub struct RelatedTest {
     /// findings from producers that do not record it. Explanation only: no
     /// decision helper reads this field except the refused-assertion exception
     /// of the opaque assertion-macro limit (`AssertionNotCredited`, RIPR-SPEC-0120,
-    /// #9644); row eligibility is [`Self::role`] (#5563).
+    /// #9644); row eligibility is [`Self::role`] (#5563). Display pickers read
+    /// it through [`Self::observation_tier`] to choose which row to name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub miss: Option<RelatedTestMiss>,
     /// Whether this row belonged to the legacy decision set or was retained
@@ -706,6 +707,46 @@ impl RelatedTest {
     pub fn is_examined_only(&self) -> bool {
         !self.is_contributing()
     }
+
+    /// How well this row can observe the changed behavior, for every picker
+    /// that names one related test to open or edit (#14454, #14483). It reads
+    /// only the producer's recorded miss, the one owner of whether a row
+    /// reaches the change (a proximity relation can still reach the owner
+    /// through a helper and credit exposure). Higher is better:
+    /// - `0`: [`RelatedTestMiss::NoCallPath`], no established path to the
+    ///   change;
+    /// - `1`: [`RelatedTestMiss::AssertionNotObserving`], the test runs the
+    ///   change but its assertion pins something the change cannot move;
+    /// - `2`: every other row. That includes `no_assertion`, whose contract
+    ///   (RIPR-SPEC-0224) requires an established path, so the row is where
+    ///   the missing assertion goes; its `none` strength already ranks it
+    ///   last where strength decides. A producer that sets it on a row with
+    ///   no established path (#14808) lets that row lead first-row pickers.
+    ///   Also in `2` are the strength
+    ///   misses (`weak_assertion`, `missing_input`, `missing_exact_assertion`)
+    ///   and the unknown-edge misses (`observation_unconfirmed`,
+    ///   `assertion_not_credited`, `assertion_inert`,
+    ///   `assertion_admission_unproven`), which record an observation ripr
+    ///   could not establish, not one that is absent (#5508).
+    ///
+    /// Display row selection only: no class, gate or credit reads it.
+    pub fn observation_tier(&self) -> u8 {
+        match self.miss {
+            Some(RelatedTestMiss::NoCallPath) => 0,
+            Some(RelatedTestMiss::AssertionNotObserving) => 1,
+            _ => 2,
+        }
+    }
+}
+
+/// The first row of the best [`RelatedTest::observation_tier`], keeping the
+/// listed order within that tier. The one observing-first rule for pickers
+/// that otherwise take the first listed row (#14483).
+pub fn first_observing_related_test(tests: &[RelatedTest]) -> Option<&RelatedTest> {
+    // `min_by_key` keeps the first of equal keys.
+    tests
+        .iter()
+        .min_by_key(|test| std::cmp::Reverse(test.observation_tier()))
 }
 
 /// Why one examined test would not notice the changed behavior being wrong.
