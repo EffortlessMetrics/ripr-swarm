@@ -1580,7 +1580,8 @@ fn sink_alignment_and_rows(
             !keys
                 .iter()
                 .any(|key| key.trim_matches(|c| c == '"' || c == '\'') == "detail")
-        });
+        })
+        && !json_equivalent_change(gate_old, gate_new);
     // The response operand itself must read a changed key: the shared
     // changed-key gate also accepts a whole-collection comparison or a
     // changed-key subscript on the expected side, which an unchanged sibling
@@ -1685,6 +1686,54 @@ fn sink_alignment_and_rows(
     )
 }
 
+/// Whether every changed entry of a dict-literal change serializes to the
+/// same JSON on both sides (#13869): a tuple and a list (`(1, 2)` and
+/// `[1, 2]`), or an integer and its float form (`5` and `5.0`), give one
+/// response body, so a response read cannot tell them apart.
+fn json_equivalent_change(old_line: Option<&str>, new_line: &str) -> bool {
+    let (Some(old), Some(new)) = (
+        old_line.and_then(parse_dict_literal_fields),
+        parse_dict_literal_fields(new_line),
+    ) else {
+        return false;
+    };
+    let json_form = |value: &str| {
+        let value: String = value
+            .trim()
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .map(|ch| match ch {
+                '(' => '[',
+                ')' => ']',
+                other => other,
+            })
+            .collect();
+        let value = value.replace(",]", "]");
+        match value.strip_suffix(".0") {
+            Some(whole)
+                if !whole.is_empty()
+                    && whole.chars().all(|ch| ch.is_ascii_digit() || ch == '-') =>
+            {
+                whole.to_string()
+            }
+            _ => value,
+        }
+    };
+    let mut changed = false;
+    for (key, new_value) in &new {
+        let Some((_, old_value)) = old.iter().find(|(k, _)| k == key) else {
+            return false;
+        };
+        if old_value != new_value {
+            if json_form(old_value) != json_form(new_value) {
+                return false;
+            }
+            changed = true;
+        }
+    }
+    changed && old.len() == new.len()
+}
+
 /// Whether an exact assertion compares one changed quoted key of `name.json()`
 /// with `==` or `self.assertEqual`: `response.json()["total"] == 195`. Any other
 /// comparison, the whole body, or a read of another attribute of the response
@@ -1720,7 +1769,27 @@ fn reads_response_json(text: &str, name: &str, changed_keys: &[String]) -> bool 
             .and_then(|rest| plain_key_subscript(rest.trim_start()))
             .is_some_and(|key| changed_keys.iter().any(|changed| changed == key))
     };
-    reads(left) || reads(right)
+    // The expected side must be independent of the route: another response
+    // (`first.json()["total"] == second.json()["total"]`), an inline request
+    // or the same read compares the handler with itself and passes on both
+    // versions.
+    let independent = |side: &str| {
+        !side.contains(".json")
+            && !side.contains(name)
+            && ![
+                ".get(",
+                ".post(",
+                ".put(",
+                ".patch(",
+                ".delete(",
+                ".options(",
+                ".head(",
+                ".request(",
+            ]
+            .iter()
+            .any(|call| side.contains(call))
+    };
+    (reads(left) && independent(right)) || (reads(right) && independent(left))
 }
 
 /// The two arguments of `self.assertEqual(first, second)`, split at the one
@@ -2397,7 +2466,6 @@ mod row_sink_alignment_tests {
             nested_result_discarded: false,
             trusted_stdlib_click_alias: false,
             route_returns_body: false,
-            route_rivals: Vec::new(),
         }
     }
 

@@ -663,7 +663,6 @@ fn owner_from_function(
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body,
-        route_rivals: Vec::new(),
     }
 }
 
@@ -797,7 +796,6 @@ fn owner_from_class(
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
-        route_rivals: Vec::new(),
     }
 }
 
@@ -842,7 +840,6 @@ pub(super) fn module_owner(
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
-        route_rivals: Vec::new(),
     }
 }
 

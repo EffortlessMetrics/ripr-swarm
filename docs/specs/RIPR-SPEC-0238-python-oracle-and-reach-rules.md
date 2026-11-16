@@ -522,10 +522,17 @@ Relations, first match wins (rank, oracle-eligible):
   plain arguments) compares that name's `.json()` with one quoted key
   subscript against the other side, and that key is one the edit changed
   (an unchanged sibling field, or a changed key only on the expected side,
-  is not). A test with a `match` statement or a walrus rebinding grants no
-  credit, and neither does a request that another route of the workspace
-  also accepts (dispatch order is not read) or a run that did not read
-  every workspace file. The handler must return its body as is:
+  is not). The other side must not read a response, name the response or
+  make a request. A test with a `match` statement, a walrus or an
+  assignment to `.json` grants no credit. The handler must not share a
+  request with another route of the workspace (verbs that can meet and
+  paths that can match one request; dispatch order is not read), and the
+  credit is off for the whole run when any file was not read, any owner has
+  a dynamic route decorator, a test file declares a route, or any source
+  has an exception handler, middleware, a request hook, an imperative route
+  registration, a mount, a `:path` catch-all or `dependency_overrides`. A
+  change whose old and new values serialize to the same JSON (a tuple and a
+  list, an integer and its float form) earns no credit. The handler must return its body as is:
   every decorator is a static route decorator whose keywords cannot reshape
   the body (no `response_model` or `response_class`), there is no return
   annotation other than a bare `dict` (FastAPI reads one as a response

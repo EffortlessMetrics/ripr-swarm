@@ -727,18 +727,13 @@ struct PythonOwner {
     trusted_stdlib_click_alias: bool,
     /// The owner is a route handler whose response body is its returned dict
     /// (#13869): every static route decorator takes only keywords that leave
-    /// the body alone (no `response_model` or `response_class`), and the
-    /// function has exactly one `return`, of a dict literal, and no `yield`.
+    /// the body alone (no `response_model` or `response_class`), the return
+    /// annotation is absent or a bare `dict`, and the function has exactly one
+    /// `return`, of a dict literal with distinct string-literal keys, and no
+    /// `yield` or `raise`. A workspace post-pass may withdraw it.
     /// `false` by default, which grants no response-read credit.
     #[serde(default)]
     route_returns_body: bool,
-    /// Every other route of the workspace, as `(path, verbs)`, set after all
-    /// files are read for an owner with [`Self::route_returns_body`]. A
-    /// request one of them also accepts may be dispatched to that handler
-    /// instead (registration order is not read), so it earns no
-    /// response-read credit (#13869).
-    #[serde(default)]
-    route_rivals: Vec<(String, Vec<String>)>,
 }
 
 /// One declared parameter of a Python function owner.
@@ -1780,10 +1775,19 @@ impl PythonAdapter {
         related_tests::apply_rival_definition_modules(&mut all_owners);
         related_tests::apply_class_facts(&mut all_owners);
         // A rival route in an unread file cannot be ruled out, so a partial
-        // walk or read refuses the route-response credit (#13869).
-        related_tests::apply_route_rivals(
+        // walk or read refuses the route-response credit, as does any source
+        // that reshapes responses or registers unrecorded routes (#13869).
+        // A test file can register a route too (`@app.get(...)` on a shared
+        // app); test-file owners are not collected, so one refuses as well.
+        related_tests::apply_route_overlaps(
             &mut all_owners,
-            refused_files == 0 && workspace_read.limits.is_empty(),
+            refused_files != 0
+                || !workspace_read.limits.is_empty()
+                || !workspace_read.io_failures.is_empty()
+                || workspace_read.sources.iter().any(|(file, source)| {
+                    related_tests::workspace_reshapes_responses(source)
+                        || (is_test_file(file) && related_tests::declares_route(source))
+                }),
         );
 
         // Walk-count cap disclosure: one named limitation carrying the

@@ -981,46 +981,130 @@ fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bo
         })
 }
 
-/// Records on each free-function owner the module paths of other workspace
-/// files defining a free function of the same name (#8759), the affirmative
-/// evidence [`bare_name_bound_to_other_module`] needs.
-/// Record, on each owner whose route returns its body, every other route of
-/// the workspace (#13869). When `complete` is false some file was not read,
-/// so a rival cannot be ruled out and the credit is withdrawn.
-pub(super) fn apply_route_rivals(owners: &mut [PythonOwner], complete: bool) {
-    let routes: Vec<(usize, String, Vec<String>)> = owners
+/// Withdraw the route-response credit (#13869) from an owner whose route may
+/// share a request with another route of the workspace: FastAPI and Flask
+/// dispatch in registration order, which is not read, so the response may
+/// come from the other handler. Two routes overlap when their verbs can meet
+/// and their paths can match one request (each segment pair equal, or either
+/// a parameter; a `:path` catch-all overlaps everything). The credit is
+/// withdrawn from every owner when `opaque` (some file was not read, or a
+/// source reshapes responses or registers routes the owners do not record,
+/// see [`workspace_reshapes_responses`]) or when any owner has a dynamic
+/// route decorator.
+pub(super) fn apply_route_overlaps(owners: &mut [PythonOwner], opaque: bool) {
+    let opaque = opaque
+        || owners
+            .iter()
+            .any(|owner| !owner.dynamic_route_decorators.is_empty());
+    let routes = |owner: &PythonOwner| -> Vec<(String, Vec<String>)> {
+        owner
+            .route_paths
+            .iter()
+            .enumerate()
+            .map(|(route, path)| {
+                (
+                    path.clone(),
+                    owner.route_methods.get(route).cloned().unwrap_or_default(),
+                )
+            })
+            .collect()
+    };
+    let shared: Vec<bool> = owners
         .iter()
         .enumerate()
-        .flat_map(|(index, owner)| {
-            owner
-                .route_paths
-                .iter()
-                .enumerate()
-                .map(move |(route, path)| {
-                    (
-                        index,
-                        path.clone(),
-                        owner.route_methods.get(route).cloned().unwrap_or_default(),
-                    )
+        .map(|(index, owner)| {
+            owner.route_returns_body
+                && !opaque
+                && routes(owner).iter().any(|(path, verbs)| {
+                    owners.iter().enumerate().any(|(other_index, other)| {
+                        other_index != index
+                            && routes(other).iter().any(|(other_path, other_verbs)| {
+                                verbs_meet(verbs, other_verbs)
+                                    && route_patterns_overlap(path, other_path)
+                            })
+                    })
                 })
         })
         .collect();
-    for (index, owner) in owners.iter_mut().enumerate() {
-        if !owner.route_returns_body {
-            continue;
-        }
-        if !complete {
+    for (owner, shared) in owners.iter_mut().zip(shared) {
+        if opaque || shared {
             owner.route_returns_body = false;
-            continue;
         }
-        owner.route_rivals = routes
-            .iter()
-            .filter(|(other, _, _)| *other != index)
-            .map(|(_, path, verbs)| (path.clone(), verbs.clone()))
-            .collect();
     }
 }
 
+/// Whether two routes' verb lists can accept one request (an empty list
+/// accepts any verb).
+fn verbs_meet(left: &[String], right: &[String]) -> bool {
+    left.is_empty() || right.is_empty() || left.iter().any(|verb| right.contains(verb))
+}
+
+/// Whether two route patterns can match one request path (#13869).
+fn route_patterns_overlap(left: &str, right: &str) -> bool {
+    let catch_all = |path: &str| path.contains(":path") || path.contains("path:");
+    if catch_all(left) || catch_all(right) {
+        return true;
+    }
+    let left: Vec<&str> = left.trim_end_matches('/').split('/').collect();
+    let right: Vec<&str> = right.trim_end_matches('/').split('/').collect();
+    let parameter = |segment: &str| {
+        (segment.starts_with('{') && segment.ends_with('}'))
+            || (segment.starts_with('<') && segment.ends_with('>'))
+    };
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(&right)
+            .all(|(a, b)| a == b || parameter(a) || parameter(b))
+}
+
+/// Whether a workspace source can answer a request with a body other than the
+/// handler's returned dict, or registers a route the owners do not record
+/// (#13869): an exception handler or middleware (which may answer with the
+/// changed key on an error path), an imperative route registration, a mount,
+/// or a catch-all `:path` parameter.
+pub(super) fn workspace_reshapes_responses(source: &str) -> bool {
+    const MARKERS: [&str; 13] = [
+        "exception_handler",
+        "errorhandler(",
+        "middleware",
+        "Middleware(",
+        "after_request",
+        "before_request",
+        "add_api_route(",
+        "add_url_rule(",
+        "add_route(",
+        "add_api_websocket_route(",
+        ".mount(",
+        ":path}",
+        "dependency_overrides",
+    ];
+    MARKERS.iter().any(|marker| source.contains(marker))
+}
+
+/// Whether a source has a decorator line that may register a route
+/// (`@app.get(...)`, `@bp.route(...)`, `@router.api_route(...)`).
+pub(super) fn declares_route(source: &str) -> bool {
+    const VERBS: [&str; 9] = [
+        ".get(",
+        ".post(",
+        ".put(",
+        ".patch(",
+        ".delete(",
+        ".options(",
+        ".head(",
+        ".route(",
+        ".api_route(",
+    ];
+    source.lines().any(|line| {
+        let line = line.trim_start();
+        line.starts_with('@') && VERBS.iter().any(|verb| line.contains(verb))
+    })
+}
+
+/// Records on each free-function owner the module paths of other workspace
+/// files defining a free function of the same name (#8759), the affirmative
+/// evidence [`bare_name_bound_to_other_module`] needs.
 pub(super) fn apply_rival_definition_modules(owners: &mut [PythonOwner]) {
     let mut modules_by_name: BTreeMap<String, Vec<(PathBuf, Vec<String>)>> = BTreeMap::new();
     for owner in owners.iter() {
@@ -2962,14 +3046,7 @@ pub(super) fn identified_route_response_names(
             for (name, verb, path) in route_response_assignments(test, receiver) {
                 let http_verb = ["get", "post", "put", "patch", "delete", "options", "head"]
                     .contains(&verb.as_str());
-                // Another route that accepts the same request may be the one
-                // dispatched (FastAPI and Flask match in registration order).
-                let rival_accepts = owner.route_rivals.iter().any(|(rival, rival_verbs)| {
-                    (rival_verbs.is_empty() || rival_verbs.contains(&verb))
-                        && python_route_matches_call_path(rival, &path)
-                });
                 if http_verb
-                    && !rival_accepts
                     && (verbs.is_empty() || verbs.contains(&verb))
                     && python_route_matches_call_path(route, &path)
                     && super::route_client::single_call_bindings(
@@ -3005,9 +3082,12 @@ fn route_response_assignments(test: &PythonTest, receiver: &str) -> Vec<(String,
         _ => return Vec::new(),
     };
     // A `match` capture or a walrus rebinds a name without an assignment
-    // statement, which the bound-once count does not read, so either refuses
-    // the read (fail closed).
+    // statement, which the bound-once count does not read, and an assignment
+    // to `.json` replaces the method the read calls, so each refuses the read
+    // (fail closed).
     if test.body_text.contains(":=")
+        || test.body_text.contains(".json =")
+        || test.body_text.contains(".json=")
         || test.body_text.lines().any(|line| {
             let line = line.trim_start();
             line.starts_with("match ") || line.starts_with("match(") || line.starts_with("case ")

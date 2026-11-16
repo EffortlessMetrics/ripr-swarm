@@ -4,9 +4,12 @@
   `assert response.json()["total"] == 190` or
   `self.assertEqual(response.json()["total"], 190)`, now reads `exposed`.
   Before, ripr reported a gap even though the test already checked the
-  changed value. A `status_code` check, another key, another route or an
-  unidentified app still never reads `exposed`, and neither does a handler
-  with a response model, a return annotation, another decorator, another
-  `return` or a `raise`, a `**` unpack or repeated key in the returned
-  dict, a changed `detail` key, an assertion on an unchanged sibling field,
-  or a request another route also accepts (#13869).
+  changed value. The credit stays off whenever the response might not be
+  the changed dict or the check might pass either way: a `status_code`
+  check, another key or route, an unidentified app, an expected side that
+  reads a response too, a response model or a return annotation other than
+  a bare `dict`, another decorator, another `return`, a `raise`, a `**`
+  unpack or repeated key, a changed `detail` key, a change JSON cannot see
+  (tuple to list, `5` to `5.0`), a route another route may share, and any
+  workspace with exception handlers, middleware or routes ripr cannot read
+  (#13869).

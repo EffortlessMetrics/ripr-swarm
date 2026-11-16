@@ -535,7 +535,95 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
     let walrus_test = format!(
         "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    if (response := client.get(\"/other\")):\n        assert response.json()[\"total\"] == 190\n"
     );
-    let cases: [(&str, &str, Edit, String); 8] = [
+    let handler_app = "from fastapi import FastAPI, Request\nfrom fastapi.exceptions import RequestValidationError\nfrom fastapi.responses import JSONResponse\n\napp = FastAPI()\n\n\n@app.exception_handler(RequestValidationError)\nasync def invalid(request: Request, exc):\n    return JSONResponse({\"total\": 190}, status_code=422)\n\n\n@app.get(\"/price\")\ndef price(qty: int):\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let middleware_app = "from fastapi import FastAPI\nfrom fastapi.responses import JSONResponse\n\napp = FastAPI()\n\n\n@app.middleware(\"http\")\nasync def gate(request, call_next):\n    return JSONResponse({\"total\": 190})\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let imperative_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\ndef cached():\n    return {\"total\": 190, \"count\": 3}\n\n\napp.add_api_route(\"/price\", cached)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let tuple_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": (1, 2), \"count\": 3}\n";
+    let tuple_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": (1, 2), \"count\": 3}",
+        new: "    return {\"total\": [1, 2], \"count\": 3}",
+    };
+    let float_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 5, \"count\": 3}\n";
+    let float_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": 5, \"count\": 3}",
+        new: "    return {\"total\": 5.0, \"count\": 3}",
+    };
+    let catch_all_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/{rest:path}\")\ndef fallback(rest: str):\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let dynamic_app = "from fastapi import FastAPI\n\napp = FastAPI()\nPRICE = \"/price\"\n\n\n@app.get(PRICE)\ndef cached():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let two_responses = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    first = client.get(\"/price\")\n    second = client.get(\"/price\")\n    assert first.json()[\"total\"] == second.json()[\"total\"]\n"
+    );
+    let cases: Vec<(&str, &str, Edit, String)> = vec![
+        (
+            "two responses compared",
+            PRICE_APP,
+            PRICE_EDIT,
+            two_responses,
+        ),
+        (
+            "inline request on the expected side",
+            PRICE_APP,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == client.get(\"/price\").json()[\"total\"]"),
+        ),
+        (
+            "the same read in other quotes",
+            PRICE_APP,
+            PRICE_EDIT,
+            read("assert response.json()['total'] == response.json()[\"total\"]"),
+        ),
+        (
+            "exception handler",
+            handler_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "middleware",
+            middleware_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "imperative route",
+            imperative_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "tuple to list",
+            tuple_app,
+            tuple_edit,
+            read("assert response.json()[\"total\"] == [1, 2]"),
+        ),
+        (
+            "int to float",
+            float_app,
+            float_edit,
+            read("assert response.json()[\"total\"] == 5"),
+        ),
+        (
+            "replaced json method",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "response.json = lambda: {\"total\": 190}\n    assert response.json()[\"total\"] == 190",
+            ),
+        ),
+        (
+            "catch-all route",
+            catch_all_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "dynamic route path",
+            dynamic_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
         (
             "unchanged sibling",
             sibling_app,
@@ -582,6 +670,19 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
         if finding.class == ExposureClass::Exposed {
             failures.push(format!("{name}: read exposed"));
         }
+    }
+    // A test file that registers its own route on the app.
+    let test_route = format!(
+        "{CLIENT_IMPORTS}@app.get(\"/price\")\ndef cached():\n    return {{\"total\": 190, \"count\": 3}}\n\n\ndef test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 190\n"
+    );
+    let finding = check_style(
+        "test-file route",
+        &[("src/app.py", PRICE_APP)],
+        PRICE_EDIT,
+        &test_route,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        failures.push("test-file route: read exposed".to_string());
     }
     // A client over another application does not reach the owner's handler.
     let rival = "from fastapi import FastAPI\nfrom fastapi.testclient import TestClient\n\nfrom src.app import app\n\nother_app = FastAPI()\n\n\ndef test_price():\n    client = TestClient(other_app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 190\n";
