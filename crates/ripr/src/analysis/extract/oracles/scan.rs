@@ -6101,6 +6101,45 @@ fn t() {
     }
 
     #[test]
+    fn a_semicolon_inside_an_array_length_does_not_hide_the_placeholder() -> Result<(), String> {
+        // #14810 round 3: `[u8; 32]` is a shape `agent stub --write` can
+        // actually emit (`u8` is std, `32` is a digit), so the depth-aware
+        // split must keep it one statement.
+        let body = r#"
+fn t() {
+    let expected: [u8; 32] = todo!("x");
+    assert_eq!(price(10), expected);
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.strength != OracleStrength::Unknown {
+            return Err(format!(
+                "a `;` inside the array length must not hide the placeholder: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_equality_operator_in_the_initializer_is_not_the_binding() -> Result<(), String> {
+        // #14810 round 3: the binding `=` is the first at depth 0, so the
+        // `==` in the initializer is never mistaken for it.
+        let body = r#"
+fn t() {
+    let expected: bool = price(10) == 7;
+    assert_eq!(flag(), expected);
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
+            return Err(format!(
+                "a comparison initializer is not a placeholder: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn a_filled_expected_value_keeps_its_strong_credit() -> Result<(), String> {
         let filled = STUB_BODY.replace(
             r#"let expected: u32 = todo!("ripr: write the value `price` should return");"#,
