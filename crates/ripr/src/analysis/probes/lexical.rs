@@ -18,6 +18,12 @@ pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     // must not hide a declaration, and string/comment contents must not
     // mint behavioral families downstream.
     let masked = mask_comments_and_strings(text);
+    // #14181: `const { assert!(N <= 249) };` is checked when the function is
+    // instantiated. A violating input fails to build, so no test can pass a
+    // value across its comparison and no runtime family applies.
+    if is_inline_const_assertion(&masked) {
+        return vec![ProbeFamily::StaticUnknown];
+    }
     if is_constant_declaration(&masked) {
         return classify_constant_declaration(&masked);
     }
@@ -964,9 +970,92 @@ fn is_constant_declaration(text: &str) -> bool {
     rest.starts_with("const ") || rest.starts_with("static ")
 }
 
+/// A statement that is one inline const block holding only an assertion
+/// macro: `const { assert!(..) };`, also `assert_eq!`/`assert_ne!` and the
+/// `debug_` forms. Read on masked text, so a quoted `}` cannot end it. A const
+/// block producing a value (`let x = const { 1 + 2 };`) is runtime-visible
+/// and is not matched.
+fn is_inline_const_assertion(masked: &str) -> bool {
+    let Some(rest) = masked.trim().strip_prefix("const") else {
+        return false;
+    };
+    let Some(body) = rest.trim_start().strip_prefix('{') else {
+        return false;
+    };
+    let tail = body.trim_end();
+    let tail = tail.strip_suffix(';').map_or(tail, str::trim_end);
+    let Some(inner) = tail.strip_suffix('}') else {
+        return false;
+    };
+    let inner = inner.trim();
+    let inner = inner.strip_suffix(';').map_or(inner, str::trim_end);
+    let Some(call) = [
+        "assert!",
+        "assert_eq!",
+        "assert_ne!",
+        "debug_assert!",
+        "debug_assert_eq!",
+        "debug_assert_ne!",
+    ]
+    .iter()
+    .find_map(|name| inner.strip_prefix(name)) else {
+        return false;
+    };
+    let call = call.trim_start();
+    // One macro call spanning the whole block: its opening parenthesis closes
+    // at the block's end, so `assert!(a); f()` is not a lone assertion.
+    let Some(args) = call.strip_prefix('(') else {
+        return false;
+    };
+    let mut depth = 1usize;
+    for (at, byte) in args.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return at + 1 == args.len();
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inline_const_assertion_selects_no_runtime_family() {
+        for line in [
+            "const { assert!(N <= 249) };",
+            "    const { assert!(Self::PREFIX.len() + N <= u8::MAX as usize) };",
+            "const { assert_eq!(N, 4) }",
+            "const { assert!(N > 0, \"N must be } positive\"); };",
+            "const {assert!(N < 8)};",
+        ] {
+            assert_eq!(
+                classify_changed_line(line),
+                vec![ProbeFamily::StaticUnknown],
+                "{line}"
+            );
+        }
+        // A const block that yields a value, a declaration, or an assertion
+        // followed by other code keeps its ordinary reading.
+        for line in [
+            "let ok = const { N <= 249 };",
+            "const LIMIT: bool = N <= 249;",
+            "const { assert!(N <= 249); f(x) > 3 };",
+        ] {
+            assert!(
+                classify_changed_line(line).contains(&ProbeFamily::Predicate),
+                "{line}: {:?}",
+                classify_changed_line(line)
+            );
+        }
+    }
 
     const MAX_LINE: &str =
         "let idx = self.queue.iter().enumerate().max_by_key(|(_, t)| t.prio).map(|(i, _)| i)?;";
