@@ -2600,8 +2600,10 @@ impl PropagationWitnessDiagnostic {
 }
 
 /// Reach-summary suffix for an owner no source, test or doc in the workspace
-/// names (RIPR-SPEC-0219). The verdict corpus keys on this wording.
-pub(in crate::analysis) const UNREFERENCED_IN_WORKSPACE: &str = "(unreferenced in workspace)";
+/// names (RIPR-SPEC-0219). The verdict corpus keys on this wording; the
+/// domain owns it so `Finding::is_unreferenced_no_static_path` reads the
+/// same text the producer writes (#14820).
+pub(in crate::analysis) use crate::domain::UNREFERENCED_IN_WORKSPACE;
 
 fn unreached_stage(stage: &str) -> StageEvidence {
     StageEvidence::new(

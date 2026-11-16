@@ -2613,3 +2613,263 @@ fn refusal_record_names_the_identity_and_only_a_runnable_next_command() {
         assert_eq!(forged.lines().count(), 3, "{forged:?}");
     }
 }
+
+/// #14820: a changed owner the producer established nothing in the workspace
+/// calls (RIPR-SPEC-0219 marker, reach ruled out, no static limit).
+fn unreferenced_owner_finding(id: &str, line: usize) -> Finding {
+    let mut gap = finding(id, ExposureClass::NoStaticPath, line);
+    gap.probe.owner = Some(crate::domain::SymbolId("ver::compare".to_string()));
+    gap.ripr.reach = StageEvidence::new(
+        StageState::No,
+        Confidence::Medium,
+        "No test path reaches the owner (unreferenced in workspace)",
+    );
+    gap.missing = vec!["No relevant oracle was detected.".to_string()];
+    gap
+}
+
+/// #14820: an owner nothing calls is the plainest test-side gap, so the run
+/// counts it in `gaps=`, names the uncalled owner, and drops `stop=`.
+#[test]
+fn unreferenced_owner_reads_as_a_gap_not_a_cannot_tell_limit() {
+    let text = rendered(&output(vec![unreferenced_owner_finding("probe:cmp", 44)]));
+    assert!(text.contains(" gaps=1 "), "{text}");
+    assert!(!text.contains("\nstop="), "{text}");
+    assert!(!text.contains("\nlimits="), "{text}");
+    assert!(
+        text.contains(
+            "no_static_path|src/lib.rs:44|pct >= 50|missing=no test calls `compare`; assert its exact result in a new test|test=-|id=probe:cmp\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|line| line == "next=ripr explain --format agent probe:cmp"),
+        "{text}"
+    );
+
+    // Without an owner the hint still names the action, not the generic
+    // "no oracle" prose.
+    let mut ownerless = unreferenced_owner_finding("probe:anon", 9);
+    ownerless.probe.owner = None;
+    let text = rendered(&output(vec![ownerless]));
+    assert!(
+        text.contains(
+            "missing=no test calls the changed function; assert its exact result in a new test|"
+        ),
+        "{text}"
+    );
+
+    // An established missing discriminator still wins over the owner hint.
+    let mut valued = unreferenced_owner_finding("probe:valued", 10);
+    valued.activation.missing_discriminators = weak_gap("x", 1).activation.missing_discriminators;
+    let text = rendered(&output(vec![valued]));
+    assert!(text.contains("|missing=pct == 50|"), "{text}");
+}
+
+/// #14820 negatives: every ambiguous no_static_path shape stays a fail-closed
+/// limit. Reach ruled out without the unreferenced marker (an owner some code
+/// calls on a path ripr cannot trace), the marker under a typed static limit,
+/// reach not ruled out, a non-current subject, and a non-no_static_path class.
+#[test]
+fn ambiguous_no_static_path_findings_stay_limits() {
+    let mut unmarked = unreferenced_owner_finding("probe:unmarked", 1);
+    unmarked.ripr.reach = StageEvidence::new(
+        StageState::No,
+        Confidence::Medium,
+        "ripr cannot trace entry `parse` -> owner `number`",
+    );
+    let mut typed_limit = unreferenced_owner_finding("probe:typed", 2);
+    typed_limit.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+    let mut reach_unknown = unreferenced_owner_finding("probe:unknown-reach", 3);
+    reach_unknown.ripr.reach.state = StageState::Unknown;
+    let mut base_side = unreferenced_owner_finding("probe:deleted", 4);
+    base_side.source_currentness = SourceCurrentness::BaseDeleted;
+    let mut other_class = unreferenced_owner_finding("probe:static-unknown", 5);
+    other_class.class = ExposureClass::StaticUnknown;
+    for shaped in [unmarked, typed_limit, reach_unknown, base_side, other_class] {
+        assert!(!shaped.is_unreferenced_no_static_path(), "{}", shaped.id);
+        let id = shaped.id.clone();
+        let text = rendered(&output(vec![shaped]));
+        assert!(text.contains(" gaps=0 "), "{id}: {text}");
+        assert!(!text.contains("no test calls"), "{id}: {text}");
+    }
+    // A run that mixes one unreferenced owner with an ambiguous limit counts
+    // only the unreferenced owner as a gap and keeps the other as a limit.
+    let mut traced = unreferenced_owner_finding("probe:traced", 7);
+    traced.ripr.reach.summary = "ripr cannot trace entry `parse`".to_string();
+    let text = rendered(&output(vec![
+        unreferenced_owner_finding("probe:cmp", 6),
+        traced,
+    ]));
+    assert!(text.contains(" gaps=1 "), "{text}");
+    assert!(text.contains("\nlimits=no_static_path:1\n"), "{text}");
+    assert!(!text.contains("|id=probe:traced"), "{text}");
+}
+
+/// #14820: `ripr explain --format agent` on the same finding reports an open
+/// test-side gap instead of stopping on a limit.
+#[test]
+fn explain_agent_unreferenced_owner_is_an_open_gap() {
+    let root = std::path::Path::new("repo");
+    let ctx = "ripr context --at probe:cmp";
+    let open = render_finding(
+        &unreferenced_owner_finding("probe:cmp", 44),
+        root,
+        ctx,
+        false,
+    );
+    assert!(open.contains("\nopen="), "{open}");
+    assert!(!open.contains("\nstop="), "{open}");
+    let mut unmarked = unreferenced_owner_finding("probe:cmp", 44);
+    unmarked.ripr.reach.summary = "No test path reaches the owner".to_string();
+    let limited = render_finding(&unmarked, root, ctx, false);
+    assert!(!limited.contains("\nopen="), "{limited}");
+}
+
+/// #14820: a preview-language finding with the marker stays a limit, and a
+/// policy-suppressed one stops in `explain` instead of opening.
+#[test]
+fn preview_or_suppressed_unreferenced_owner_is_not_an_open_gap() {
+    let mut preview = unreferenced_owner_finding("probe:preview", 3);
+    preview.language_status = Some(crate::domain::LanguageStatus::Preview);
+    let text = rendered(&output(vec![preview]));
+    assert!(text.contains(" gaps=0 "), "{text}");
+    assert!(!text.contains("no test calls"), "{text}");
+
+    let root = std::path::Path::new("repo");
+    let ctx = "ripr context --at probe:cmp";
+    let suppressed = render_finding(
+        &unreferenced_owner_finding("probe:cmp", 44),
+        root,
+        ctx,
+        true,
+    );
+    assert!(!suppressed.contains("\nopen="), "{suppressed}");
+    assert!(
+        suppressed.contains("\nstop=this finding is suppressed by policy"),
+        "{suppressed}"
+    );
+}
+
+/// #14820: gap rows fold only when the printed rows agree, so two unreferenced
+/// owners on the same line and expression keep separate rows.
+#[test]
+fn unreferenced_owner_rows_fold_on_the_printed_owner_hint() {
+    let first = unreferenced_owner_finding("probe:a", 5);
+    let mut second = unreferenced_owner_finding("probe:b", 5);
+    second.probe.owner = Some(crate::domain::SymbolId("ver::other".to_string()));
+    let text = rendered(&output(vec![first, second]));
+    assert!(text.contains(" gaps=2 "), "{text}");
+    assert!(text.contains("no test calls `compare`"), "{text}");
+    assert!(text.contains("no test calls `other`"), "{text}");
+
+    let text = rendered(&output(vec![
+        unreferenced_owner_finding("probe:a", 5),
+        unreferenced_owner_finding("probe:b", 5),
+    ]));
+    assert!(text.contains(" gaps=1 folded_gaps=1 "), "{text}");
+}
+
+/// A throwaway workspace for the producer-to-renderer #14820 path.
+#[cfg(feature = "lang-rust")]
+struct UnreferencedWorkspace(PathBuf);
+
+#[cfg(feature = "lang-rust")]
+impl UnreferencedWorkspace {
+    fn new(extra_source: &str) -> Result<Self, String> {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-agent-unreferenced-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        let workspace = Self(root);
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/rust_uncalled_owner_same_file_tests");
+        let read = |path: PathBuf| std::fs::read_to_string(&path).map_err(|e| e.to_string());
+        let source = read(fixture.join("input/src/lib.rs"))?;
+        std::fs::write(
+            workspace.0.join("Cargo.toml"),
+            read(fixture.join("input/Cargo.toml"))?,
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            workspace.0.join("src/lib.rs"),
+            format!("{source}{extra_source}"),
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            workspace.0.join("diff.patch"),
+            read(fixture.join("diff.patch"))?,
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(workspace)
+    }
+
+    fn agent_text(&self) -> Result<(String, Vec<Finding>), String> {
+        let output = crate::app::check_workspace(crate::app::CheckInput {
+            root: self.0.clone(),
+            diff_file: Some(self.0.join("diff.patch")),
+            ..Default::default()
+        })?;
+        Ok((rendered(&output), output.findings))
+    }
+}
+
+#[cfg(feature = "lang-rust")]
+impl Drop for UnreferencedWorkspace {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// #14820 production path: the real producer marks the uncalled
+/// `untested_rounding` owner and the agent surface lists it as a gap. Adding
+/// one non-test caller withholds the marker, so the same change no longer
+/// gets the uncalled-owner hint.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn producer_marked_unreferenced_owner_reaches_the_agent_gap_row() -> Result<(), String> {
+    let (text, findings) = UnreferencedWorkspace::new("")?.agent_text()?;
+    assert!(!findings.is_empty(), "{text}");
+    assert!(
+        findings
+            .iter()
+            .all(|f| f.class == ExposureClass::NoStaticPath
+                && f.ripr
+                    .reach
+                    .summary
+                    .ends_with("(unreferenced in workspace)")
+                && f.is_unreferenced_no_static_path()),
+        "{findings:#?}"
+    );
+    assert!(
+        text.contains(&format!(" gaps={} ", findings.len())),
+        "{text}"
+    );
+    assert!(
+        text.contains("missing=no test calls `untested_rounding`"),
+        "{text}"
+    );
+    assert!(!text.contains("\nstop="), "{text}");
+
+    let caller = "\npub fn rounded_total(cents: u32) -> u32 {\n    untested_rounding(cents)\n}\n";
+    let (text, findings) = UnreferencedWorkspace::new(caller)?.agent_text()?;
+    assert!(!findings.is_empty(), "{text}");
+    assert!(
+        findings.iter().all(|f| !f.is_unreferenced_no_static_path()
+            && !f
+                .ripr
+                .reach
+                .summary
+                .ends_with("(unreferenced in workspace)")),
+        "{findings:#?}"
+    );
+    // The caller sits beside the same-file tests, so ripr reads it as a weak
+    // path; whatever the class, the uncalled-owner hint is withheld.
+    assert!(!text.contains("no test calls"), "{text}");
+    Ok(())
+}
