@@ -314,7 +314,8 @@ fn stale_old_type_test_is_refused_when_the_raise_message_is_an_f_string() -> Res
 }
 
 /// #13753: the `expected_exception=` keyword and a tuple of the old class are
-/// the same stale old-type pin; a tuple that also names the new class is not.
+/// the same stale old-type pin; a tuple that also names the new class or a
+/// broader class still passes against the new raise and closes.
 #[test]
 fn keyword_and_tuple_old_type_tests_are_refused_unless_the_tuple_names_the_new_type()
 -> Result<(), String> {
@@ -322,6 +323,7 @@ fn keyword_and_tuple_old_type_tests_are_refused_unless_the_tuple_names_the_new_t
         ("keyword", "expected_exception=ValueError", true),
         ("tuple", "(ValueError, ValueError)", true),
         ("tuple-new", "(ValueError, TypeError)", false),
+        ("tuple-broad", "(ValueError, Exception)", false),
     ] {
         let (_guard, root) = repository(label)?;
         let attempt = start_attempt(&root)?;
@@ -341,8 +343,14 @@ fn keyword_and_tuple_old_type_tests_are_refused_unless_the_tuple_names_the_new_t
                 after.status.code()
             ));
         }
-        if !refused && stale {
-            return Err(format!("{label}: refused as stale:\n{text}"));
+        if !refused {
+            if !after.status.success() || stale {
+                return Err(format!(
+                    "{label}: must close, got {:?}:\n{text}",
+                    after.status.code()
+                ));
+            }
+            need(&text, "closed: weakly_exposed -> exposed", label)?;
         }
     }
     Ok(())
