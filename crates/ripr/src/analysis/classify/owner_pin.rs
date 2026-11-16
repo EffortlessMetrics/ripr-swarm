@@ -1141,7 +1141,7 @@ impl OwnerPinSyntax {
         // the disclosure names it rather than the gate. With nothing left to
         // refuse, the shared gate decides: admitted when the owner is reached
         // only through the declaration, otherwise the gate itself withholds.
-        let skip = self.module_edge_child_for_test(test, index);
+        let skip = self.module_edge_child_for_test(module_refusal, test, index);
         let inner = self.context_refusal_without_provenance(
             test,
             assertion,
@@ -1149,13 +1149,45 @@ impl OwnerPinSyntax {
             matches_context,
             skip.as_deref(),
         );
-        if inner.is_some() {
-            return inner.map(|refusal| Self::refusal_with_value_guard(refusal, assertion));
+        if let Some(inner) = inner {
+            // #14537 review: only an unestablished gate lets the rest of the
+            // context speak. When the declaration's gate is not unestablished
+            // (`cfg(any())`, an always-off `cfg_attr`, or a declaration ripr
+            // cannot read), no build compiles that code, so a refusal read
+            // past it is not this assertion's limit - and under RIPR-SPEC-0240
+            // only a real limit withholds a gap. Keep the declaration.
+            if !self.module_gate_is_unestablished(module_refusal, index) {
+                return refusal;
+            }
+            return Some(Self::refusal_with_value_guard(inner, assertion));
         }
         if shared_gate {
             return None;
         }
         refusal
+    }
+
+    /// Whether the `mod` declaration behind `refusal` carries a `cfg` ripr
+    /// cannot evaluate (so the shared-gate rule can apply), as opposed to a
+    /// provably-off gate, a declaration it cannot read, or a plain module.
+    /// The gate reader is the syntax layer's, the same one the producer and
+    /// the shared-gate rule use (#14537 review).
+    fn module_gate_is_unestablished(&self, refusal: &AssertionRefusal, index: &RustIndex) -> bool {
+        let Some((parent, line, declaration)) = refusal.module_declaration_site() else {
+            return false;
+        };
+        index
+            .files()
+            .get(parent)
+            .filter(|facts| !facts.used_lexical_fallback)
+            .and_then(|facts| {
+                crate::analysis::syntax::module_declaration_unestablished_gate(
+                    &facts.source,
+                    line,
+                    declaration,
+                )
+            })
+            == Some(true)
     }
 
     fn admits_assertion_family(
@@ -2417,17 +2449,35 @@ impl OwnerPinSyntax {
     }
 
     /// The Module edge child to skip for a predicate equality whose test file
-    /// is composed through a gated `mod`: the file that includes the test
-    /// fragment, or the test file itself when it is the module child. The
-    /// Include edge further up the chain is left in place, so an include
-    /// fragment still refuses as `IncludedFile` (#14537).
-    fn module_edge_child_for_test(&self, test: &TestSummary, index: &RustIndex) -> Option<PathBuf> {
+    /// is composed through a gated `mod`. The edge is the refused declaration,
+    /// so a test in an ungated child module of that `mod`
+    /// (`lib.rs: mod python;`, `src/python.rs: mod tests;`) skips
+    /// `src/python.rs` rather than the inner declaration (#14537 review). An
+    /// include fragment keeps its parent, and anything unreadable falls back to
+    /// the test file. The Include edge further up the chain is left in place,
+    /// so an include fragment still refuses as `IncludedFile` (#14537).
+    fn module_edge_child_for_test(
+        &self,
+        refusal: &AssertionRefusal,
+        test: &TestSummary,
+        index: &RustIndex,
+    ) -> Option<PathBuf> {
         let facts = index.files().get(&test.file)?;
         let context = self.execution_context(&test.file, index);
         let edges = context
             .as_ref()
             .as_ref()
             .map_or(&facts.role_provenance.edges, |context| &context.edges);
+        if let Some((parent, line, declaration)) = refusal.module_declaration_site()
+            && let Some(edge) = edges.iter().find(|edge| {
+                edge.kind == SourceRoleProvenanceEdgeKind::Module
+                    && edge.parent == parent
+                    && edge.line == line
+                    && edge.declaration == declaration
+            })
+        {
+            return Some(edge.child.clone());
+        }
         edges
             .iter()
             .find(|edge| {

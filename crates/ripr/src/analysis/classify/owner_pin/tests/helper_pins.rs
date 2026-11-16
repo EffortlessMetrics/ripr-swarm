@@ -872,7 +872,12 @@ fn a_gated_predicate_assert_eq_in_an_include_fragment_is_still_refused() -> Resu
         .find(|oracle| oracle.text.starts_with("assert_eq!(gate("))
         .ok_or("premise: the test's assert_eq! parses")?;
     let syntax = OwnerPinSyntax::default();
-    let skip = syntax.module_edge_child_for_test(test, &index);
+    // The retry skips the refused declaration's own edge; here the refusal sits
+    // above an include fragment, so the skip is the include's parent.
+    let outer = syntax
+        .context_refusal(test, &assertion, &index, false)
+        .ok_or("premise: the include fragment refuses")?;
+    let skip = syntax.module_edge_child_for_test(&outer, test, &index);
     let refusal =
         syntax.context_refusal_without_provenance(test, &assertion, &index, false, skip.as_deref());
     assert!(
@@ -916,6 +921,94 @@ fn a_predicate_assert_eq_in_a_known_disabled_module_is_still_refused() -> Result
     assert!(
         !syntax.admits_equality_assertion(&probe, Some(owner), test, &assertion, &index),
         "a predicate assert_eq! in a module no build compiles is not admitted"
+    );
+    Ok(())
+}
+
+/// #14537 review: a value guard does not convert a provably-off module's
+/// refusal into a ripr limit. Skipping the disabled declaration reads code no
+/// build compiles, so what it finds is not this assertion's limit and cannot
+/// withhold a gap (RIPR-SPEC-0240). The guard is `>` against an integer
+/// expected operand, which is the shape `value_guard_subject` converts to
+/// `ValueGuard`; the boolean cases above never reach the conversion.
+#[test]
+fn a_value_guarded_predicate_assert_eq_in_a_disabled_module_is_still_refused() -> Result<(), String>
+{
+    let lib = "#[cfg(any())]\nmod python;\n\npub fn gate(value: u32) -> u32 {\n    value + 1\n}\n";
+    let python = "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn pins() {\n        if gate(10) > 11 {\n            return;\n        }\n        assert_eq!(gate(10), 11);\n    }\n}\n";
+    let index = index(&[(LIB, lib), ("src/python.rs", python)]);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "pins")
+        .ok_or("premise: `pins` is indexed")?;
+    let owner = owner(&index, "gate");
+    let probe = super::predicate_probe(owner, "value + 1");
+    let assertion = parser_oracles_for_function(&test.body, test.start_line)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|oracle| oracle.text.starts_with("assert_eq!(gate("))
+        .ok_or("premise: the test's assert_eq! parses")?;
+    let syntax = OwnerPinSyntax::default();
+    let refusal = syntax.equality_assertion_refusal(&probe, Some(owner), test, &assertion, &index);
+    assert!(
+        matches!(refusal, Some(AssertionRefusal::ModuleDeclaration { .. })),
+        "a value-guarded predicate assert_eq! in a `#[cfg(any())]` module keeps the \
+         module-declaration refusal (refusal={refusal:?})"
+    );
+    assert!(
+        refusal
+            .as_ref()
+            .is_none_or(|refusal| !refusal.is_analyzer_limit()),
+        "a disabled module's refusal is not a limit of ripr's reading (refusal={refusal:?})"
+    );
+    assert!(
+        !syntax.admits_equality_assertion(&probe, Some(owner), test, &assertion, &index),
+        "a value-guarded predicate assert_eq! in a module no build compiles is not admitted"
+    );
+    Ok(())
+}
+
+/// #14537 review: the retry skips the refused declaration's own edge, so a test
+/// in an ungated child module of the gated `mod` still shares the bare
+/// `assert!`'s admission. The inline shape was the only one covered before.
+#[test]
+fn a_predicate_assert_eq_in_an_ungated_child_module_of_a_gated_mod_is_admitted()
+-> Result<(), String> {
+    let lib = "#[cfg(feature = \"lang-python\")]\nmod python;\n";
+    let python = "pub fn gate(value: u32) -> bool {\n    10 <= value\n}\n\nmod tests;\n";
+    let tests = "use super::*;\n\n#[test]\nfn pins() {\n    assert_eq!(gate(10), true);\n}\n";
+    let index = index(&[
+        (LIB, lib),
+        ("src/python.rs", python),
+        ("src/python/tests.rs", tests),
+    ]);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "pins")
+        .ok_or("premise: `pins` is indexed")?;
+    // The owner lives inside the gated module, so the gate is the only path to it.
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "gate" && function.file == Path::new("src/python.rs"))
+        .ok_or("premise: `gate` is indexed from src/python.rs")?;
+    let probe = super::predicate_probe(owner, "10 <= value");
+    let assertion = parser_oracles_for_function(&test.body, test.start_line)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|oracle| oracle.text.starts_with("assert_eq!(gate("))
+        .ok_or("premise: the test's assert_eq! parses")?;
+    let syntax = OwnerPinSyntax::default();
+    let refusal = syntax.equality_assertion_refusal(&probe, Some(owner), test, &assertion, &index);
+    assert!(
+        refusal.is_none(),
+        "a test in an ungated child module of the gated mod is admitted (refusal={refusal:?})"
+    );
+    assert!(
+        syntax.admits_equality_assertion(&probe, Some(owner), test, &assertion, &index),
+        "the shared-gate rule reaches a test composed through a nested `mod tests;`"
     );
     Ok(())
 }
