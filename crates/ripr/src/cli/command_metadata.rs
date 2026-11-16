@@ -210,6 +210,9 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
         // `gate check` composes review-comments with the same evaluator and
         // exit mapping (RIPR-SPEC-0435): a producer failure is config_error.
         "cmd:gate.evaluate" | "cmd:gate.check" => Some(EXIT_GATE_EVALUATE),
+        // The CI packet runs the gate as a required step: a blocked gate is
+        // its only exit 3, every other required failure is 2.
+        "cmd:reports.ci-packet" => Some(EXIT_GATE_EVALUATE),
         "cmd:agent.verify" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
         // An unknown `--seam-id` exits 3 with prose on stderr and empty stdout.
         "cmd:agent.start" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
@@ -1533,9 +1536,10 @@ const METADATA: &[CommandMetadata] = &[
         next_routes: &["reports ci-summary", "reports index", "first-pr"],
         stop_states: &[
             "advisory steps log a failure and continue",
-            "a failed diff capture, gate evaluation, or blocking-mode producer exits nonzero after the packet is written",
+            "a blocked gate exits 3 after the packet is written",
+            "a failed diff capture, gate evaluation, or blocking-mode producer exits 2 after the packet is written",
         ],
-        exit: EXIT_COMPLETED_OR_FAILED,
+        exit: EXIT_GATE_EVALUATE,
         limitations: "runs the same ripr commands the workflow steps ran; it reads no token and posts no PR comments.",
         not_applicable_reason: None,
     },
@@ -3316,6 +3320,14 @@ mod tests {
     #[test]
     fn gate_check_row_cannot_drop_the_blocked_decision_exit() -> Result<(), String> {
         let rows = with_mutated_row("cmd:gate.check", |row| {
+            row.exit = EXIT_COMPLETED_OR_FAILED;
+        })?;
+        expect_single_violation(&rows, "contradicts the implemented mapping")
+    }
+
+    #[test]
+    fn ci_packet_row_cannot_drop_the_blocked_gate_exit() -> Result<(), String> {
+        let rows = with_mutated_row("cmd:reports.ci-packet", |row| {
             row.exit = EXIT_COMPLETED_OR_FAILED;
         })?;
         expect_single_violation(&rows, "contradicts the implemented mapping")

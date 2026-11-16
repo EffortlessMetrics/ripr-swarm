@@ -95,10 +95,15 @@ export function isWindowsHost(): boolean {
  * editor may offer to copy: Python's pytest and unittest routes, and the
  * TypeScript launchers that run only the package's installed binary
  * (RIPR-SPEC-0085). `npx` without `--no-install` and `bunx` are absent on
- * purpose: they fetch a missing package from the registry.
+ * purpose: they fetch a missing package from the registry. Pytest may run
+ * under the project's own POSIX venv interpreter (`.venv/bin/python`,
+ * `venv/bin/python`; RIPR-SPEC-0028, #13801), matching the server's
+ * `PYTEST_VERIFY_INTERPRETERS`.
  */
 export const TEST_RUNNER_VERIFY_COMMAND_PREFIXES: readonly string[] = [
   'python -m pytest',
+  '.venv/bin/python -m pytest',
+  'venv/bin/python -m pytest',
   'pytest',
   'python -m unittest',
   ...['jest', 'vitest run', 'ava'].flatMap((bin) => [

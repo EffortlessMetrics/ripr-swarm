@@ -23,7 +23,7 @@ pub(crate) mod probes;
 mod proof_harness;
 mod repo;
 
-pub(crate) use probe_shape::producer_gap_names_seam_shape;
+pub(crate) use probe_shape::{producer_gap_names_seam_shape, rust_gap_id_for_seam_shape};
 pub(crate) use probes::{
     changed_let_binding, mask_rust_char_literals, mask_rust_comments_and_strings,
 };
@@ -2404,6 +2404,19 @@ impl<'a> GeneratedRustSources<'a> {
         self.is_convention_excluded(path) || self.has_stronger_exclusion(path)
     }
 
+    /// Whether the repository's own `[languages.rust] generated_file_patterns`
+    /// excludes this path (#13894). That is scope the operator configured, as
+    /// opposed to the built-in naming conventions, generator headers and
+    /// vendor markers the operator did not ask for.
+    pub(crate) fn is_configured_pattern_exclusion(&self, path: &Path) -> bool {
+        route(path) == Some(LanguageId::Rust)
+            && self
+                .config
+                .generated_file_patterns
+                .iter()
+                .any(|pattern| generated_pattern_matches(pattern, path))
+    }
+
     /// Whether an exact handwritten declaration can recover this skipped path.
     pub(crate) fn is_convention_only_exclusion(&self, path: &Path) -> bool {
         self.is_convention_excluded(path) && !self.has_stronger_exclusion(path)
@@ -2623,14 +2636,15 @@ impl RustAdapter {
         }
         let (rust_files, unreadable_dirs) =
             workspace::discover_rust_files_tolerating_unreadable(&options.root)?;
-        let mut unreadable_unchanged_paths = unreadable_dirs
-            .into_iter()
-            .map(|(path, _)| path)
-            .collect::<Vec<_>>();
         let changed_paths = changed_files
             .iter()
             .map(|file| file.path.clone())
             .collect::<BTreeSet<_>>();
+        workspace::refuse_unreadable_dir_over_changed_path(&unreadable_dirs, &changed_paths)?;
+        let mut unreadable_unchanged_paths = unreadable_dirs
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect::<Vec<_>>();
         let (rust_files, unreadable_files) =
             workspace::split_unreadable_unchanged_files(&options.root, rust_files, &changed_paths);
         unreadable_unchanged_paths.extend(unreadable_files);
@@ -2945,12 +2959,9 @@ impl RustAdapter {
         );
         rust_consumed_sources.file_fact_cache = Some(cached.file_fact_cache.clone());
         let mut index = cached.index;
-        if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
-            eprintln!("{disclosure}");
-        }
-        if let Some(disclosure) = rust_index::module_composition_disclosure(&index) {
-            eprintln!("{disclosure}");
-        }
+        // #14700: within one `ripr check`, this index owns each limitation
+        // family; a scoped inventory index built later stays silent.
+        rust_index::eprint_index_limit_disclosures(&index);
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
         // #13703: keep raw bytes only for files whose indexed text differs;
         // origin capture borrows the rest from the index.

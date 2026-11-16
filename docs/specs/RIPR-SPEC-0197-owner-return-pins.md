@@ -291,7 +291,14 @@ wrong credits.
    the attribute carries no arguments (#5040), and under `#[actix_rt::test]`
    and `#[actix_web::test]` on the same terms (#14073): the exact
    crate-qualified path, the crate not rebound in the test's module, and no
-   arguments (`system = ..` swaps the runtime). An `async` owner's return value is then read
+   arguments (`system = ..` swaps the runtime). `#[test_log::test]` (#14211)
+   runs the unchanged body after installing a logger: it is admitted bare on a
+   sync `fn`, or as exactly `#[test_log::test(tokio::test)]` on an `async fn`,
+   with neither `test_log` nor `tokio` rebound in the test's module.
+   `#[tracing_test::traced_test]` (#14213) installs a subscriber and enters a
+   span before the unchanged body: it is admitted by its crate-qualified path,
+   or by the bare name bound by one unrenamed `use tracing_test::traced_test`,
+   with no arguments and the crate not rebound. An `async` owner's return value is then read
    through one trailing `.await` on its call (`assert_eq!(total(&[1, 2]).await,
    3)`). Its bare call is a future and refuses; a sync owner's `.await` awaits
    a future it returns and stays refused. A sync `fn` under `#[tokio::test]`
@@ -502,7 +509,8 @@ wrong credits.
    A compared operand that is a plain identifier the test binds exactly
    once, by an immutable `let v [: T] = <call>;`, is that call (#6974) when
    `v` appears nowhere else in the test but as a whole operand of
-   `assert_eq!` assertions on later lines, and the assertion is the
+   `assert_eq!` assertions (or one whole side of a plain lone-equality
+   `assert!(v == e)`, see Lone-equality pins) on later lines, and the assertion is the
    statement right after the `let` and the only statement on its line (a
    statement between them, or one sharing the assertion's line, could
    change the value through a shared handle). A `mut` binding, a second binding, a
@@ -1873,7 +1881,14 @@ reads `assert_eq!` operands when:
    macro admission (the parser keys each terminal Err-return guard by its
    `if` line and whitespace-free condition, with the same eager-path
    gates), `#[should_panic]`, the test's line range and the return-path
-   gate. The #6974 let-bound result rule applies to `assert_eq!` only.
+   gate. The #6974 let-bound result rule reads a plain `assert!` here as
+   it reads `assert_eq!` (#14085): `let v = owner(..); assert!(v == 4);`
+   fails exactly when `assert_eq!(v, 4)` does, so `v` is the call when one
+   side of the single `==` is the binding alone, the assertion names it
+   nowhere else (a message argument `"{}", v` refuses; an inline `"{v}"`
+   is string text), and every #6974 binding condition holds. A guard twin
+   over a binding (`let v = owner(..); if v != 4 { return Err(..) }`)
+   stays unpinned.
 4. A guard reads only its condition. A macro inside its body runs only
    when the guard fires, so it is never the pinned assertion, and the
    self-computed check selects its reader the same way: an `assert_eq!`
@@ -2060,6 +2075,27 @@ no gate the stand-in passes depends on the text. Rejected: keeping
 `expect_file!` at `snapshot` / medium. It compares the whole value exactly,
 as the inline form does; the corpus row
 `lib-expect-test-expect-file-golden` kills both mutants at runtime.
+
+### Tail `if`/`else` branch values (#14385)
+
+When the owner's tail is an `if`/`else`, each branch block's tail value is
+what the owner returns, so it gets a `return_value` probe like a plain tail
+(and an `error_path` probe when it builds an error). `else if` chains and
+nested `if` branch tails recurse. Exclusions:
+
+- a branch tail that is itself `if`, `match` or a loop gets no shape, decided
+  by AST kind (so `if` or `match` alone on its line is still excluded);
+- a value on any line of its `if`'s condition gets no shape, because an inline
+  branch already flows to the return through that line's predicate (#7626);
+- a branch value that is a comparison or boolean expression
+  (`input.len() > 3`, also inside parentheses or under `!`) keeps only its
+  predicate probe, so a weaker second row
+  cannot turn a discriminated predicate into a gap (verdict corpus
+  `spec-b-0159-recursive-helper`);
+- an `if` without `else` is a statement, not the owner's value.
+
+This adds probes only; it does not widen Rule 3. A pin of the owner's result
+still credits a branch value only weakly, as for an early return (#14387).
 
 ### Short-circuit tails (#7969)
 
@@ -2364,11 +2400,11 @@ analysis:
 
 The credit rides the existing same-file helper eligibility (helper role,
 single definition, same module, no cfg, no `use`/nested `fn`, non-async).
-Not credited by this rule: a callback merely forwarded to another function
-(tracing's `with_default(subscriber, fun)`, #9981's original example),
-`assert_eq!(f(), x)` or other invocations inside macro arguments, boxed or
-by-reference closures, and invocations under branches, loops, or after an
-earlier exit.
+Not credited by this rule: a callback forwarded to a function this rule
+cannot resolve (tracing's `with_default(subscriber, fun)`, #9981's original
+example; see "Forwarded closure callbacks" below), `assert_eq!(f(), x)` or
+other invocations inside macro arguments, boxed or by-reference closures, and
+invocations under branches, loops, or after an earlier exit.
 
 A plain helper (one that invokes no parameter directly, so it never runs a
 closure parameter or only forwards it, as tracing's `with_default(subscriber,
@@ -2416,7 +2452,117 @@ casts, and a struct field or tuple holding the closure. A qualified or
 computed receiver is not a local callback binding. The scan does not model
 shadowing, so a closure parameter `|f| run(1, f)` beside an outer call-making
 `let f` is withheld (a missed advisory). The tracing forwarding shape is a
-limitation, not a credit, until the receiving call is itself resolved.
+limitation, not a credit, until the receiving call is itself resolved (next
+section).
+
+#### Forwarded closure callbacks (#9981 forwarding residual)
+
+A plain helper that does not invoke its closure parameter but hands it on
+(`let got = with_default(fun); assert_eq!(got, want);`) is the one exception
+to the plain-helper withholding above. Decision: credit only where the
+receiving call is a same-file function whose own body is shown to run the
+closure, one hop deep; everywhere else, withhold credit and replace the false
+"has no assertion" reading with a named analyzer limit. Following arbitrary
+callees, or treating forwarding as invocation, was rejected: an external
+`with_default` may store, drop or conditionally run the closure, and a wrong
+credit is worse than a missed one.
+
+Forwarding grammar (`forwarded_callback_params`, fail-closed):
+
+- the helper is not `async` and has no `self`; the forwarded parameter is the
+  same immutable plain identifier, bound once, that the invocation rule
+  admits, and the helper does not invoke it directly;
+- the parameter's only mention in the helper body (counted by identifier
+  token, so a mention inside a macro argument refuses) is a bare,
+  unborrowed, unparenthesized argument of a call or method call that is a
+  statement the helper reaches unconditionally and in order (`g(.., fun);`,
+  tail `g(fun)`, `let PAT = g(fun);`), or the receiver of a method chain on
+  such a call (`catch_unwind(fun).unwrap()`);
+- every argument of every call to the helper in the test that holds a
+  call-making closure, or a name bound to one (the #9997 reading), sits at
+  one position, so a second closure the helper never runs cannot carry the
+  owner call; the forwarded parameter at that position is the closure's, and
+  the test reaches the helper call eagerly with a call-making closure literal
+  there (the invocation rule's test side). Other parameters the helper
+  forwards bare (tracing's `new_span(span)`, `let s = make(want);`) receive
+  no call-making closure, so they are ordinary values and neither block nor
+  join the rule. For this position check only, a closure whose body holds a
+  macro call (`|| my_macro!(greet("bob"))`, literal or bound by `let`) also
+  counts, because the macro may expand to the owner call. So
+  `run_test(|| my_macro!(greet("bob")), || noop())` yields two positions and
+  earns nothing; the #9997 withholding reading is unchanged.
+
+Residual (pre-existing, not changed here): the direct-invocation rule above
+reads its test side through `closure_argument_positions`, which sees only
+call and method-call expressions in a closure body and does not inspect other
+argument positions. A closure the helper never invokes, whose owner call sits
+inside a macro, beside an invoked closure that makes some other call, can
+still lend the direct helper's assertion.
+
+Same-file forward (credited): the receiving call is a single-segment free
+function defined once in the file, an evidence-helper role item of the
+test's own module (the direct-helper eligibility), neither the helper nor a
+name the helper binds, sharing no line with the test, whose plain body
+eagerly invokes exactly one parameter, the one at the forwarded argument
+position, under the invocation rule above. Then the helper's parser-backed
+assertions that start after the forwarding statement ends, and the receiving
+function's assertions that start after its invoking statement ends, are
+copied to the test with their own lines, filtered by each function's role
+(`assert_eq!` only for a `Production` integration-target item). The
+receiving function's calls, except the callback parameter's own call, are
+added with the helper's. A receiving function that forwards again, invokes
+the parameter only conditionally, or otherwise does not eagerly invoke it is
+not followed (one hop). A receiving function that passes every resolution
+check above but never names the parameter at the forwarded position (a `_`
+pattern, or a plain name with no identifier token of it in its body) never
+runs the closure: it is read like the never-invoked control (#9997), so it
+lends nothing and records no limit.
+
+Unresolved forward (named limit, never credit): when the grammar holds but
+the receiving call is not such a same-file function (an external
+`with_default`, a qualified path, a method call, or a same-file function
+outside the rule) and the helper still has a recognized, role-admitted
+parser-backed assertion after the forwarding statement, the helper-credit
+pass records a transient
+per-test limit naming the helper and the callee as written, and lends
+nothing. The classifier reads it only for a row it would otherwise mark
+`no_assertion` with no oracle: that row's miss becomes the analyzer-limit
+`assertion_admission_unproven` (RIPR-SPEC-0221) and the finding evidence
+gains one line, `closure forwarded by helper: test `a` calls helper
+`run_test`, which asserts after forwarding the closure to `with_default`;
+whether it runs the closure is not established statically`. No oracle, kind,
+strength, stage state or class changes, so no verdict can rise to `exposed`
+(or anywhere) from this path; the change withdraws a false absence claim and
+its "add an assertion" repair. A test credited by another helper, and a helper
+that never runs or forwards the closure, keep their earlier readings.
+
+Finding-level guidance follows the rows only when every assertion the related
+tests hold is such a forwarded helper's: at least one row was rewritten, no
+`no_assertion` row is left, no row carries an oracle, and every
+oracle-crediting related test, including any the eight-row display window
+omits, is a forwarded-limit test with no assertion of its own. The decision
+reads the full related-test set, not the capped display rows, so an omitted
+assertion-free or oracle-bearing test keeps the earlier wording. Then, and only when
+the observe and discriminate stages carry exactly the no-assertion summaries
+("Related tests were found, but no assertion appears to observe ..." and "No
+assertion found on related tests"), those two summaries are replaced by the
+existing refused-context pair (`rust_assertion_context_unestablished`, as for
+a refused assertion). Both stages stay `no`. The existing consumers of that
+observe summary then give the finding the refused-assertion next step
+("Establish that the test is collected and enabled, that the assertion runs on
+its executed path, ...") instead of "Add a meaningful assertion ...", and drop
+the "No detected assertion observes ..." missing line. The analyzer-limit gap
+marker is not set (no refusal exists), so the class is not rewritten to
+`static_unknown`. A finding whose related tests include any other
+no-assertion row, such as the never-invoked control, keeps the old wording.
+
+Remaining residual: the literal tracing helper of #9981 asserts only through
+`handle.assert_finished()`, a method call that is not a parser-backed
+assertion (no method-name oracle is added for it). It therefore has no
+recognized assertion after the forward, records no limit, and its tests still
+read `no_assertion` until that expectation-handle oracle is recognized by the
+oracle producers themselves. Only helpers with a recognized assertion
+(`assert_eq!` and the other parser-backed macros) after the forward are named.
 
 ### Selected tier literals through a returned binding (#13037)
 
@@ -2450,6 +2596,41 @@ all previously matched rows are present and there is room under the existing
 render cap; preserve the original rows and count the new row. Otherwise retain
 unknown. Runtime mutation results are evidence for the fixture truth and are
 not themselves a static propagation proof.
+
+### Guard returns the closed subset separates (#14387)
+
+A changed early `return <value>;` inside a guard is credited to an exact
+owner pin when both versions of the owner fall inside the closed integer
+subset (`owner_value`, #12716). That subset covers integer parameters of one
+type, guards of the form `if COND { return RET; }`, and an integer or
+`Ok`/`Some`/`Err`/`None` tail. The changed line must be the whole statement,
+and the old and new texts must both be `return <value>`. The diff must replace
+that one line and change no other line of the owner, and the diff's old text
+must match the line the gate rebuilds. Only that guard's returned value moves,
+so every condition and every other exit are the same in both versions. A diff
+that also moves a guard condition (`t > 500` to `t > 200`) refuses, because
+the old owner is then not the new one with the return line swapped back
+(`fixtures/rust_guard_return_changed_guard`, an evidence-promotion honesty
+case).
+
+The subset reads integer types and the prelude variants by spelling, so the
+owner's file must bind none of `Ok`, `Err`, `Some`, `None` as a value, declare
+or import no integer type name (`type u32 = u8;` would narrow the range), and
+glob-import nothing beyond `use super::*;`.
+
+The pin holds per call:
+- the pinned call is a bare owner call with plain decimal literal arguments;
+- the typed evaluator runs both versions on those arguments without overflow
+  or division by zero, and they return different values;
+- the pinned value is one of the two, so the assertion passes on one version
+  and fails on the other.
+
+A literal that takes an earlier guard or the tail, a pinned value that
+neither version returns, a non-literal argument, an `Err(..)` result whose
+payload the subset leaves unevaluated, and two versions that agree at the
+pinned input (`100 / 5` and `100 - 80`) all keep their earlier reading.
+Anything the subset cannot read refuses. The tail `if`/`else` form waits on
+the branch probe of #14385.
 
 ## Required Evidence
 
@@ -2541,6 +2722,22 @@ not themselves a static propagation proof.
   an `async` test, or the file and line of the macro binding). A refused
   context does not also claim that no assertion or oracle was detected. The
   disclosure is computed after admission and never changes what is credited.
+  When an include makes placement unavailable and a private, unscoped glob
+  outside the assertion's own file therefore cannot be confined, the blocker
+  says so and names the first workspace-reaching include expression, location
+  and reason code; an inert include or a separate placement failure is not
+  blamed. A glob in the assertion's own file keeps its direct macro-binding
+  explanation, and so does a glob whose ambiguity does not depend on
+  placement: a public glob is unconfined by construction, a scoped import is
+  confined lexically, a glob whose own module composition did not resolve has
+  a separate cause, another disabling input (a lexical fallback, an unknown
+  `#[path]` target or an unseen unindexed member) keeps placement off without
+  the include, and a glob that reaches the assertion from an ancestor module
+  or along the module chain is ambiguous with placement on
+  (`the_refusal_names_the_include_that_makes_placement_unavailable`,
+  `a_public_glob_keeps_its_direct_explanation_with_an_include_present`,
+  `a_separate_placement_failure_keeps_the_direct_glob_explanation`,
+  `a_glob_reaching_from_an_ancestor_keeps_its_direct_explanation`).
   A refused assertion whose text calls the changed owner is named first.
   Only that one earns the next step that calls the refusal a possible static
   limit to confirm with a real mutation run; a refused assertion that does
@@ -2560,14 +2757,23 @@ not themselves a static propagation proof.
   the call's arguments hold a binding word (`macro_rules`, `macro`, `use`,
   `extern`, `mod`, `include`, `macro_use`, `macro_export`,
   `no_implicit_prelude`) or an attribute other than a built-in test, lint,
-  `cfg` or `doc` attribute. The definition holds no `!` at all and captures
-  no `tt` fragment (the only fragment that can lift a lone `!` or `#` out of
-  the arguments and splice it after another name), and the arguments hold a
-  `!` only as a bare trusted `name!` (a unary `!` fails closed, since a `tt`
-  fragment or a repetition can splice it after a name). No module item sits
-  between the definition and the call, and every macro call there is another
-  such call of the same wrapper (even a trusted name may be a local macro
-  there), so nothing can bring in a shadowing definition. Attribute proc
+  `cfg` or `doc` attribute. The definition captures no `tt` fragment (the
+  only fragment that can lift a lone `!` or `#` out of the arguments and
+  splice it after another name), and the arguments hold a `!` only as a bare
+  trusted `name!` (a unary `!` fails closed, since a `tt` fragment or a
+  repetition can splice it after a name). The definition's body holds a `!`
+  only after a plain literal name that is a trusted name or the wrapper
+  itself (#14761): such a call resolves as the same call passed in the
+  arguments would, and a recursive call re-enters the same definition. A
+  `!` after a fragment (`$m!`), a path (`std::assert!`) or any other name
+  fails closed. No module item sits between the definition and the call,
+  and every macro call there outside a block is another such call of the
+  same wrapper (even a trusted name may be a local macro there), so nothing
+  can bring in a shadowing definition. A call inside a block that does not
+  also hold the wrapper call, such as a
+  plain test function's `assert_eq!`, defines nothing outside that block,
+  and the textual definition takes precedence over a `#[macro_export]`
+  copy it might emit. Attribute proc
   macros elsewhere in the file stay invisible, as for every other site.
   `macro_use` or `no_implicit_prelude` anywhere in a non-trusted macro's
   arguments makes every trusted name ambiguous (stricter than the same
@@ -2643,7 +2849,33 @@ not themselves a static propagation proof.
   `tests/common/mod.rs` composes under its first owner only), and, while any
   `include!` in the workspace is unresolved (ambiguous, cfg-conflicting,
   capped, dynamic or unindexed), every file: an unresolved fragment and its
-  module children otherwise look like a crate root of their own. The same
+  module children otherwise look like a crate root of their own. #14116
+  narrows that last clause to what the paste can reach. An `include!` of a
+  literal path inside the repository, either inside an inline module or at
+  file level with a target the index does not hold, is read: an inert
+  fragment (no out-of-line `mod`, no `include!`, no `#[path]`, so it compiles
+  no further file) that the index holds as a file no crate claims is already
+  scanned as a file any crate may compile, and one the index does not hold
+  is read from disk with the same assertion-macro scan every indexed file
+  gets. A fragment with no possible binding leaves placement on. One that
+  may bind an assertion macro turns placement off only for the including
+  crate when that crate is an integration test, bench or example root, which
+  nothing can import (a `[lib] path` moved under `tests/` is a library and
+  does not count), and its crate-local sites stay charged to that crate;
+  inside a library or binary it keeps the workspace-wide refusal. A dynamic
+  expression, a missing, unreadable or oversized target, a path that
+  resolves outside the repository through a symlink, a fragment that
+  mounts a file, and a fragment that is itself a module of some crate keep
+  the workspace-wide refusal too. The fragment's items stay unread, so a
+  test that reaches a fragment's function by import, glob or path is not
+  taken for the owner's
+  (`an_include_in_a_test_crate_leaves_the_librarys_tests_credited`,
+  `a_read_inert_fragment_in_the_library_leaves_its_tests_credited`,
+  `an_unread_mounting_or_binding_fragment_keeps_the_refusal`,
+  `a_fragments_namesake_is_never_taken_for_the_owner`,
+  `a_library_rooted_under_tests_is_not_an_unimportable_crate`,
+  `a_fragment_symlinked_out_of_the_repository_is_not_read`,
+  `the_glob_alone_and_an_unresolved_include_are_the_two_baselines`). The same
   holds while any `#[path]` is unresolvable (`cfg_attr`, non-literal), which
   records no module edge for its target. A withheld file in the
   dependent scope is routed by root only when its own path is a `src/lib.rs`,
@@ -3029,7 +3261,7 @@ assertions. This repair shares the existing callback without that larger migrati
   runtime truth for the direct, wrong-input, transformed, masked, discarded,
   opaque-input and unrelated-test shapes.
 - Claims payload equality pins (#12304):
-  `crates/ripr/tests/claims_payload_eq_owner_pin.rs` (the credited twins and
+  `crates/ripr/tests/wrapped_owner_pins/claims_payload_eq_owner_pin.rs` (the credited twins and
   one negative control per refusal above, the early-`Err` and `None` exit
   directions, the non-`return_value` families, and multi-line invocations: credited
   when the closing line holds only the `;` and a comment, unknown otherwise).
@@ -3042,7 +3274,7 @@ assertions. This repair shares the existing callback without that larger migrati
   `assert_some_eq!` over a hand-written `clone` owner and an `Err(..)`
   struct-variant owner stay `unknown`), with the `assert_eq!` twins credited
   on the same subjects.
-- Claims payload pins (#9619): `crates/ripr/tests/claims_payload_owner_pin.rs`
+- Claims payload pins (#9619): `crates/ripr/tests/wrapped_owner_pins/claims_payload_owner_pin.rs`
   (single and grouped import, trailing `assert_err!`, `assert_some!`
   positives; missing, foreign, renamed, locally redefined import, `mut`,
   owner-derived expected value, wrapped operand, method use, converted
@@ -3073,7 +3305,7 @@ assertions. This repair shares the existing callback without that larger migrati
   is compiled directly by the integration suite; native proc-macro removal
   controls are separate engineering evidence, not claimed by the API assertions.
 - Unwrapped `Ok`/`Some` pins (#9619):
-  `crates/ripr/tests/unwrapped_ok_owner_pin.rs` (direct, reversed, `expect`,
+  `crates/ripr/tests/wrapped_owner_pins/unwrapped_ok_owner_pin.rs` (direct, reversed, `expect`,
   bound and `Option` positives; `mut`, shadowing, method use, owner-derived
   expected value, `unwrap_or`, `unwrap_err`, `assert_ne!`, other owner,
   discarded unwrap and wrapper- or opposite-exit-binding negatives).
@@ -3090,6 +3322,22 @@ assertions. This repair shares the existing callback without that larger migrati
   a return or `?` written in the callback literal, and the benign
   `format!("hi {}", "bob")` operand positive) pin
   observation-fact admission, not a changed-sink or owner-return claim.
+
+- Forwarded closure callbacks (#9981 forwarding residual):
+  `plain_helper_forwarding_a_closure_to_a_same_file_invoker_lends_its_later_assertion`
+  (the former #9997 pinned negative, now an intended positive),
+  `forwarded_closure_is_credited_beside_a_non_closure_parameter_forwarded_bare`,
+  `forwarded_closure_credits_the_same_file_invokers_own_observing_assertion`,
+  `forwarded_closure_to_an_unresolved_callee_is_a_named_limit_not_credit` and
+  `forwarded_closure_shapes_outside_the_grammar_grant_nothing_and_name_nothing`
+  in `crates/ripr/src/analysis/facts/test_helpers/tests.rs`;
+  `crates/ripr/tests/forwarded_closure_helper.rs` drives the public API: a
+  same-file forward reads exactly like the direct-invocation reference, and an
+  unresolved forward keeps the never-invoked control's class and strength
+  while its row reads `assertion_admission_unproven` with the named evidence
+  line (the never-invoked control stays `no_assertion`); two mixed findings
+  pin that a genuine `no_assertion` test keeps the finding wording and an
+  oracle-bearing test leaves class, oracle and stages unchanged.
 
 - Cloned unused callbacks (#13219):
   `closure_callbacks::tests::cloned_callback_names_keep_the_plain_helper_withhold`
@@ -3332,6 +3580,11 @@ assertions. This repair shares the existing callback without that larger migrati
   `fixtures/tail_comparison_boundary`, whose tests pin a free owner's
   unconditional tail.
 
+- Let-bound lone-equality pins (#14085):
+  `crates/ripr/tests/let_bound_lone_equality_pin.rs`
+  (`a_let_bound_result_compared_by_a_lone_equality_pins_the_owner`,
+  `refused_bindings_and_conditions_lend_no_lone_equality_pin`,
+  `an_equality_the_test_never_runs_stays_unrevealed`).
 - Check-helper argument pins: `crates/ripr/tests/check_helper_argument_pins.rs`
   (`a_helper_comparing_its_parameters_pins_the_arguments_the_test_passes`,
   `a_direct_template_rendering_pins_a_scalar_owner`,

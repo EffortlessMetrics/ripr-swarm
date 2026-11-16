@@ -385,6 +385,16 @@ shadows and uncalled function values remain separate from runner registrations.
   Those failures can replace the pending completion at runtime, but do not by
   themselves trigger this rule's withholding of the try/catch assertions
   (#8613).
+- (Amended 2026-11-11, #8286.) A returned or awaited `.then(callback)`
+  supplies no assertions when the callback is a `function*` or
+  `async function*` expression, with zero or one parameter: a native promise
+  invokes it only to create an iterator, so its body never runs. Ordinary
+  and async function and arrow callbacks keep collection, as does an
+  independent assertion beside the dormant callback. Withheld assertion-like
+  syntax remains unresolved admission, not established absence; a test whose
+  only assertion-like code is in the dormant callback reads `static_unknown`
+  (RIPR-SPEC-0246 rule 4). This is not general generator execution, iterator
+  consumption or promise type analysis.
 - An assertion inside a nested callback (`forEach`, `waitFor`, `act`, a
   subtest) or inside a declaration initializer is not collected, except
   the three forms RIPR-SPEC-0246 rule 2 names.

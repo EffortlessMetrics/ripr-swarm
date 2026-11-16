@@ -170,7 +170,9 @@ pub(crate) mod ripr_plus_command;
 pub(super) use assistant_loop::assistant_loop;
 pub(super) use first_action::first_action;
 pub(super) use first_pr::first_pr;
+#[cfg(test)]
 pub(super) use reports::reports;
+pub(super) use reports::reports_command;
 
 #[path = "commands/capabilities.rs"]
 mod capabilities;
@@ -634,6 +636,10 @@ fn pr_evidence_ledger_record(args: &[String]) -> Result<(), String> {
 
 fn pr_comments_plan(args: &[String]) -> Result<(), String> {
     let options = parse_pr_comments_plan_options(args)?;
+    crate::cli::commands_context::ensure_command_root(
+        Path::new(&options.root),
+        "pr-comments plan",
+    )?;
     let pr_guidance_path = options
         .pr_guidance
         .as_ref()
@@ -755,7 +761,7 @@ fn pr_review_front_panel(args: &[String]) -> Result<(), String> {
         assistant_proof_json: options
             .assistant_proof
             .as_ref()
-            .map(|path| read_report_input_plain("assistant proof", path)),
+            .map(|path| read_report_input_plain_typed("assistant proof", path)),
         assistant_health_json: options
             .assistant_health
             .as_ref()
@@ -950,6 +956,19 @@ fn parse_calibrate_cargo_mutants_options(args: &[String]) -> Result<CalibrateOpt
     let repo_exposure_json = repo_exposure_json.ok_or_else(|| {
         "calibrate cargo-mutants requires --repo-exposure-json <path>".to_string()
     })?;
+    if let Some(out) = out.as_deref() {
+        refuse_output_naming_input(
+            "calibrate cargo-mutants",
+            &[("--out", out)],
+            &[
+                ("--mutants-json", Some(&mutants_json)),
+                // A cargo-mutants directory is read through these members.
+                ("--mutants-json", Some(&mutants_json.join("outcomes.json"))),
+                ("--mutants-json", Some(&mutants_json.join("mutants.json"))),
+                ("--repo-exposure-json", Some(&repo_exposure_json)),
+            ],
+        )?;
+    }
     Ok(CalibrateOptions {
         mutants_json,
         repo_exposure_json,
@@ -1114,6 +1133,13 @@ fn parse_outcome_options(args: &[String]) -> Result<OutcomeOptions, String> {
 
     let before = before.ok_or_else(|| OUTCOME_BEFORE_REFUSAL.to_string())?;
     let after = after.ok_or_else(|| OUTCOME_AFTER_REFUSAL.to_string())?;
+    if let Some(out) = out.as_deref() {
+        refuse_output_naming_input(
+            "outcome",
+            &[("--out", out)],
+            &[("--before", Some(&before)), ("--after", Some(&after))],
+        )?;
+    }
     Ok(OutcomeOptions {
         before,
         after,
@@ -1166,6 +1192,11 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
         i += 1;
     }
 
+    refuse_output_naming_input(
+        "evidence-health",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[("--mutation-calibration", mutation_calibration.as_deref())],
+    )?;
     Ok(EvidenceHealthOptions {
         root,
         out,
@@ -1230,9 +1261,25 @@ fn parse_ripr_zero_status_options(args: &[String]) -> Result<RiprZeroStatusOptio
         i += 1;
     }
 
+    let delta = delta.ok_or_else(|| "zero status requires --delta <path>".to_string())?;
+    refuse_output_naming_input(
+        "zero status",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--baseline", baseline.as_deref()),
+            ("--delta", Some(&delta)),
+            ("--gap-ledger", gap_ledger.as_deref()),
+            ("--gate", gate.as_deref()),
+            ("--pr-guidance", pr_guidance.as_deref()),
+            (
+                "--recommendation-calibration",
+                recommendation_calibration.as_deref(),
+            ),
+        ],
+    )?;
     Ok(RiprZeroStatusOptions {
         baseline,
-        delta: delta.ok_or_else(|| "zero status requires --delta <path>".to_string())?,
+        delta,
         gap_ledger,
         gate,
         pr_guidance,
@@ -1399,6 +1446,24 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
         );
     }
 
+    refuse_output_naming_input(
+        "pr-ledger record",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--gate", gate.as_deref()),
+            ("--baseline-delta", baseline_delta.as_deref()),
+            ("--zero-status", zero_status.as_deref()),
+            ("--pr-guidance", pr_guidance.as_deref()),
+            ("--gap-ledger", gap_ledger.as_deref()),
+            (
+                "--recommendation-calibration",
+                recommendation_calibration.as_deref(),
+            ),
+            ("--agent-receipt", agent_receipt.as_deref()),
+            ("--coverage", coverage.as_deref()),
+            ("--history", history.as_deref()),
+        ],
+    )?;
     if let Some(jsonl) = out_jsonl.as_ref() {
         let mut forbidden = vec![&out, &out_md];
         for input in [
@@ -1569,6 +1634,14 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
         return Err("pr-comments plan --max-inline-comments must be greater than zero".to_string());
     }
 
+    refuse_output_naming_input(
+        "pr-comments plan",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--pr-guidance", pr_guidance.as_deref()),
+            ("--existing-comments", existing_comments.as_deref()),
+        ],
+    )?;
     Ok(PrCommentsPlanOptions {
         root,
         pr_guidance,
@@ -1761,6 +1834,27 @@ fn parse_pr_review_front_panel_options(
         );
     }
 
+    refuse_output_naming_input(
+        "pr-review front-panel",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--pr-guidance", pr_guidance.as_deref()),
+            ("--first-action", first_action.as_deref()),
+            ("--assistant-proof", assistant_proof.as_deref()),
+            ("--assistant-health", assistant_health.as_deref()),
+            ("--ledger", ledger.as_deref()),
+            ("--baseline-delta", baseline_delta.as_deref()),
+            ("--zero-status", zero_status.as_deref()),
+            ("--gate-decision", gate_decision.as_deref()),
+            (
+                "--recommendation-calibration",
+                recommendation_calibration.as_deref(),
+            ),
+            ("--mutation-calibration", mutation_calibration.as_deref()),
+            ("--coverage-frontier", coverage_frontier.as_deref()),
+            ("--receipt", receipt.as_deref()),
+        ],
+    )?;
     Ok(PrReviewFrontPanelOptions {
         root,
         pr_guidance,
@@ -1850,6 +1944,16 @@ fn parse_coverage_grip_frontier_options(
         );
     }
 
+    refuse_output_naming_input(
+        "coverage-grip frontier",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--coverage", coverage.as_deref()),
+            ("--ledger", ledger.as_deref()),
+            ("--baseline-delta", baseline_delta.as_deref()),
+            ("--zero-status", zero_status.as_deref()),
+        ],
+    )?;
     Ok(CoverageGripFrontierOptions {
         coverage,
         ledger,
@@ -1895,6 +1999,28 @@ fn read_report_input_plain(label: &str, path: &Path) -> Result<String, String> {
             output::baseline_delta::display_path(path),
             crate::bounded_input::read_failure_detail(&err)
         )
+    })
+}
+
+/// [`read_report_input_plain`] with the not-found case kept separate, so the
+/// front panel can say "missing" only when the path is really absent (#14553).
+fn read_report_input_plain_typed(
+    label: &str,
+    path: &Path,
+) -> Result<String, output::pr_review_front_panel::PanelInputError> {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
+        let detail = crate::bounded_input::read_failure_detail(&err);
+        let detail = match detail.find(" (os error ") {
+            Some(index) => detail[..index].to_string(),
+            None => detail,
+        };
+        output::pr_review_front_panel::PanelInputError {
+            not_found: err.kind() == std::io::ErrorKind::NotFound,
+            message: format!(
+                "read {label} {} failed: {detail}",
+                output::baseline_delta::display_path(path)
+            ),
+        }
     })
 }
 
@@ -1944,6 +2070,31 @@ fn read_optional_manifest_for_report(
     }
 }
 
+/// Refuse, before anything is written, an output flag that names one of the
+/// command's own input files (#14312): the write would silently replace the
+/// evidence the user wants to rerun from. Shared by every artifact report
+/// command so the rule and wording live in one place.
+fn refuse_output_naming_input(
+    command: &str,
+    outputs: &[(&str, &Path)],
+    inputs: &[(&str, Option<&Path>)],
+) -> Result<(), String> {
+    for (out_flag, out_path) in outputs {
+        for (in_flag, in_path) in inputs {
+            let Some(in_path) = in_path else {
+                continue;
+            };
+            if output::path::output_replaces_input(out_path, in_path) {
+                return Err(format!(
+                    "{command} {out_flag} {} names the same file as {in_flag}; writing there would replace that input. Pass a different {out_flag} path",
+                    output::path::human_path(out_path)
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn non_empty_path_arg(
     args: &[String],
     index: usize,
@@ -1962,7 +2113,9 @@ fn non_empty_string_arg(
 ) -> Result<String, String> {
     let value = expect_value(args, index, flag)?;
     if value.trim().is_empty() {
-        Err(format!("{command} {flag} requires a non-empty value"))
+        let message = format!("{command} {flag} requires a non-empty value");
+        crate::cli::usage_refusal::note_missing_value(flag, &message);
+        Err(message)
     } else {
         Ok(value.to_string())
     }
@@ -2179,10 +2332,16 @@ fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
         .as_deref()
         .is_some_and(|base| base.trim().is_empty())
     {
-        return Err("diff --base requires a non-empty revision".to_string());
+        return Err(crate::cli::usage_refusal::empty_value(
+            "--base",
+            "diff --base requires a non-empty revision",
+        ));
     }
     if options.head.trim().is_empty() {
-        return Err("diff --head requires a non-empty revision".to_string());
+        return Err(crate::cli::usage_refusal::empty_value(
+            "--head",
+            "diff --head requires a non-empty revision",
+        ));
     }
 
     Ok(options)
@@ -6293,10 +6452,16 @@ language = "rust"
             section.contains("always()"),
             "the section no longer names the always() steps the binding above checks"
         );
+        // #14841: the packet exits 3 when only the gate blocked and 2 on any
+        // other required failure; the section and the catalog stop states
+        // must both say so.
         assert!(
-            section.contains("nonzero")
+            section.contains("makes the packet exit `3`")
+                && section.contains("exit `2` after")
                 && include_str!("command_metadata.rs")
-                    .contains("exits nonzero after the packet is written")
+                    .contains("a blocked gate exits 3 after the packet is written")
+                && include_str!("command_metadata.rs")
+                    .contains("exits 2 after the packet is written")
                 && include_str!("commands/ci_packet.rs")
                     .contains("failed and is advisory; continuing"),
             "the section's failure-role prose no longer matches the ci-packet \

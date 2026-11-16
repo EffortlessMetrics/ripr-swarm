@@ -1,5 +1,7 @@
 //! Real workflow shell and immutable Git histories; no wheel build or consumers.
 #![cfg(target_os = "linux")]
+#[path = "python_wheel_workflow/boundaries.rs"]
+mod boundaries;
 #[path = "python_wheel_workflow/ordinary.rs"]
 mod ordinary;
 #[path = "../test_support.rs"]
@@ -142,6 +144,7 @@ impl Fixture {
             "Cargo.lock",
             "rust-toolchain.toml",
             "tools/repo-policy",
+            "xtask/src/policy/user_text.rs",
             ".github",
             ".agents",
             ".claude",

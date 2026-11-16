@@ -1,0 +1,11 @@
+diff --git a/band_traps/redirect.py b/band_traps/redirect.py
+--- a/band_traps/redirect.py
++++ b/band_traps/redirect.py
+@@ -1,6 +1,6 @@
+ class Rates:
+     def band(self, x):
+-        return x * 3
++        return x * 3 + 5
+ 
+ 
+ # A class dunder written after the class answers every attribute lookup with

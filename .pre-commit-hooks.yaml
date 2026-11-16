@@ -1,7 +1,9 @@
 # Hook definitions for the pre-commit framework (https://pre-commit.com).
-# Consumers reference this repository with `repo:`/`rev:` and `id: ripr`.
+# Consumers reference this repository with `repo:`/`rev:` and an `id:` below.
 # `language: system`: ripr must already be on PATH. `language: rust` would
 # build the whole crate inside every consumer's hook environment.
+# The entries are run against the real CLI by
+# crates/ripr/tests/pre_commit_hook_manifest.rs; keep that test in step.
 - id: ripr
   name: ripr (static test-gap check)
   description: Advisory static check of the Rust change being committed, against HEAD.
@@ -10,3 +12,13 @@
   types_or: [rust]
   pass_filenames: false
   verbose: true
+  stages: [pre-commit, pre-merge-commit, manual]
+- id: ripr-push
+  name: ripr (static test-gap check of the branch against its base)
+  description: Advisory static check of the current branch's committed Rust changes against the default base.
+  entry: ripr check --committed --quiet
+  language: system
+  types_or: [rust]
+  pass_filenames: false
+  verbose: true
+  stages: [pre-push]

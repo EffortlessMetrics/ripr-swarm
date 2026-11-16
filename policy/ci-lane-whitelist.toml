@@ -30,6 +30,14 @@ id = "dx-scoreboard"
 paths = ["target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
 
 [[artifact_family]]
+id = "dx-trend"
+paths = ["target/ripr/reports/dx-trend.json", "target/ripr/reports/dx-trend.md"]
+
+[[artifact_family]]
+id = "dx-trend-receipts"
+paths = ["$RUNNER_TEMP/dx-trend-history/dx-trend-*.json"]
+
+[[artifact_family]]
 id = "size-scaling"
 paths = ["target/ripr/reports/size-scaling.json", "target/ripr/reports/size-scaling.md"]
 
@@ -184,10 +192,10 @@ id = "dx-scoreboard"
 posture = "advisory"
 workflow = ".github/workflows/dx-scoreboard.yml"
 jobs = ["scoreboard"]
-commands = ["cargo xtask dx-scoreboard --clone --include-heavy --corpus-dir \"$RUNNER_TEMP/dx-scoreboard-corpus\" --baseline metrics/dx-scoreboard/baseline.json --gate"]
+commands = ["cargo xtask dx-scoreboard --clone --include-heavy --corpus-dir \"$RUNNER_TEMP/dx-scoreboard-corpus\" --baseline metrics/dx-scoreboard/baseline.json --gate", "cargo xtask dx-trend --report target/ripr/reports/dx-scoreboard.json --history \"$RUNNER_TEMP/dx-trend-history\""]
 estimated_lem = 40
-artifact_families = ["dx-scoreboard"]
-description = "Nightly developer-experience scoreboards on the pinned real-repository corpus; fails only when a metric regresses past its margin against the committed baseline or an instrument breaks."
+artifact_families = ["dx-scoreboard", "dx-trend", "dx-trend-receipts"]
+description = "Nightly developer-experience scoreboards on the pinned real-repository corpus; fails only when a metric regresses past its margin against the committed baseline or an instrument breaks. Also keeps one dated trend receipt and renders the advisory distance-from-bar trend page (#14795)."
 
 [[lane]]
 id = "size-scaling"

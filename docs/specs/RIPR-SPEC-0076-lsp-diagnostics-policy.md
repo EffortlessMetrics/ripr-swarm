@@ -121,8 +121,9 @@ completeness check applies. This exception is documented in the code.
 A finding's Problems-panel text is its reconciled next step. When that step
 is the generic one and the finding's witness names a first missing
 discriminator that the step does not already quote, the message starts with
-`Missing check: `<value>`. ` so editors that show only the message, or only
-its first words, still name the concrete input or value (#14465). Preview findings, an empty value, a value
+``Missing check: `<value>`.`` followed by a space, so editors that show only
+the message, or only its first words, still name the concrete input or value
+(#14465). Preview findings, an empty value, a value
 longer than 80 characters (counted as characters) and a value containing a
 backtick or newline leave the message unchanged. For a predicate probe the named value is the boundary input (a missing discriminator spelled `<left> == <right>`) when the witness carries one, even if an error-variant or value check sorts first, so a boundary-test step is not followed by a sibling check (#13372); every other probe family names the first. This changes wording only; class, severity and actionability are untouched.
 
