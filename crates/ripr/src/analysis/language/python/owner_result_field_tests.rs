@@ -379,7 +379,7 @@ fn descriptor_or_hidden_expression_shapes_carry_no_fact() -> Result<(), String> 
         (
             "a match guard after the write",
             format!(
-                "class Req:\n{init}    def timeout(self, t):\n        self.timeout_value = t * 2\n        match t:\n            case _ if self._reset() is None:\n                pass\n        return self\n"
+                "class Req:\n{init}    def timeout(self, t):\n        self.timeout_value = t * 2\n        match [t]:\n            case _ if self._reset() is None:\n                pass\n        return self\n"
             ),
         ),
         (
