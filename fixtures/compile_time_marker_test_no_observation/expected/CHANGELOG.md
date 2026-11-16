@@ -160,3 +160,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — compile_time_marker_test_no_observation (13)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/human.txt`

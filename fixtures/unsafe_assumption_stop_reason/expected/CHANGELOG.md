@@ -82,3 +82,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — unsafe_assumption_stop_reason (8)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless unsafe_assumption_stop_reason --reason "..."`
+
+Updated:
+- `expected/human.txt`

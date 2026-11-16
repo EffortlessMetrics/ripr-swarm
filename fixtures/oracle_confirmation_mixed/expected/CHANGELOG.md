@@ -543,3 +543,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — oracle_confirmation_mixed (41)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless oracle_confirmation_mixed --reason "..."`
+
+Updated:
+- `expected/human.txt`

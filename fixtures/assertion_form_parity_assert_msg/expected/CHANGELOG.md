@@ -585,3 +585,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — assertion_form_parity_assert_msg (45)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_assert_msg --reason "..."`
+
+Updated:
+- `expected/human.txt`

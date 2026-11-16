@@ -336,3 +336,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_slice_table_zero_elements (27)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless rust_slice_table_zero_elements --reason "..."`
+
+Updated:
+- `expected/human.txt`
