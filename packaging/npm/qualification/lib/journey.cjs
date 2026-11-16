@@ -332,6 +332,7 @@ class Journey {
     this.checks = [];
     this.log = [];
     this.unownedDescendants = false;
+    this.processGroups = [];
     this.npm = npmCli();
     // An explicit --work must be new or empty: the run deletes it afterwards
     // and its cold-cache and decoy claims assume no earlier state.
@@ -394,8 +395,21 @@ class Journey {
     const system = isWindows(this.platform)
       ? [path.join(process.env.SystemRoot || "C:\\Windows", "System32"), process.env.SystemRoot || "C:\\Windows"]
       : ["/usr/bin", "/bin"];
-    const dirs = [this.decoyDir, path.dirname(process.execPath), path.dirname(git), ...system];
-    return [...new Set(dirs)].join(separator);
+    if (isWindows(this.platform)) {
+      const dirs = [this.decoyDir, path.dirname(process.execPath), path.dirname(git), ...system];
+      return [...new Set(dirs)].join(separator);
+    }
+    // On POSIX link only node and git into a private directory: their own
+    // directories (Homebrew's /opt/homebrew/bin, /usr/local/bin) can also
+    // hold cargo, rustc or rustup.
+    const tools = path.join(this.root, "tools bin");
+    fs.mkdirSync(tools, { recursive: true });
+    for (const [name, target] of [["node", process.execPath], ["git", git]]) {
+      const link = path.join(tools, name);
+      fs.rmSync(link, { force: true });
+      fs.symlinkSync(fs.realpathSync(target), link);
+    }
+    return [...new Set([this.decoyDir, tools, ...system])].join(separator);
   }
 
   env(extra = {}) {
@@ -445,6 +459,7 @@ class Journey {
       // descendant (npm -> launcher -> native), not just the direct child.
       detached: !isWindows(this.platform),
     });
+    if (result.pid && !isWindows(this.platform)) this.processGroups.push(result.pid);
     if (result.error && result.error.code === "ETIMEDOUT") {
       if (isWindows(this.platform)) {
         // Node stops only the direct child on Windows, so descendants of a
@@ -813,7 +828,25 @@ class Journey {
     return { identities, payload, timings, elapsed: Date.now() - started };
   }
 
+  // Kills what any step left running in its own process group, so a
+  // descendant that outlived a step that exited normally cannot keep the job
+  // alive. Returns how many groups still had members.
+  reapProcessGroups() {
+    let lingering = 0;
+    for (const pid of this.processGroups.splice(0)) {
+      try {
+        process.kill(-pid, "SIGKILL");
+        lingering += 1;
+      } catch {
+        // the group is already empty
+      }
+    }
+    if (lingering > 0) this.log.push({ label: "reap", error: `${lingering} step process group(s) still had members; killed` });
+    return lingering;
+  }
+
   cleanup() {
+    this.reapProcessGroups();
     if (this.options.keep) return "not_run";
     if (this.unownedDescendants) {
       this.log.push({ label: "cleanup", error: "a step timed out on Windows, where descendant teardown is not owned; cleanup fails closed" });
