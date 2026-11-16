@@ -776,6 +776,133 @@ fn unreadable_raise_or_class_shapes_record_no_stale_pin() -> Check {
     Ok(())
 }
 
+// #13753: bare raises, the `expected_exception=` keyword and a tuple of the
+// old class are read; dotted names and any other member are not.
+fn shaped_finding(old_raise: &str, new_raise: &str, expected: &str) -> Result<Finding, String> {
+    let source =
+        format!("def parse(s):\n    if len(s) > 10:\n        {new_raise}\n    return len(s)\n");
+    let body = format!(
+        "    with pytest.raises({expected}, match=\"m\"):\n        parse('abcdefghijklmnop')\n"
+    );
+    let tests = format!("import pytest\nfrom fx.core import parse\n\ndef test_variant():\n{body}");
+    classify_with_context(
+        &source,
+        &tests,
+        Some(&format!("        {old_raise}")),
+        &format!("        {new_raise}"),
+        true,
+    )
+}
+
+#[test]
+fn keyword_and_tuple_old_class_expectations_record_one_stale_pin() -> Check {
+    for expected in [
+        "expected_exception=ValueError",
+        "(ValueError, ValueError)",
+        "expected_exception=(ValueError, ValueError)",
+    ] {
+        let finding = shaped_finding(
+            "raise ValueError(\"m\")",
+            "raise TypeError(\"m\")",
+            expected,
+        )?;
+        if stale_pins(&finding).len() != 1 {
+            return Err(format!("{expected} must pin once: {finding:?}"));
+        }
+        if finding.class != ExposureClass::Exposed {
+            return Err(format!("{expected} changed the class: {finding:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn keyword_and_tuple_expectations_that_can_see_the_new_type_record_no_pin() -> Check {
+    for expected in [
+        // The new type is asserted, alone or in a tuple.
+        "expected_exception=TypeError",
+        "(ValueError, TypeError)",
+        "expected_exception=(TypeError, ValueError)",
+        // Another member than the old class, even a broad one.
+        "(ValueError, Exception)",
+        "Exception",
+        "expected_exception=Exception",
+        // A dotted spelling is not the old class.
+        "builtins.ValueError",
+        "(ValueError, builtins.ValueError)",
+        "expected_exception=builtins.ValueError",
+        // Positional and keyword together, an empty tuple and a starred member.
+        "ValueError, expected_exception=ValueError",
+        "()",
+        "(*errors,)",
+    ] {
+        let finding = shaped_finding(
+            "raise ValueError(\"m\")",
+            "raise TypeError(\"m\")",
+            expected,
+        )?;
+        if !stale_pins(&finding).is_empty() {
+            return Err(format!("{expected} must record no pin: {finding:?}"));
+        }
+    }
+    // The new class a subclass of the old one: the tuple still passes.
+    let subclass = shaped_finding(
+        "raise LookupError(\"m\")",
+        "raise KeyError(\"m\")",
+        "(LookupError, LookupError)",
+    )?;
+    if !stale_pins(&subclass).is_empty() {
+        return Err(format!("a subclass raise must record no pin: {subclass:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn bare_raises_of_resolvable_classes_record_a_pin() -> Check {
+    let bare = shaped_finding("raise ValueError", "raise TypeError", "ValueError")?;
+    if stale_pins(&bare).len() != 1 {
+        return Err(format!("a bare raise must pin once: {bare:?}"));
+    }
+    // A bare raise of a subclass, of a constructor-checked class, and of a
+    // name that is not a resolvable class record nothing.
+    for (old, new, expected) in [
+        ("raise LookupError", "raise KeyError", "LookupError"),
+        ("raise TypeError", "raise OSError", "TypeError"),
+        ("raise ValueError", "raise error", "ValueError"),
+        ("raise ValueError", "raise TypeError", "TypeError"),
+    ] {
+        let finding = shaped_finding(old, new, expected)?;
+        if !stale_pins(&finding).is_empty() {
+            return Err(format!("{old} -> {new} must record no pin: {finding:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn dotted_raises_record_no_pin() -> Check {
+    // `mod.Exc` could alias an ancestor of the other class, so it is not read,
+    // whether the dotted name is the old or the new raise and however the
+    // test spells it.
+    for (old, new, expected) in [
+        ("raise mod.Exc(\"m\")", "raise TypeError(\"m\")", "mod.Exc"),
+        ("raise mod.Exc", "raise TypeError", "mod.Exc"),
+        (
+            "raise ValueError(\"m\")",
+            "raise mod.Exc(\"m\")",
+            "ValueError",
+        ),
+        ("raise ValueError", "raise mod.Exc", "ValueError"),
+        ("raise mod.Old(\"m\")", "raise mod.New(\"m\")", "mod.Old"),
+    ] {
+        let finding = shaped_finding(old, new, expected)?;
+        if !stale_pins(&finding).is_empty() {
+            return Err(format!("{old} -> {new} must record no pin: {finding:?}"));
+        }
+    }
+    Ok(())
+}
+
 // Builtin exception classes (#13869): the hierarchy is fixed, so a class-only
 // context naming one of two disjoint builtins discriminates the swap.
 const BUILTIN_SOURCE: &str = "def checked(total):\n    if total < 0:\n        raise ValueError(\"negative\")\n    return total\n";
