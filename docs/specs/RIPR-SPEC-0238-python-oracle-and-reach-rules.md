@@ -768,6 +768,14 @@ in the assertion's `with` body or rule 13 callable instead of an asserted
 operand, so `levels.parse("")` and an imported `parse("")` under the same
 `pytest.raises(ValueError, match=...)` read alike (#14090). A body holding a
 `lambda` or a nested `def`/`class` is not read, since the call may be deferred.
+For a free-function owner, the owner-name, import-alias and changed-sink-token
+branches likewise read only that body (or rule 13 callable): a name or token
+spelled only in the item's `match=`, before the `with`, in the rule 14
+comparison after it, or inside a body string or comment does not credit the
+changed raise (#14267). Text this reader hides is only text: the replacement
+field of an f-string is code, so the body reader sees a call spelled in
+`f"{levels.parse('')}"`, and a `def ` or `class ` spelled inside a body string
+defines nothing and defers no call (#14267 review).
 With no crediting branch, a strong oracle
 is `orthogonal`; without an admitted strong oracle alignment stays `unknown`.
 This reverses the legacy no-token observing exception (#7526), which could

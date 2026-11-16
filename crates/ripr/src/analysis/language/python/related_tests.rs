@@ -2279,20 +2279,87 @@ pub(super) fn oracle_operand_calls(text: &str, callee: &str) -> bool {
 /// A rule 14 comparison joined after the body (`assert str(exc.value) ==
 /// ...`) runs after the `with`, when the error was already raised, so an
 /// owner call there is not the call that raises and is not read.
-pub(super) fn exception_body_calls(gate_text: &str, item_text: &str, callee: &str) -> bool {
-    let Some(body) = gate_text
-        .strip_prefix(item_text)
-        .and_then(|rest| rest.strip_prefix('\n'))
-        .map(exception_body_text)
-    else {
+pub(super) fn exception_body_calls(
+    gate_text: &str,
+    item_text: &str,
+    body_end: Option<usize>,
+    callee: &str,
+) -> bool {
+    let Some(body) = exception_body(gate_text, item_text, body_end) else {
         return false;
     };
+    if exception_body_defers(body) {
+        return false;
+    }
+    let needle = format!("{callee}(");
+    body.match_indices(&needle).any(|(idx, _)| {
+        python_callee_start_has_boundary(body, idx) && !python_text_hides_code(body, idx)
+    })
+}
+
+/// Whether `token` appears as a visible whole identifier in the exception
+/// body of an assertion (see [`exception_body_calls`]). The item itself
+/// (its `match=` pattern), anything before the `with`, and the rule 14
+/// comparison appended after the body are not read, nor is a token spelled
+/// only inside a string or comment or deferred by a `lambda`/`def`/`class`.
+pub(super) fn exception_body_observes_token(
+    gate_text: &str,
+    item_text: &str,
+    body_end: Option<usize>,
+    token: &str,
+) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    let Some(body) = exception_body(gate_text, item_text, body_end) else {
+        return false;
+    };
+    if exception_body_defers(body) {
+        return false;
+    }
+    body.match_indices(token).any(|(idx, _)| {
+        let before = body[..idx].chars().next_back();
+        let after = body[idx + token.len()..].chars().next();
+        !before.is_some_and(is_python_identifier_char)
+            && !after.is_some_and(is_python_identifier_char)
+            && !python_text_hides_code(body, idx)
+    })
+}
+
+/// The exception body of an assertion's gate text: the text after its item,
+/// ending at the recorded body boundary, or at the appended rule 14 comparison
+/// when the fact predates that boundary (see [`exception_body_text`]).
+fn exception_body<'a>(
+    gate_text: &'a str,
+    item_text: &str,
+    body_end: Option<usize>,
+) -> Option<&'a str> {
+    let rest = gate_text
+        .strip_prefix(item_text)
+        .and_then(|rest| rest.strip_prefix('\n'))?;
+    let start = gate_text.len() - rest.len();
+    let end = body_end
+        .filter(|end| *end >= start && *end <= gate_text.len())
+        .unwrap_or_else(|| start + exception_body_text(rest).len());
+    Some(&gate_text[start..end])
+}
+
+/// Whether a `lambda` or nested `def`/`class` in the body defers its calls,
+/// so nothing in it runs as the body runs. A line that only spells `def ` or
+/// `class ` inside a string or docstring defines nothing (#14754 review), so
+/// it is read only where code is visible.
+fn exception_body_defers(body: &str) -> bool {
     let visible = |idx: usize| !python_text_hides_code(body, idx);
-    let defers_by_keyword = body.lines().any(|line| {
-        let line = line.trim_start();
-        ["def ", "async def ", "class "]
-            .iter()
-            .any(|keyword| line.starts_with(keyword))
+    let mut offset = 0usize;
+    let defers_by_keyword = body.split_inclusive('\n').any(|line| {
+        let line_start = offset;
+        offset += line.len();
+        let text = line.trim_start();
+        let start = line_start + (line.len() - text.len());
+        visible(start)
+            && ["def ", "async def ", "class "]
+                .iter()
+                .any(|keyword| text.starts_with(keyword))
     });
     let defers_by_lambda = body.match_indices("lambda").any(|(idx, word)| {
         let before = body[..idx].chars().next_back();
@@ -2301,12 +2368,7 @@ pub(super) fn exception_body_calls(gate_text: &str, item_text: &str, callee: &st
             && !after.is_some_and(is_python_identifier_char)
             && visible(idx)
     });
-    if defers_by_keyword || defers_by_lambda {
-        return false;
-    }
-    let needle = format!("{callee}(");
-    body.match_indices(&needle)
-        .any(|(idx, _)| python_callee_start_has_boundary(body, idx) && visible(idx))
+    defers_by_keyword || defers_by_lambda
 }
 
 /// The `with` body (or callable call) of an exception assertion's gate text
@@ -3962,10 +4024,8 @@ fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
             // (3.12 same-quote nesting in a field, a newline in a field)
             // hides the rest of the text: a miss, never an invented call
             // (#9230).
-            if !rest.starts_with('#')
-                && string_prefix_is_f_string(text, cursor)
-                && super::static_limits::single_line_fstring_is_ambiguous(rest.chars())
-            {
+            let formatted = !rest.starts_with('#') && string_prefix_is_f_string(text, cursor);
+            if formatted && super::static_limits::single_line_fstring_is_ambiguous(rest.chars()) {
                 return true;
             }
             let len = if rest.starts_with('#') {
@@ -3973,10 +4033,12 @@ fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
             } else {
                 single_line_string_len(rest)
             };
-            // `idx` inside a comment or a (possibly backslash-continued)
-            // string literal is hidden code, not a call.
             if idx < cursor + len {
-                return true;
+                // A replacement field of a single-line f-string is code, not
+                // string text, so a call there stays visible (#14754 review).
+                if !(formatted && single_line_fstring_offset_is_code(rest, idx - cursor)) {
+                    return true;
+                }
             }
             cursor += len;
         } else {
@@ -3996,6 +4058,68 @@ fn string_prefix_is_f_string(text: &str, quote: usize) -> bool {
         .map_or(0, |(at, ch)| at + ch.len_utf8());
     let prefix = &text[prefix_start..quote];
     prefix.len() <= 2 && matches!(prefix.to_ascii_lowercase().as_str(), "f" | "rf" | "fr")
+}
+
+/// Whether byte `offset` of the single-line literal that starts at the first
+/// character of `literal` (its opening quote) sits inside a replacement field.
+/// A field is code, so a call spelled there is not string text (#14754 review).
+/// `false` for literal text, for the text after the closing quote, and for a
+/// literal this reader cannot follow (the ambiguity rule hides those instead).
+pub(super) fn single_line_fstring_offset_is_code(literal: &str, offset: usize) -> bool {
+    let Some((_, opening)) = literal.char_indices().next() else {
+        return false;
+    };
+    let mut chars = literal.char_indices().peekable();
+    chars.next();
+    let mut field = false;
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    while let Some((at, ch)) = chars.next() {
+        if at >= offset {
+            break;
+        }
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(open) = quote {
+            if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        if field {
+            match ch {
+                '\'' | '"' => quote = Some(ch),
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        field = false;
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+        if ch == opening {
+            break;
+        }
+        if ch == '{' {
+            if chars.peek().is_some_and(|(_, next)| *next == '{') {
+                chars.next();
+                continue;
+            }
+            field = true;
+            depth = 1;
+        }
+    }
+    field
 }
 
 /// The extent of one f-string replacement field.
@@ -4404,7 +4528,7 @@ mod oracle_operand_tests {
         ] {
             let gate = format!("{item}{body}");
             assert_eq!(
-                exception_body_calls(&gate, item, "utils.sign"),
+                exception_body_calls(&gate, item, None, "utils.sign"),
                 expected,
                 "{gate}"
             );
@@ -4414,11 +4538,13 @@ mod oracle_operand_tests {
         assert!(!exception_body_calls(
             "pytest.raises(ValueError, utils.sign(0))",
             "pytest.raises(ValueError, utils.sign(0))",
+            None,
             "utils.sign"
         ));
         assert!(!exception_body_calls(
             "assert utils.sign(0) == 0",
             "assert utils.sign(0) == 0, \"message\"",
+            None,
             "utils.sign"
         ));
     }
