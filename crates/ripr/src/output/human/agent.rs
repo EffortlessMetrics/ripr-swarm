@@ -153,6 +153,7 @@ fn render_report(
         },
     );
     out.push_str(&incomplete_lines);
+    out.push_str(&requested_scope_note_line(output));
     let unanalyzed = render_unanalyzed_changes(&mut out, output);
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
@@ -243,6 +244,28 @@ fn render_report(
     out
 }
 
+/// #13894: one informational line for files the operator left out with
+/// `--path`, `--exclude` or a configured pattern. The requested scope was
+/// analyzed in full, so this is a note, not a limitation, and a run with no
+/// such files prints nothing.
+fn requested_scope_note_line(output: &CheckOutput) -> String {
+    let Some(outcome) = output.analysis_outcome.as_ref() else {
+        return String::new();
+    };
+    let left_out: u64 = outcome
+        .limitations
+        .iter()
+        .filter(|limitation| limitation.kind.is_requested_scope_note())
+        .map(|limitation| limitation.affected_items.unwrap_or(0))
+        .sum();
+    if left_out == 0 {
+        return String::new();
+    }
+    format!(
+        "scope_note={left_out} file(s) left out at your request (--path/--exclude or a configured pattern); not a limitation\n"
+    )
+}
+
 /// Project the producer's closed completeness decision, before any terminal
 /// claim. Retained gaps may still be useful, but do not complete this run.
 /// The pipeline already projects partial-scope budgets into this outcome.
@@ -281,10 +304,15 @@ fn render_incomplete_analysis(out: &mut String, output: &CheckOutput) -> bool {
             field(&clip(reason)),
             field(&limitation.recovery.detail)
         ));
-        if outcome.limitations.len() > 1 {
+        let others = outcome
+            .limitations
+            .iter()
+            .filter(|other| !other.kind.is_requested_scope_note())
+            .count();
+        if others > 1 {
             out.push_str(&format!(
                 "+{} more analysis limitations; `--format json` lists all\n",
-                outcome.limitations.len() - 1
+                others - 1
             ));
         }
     }
@@ -987,6 +1015,10 @@ fn strongest_test(finding: &Finding) -> Option<&RelatedTest> {
             (
                 test.relation_confidence
                     .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
+                // #14454, #14483: within a confidence tier, a row whose
+                // assertion cannot observe the change is never the test to
+                // edit while another row can (the shared observation tier).
+                std::cmp::Reverse(test.observation_tier()),
                 strength_rank(&test.oracle_strength),
             )
         })
@@ -995,7 +1027,10 @@ fn strongest_test(finding: &Finding) -> Option<&RelatedTest> {
 /// The related test a `done=` line names as the one that appears to notice
 /// the change: the strongest oracle leads, so a direct caller holding only a
 /// smoke check is never named as the noticer over a test that pins the value;
-/// relation confidence breaks ties (#13603 review).
+/// relation confidence breaks ties (#13603 review). The shared observation
+/// tier leads (#14483), so a strong oracle on a test with no established path
+/// to the change is never named as the noticer while a reaching test is
+/// listed.
 fn noticing_test(finding: &Finding) -> Option<&RelatedTest> {
     finding
         .related_tests
@@ -1003,6 +1038,7 @@ fn noticing_test(finding: &Finding) -> Option<&RelatedTest> {
         .filter(|test| test.is_contributing())
         .min_by_key(|test| {
             (
+                std::cmp::Reverse(test.observation_tier()),
                 strength_rank(&test.oracle_strength),
                 test.relation_confidence
                     .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),

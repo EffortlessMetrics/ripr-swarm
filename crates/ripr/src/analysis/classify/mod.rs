@@ -177,6 +177,7 @@ pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_rec
 #[cfg(test)]
 pub(in crate::analysis) use owner_pin::{SCAN_LOG, nested_parallelism_allowed};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
+pub(in crate::analysis) use owner_value_sink::{bool_field_assertion, use_may_rebind_owner};
 pub(in crate::analysis) use pinned_shape::{
     withhold_pinned_shape_gap, withhold_result_collect_err_pin,
 };
@@ -205,7 +206,8 @@ pub(in crate::analysis) use receiver_unestablished::{
     mark_receiver_unestablished, withhold_receiver_unestablished_gap,
 };
 pub(in crate::analysis) use refusal_miss::{
-    assertion_refusal_counts_as_analyzer_limit, split_assertion_not_credited_misses,
+    assertion_refusal_counts_as_analyzer_limit, name_forwarded_callback_limits,
+    split_assertion_not_credited_misses,
 };
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, assertion_pins_display_string,
@@ -220,17 +222,21 @@ pub(in crate::analysis) use related_tests::{
 };
 #[cfg(feature = "lang-rust")]
 pub(in crate::analysis) use reveal::RELATED_TESTS_RENDER_CAP;
+pub(in crate::analysis) use reveal::assertion_comparison_operands;
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 pub(in crate::analysis) use reveal::{
-    ASSERTION_CONTEXT_UNESTABLISHED, FileUseStatements, oracle_crediting_relations,
+    ASSERTION_CONTEXT_UNESTABLISHED, ASSERTION_CONTEXT_UNESTABLISHED_DISCRIMINATE_SUMMARY,
+    FileUseStatements, NO_ASSERTION_DISCRIMINATE_SUMMARY, NO_OBSERVING_ASSERTION_SUMMARY,
+    oracle_crediting_relations,
 };
 pub(in crate::analysis) use reveal::{
     NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY, NO_REACHABLE_TEST_OBSERVE_SUMMARY,
 };
 pub(in crate::analysis) use reveal::{
-    ReturnOracleAdmission, contains_as_whole_word, owner_returns_record,
+    RecordFieldLine, ReturnOracleAdmission, contains_as_whole_word, owner_returns_record,
+    predicate_initialized_field,
 };
 pub(in crate::analysis) use reveal::{only_proximity_oracles, reveal_outcome};
 pub(in crate::analysis) use slice_boundary::refine_slice_boundary;

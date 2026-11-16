@@ -33,8 +33,8 @@ use value_contradiction::{
     exact_value_assertion_verdict_for_test,
 };
 pub(in crate::analysis) use value_contradiction::{
-    InvisibilityReason, PointerReturnChange, change_is_invisible_to_every_assertion,
-    fold_owner_body_at,
+    InvisibilityReason, PointerReturnChange, RangeChangeVisibility,
+    change_is_invisible_to_every_assertion, fold_owner_body_at, range_change_visibility,
 };
 
 pub(crate) use related_tests::CompactGripContext;
@@ -54,7 +54,7 @@ use super::classify::{
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
-use super::resource_cost::trace_latency_phase;
+use super::resource_cost::{duration_percentiles, latency_trace_enabled, trace_latency_phase};
 use super::rust_index::{
     self, FunctionSummary, OracleFact, RustIndex, TestSummary, extract_call_facts,
     extract_identifier_tokens,
@@ -398,6 +398,146 @@ struct IncompleteScope {
     files: BTreeSet<PathBuf>,
 }
 
+/// One seam's measured cost in an [`EvidencePass::evidence_for`] call
+/// (#9575). Records are observation only: nothing reads them back into
+/// evidence, scheduling, memoization, or ordering, so findings are
+/// identical whether the trace is collected or not.
+#[derive(Clone)]
+struct SeamCostRecord {
+    seam_id: String,
+    duration: Duration,
+    worker: Option<usize>,
+}
+
+/// Seam identities named in the last-window trace line (#9575).
+const LAST_WINDOW_SEAMS: usize = 16;
+
+/// Completion-ordered per-seam costs for one evidence call. Workers push
+/// after computing their seam, so push order approximates completion
+/// order and the tail of the vector is the straggler window.
+#[derive(Default)]
+struct SeamCostTrace {
+    records: std::sync::Mutex<Vec<SeamCostRecord>>,
+}
+
+impl SeamCostTrace {
+    fn record(&self, seam_id: &str, duration: Duration, worker: Option<usize>) {
+        if let Ok(mut records) = self.records.lock() {
+            records.push(SeamCostRecord {
+                seam_id: seam_id.to_owned(),
+                duration,
+                worker,
+            });
+        }
+    }
+
+    fn records(&self) -> Vec<SeamCostRecord> {
+        self.records
+            .lock()
+            .map(|records| records.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// Per-worker seam counts and busy time, busiest first (#9575).
+fn worker_occupancy(records: &[SeamCostRecord]) -> Vec<(Option<usize>, usize, Duration)> {
+    let mut by_worker: BTreeMap<Option<usize>, (usize, Duration)> = BTreeMap::new();
+    for record in records {
+        let entry = by_worker.entry(record.worker).or_default();
+        entry.0 += 1;
+        entry.1 += record.duration;
+    }
+    let mut rows: Vec<(Option<usize>, usize, Duration)> = by_worker
+        .into_iter()
+        .map(|(worker, (count, busy))| (worker, count, busy))
+        .collect();
+    rows.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+    rows
+}
+
+/// Keep a seam identity inside one trace status token.
+fn trace_token(text: &str, max_chars: usize) -> String {
+    text.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '/' | ':' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .take(max_chars)
+        .collect()
+}
+
+/// Emit the #9575 per-seam cost summary through the existing latency
+/// trace owner. One pinned cold run can then read per-seam percentiles,
+/// worker occupancy, the last-window seam identities, and the run-memo
+/// hit/miss delta without a parallel telemetry system.
+fn emit_seam_cost_trace(
+    records: &[SeamCostRecord],
+    memo_delta: crate::analysis::syntax::run_memo::MemoStats,
+    total: Duration,
+) {
+    let durations: Vec<Duration> = records.iter().map(|record| record.duration).collect();
+    if let Some(percentiles) = duration_percentiles(&durations) {
+        let slowest = records
+            .iter()
+            .max_by_key(|record| record.duration)
+            .map(|record| trace_token(&record.seam_id, 96))
+            .unwrap_or_default();
+        trace_latency_phase(
+            "evidence_seam_durations",
+            &format!(
+                "seams_{}_p50_ms_{}_p90_ms_{}_p99_ms_{}_max_ms_{}_mean_ms_{}_slowest_{slowest}",
+                percentiles.count,
+                percentiles.p50_ms,
+                percentiles.p90_ms,
+                percentiles.p99_ms,
+                percentiles.max_ms,
+                percentiles.mean_ms,
+            ),
+            total,
+        );
+    }
+    let occupancy = worker_occupancy(records);
+    let busy_total: Duration = occupancy.iter().map(|row| row.2).sum();
+    trace_latency_phase(
+        "evidence_worker_occupancy",
+        &format!(
+            "summary_workers_{}_seams_{}_busy_ms_{}",
+            occupancy.len(),
+            records.len(),
+            busy_total.as_millis(),
+        ),
+        total,
+    );
+    for (worker, count, busy) in &occupancy {
+        let label = worker.map_or_else(|| "unknown".to_string(), |index| index.to_string());
+        trace_latency_phase(
+            "evidence_worker_occupancy",
+            &format!("worker_{label}_seams_{count}_busy_ms_{}", busy.as_millis()),
+            *busy,
+        );
+    }
+    let mut window: Vec<String> = records
+        .iter()
+        .rev()
+        .take(LAST_WINDOW_SEAMS)
+        .map(|record| trace_token(&record.seam_id, 96))
+        .collect();
+    window.reverse();
+    trace_latency_phase(
+        "evidence_last_window",
+        &format!("last_{}_{}", window.len(), window.join(",")),
+        Duration::ZERO,
+    );
+    trace_latency_phase(
+        "evidence_run_memo",
+        &format!("hits_{}_misses_{}", memo_delta.hits, memo_delta.misses),
+        Duration::ZERO,
+    );
+}
+
 pub(crate) struct EvidencePass<'index> {
     context: Option<CompactGripContext<'index>>,
     /// The whole-index tables are paid once per pass, not per stage.
@@ -596,6 +736,18 @@ impl<'index> EvidencePass<'index> {
     /// could not be built. Carries the same cancellation contract as
     /// [`evidence_for_seams`].
     pub(crate) fn evidence_for(&self, seams: &[RepoSeam]) -> Vec<TestGripEvidence> {
+        self.evidence_for_traced(seams, latency_trace_enabled())
+    }
+
+    /// [`Self::evidence_for`] with explicit per-seam cost collection
+    /// (#9575). Collection only observes durations, worker indices, and
+    /// memo counters; it never feeds evidence, scheduling, or ordering,
+    /// so the returned vector is byte-identical either way.
+    fn evidence_for_traced(
+        &self,
+        seams: &[RepoSeam],
+        collect_cost_trace: bool,
+    ) -> Vec<TestGripEvidence> {
         let Some(context) = self.context.as_ref() else {
             return Vec::new();
         };
@@ -604,6 +756,10 @@ impl<'index> EvidencePass<'index> {
             return Vec::new();
         }
         let evidence_started = Instant::now();
+        let cost_trace = collect_cost_trace.then(|| Arc::new(SeamCostTrace::default()));
+        let memo_before = cost_trace
+            .as_ref()
+            .map(|_| crate::analysis::syntax::run_memo::memo_stats());
         // Seams are independent and the context's memos are keyed, so the
         // pass runs on the rayon pool. Workers inherit this thread's
         // cancellation token and committed-source overlay; a cancelled
@@ -650,7 +806,15 @@ impl<'index> EvidencePass<'index> {
                 cancellation::with_optional_token(token.as_ref(), || {
                     crate::analysis::committed_source::with_overlay(overlay.clone(), || {
                         cancellation::checkpoint().ok()?;
+                        let seam_started = cost_trace.as_ref().map(|_| Instant::now());
                         let evidence = evidence_for_seam_with_context(seam, context);
+                        if let (Some(trace), Some(started)) = (&cost_trace, seam_started) {
+                            trace.record(
+                                seam.id().as_str(),
+                                started.elapsed(),
+                                rayon::current_thread_index(),
+                            );
+                        }
                         let processed = processed.fetch_add(1, Ordering::Relaxed) + 1;
                         if processed.is_multiple_of(EVIDENCE_PROGRESS_CHUNK)
                             || processed == seams.len()
@@ -681,6 +845,10 @@ impl<'index> EvidencePass<'index> {
             // #5341: a cancelled pass must not leave provisional shared-grip
             // records pinned on the generation-local pool.
             context.clear_window_memos();
+        }
+        if let (Some(trace), Some(before)) = (&cost_trace, memo_before) {
+            let memo_delta = crate::analysis::syntax::run_memo::memo_stats().since(before);
+            emit_seam_cost_trace(&trace.records(), memo_delta, evidence_started.elapsed());
         }
         out
     }
@@ -4581,6 +4749,11 @@ fn discriminate_evidence(
     let boolean_pin = BooleanBoundaryPin::establish(seam, owner_fn, index);
     let mut best = OracleStrength::None;
     let mut best_matching = OracleStrength::None;
+    // The kind match of the best-ranked oracle, kept apart from whether that
+    // oracle discriminates. `best_matching` folds in every refusal gate, so
+    // reading it as "kind-match" named the wrong gate (#14496 review).
+    let mut best_kind_matches: Option<bool> = None;
+    let mut best_branch_withheld = false;
     let mut contradictions: Vec<String> = Vec::new();
     for test in related {
         for oracle in &test.assertions {
@@ -4607,8 +4780,23 @@ fn discriminate_evidence(
             if let Some(contradiction) = contradiction {
                 contradictions.push(contradiction);
             }
-            if strength.rank() > best.rank() {
-                best = strength.clone();
+            // #14496: a branch-withheld return-value oracle keeps at most Weak
+            // credit, exactly as `best_oracle` grades it. Ranking the raw
+            // strength here let a Strong oracle that misses the branch set
+            // `best`, so the stage answered `Yes` while the record published
+            // `Weak` — the disagreement this PR exists to remove.
+            let branch_withheld = branch_gate_withholds(seam, oracle, test, owner_fn);
+            let graded = if branch_withheld
+                && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
+            {
+                OracleStrength::Weak
+            } else {
+                strength.clone()
+            };
+            if graded.rank() > best.rank() {
+                best = graded;
+                best_kind_matches = Some(oracle_kind_matches_seam_kind(seam.kind(), &oracle.kind));
+                best_branch_withheld = branch_withheld;
             }
             // RIPR-SPEC-0106 (Part B): for ErrorVariant seams, oracle_kind_matches_seam
             // is necessary but not sufficient — the oracle must also structurally pin
@@ -4638,12 +4826,26 @@ fn discriminate_evidence(
             (false, OracleStrength::Strong | OracleStrength::Medium) => StageState::Weak,
         }
     };
-    let mut summary = format!(
-        "Strongest oracle for seam kind `{}` is `{}` (kind-match {})",
-        seam.kind().as_str(),
-        best.as_str(),
-        best_matching != OracleStrength::None
-    );
+    // #14496: name the gate that actually refused. The parenthetical used to
+    // print `best_matching != None` as "kind-match", so any refusal that was
+    // not a kind mismatch (a branch-reach refusal, a #8121/#12189/#11398
+    // refusal) read as one. Report the best-ranked oracle's own kind match,
+    // and name the branch refusal as itself.
+    let kind_matches = best_kind_matches.unwrap_or(false);
+    let mut summary = if best_branch_withheld && kind_matches {
+        format!(
+            "Strongest oracle for seam kind `{}` is `{}` (kind matches; the call does not reach the seam's branch)",
+            seam.kind().as_str(),
+            best.as_str()
+        )
+    } else {
+        format!(
+            "Strongest oracle for seam kind `{}` is `{}` (kind-match {})",
+            seam.kind().as_str(),
+            best.as_str(),
+            kind_matches
+        )
+    };
     if !contradictions.is_empty() {
         summary.push_str("; ");
         summary.push_str(&contradictions.join("; "));
@@ -4876,6 +5078,14 @@ fn oracle_discriminates_seam_in_test(
                 )
         });
     }
+    // #14496: a return-value seam inside one branch of the owner is credited
+    // only by an oracle whose call statically reaches that branch. An exact pin
+    // of the owner's result from a call that takes the other branch observes a
+    // different value, so it is not strong grip for this seam. `None` (a shape
+    // the fold cannot read) keeps today's credit.
+    if branch_gate_withholds(seam, oracle, test, owner) {
+        return false;
+    }
     oracle_discriminates_seam(seam, oracle)
         || direct_collection_mutation_receiver(seam.expression())
             .zip(owner)
@@ -4893,6 +5103,27 @@ fn oracle_discriminates_seam_in_test(
                                 receiver, owner, index, test, oracle, pin_syntax,
                             )))
             })
+}
+
+/// #14496: whether the branch gate withholds credit for this oracle. Shared by
+/// the discriminate stage and the per-test record so they cannot disagree
+/// about one assertion.
+fn branch_gate_withholds(
+    seam: &RepoSeam,
+    oracle: &OracleFact,
+    test: &TestSummary,
+    owner: Option<&FunctionSummary>,
+) -> bool {
+    seam.kind() == SeamKind::ReturnValue
+        && owner.is_some_and(|owner| {
+            value_contradiction::seam_branch_reached_by_call(
+                owner,
+                seam.expression(),
+                seam.display_line(),
+                &oracle.text,
+                test,
+            ) == Some(false)
+        })
 }
 
 fn collection_assertion_admitted(
@@ -5874,6 +6105,16 @@ fn best_oracle(
             )
             && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
             && !oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
+        {
+            OracleStrength::Weak
+        } else {
+            strength
+        };
+        // #14496: the per-test record must not publish strong grip for a
+        // return-value seam the branch gate refuses, or the record and the
+        // discriminate stage disagree about the same assertion.
+        let strength = if matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
+            && branch_gate_withholds(seam, oracle, test, owner_fn)
         {
             OracleStrength::Weak
         } else {

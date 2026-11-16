@@ -870,6 +870,83 @@ Proof: `a_kept_field_is_read_only_whole_or_through_that_field` in
 `crates/ripr/src/analysis/classify/owner_value_sink.rs`, and
 `crates/ripr/tests/predicate_record_field_masked.rs` through `check_workspace`.
 
+## A bare `assert!` on the changed bool field (#14701)
+
+`assert!` takes a `bool`, so `assert!(opts(10).big)` is
+`assert_eq!(opts(10).big, true)` and `assert!(!opts(9).big)` is
+`assert_eq!(opts(9).big, false)`. The classifier still grades a bare `assert!`
+as `relational_check` / weak, so a test that pins a changed bool field this
+way left both findings on the line `weakly_exposed`. The `assert_eq!`
+spelling already read `exposed`.
+
+Rule, for a `field_construction` probe, or a predicate probe under the #14562
+field rule, whose line sets field `name` of a record the owner returns
+(`owner_returns_record`): the assertion counts as a pin of that field
+(`bool_field_assertion`) when
+- it is a single plain `assert!` invocation (not `debug_assert!`, not a
+  path-qualified macro, and not a second macro inside it);
+- its condition, after parentheses and at most one `!`, is exactly a field
+  read `<record>.name`;
+- `<record>` reads as the owner's whole returned record under
+  `owner_field_value_flow` with `name` kept. That means the owner call itself,
+  a once-bound plain `let` of it, or the record-keeping methods (`clone`,
+  `unwrap`, `as_ref`, ...).
+
+Because this reading grants credit, it is stricter than the #14562 masking
+reader. The owner call must be the unqualified free call `owner(..)`; a path
+(`rival::opts(..)`, `crate::opts(..)`), a turbofish, or a method of the same
+name may be another function and does not pin; so does a call the test
+shadows (a nested `fn opts` or a local `let opts = |n| ..`), a same-name
+import, or a same-name function of the test's own package when the owner
+lives in another. A `use` in the test's file that may bind the bare name
+elsewhere also refuses the pin (`use_may_rebind_owner`): a rename to the
+name, an import from below the crate root (`use crate::rival::opts`), a glob
+below the crate root, or any explicit import of the name when the owner is
+not in `src/lib.rs` or `src/main.rs`. A `self`- or `super`-rooted import
+(`use super::*;`, `use super::opts;`) is admitted only in the owner's own file
+and only when its `super` count equals the inline `mod` depth of the `use`, so
+it names the owner's module (`mod tests { use super::*; }`); in another file,
+or from a deeper inline module, it may name a parent module with a rival of the
+same name, and an owner inside an inline module refuses it (`super::*` then
+reads a file-level namesake). A
+crate-root glob (`use crate::*;`) refuses unless the owner is at the crate root,
+and a first segment the file binds itself (`mod rival`, `use super::rival;`) is
+a local module, so `use rival::opts;` refuses. A followed `let` must be immutable and its initializer write-free (no
+mutable borrow, however spaced, `as_mut` or `*_mut(..)`), the test may neither
+assign through its name (`o.big = true`, `*o = ..`) nor take a mutable borrow
+of it (`let alias = &mut *o;`), and no other pattern in the test
+(`if let Some(o)`, `for o in`, a closure parameter) may bind it.
+
+Known under-credit: a field the token reader cannot confirm (a short name
+such as `ok`), or a read through `.clone()` that the field_construction
+recognizer does not follow, can stay weak for one of the two findings. The
+pin only raises strength; it never confirms observation on its own. The assertion must also pass the shared execution and macro-binding
+admission (`OwnerPinSyntax::admits`), outside a `should_panic` test. The
+family gate does not apply that admission to a bare `assert!` for these
+probe families, so a shadowed `assert!` or one after `return` pins nothing.
+
+Its kind stays `relational_check`. Only its strength relative to the probe
+rises to strong, as the RIPR-SPEC-0197 bool owner pin's does. The same pin
+satisfies the predicate's same-test boundary pairing. The usual caps still
+apply: self-computed expected values, and #14206 masking. A condition that
+compares (`opts(10).big == true`), combines (`&&`, `||`), negates twice,
+calls a method, or reads the field through another field or a helper stays
+weak.
+
+Static evidence only: the assertion's polarity is not checked against either
+version's value.
+
+Known limit: a `field_construction` probe on a nested or unrelated struct
+literal whose field shares its name with a field of the owner's returned
+record (`Opts { inner: Inner { big: pred }, big: true }`) is credited by
+`assert!(opts(10).big)`, exactly as `assert_eq!(opts(10).big, true)` already
+was. The field rule matches the field by name, not by literal identity.
+
+Proof: `a_bare_assert_on_the_kept_field_is_a_field_pin` in
+`owner_value_sink.rs`, plus `a_bare_assert_on_the_changed_bool_field_is_exposed`
+and `a_bare_assert_on_anything_else_stays_weak` in
+`crates/ripr/tests/predicate_record_field_masked.rs`.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/reveal.rs` unit tests for all new families.

@@ -407,6 +407,18 @@ impl TypeScriptAdmissionContext {
             .is_some_and(|registration| registration.kind == expected)
     }
 
+    /// Whether `root` is bound, in a context from `registration_context`, by
+    /// a named `test` / `it` import from `vitest`: the only runner whose
+    /// whole-row `.for` factory the extractor reads (#10760).
+    pub(crate) fn root_is_vitest_test(&self, root: &str) -> bool {
+        self.imports.iter().any(|import| {
+            import.local == root
+                && import.source == "vitest"
+                && !import.namespace
+                && matches!(import.imported.as_deref(), Some("test" | "it"))
+        })
+    }
+
     /// Validated runner imports shared by registration disclosure (#10169).
     pub(super) fn runner_declaration_imports(&self) -> impl Iterator<Item = &TypeScriptImport> {
         self.registration_imports

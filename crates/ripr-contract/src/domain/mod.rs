@@ -130,6 +130,7 @@ pub use probe::LIVE_PYTHON_TRUTHINESS_ALIGNMENT;
 pub use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
 pub use probe::boundary_input_observed_with_weak_oracle;
 pub use probe::declared_const_name;
+pub use probe::first_observing_related_test;
 pub use project_facts::{
     CanonicalSourceRole, FactCurrentnessV1, PROJECT_FACTS_SCHEMA_VERSION, ProjectFactsV1,
     SourceUnitFactV1, TestEnvironmentFactV1,

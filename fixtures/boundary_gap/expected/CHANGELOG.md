@@ -1,6 +1,19 @@
 # Golden Output Changes
 
-## Pending — tail `if`/`else` branch-value seams (#14385)
+## Pending - branch-local return-value grip (#14496)
+
+A `return_value` seam inside a branch the pinned call does not take no longer
+keeps strong grip. In the portable unchanged-attempt snapshots the two tail
+`if`/`else` branch values now credit only the call that reaches them: the
+non-reaching oracle reads `weak` and sorts after the reaching one, so
+`related_tests`, `nearest_test_to_imitate`, `related_test` and the `reach`
+summary move for `src/lib.rs:3` and `src/lib.rs:5`. Refresh the artifact content
+commitment, then the dependent verify commitments and receipt byte hashes. The
+predicate seam, its weak grip, unchanged movement, historical currentness,
+incomplete receipt status and fail-closed first-action routing remain unchanged.
+No other fixture output is regenerated.
+
+## Pending - tail `if`/`else` branch-value seams (#14385)
 
 The portable unchanged-attempt snapshots now list the owner's two tail
 `if`/`else` branch values (`src/lib.rs:3` and `src/lib.rs:5`) as strongly

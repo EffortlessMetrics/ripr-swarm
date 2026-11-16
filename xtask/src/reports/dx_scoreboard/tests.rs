@@ -6009,7 +6009,7 @@ fn every_corpus_entry_names_a_size_tier_and_gets_its_memory_bar() -> Result<(), 
     };
     assert_eq!(ceiling_of("serde"), Some(150.0));
     assert_eq!(ceiling_of("click-python"), Some(512.0));
-    assert_eq!(ceiling_of("ripr-swarm-2026-10"), Some(1536.0));
+    assert_eq!(ceiling_of("ripr-swarm-2026-10"), Some(1200.0));
     Ok(())
 }
 

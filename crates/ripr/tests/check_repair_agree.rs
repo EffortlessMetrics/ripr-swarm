@@ -1109,8 +1109,8 @@ fn weak_assertion_gap_start_offered_by_check_starts() -> Result<(), String> {
 /// guidance is the whole story; the withheld seam adds no second advisory.
 /// The comparison sits in parentheses, an operand shape the boundary reader
 /// does not bind, so the finding stays unclear. (A plain
-/// `member && total >= 120` reads its `total == 120` boundary since #9637
-/// and is no longer unclear.)
+/// `member && total >= 120` is read by the guarded boundary rule, #13037,
+/// which credits only rows that hold `member = true`.)
 #[test]
 fn unclear_finding_on_a_withheld_seam_adds_no_repair_advisory() -> Result<(), String> {
     let repo = Repo::create(
