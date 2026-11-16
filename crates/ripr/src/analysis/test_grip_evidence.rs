@@ -51,7 +51,7 @@ use super::classify::{
     predicate_line_arms_all_agree, predicate_line_bool_guards,
     reach_evidence as classify_reach_evidence, related_tests_reach_owner_indirectly,
     relation_establishes_reach, test_calls_free_function, test_count_pins_pushed_collection,
-    test_counts_pushed_collection_argument,
+    test_counts_pushed_collection_argument, whole_signature_parameters,
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
@@ -4369,9 +4369,6 @@ fn boundary_constant_operand(
     })
 }
 
-/// A direct owner call whose compared argument names the boundary
-/// constant itself (`discounted_total(DISCOUNT_THRESHOLD)`), in a test whose
-/// own file does not declare a constant of the same name.
 /// #13037: for a predicate seam whose source line guards the comparison
 /// with bare bool parameters, the guards (`` `express = false` ``) when no
 /// related test call sits on the boundary value while holding every guard
@@ -4400,7 +4397,9 @@ fn guarded_boundary_unheld(
         .map(|(guard, value)| format!("`{guard} = {value}`"))
         .collect::<Vec<_>>()
         .join(" and ");
-    let parameters = function_parameters(owner_fn);
+    // The whole signature, as the guards were read: a rustfmt-wrapped
+    // parameter list must still place each argument.
+    let parameters = whole_signature_parameters(owner_fn);
     let tested_at = boundary.and_then(|boundary| {
         parameters
             .iter()
@@ -4444,6 +4443,9 @@ fn guarded_boundary_unheld(
     (!held).then_some(describe)
 }
 
+/// A direct owner call whose compared argument names the boundary
+/// constant itself (`discounted_total(DISCOUNT_THRESHOLD)`), in a test whose
+/// own file does not declare a constant of the same name.
 fn test_passes_boundary_constant(
     indexed: &CompactTest<'_>,
     owner_fn: Option<&FunctionSummary>,

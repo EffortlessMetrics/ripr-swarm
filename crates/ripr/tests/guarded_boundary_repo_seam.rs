@@ -124,9 +124,9 @@ fn boundary_calls_that_miss_the_guard_do_not_grip_the_comparison() -> Result<(),
         Some("unknown"),
         "{seam}"
     );
-    assert_ne!(
+    assert_eq!(
         field(&seam, "/grip_class"),
-        Some("strongly_gripped"),
+        Some("activation_unknown"),
         "{seam}"
     );
     assert!(missing_values(&seam).is_empty(), "never actionable: {seam}");
@@ -167,5 +167,33 @@ fn a_mut_guard_is_not_read_from_the_test_argument() -> Result<(), String> {
         Some("unknown"),
         "{seam}"
     );
+    Ok(())
+}
+
+#[test]
+fn guard_and_boundary_must_hold_on_the_same_call() -> Result<(), String> {
+    // One call sits on the boundary with the guard missing, another holds
+    // the guard off the boundary: neither alone reaches the boundary.
+    let seam = TempRepo::create(
+        SOURCE,
+        "assert_eq!(shipping_cost(100, 5000, true), 200);\n    assert_eq!(shipping_cost(100, 4999, false), 100);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(
+        field(&seam, "/evidence/activate"),
+        Some("unknown"),
+        "{seam}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_call_naming_the_boundary_constant_holds_the_boundary() -> Result<(), String> {
+    let seam = TempRepo::create(
+        SOURCE,
+        "assert_eq!(shipping_cost(100, guarded_repo_seam::FREE_OVER_CENTS, false), 0);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(field(&seam, "/evidence/activate"), Some("yes"), "{seam}");
     Ok(())
 }
