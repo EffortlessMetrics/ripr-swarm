@@ -164,6 +164,9 @@ pub(in crate::analysis) use operand_pin::{operand_only_pin, outer_imported_names
 pub(in crate::analysis) use out_parameter::{
     assertion_out_parameter, expression_writes_parameter, file_shadows_buffer_types,
 };
+#[cfg(test)]
+pub(in crate::analysis) use owner_pin::SCAN_LOG;
+pub(in crate::analysis) use owner_pin::nested_parallelism_allowed;
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings,
     claims_payload_eq_candidates, direct_call_name, equality_condition_operands,
@@ -173,8 +176,6 @@ pub(in crate::analysis) use owner_pin::{
     trait_impl_self_type_names,
 };
 pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
-#[cfg(test)]
-pub(in crate::analysis) use owner_pin::{SCAN_LOG, nested_parallelism_allowed};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use owner_value_sink::{bool_field_assertion, use_may_rebind_owner};
 pub(in crate::analysis) use pinned_shape::{
