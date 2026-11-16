@@ -113,7 +113,11 @@ it is a state token alone; it carries a `disposition` field label anywhere (such
 `Final disposition:` or a `| Disposition | ... |` table row); or it is a table row with a
 cell that holds only a state token. Fenced text is still scanned for any state token. A
 PR description that carries any of these field shapes besides its `Source review:` line
-is ambiguous and attests nothing.
+is ambiguous and attests nothing. In a review body only, a field label of up to 61
+characters without backticks, followed by a colon (ASCII or fullwidth), `->`, `=>` or `=`
+and a non-positive state token, also states it (`VERDICT: REPAIR_REQUIRED`,
+`Status (round 2): CHANGES_REQUESTED`, `Status -> REPAIR_REQUIRED`, #14592). A positive
+value under a label (`- **Status:** REVIEW_READY`) is narration, not a refusal.
 A COMMENT whose first line is `VERDICT: APPROVE <full 40-character head SHA>` at
 column zero, with the SHA equal to that review's head and only a blocker-free tail
 after it, is the same attestation in verdict form, and `VERDICT: BLOCK` /
