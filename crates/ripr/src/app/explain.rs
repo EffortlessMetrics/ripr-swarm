@@ -585,13 +585,17 @@ fn location_miss_cause_text(selector: &str, output: &CheckOutput) -> Option<Loca
     // file the user meant. The #14416 hint names its correct spelling and
     // lines; a disk probe here would answer differently by filesystem (on a
     // case-insensitive one the wrong-case path "exists" with "no finding"),
-    // contradicting that hint, so the cause defers before probing.
-    if output.findings.iter().any(|finding| {
-        super::selector::locator_paths_match_ignoring_ascii_case(
-            &crate::analysis::stable_path_text(&finding.probe.location.file),
-            selector_file,
-        )
-    }) {
+    // contradicting that hint, so the cause defers before probing. The hint
+    // speaks only for a path-shaped selector, so a bare `MAKEFILE:3` keeps
+    // its cause rather than getting neither sentence.
+    if wanted_file.contains(['/', '.'])
+        && output.findings.iter().any(|finding| {
+            super::selector::locator_paths_match_ignoring_ascii_case(
+                &crate::analysis::stable_path_text(&finding.probe.location.file),
+                selector_file,
+            )
+        })
+    {
         return None;
     }
 
@@ -1197,7 +1201,27 @@ mod tests {
         let cause = location_miss_cause("src/other.rs:9", &output)
             .map(|cause| cause.text)
             .ok_or("an unrelated path keeps its cause")?;
-        require_contains(&cause, "is not the path of a file from the analyzed root")
+        require_contains(&cause, "is not the path of a file from the analyzed root")?;
+
+        // A bare wrong-case name matching an extensionless finding file gets
+        // no hint (the hint needs a path shape), so the cause must stay.
+        let mut output = output;
+        let mut makefile = output.findings[0].clone();
+        makefile.probe.location.file = output.root.join("Makefile");
+        output.findings.push(makefile);
+        let hint = super::super::selector::location_miss_hint(
+            &output.findings,
+            &output.root,
+            "MAKEFILE:3",
+            super::super::selector::ScopeCompleteness::Complete,
+        );
+        if hint.is_some() {
+            return Err(format!("a bare name gets no hint: {hint:?}"));
+        }
+        if location_miss_cause("MAKEFILE:3", &output).is_none() {
+            return Err("MAKEFILE:3 gets no hint, so it must keep a cause".to_string());
+        }
+        Ok(())
     }
 
     /// #14511: the cause defers a `file:line:column` selector to the hint
