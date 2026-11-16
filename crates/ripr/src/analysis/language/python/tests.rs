@@ -4400,6 +4400,48 @@ fn an_unlexable_file_keeps_a_changed_bare_string_quiet() {
 }
 
 #[test]
+fn a_bracketed_raise_message_is_not_credited_to_a_return_assertion() -> Result<(), String> {
+    // #13875: the message takes the raise's error-path family, so the
+    // related assertions are selected for an error path and a strong return
+    // assertion behind a guard the activation gate cannot resolve does not
+    // observe it.
+    let source = concat!(
+        "def f(item):\n",
+        "    if item.is_bad():\n",
+        "        raise ValueError(\n",
+        "            \"bad item\"\n",
+        "        )\n",
+        "    return 1\n",
+    );
+    let file = Path::new("src/m.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_m.py"),
+        "from src.m import f\nfrom tests.helpers import make_item\n\n\ndef test_f():\n    assert f(make_item()) == 1\n",
+    );
+    let context = PythonNoBehaviorContext {
+        new_line_in_brackets: true,
+        old_line_in_brackets: true,
+        bracket_statement_span: Some((3, 5)),
+        ..PythonNoBehaviorContext::default()
+    };
+    let finding = classify_change_with_context(
+        file,
+        4,
+        "            \"XXbad itemXX\"",
+        Some("            \"bad item\""),
+        &owners,
+        &tests,
+        context,
+        Some(source),
+    )
+    .ok_or_else(|| "a changed message argument must carry a probe".to_string())?;
+    assert_eq!(finding.probe.family, ProbeFamily::ErrorPath, "{finding:?}");
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
 fn a_changed_message_argument_with_a_trailing_comma_is_an_error_path() -> Result<(), String> {
     // #13875: `"msg",` inside `raise E(` is the same bare string argument as
     // `"msg"`, so it takes the raise statement's shape. Before, it was read as
