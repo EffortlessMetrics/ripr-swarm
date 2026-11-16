@@ -6,8 +6,10 @@
 //! same artifacts, so the step is one command. Reads only; it never runs
 //! analysis, edits source, or decides pass/fail.
 //!
-//! Field fallbacks, `repo_relative` rewriting, and raw report inclusion follow
-//! [`jq`]'s model of what the retired shell printed. Changed-behavior source
+//! Field fallbacks and `repo_relative` rewriting follow [`jq`]'s model of
+//! what the retired shell printed. Full reports are named for the
+//! `ripr-reports` artifact rather than inlined (#14301), except the opt-in
+//! comment publish plan. Changed-behavior source
 //! snippets and Why values use the shared Markdown code-span renderer so
 //! source backticks remain literal; other fields retain the legacy
 //! `markdown_inline` spelling.
@@ -26,6 +28,15 @@ pub(crate) fn effective_comment_mode(raw: &str) -> &str {
         mode => mode,
     }
 }
+
+/// A report's path inside the `ripr-reports` artifact. The generated
+/// workflow uploads `target/ripr` and `target/ci`, and `upload-artifact`
+/// roots the archive at their common parent, so `target/ripr/x.md` is
+/// `ripr/x.md` in the downloaded artifact.
+fn artifact_path(path: &str) -> &str {
+    path.strip_prefix("target/").unwrap_or(path)
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -235,20 +246,29 @@ impl Summary {
         path.is_file().then(|| Doc::read(&path))
     }
 
-    /// A collapsed full report. `relative` rewrites the checkout path in
-    /// reports that carry runnable commands.
-    fn full_report(&mut self, path: &str, relative: bool) {
-        self.line(&format!("<details><summary>Full report: {path}</summary>"));
+    /// One report kept inline, collapsed, as every report was before
+    /// #14301; only the comment publish plan uses it.
+    fn collapsed_report(&mut self, path: &str) {
+        self.line(&format!(
+            "<details><summary>Full report: {}</summary>",
+            artifact_path(path)
+        ));
         self.blank();
         let bytes = fs::read(self.root.join(path)).unwrap_or_default();
-        if relative {
-            let rewritten = self.relative.file(&bytes);
-            self.out.extend(rewritten);
-        } else {
-            self.out.extend(bytes);
-        }
+        self.out.extend(bytes);
         self.blank();
         self.line("</details>");
+    }
+
+    /// Names a full report in the uploaded artifact instead of inlining it
+    /// (#14301). Inlined reports made a three-line pull request's summary
+    /// 50 KB / 1,000 lines, mostly restating the sections above them; the
+    /// report itself is unchanged in the `ripr-reports` artifact.
+    fn full_report(&mut self, path: &str) {
+        self.line(&format!(
+            "- Full report: {} in the `ripr-reports` artifact",
+            code_span(artifact_path(path))
+        ));
     }
 
     /// The policy and governance sections. With no gate configured they carry
@@ -339,29 +359,29 @@ impl Summary {
 
     fn start_here(&mut self) {
         self.line("### Start here");
-        self.line("- Open `start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.");
+        self.line("- Open `ripr/reports/start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.");
         self.line(
-            "- Then open `index.md` in the same artifact to navigate deeper evidence artifacts.",
+            "- Then open `ripr/reports/index.md` in the same artifact to navigate deeper evidence artifacts.",
         );
         if self.is_file(START_HERE_MD) {
-            self.line("- Start-here artifact: `start-here.md` in the `ripr-reports` artifact");
+            self.line("- Start-here artifact: `ripr/reports/start-here.md` in the `ripr-reports` artifact");
         } else if let Some(index) = self.doc(INDEX_JSON) {
             let path =
                 inline(&index.field(&["summary.start_here"], "not_available", "not_available"));
             if path == "not_available" {
                 self.line("- Start-here artifact: `not_available`");
             } else {
-                let name = path.rsplit('/').next().unwrap_or(&path);
+                let name = artifact_path(&path);
                 self.line(&format!(
                     "- Start-here artifact: `{name}` in the `ripr-reports` artifact"
                 ));
             }
         } else if self.is_file(FRONT_PANEL_MD) {
             self.line(
-                "- Start-here artifact: `pr-review-front-panel.md` in the `ripr-reports` artifact",
+                "- Start-here artifact: `ripr/reports/pr-review-front-panel.md` in the `ripr-reports` artifact",
             );
         } else if self.is_file(PILOT_SUMMARY_MD) {
-            self.line("- Start-here artifact: `pilot-summary.md` in the `ripr-reports` artifact");
+            self.line("- Start-here artifact: `ripr/pilot/pilot-summary.md` in the `ripr-reports` artifact");
         } else {
             self.line("- Start-here artifact: not generated yet; inspect uploaded artifacts and job logs.");
         }
@@ -555,11 +575,11 @@ impl Summary {
         );
         self.status_row(&next, &format!("- Safe next action command: `{next}`"));
         self.status_row(&warnings, &format!("- Warnings: `{warnings}`"));
-        self.line("- Artifacts: `start-here.json`, `start-here.md` in the `ripr-reports` artifact");
+        self.line("- Artifacts: `ripr/reports/start-here.json`, `ripr/reports/start-here.md` in the `ripr-reports` artifact");
         self.line("- Boundary: start-here is advisory first-run guidance only; gate decision remains separate pass/fail authority when configured.");
         if self.is_file(START_HERE_MD) {
             self.blank();
-            self.full_report(START_HERE_MD, false);
+            self.full_report(START_HERE_MD);
         }
     }
 
@@ -663,7 +683,8 @@ impl Summary {
         self.status_row(&fallback, &format!("- Fallback/no-action: `{fallback}`"));
         self.status_row(&warnings, &format!("- Warnings: `{warnings}`"));
         self.line(&format!(
-            "- Artifacts: `target/ripr/reports/first-useful-action.json`, `target/ripr/reports/first-useful-action.md`, `{WORKFLOW_AGENT_PACKET_ARTIFACT}`"
+            "- Artifacts: `ripr/reports/first-useful-action.json`, `ripr/reports/first-useful-action.md`, `{}`",
+            artifact_path(WORKFLOW_AGENT_PACKET_ARTIFACT)
         ));
         self.line("- Boundary: advisory first-run path only; gate decision remains separate pass/fail authority when configured.");
     }
@@ -839,12 +860,12 @@ impl Summary {
                 "- Gate: mode=`{gate_mode}`, decision=`{gate_decision}`"
             ));
             self.line(&format!("- Warnings: `{warnings}`"));
-            self.line("- Front-panel artifacts: `target/ripr/reports/pr-review-front-panel.json`, `target/ripr/reports/pr-review-front-panel.md`");
+            self.line("- Front-panel artifacts: `ripr/reports/pr-review-front-panel.json`, `ripr/reports/pr-review-front-panel.md`");
             self.line("- Pass/fail authority remains `ripr gate evaluate` when an explicit gate mode is configured.");
             self.blank();
         }
         if self.is_file(FRONT_PANEL_MD) {
-            self.full_report(FRONT_PANEL_MD, true);
+            self.full_report(FRONT_PANEL_MD);
         }
         self.blank();
     }
@@ -901,12 +922,12 @@ impl Summary {
             self.line(&format!("- {}: `{receipt}`", labels.receipt));
             self.line(&format!("- Fallback: `{fallback}`"));
             self.line(&format!("- Warnings: `{warnings}`"));
-            self.line("- Action artifacts: `target/ripr/reports/first-useful-action.json`, `target/ripr/reports/first-useful-action.md`");
+            self.line("- Action artifacts: `ripr/reports/first-useful-action.json`, `ripr/reports/first-useful-action.md`");
             self.line("- Boundary: static evidence only; no runtime mutation execution.");
             self.blank();
         }
         if self.is_file(FIRST_ACTION_MD) {
-            self.full_report(FIRST_ACTION_MD, true);
+            self.full_report(FIRST_ACTION_MD);
         }
         self.blank();
     }
@@ -914,7 +935,7 @@ impl Summary {
     fn top_recommendation(&mut self) {
         self.line("### Top recommendation");
         if self.is_file(PILOT_SUMMARY_MD) {
-            self.full_report(PILOT_SUMMARY_MD, false);
+            self.full_report(PILOT_SUMMARY_MD);
         } else {
             self.line("Pilot summary was not generated. Inspect the uploaded artifact packet and job logs.");
         }
@@ -942,10 +963,11 @@ impl Summary {
                 self.repair_start("Start repair", &inline(&repair));
             }
             self.line(&format!(
-                "- Full packet: `{WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT}` (workflow artifact)."
+                "- Full packet: `{}` in the `ripr-reports` artifact.",
+                artifact_path(WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT)
             ));
         } else if self.is_file(WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT) {
-            self.full_report(WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT, false);
+            self.full_report(WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT);
         } else {
             self.line("Agent review summary was not generated. Run `ripr agent status --root .` locally or inspect uploaded workflow artifacts.");
         }
@@ -954,13 +976,13 @@ impl Summary {
 
     fn artifact_packet(&mut self) {
         self.line("### Artifact packet");
-        self.line("- Pilot reports: `target/ripr/pilot/`");
-        self.line("- Agent workflow: `target/ripr/workflow/`");
-        self.line("- Agent compatibility copies: `target/ripr/agent/`");
-        self.line("- Repo reports, badges, SARIF, and receipts: `target/ripr/reports/`");
-        self.line("- CI labels and plan inputs: `target/ci/`");
+        self.line("- Pilot reports: `ripr/pilot/`");
+        self.line("- Agent workflow: `ripr/workflow/`");
+        self.line("- Agent compatibility copies: `ripr/agent/`");
+        self.line("- Repo reports, badges, SARIF, and receipts: `ripr/reports/`");
+        self.line("- CI labels and plan inputs: `ci/`");
         if self.root.join("target/ripr/review").is_dir() {
-            self.line("- PR test guidance report: `target/ripr/review/`");
+            self.line("- PR test guidance report: `ripr/review/`");
         } else {
             self.line("- PR test guidance report: not generated yet");
         }
@@ -1000,12 +1022,12 @@ impl Summary {
             self.line(&format!("- Gate authority: `{gate}`"));
             self.line(&format!("- Missing expected: `{missing_labels}`"));
             self.line(&format!("- Warning kinds: `{warning_kinds}`"));
-            self.line("- Index artifacts: `target/ripr/reports/index.json`, `target/ripr/reports/index.md`");
+            self.line("- Index artifacts: `ripr/reports/index.json`, `ripr/reports/index.md`");
             self.line("- Boundary: advisory artifact map only; gate-decision remains configured pass/fail authority.");
             self.blank();
         }
         if self.is_file(INDEX_MD) {
-            self.full_report(INDEX_MD, false);
+            self.full_report(INDEX_MD);
         }
         self.blank();
     }
@@ -1059,12 +1081,12 @@ impl Summary {
             }
             self.line(&format!("- Coverage/grip frontier: `{coverage}`"));
             self.line(&format!("- History trend: `{trend}`"));
-            self.line("- Ledger artifacts: `target/ripr/reports/pr-evidence-ledger.json`, `target/ripr/reports/pr-evidence-ledger.md`");
+            self.line("- Ledger artifacts: `ripr/reports/pr-evidence-ledger.json`, `ripr/reports/pr-evidence-ledger.md`");
             self.line("- Pass/fail authority remains `ripr gate evaluate` when an explicit gate mode is configured.");
             self.blank();
         }
         if self.is_file(LEDGER_MD) {
-            self.full_report(LEDGER_MD, false);
+            self.full_report(LEDGER_MD);
         } else if self.is_file(COMMENTS_JSON) {
             self.line("PR evidence ledger was not generated. Inspect `target/ripr/review/comments.json` and rerun `ripr pr-ledger record` locally.");
         } else {
@@ -1108,12 +1130,12 @@ impl Summary {
             self.line(&format!("- Gate input: `{gate}`"));
             self.line(&format!("- Coverage/grip frontier input: `{coverage}`"));
             self.line(&format!("- Warnings: `{warnings}`"));
-            self.line("- Proof artifacts: `target/ripr/reports/test-oracle-assistant-proof.json`, `target/ripr/reports/test-oracle-assistant-proof.md`");
+            self.line("- Proof artifacts: `ripr/reports/test-oracle-assistant-proof.json`, `ripr/reports/test-oracle-assistant-proof.md`");
             self.line("- Pass/fail authority remains `ripr gate evaluate` when an explicit gate mode is configured.");
             self.blank();
         }
         if self.is_file(md) {
-            self.full_report(md, false);
+            self.full_report(md);
         }
         self.blank();
     }
@@ -1167,12 +1189,12 @@ impl Summary {
             self.line(&format!(
                 "- Repair queue: total=`{repairs}`, first=`{top_repair}`"
             ));
-            self.line("- Health artifacts: `target/ripr/reports/assistant-loop-health.json`, `target/ripr/reports/assistant-loop-health.md`");
+            self.line("- Health artifacts: `ripr/reports/assistant-loop-health.json`, `ripr/reports/assistant-loop-health.md`");
             self.line("- Boundary: advisory static health over proof artifacts; gate evaluator remains pass/fail authority.");
             self.blank();
         }
         if self.is_file(md) {
-            self.full_report(md, false);
+            self.full_report(md);
         }
         self.blank();
     }
@@ -1199,7 +1221,7 @@ impl Summary {
             self.line(&format!("- Axes: blocking=`{blocking}`, baseline=`{baseline}`, waiver=`{waiver}`, suppression=`{suppression}`, calibration=`{calibration}`, preview=`{preview}`"));
             self.line(&format!("- Warnings: `{warnings}`; unknowns: `{unknowns}`"));
             self.line(&format!("- Next policy action: `{next}`"));
-            self.line("- Policy readiness artifacts: `target/ripr/reports/policy-readiness.json`, `target/ripr/reports/policy-readiness.md`");
+            self.line("- Policy readiness artifacts: `ripr/reports/policy-readiness.json`, `ripr/reports/policy-readiness.md`");
             self.line("- Boundary: advisory readiness projection only; `ripr gate evaluate` remains pass/fail authority when configured.");
             self.blank();
         }
@@ -1238,7 +1260,7 @@ impl Summary {
                 "- Blockers: total=`{blockers}`, first=`{top_blocker}`"
             ));
             self.line(&format!("- Warnings: `{warnings}`; unknowns: `{unknowns}`"));
-            self.line("- Policy operations artifacts: `target/ripr/reports/policy-operations.json`, `target/ripr/reports/policy-operations.md`");
+            self.line("- Policy operations artifacts: `ripr/reports/policy-operations.json`, `ripr/reports/policy-operations.md`");
             self.line("- Boundary: advisory operations packet only; promotion requires manual review and separate configuration changes.");
             self.blank();
         }
@@ -1269,7 +1291,7 @@ impl Summary {
             ));
             self.line(&format!("- Trends: readiness=`{readiness}`, waiver_pressure=`{waiver}`, suppression_health=`{suppression}`, baseline_still_present=`{baseline_present}`, baseline_resolved=`{baseline_resolved}`, preview_boundary=`{preview}`"));
             self.line(&format!("- Warnings: `{warnings}`; unknowns: `{unknowns}`"));
-            self.line("- Policy history artifacts: `target/ripr/reports/policy-history.json`, `target/ripr/reports/policy-history.md`");
+            self.line("- Policy history artifacts: `ripr/reports/policy-history.json`, `ripr/reports/policy-history.md`");
             self.line("- Boundary: history is read-only and never appends to `.ripr/policy-history.jsonl` automatically.");
             self.blank();
         }
@@ -1298,7 +1320,7 @@ impl Summary {
             self.line(&format!("- `{target}`: allowed_now=`{allowed}`, repairs=`{repairs}`, receipts=`{receipts}`, warnings=`{warnings}`, unknowns=`{unknowns}`, why=`{reason}`"));
         }
         if found {
-            self.line("- Promotion packet artifacts: `target/ripr/reports/policy-promotion-*.json`, `target/ripr/reports/policy-promotion-*.md`");
+            self.line("- Promotion packet artifacts: `ripr/reports/policy-promotion-*.json`, `ripr/reports/policy-promotion-*.md`");
             self.line("- Boundary: packets do not edit `ripr.toml`, baselines, suppressions, workflows, branch protection, CI defaults, or preview eligibility.");
         } else {
             self.line("Policy promotion packets were not generated. They require policy-operations and remain read-only manual review packets.");
@@ -1307,7 +1329,7 @@ impl Summary {
             let md = format!("{REPORTS}/policy-promotion-{mode}.md");
             if self.is_file(&md) {
                 self.blank();
-                self.full_report(&md, false);
+                self.full_report(&md);
             }
         }
         self.blank();
@@ -1331,7 +1353,7 @@ impl Summary {
             self.line(&format!("- `{language}`/`{class}`: allowed_now=`{allowed}`, supplied_evidence=`{supplied}`, missing_evidence=`{missing}`, warnings=`{warnings}`, unknowns=`{unknowns}`"));
         }
         if jsons.iter().any(|json| self.is_file(json)) {
-            self.line("- Preview promotion artifacts: `target/ripr/reports/preview-promotion-*.json`, `target/ripr/reports/preview-promotion-*.md`");
+            self.line("- Preview promotion artifacts: `ripr/reports/preview-promotion-*.json`, `ripr/reports/preview-promotion-*.md`");
             self.line("- Boundary: preview evidence remains visible and non-gating unless a later explicit promotion policy is reviewed.");
         } else {
             self.line("Preview promotion packets were not generated. They are only surfaced when TypeScript or Python preview adapters are configured.");
@@ -1339,7 +1361,7 @@ impl Summary {
         for md in self.preview_promotion_files(".md") {
             if self.is_file(&md) {
                 self.blank();
-                self.full_report(&md, false);
+                self.full_report(&md);
             }
         }
         self.blank();
@@ -1388,12 +1410,12 @@ impl Summary {
             self.line(&format!("- Status: `{status}`"));
             self.line(&format!("- Counts: waivers=`{waivers}`, identities=`{identities}`, repeated_seams=`{repeated_seams}`, repeated_files=`{repeated_files}`"));
             self.line(&format!("- Review signals: focused_test_candidates=`{focused}`, durable_suppression_candidates=`{suppression}`, warnings=`{warnings}`"));
-            self.line("- Waiver-aging artifacts: `target/ripr/reports/waiver-aging.json`, `target/ripr/reports/waiver-aging.md`");
+            self.line("- Waiver-aging artifacts: `ripr/reports/waiver-aging.json`, `ripr/reports/waiver-aging.md`");
             self.line("- Boundary: repeated waiver is a visible signal, not a failure or durable suppression.");
             self.blank();
         }
         if self.is_file("target/ripr/reports/waiver-aging.md") {
-            self.full_report("target/ripr/reports/waiver-aging.md", false);
+            self.full_report("target/ripr/reports/waiver-aging.md");
         } else if self.is_file(LEDGER_JSON) {
             self.line("Waiver aging was not generated. Inspect `target/ripr/reports/pr-evidence-ledger.json` and rerun `ripr policy waiver-aging` locally.");
         } else {
@@ -1438,7 +1460,7 @@ impl Summary {
             self.line(&format!(
                 "- Warnings: `{warnings}`; config_errors: `{config_errors}`"
             ));
-            self.line("- Suppression-health artifacts: `target/ripr/reports/suppression-health.json`, `target/ripr/reports/suppression-health.md`");
+            self.line("- Suppression-health artifacts: `ripr/reports/suppression-health.json`, `ripr/reports/suppression-health.md`");
             self.line("- Boundary: suppressions remain visible durable exceptions; this report never applies or gates on suppressions.");
             self.blank();
         }
@@ -1557,10 +1579,8 @@ impl Summary {
             self.line(&format!(
                 "- Blocking reason (`{blocking}`): `{blocking_reason}`"
             ));
-            self.line("- Gate artifacts: `target/ripr/reports/gate-decision.json`, `target/ripr/reports/gate-decision.md`");
-            self.line(
-                "- Related inputs: `target/ripr/review/comments.json`, `target/ci/labels.json`",
-            );
+            self.line("- Gate artifacts: `ripr/reports/gate-decision.json`, `ripr/reports/gate-decision.md`");
+            self.line("- Related inputs: `ripr/review/comments.json`, `ci/labels.json`");
             self.blank();
         }
         self.report_or(
@@ -1593,11 +1613,11 @@ impl Summary {
             self.line(&format!("- Baseline: `{baseline}`"));
             self.line(&format!("- Counts: still_present=`{still_present}`, resolved=`{resolved}`, new_policy_eligible=`{new_policy_eligible}`, acknowledged=`{acknowledged}`, suppressed=`{suppressed}`, stale=`{stale}`, invalid=`{invalid}`, missing_current_input=`{missing_current}`, legacy_fallback=`{legacy}`"));
             self.line(&format!("- Boundary: {limits}"));
-            self.line("- Baseline delta artifacts: `target/ripr/reports/baseline-debt-delta.json`, `target/ripr/reports/baseline-debt-delta.md`");
+            self.line("- Baseline delta artifacts: `ripr/reports/baseline-debt-delta.json`, `ripr/reports/baseline-debt-delta.md`");
             self.blank();
         }
         if self.is_file(DELTA_MD) {
-            self.full_report(DELTA_MD, false);
+            self.full_report(DELTA_MD);
         } else if gate_baseline {
             self.line("Baseline debt delta was not generated. Check that `RIPR_GATE_MODE` produced `target/ripr/reports/gate-decision.json` and that `RIPR_GATE_BASELINE` points at a readable baseline.");
         } else {
@@ -1647,11 +1667,11 @@ impl Summary {
             self.line(&format!("- Top debt area: `{top_area}`"));
             self.line(&format!("- Top repair route: `{top_route}`"));
             self.line(&format!("- Trend source: `{trend}`"));
-            self.line("- RIPR Zero artifacts: `target/ripr/reports/ripr-zero-status.json`, `target/ripr/reports/ripr-zero-status.md`");
+            self.line("- RIPR Zero artifacts: `ripr/reports/ripr-zero-status.json`, `ripr/reports/ripr-zero-status.md`");
             self.blank();
         }
         if self.is_file(ZERO_MD) {
-            self.full_report(ZERO_MD, false);
+            self.full_report(ZERO_MD);
         } else if self.is_file(DELTA_JSON) {
             self.line("RIPR Zero status was not generated. Inspect `target/ripr/reports/baseline-debt-delta.json` and rerun `ripr zero status` locally.");
         } else {
@@ -1749,11 +1769,16 @@ impl Summary {
                 "- Counts: publishable=`{publishable}`, skipped=`{skipped}`, blocked=`{blocked}`"
             ));
             self.line(&format!("- Safe to publish: `{safe}`"));
-            self.line("- Plan artifacts: `target/ripr/review/comment-publish-plan.json`, `target/ripr/review/comment-publish-plan.md`");
+            self.line("- Plan artifacts: `ripr/review/comment-publish-plan.json`, `ripr/review/comment-publish-plan.md` in the `ripr-reports` artifact");
             self.line("- Boundary: inline comments remain opt-in; gate decisions remain separate pass/fail authority.");
             self.blank();
+            // The plan is what `RIPR_COMMENT_MODE=plan` asks to see: which
+            // lines would get a comment and why others are skipped. It stays
+            // inline, collapsed. Its comment lines are bounded by the
+            // inline-comment cap; each stale-comment delete is one line, and
+            // stale comments are the previous run's capped set.
             if self.is_file("target/ripr/review/comment-publish-plan.md") {
-                self.full_report("target/ripr/review/comment-publish-plan.md", false);
+                self.collapsed_report("target/ripr/review/comment-publish-plan.md");
             }
         } else {
             self.line("- Inline comments are disabled by default. Set `RIPR_COMMENT_MODE` to `plan` to inspect a publish plan or `inline` to publish same-repo changed-line comments when permissions are safe.");
@@ -1819,7 +1844,7 @@ impl Summary {
     /// The full report when it exists, otherwise the not-generated line.
     fn report_or(&mut self, path: &str, missing: &str) {
         if self.is_file(path) {
-            self.full_report(path, false);
+            self.full_report(path);
         } else {
             self.line(missing);
         }

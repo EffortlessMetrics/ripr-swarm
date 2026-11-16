@@ -189,7 +189,7 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
     let ranker = ChangedLineRank::build(
         changed_text,
         facts.probe_shapes.iter().filter_map(|shape| {
-            (shape.start_line <= line && line <= shape.end_line).then_some(shape.text.as_str())
+            (shape.start_line() <= line && line <= shape.end_line()).then_some(shape.text.as_str())
         }),
     );
     // The unchanged test counts token runs of every overlapping shape in the
@@ -200,7 +200,7 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
         let needles = facts
             .probe_shapes
             .iter()
-            .filter(|shape| shape.start_line <= line && line <= shape.end_line)
+            .filter(|shape| shape.start_line() <= line && line <= shape.end_line())
             .map(|shape| {
                 (
                     shape.text.trim(),
@@ -234,7 +234,7 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
     };
     let mut selected = Vec::<(ParserProbeShape<'a>, Option<(u8, bool, usize)>)>::new();
     for shape in &facts.probe_shapes {
-        if shape.start_line > line || line > shape.end_line {
+        if shape.start_line() > line || line > shape.end_line() {
             continue;
         }
         let family = family_for_probe_shape(shape.kind);
@@ -255,9 +255,9 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             start_line: if unsafe_boundary {
                 line
             } else {
-                shape.start_line
+                shape.start_line()
             },
-            start_byte: shape.start_byte,
+            start_byte: shape.start_byte(),
             text: shape.text.as_str(),
             // Resolved for the winners only: it scans the line prefix, which
             // is linear in the line per shape (#9895).
@@ -325,7 +325,7 @@ fn unsafe_boundary_owns_changed_line(
         return false;
     }
 
-    if line == shape.start_line {
+    if line == shape.start_line() {
         let prefix_end = boundary_start.max(line_range.start).min(line_range.end);
         let Some(prefix) = facts.source.get(line_range.start..prefix_end) else {
             return false;
@@ -334,7 +334,7 @@ fn unsafe_boundary_owns_changed_line(
             return false;
         }
     }
-    if line == shape.end_line {
+    if line == shape.end_line() {
         let suffix_start = boundary_end.max(line_range.start).min(line_range.end);
         let Some(suffix) = facts.source.get(suffix_start..line_range.end) else {
             return false;
@@ -356,7 +356,7 @@ fn unsafe_boundary_syntax_range(
         let Some(token) = function.unsafe_token() else {
             continue;
         };
-        if u32::from(token.text_range().start()) as usize == shape.start_byte {
+        if u32::from(token.text_range().start()) == shape.start_byte {
             return Some(function.syntax().text_range());
         }
     }
@@ -364,7 +364,7 @@ fn unsafe_boundary_syntax_range(
         let Some(token) = block.unsafe_token() else {
             continue;
         };
-        if u32::from(token.text_range().start()) as usize == shape.start_byte {
+        if u32::from(token.text_range().start()) == shape.start_byte {
             return Some(block.syntax().text_range());
         }
     }
@@ -461,6 +461,99 @@ fn is_token_run(haystack: &str, masked: &[u8], start: usize, needle: &str) -> bo
     let open_end = needle.chars().next_back().is_none_or(|ch| !is_word(ch))
         || after.is_none_or(|ch| !is_word(ch));
     open_start && open_end
+}
+
+/// How often `needle` occurs in `haystack` as a code token run that no
+/// neighbouring operand syntax extends (#14722): `total > limit` is not
+/// found in `subtotal > limit`, `total > limit.max`, `total > limit[0]`,
+/// `total > limit + 1` or `x.total > limit`, but is found in
+/// `let over = total > limit;`. A shape the diff producer cannot cut is
+/// unchanged only when the old line holds it at least this often.
+pub(super) fn operand_bounded_token_run_count(haystack: &str, needle: &str) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+    let masked = mask_comments_and_strings(haystack);
+    haystack
+        .match_indices(needle)
+        .filter(|(start, _)| {
+            // Neighbours are read on the masked line, so a comment beside
+            // the comparison (`a > b // note`) is not read as an operator.
+            let next = masked
+                .get(start + needle.len()..)
+                .unwrap_or_default()
+                .trim_start();
+            let previous = masked.get(..*start).unwrap_or_default().trim_end();
+            is_token_run(haystack, masked.as_bytes(), *start, needle)
+                && !extends_rightward(next)
+                && !extends_leftward(previous)
+        })
+        .count()
+}
+
+/// Whether `next` (the text after a match, leading space trimmed) continues
+/// the right operand: a member, call, index, `?`, an arithmetic or bit
+/// operator (`|` and `&` but not `||`/`&&`, which end the operand), a shift,
+/// a macro `!`, a path, or an `as` cast.
+fn extends_rightward(next: &str) -> bool {
+    let doubled = |op: &str| next.starts_with(op);
+    if next.starts_with([
+        '.', '(', '[', '?', '+', '-', '*', '/', '%', ':', '^', '<', '>', '!',
+    ]) {
+        return true;
+    }
+    if (next.starts_with('|') && !doubled("||")) || (next.starts_with('&') && !doubled("&&")) {
+        return true;
+    }
+    next.strip_prefix("as")
+        .is_some_and(|rest| !rest.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_'))
+}
+
+/// Whether `previous` (the text before a match, trailing space trimmed)
+/// continues the left operand: a member or path, an arithmetic or bit
+/// operator (`|` and `&` but not `||`/`&&`), a unary `!`, or a shift.
+/// A struct field `:`, a match arrow `=>`, a return arrow `->`, a range
+/// `..` and closure parameters `|x|` end the operand instead.
+fn extends_leftward(previous: &str) -> bool {
+    if previous.ends_with("..") {
+        return false;
+    }
+    if previous.ends_with(['.', '+', '-', '*', '/', '%', '!', '^']) {
+        return true;
+    }
+    let single = |op: char, doubled: &str| previous.ends_with(op) && !previous.ends_with(doubled);
+    (single('|', "||") && !closes_closure_parameters(previous))
+        || single('&', "&&")
+        || previous.ends_with("::")
+        || previous.ends_with(">>")
+        || previous.ends_with("<<")
+}
+
+/// Whether `previous` ends with a closure parameter list (`|x|`,
+/// `move |a, b: u8|`, `|x: &Vec<u8>|`) rather than a bit-or operand: the
+/// opening `|` follows an expression start (`(`, `,`, `=`, `=>`, `{`, `;`,
+/// `[`, the line start, `move`, `return` or another closure's parameters),
+/// not a left operand as in `m | n | a > b`. A binary `|` always has a left
+/// operand, so the parameter text itself needs no check.
+fn closes_closure_parameters(previous: &str) -> bool {
+    let Some(head) = previous.strip_suffix('|') else {
+        return false;
+    };
+    let Some(open) = head.rfind('|') else {
+        return false;
+    };
+    let before = head.get(..open).unwrap_or_default().trim_end();
+    let ends_with_word = |word: &str| {
+        before
+            .strip_suffix(word)
+            .is_some_and(|rest| !rest.ends_with(|ch: char| ch.is_alphanumeric() || ch == '_'))
+    };
+    before.is_empty()
+        || before.ends_with(['(', ',', '=', '{', ';', '['])
+        || before.ends_with("=>")
+        || ends_with_word("move")
+        || ends_with_word("return")
+        || closes_closure_parameters(before)
 }
 
 /// A record field must be a whole syntactic unit, not the head or tail of a
@@ -749,6 +842,35 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
         || text.starts_with("mod ")
         || text.starts_with("#")
         || is_visible_module_declaration(text)
+        || is_plain_extern_crate(text)
+}
+
+/// A private, plain `extern crate name;` only links a crate, the same way a
+/// private `use` imports one, so it holds no behavior for a test to notice
+/// (#14403). A visibility-qualified form (`pub extern crate foo;`) re-exports
+/// the crate under the declaring module's path, like a visible `use`, and the
+/// renaming form (`extern crate core as std;`, `extern crate self as name;`)
+/// changes what a name means for the rest of the crate; both stay probed, as
+/// does any line with trailing code.
+fn is_plain_extern_crate(text: &str) -> bool {
+    let Some(body) = text.strip_suffix(';') else {
+        return false;
+    };
+    body.strip_prefix("extern")
+        .filter(|tail| tail.starts_with(char::is_whitespace))
+        .map(str::trim_start)
+        .and_then(|tail| tail.strip_prefix("crate"))
+        .filter(|tail| tail.starts_with(char::is_whitespace))
+        .map(str::trim)
+        .is_some_and(|name| {
+            let name = name.strip_prefix("r#").unwrap_or(name);
+            name != "self"
+                && name
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
 }
 
 /// A visibility-qualified out-of-line `mod name;` declaration
@@ -854,6 +976,65 @@ pub(crate) fn is_item_header(text: &str) -> bool {
                 && !generics_hold_expression(rest)
         })
     })
+}
+
+/// A one-line `type` item, whether a trait's associated type (`type Eq: CmpEq;`,
+/// `type Item;`), an impl's binding (`type Eq = __m128i;`) or a type alias
+/// (`pub type Map<K> = BTreeMap<K, u8>;`), declares a type and runs nothing
+/// (#14429). Its `name: Bound` only looks like a constructed field `name:
+/// value`, so it reads as one `static_unknown`, like an item header, and a
+/// changed type stays visible. The line must hold the whole item, ending in
+/// `;`. A type that holds an expression (a block, a macro, or any array
+/// length) keeps its ordinary families.
+pub(crate) fn is_type_item_declaration(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    let text = masked.trim();
+    let declared = super::diff::strip_visibility(text);
+    let declared = declared
+        .strip_prefix("default")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map_or(declared, str::trim_start);
+    let Some(rest) = declared
+        .strip_prefix("type")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map(str::trim_start)
+    else {
+        return false;
+    };
+    let name_len = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    let name = rest.get(..name_len).unwrap_or_default();
+    let starts_like_identifier = name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
+    let Some(body) = rest.strip_suffix(';') else {
+        return false;
+    };
+    // A `;` outside brackets joins a second statement (`type A = u8; f();`);
+    // one inside an array type (`[u8; 4]`) is part of the type.
+    let mut depth = 0usize;
+    let second_statement = body.chars().any(|c| match c {
+        '[' | '(' | '<' => {
+            depth += 1;
+            false
+        }
+        ']' | ')' | '>' => {
+            depth = depth.saturating_sub(1);
+            false
+        }
+        ';' => depth == 0,
+        _ => false,
+    });
+    // An array length is a const expression evaluated in the type
+    // (`[T; 4]`), so the item keeps its ordinary families, as the inline
+    // bound owner rule requires.
+    let has_array_length = array_length_texts(body).next().is_some();
+    starts_like_identifier
+        && !second_statement
+        && !has_array_length
+        && !generics_hold_expression(body)
 }
 
 /// A const-generic default (`<const N: usize = { capacity() }>`) or an array
@@ -1128,6 +1309,158 @@ mod tests {
         assert!(!is_visible_module_declaration("pub use a::b;"));
     }
 
+    /// #14429: a one-line `type` item declares a type; its bound only looks
+    /// like a constructed field. Expressions in the type and trailing code
+    /// keep their ordinary families.
+    #[test]
+    fn type_items_read_as_declarations_not_fields() {
+        use crate::analysis::probes::lexical::classify_changed_line;
+        for declaration in [
+            "type Eq: CmpEq;",
+            "type Mask: MoveMask;",
+            "type Item;",
+            "type Eq = __m128i;",
+            "pub type Map<K> = BTreeMap<K, u8>;",
+            "default type Output = Self;",
+            "type Error: std::error::Error + Send + Sync + 'static;",
+            "type F = fn(u8) -> u8;",
+        ] {
+            assert!(is_type_item_declaration(declaration), "`{declaration}`");
+            assert_eq!(
+                classify_changed_line(declaration),
+                vec![ProbeFamily::StaticUnknown],
+                "`{declaration}`"
+            );
+        }
+        for kept in [
+            "type Buf = [u8; cap()];",
+            "pub(crate) type Buf = [u8; 4];",
+            "type Packet<T: Clone> = [T; 4];",
+            "type A = u8; f();",
+            "type Out = { 1 };",
+            "type M = mac!(u8);",
+            "type Eq: CmpEq",
+            "type = u8;",
+            "type 1x = u8;",
+            "typed: u8,",
+            "type_: Kind,",
+            "let ty = Type::new();",
+        ] {
+            assert!(!is_type_item_declaration(kept), "`{kept}`");
+        }
+    }
+
+    /// #14429 producer level: a changed trait associated type yields no
+    /// field-construction probe, while a changed struct-literal field still
+    /// does (negative control).
+    #[test]
+    fn diff_producer_reads_associated_type_as_declaration() -> Result<(), String> {
+        use crate::analysis::diff::{ChangedFile, ChangedLine};
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source = "pub trait Vector {\n    type Eq: CmpEq;\n}\npub struct S {\n    pub a: u8,\n}\npub fn make() -> S {\n    S {\n        a: 1,\n    }\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(path.clone(), facts)]),
+            ..Default::default()
+        });
+        let families_for = |line: usize| {
+            let text = source.lines().nth(line - 1).unwrap_or_default().to_string();
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: vec![ChangedLine {
+                    line,
+                    new_side_line: line,
+                    text,
+                }],
+                removed_lines: Vec::new(),
+            };
+            super::super::diff::probes_for_file(std::path::Path::new("."), &changed, &index)
+                .into_iter()
+                .map(|probe| probe.family)
+                .collect::<Vec<_>>()
+        };
+        let associated = families_for(2);
+        assert!(
+            !associated.contains(&ProbeFamily::FieldConstruction),
+            "`type Eq: CmpEq;` must not read as a constructed field: {associated:?}"
+        );
+        let field = families_for(9);
+        assert!(
+            field.contains(&ProbeFamily::FieldConstruction),
+            "the struct-literal field `a: 1,` must stay field_construction: {field:?}"
+        );
+        Ok(())
+    }
+
+    /// #14403: a private plain `extern crate name;` links a crate and has no
+    /// behavior; a re-export (`pub extern crate x;`), a renaming
+    /// `extern crate a as b;` and any trailing code stay probed.
+    #[test]
+    fn plain_extern_crate_is_ignored_but_a_rename_is_not() {
+        for ignored in [
+            "extern crate alloc;",
+            "extern  crate  std ;",
+            "extern crate r#async;",
+        ] {
+            assert!(should_ignore_changed_line(ignored), "`{ignored}`");
+        }
+        for kept in [
+            "pub extern crate core;",
+            "pub(crate) extern crate serde_json;",
+            "extern crate core as std;",
+            "pub extern crate other as u32;",
+            "extern crate self as my_crate;",
+            "extern crate self;",
+            "extern crate alloc; fn go() {}",
+            "extern crate alloc",
+            "extern crate;",
+            "extern \"C\" fn go();",
+            "externcrate alloc;",
+            "extern cratex alloc;",
+            "extern crate 1alloc;",
+        ] {
+            assert!(!should_ignore_changed_line(kept), "`{kept}`");
+        }
+    }
+
+    /// Producer level: an added `extern crate alloc;` yields no probe, while a
+    /// renaming `extern crate core as std;` still yields one.
+    #[test]
+    fn diff_producer_ignores_plain_extern_crate_but_probes_a_rename() -> Result<(), String> {
+        use crate::analysis::diff::{ChangedFile, ChangedLine};
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source = "extern crate alloc;\nextern crate core as std;\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(path.clone(), facts)]),
+            ..Default::default()
+        });
+        let probes_for = |line: usize| {
+            let text = source.lines().nth(line - 1).unwrap_or_default().to_string();
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: vec![ChangedLine {
+                    line,
+                    new_side_line: line,
+                    text,
+                }],
+                removed_lines: Vec::new(),
+            };
+            super::super::diff::probes_for_file(std::path::Path::new("."), &changed, &index)
+        };
+        assert!(
+            probes_for(1).is_empty(),
+            "`extern crate alloc;` must yield no probe"
+        );
+        assert!(
+            !probes_for(2).is_empty(),
+            "a renaming `extern crate core as std;` must still be probed"
+        );
+        Ok(())
+    }
+
     /// Producer level: an added `pub mod new;` yields no probe, while a
     /// retargeted `pub(crate) use` re-export still yields one.
     #[test]
@@ -1298,8 +1631,12 @@ mod tests {
                         ProbeShapeFact {
                             start_line: 1,
                             end_line: 5,
-                            start_byte: function_start,
-                            end_byte: function_start + 18,
+                            start_byte: crate::analysis::facts::probe_shape_position(
+                                function_start,
+                            ),
+                            end_byte: crate::analysis::facts::probe_shape_position(
+                                function_start + 18,
+                            ),
                             kind: ProbeShapeKind::UnsafeBoundary,
                             text: "unsafe fn read_raw".into(),
                             value_consumed: false,
@@ -1308,8 +1645,10 @@ mod tests {
                         ProbeShapeFact {
                             start_line: 2,
                             end_line: 4,
-                            start_byte: block_start,
-                            end_byte: block_start + 12,
+                            start_byte: crate::analysis::facts::probe_shape_position(block_start),
+                            end_byte: crate::analysis::facts::probe_shape_position(
+                                block_start + 12,
+                            ),
                             kind: ProbeShapeKind::UnsafeBoundary,
                             text: "unsafe block".into(),
                             value_consumed: false,
@@ -1318,8 +1657,12 @@ mod tests {
                         ProbeShapeFact {
                             start_line: 3,
                             end_line: 3,
-                            start_byte: predicate_start,
-                            end_byte: predicate_start + 13,
+                            start_byte: crate::analysis::facts::probe_shape_position(
+                                predicate_start,
+                            ),
+                            end_byte: crate::analysis::facts::probe_shape_position(
+                                predicate_start + 13,
+                            ),
                             kind: ProbeShapeKind::Predicate,
                             text: "value < limit".into(),
                             value_consumed: false,
@@ -1366,8 +1709,8 @@ mod tests {
                     probe_shapes: vec![ProbeShapeFact {
                         start_line: 1,
                         end_line: 1,
-                        start_byte: block_start,
-                        end_byte: block_start + 12,
+                        start_byte: crate::analysis::facts::probe_shape_position(block_start),
+                        end_byte: crate::analysis::facts::probe_shape_position(block_start + 12),
                         kind: ProbeShapeKind::UnsafeBoundary,
                         text: "unsafe block".into(),
                         value_consumed: false,
@@ -1405,8 +1748,8 @@ mod tests {
                     probe_shapes: vec![ProbeShapeFact {
                         start_line: 2,
                         end_line: 2,
-                        start_byte: block_start,
-                        end_byte: block_start + 12,
+                        start_byte: crate::analysis::facts::probe_shape_position(block_start),
+                        end_byte: crate::analysis::facts::probe_shape_position(block_start + 12),
                         kind: ProbeShapeKind::UnsafeBoundary,
                         text: "unsafe block".into(),
                         value_consumed: false,
@@ -1445,8 +1788,8 @@ mod tests {
                         ProbeShapeFact {
                             start_line: 2,
                             end_line: 2,
-                            start_byte: first,
-                            end_byte: first + 6,
+                            start_byte: crate::analysis::facts::probe_shape_position(first),
+                            end_byte: crate::analysis::facts::probe_shape_position(first + 6),
                             kind: ProbeShapeKind::CallDeletion,
                             text: "read()".into(),
                             value_consumed: false,
@@ -1455,8 +1798,8 @@ mod tests {
                         ProbeShapeFact {
                             start_line: 3,
                             end_line: 3,
-                            start_byte: second,
-                            end_byte: second + 6,
+                            start_byte: crate::analysis::facts::probe_shape_position(second),
+                            end_byte: crate::analysis::facts::probe_shape_position(second + 6),
                             kind: ProbeShapeKind::CallDeletion,
                             text: "read()".into(),
                             value_consumed: false,
@@ -1552,8 +1895,8 @@ mod tests {
         ProbeShapeFact {
             start_line: 1,
             end_line: 1,
-            start_byte,
-            end_byte,
+            start_byte: crate::analysis::facts::probe_shape_position(start_byte),
+            end_byte: crate::analysis::facts::probe_shape_position(end_byte),
             kind,
             text,
             value_consumed: false,
@@ -1575,7 +1918,7 @@ mod tests {
         inner.push_str("_=>0}");
         shapes.push(shape_fact(ProbeShapeKind::MatchArm, tail_start, "_=>0"));
         let prefix = "Id { a: 1, b: 2, x: ";
-        let shift = prefix.len();
+        let shift = crate::analysis::facts::probe_shape_position(prefix.len());
         for shape in &mut shapes {
             shape.start_byte = shape.start_byte.saturating_add(shift);
             shape.end_byte = shape.end_byte.saturating_add(shift);
@@ -1894,8 +2237,8 @@ mod tests {
                 let key = Some((category, unchanged, distance));
                 let candidate = ParserProbeShape {
                     family,
-                    start_line: shape.start_line,
-                    start_byte: shape.start_byte,
+                    start_line: shape.start_line(),
+                    start_byte: shape.start_byte(),
                     text: shape.text.as_str(),
                     standalone_call: true,
                     unsafe_boundary: false,
@@ -2024,5 +2367,83 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    /// #14722 review: an operator that continues an operand hides the
+    /// comparison, and one that ends it (`&&`, `||`, a field `:`, `=>`,
+    /// `->`, a range, closure parameters, a comment) does not.
+    #[test]
+    fn operand_bounded_count_reads_operand_boundaries() {
+        let count = |haystack: &str| operand_bounded_token_run_count(haystack, "a > b");
+        for extended in [
+            "(a > b as u8, c)",
+            "(a > b | m, c)",
+            "(a > b & m, c)",
+            "(a > b ^ m, c)",
+            "(a > b << 1, c)",
+            "(a > b >> 1, c)",
+            "(a > b!(x), c)",
+            "(a > b::C, c)",
+            "(m | a > b, c)",
+            "(m & a > b, c)",
+            "(m >> a > b, c)",
+            "(m::a > b, c)",
+            "(!a > b, c)",
+            "(a > b.c, c)",
+            "(a > b(c), c)",
+            "(a > b[0], c)",
+            "(a > b?, c)",
+            "(a > b + 1, c)",
+            "(a > b - 1, c)",
+            "(a > b * 2, c)",
+            "(a > b / 2, c)",
+            "(a > b % 2, c)",
+            "(a > b < c, c)",
+            "(m.a > b, c)",
+            "(m + a > b, c)",
+            "(m - a > b, c)",
+            "(m * a > b, c)",
+            "(m / a > b, c)",
+            "(m % a > b, c)",
+            "(m ^ a > b, c)",
+            "(m << a > b, c)",
+            "(m | n | a > b, c)",
+            "(f(x) | a > b, c)",
+            "(m, n | k | a > b)",
+            "x = m | n | a > b;",
+            "{ m | n | a > b }",
+            "(remove |x| a > b, c)",
+            "(x || y | a > b, c)",
+        ] {
+            assert_eq!(count(extended), 0, "{extended}");
+        }
+        for bounded in [
+            "(x && a > b, c)",
+            "(x || a > b, c)",
+            "(a > b && x, c)",
+            "(a > b || x, c)",
+            "(S { ok: a > b }, c)",
+            "x => a > b,",
+            "fn f() -> bool { a > b }",
+            "(a > b assert, c)",
+            "(v.any(|x| a > b), c)",
+            "(move |x, y: u8| a > b, c)",
+            "let f = |x| a > b;",
+            "|x| a > b",
+            "(c, |x| a > b)",
+            "{ |x| a > b }",
+            "(v.any(|x: &Vec<u8>| a > b), c)",
+            "(v.any(|[x, _]: [u8; 2]| a > b), c)",
+            "(v.any(|x: &'a T| a > b), c)",
+            "x => |x| a > b,",
+            "return |x| a > b;",
+            "(|x| |y| a > b, c)",
+            "(x && a > b, c) // note",
+            "x && a > b // a / b",
+            "(/* why */ a > b, c)",
+            "(..a > b, c)",
+        ] {
+            assert_eq!(count(bounded), 1, "{bounded}");
+        }
     }
 }

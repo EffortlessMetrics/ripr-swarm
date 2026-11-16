@@ -5,10 +5,6 @@ name: Windows Gate
 # surfaces. Branch-protection promotion to required is a separate owner step.
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-  push:
-    branches: [main, master]
   workflow_dispatch:
 
 permissions:

@@ -1,4 +1,6 @@
-use super::approx_band::{PythonBandReading, PythonBandVerdict, python_band_reading};
+use super::approx_band::{
+    PythonBandReading, PythonBandSource, PythonBandVerdict, python_band_reading,
+};
 use super::arm_activation;
 use super::assertion_selection::{
     PythonAssertionFocus, PythonAssertionSelection, select_relevant_assertion,
@@ -126,6 +128,11 @@ pub(super) fn classify_change_with_source(
 pub(super) struct PythonNoBehaviorContext {
     pub(super) new_line_in_docstring: bool,
     pub(super) old_line_in_docstring: bool,
+    /// The changed line lies in the body of `if TYPE_CHECKING:`, which never
+    /// runs (`type_checking_block.rs`, #14156).
+    pub(super) new_line_type_checking_only: bool,
+    /// The paired old line lay in such a body of the old file.
+    pub(super) old_line_type_checking_only: bool,
     /// The changed line lies inside a string literal that crosses a line
     /// break, or the file could not be lexed to rule that out. A spacing or
     /// comment-looking change there edits the string (#10706).
@@ -265,9 +272,17 @@ fn classify_change_full<'a>(
     // tests notice a behavior change that does not exist. The change is a no-op only
     // when BOTH sides are non-behavioral: if real code was replaced by a docstring
     // (old line behavioral), keep analyzing rather than silently dropping it.
-    let new_is_noop = no_behavior.new_line_in_docstring || is_python_no_behavior_line(line_text);
-    let old_is_noop = old_line_text
-        .is_none_or(|old| no_behavior.old_line_in_docstring || is_python_no_behavior_line(old));
+    // A line in a type-checking-only block (#14156) is the same kind of fact:
+    // it never runs. Runtime code moved INTO such a block (old line
+    // behavioral) keeps its probe.
+    let new_is_noop = no_behavior.new_line_in_docstring
+        || no_behavior.new_line_type_checking_only
+        || is_python_no_behavior_line(line_text);
+    let old_is_noop = old_line_text.is_none_or(|old| {
+        no_behavior.old_line_in_docstring
+            || no_behavior.old_line_type_checking_only
+            || is_python_no_behavior_line(old)
+    });
     if new_is_noop && old_is_noop {
         return None;
     }
@@ -872,7 +887,10 @@ fn classify_change_for_owner_inner<'a>(
         log_evidence.as_ref(),
         &focus,
         owner,
-        owner_source.unwrap_or(""),
+        PythonBandSource {
+            text: owner_source.unwrap_or(""),
+            sole_line_replacement: no_behavior.sole_line_replacement,
+        },
         &related_candidates,
     )
     // A pinned lambda body edit or dataclass default edit is read by the
@@ -1150,6 +1168,24 @@ fn classify_change_for_owner_inner<'a>(
             )
         })
         .flatten();
+    // #13622: an old-type exact assertion after a raised-type replacement is
+    // recorded as advisory evidence only; it never changes the class here. The
+    // gap-bound repair closure reads it (RIPR-SPEC-0310).
+    let stale_raised_type_pins = if static_limit.is_none()
+        && matches!(family, ProbeFamily::ErrorPath)
+        && !no_behavior.multi_line_def_header_line
+        && exception_variants.is_empty()
+    {
+        super::exception_variant::stale_raised_type_pins(
+            line_text,
+            old_line_text,
+            owner_source,
+            &related_candidates,
+            &focus,
+        )
+    } else {
+        Vec::new()
+    };
     let mut message_pin_downgraded = false;
     // Table-driven expected values that never vary the changed returned
     // operand cannot discriminate `return default` -> `return None` (#6651).
@@ -1193,16 +1229,29 @@ fn classify_change_for_owner_inner<'a>(
     let mut table_downgraded = false;
     // An `approx` band that provably admits both the old and the new result
     // lets a strong assertion pass either way (#9546, RIPR-SPEC-0238 rule 21).
+    // The reading succeeds only on a `return` line or a straight-line body
+    // assignment (#13723), whatever its probe family, and the static-limit
+    // pass lifts the band limit on the same reading, so the gap applies to
+    // every family: gating it on `ReturnValue` credited an absorbed edit to
+    // an assignment as exposed.
     let band_gap = (static_limit.is_none()
-        && matches!(family, ProbeFamily::ReturnValue)
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && guarded_arm_gap.is_none()
         && unvaried_table.is_none()
         && !no_behavior.multi_line_def_header_line)
         .then(|| {
-            match python_band_reading(old_line_text, line_text, owner, &related_candidates, &focus)
-            {
+            match python_band_reading(
+                old_line_text,
+                line_text,
+                owner,
+                PythonBandSource {
+                    text: owner_source.unwrap_or(""),
+                    sole_line_replacement: no_behavior.sole_line_replacement,
+                },
+                &related_candidates,
+                &focus,
+            ) {
                 PythonBandReading::Read(evidence)
                     if evidence.verdict == PythonBandVerdict::Absorbs =>
                 {
@@ -2070,6 +2119,11 @@ fn classify_change_for_owner_inner<'a>(
         },
         alignment_prep,
     );
+    evidence.extend(
+        stale_raised_type_pins
+            .iter()
+            .map(crate::analysis::stale_raised_type_pin::StaleRaisedTypePin::evidence_line),
+    );
     for candidate in related_candidates {
         let test = candidate.test;
         evidence.push(format!(
@@ -2199,9 +2253,14 @@ fn classify_change_for_owner_inner<'a>(
             .iter()
             .find(|credit| std::ptr::eq(credit.test, test))
         {
+            let (rejected, accepted) = if credit.pins_old {
+                (&credit.new_type, &credit.old_type)
+            } else {
+                (&credit.old_type, &credit.new_type)
+            };
             evidence.push(format!(
                 "exception_variant_read: `{}` rejects `{}` and accepts `{}` at the changed raise ({})",
-                credit.assertion.text, credit.old_type, credit.new_type, test.name
+                credit.assertion.text, rejected, accepted, test.name
             ));
             evidence.push(format!(
                 "test_oracle: exact_error_variant strong ({})",

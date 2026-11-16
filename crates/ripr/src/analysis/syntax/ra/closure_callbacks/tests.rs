@@ -1059,3 +1059,32 @@ fn call_making_closure_answers_parse_once_per_pair_inside_a_run_scope() {
         "three distinct (body, helper) pairs parse once across three index passes"
     );
 }
+
+#[test]
+fn forwarding_positions_count_closures_whose_body_holds_a_macro() -> Result<(), String> {
+    // #9981: a macro in a closure body may expand to the owner call, so the
+    // forwarding-credit position check counts it; the call-free closure and a
+    // plain value do not count.
+    let count = |test: &str| {
+        call_making_closure_positions(test, "run_test")
+            .map(|set| set.into_iter().collect::<Vec<_>>())
+            .ok_or_else(|| format!("premise: parses: {test}"))
+    };
+    assert_eq!(
+        count("fn t() { run_test(|| my_macro!(greet(\"bob\")), || noop()); }")?,
+        vec![0, 1]
+    );
+    assert_eq!(
+        count("fn t() { let c = || my_macro!(greet()); run_test(c, || noop()); }")?,
+        vec![0, 1]
+    );
+    assert_eq!(count("fn t() { run_test(|| 5, || noop()); }")?, vec![1]);
+    assert_eq!(count("fn t() { run_test(span, || noop()); }")?, vec![1]);
+    // The #9997 withholding reading is unchanged: a macro-only closure alone
+    // does not withhold a plain helper.
+    assert!(!passes_call_making_closure(
+        "fn t() { run_test(|| my_macro!(x)); }",
+        "run_test"
+    ));
+    Ok(())
+}

@@ -25,24 +25,35 @@ roxmltree = { version = "0.21", optional = true }
 
 [dev-dependencies]
 proptest = "1"
-# Maintained, safe-Rust YAML field extraction for guards and concurrency.
-yaml-rust2 = { version = "=0.10.4", default-features = false }
 
 [features]
 # Ordinary xtask commands and workspace tests retain their complete graph.
 # The UB receipt reporter can disable it without changing its source or tests.
 default = ["automation"]
-automation = [
+automation = ["policy", "product"]
+# Policy commands (`xtask/src/policy/**`, `check-policy-all`,
+# `check-changelog-fragments`): repository policy without the RIPR product.
+# Shared parsers/serializers (`serde`, `sha2`, `toml`, `ra_ap_syntax`,
+# `rustix`) are also required by product code, so they appear in both.
+policy = [
+    "dep:repo-policy",
+    "dep:serde",
+    "dep:sha2",
+    "dep:toml",
+    "dep:ra_ap_syntax",
+    "dep:rustix",
+]
+# Product commands: the RIPR analyzer and everything else.
+product = [
+    "dep:ripr",
     "dep:bigdecimal",
     "dep:home",
     "dep:num-bigint",
-    "dep:repo-policy",
-    "dep:ripr",
-    "dep:ra_ap_syntax",
     "dep:rayon",
     "dep:serde",
     "dep:sha2",
     "dep:toml",
+    "dep:ra_ap_syntax",
     "dep:flate2",
     "dep:tar",
     "dep:zip",

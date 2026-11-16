@@ -177,11 +177,12 @@ remainder that does not exist:
   base-side or entirely unresolved currentness says so (`All N omitted
   finding(s) are base-side evidence, not candidate edit targets.`). Pure
   lower-priority omitted sets keep the single count clause.
-- Byte-identical consecutive hidden rows (same location, class, kind, reason
-  and any stub sub-block) collapse into one bullet ending ` (xN)`, where `N`
-  is the number of findings it stands for. The count line, the twenty-finding
-  listing cap and the `… and N more` continuation keep counting findings, not
-  bullets, so no finding disappears from the totals (#8389).
+- Byte-identical hidden rows (same location, class, kind, reason and any
+  stub sub-block) collapse into one bullet ending ` (xN)`, where `N` is the
+  number of findings it stands for (#8389), and same-owner rows group as
+  described below (#14299). The count line and the `… and N more`
+  continuation keep counting findings, not bullets, so no finding disappears
+  from the totals; the twenty-row listing cap counts rows.
 - `N == 0` — the heading is `More:` and the count line is not rendered. The
   two format pointers still render, unchanged, because they remain useful
   when nothing was omitted.
@@ -196,7 +197,7 @@ unrooted relative paths retain the shared renderer's fallback spelling and
 encoding. This presentation rule also applies when no finding is selected;
 it does not re-coordinate base-side findings or change their currentness.
 
-When the hidden identity list exceeds its 20-finding window, its remainder
+When the hidden identity list exceeds its 20-row window, its remainder
 line names `--format json with RIPR_CHECK_FINDINGS_BYTES=0` for every identity.
 Default check JSON has its own findings-array byte budget; the explicit
 opt-out recovers the full finding set without changing either display cap.
@@ -206,13 +207,43 @@ file-order prefix, and its `limited_findings_bound` message names the dropped
 counts per class and file (#10093).
 
 The hidden identity list chooses its 20 rows by that same priority order when
-more than 20 findings are omitted, so a gap in a late-sorting file is named
-ahead of an already-noticed finding in an early one. The chosen rows still
-print in report (file, line) order, the hidden test-stub rows use the same
-window, and the remainder line counts the findings outside the window by
-class, for example `… and 7 more omitted finding(s): 7 exposed; every identity
-is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.` At 20 or fewer omitted
-findings every one is listed and the output is unchanged (#14233).
+the omitted findings need more than 20 rows, so a gap in a late-sorting file is
+named ahead of an already-noticed finding in an early one. The chosen rows
+still print in report (file, line) order, and the remainder line counts the
+findings outside the window by class, for example `… and 7 more omitted
+finding(s): 7 exposed; every identity is in --format json with
+RIPR_CHECK_FINDINGS_BYTES=0.` At 20 or fewer rows every row is listed
+(#14233). The hidden test-stub rows use a separate report-order cutoff: they
+take the first 20 omitted findings in report order and keep the ones that offer
+a stub route, so a routed stub row can fall outside the displayed `Hidden:`
+window and a row inside that window can have no stub route (#14687).
+
+Omitted findings that share file, owner, class, currentness label and reason
+(findings with no resolved owner never group)
+print as one row that names the line span, the count, the owner and the
+kinds, for example:
+
+```text
+- src/lib.rs:1078-1241 (weak, lower-priority candidate); 44 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
+```
+
+Members that share line and kind keep the single
+row with its `(xN)` repeat count. A finding that offers its own test stub
+keeps its own row. The 20-row window then bounds rows, not findings: beyond
+20 rows it keeps the rows whose best member ranks highest in the priority
+order above, printed in the order of each row's first finding, and the
+remainder line counts the findings in the rows it left out (#14299).
+
+A row whose reason is longer than 40 bytes and equal to the reason of the row
+printed just above it prints `reason: same as above` instead of repeating the
+sentence, so a run of rows that differ only by file or kind states a shared
+limitation once (#14308). Shorter reasons print on every row. `human-full` and
+machine formats keep every reason.
+
+The canonical next action's two `considered finding` alternates are chosen by
+the same priority order from the findings `Start here` did not select, so a
+gap is offered before an already-noticed finding that sorts earlier in the
+report; findings of equal priority keep report order (#14266).
 
 When a selected finding exists, the digest includes file and line, static
 exposure class, changed behavior, first missing discriminator when known,
@@ -285,9 +316,19 @@ when detail remains the line
 the recovery format. `--format human-full` still renders every evidence line,
 and no machine format reads the compact line.
 
+The digest states each fact once (#14308). A stage detail whose prose equals
+the digest's `Missing check` / `Analyzer limit` value (after collapsing
+whitespace, one terminal period and ASCII case) is left out of the two-line
+window, the next detail takes its place, and the `N more detail line(s)` count
+covers only the details not shown. Classification, `--format human-full`
+and the machine formats are unchanged.
+
 Start here ranks a finding with a repair route ahead of one without. For a
 stable finding the route is a recommended next step or suggested verify
-command; for a Python preview finding it is a repair card from the Python
+command, and only when the finding is not static-limited: a static-limited
+finding (`no_static_path`, the unknown classes, or a named static limit)
+never prints a repair route, so its advisory next step does not rank it as
+routed (#14266); for a Python preview finding it is a repair card from the Python
 repair-card authority. A card-less Python finding therefore never hides a
 carded one, so `check` does not report "no repair card" while `ripr pilot` and
 `ripr first-pr` route a card for the same diff. Classification is unchanged.
@@ -378,11 +419,23 @@ selector is deterministic:
    different owner, is likewise not shadowed.
 3. Non-preview findings outrank preview-language findings.
 4. Non-exposed findings with repair routes outrank findings without repair
-   routes.
+   routes. A static-limited finding counts as having no repair route, matching
+   the route the screen prints, and all static-limited findings share one tier
+   behind every gap and ahead of `exposed`, so the keys in step 6 order them
+   among themselves (#14266).
 5. `exposed` findings do not outrank non-exposed findings merely because they
    carry generic next-step text.
-6. Class, gap metadata, related tests, missing evidence, confidence, path, and
-   line provide stable tie-breakers.
+6. Gap metadata, related tests, missing evidence, confidence, exposure class,
+   path, and line provide stable tie-breakers, in that order. Class is
+   compared even when step 4 put both findings in the same repair-route
+   band, so two candidates equal through confidence order
+   `reachable_unrevealed`, `weakly_exposed`, `no_static_path`, the unknown
+   classes, then `exposed`, rather than by file path (#14266). The
+   related-test key counts only a decision-set row linked above `low`
+   relation confidence: a row joined by a shared name token or fixture
+   affinity is advisory, so it does not lift a finding over a
+   higher-confidence one (#14734). A row with no recorded relation
+   confidence (an older artifact) still counts.
 
 Apart from the same-behavior shadowing in step 2, verdict order within one
 file role is unchanged: an unshadowed production unknown still leads a
@@ -987,6 +1040,20 @@ because the caller is the test an agent edits to grip the changed value. A
 change, never a smoke-only caller. Rows without a recorded relation rank as
 `Opaque`, so their order falls back to oracle strength.
 
+### Identical agent gap rows fold (#14338)
+
+`check --format agent` prints one gap row for findings whose records would
+print identically apart from `id=`: class, `FILE:LINE`, changed expression,
+`missing=`, the strongest related test's whole `tK=` line and the `stages=`
+row, compared unclipped and over every missing discriminator's value,
+shape, flow sink and drafted boundary call (the explanatory prose counts
+only when no discriminator is named). The first
+finding in triage order keeps the row, so the top gap and
+`next=` do not move. `gaps=` counts rows (tests to write) and `folded_gaps=`
+the extra findings. Any printed difference keeps the rows apart. Folding is
+display-only: the folded findings stay gaps for `limits=` and `stop=`, count
+in `verify=`, and stay listed in `--format json`.
+
 ### `explain --format agent` (#12104)
 
 `ripr explain <finding> --format agent` prints the selected finding in the
@@ -1142,6 +1209,14 @@ report with zero records still carries its route.
 - `crates/ripr/src/output/human.rs::tests::hidden_block_list_discloses_remainder_beyond_its_window`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_window_names_gap_findings_before_already_noticed_ones`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_remainder_names_each_unlisted_class_by_position`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_groups_same_owner_class_and_reason_into_one_row`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_window_counts_grouped_rows_and_remainder_findings`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_keeps_stub_route_findings_one_row_each`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_keeps_owner_less_rows_apart_and_orders_mixed_rows`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_window_ranks_a_group_by_its_best_member`
+- `crates/ripr/src/output/human/triage.rs::tests::check_adapter_alternates_follow_the_shared_priority_not_report_order`
+- `crates/ripr/src/output/human/triage.rs::tests::start_here_does_not_rank_an_unprintable_route_as_a_repair_route`
+- `crates/ripr/src/output/human/triage.rs::tests::start_here_orders_static_limited_findings_by_evidence_not_class`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail`
 - `crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary`

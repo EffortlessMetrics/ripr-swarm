@@ -13,8 +13,9 @@
 //!   failure and the packet continues;
 //! - the diff capture and the gate evaluation had no `continue-on-error`,
 //!   and the PR guidance and SARIF renders had it only in an advisory
-//!   `RIPR_GATE_MODE`, so their failure makes the command exit nonzero once
-//!   the rest of the packet is written;
+//!   `RIPR_GATE_MODE`, so their failure makes the command exit `2` once
+//!   the rest of the packet is written, or `3` when the only such failure is
+//!   a gate that blocked (#14841);
 //! - a stage whose step had no `always()` is skipped after such a failure,
 //!   as GitHub skipped the step.
 //!
@@ -34,6 +35,7 @@ use crate::agent::loop_commands::{
     WORKFLOW_AGENT_STATUS_MARKDOWN_ARTIFACT, WORKFLOW_AGENT_VERIFY_ARTIFACT,
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, shell_arg,
 };
+use crate::cli::CommandError;
 use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::unknown_argument;
 use crate::output::ci_summary::annotations::render_workflow_annotations;
@@ -75,8 +77,22 @@ pub(super) struct CiPacketOptions {
     pub(super) steps: Vec<String>,
 }
 
+/// String-error form for the family parsers and tests; the binary dispatches
+/// through [`ci_packet_command`] so a blocked gate keeps exit `3`.
 pub(super) fn ci_packet(args: &[String]) -> Result<(), String> {
+    ci_packet_command(args).map_err(|error| error.message().to_string())
+}
+
+/// `ripr reports ci-packet` with its exit contract: `0` when every required
+/// step passed, `3` when the only failed required step is a gate evaluation
+/// that blocked (its child exited `3` after writing its report), and `2` for
+/// anything else, so a blocking gate is not reported as a could-not-complete
+/// failure and an operational failure is never softened into a decision.
+pub(super) fn ci_packet_command(args: &[String]) -> Result<(), CommandError> {
     let options = parse_ci_packet_options(args)?;
+    // #14222: a mistyped `--root` is refused by the shared validator instead of
+    // being created as a new directory tree.
+    crate::cli::commands_context::ensure_command_root(&options.root, COMMAND)?;
     crate::atomic_file::ensure_report_output_contained(&options.root)?;
     let exe = std::env::current_exe()
         .map_err(|err| format!("{COMMAND} cannot locate the running ripr binary: {err}; install ripr again, or run it by its full path"))?;
@@ -89,6 +105,7 @@ pub(super) fn ci_packet(args: &[String]) -> Result<(), String> {
         seen: Vec::new(),
         top_seam: None,
         failed: Vec::new(),
+        gate_blocked: false,
         recorded: None,
     };
     run.all_stages();
@@ -99,7 +116,7 @@ pub(super) fn ci_packet(args: &[String]) -> Result<(), String> {
         .cloned()
         .collect::<Vec<_>>();
     if !unknown.is_empty() {
-        return Err(format!(
+        return Err(CommandError::Failure(format!(
             "{COMMAND}: unknown --step {}; the steps are: {}; pass one of those names to --step",
             unknown.join(", "),
             run.seen
@@ -107,16 +124,9 @@ pub(super) fn ci_packet(args: &[String]) -> Result<(), String> {
                 .map(|(name, _, _)| name.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
-        ));
+        )));
     }
-    if run.failed.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{COMMAND}: required step(s) failed: {}. The rest of the packet was written; see each step's log group above.",
-            run.failed.join(", ")
-        ))
-    }
+    run.outcome()
 }
 
 pub(super) fn parse_ci_packet_options(args: &[String]) -> Result<CiPacketOptions, String> {
@@ -349,6 +359,9 @@ struct PacketRun {
     top_seam: Option<String>,
     /// Names of failed steps whose failure fails the job.
     failed: Vec<String>,
+    /// The gate evaluation ran and blocked (its child exited `3`). A blocked
+    /// gate is a decision, not a could-not-complete failure (EXIT_CODES.md).
+    gate_blocked: bool,
     /// Test seam: when set, child commands and the diff capture are recorded
     /// as command lines instead of run, so tests can hold each step's argv.
     recorded: Option<std::cell::RefCell<Vec<String>>>,
@@ -356,7 +369,26 @@ struct PacketRun {
 
 type StageResult = Result<(), String>;
 
+/// The log-group name of the gate evaluation stage.
+const GATE_STAGE: &str = "Evaluate RIPR gate decision";
+
 impl PacketRun {
+    /// The packet's exit once every stage ran: `3` only when the gate blocked
+    /// and no other required step failed; any other required failure is `2`.
+    fn outcome(&self) -> Result<(), CommandError> {
+        if self.failed.is_empty() {
+            return Ok(());
+        }
+        let failed = self.failed.join(", ");
+        if self.gate_blocked && self.failed.iter().all(|step| step == GATE_STAGE) {
+            return Err(CommandError::Decision(format!(
+                "{COMMAND}: the RIPR gate blocked this pull request (gate exit 3). The rest of the packet was written; read target/ripr/reports/gate-decision.md for the blocking reasons and how to clear them."
+            )));
+        }
+        Err(CommandError::Failure(format!(
+            "{COMMAND}: required step(s) failed: {failed}. The rest of the packet was written; see each step's log group above."
+        )))
+    }
     /// A regular file, as `[ -f ]` and `hashFiles()` tested: a directory at
     /// an input path does not count.
     fn exists(&self, relative: &str) -> bool {
@@ -719,7 +751,7 @@ impl PacketRun {
         );
 
         self.stage(
-            "Evaluate RIPR gate decision",
+            GATE_STAGE,
             When::Always,
             Role::Required,
             !self.settings.gate_mode.is_empty() && self.exists(COMMENTS_JSON),
@@ -1516,7 +1548,21 @@ impl PacketRun {
         if !self.settings.gate_baseline.is_empty() {
             argv.extend(args(&["--baseline", &self.settings.gate_baseline]));
         }
-        self.ripr(&argv)
+        match self.spawn_code(&argv, Stdio::inherit(), &[])? {
+            Some(0) => Ok(()),
+            Some(3) => {
+                self.gate_blocked = true;
+                Err(format!(
+                    "`ripr {}` exited 3: the gate blocked; see target/ripr/reports/gate-decision.md",
+                    argv.join(" ")
+                ))
+            }
+            Some(code) => Err(format!("`ripr {}` exited {code}", argv.join(" "))),
+            None => Err(format!(
+                "`ripr {}` was terminated by a signal",
+                argv.join(" ")
+            )),
+        }
     }
 
     fn pr_evidence_ledger(&mut self) -> StageResult {
@@ -1922,6 +1968,7 @@ pub(super) fn recorded_commands(root: &Path, settings: CiSettings) -> (Vec<Strin
         seen: Vec::new(),
         top_seam: None,
         failed: Vec::new(),
+        gate_blocked: false,
         recorded: Some(std::cell::RefCell::new(Vec::new())),
     };
     run.all_stages();
@@ -1945,6 +1992,7 @@ pub(super) fn stage_table() -> Vec<(String, When, Role)> {
         seen: Vec::new(),
         top_seam: None,
         failed: Vec::new(),
+        gate_blocked: false,
         recorded: Some(std::cell::RefCell::new(Vec::new())),
     };
     run.all_stages();
@@ -2479,6 +2527,7 @@ mod tests {
             seen: Vec::new(),
             top_seam: None,
             failed: Vec::new(),
+            gate_blocked: false,
             recorded: Some(std::cell::RefCell::new(Vec::new())),
         };
         run.all_stages();
@@ -2528,6 +2577,7 @@ mod tests {
             seen: Vec::new(),
             top_seam: None,
             failed: Vec::new(),
+            gate_blocked: false,
             recorded: None,
         };
         let result = run.agent_loop("seam-1");
@@ -2583,6 +2633,7 @@ mod tests {
             seen: Vec::new(),
             top_seam: None,
             failed: Vec::new(),
+            gate_blocked: false,
             recorded: Some(std::cell::RefCell::new(Vec::new())),
         };
         empty_run.all_stages();
@@ -2617,6 +2668,7 @@ mod tests {
             seen: Vec::new(),
             top_seam: None,
             failed: Vec::new(),
+            gate_blocked: false,
             recorded: Some(std::cell::RefCell::new(Vec::new())),
         };
         based_run.all_stages();
@@ -2632,6 +2684,117 @@ mod tests {
                 .any(|line| line.contains("first-pr") && line.contains("--base origin/trunk")),
             "a derivable base must keep producing the origin/<base> command: {based_commands:?}"
         );
+        Ok(())
+    }
+
+    /// Runs the real gate stage against a child that exits `code`, optionally
+    /// after another required step failed, and returns the packet outcome.
+    /// A freshly written script can hit `ETXTBSY` ("Text file busy", os error
+    /// 26) when another test thread forks while the write handle is still
+    /// inherited; that spawn error is retried a few times, never an exit code.
+    #[cfg(unix)]
+    fn gate_stage_outcome(
+        code: i32,
+        earlier_required_failure: bool,
+        tag: &str,
+    ) -> Result<(Vec<String>, Result<(), CommandError>), String> {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!(
+            "ripr-ci-packet-gate-exit-{tag}-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        let exe = root.join("fake-ripr.sh");
+        fs::write(&exe, format!("#!/bin/sh\nexit {code}\n")).map_err(|err| err.to_string())?;
+        fs::set_permissions(&exe, fs::Permissions::from_mode(0o755))
+            .map_err(|err| err.to_string())?;
+        let mut attempt = 0;
+        let result = loop {
+            attempt += 1;
+            let mut run = PacketRun {
+                root: root.clone(),
+                exe: exe.clone(),
+                settings: CiSettings {
+                    gate_mode: "baseline-check".to_string(),
+                    ..CiSettings::default()
+                },
+                only: Vec::new(),
+                seen: Vec::new(),
+                top_seam: None,
+                failed: Vec::new(),
+                gate_blocked: false,
+                recorded: None,
+            };
+            if earlier_required_failure {
+                run.stage(
+                    "Capture pull request diff",
+                    When::Always,
+                    Role::Required,
+                    true,
+                    |_| Err("diff capture failed".to_string()),
+                );
+            }
+            let mut text_file_busy = false;
+            run.stage(GATE_STAGE, When::Always, Role::Required, true, |run| {
+                let result = run.evaluate_gate();
+                text_file_busy = matches!(&result, Err(err) if err.contains("(os error 26)"));
+                result
+            });
+            if text_file_busy && attempt < 5 {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                continue;
+            }
+            break Ok((run.failed.clone(), run.outcome()));
+        };
+        let _ = fs::remove_dir_all(&root);
+        result
+    }
+
+    /// A blocked gate (child exit 3) is the packet's decision exit 3, not the
+    /// could-not-complete exit 2 an operational failure gets.
+    #[cfg(unix)]
+    #[test]
+    fn blocked_gate_makes_the_packet_exit_3() -> Result<(), String> {
+        let (failed, outcome) = gate_stage_outcome(3, false, "blocked")?;
+        assert_eq!(failed, vec![GATE_STAGE.to_string()]);
+        let error = outcome.err().ok_or("a blocked gate must fail the packet")?;
+        assert_eq!(error.exit_code(), 3, "{}", error.message());
+        assert!(
+            error.message().contains("gate-decision.md"),
+            "{}",
+            error.message()
+        );
+        Ok(())
+    }
+
+    /// Discriminating negative: a gate that could not complete (exit 2) stays
+    /// a could-not-complete packet failure.
+    #[cfg(unix)]
+    #[test]
+    fn gate_config_error_keeps_the_packet_at_exit_2() -> Result<(), String> {
+        let (failed, outcome) = gate_stage_outcome(2, false, "config-error")?;
+        assert_eq!(failed, vec![GATE_STAGE.to_string()]);
+        let error = outcome.err().ok_or("a failed gate must fail the packet")?;
+        assert_eq!(error.exit_code(), 2, "{}", error.message());
+        assert!(error.message().contains(GATE_STAGE), "{}", error.message());
+        Ok(())
+    }
+
+    /// A blocked gate never hides an operational failure: when another
+    /// required step failed too, the packet could not complete (exit 2).
+    #[cfg(unix)]
+    #[test]
+    fn blocked_gate_after_a_failed_required_step_exits_2() -> Result<(), String> {
+        let (failed, outcome) = gate_stage_outcome(3, true, "blocked-and-failed")?;
+        assert_eq!(
+            failed,
+            vec![
+                "Capture pull request diff".to_string(),
+                GATE_STAGE.to_string()
+            ]
+        );
+        let error = outcome.err().ok_or("the packet must fail")?;
+        assert_eq!(error.exit_code(), 2, "{}", error.message());
         Ok(())
     }
 
@@ -2656,6 +2819,7 @@ mod tests {
             seen: Vec::new(),
             top_seam: None,
             failed: Vec::new(),
+            gate_blocked: false,
             recorded: Some(std::cell::RefCell::new(Vec::new())),
         };
         run.stage("Required", When::Always, Role::Required, true, |_| {
@@ -2710,6 +2874,7 @@ mod tests {
             seen: Vec::new(),
             top_seam: None,
             failed: Vec::new(),
+            gate_blocked: false,
             recorded: Some(std::cell::RefCell::new(Vec::new())),
         }
     }
@@ -2933,6 +3098,7 @@ mod tests {
             seen: Vec::new(),
             top_seam: None,
             failed: Vec::new(),
+            gate_blocked: false,
             recorded: None,
         };
         let result = run.capture_pull_request_diff();

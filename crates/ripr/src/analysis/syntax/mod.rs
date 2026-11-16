@@ -27,6 +27,7 @@ pub(crate) use owner_pin::COMPARISON_NESTED_MACROS;
 pub(crate) use owner_pin::cfg_if_module_name;
 pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
+pub(crate) use owner_pin::module_declaration_unestablished_gate;
 pub(crate) use owner_pin::unestablished_cfg_gates_of_fn;
 pub(crate) use owner_pin::{
     AssertionContextRefusal, HelperLoan, MacroBindingCandidates, MacroBindingKind,
@@ -35,7 +36,7 @@ pub(crate) use owner_pin::{
     direct_literal_call_column, empty_local_macro_invocation_ranges,
     empty_macro_binding_ambiguities, err_return_guard_key, literal_root_macro_exports,
     local_empty_macro_names, macro_binding_scan, macro_call_is_statement, node_has_macro_escape,
-    owner_pin_assertions, owner_pin_matches_assertions, owner_reference_count,
+    owner_pin_assertions, owner_pin_assertions_with_default_features, owner_reference_count,
     qualified_matches_paths, returns_leave_the_function, skipping_table_column,
     source_binds_value_name, source_declares_value_name, source_imported_claims_macros,
     standard_derive_names, supported_targeted_item_context, trusted_macro_binding_site_sets,
@@ -78,10 +79,12 @@ pub(crate) use ra::parser_oracles_for_function;
 pub(crate) use ra::production_owner_module_path;
 pub(crate) use ra::rust_include_directives;
 pub(crate) use ra::{
-    GovernedCfgTestModule, InvokedCallbackParam, ModuleItemScopes, closure_argument_positions,
-    fn_name_binding_count, governed_cfg_test_modules, has_test_attribute,
+    ForwardedCallbackParam, GovernedCfgTestModule, InvokedCallbackParam, ModuleItemScopes,
+    call_making_closure_positions, closure_argument_positions, fn_name_binding_count,
+    forwarded_callback_params, governed_cfg_test_modules, has_test_attribute,
     inline_unit_module_layout, invoked_callback_params, macro_call_columns, module_item_scopes,
-    module_path_targets, passes_call_making_closure, unconditionally_invoked_param_positions,
+    module_path_targets, param_never_mentioned, passes_call_making_closure,
+    unconditionally_invoked_param_positions,
 };
 pub(crate) use source_snapshot::{
     ItemNesting, RootShadow, SourceSnapshot, SourceSyntaxMemos, has_cfg_attr,

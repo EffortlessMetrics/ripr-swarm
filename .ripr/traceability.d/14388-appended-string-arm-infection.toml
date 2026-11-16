@@ -1,0 +1,7 @@
+# Registers the appended string-equality `||` arm infection reading (#14388)
+# under RIPR-SPEC-0001.
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/classify/infection.rs::tests::an_input_equal_to_an_appended_string_arm_reaches_the_change",
+]

@@ -1060,6 +1060,24 @@ committed change also touches are not listed.
 - `crates/ripr/src/edit_cage/mod.rs::tests::eol_flip_without_git_normalization_remains_an_edit` (a git-visible flip is not reported)
 - `crates/ripr/src/cli/commands/agent.rs::tests::line_ending_only_note_names_skipped_files_and_stays_silent_without_them` (narration, bound, escaping, manifest round-trip)
 
+## Amendment (#14271): a refused production edit names the start that follows the undo
+
+The after phase withholds the new-attempt recipe from a narrated recovery when
+the shared start gate refuses a new start (#8766). It asks the gate while the
+refused changes are still in the tree. When the gate's only hold is that the
+attempt's inline test target has uncommitted changes, those can be the refused
+changes themselves, and undoing them lifts the hold. For that hold the
+edit-cage recovery line ("undo the refused changes ...") does not say "a new
+attempt is not offered"; it says no new attempt can start while the refused
+changes are in place and names `ripr repair --root <root>`, which asks the gate
+again once they are undone. A refusal about the gap itself keeps the withheld
+wording.
+
+## Test Mapping
+
+- `crates/ripr/tests/repair_refused_production_edit_recovery.rs::refused_production_edit_recovery_points_at_a_start_that_then_works` (#14271)
+- `crates/ripr/src/app/task_first.rs::tests::held_by_uncommitted_target_reads_only_the_held_inline_reason` (#14271)
+
 ## Amendment (#14084): no start the before phase would withhold
 
 The before phase selects its seam through the agent brief, which withholds a

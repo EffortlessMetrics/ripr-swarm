@@ -1,0 +1,2 @@
+xtask/src/pr_admission_preflight.rs|Command::new|1|pr-ready|#14639: cargo xtask pr-ready --pr <N> queries `gh pr view` and `gh api graphql` to mirror pr-candidate-admission locally before requesting merge-ready. Read-only, direct argv spawn with no shell, output captured via .output().
+xtask/src/pr_admission_preflight.rs|use std::process::Command|1|pr-ready|#14639: import for the bounded read-only gh invocation above.
