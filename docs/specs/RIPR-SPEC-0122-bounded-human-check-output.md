@@ -1054,6 +1054,16 @@ the extra findings. Any printed difference keeps the rows apart. Folding is
 display-only: the folded findings stay gaps for `limits=` and `stop=`, count
 in `verify=`, and stay listed in `--format json`.
 
+A `predicate` gap on one struct-literal field initializer also folds into
+the `field_construction` gap for that initializer (#14713). The field
+probe's expression is `<field>: <value>` and the predicate's is `<value>`.
+Both must have the same class, `FILE:LINE`, strongest related test (file,
+line, name, oracle kind and oracle, though not its `miss=` wording, which
+differs between the two families for one assertion) and `stages=` row, and
+the predicate must name no missing discriminator of its own. The field row
+names the value to assert and is kept wherever it ranks; `next=` names the
+first printed row. One assertion on the field closes both.
+
 ### `explain --format agent` (#12104)
 
 `ripr explain <finding> --format agent` prints the selected finding in the

@@ -32,7 +32,8 @@ use super::triage::{self, HumanTriage};
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
 use crate::domain::{
-    ExposureClass, Finding, NextActionCheckCase, OracleStrength, RelatedTest, RelationConfidence,
+    ExposureClass, Finding, NextActionCheckCase, OracleStrength, ProbeFamily, RelatedTest,
+    RelationConfidence,
 };
 use crate::output::next_action::render_next_action_plain_at_root;
 use crate::output::path::repository_display_path;
@@ -155,7 +156,9 @@ fn render_report(
     out.push_str(&incomplete_lines);
     out.push_str(&requested_scope_note_line(output));
     let unanalyzed = render_unanalyzed_changes(&mut out, output);
-    let next = next_line(&triage, output, &gaps, drill_in, provenance);
+    // The first printed row, which is the first gap unless that gap is a
+    // predicate folded into its field row (#14713).
+    let next = next_line(&triage, output, &rows, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
         // #13658: a `no_scope` outcome (empty or unparseable --diff) read
         // nothing, so it must not claim `done`.
@@ -1097,17 +1100,101 @@ fn intern_test(tests: &mut Vec<TestRef>, root: &Path, test: &RelatedTest) -> usi
 /// second test. The first finding in triage order keeps the row, so the top
 /// gap and `next=` are unchanged; any difference keeps the rows separate
 /// (fail closed).
+///
+/// #14713: a `predicate` probe on a single struct-literal field initializer
+/// (`verbose: a || b,`) also folds into the `field_construction` row for the
+/// same initializer when that row is already kept, the class, location,
+/// strongest test and `stages=` row agree, and the predicate names no
+/// missing discriminator value of its own (its `missing=` would be only the
+/// fallback prose). The field row need not rank first. The field row already names the value to assert, and
+/// one test of the field closes both, so the predicate row would only send
+/// an agent after a second test with nothing more to say. The field row is
+/// kept wherever it ranks, so `next=` names the first printed row.
 fn fold_identical_gap_rows<'a>(root: &Path, gaps: &[&'a Finding]) -> Vec<&'a Finding> {
+    let field_rows: Vec<String> = gaps
+        .iter()
+        .filter_map(|finding| field_construction_row_key(root, finding))
+        .collect();
     let mut seen: Vec<String> = Vec::new();
     let mut rows = Vec::with_capacity(gaps.len());
     for finding in gaps {
         let key = gap_row_key(root, finding);
-        if !seen.contains(&key) {
-            seen.push(key);
-            rows.push(*finding);
+        if seen.contains(&key) {
+            continue;
         }
+        if predicate_field_twin_key(root, finding).is_some_and(|twin| field_rows.contains(&twin)) {
+            continue;
+        }
+        seen.push(key);
+        rows.push(*finding);
     }
     rows
+}
+
+/// The fold identity of a `field_construction` gap whose expression is one
+/// field initializer, `<field>: <value>` with an optional trailing comma:
+/// the value plus everything the two rows must share (see
+/// `fold_identical_gap_rows`). `None` for any other finding.
+fn field_construction_row_key(root: &Path, finding: &Finding) -> Option<String> {
+    if finding.probe.family != ProbeFamily::FieldConstruction {
+        return None;
+    }
+    let expression = finding.probe.expression.trim();
+    let expression = expression.strip_suffix(',').unwrap_or(expression);
+    let (field, value) = expression.split_once(':')?;
+    let field = field.trim();
+    let value = value.trim();
+    let is_field_name = !field.is_empty()
+        && field
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        && !field.starts_with(|ch: char| ch.is_ascii_digit());
+    // `a::b` paths and `x: T` in other positions are not initializers.
+    if !is_field_name || value.is_empty() || value.starts_with(':') {
+        return None;
+    }
+    Some(twin_fold_key(root, finding, value))
+}
+
+/// The fold identity a `predicate` gap would share with its field
+/// initializer twin. `None` when the predicate names a missing value of its
+/// own, which keeps its row.
+fn predicate_field_twin_key(root: &Path, finding: &Finding) -> Option<String> {
+    if finding.probe.family != ProbeFamily::Predicate
+        || !finding.activation.missing_discriminators.is_empty()
+    {
+        return None;
+    }
+    let value = finding.probe.expression.trim();
+    let value = value.strip_suffix(',').unwrap_or(value).trim();
+    (!value.is_empty()).then(|| twin_fold_key(root, finding, value))
+}
+
+fn twin_fold_key(root: &Path, finding: &Finding, value: &str) -> String {
+    // The test's identity and oracle, without its `miss=`: the two probes
+    // word why the same assertion misses differently (the field row says
+    // `missing_exact_assertion`, the predicate `observation_unconfirmed`),
+    // and one assertion on the field closes both.
+    let test = strongest_test(finding).map(|test| {
+        format!(
+            "{}:{} {} {} {:?}",
+            repository_display_path(root, &test.file),
+            test.line,
+            test.name,
+            test.oracle_kind.as_str(),
+            test.oracle,
+        )
+    });
+    let (_, stages) = test_and_stages_key(root, finding);
+    format!(
+        "{}\n{}:{}\n{:?}\n{:?}\n{}",
+        finding.class.as_str(),
+        repository_display_path(root, &finding.probe.location.file),
+        finding.probe.location.line,
+        value,
+        test,
+        stages
+    )
 }
 
 /// What a gap's records say, without its id (see `fold_identical_gap_rows`).
@@ -1137,6 +1224,22 @@ fn gap_row_key(root: &Path, finding: &Finding) -> String {
             })
             .collect()
     };
+    let (test, stages) = test_and_stages_key(root, finding);
+    format!(
+        "{}\n{}:{}\n{:?}\n{:?}\n{:?}\n{}",
+        finding.class.as_str(),
+        repository_display_path(root, &finding.probe.location.file),
+        finding.probe.location.line,
+        finding.probe.expression,
+        missing,
+        test,
+        stages
+    )
+}
+
+/// The strongest related test's full `tN=` identity and the `stages=` row,
+/// compared unclipped by both row folds.
+fn test_and_stages_key(root: &Path, finding: &Finding) -> (Option<String>, String) {
     let test = strongest_test(finding).map(|test| {
         format!(
             "{}:{} {} {} {:?} {:?}",
@@ -1151,16 +1254,7 @@ fn gap_row_key(root: &Path, finding: &Finding) -> String {
     let stages = crate::output::stage_rows::stage_rows_agent_line(
         &crate::output::stage_rows::evidence_stage_rows(finding),
     );
-    format!(
-        "{}\n{}:{}\n{:?}\n{:?}\n{:?}\n{}",
-        finding.class.as_str(),
-        repository_display_path(root, &finding.probe.location.file),
-        finding.probe.location.line,
-        finding.probe.expression,
-        missing,
-        test,
-        stages
-    )
+    (test, stages)
 }
 
 fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missing: bool) -> String {

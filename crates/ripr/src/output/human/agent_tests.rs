@@ -2613,3 +2613,86 @@ fn refusal_record_names_the_identity_and_only_a_runnable_next_command() {
         assert_eq!(forged.lines().count(), 3, "{forged:?}");
     }
 }
+
+/// #14713: a predicate probe on one struct-literal field initializer folds
+/// into the field_construction row for that initializer when the predicate
+/// names no missing value of its own; any other difference keeps both rows.
+#[test]
+fn predicate_on_a_field_initializer_folds_into_its_field_construction_row() {
+    let mut field = weak_gap("probe:field_construction:a", 10);
+    field.probe.family = ProbeFamily::FieldConstruction;
+    field.probe.expression = "verbose: flag == \"-v\" || flag == \"--verbose\"".to_string();
+    field.activation.missing_discriminators[0].value = field.probe.expression.clone();
+    let mut predicate = weak_gap("probe:predicate:b", 10);
+    predicate.probe.family = ProbeFamily::Predicate;
+    predicate.probe.expression = "flag == \"-v\" || flag == \"--verbose\"".to_string();
+    predicate.activation.missing_discriminators.clear();
+    predicate.missing = vec!["No strong discriminator was detected".to_string()];
+    // As in the producer's output, the predicate words the same test's miss
+    // differently; the shared test still closes both.
+    predicate.related_tests[0].miss = Some(RelatedTestMiss::ObservationUnconfirmed);
+    let text = rendered(&output(vec![field.clone(), predicate.clone()]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 1, "{text}");
+    assert!(text.contains(" findings=2 gaps=1 folded_gaps=1 "), "{text}");
+    assert!(text.contains("|id=probe:field_construction:a\n"), "{text}");
+    assert!(!text.contains("probe:predicate:b"), "{text}");
+    assert!(
+        text.contains("|findings=2|exposed=0|"),
+        "verification still counts every finding: {text}"
+    );
+
+    // Either arrival order folds, and `next=` names the printed field row.
+    let text = rendered(&output(vec![predicate.clone(), field.clone()]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 1, "{text}");
+    assert!(
+        text.contains("probe:field_construction:a\n") && !text.contains("probe:predicate:b"),
+        "the next step names the printed row, not the folded one: {text}"
+    );
+
+    // A predicate that names its own missing value is a second test.
+    let mut own_value = predicate.clone();
+    own_value.activation.missing_discriminators =
+        weak_gap("x", 10).activation.missing_discriminators;
+    let text = rendered(&output(vec![field.clone(), own_value]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // A different value, line, class, test or stage keeps both rows.
+    let mut other_value = predicate.clone();
+    other_value.probe.expression = "flag == \"-v\"".to_string();
+    let mut other_line = predicate.clone();
+    other_line.probe.location = SourceLocation::new("src/lib.rs", 11, 1);
+    let mut other_test = predicate.clone();
+    other_test.related_tests[0].name = "discount_other".to_string();
+    let mut other_stage = predicate.clone();
+    other_stage.ripr.propagate = StageEvidence::new(StageState::Unknown, Confidence::Low, "p");
+    let mut other_class = predicate.clone();
+    other_class.class = ExposureClass::ReachableUnrevealed;
+    for variant in [
+        other_value,
+        other_line,
+        other_test,
+        other_stage,
+        other_class,
+    ] {
+        let text = rendered(&output(vec![field.clone(), variant]));
+        assert!(!text.contains("folded_gaps="), "{text}");
+    }
+
+    // A field expression that is not one `<field>: <value>` initializer
+    // (a path, or a nested struct literal) never folds a predicate.
+    for expression in [
+        "a::b == c",
+        "Options { verbose: flag == \"-v\" || flag == \"--verbose\" }",
+    ] {
+        let mut not_initializer = field.clone();
+        not_initializer.probe.expression = expression.to_string();
+        let mut matching = predicate.clone();
+        matching.probe.expression = expression
+            .split_once(':')
+            .map_or(expression, |(_, rest)| rest)
+            .trim()
+            .to_string();
+        let text = rendered(&output(vec![not_initializer, matching]));
+        assert!(!text.contains("folded_gaps="), "{expression}: {text}");
+    }
+}
