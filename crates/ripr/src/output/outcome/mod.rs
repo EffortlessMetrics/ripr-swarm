@@ -825,6 +825,16 @@ fn build_targeted_test_outcome_report_from_snapshots(
         .union(&after.owner_opt_outs.owners)
         .cloned()
         .collect();
+    // Same-named owners (cfg-gated twins, say) are told apart by a
+    // `#L<start_line>` suffix, and the inserted attribute line moves that
+    // suffix too, so the withheld owner's old key names no seam. For a
+    // suffixed withheld owner, exclude every seam whose owner shares its base
+    // key on both sides: this also excludes the twin, which is the
+    // conservative direction (disclosed, never read as resolved).
+    let withheld_bases: BTreeSet<&str> = withheld_owners
+        .iter()
+        .filter_map(|owner| duplicate_owner_base(owner))
+        .collect();
     let mut withheld: BTreeSet<String> = before
         .owner_opt_outs
         .seam_ids
@@ -838,9 +848,11 @@ fn build_targeted_test_outcome_report_from_snapshots(
         seams
             .into_iter()
             .filter(|seam| {
-                let owner_withheld = seam_owners
-                    .get(&seam.seam_id)
-                    .is_some_and(|owner| withheld_owners.contains(owner));
+                let owner_withheld = seam_owners.get(&seam.seam_id).is_some_and(|owner| {
+                    withheld_owners.contains(owner)
+                        || withheld_bases
+                            .contains(duplicate_owner_base(owner).unwrap_or(owner.as_str()))
+                });
                 if owner_withheld {
                     withheld.insert(seam.seam_id.clone());
                 }
@@ -897,6 +909,14 @@ fn build_targeted_test_outcome_report_from_snapshots(
         owner_opt_out_seam_ids: withheld.into_iter().collect(),
         owner_opt_out_owners: withheld_owners.into_iter().collect(),
     })
+}
+
+/// The base key of an owner id that `disambiguate_duplicate_symbol_ids`
+/// suffixed with `#L<start_line>`, or `None` when the id carries no suffix.
+fn duplicate_owner_base(owner: &str) -> Option<&str> {
+    let (base, line) = owner.rsplit_once("#L")?;
+    (!base.is_empty() && !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()))
+        .then_some(base)
 }
 
 /// The `owner_opt_outs` disclosure an outcome or verify document adds when
@@ -4204,6 +4224,59 @@ mod tests {
             report.owner_opt_out_owners,
             vec!["src/lib.rs::fn_level".to_string()]
         );
+        Ok(())
+    }
+
+    /// #14139 review: cfg-gated same-named owners carry a `#L<line>` suffix
+    /// that the inserted attribute line moves, so neither the id nor the
+    /// owner key matches. A suffixed withheld owner excludes every seam of
+    /// its base key on both sides (the twin too), never resolving one.
+    #[test]
+    fn owner_opt_out_suffixed_owner_excludes_its_base_key_on_both_sides() -> Result<(), String> {
+        let seam = |id: &str, owner: &str| {
+            format!(
+                r#"{{"seam_id": "{id}", "kind": "predicate_boundary", "file": "src/lib.rs", "line": 3, "owner": "src/lib.rs::{owner}", "grip_class": "weakly_gripped"}}"#
+            )
+        };
+        let before = format!(
+            r#"{{"schema_version": "0.5", "scope": "repo", "seams": [{}, {}, {}, {}]}}"#,
+            seam("old-gate-unix", "gate#L2"),
+            seam("old-gate-other", "gate#L4"),
+            seam("plain", "control"),
+            seam("gatekeeper", "gatekeeper")
+        );
+        let after = format!(
+            r#"{{"schema_version": "0.5", "scope": "repo", "seams": [{}, {}, {}], "owner_opt_outs": {{"withheld": 1, "reason": "owner_mutants_skip", "seam_ids": ["new-gate-unix"], "owners": ["src/lib.rs::gate#L3"]}}}}"#,
+            seam("new-gate-other", "gate#L5"),
+            seam("plain", "control"),
+            seam("gatekeeper", "gatekeeper")
+        );
+        let report = targeted_test_outcome_report_from_json(
+            &before,
+            &after,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        )?;
+        assert!(report.removed.is_empty(), "{:?}", report.removed);
+        assert!(report.new.is_empty(), "{:?}", report.new);
+        // `control` and `gatekeeper` (a different name, no suffix) still compare.
+        assert_eq!(report.unchanged.len(), 2);
+        assert_eq!(
+            report.owner_opt_out_seam_ids,
+            vec![
+                "new-gate-other".to_string(),
+                "new-gate-unix".to_string(),
+                "old-gate-other".to_string(),
+                "old-gate-unix".to_string()
+            ]
+        );
+        assert_eq!(
+            duplicate_owner_base("src/lib.rs::gate#L12"),
+            Some("src/lib.rs::gate")
+        );
+        assert_eq!(duplicate_owner_base("src/lib.rs::gate"), None);
+        assert_eq!(duplicate_owner_base("src/lib.rs::gate#L"), None);
+        assert_eq!(duplicate_owner_base("src/lib.rs::gate#Lx"), None);
         Ok(())
     }
 

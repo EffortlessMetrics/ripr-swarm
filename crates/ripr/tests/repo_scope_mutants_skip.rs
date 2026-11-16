@@ -702,3 +702,155 @@ fn outcome_does_not_resolve_seams_whose_ids_moved_when_the_attribute_is_inserted
     }
     Ok(())
 }
+
+fn read_json(path: &std::path::Path) -> Result<Value, String> {
+    serde_json::from_str(&fs::read_to_string(path).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
+/// Seam ids whose owner is `src/lib.rs::{base}#L<line>`, keyed by owner.
+fn suffixed_owner_ids(
+    document: &Value,
+    base: &str,
+) -> Result<std::collections::BTreeMap<String, BTreeSet<String>>, String> {
+    let prefix = format!("src/lib.rs::{base}#L");
+    let mut by_owner = std::collections::BTreeMap::<String, BTreeSet<String>>::new();
+    for seam in seams(document)? {
+        if let (Some(owner), Some(id)) = (seam["owner"].as_str(), seam["seam_id"].as_str())
+            && owner.starts_with(&prefix)
+        {
+            by_owner
+                .entry(owner.to_owned())
+                .or_default()
+                .insert(id.to_owned());
+        }
+    }
+    Ok(by_owner)
+}
+
+/// #14139 review: cfg-gated same-named owners are told apart by a
+/// `#L<start_line>` owner suffix, and the inserted attribute line moves that
+/// suffix, so neither the old ids nor the old owner key match the withheld
+/// side. The skipped twin's old seams must still never read as removed
+/// (resolved); the comparison excludes every seam of the base key instead.
+#[test]
+fn outcome_does_not_resolve_a_cfg_gated_twin_whose_owner_suffix_moved() -> Result<(), String> {
+    let source = |attr: &str| {
+        format!(
+            "pub fn control(level: u32) -> bool {{\n    level > 3\n}}\n\n#[cfg(unix)]\n{attr}pub fn gate(level: u32) -> bool {{\n    level > 5\n}}\n\n#[cfg(not(unix))]\npub fn gate(level: u32) -> bool {{\n    level > 7\n}}\n"
+        )
+    };
+    let repo = Repo::new(source("").as_bytes())?;
+    fs::write(
+        repo.root.join("tests/gate.rs"),
+        "#[test]\nfn gate_far_from_boundary() {\n    assert!(fx::gate(10));\n}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let before = repo.snapshot("before.json")?;
+    let before_json = read_json(&before)?;
+    let before_gates = suffixed_owner_ids(&before_json, "gate")?;
+    // Fixture: both twins are parsed and carry distinct suffixed owners.
+    if before_gates.len() != 2 || before_gates.values().any(BTreeSet::is_empty) {
+        return Err(format!(
+            "fixture: want two suffixed `gate` owners with seams, got {before_gates:?}"
+        ));
+    }
+    let old_ids: BTreeSet<String> = before_gates.values().flatten().cloned().collect();
+    repo.write_lib(source("#[mutants::skip]\n").as_bytes())?;
+    let after = repo.snapshot("after.json")?;
+    let after_json = read_json(&after)?;
+    // Fixture: only the first twin is withheld, under a moved suffix that
+    // names no owner of the before snapshot.
+    let withheld_owners = after_json["owner_opt_outs"]["owners"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let [withheld_owner] = withheld_owners.as_slice() else {
+        return Err(format!("fixture: want one withheld owner: {after_json}"));
+    };
+    let withheld_owner = withheld_owner.as_str().unwrap_or_default().to_owned();
+    if !withheld_owner.starts_with("src/lib.rs::gate#L")
+        || before_gates.contains_key(&withheld_owner)
+    {
+        return Err(format!(
+            "fixture: the withheld twin's suffix must move: before {before_gates:?}, withheld {withheld_owner}"
+        ));
+    }
+    let new_ids = disclosed_ids(&after_json)?;
+    if !old_ids.is_disjoint(&new_ids) {
+        return Err(format!(
+            "fixture: the insertion must move the ids: before {old_ids:?}, withheld {new_ids:?}"
+        ));
+    }
+    let after_twin_ids: BTreeSet<String> = suffixed_owner_ids(&after_json, "gate")?
+        .into_values()
+        .flatten()
+        .collect();
+    let outcome = repo.outcome(&before, &after)?;
+    let removed: BTreeSet<String> = outcome["removed"]
+        .as_array()
+        .map(|seams| {
+            seams
+                .iter()
+                .filter_map(|seam| seam["seam_id"].as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !removed.is_disjoint(&old_ids) {
+        return Err(format!(
+            "a `gate` twin's old ids read as removed: {outcome}"
+        ));
+    }
+    // Every `gate` seam on both sides is excluded and disclosed: the skipped
+    // twin's old and new ids, and the cfg sibling (conservative).
+    let excluded: BTreeSet<String> = old_ids
+        .iter()
+        .chain(&new_ids)
+        .chain(&after_twin_ids)
+        .cloned()
+        .collect();
+    assert_outcome_excludes(&outcome, &excluded, "cfg-gated twin")?;
+    Ok(())
+}
+
+/// #14139 review: owners are resolved by line, so on a line holding two
+/// functions the line cannot say which one holds a shape. The opt-out must
+/// not attach there: the plain `control`'s predicate keeps reporting rather
+/// than being withheld as the skipped neighbour's. Without byte-range
+/// ownership the skipped one's seam also keeps reporting (fail toward
+/// reporting); a skipped owner on lines of its own is withheld as before.
+#[test]
+fn repo_formats_do_not_withhold_a_plain_owner_sharing_a_line_with_a_skipped_one()
+-> Result<(), String> {
+    let repo = Repo::new(
+        b"pub fn control(n: u32) -> bool { n > 3 } #[mutants::skip] pub fn skipped(n: u32) -> bool { n < 9 }\n",
+    )?;
+    fs::write(
+        repo.root.join("tests/one_line.rs"),
+        "#[test]\nfn one_line_far_from_boundary() {\n    assert!(fx::control(10));\n    assert!(fx::skipped(1));\n}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let document = repo.json("repo-exposure-json")?;
+    let expressions: BTreeSet<String> = seams(&document)?
+        .iter()
+        .filter_map(|seam| seam["expression"].as_str().map(str::to_owned))
+        .collect();
+    if !expressions.iter().any(|e| e.contains("n > 3")) {
+        return Err(format!(
+            "control's predicate must keep reporting, not be withheld: {document}"
+        ));
+    }
+    if !expressions.iter().any(|e| e.contains("n < 9")) {
+        return Err(format!(
+            "fixture: the shared line must still yield the second predicate: {document}"
+        ));
+    }
+    for format in [
+        "repo-exposure-json",
+        "repo-exposure-summary-json",
+        "repo-seams-json",
+    ] {
+        assert_not_disclosed(&repo.text(format)?, format)?;
+    }
+    Ok(())
+}

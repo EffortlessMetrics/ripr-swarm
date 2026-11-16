@@ -4019,12 +4019,23 @@ byte-identical repo output and no schema version changes:
 withheld seam and `owners` each withheld seam's `owner` (`file::name`, the same
 key every repo seam records), both sorted.
 
+Owners are resolved by source line, so the opt-out attaches only when no other
+function starts or ends on the seam's lines. A seam on a line shared with
+another function (two functions written on one line, say) keeps reporting
+rather than inherit a neighbour's opt-out, even when its own owner carries the
+attribute: the line cannot say which function holds it.
+
 `ripr outcome` and `ripr agent verify` compare two snapshots by seam id. A seam
 is excluded from both sides before matching when either snapshot names its id
 in `owner_opt_outs.seam_ids` or its recorded `owner` in `owner_opt_outs.owners`.
 The owner match is what covers an inserted attribute line: a seam id hashes the
 seam's byte offset, so inserting `#[mutants::skip]` gives the owner's seams new
 ids on the withheld side, and the other snapshot's old ids are matched by owner.
+Same-named owners (cfg-gated twins) are told apart by a `#L<start_line>` owner
+suffix, which the inserted line moves as well; for a withheld owner carrying
+that suffix, every seam on either side whose owner has the same base key (the
+suffix removed) is excluded too. That also excludes the twin's seams, the
+conservative direction, and they are disclosed like any other excluded seam.
 A seam withheld on one side only (a `ripr pilot` snapshot, which keeps every
 seam, against a `ripr check` one, or the attribute added or removed between two
 snapshots) is therefore never reported as removed, resolved or new. Those
