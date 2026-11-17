@@ -375,3 +375,41 @@ fn expect_predicate_without_reason(
         ))
     }
 }
+
+/// A deleted runtime line directly above an unchanged split block sits at the
+/// block's first new-file line, but it is not part of the block.
+#[test]
+fn deleted_line_above_a_split_block_is_not_a_build_time_check() -> Result<(), String> {
+    let diff = format!(
+        "{HEADER}@@ -4,5 +4,4 @@
+     pub const fn fixed<const N: usize>(label: &'static [u8; N]) -> Self {{
+-        let _width = N;
+         const {{
+             assert!(N <= 250);
+         }};
+"
+    );
+    let findings = TempRepo::create(&lib(SPLIT_NEW), &diff)?.findings()?;
+    let deleted = findings
+        .iter()
+        .filter(|finding| finding.probe.expression.contains("_width"))
+        .collect::<Vec<_>>();
+    if deleted.is_empty() {
+        return Err(format!(
+            "premise: the deleted line keeps a finding, got [{}]",
+            describe(&findings)
+        ));
+    }
+    if deleted.iter().any(|finding| {
+        finding
+            .stop_reasons
+            .iter()
+            .any(|reason| reason.as_str() == "compile_time_invariant")
+    }) {
+        return Err(format!(
+            "a deleted runtime line is not a build-time check, got [{}]",
+            describe(&findings)
+        ));
+    }
+    Ok(())
+}

@@ -24,4 +24,5 @@ tests = [
   "crates/ripr/tests/inline_const_assertion_probe_family.rs::edited_split_inline_const_assertion_is_not_a_runtime_predicate",
   "crates/ripr/tests/inline_const_assertion_probe_family.rs::edited_split_assertion_arguments_are_not_a_runtime_predicate",
   "crates/ripr/tests/inline_const_assertion_probe_family.rs::split_value_const_block_keeps_its_predicate_reading",
+  "crates/ripr/tests/inline_const_assertion_probe_family.rs::deleted_line_above_a_split_block_is_not_a_build_time_check",
 ]

@@ -330,11 +330,15 @@ pub(in crate::analysis) fn stop_reasons(
         }
     } else if probe.family == ProbeFamily::StaticUnknown
         && (crate::analysis::probes::is_inline_const_assertion_line(&probe.expression)
-            || owner_fn.is_some_and(|owner| in_owner_const_assertion(owner, probe.location.line)))
+            || (probe.after.is_some()
+                && owner_fn
+                    .is_some_and(|owner| in_owner_const_assertion(owner, probe.location.line))))
     {
         // #14181: `const { assert!(N <= 249) };` inside a function is checked
         // when the function is built; a violating edit fails to compile. A
-        // rustfmt-split block is found by its line in the owner's body.
+        // rustfmt-split block is found by its line in the owner's body. Only
+        // an added-side probe sits on its own new-file line; a removed one's
+        // location is where the deletion sits.
         reasons.push(StopReason::CompileTimeInvariant);
     }
     if is_unsafe_obligation(probe) {
