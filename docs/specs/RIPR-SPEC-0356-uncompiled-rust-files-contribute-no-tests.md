@@ -123,14 +123,18 @@ file are withheld, exactly as for an uncompiled file, when all of these hold:
    is doubt; a directory link without Rust sources is not. The
    file keeps its tests when any source outside its own skipped ancestry
    spells its file name (a `#[path]`, a static `include!`, a build script that
-   writes a mount) or declares a `mod` of its stem; when any source builds a
-   `mod`/`include!` operand dynamically (an `include!` whose `(`, `{` or `[`
-   delimiter is not followed by a plain string literal, such as
-   `include!(concat!(env!("OUT_DIR"), ..))`, or a macro metavariable as a
-   `mod` name or `path` value: `mod $name`, `path = $p`, read with whitespace
-   ignored and again with comments stripped, so `mod /* m */ $n` counts) or
-   spells such an operand with escapes; an ordinary
-   `macro_rules!` (`($e:expr) => { $e * 2 }`) is no doubt; when
+   writes a mount) or declares a `mod` of its stem; when any source may mount
+   through a file the scan cannot name or read, judged on Rust tokens (a
+   small lexer that drops comments and keeps string, raw-string and char
+   literals whole, so neither a comment nor a `"http://x"` string can hide or
+   fake a mount): a `macro_rules!` or `macro` body holding a `mod`, `include`
+   or non-`::` `path` token (`mod /* c */ $n`); an `include!` with any
+   delimiter whose operand is not a string literal naming a `.rs` file
+   (`include!(concat!(env!("OUT_DIR"), ..))`, `include!("gen.inc")`); a
+   `path` attribute whose value is a metavariable or a non-`.rs` string
+   (`#[path = "m.txt"]`); or `mod $name` anywhere; an ordinary
+   `macro_rules!` (`($e:expr) => { $e * 2 }`) has none of those tokens and
+   is no doubt; when a source spells a mount operand with escapes; when
    the file is a `mod.rs`; when cargo metadata lists the file itself as a
    live or unmodeled target (`[[test]] path`, `build`, an example); or when
    the walk cannot finish (an unreadable file, more than 20,000 entries).
@@ -174,7 +178,10 @@ running test; no named stop reason is added on this issue.
   mount `mod /* m */ $n` into a tested bin read in every mode what their
   tests-on controls read (`exposed`); the plain skip reads the same in every
   mode, also beside an ordinary `macro_rules!` and a symlinked directory
-  without Rust sources.
+  without Rust sources. Round 5: an `include!("gen.inc")` and a
+  `#[path = "m.txt"]` mount of a non-`.rs` file, and a macro mount
+  `mod /* c */ $n` after a `"http://x"` string, read in every mode what
+  their tests-on controls read (`exposed`).
 
 ## Known Limits
 

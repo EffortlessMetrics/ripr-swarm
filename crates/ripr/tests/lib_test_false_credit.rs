@@ -608,3 +608,56 @@ fn a_symlinked_directory_without_sources_does_not_restore_credit() -> Result<(),
         .map_err(|error| format!("symlink assets failed: {error}"))?;
     assert_withheld_in_every_mode(&fixture)
 }
+
+/// `b` mounts `a/src/shared.rs` through `b_files`, read beside a tests-on
+/// control: the skip may not move the class in any mode.
+fn assert_b_mount_keeps_credit(b_files: &[(&str, &str)], label: &str) -> Result<(), String> {
+    let fixture = mounted_from_b(b_files)?;
+    let control = mounted_from_b_with(MEMBER_A_TESTED, b_files)?;
+    assert_exposed_like_control_in_every_mode(&fixture, &control, label)
+}
+
+/// The text of a non-`.rs` file in `b/src` that mounts the shared file.
+const B_SRC_MOUNT: &str = "#[path = \"../../a/src/shared.rs\"]\npub mod shared;\n";
+
+#[test]
+fn an_include_of_a_non_rust_file_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review n5: the scan reads only `.rs` sources, so a mount
+    // spelled in an included `gen.inc` is doubt.
+    assert_b_mount_keeps_credit(
+        &[
+            ("b/src/lib.rs", "include!(\"gen.inc\");\n"),
+            ("b/src/gen.inc", B_SRC_MOUNT),
+        ],
+        "an `include!` of `gen.inc`",
+    )
+}
+
+#[test]
+fn a_path_mount_of_a_non_rust_file_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review n5p: `#[path = "m.txt"]` mounts a file the scan does
+    // not read.
+    assert_b_mount_keeps_credit(
+        &[
+            ("b/src/lib.rs", "#[path = \"m.txt\"]\npub mod m;\n"),
+            ("b/src/m.txt", B_SRC_MOUNT),
+        ],
+        "a `#[path]` mount of `m.txt`",
+    )
+}
+
+#[test]
+fn a_macro_mount_after_a_url_string_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review n2_urlcmt: a `//` inside a string must not hide the
+    // commented `mod /* c */ $n` the macro expands into the tested bin.
+    let shared = lib_source(UNIT_TESTS);
+    let main = "macro_rules! m {\n    ($n:ident) => {\n        const U: &str = \"http://x\"; mod /* c */ $n;\n    };\n}\nm!(shared);\nfn main() {}\n";
+    let files = [
+        ("src/lib.rs", "pub mod shared;\n"),
+        ("src/shared.rs", shared.as_str()),
+        ("src/main.rs", main),
+    ];
+    let fixture = TempCrate::create_changing(LIB_TEST_FALSE, &files, "src/shared.rs", 1)?;
+    let control = TempCrate::create_changing("", &files, "src/shared.rs", 1)?;
+    assert_exposed_like_control_in_every_mode(&fixture, &control, "a macro mount after a URL")
+}
