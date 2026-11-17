@@ -23,6 +23,7 @@ use super::generated_rust_corpus::{
     discover_analyzable_rust_corpus_for_changed_paths_tolerating_unreadable,
     discover_analyzable_rust_corpus_tolerating_unreadable,
 };
+use super::owner_opt_out;
 use super::rust_index::{self, ProbeShapeFact, ProbeShapeKind, RustIndex};
 #[cfg(test)]
 use super::seam_cache::CLASSIFIED_SEAM_CACHE_STORE_LIMIT;
@@ -4586,7 +4587,17 @@ fn seams_from_index_files(
         if facts.probe_shapes.is_empty() {
             continue;
         }
-        let owners = rust_index::FileOwnerLookup::new(facts.functions.iter());
+        let owners = FileOwners {
+            lookup: rust_index::FileOwnerLookup::new(facts.functions.iter()),
+            // #15000: one owner opt-out decision per file, the same one diff
+            // scope applies, so a seam inside a skipped `impl`, `trait`,
+            // inline module or file is withheld like a fn-level one.
+            opt_outs: owner_opt_out::FileOwnerOptOuts::decide(
+                &facts.source,
+                facts.used_lexical_fallback,
+                facts.functions.iter(),
+            ),
+        };
         // One line index per file: span derivation reuses it for every shape
         // instead of rescanning the source per seam.
         let line_starts = build_line_starts(&facts.source);
@@ -4608,7 +4619,7 @@ fn seams_from_index_files(
             ) else {
                 continue;
             };
-            if admission.admits(&seam, &facts.source, &owners)? {
+            if admission.admits(&seam, &facts.source, &owners.lookup)? {
                 seams.push(seam);
             }
         }
@@ -4764,7 +4775,17 @@ pub(crate) fn inventory_seams_from_index_bounded(
         if facts.probe_shapes.is_empty() {
             continue;
         }
-        let lookup = rust_index::FileOwnerLookup::new(facts.functions.iter());
+        let owners = FileOwners {
+            lookup: rust_index::FileOwnerLookup::new(facts.functions.iter()),
+            // #15000: one owner opt-out decision per file, the same one diff
+            // scope applies, so a seam inside a skipped `impl`, `trait`,
+            // inline module or file is withheld like a fn-level one.
+            opt_outs: owner_opt_out::FileOwnerOptOuts::decide(
+                &facts.source,
+                facts.used_lexical_fallback,
+                facts.functions.iter(),
+            ),
+        };
         // One line index per file: span derivation reuses it for every shape
         // instead of rescanning the source per seam.
         let line_starts = build_line_starts(&facts.source);
@@ -4778,12 +4799,12 @@ pub(crate) fn inventory_seams_from_index_bounded(
             if let Some(seam) = build_seam_from_shape(
                 file,
                 shape,
-                &lookup,
+                &owners,
                 &facts.source,
                 &line_starts,
                 &crlf_pairs,
                 &arm_ranges,
-            ) && admission.admits(&seam, &facts.source, &lookup)?
+            ) && admission.admits(&seam, &facts.source, &owners.lookup)?
             {
                 collector.push(seam);
             }
@@ -4955,10 +4976,17 @@ fn written_field_is_nonpublic(seam: &RepoSeam, source: &str) -> bool {
         )
 }
 
+/// One production file's owner resolution: the line lookup and the owner
+/// opt-out decision (#14139, #15000) over the same indexed functions.
+struct FileOwners<'a> {
+    lookup: rust_index::FileOwnerLookup<'a>,
+    opt_outs: owner_opt_out::FileOwnerOptOuts,
+}
+
 fn build_seam_from_shape(
     path: &Path,
     shape: &ProbeShapeFact,
-    owners: &rust_index::FileOwnerLookup<'_>,
+    owners: &FileOwners<'_>,
     source: &str,
     line_starts: &[usize],
     crlf_pairs: &CrlfPairPositions,
@@ -4975,7 +5003,7 @@ fn build_seam_from_shape(
         && crate::analysis::classify::field_assignment_target(&shape.text).is_some()
     {
         Some(written_field_of_shape(
-            owners.owner(shape.start_line())?,
+            owners.lookup.owner(shape.start_line())?,
             shape,
         )?)
     } else {
@@ -4988,7 +5016,7 @@ fn build_seam_from_shape(
     if kind == SeamKind::CallPresence && shape.value_consumed {
         return None;
     }
-    let owner_fact = owners.owner(shape.start_line())?;
+    let owner_fact = owners.lookup.owner(shape.start_line())?;
     // Skip shapes whose owner is itself a test function (e.g.,
     // `#[test] fn ...` inside an in-file `#[cfg(test)] mod tests`).
     // the source-role model already excludes physical test files;
@@ -5032,15 +5060,19 @@ fn build_seam_from_shape(
     )
     .with_owner_call(owner_call)
     .with_source_lines(shape.source_lines())
-    // #14139: the one owner opt-out decision, read from the parser-backed
-    // attributes; a lexically read owner has none and is never opted out.
-    // Owners are resolved by line, so the decision attaches only when no
-    // other function starts or ends on the shape's lines: a shape on a line
-    // shared with another function keeps reporting rather than inherit a
-    // neighbour's opt-out.
+    // #14139, #15000: the one owner opt-out decision (the owner's own
+    // parser-backed attributes, then its enclosing `fn`, `impl`, `trait`,
+    // inline module and file); a lexically read owner has none and is never
+    // opted out. Owners are resolved by line, so the decision attaches only
+    // when no other function starts or ends on the shape's lines: a shape on
+    // a line shared with another function keeps reporting rather than
+    // inherit a neighbour's opt-out.
     .with_owner_opt_out(
-        if owners.owns_lines_alone(owner_fact, shape.start_line(), shape.end_line()) {
-            crate::analysis::owner_opt_out::function_owner_opt_out(owner_fact)
+        if owners
+            .lookup
+            .owns_lines_alone(owner_fact, shape.start_line(), shape.end_line())
+        {
+            owners.opt_outs.reason(owner_fact)
         } else {
             None
         },

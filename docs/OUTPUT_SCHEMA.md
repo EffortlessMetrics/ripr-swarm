@@ -4079,13 +4079,16 @@ The `ripr check --format` repo formats
 `repo-exposure-json`, `repo-exposure-summary-json`, `repo-exposure-md`,
 `repo-seams-json`, `repo-seams-md`, `repo-badge-json`, `repo-badge-shields`,
 `repo-badge-plus-json` and `repo-badge-plus-shields` withhold every seam whose
-owner function itself carries the attribute. An enclosing `impl`, `trait`,
-module or file skip does not withhold a repo seam yet (tracked in #15000), so
-those seams keep reporting. The decision is
-the same parser-backed recognizer, read once when the seam is extracted and
-carried with the seam through the classified seam caches; the cache key's
-`files_content_hash` covers the attribute's bytes, so adding or removing it
-never replays the other state. A withheld seam is removed from the format's
+owner function carries the attribute, or sits inside an `impl`, `trait`,
+inline module or function that carries it, or in a file whose inner
+`#![mutants::skip]` skips it (#15000). The decision is the one `ripr check`
+applies to diff findings (RIPR-SPEC-0450), so the two scopes withhold the same
+owners; like diff scope, a `#[mutants::skip] mod name;` declaration is not
+followed into the module's own file. It is made once per file when the seams
+are extracted and carried with each seam through the classified seam caches;
+every enclosing scope lives in the owner's own file, whose bytes the cache
+key's `files_content_hash` covers, so adding or removing the attribute never
+replays the other state. A withheld seam is removed from the format's
 `seams` list and from every count derived from it (`metrics`, class counts,
 `unsuppressed_exposure_gaps`, `top_files`, the badge count). It is not
 reclassified. The JSON formats add one top-level member, emitted only when at
