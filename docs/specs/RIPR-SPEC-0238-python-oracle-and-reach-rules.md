@@ -556,9 +556,12 @@ Relations, first match wins (rank, oracle-eligible):
   `dict` token counts as a read only after `->`, after a `:` inside brackets
   outside a `case` pattern, or before a call's `(` not after `def` or
   `class`; a source that does not lex, a star import, a non-ASCII name, a
-  `"dict"` string, or a name that can write a namespace without spelling the
-  bound name, such as `globals`, `vars`, `__dict__`, `setattr`, `exec`,
-  `sys.modules`, frame or function globals or the builtins, also refuses),
+  `"dict"` string, any f-string (its braces are not read), or a name that
+  can reach or write a namespace without spelling the bound name, such as
+  `globals`, `vars`, `__dict__`, `getattr`, `setattr`, `exec`,
+  `sys.modules`, frame or function globals, `gc` referents or the builtins,
+  also refuses; Python startup hooks outside the workspace, such as
+  `sitecustomize` or installed plugins, are not read),
   or has an exception
   handler, middleware, a request hook, `dependency_overrides`, a custom
   route class, an imperative or declarative route registration, a router
