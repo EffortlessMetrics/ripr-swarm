@@ -696,7 +696,7 @@ fn reads_of_only_other_fields_are_a_gap() -> Result<(), String> {
 /// the written field: every other shape keeps abstaining.
 #[test]
 fn other_field_reads_that_may_hide_the_field_keep_abstaining() -> Result<(), String> {
-    let owner = "pub struct Counter {\n    pub n: u32,\n    pub m: u32,\n}\nimpl Counter {\n    pub fn reset(&mut self) {\n        self.n = 1;\n    }\n    pub fn total(&self) -> u32 {\n        self.n + self.m\n    }\n    pub fn clear(&mut self) {\n        self.n = 0;\n    }\n}\npub fn peek(c: &Counter) -> u32 {\n    c.n\n}\n";
+    let owner = "pub struct Counter {\n    pub n: u32,\n    pub m: u32,\n}\nimpl Counter {\n    pub fn reset(&mut self) {\n        self.n = 1;\n    }\n    pub fn total(&self) -> u32 {\n        self.n + self.m\n    }\n    pub fn clear(&mut self) {\n        self.n = 0;\n    }\n    pub fn n_plain(&self) -> u32 {\n        self.n\n    }\n}\npub fn peek(c: &Counter) -> u32 {\n    c.n\n}\n";
     for (case, lines) in [
         (
             "a computed getter that reads the field",
@@ -709,6 +709,18 @@ fn other_field_reads_that_may_hide_the_field_keep_abstaining() -> Result<(), Str
         (
             "the field copied to a local first",
             "    let mut c = Counter { n: 5, m: 1 };\n    c.reset();\n    let n = c.n;\n    assert_eq!(c.m, 1);\n    assert_eq!(n, 1);",
+        ),
+        (
+            "the written field beside the other in one assertion",
+            "    let mut c = Counter { n: 5, m: 1 };\n    c.reset();\n    assert!(c.n + c.m > 0);",
+        ),
+        (
+            "a getter of the written field beside the other",
+            "    let mut c = Counter { n: 5, m: 1 };\n    c.reset();\n    assert_eq!(c.m, c.n_plain());",
+        ),
+        (
+            "the owner called twice",
+            "    let mut c = Counter { n: 5, m: 1 };\n    c.reset();\n    c.reset();\n    assert_eq!(c.m, 1);",
         ),
         (
             "a &mut method between the call and the read",
@@ -739,5 +751,30 @@ fn other_field_reads_that_may_hide_the_field_keep_abstaining() -> Result<(), Str
         );
         assert_ne!(found.class, ExposureClass::Exposed, "{case}: {found:#?}");
     }
+    Ok(())
+}
+
+/// Review of #12771: an owner that copies the written field into a sibling
+/// before the write, run twice, leaves the first write in the sibling, so a
+/// sibling read after two calls may observe it. Only one call places it.
+#[test]
+fn a_sibling_read_after_two_owner_calls_keeps_abstaining() -> Result<(), String> {
+    let owner = "pub struct Counter {\n    pub n: u32,\n    pub m: u32,\n}\nimpl Counter {\n    pub fn reset(&mut self) {\n        self.m = self.n;\n        self.n = 1;\n    }\n}\n";
+    let test = |lines: &str| format!("use probe::Counter;\n{}", test_body(lines));
+    let twice = finding_at(
+        owner,
+        "tests/t.rs",
+        &test(
+            "    let mut c = Counter { n: 0, m: 7 };\n    c.reset();\n    c.reset();\n    assert_eq!(c.m, 1);",
+        ),
+    )?;
+    assert_ne!(twice.class, ExposureClass::WeaklyExposed, "{twice:#?}");
+    assert_ne!(twice.class, ExposureClass::Exposed, "{twice:#?}");
+    let once = finding_at(
+        owner,
+        "tests/t.rs",
+        &test("    let mut c = Counter { n: 0, m: 7 };\n    c.reset();\n    assert_eq!(c.m, 0);"),
+    )?;
+    assert_eq!(once.class, ExposureClass::WeaklyExposed, "{once:#?}");
     Ok(())
 }

@@ -774,14 +774,18 @@ changes `self.count += 2` to `self.count += 1`.
   (`ClassifiedProbeEvidence::class` in `classifier/evidence.rs`), failing
   closed until those reads are established. Two reads are established and
   keep `weakly_exposed`: a relational read under the #11870 start policy,
-  and (#12771, examples 3, 4 and 6) a test whose assertions read only other
-  fields of the receiver that ran the owner (`assert_eq!(c.label, "x")`), or
-  a getter whose body plainly returns another field (`c.count()` returning
+  and (#12771, examples 3, 4 and 6) a test with at least one `assert_eq!`,
+  `assert_ne!` or `assert!` that reads only other declared fields of the
+  receiver that ran the owner (`assert_eq!(c.label, "x")`), or a getter
+  whose body plainly returns another field (`c.count()` returning
   `self.other`), under the same policy's guards: every reaching test calls
-  the owner directly, the field is named nowhere else in the test, the
-  receiver is used only as `<binding>.<declared field>` or such a getter
-  call in that assertion, nothing takes `&mut` of it in between, and the
-  owner's name is mentioned nowhere else (`assigned_field_gap_is_placed` and
+  the owner directly and exactly once on that receiver (a second run could
+  carry the first write into a sibling), the field is named nowhere else in
+  the test, the receiver is used only as `<binding>.<declared field>` or
+  such a getter call in that assertion, no other method or `&mut` use of it
+  comes between the call and the read, no assertion macro is rebound, and
+  the owner's name is mentioned nowhere else. Other assertion shapes on the
+  receiver (`assert!(c.m == 7)`) are not placed and keep abstaining (`assigned_field_gap_is_placed` and
   `sibling_field_read` in `classify/activation.rs`). Such a read holds no
   weak read of the field to strengthen, so it starts no repair, like a test
   with no assertion. Writes through `*p`, a

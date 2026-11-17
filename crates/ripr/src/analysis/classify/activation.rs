@@ -6047,8 +6047,9 @@ fn weak_assigned_field_read(
 /// [`getter_plainly_reads`](super::builder_override::getter_plainly_reads)
 /// resolves to a field `g`, where `g` is declared on the owner's impl type and
 /// is not the written field `path` (nor a projection of it). The binding
-/// appears nowhere else in the assertion (`&c`, `c.clone()`), and the
-/// confirming rule's binding guards hold. Such a read cannot observe the
+/// appears nowhere else in the assertion (`&c`, `c.clone()`), the test calls
+/// the owner on it exactly once, and the confirming rule's binding guards
+/// hold. Such a read cannot observe the
 /// write, so it places a test for [`assigned_field_gap_is_placed`]: the rest
 /// of that policy still withholds when anything
 /// else in the test may read `path`. Any other shape (a method on another
@@ -6067,9 +6068,9 @@ fn sibling_field_read(
     let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
     let text = masked.trim();
     let (name, _) = text.split_once('!')?;
-    // A `.<root>` access is refused in the loop below unless it is a getter
-    // resolved to another field (`c.count()` returning `self.other`).
-    if !matches!(name.trim(), "assert_eq" | "assert_ne" | "assert") {
+    if !matches!(name.trim(), "assert_eq" | "assert_ne" | "assert")
+        || macro_names_rebound(index, &["assert", "assert_eq", "assert_ne"])
+    {
         return None;
     }
     let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
@@ -6113,6 +6114,11 @@ fn sibling_field_read(
             }
             member.to_string()
         };
+        // The only refusal of the written field in a placed assertion: the
+        // shared guards skip a placed assertion, so a `.<root>` access here
+        // (`c.n + c.m`) or a getter that returns it must decline. A getter
+        // named after the field that returns another (`c.count()` reading
+        // `self.other`) is a sibling read.
         if field == root || super::field_reach::declared_field_reach(owner, &field, index).is_none()
         {
             return None;
@@ -6134,6 +6140,19 @@ fn sibling_field_read(
             .count()
             != accesses
         || names_format_capture(&assertion.text, binding)
+    {
+        return None;
+    }
+    // One owner call on the binding: a second run can carry the first
+    // write into a sibling (`self.m = self.count; self.count += 1;` run
+    // twice leaves the written value in `m`), so the read could observe it.
+    let body = crate::analysis::extract::mask_comments_and_strings(test.body.as_ref());
+    let call_text = format!("{binding}.{}(", call.name());
+    if body
+        .match_indices(&call_text)
+        .filter(|(at, _)| !body[..*at].chars().next_back().is_some_and(is_ident))
+        .count()
+        != 1
     {
         return None;
     }
