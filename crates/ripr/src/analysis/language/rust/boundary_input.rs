@@ -44,6 +44,15 @@ pub(super) fn apply_limit(finding: &mut Finding, probe: &Probe, index: &RustInde
     {
         return false;
     }
+    // The seam below is rebuilt from the diff line. A predicate spanning
+    // lines or joining comparisons may not split the way the repo producer
+    // splits its parsed expression, so those keep today's reading.
+    if probe.expression.contains('\n')
+        || probe.expression.contains("&&")
+        || probe.expression.contains("||")
+    {
+        return false;
+    }
     let Some(owner) = probe
         .owner
         .as_ref()

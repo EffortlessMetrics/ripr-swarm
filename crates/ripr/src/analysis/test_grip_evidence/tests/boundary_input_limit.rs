@@ -115,6 +115,34 @@ pub fn uncalled(cents: u32) -> u32 {
 }",
             false,
         ),
+        // A closure-derived and an iterator-derived operand.
+        (
+            "pub fn uncalled(values: &[u32]) -> bool {
+    let top = || values.len() as u32;
+    if top() > 3 { true } else { false }
+}",
+            true,
+        ),
+        (
+            "pub fn uncalled(values: &[u32]) -> u32 {
+    let mut hits = 0;
+    for value in values.iter() {
+        if *value > 3 { hits += 1; }
+    }
+    hits
+}",
+            true,
+        ),
+        // A field of `self` compared with a literal.
+        (
+            "pub struct Meter { inner: u32 }
+impl Meter {
+    pub fn uncalled(&self) -> bool {
+        if self.inner > 10 { true } else { false }
+    }
+}",
+            true,
+        ),
     ];
     for (owner, expected) in cases {
         for (expression, named, shared, activate) in readings(owner)? {
