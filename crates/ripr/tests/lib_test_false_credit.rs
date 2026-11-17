@@ -172,20 +172,59 @@ fn lib_test_false_unit_tests_in_a_child_module_are_not_a_discriminator() -> Resu
 
 #[test]
 fn lib_test_false_keeps_integration_test_credit() -> Result<(), String> {
-    let finding = TempCrate::create(
+    // Distinct names, so the credit is attributed: the integration test is
+    // the related discriminator and the disabled unit test is not revived by
+    // the integration root's presence.
+    let unit = "\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn disabled_unit_discriminator() {\n        assert_eq!(f(5), 7);\n    }\n}\n";
+    let integration =
+        "#[test]\nfn integration_discriminator() {\n    assert_eq!(lib_test_false::f(5), 7);\n}\n";
+    let lib = lib_source(unit);
+    let with_integration = TempCrate::create(
         LIB_TEST_FALSE,
-        &[
-            ("src/lib.rs", &lib_source(UNIT_TESTS)),
-            ("tests/it.rs", INTEGRATION_TEST),
-        ],
+        &[("src/lib.rs", &lib), ("tests/it.rs", integration)],
     )?
     .finding()?;
     assert_eq!(
-        finding.class,
+        with_integration.class,
         ExposureClass::Exposed,
-        "an integration test still runs under cargo test: {finding:?}"
+        "an integration test still runs under cargo test: {with_integration:?}"
+    );
+    let names = related_names(&with_integration);
+    assert!(
+        names.iter().any(|name| name == "integration_discriminator"),
+        "the integration test is the related discriminator: {names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|name| name == "disabled_unit_discriminator"),
+        "the disabled unit test is not related: {names:?}"
+    );
+
+    // The same unit source without the integration target loses the credit.
+    let without_integration =
+        TempCrate::create(LIB_TEST_FALSE, &[("src/lib.rs", &lib)])?.finding()?;
+    assert!(
+        !credits_a_discriminator(&without_integration.class),
+        "only the integration target carried the credit: {without_integration:?}"
+    );
+    let names = related_names(&without_integration);
+    assert!(
+        !names
+            .iter()
+            .any(|name| name == "disabled_unit_discriminator"),
+        "the disabled unit test is not related: {names:?}"
     );
     Ok(())
+}
+
+/// The names of the finding's related tests.
+fn related_names(finding: &Finding) -> Vec<String> {
+    finding
+        .related_tests
+        .iter()
+        .map(|test| test.name.clone())
+        .collect()
 }
 
 #[test]
@@ -205,6 +244,10 @@ fn lib_test_false_keeps_doctest_credit() -> Result<(), String> {
     );
     assert!(
         !finding.ripr.reach.summary.ends_with(", t"),
+        "the skipped unit test `t` is not a related test: {finding:?}"
+    );
+    assert!(
+        !related_names(&finding).iter().any(|name| name == "t"),
         "the skipped unit test `t` is not a related test: {finding:?}"
     );
     Ok(())
