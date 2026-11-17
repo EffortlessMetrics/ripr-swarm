@@ -157,6 +157,24 @@ already carries a modeled-family probe whose `before` is that literal
 keep verification refused for code no test can reach. An equal literal
 deleted with no replacement keeps its own probe.
 
+A changed line that lies wholly inside a statement (`let`, expression
+statement or item) of a closure or `async` body nested in a multi-line
+returned expression is a statement of that body, not part of the returned
+value (#14192). A trailing comment on the line does not count. Examples are
+`let doubled = item * 2;` inside `with(|| { .. })`, inside
+`Box::pin(async move { .. })`, or inside an `async { .. }` tail. The
+`return_value` and `error_path` shapes of the outer expression do not select
+it, so it reads the families the same statement reads in a function body or a
+plain `if` tail block. A `return` on that line keeps its own narrower shape.
+The nested block's own tail expression, a method-chain link and an argument
+line are part of the returned value and keep the outer shape. A shape or line
+the parse cannot place keeps the earlier selection.
+Known under-credit: the rule is syntactic, so a `let` that feeds the nested
+tail (`.map(|x| {\n let y = x + 1;\n y\n})`) reads as the same statement
+in a function body does, not as the returned value. The lexical fallback
+that classifies such a line still reads its text the way it reads any
+function-body statement (a `?` reads `error_path`).
+
 ## Required Evidence
 
 Parser-confirmed Rust where clauses and generic type/lifetime bounds without
@@ -775,6 +793,34 @@ below. Then:
 Fixture `fixtures/rust_guarded_boundary_guard_missing` and honesty-corpus
 case `rust_guarded_boundary_guard_missing_not_promoted` pin the guard-missing
 boundary row as `infection_unknown`.
+
+The repo-wide seam view (`--format repo-exposure-json`, the evidence `ripr
+repair` reads) applies the same rule to the comparison seam it splits from
+such a predicate (#14872). The seam's activation is `unknown` with the guards
+named, and it carries no missing value, unless one related test call sits on
+the boundary value while holding every guard, and a discriminating
+assertion's compared operands observe that same call (the call, or `r`
+from `let r = call;` with `r` bound once, as a whole operand; a line
+with two owner calls, a call buried in a larger expression, or a name only
+in the assertion message or a comment, does not count).
+A literal, a test local bound once and never shadowed or reassigned, or
+the boundary constant's own name each count; any other local, a `mut` or
+rebound guard parameter, or a compared side that is not a plain parameter,
+counts as unheld. A constant on the left (`LIMIT <= amount`) is oriented as
+`check` orients it. The call must resolve to the changed owner, not a
+same-named function in another module, and the seam keeps `unknown` without
+crediting any row when the tested parameter may be rebound before the
+comparison or an earlier decision in the owner can return first, the same
+reachability `check` requires. Such a seam is not offered as a `ripr repair`
+start (a `stock > 0 && blocked` change tested only with `blocked = false`
+starts the whole-line seam, not the boundary). So a row that misses a guard can no longer grip the seam
+while `check` reads the same change as unclear. Both views read the guard
+from the comparison's own `if`/`else if`/`while` line plus any lines rustfmt
+wraps under it that each open with `&&`, up to the opening brace, with
+comments masked; an edit
+whose old line cannot be read with the wrapped guards is declined; a predicate
+written as `let`/`return` is not yet read as guarded (#14874). Honesty-corpus case
+`rust_repo_exposure_guarded_boundary_guard_missing_not_promoted` pins it.
 
 ## Test Mapping
 

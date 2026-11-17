@@ -363,6 +363,59 @@ pub(crate) fn passes_call_making_closure(test_text: &str, helper: &str) -> bool 
     )
 }
 
+/// [`passes_call_making_closure`] for many `(test_text, helper)` queries under
+/// the same memo key, the scope's misses computed on the rayon pool (#12947).
+pub(crate) fn passes_call_making_closure_many(queries: &[(&str, &str)]) -> Vec<bool> {
+    use super::super::run_memo::{Product, memoize_many_with};
+    memoize_many_with(
+        Product::CallMakingClosure,
+        &text_helper_queries(queries),
+        |query| passes_call_making_closure_uncached(query.source, query.extra),
+    )
+}
+
+/// [`closure_argument_positions`] for many `(test_text, helper)` queries
+/// under the same memo key, the scope's misses computed on the rayon pool
+/// (#12947).
+pub(crate) fn closure_argument_positions_many(
+    queries: &[(&str, &str)],
+) -> Vec<Option<BTreeSet<usize>>> {
+    use super::super::run_memo::{Product, memoize_many_with};
+    memoize_many_with(
+        Product::ClosureArgumentPositions,
+        &text_helper_queries(queries),
+        |query| closure_argument_positions_uncached(query.source, query.extra),
+    )
+}
+
+/// [`invoked_callback_params`] for many helper texts under the same memo
+/// key, the scope's misses computed on the rayon pool (#12947).
+pub(crate) fn invoked_callback_params_many(
+    helper_texts: &[&str],
+) -> Vec<Option<Vec<InvokedCallbackParam>>> {
+    crate::analysis::syntax::run_memo::memoize_many(
+        crate::analysis::syntax::run_memo::Product::InvokedCallbackParams,
+        helper_texts,
+        invoked_callback_params_uncached,
+    )
+}
+
+/// `(text, helper name)` as the keys [`super::super::run_memo::memoize_with`]
+/// uses for the per-call products above: discriminator 0, the name as the
+/// extra query.
+fn text_helper_queries<'a>(
+    queries: &[(&'a str, &'a str)],
+) -> Vec<super::super::run_memo::MemoQuery<'a>> {
+    queries
+        .iter()
+        .map(|(source, extra)| super::super::run_memo::MemoQuery {
+            discriminator: 0,
+            extra,
+            source,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 thread_local! {
     static CALL_MAKING_CLOSURE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

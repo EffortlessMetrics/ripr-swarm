@@ -15,9 +15,9 @@ concurrency:
 
 jobs:
   # #12916: this lane used to re-run the whole unsharded suite in one 40-minute
-  # job, duplicating the four required hash partitions. It now runs the same
-  # four `--partition hash:N/4` partitions as `rust-test-shards.yml` (same `ci`
-  # profile), keeping only its own selection difference: `--all-features`,
+  # job, repeating the required test selection. It now runs four
+  # `--partition hash:N/4` partitions with the same `ci` profile as the required
+  # route, keeping its own selection difference: `--all-features`,
   # which is the one place the `lang-perl` tests execute. No single job runs
   # the whole suite. This lane is advisory analytics: the required shards in
   # the routed Rust lane remain the blocking test enforcement, and nothing

@@ -338,11 +338,11 @@ esac
         eligibility_outcome.to_string(),
     );
     // The extension e2e step (#12122, #12252) judges this run's own `needs`
-    // results and runs only for an admitted merge-ready pull_request; its
-    // verdict matrix is exercised by repo-policy's docs_only_routing.
+    // results for admitted pull_request and merge_group requests; its verdict
+    // matrix is exercised by repo-policy's docs_only_routing.
     env.insert(
         "VSCODE_CHECK_RESULT".to_string(),
-        if event == "pull_request" && eligibility_outcome != "skipped" {
+        if matches!(event, "pull_request" | "merge_group") && eligibility_outcome != "skipped" {
             "success"
         } else {
             "skipped"

@@ -295,6 +295,91 @@ pub(crate) struct AgentBriefSelection<'a> {
     /// framework oracle). These are changed seams ripr could not judge, so a
     /// consumer must not read their absence as a clean result (#14082).
     pub(crate) omitted_static_limited: usize,
+    /// The gap-class seams among `omitted_by_policy` that sit on a changed
+    /// line or in a changed owner and were withheld as static limitations,
+    /// itemized so PR guidance discloses each one by name (#13892).
+    pub(crate) withheld_changed_gaps: Vec<AgentBriefWithheldChangedGap>,
+}
+
+/// Reason PR guidance names for an [`AgentBriefWithheldChangedGap`].
+pub(crate) const WITHHELD_CHANGED_GAP_REASON: &str = "static_limitation";
+
+/// A gap-class seam on a changed line or in a changed owner that selection
+/// withheld as a static limitation (#13892).
+///
+/// `ripr check` can still list the changed behavior (for example an owner no
+/// test calls whose boundary operand is computed), so PR guidance must not
+/// drop it silently. This does not reclassify the seam or grant a repair
+/// route: the omission decision stays [`AgentBriefOmission::for_entry`], and
+/// this record only carries fixed-size identity plus the named limitation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentBriefWithheldChangedGap {
+    pub(crate) seam_id: String,
+    pub(crate) file: PathBuf,
+    pub(crate) line: usize,
+    /// The seam's grip class (`ungripped`, `weakly_gripped`, ...), the
+    /// vocabulary the gate's policy eligibility reads. User-facing text maps
+    /// it to exposure words through `gap_vocabulary::present_exposure_class`.
+    pub(crate) class: String,
+    pub(crate) message: String,
+}
+
+impl AgentBriefWithheldChangedGap {
+    fn for_omission(
+        entry: &ClassifiedSeam,
+        working_set: &NormalizedAgentBriefWorkingSet<'_>,
+        omission: AgentBriefOmission,
+    ) -> Option<Self> {
+        // Membership is checked directly, not through the ranked why-now
+        // reason: a changed related-test line outranks a changed owner there,
+        // and must not hide a changed owner's withheld gap.
+        if matching_changed_line(&entry.seam, working_set).is_none()
+            && matching_changed_owner(&entry.seam, working_set).is_none()
+        {
+            return None;
+        }
+        let class = match omission {
+            AgentBriefOmission::EvidenceLimited(class)
+            | AgentBriefOmission::PanicOutcomeUnresolved(class)
+            | AgentBriefOmission::FrameworkOracleUnresolved(class) => class,
+            AgentBriefOmission::ConfiguredOff(_) | AgentBriefOmission::NotActionable(_) => {
+                return None;
+            }
+        };
+        let mut categories = crate::output::evidence_record::static_limitations_for(entry)
+            .into_iter()
+            .map(|limitation| limitation.category)
+            .collect::<Vec<_>>();
+        categories.dedup();
+        let categories = if categories.is_empty() {
+            "opaque or unknown stage evidence".to_string()
+        } else {
+            categories.join(", ")
+        };
+        Some(Self {
+            seam_id: entry.seam.id().as_str().to_string(),
+            file: entry.seam.file().to_path_buf(),
+            line: entry.seam.display_line(),
+            class: class.as_str().to_string(),
+            message: format!(
+                "Changed {} seam in {} is withheld from repair guidance as a static \
+                 limitation ({categories}). Its absence from comments is not evidence the gap \
+                 is resolved; `ripr check` can still list this changed behavior.",
+                crate::output::gap_vocabulary::present_exposure_class(class.as_str()),
+                entry.seam.owner()
+            ),
+        })
+    }
+}
+
+fn sort_withheld_changed_gaps(gaps: &mut [AgentBriefWithheldChangedGap]) {
+    gaps.sort_by(|left, right| {
+        (left.file.as_path(), left.line, left.seam_id.as_str()).cmp(&(
+            right.file.as_path(),
+            right.line,
+            right.seam_id.as_str(),
+        ))
+    });
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -398,6 +483,7 @@ pub(crate) fn select_agent_brief_seams<'a>(
         warnings,
         omitted_by_cap,
         omitted_by_policy: direct.omitted_by_policy,
+        withheld_changed_gaps: direct.withheld_changed_gaps,
         omitted_static_limited: direct.omitted_static_limited,
     }
 }
@@ -523,6 +609,7 @@ struct AgentBriefCandidateSelection<'a> {
     candidates: Vec<AgentBriefSelectedSeam<'a>>,
     allow_fallback: bool,
     omitted_by_policy: usize,
+    withheld_changed_gaps: Vec<AgentBriefWithheldChangedGap>,
     omitted_static_limited: usize,
 }
 
@@ -537,6 +624,7 @@ fn direct_candidates<'a>(
             candidates: explicit_seam_candidate(classified, seam_id, policy, warnings),
             allow_fallback: false,
             omitted_by_policy: 0,
+            withheld_changed_gaps: Vec::new(),
             omitted_static_limited: 0,
         };
     }
@@ -545,6 +633,7 @@ fn direct_candidates<'a>(
     let mut matched_working_set = false;
     let mut named_omissions = 0;
     let mut omitted_by_policy = 0usize;
+    let mut withheld_changed_gaps = Vec::new();
     let mut omitted_static_limited = 0usize;
     let mut more_omissions: Vec<(AgentBriefOmission, usize)> = Vec::new();
     let mut named_groups: Vec<(AgentBriefOmission, String)> = Vec::new();
@@ -556,6 +645,11 @@ fn direct_candidates<'a>(
         matched_working_set = true;
         if let Some(omission) = AgentBriefOmission::for_entry(entry, policy) {
             omitted_by_policy += 1;
+            withheld_changed_gaps.extend(AgentBriefWithheldChangedGap::for_omission(
+                entry,
+                &normalized_working_set,
+                omission,
+            ));
             omitted_static_limited += usize::from(omission.is_static_limited());
             // A large diff can match thousands of hidden seams; name
             // the first few and count the rest per reason.
@@ -589,10 +683,12 @@ fn direct_candidates<'a>(
             .map(|(omission, count)| omission.more(count)),
     );
 
+    sort_withheld_changed_gaps(&mut withheld_changed_gaps);
     AgentBriefCandidateSelection {
         candidates,
         allow_fallback: !matched_working_set,
         omitted_by_policy,
+        withheld_changed_gaps,
         omitted_static_limited,
     }
 }
@@ -3379,6 +3475,142 @@ weakly_gripped = "off"
         );
     }
 
+    #[test]
+    fn changed_scope_static_limited_gap_seams_are_itemized_in_both_selection_paths()
+    -> Result<(), String> {
+        // #13892: an owner no test calls, whose boundary operand is computed,
+        // is withheld as a static limitation. On a changed line it must be
+        // itemized for PR guidance, not only counted.
+        let mut withheld = classified(
+            "src/pricing.rs",
+            3,
+            "pricing::untested_rounding",
+            "cents % 100 > 49",
+            SeamGripClass::Ungripped,
+        );
+        withheld.evidence.reach = stage(StageState::No);
+        withheld.evidence.activate = stage(StageState::Unknown);
+        withheld.evidence.activate.summary = "Boundary activation operands are local or computed for seam `cents % 100 > 49`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet".to_string();
+        // Same file, off the changed lines: not changed behavior.
+        let mut same_file = classified(
+            "src/pricing.rs",
+            40,
+            "pricing::other",
+            "n > 1",
+            SeamGripClass::WeaklyGripped,
+        );
+        same_file.evidence.propagate = stage(StageState::Unknown);
+        // On a changed line but configured off (strongly gripped by default)
+        // or not a gap class: neither is a withheld gap.
+        let configured_off = classified(
+            "src/pricing.rs",
+            7,
+            "pricing::tested",
+            "n >= 2",
+            SeamGripClass::StronglyGripped,
+        );
+        let not_gap = classified(
+            "src/pricing.rs",
+            8,
+            "pricing::unknown",
+            "n >= 3",
+            SeamGripClass::ActivationUnknown,
+        );
+        let seams = vec![same_file, configured_off, not_gap, withheld];
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            [3, 7, 8]
+                .into_iter()
+                .map(|line| AgentBriefLine::new("src/pricing.rs", line))
+                .collect(),
+        );
+        let expected_id = seams[3].seam.id().as_str().to_string();
+
+        let direct = select(&seams, &working_set, 3);
+        assert_eq!(direct.omitted_by_policy, 4);
+        assert_eq!(direct.withheld_changed_gaps.len(), 1, "{direct:?}");
+        let gap = &direct.withheld_changed_gaps[0];
+        assert_eq!(gap.seam_id, expected_id);
+        assert_eq!(gap.file, PathBuf::from("src/pricing.rs"));
+        assert_eq!(gap.line, 3);
+        assert!(
+            gap.message.contains("activation_boundary_input_unresolved")
+                && gap.class == "ungripped"
+                && gap.message.contains("Changed no_static_path seam")
+                && gap.message.contains("pricing::untested_rounding")
+                && gap.message.contains("not evidence the gap is resolved"),
+            "{}",
+            gap.message
+        );
+
+        let config = RiprConfig::default();
+        let mut bounded =
+            BoundedAgentBrief::new(&working_set, 3, AgentBriefPolicy::from_config(&config))?;
+        for (ordinal, entry) in seams.iter().enumerate().rev() {
+            bounded.observe(ordinal, entry.clone())?;
+        }
+        let streamed = bounded.selection()?;
+        assert_eq!(streamed.withheld_changed_gaps, direct.withheld_changed_gaps);
+        Ok(())
+    }
+
+    #[test]
+    fn changed_owner_gap_is_itemized_even_when_a_related_test_line_also_changed()
+    -> Result<(), String> {
+        // Devin on #13924: the PR edits another line inside the owner and the
+        // related test's own line. The ranked why-now reason is then the
+        // related-test reason, but the owner still changed, so the withheld
+        // gap must still be itemized on both selection paths.
+        let mut withheld = classified(
+            "src/pricing.rs",
+            3,
+            "pricing::untested_rounding",
+            "cents % 100 > 49",
+            SeamGripClass::Ungripped,
+        );
+        withheld.evidence.reach = stage(StageState::No);
+        withheld.evidence.activate = stage(StageState::Unknown);
+        withheld.evidence.activate.summary = "Boundary activation operands are local or computed for seam `cents % 100 > 49`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet".to_string();
+        let related = withheld
+            .evidence
+            .related_tests
+            .first()
+            .map(|test| (test.file.clone(), test.line))
+            .ok_or("fixture seam has no related test")?;
+        let seams = vec![withheld];
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![
+                AgentBriefLine::new("src/pricing.rs", 2),
+                AgentBriefLine::new(related.0.clone(), related.1),
+            ],
+        )
+        .with_changed_owners(vec![AgentBriefChangedOwner::new(
+            "src/pricing.rs",
+            2,
+            "pricing::untested_rounding",
+        )]);
+        let normalized = NormalizedAgentBriefWorkingSet::new(&working_set);
+        let why_now = why_now_for(&seams[0], &normalized).ok_or("seam must be in scope")?;
+        assert_eq!(
+            why_now.reason,
+            AgentBriefWhyNowReason::ChangedTestForRelatedSeam,
+            "fixture must exercise the ranked related-test reason"
+        );
+
+        let direct = select(&seams, &working_set, 3);
+        assert_eq!(direct.withheld_changed_gaps.len(), 1, "{direct:?}");
+        assert_eq!(direct.withheld_changed_gaps[0].line, 3);
+
+        let config = RiprConfig::default();
+        let mut bounded =
+            BoundedAgentBrief::new(&working_set, 3, AgentBriefPolicy::from_config(&config))?;
+        bounded.observe(0, seams[0].clone())?;
+        let streamed = bounded.selection()?;
+        assert_eq!(streamed.withheld_changed_gaps, direct.withheld_changed_gaps);
+        Ok(())
+    }
+
     fn arm_seam(line: usize, expression: &str) -> ClassifiedSeam {
         let mut entry = classified(
             "src/lib.rs",
@@ -3460,6 +3692,7 @@ weakly_gripped = "off"
             omitted_by_cap: 0,
             omitted_by_policy: 0,
             omitted_static_limited: 0,
+            withheld_changed_gaps: Vec::new(),
         };
         attach_agent_brief_arm_results(&root, &mut selection);
         let results = selection

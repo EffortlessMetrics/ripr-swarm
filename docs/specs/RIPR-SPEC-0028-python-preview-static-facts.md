@@ -411,10 +411,18 @@ Known limits of this pass: directories a pytest `pythonpath` setting
 `sys.path` are not read, so a shadowing module reachable only through one is not
 detected; the model is one pytest invocation per project, so cross-project
 `sys.path` and `sys.modules` effects of a repository-wide run are not modeled,
-nor is a subproject directory used as the working directory; and the
-module-attribute credit sites (`boundary.rs`, `transitive_reach.rs`) match
-`owner_module_paths` directly and are not gated by the shadow, the same as the
-pre-existing rival-module case (#4566).
+nor is a subproject directory used as the working directory.
+The module-attribute sites go through the same identity gate (#14035): a module
+constant read as `pricing.LIMIT` binds a boundary value, `table.Table` after
+`import table` witnesses the owner's class for the same-class transitive-reach
+limitation, and the target prefix of a `patch("clock.time.time",
+return_value=...)` substitution or of a callee-only patch such as
+`patch("pricing.rate", return_value=3)` names the owner's module only while
+that module name identifies the owner for the test, so a test-local shadow
+(#13706) or a rival src-layout module (#4566) of that name gives none of them.
+The source-import reachability walk of `imported_call_operator` is deliberately
+not gated: a stricter walk would find fewer withholding operator definitions
+and so widen credit.
 A test that imports a free-function owner's name from a workspace module that
 defines its own function of that name, when no import reaches the owner's module,
 is not related to the owner even if its call text matches the name (#8759). The
@@ -1914,6 +1922,42 @@ A conjunction is false when any conjunct is false, so a conjunct this reader
 cannot evaluate no longer hides a false one (`vip and total > 1000`); this
 also applies to live guarded lines and only moves a verdict from `exposed` to
 `weakly_exposed`.
+
+## Cross-Module Caller Amendment (2026-11-08, #12955)
+
+A top-level helper that no test calls itself, reached by a test only through a
+function of another module that imports it, no longer reads `no_static_path`.
+The first `helper_owner_call` hop may also enter from a top-level function of
+another module that binds the helper through `from <helper module> import
+<name>` (aliased or not) and bare-calls that binding; later hops stay in the
+file of the function they call, within the same three-hop bound, and past the
+module boundary only top-level functions are callers. A method of another
+module is never followed, because a test's bare call of its name is not shown
+to reach it. Such a
+test is related with the reach-only `cross_module_caller_call` relation: it
+carries no oracle, and when every related test is reached that way the finding
+is `static_unknown` with no repair card. Its limit is `missing_import_graph`,
+naming the caller and its file, unless a limit read from the changed line itself
+(for example `dynamic_dispatch`) applies first; either way the finding stays
+`static_unknown`. A test that also reaches the helper through a
+same-module caller keeps the existing `helper_owner_call` reading.
+
+The binding is read from the caller file's top-level import statements and
+top-level definitions only: the import's module must be the helper's module
+under the same provenance rules a test import uses (src-layout ambiguity and
+rival definitions included); it must be the only top-level import binding that
+local name; and no top-level `def` or `class` of the caller's file may share
+it. A module-level assignment, or a second import inside a `try`/`if` block,
+that rebinds a name a top-level import already binds is not seen, so that
+top-level binding can still make an edge; that only moves `no_static_path` to
+`static_unknown`. A binding that exists only inside a function or a `try`/`if`
+block makes no edge. A plain `import M` read as `M.helper(...)`, a star import, a parameter or
+local rebinding, a binding passed as a value rather than called, and a
+same-named function of another module make no edge. When more than 32
+top-level functions of other modules call the helper, none of them is followed; with no
+other related test the finding is `static_unknown` and says that reach through
+them was not checked, so a heavily imported helper never reads
+`no_static_path` on that account alone.
 
 ## Metrics
 

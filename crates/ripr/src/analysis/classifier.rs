@@ -2367,7 +2367,7 @@ pub(super) mod tests {
         assert_eq!(
             finding.recommended_next_step.as_deref(),
             Some(
-                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown."
             )
         );
     }
@@ -3606,14 +3606,14 @@ fn far_above_threshold_discounts() {
             )
             .as_deref(),
             Some(
-                "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+                "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown."
             )
         );
         assert_eq!(
             recommended_next_step(&predicate_probe, &ExposureClass::StaticUnknown, false, &[])
                 .as_deref(),
             Some(
-                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown."
             )
         );
     }
@@ -3691,7 +3691,7 @@ fn far_above_threshold_discounts() {
                 "{step}"
             );
             assert!(
-                step.contains("original and changed") && step.contains("may remain unknown"),
+                step.contains("old and new code") && step.contains("may remain unknown"),
                 "{step}"
             );
         } else {

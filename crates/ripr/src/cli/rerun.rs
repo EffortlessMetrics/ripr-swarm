@@ -503,14 +503,20 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
             "--changed-test" => {
                 index += 1;
                 if changed_test.is_some() || canonical_gap_id.is_some() {
-                    return Err("rerun accepts exactly one selector".to_string());
+                    return Err(crate::cli::usage_refusal::conflicting_flags(
+                        "--changed-test",
+                        "rerun accepts exactly one selector",
+                    ));
                 }
                 changed_test = Some(expect_value(args, index, "--changed-test")?.to_string());
             }
             "--gap" => {
                 index += 1;
                 if changed_test.is_some() || canonical_gap_id.is_some() {
-                    return Err("rerun accepts exactly one selector".to_string());
+                    return Err(crate::cli::usage_refusal::conflicting_flags(
+                        "--gap",
+                        "rerun accepts exactly one selector",
+                    ));
                 }
                 canonical_gap_id = Some(expect_value(args, index, "--gap")?.to_string());
             }
@@ -538,11 +544,13 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
             RerunSelector::ChangedTest { file, node }
         }
         (Some(_), None, Some(_)) => {
-            // Not typed: `--gap` would conflict with `--changed-test`, so the
-            // flag the message names is not an additive repair.
-            return Err(
-                "rerun --gap-ledger requires --gap; add `--gap` to the command".to_string(),
-            );
+            // A conflict, not a missing flag: adding the `--gap` the message
+            // names would conflict with `--changed-test`, so the token is the
+            // ledger to drop (#14925).
+            return Err(crate::cli::usage_refusal::conflicting_flags(
+                "--gap-ledger",
+                "rerun --gap-ledger requires --gap; add `--gap` to the command",
+            ));
         }
         (None, Some(canonical_gap_id), Some(gap_ledger)) => RerunSelector::Gap {
             canonical_gap_id,

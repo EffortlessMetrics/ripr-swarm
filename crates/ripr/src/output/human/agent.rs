@@ -714,14 +714,43 @@ fn render_limited_records(
     out
 }
 
+/// A test-side gap: a weak or unobserved related test, or (#14820) a changed
+/// owner the producer established nothing in the workspace calls. The second
+/// is the plainest gap there is (write a test that calls it), so it counts in
+/// `gaps=` instead of reading as a "cannot tell" limit. Every other
+/// `no_static_path` or unknown class stays a fail-closed limit: an owner some
+/// code calls on a path ripr cannot trace may already be tested.
 fn is_test_side_gap(finding: &Finding) -> bool {
-    finding.is_candidate_actionable()
-        && matches!(
-            finding.class,
-            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
-        )
-        && !triage::is_static_limited(finding)
-        && !triage::is_preview_limited(finding)
+    if triage::is_preview_limited(finding) {
+        return false;
+    }
+    finding.is_unreferenced_no_static_path()
+        || (finding.is_candidate_actionable()
+            && matches!(
+                finding.class,
+                ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+            )
+            && !triage::is_static_limited(finding))
+}
+
+/// The `missing=` hint for an unreferenced owner (#14820): the producer's
+/// `missing` lines there are generic ("No relevant oracle was detected"), so
+/// the row names the uncalled owner instead.
+fn unreferenced_owner_hint(finding: &Finding) -> Option<String> {
+    if !finding.is_unreferenced_no_static_path()
+        || !finding.activation.missing_discriminators.is_empty()
+    {
+        return None;
+    }
+    Some(match finding.probe.owner.as_ref() {
+        Some(owner) => {
+            let name = owner.0.rsplit("::").next().unwrap_or(owner.0.as_str());
+            format!("no test calls `{name}`; assert its exact result in a new test")
+        }
+        None => {
+            "no test calls the changed function; assert its exact result in a new test".to_string()
+        }
+    })
 }
 
 /// RIPR-SPEC-0429: the compact staged-evidence row, printed directly after a
@@ -1222,8 +1251,11 @@ fn gap_row_key(root: &Path, finding: &Finding) -> String {
     // Each fact also keys its shape, flow sink and drafted boundary call: one
     // value asserted at two different sinks, or drafted against two different
     // calls, is two tests.
+    // #14820: an unreferenced owner prints the owner hint, so the key uses it.
     let missing: Vec<String> = if finding.activation.missing_discriminators.is_empty() {
-        finding.missing.clone()
+        unreferenced_owner_hint(finding)
+            .map(|hint| vec![hint])
+            .unwrap_or_else(|| finding.missing.clone())
     } else {
         finding
             .activation
@@ -1278,11 +1310,13 @@ fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missin
     );
     // An open limited finding has no established missing discriminator; its
     // `missing` text is the limitation prose, which is not a value to assert.
+    let owner_hint = unreferenced_owner_hint(finding);
     let missing = finding
         .activation
         .missing_discriminators
         .first()
         .map(|fact| fact.value.as_str())
+        .or(owner_hint.as_deref())
         .or_else(|| finding.missing.first().map(String::as_str))
         .filter(|_| with_missing)
         .unwrap_or("-");
