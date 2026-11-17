@@ -4904,9 +4904,11 @@ fn may_reach_owner_unread(
 }
 
 /// Whether any indexed file mentions `owner` more often than the related
-/// tests in it do, names it in a doc comment, or uses `include!`. Mentions in the owner's `fn` header and in plain `use`
-/// paths do not count ([`unread_mentions`]); every other mention must be
-/// one a related test's body holds, since only those calls are read.
+/// tests in it do, names it in a doc comment, or uses `include!`. Mentions
+/// in the owner's `fn` header and in plain `use` paths do not count
+/// ([`unread_mentions`]), nor do mentions inside a function that provably
+/// never runs ([`never_runs`]); every other mention must be one a related
+/// test's body holds, since only those calls are read.
 fn owner_named_outside_related_tests(
     index: &crate::analysis::rust_index::RustIndex,
     owner: &str,
@@ -4960,11 +4962,12 @@ fn owner_named_outside_related_tests(
 /// `fn` (no `#[test]`, `#[no_mangle]`, `#[export_name]`, `#[cfg]` or harness
 /// attribute) outside any trait and outside an attributed `impl`, not
 /// `main`, whose name appears nowhere in the workspace but its own header
-/// (no call, `use`, comment or string names it), and whose body declares no
-/// item and invokes no unread macro. A trait method runs from calls that
-/// never name it, an attribute may register a function with a harness or a
-/// linker, and a nested `impl` runs without its parent, so any of those
-/// keeps the function reachable.
+/// (no call, `use`, comment or string names it; not a raw `r#` name; no
+/// file uses `paste` or `concat_idents`), and whose body declares no item and
+/// invokes no macro at all. A trait method runs from calls that never name
+/// it, an attribute may register a function with a harness or a linker, a
+/// nested `impl` runs without its parent, and a macro may expand to either,
+/// so any of those keeps the function reachable.
 fn never_runs(index: &crate::analysis::rust_index::RustIndex, function: &FunctionSummary) -> bool {
     use crate::analysis::facts::{FunctionContainer, FunctionSourceRole};
     function.source_role == FunctionSourceRole::Production
