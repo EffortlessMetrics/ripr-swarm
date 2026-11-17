@@ -44,6 +44,7 @@ pub(crate) enum Product {
     StrippedFileImports,
     ItemSyntax,
     LocalMacroCalls,
+    CfgGatesOfFn,
 }
 
 impl Product {
@@ -67,6 +68,7 @@ impl Product {
             Self::StrippedFileImports => "stripped_file_imports",
             Self::ItemSyntax => "item_syntax",
             Self::LocalMacroCalls => "local_macro_calls",
+            Self::CfgGatesOfFn => "cfg_gates_of_fn",
         }
     }
 }
