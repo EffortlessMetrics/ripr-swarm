@@ -1143,8 +1143,16 @@ fn evidence_for_seam_with_context(
         .map(|(indexed, reason)| (indexed.test, *reason))
         .collect();
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
-    let (activate, observed_values, missing_discriminators) =
+    let (mut activate, observed_values, mut missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
+    weaken_unselected_arm(
+        seam,
+        &related,
+        owner_fn,
+        context.index,
+        &mut activate,
+        &mut missing_discriminators,
+    );
     let pin_syntax = context.pin_syntax();
     let refuse = refuses_other_function_oracle(
         seam,
@@ -1211,7 +1219,6 @@ fn evidence_for_seam_with_context(
                 .collect()
         })
         .unwrap_or_default();
-    let mut missing_discriminators = missing_discriminators;
     if activate.state == StageState::Yes {
         let reaching: Vec<&TestSummary> = related_with_reason
             .iter()
@@ -2990,8 +2997,19 @@ pub(crate) fn compact_evidence_for_seam(
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
 
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
-    let (activate, mut missing_discriminators) =
+    let (mut activate, mut missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
+    // The arm reading needs every related test, not the rank-limited slice:
+    // one test that may select the arm leaves it unnamed.
+    let every_related: Vec<&TestSummary> = ranked.iter().map(|(indexed, _)| indexed.test).collect();
+    weaken_unselected_arm(
+        seam,
+        &every_related,
+        owner_fn,
+        context.index,
+        &mut activate,
+        &mut missing_discriminators,
+    );
     if activate.state == StageState::Yes {
         // #11870: the weak-read start is asked over every test that runs the
         // owner, not the rank-limited slice.
@@ -3465,6 +3483,39 @@ fn activate_evidence(
         &stage.state,
     ));
     (stage, observed, missing)
+}
+
+/// #12078: a `match_arm` seam whose related tests all call the owner with
+/// inputs that select other arms is not activated by them, whatever their
+/// oracle: activation reads weak and the arm's pattern is the missing
+/// discriminator, as `ripr check` reads the same arm (RIPR-SPEC-0229). Only
+/// an established activation is weakened; every refusal of the shared
+/// reading keeps the stage as it was.
+fn weaken_unselected_arm(
+    seam: &RepoSeam,
+    related: &[&TestSummary],
+    owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+    activate: &mut StageEvidence,
+    missing: &mut Vec<MissingDiscriminatorFact>,
+) {
+    if seam.kind() != SeamKind::MatchArm || activate.state != StageState::Yes {
+        return;
+    }
+    let Some(owner) = owner_fn else {
+        return;
+    };
+    let Some(fact) = super::classify::repo_seam_unselected_arm(
+        seam.file(),
+        seam.display_line(),
+        owner,
+        related,
+        index,
+    ) else {
+        return;
+    };
+    *activate = StageEvidence::new(StageState::Weak, Confidence::Medium, fact.reason.clone());
+    missing.push(fact);
 }
 
 fn requires_concrete_activation_values(seam: &RepoSeam) -> bool {

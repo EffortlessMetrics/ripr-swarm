@@ -4,6 +4,7 @@ mod framework_snapshot;
 mod module_extraction;
 pub(super) mod panic_marker;
 mod shared_execution_context;
+mod unselected_arm;
 mod warm_entrypoint;
 
 use super::related_tests::context::*;
