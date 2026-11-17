@@ -63,6 +63,10 @@ fn direct_call_count_reads_whole_word_calls() {
     assert_eq!(direct_call_count("number (a)", "number"), 1);
     assert_eq!(direct_call_count("renumber(a) + number_of(b)", "number"), 0);
     assert_eq!(direct_call_count("let number = 3;", "number"), 0);
+    assert_eq!(
+        direct_call_count("number::<u8>(a) + number(b)", "number"),
+        2
+    );
 }
 
 #[test]
@@ -103,5 +107,43 @@ fn a_test_side_caller_keeps_the_multi_site_stop() -> Result<(), String> {
         "#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn two_calls() {\n        assert!(number(\"1\").is_ok());\n        assert!(number(\"01\").is_err());\n    }\n}\n",
     )?;
     assert!(chain.hops.iter().all(|hop| !hop.multi_site), "{chain:?}");
+    Ok(())
+}
+
+#[test]
+fn a_tail_forwarding_multi_site_caller_forwards_nothing() -> Result<(), String> {
+    // Either branch forwards `number`'s result, which a single-site tail
+    // would; with two sites no one result stands for the caller's.
+    let chain = chain_with(
+        "pub fn pick(flag: bool, a: &str, b: &str) -> Result<u64, ()> {\n    if flag {\n        number(a)\n    } else {\n        number(b)\n    }\n}\n",
+    )?;
+    let [hop] = chain.hops.as_slice() else {
+        return Err(format!("one hop expected: {chain:?}"));
+    };
+    assert!(hop.multi_site && hop.arguments.is_empty(), "{hop:?}");
+    assert!(!chain_forwards_owner_result("number", &chain));
+    Ok(())
+}
+
+#[test]
+fn a_multi_site_caller_above_a_wrapper_keeps_the_wrapper_chain() -> Result<(), String> {
+    // `pair` calls the single-site wrapper `bulk` twice. The chain keeps
+    // `bulk` as its bindable entry and stops at `pair`, as before #14918,
+    // instead of appending a reach-only hop that would void `bulk`'s rows.
+    let source = "fn is_bulk(q: u32) -> bool {\n    q >= 10\n}\npub fn bulk(q: u32) -> bool {\n    is_bulk(q)\n}\npub fn pair(a: u32, b: u32) -> (bool, bool) {\n    (\n        bulk(a),\n        bulk(b),\n    )\n}\n";
+    let chain = resolve_chain("is_bulk", &index_of(source)?, true, &[]);
+    let [hop] = chain.hops.as_slice() else {
+        return Err(format!("one hop expected: {chain:?}"));
+    };
+    assert_eq!(hop.caller.name, "bulk");
+    assert!(!hop.reach_only() && hop.arguments == vec!["q".to_string()]);
+    assert!(
+        chain
+            .stop_above
+            .as_deref()
+            .is_some_and(|edge| edge.contains("multi-site binding is not transferred")),
+        "{chain:?}"
+    );
+    assert!(chain_forwards_owner_result("is_bulk", &chain));
     Ok(())
 }

@@ -62,7 +62,11 @@ can only hint that a caller "may lead here" without changing anything.
   site's arguments stand for the others, so it binds no input rows, forwards
   no result, and admits no wrapper or entry pin. The finding's class then
   comes from the ordinary stages (a computed-argument chain reads
-  `infection_unknown`), never from a single site's values.
+  `infection_unknown`), never from a single site's values. Only the hop
+  directly above the owner, with a production caller, may be multi-site: a
+  multi-site caller higher up keeps the chain stopped below it, so the
+  single-site wrapper hops there still bind, and a test caller keeps relating
+  directly.
 - On resolution, a test that calls any resolved hop's caller relates
   to the helper-owned probe (`RelationReason::HelperOwnerCall`): the
   reach, observation, and oracle stages see the same related tests a

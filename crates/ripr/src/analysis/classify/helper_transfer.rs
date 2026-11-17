@@ -1120,7 +1120,7 @@ pub(crate) fn resolve_chain(
 }
 
 /// How many direct calls of `callee_name` one recorded call text holds: a
-/// whole-word name followed by `(` (#14918). Over-counting (a nested
+/// whole-word name followed by `(` or a turbofish `::<` (#14918). Over-counting (a nested
 /// `f(f(x))`) only makes the hop reach-only, which binds less.
 fn direct_call_count(text: &str, callee_name: &str) -> usize {
     let bytes = text.as_bytes();
@@ -1129,7 +1129,8 @@ fn direct_call_count(text: &str, callee_name: &str) -> usize {
             let end = start + callee_name.len();
             let word_start = *start == 0
                 || !(bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_');
-            word_start && text[end..].trim_start().starts_with('(')
+            let after = text[end..].trim_start();
+            word_start && (after.starts_with('(') || after.starts_with("::<"))
         })
         .count()
 }
@@ -1284,7 +1285,13 @@ fn chain_through_caller(
     // Only a production caller carries multi-site reach: a test or test
     // helper that calls the owner several times already relates to it
     // directly, and a hop through it would displace that direct evidence.
-    if multi_site && caller.source_role != crate::analysis::facts::FunctionSourceRole::Production {
+    // Only the hop directly above the owner may be multi-site: higher up, a
+    // reach-only hop would make every whole-chain binding and pinning gate
+    // refuse the single-site hops below it, which bind on their own.
+    if multi_site
+        && (caller.source_role != crate::analysis::facts::FunctionSourceRole::Production
+            || !visited.is_empty())
+    {
         return stopped(format!(
             "helper `{callee_name}` is called more than once in `{}`; multi-site binding is not transferred at this bound",
             caller.name
