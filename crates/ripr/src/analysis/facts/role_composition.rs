@@ -323,9 +323,11 @@ fn files_in_skipped_unit_test_targets(
 ///   attribute-position `path` token, since its expansion can mount any
 ///   file (`mod /* c */ $n;`); a macro without them, such as `($e:expr) =>
 ///   { $e * 2 }`, is no doubt;
-/// - an `include!` (any delimiter) whose operand is not a string literal
-///   naming a `.rs` file (`include!(concat!(env!("OUT_DIR"), ..))`,
-///   `include!("gen.inc")`), since the scan reads only `.rs` sources;
+/// - any `include` token other than an `include!` (any delimiter) whose
+///   operand is a string literal naming a `.rs` file: a generated
+///   `include!(concat!(env!("OUT_DIR"), ..))`, an `include!("gen.inc")` the
+///   scan does not read (it reads only `.rs` sources), and an alias such as
+///   `use std::include as inc;` whose `inc!` no rule could follow;
 /// - a `path` attribute whose value is a metavariable or a string literal
 ///   that does not name a `.rs` file (`#[path = "m.txt"]`);
 /// - `mod $name` anywhere.
@@ -347,9 +349,9 @@ fn may_build_mount_operands(source: &str) -> bool {
             return true;
         }
         if ident(at, "include")
-            && punct(at + 1, '!')
-            && (punct(at + 2, '(') || punct(at + 2, '{') || punct(at + 2, '['))
-            && !names_rust_source(at + 3)
+            && !(punct(at + 1, '!')
+                && (punct(at + 2, '(') || punct(at + 2, '{') || punct(at + 2, '['))
+                && names_rust_source(at + 3))
         {
             return true;
         }
@@ -1849,6 +1851,10 @@ mod tests {
             "macro_rules! m { ($a:meta) => { #[$a] mod inner; }; }",
             "macro m($n:ident) { mod $n; }",
             "macro_rules! m { ($n:ident) => { r#mod $n; }; }",
+            // Review round 6 (n7): an aliased or re-exported `include`.
+            "use std::include as inc;\ninc!(concat!(env!(\"OUT_DIR\"), \"/plain.rs\"));",
+            "use core::include;",
+            "pub use ::std::{include as inc};",
         ] {
             assert!(may_build_mount_operands(doubt), "{doubt}");
         }

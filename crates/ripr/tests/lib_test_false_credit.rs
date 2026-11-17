@@ -634,6 +634,24 @@ fn an_include_of_a_non_rust_file_keeps_credit_in_every_mode() -> Result<(), Stri
 }
 
 #[test]
+fn an_aliased_generated_include_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review n7: `inc!` is `include!` under another name, so the
+    // generated mount must still be doubt.
+    let manifest = format!("{MEMBER_B}build = \"build.rs\"\n");
+    assert_b_mount_keeps_credit(
+        &[
+            ("b/Cargo.toml", manifest.as_str()),
+            ("b/build.rs", NAMELESS_MOUNT_BUILD),
+            (
+                "b/src/lib.rs",
+                "use std::include as inc;\ninc!(concat!(env!(\"OUT_DIR\"), \"/plain.rs\"));\n",
+            ),
+        ],
+        "an aliased `include!`",
+    )
+}
+
+#[test]
 fn a_path_mount_of_a_non_rust_file_keeps_credit_in_every_mode() -> Result<(), String> {
     // #14962 review n5p: `#[path = "m.txt"]` mounts a file the scan does
     // not read.

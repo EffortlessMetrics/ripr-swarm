@@ -128,9 +128,11 @@ file are withheld, exactly as for an uncompiled file, when all of these hold:
    small lexer that drops comments and keeps string, raw-string and char
    literals whole, so neither a comment nor a `"http://x"` string can hide or
    fake a mount): a `macro_rules!` or `macro` body holding a `mod`, `include`
-   or non-`::` `path` token (`mod /* c */ $n`); an `include!` with any
-   delimiter whose operand is not a string literal naming a `.rs` file
-   (`include!(concat!(env!("OUT_DIR"), ..))`, `include!("gen.inc")`); a
+   or non-`::` `path` token (`mod /* c */ $n`); any `include` token other
+   than an `include!` (any delimiter) whose operand is a string literal
+   naming a `.rs` file (`include!(concat!(env!("OUT_DIR"), ..))`,
+   `include!("gen.inc")`, and an alias such as `use std::include as inc;`
+   whose `inc!` no rule could follow); a
    `path` attribute whose value is a metavariable or a non-`.rs` string
    (`#[path = "m.txt"]`); or `mod $name` anywhere; an ordinary
    `macro_rules!` (`($e:expr) => { $e * 2 }`) has none of those tokens and
@@ -213,6 +215,12 @@ running test; no named stop reason is added on this issue.
   withheld although `cargo test` of the mounting crate runs them. Sources
   under a build directory are unusual and Cargo may delete them on
   `cargo clean`.
+- Skipped targets, under-credit (#14962 review n8): procedural macros are
+  not modelled. A proc-macro (for example a workspace proc-macro member)
+  that emits a `mod` declaration or a `#[path = ...] pub mod m;` built by
+  string formatting can mount the file into a tested target without any
+  token the scan recognizes, and the file's tests are then withheld
+  although `cargo test` of that target runs them.
 
 ## Non-Goals
 
