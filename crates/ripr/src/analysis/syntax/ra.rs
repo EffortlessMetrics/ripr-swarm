@@ -3140,7 +3140,7 @@ fn extract_parser_oracles(
     let function_start = line_index.line(function.syntax().text_range().start());
     // #3284: terminal Err-return guards credit as their assertion twins
     // on the parser path too, so both adapters agree.
-    for oracle in err_return_guard_oracles(&function_text, function_start) {
+    for oracle in err_return_guard_oracles(&function_text, function_start, &placeholder_vars) {
         assertions.push(oracle);
     }
     // #3727 Slice A: parser-backed shadow facts over the scanned text. The

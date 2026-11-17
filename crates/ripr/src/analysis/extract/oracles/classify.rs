@@ -68,14 +68,21 @@ pub(crate) fn classify_assertion_in(line: &str, decl_source: &str) -> OracleClas
 /// unfilled placeholder macro (`let expected: i32 = todo!(..)`) pins no
 /// expected value, so it earns no strong credit. `ripr agent stub --write`
 /// writes exactly this shape, and crediting it tells an agent that wrote the
-/// stub that the gap is closed. Only a strong reading is lowered: a weak or
-/// relational reading already withholds the credit.
+/// stub that the gap is closed. A strong, medium or weak reading is lowered.
+/// #14882: a weak `relational_check` is lowered too, because the owner
+/// return pin raises `assert!(price(100) == expected)` or the terminal guard
+/// `if price(100) != expected { return Err(..) }` to strong relative to the
+/// probe. A smoke or none reading claims no comparison and keeps its kind.
 pub(crate) fn without_unfilled_expected(
     classification: OracleClassification,
     assertion: &str,
     placeholders: &std::collections::BTreeSet<String>,
 ) -> OracleClassification {
-    if classification.strength != OracleStrength::Strong || placeholders.is_empty() {
+    if !matches!(
+        classification.strength,
+        OracleStrength::Strong | OracleStrength::Medium | OracleStrength::Weak
+    ) || placeholders.is_empty()
+    {
         return classification;
     }
     // #14810 round 3: match against the assertion's semantic operands, not
