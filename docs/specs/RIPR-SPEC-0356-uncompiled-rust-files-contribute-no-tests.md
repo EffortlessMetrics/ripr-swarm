@@ -215,8 +215,10 @@ running test; no named stop reason is added on this issue.
   withheld although `cargo test` of the mounting crate runs them. Sources
   under a build directory are unusual and Cargo may delete them on
   `cargo clean`.
-- Skipped targets, under-credit (#14962 review n8): procedural macros are
-  not modelled. A proc-macro (for example a workspace proc-macro member)
+- Skipped targets, under-credit (#14962 review n8): macros defined outside
+  the scanned sources are not modelled. A proc-macro (for example a
+  workspace proc-macro member), or a macro or `include` re-export from a
+  non-member path dependency (`ext::inc!(concat!(env!("OUT_DIR"), ..))`),
   that emits a `mod` declaration or a `#[path = ...] pub mod m;` built by
   string formatting can mount the file into a tested target without any
   token the scan recognizes, and the file's tests are then withheld
