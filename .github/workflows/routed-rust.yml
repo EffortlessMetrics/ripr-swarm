@@ -414,6 +414,11 @@ jobs:
           docs-only: ${{ steps.entry.outputs.tip_docs_only || needs.detect-docs-only.outputs.docs_only || 'false' }}
           max-changed-files: '160'
           max-changed-lines: '3700'
+          # #14932: only the pull_request arm checks the bundle out at a commit
+          # the action would otherwise resolve a second time; read the packet and
+          # the generated-path declaration from that same commit. The merge_group
+          # arm already anchors the bundle to the group base and is unchanged here.
+          trusted-sha: ${{ github.event_name == 'pull_request' && steps.trusted.outputs.sha || '' }}
       - name: Admit additional merge-group constituents
         if: github.event_name == 'merge_group' && steps.candidate.outputs.status == 'admitted'
         shell: bash

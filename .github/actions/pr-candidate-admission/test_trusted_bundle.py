@@ -74,9 +74,15 @@ elif '/issues/' in url and '/comments' in url:
 elif '/pulls/' in url:
     value={'number':10,'state':'open','draft':False,'head':{'sha':head,'repo':{'full_name':'o/r'}},'base':{'ref':'main','sha':base},'changed_files':1,'additions':d.get('lines',1),'deletions':0,'body':'Governing issue or accepted claim: #4986\nAcceptance delta (one sentence): trusted bundle controls'}
 elif '/contents/.gitattributes?' in url:
-    print(d.get('base_attributes',''));sys.exit(0)
+    ref=url.rsplit('ref=',1)[-1]
+    if ref==d.get('anchor'): print(d.get('anchor_attributes') or d.get('base_attributes',''))
+    else: print(d.get('base_attributes',''))
+    sys.exit(0)
 elif '/contents/policy/release-hard-cut-admission.json?' in url:
-    packet=d['packet'] if url.endswith(base) else d['inactive']
+    ref=url.rsplit('ref=',1)[-1]
+    if ref==d.get('anchor'): packet=d.get('anchor_packet') or d['inactive']
+    elif ref==base: packet=d['packet']
+    else: packet=d['inactive']
     value={'content':base64.b64encode(json.dumps(packet).encode()).decode()}
 else: raise SystemExit('unexpected read: '+url)
 if '--jq' in sys.argv:
@@ -90,7 +96,8 @@ print(value if isinstance(value,str) else json.dumps(value))
 
 class Bundle(unittest.TestCase):
     def run_case(self, *, damage="", poison="wrapper", lines=1, active=False,
-                 attributes="", filename="src/lib.rs", base_attributes="", mutant=False):
+                 attributes="", filename="src/lib.rs", base_attributes="", mutant=False,
+                 trusted_sha=None, anchor_active=False, anchor_attributes=None):
         with tempfile.TemporaryDirectory(prefix="ripr-trusted-bundle-") as temporary:
             tmp = Path(temporary)
             workspace = tmp / "candidate"
@@ -148,13 +155,25 @@ class Bundle(unittest.TestCase):
                        ADMISSION_PR_NUMBER="10", ADMISSION_EXPECTED_HEAD="a" * 40,
                        ADMISSION_DOCS_ONLY="false", ADMISSION_MAX_CHANGED_FILES="160",
                        ADMISSION_MAX_CHANGED_LINES="3000", ADMISSION_MODE="admit")
+            # #14932: the commit the workflow checked the bundle out at. Left
+            # unset the action falls back to the live base tip, which is the
+            # pre-#14932 behaviour and the negative control.
+            if trusted_sha is not None:
+                env["ADMISSION_TRUSTED_SHA"] = trusted_sha
             packet = dict(inactive)
             if active:
                 packet.update(state="active", generation="cut-1", observed_main={"sha":"b"*40,"tree":"c"*40},
                               admitted=[{"pr":9,"head_sha":"9"*40,"admission":"admitted","disposition":"release_required_product","owner_issue":99,"release_effect":"landed before cut","proof_refs":["#99"]}])
+            anchor_packet = None
+            if anchor_active:
+                anchor_packet = dict(packet)
+                anchor_packet.update(state="active", generation="cut-1", observed_main={"sha":"b"*40,"tree":"c"*40},
+                                     admitted=[{"pr":9,"head_sha":"9"*40,"admission":"admitted","disposition":"release_required_product","owner_issue":99,"release_effect":"landed before cut","proof_refs":["#99"]}])
             case = tmp / "case.json"
             case.write_text(json.dumps(dict(lines=lines, packet=packet, inactive=inactive,
-                                           filename=filename, base_attributes=base_attributes)), encoding="utf-8")
+                                           filename=filename, base_attributes=base_attributes,
+                                           anchor=trusted_sha, anchor_packet=anchor_packet,
+                                           anchor_attributes=anchor_attributes)), encoding="utf-8")
             env["CONTROL_CASE"] = str(case)
             (tmp / "gh").write_bytes(GH.encode("utf-8"))  # LF: a CRLF shebang cannot run
             (tmp / "gh").chmod(0o755)
@@ -201,6 +220,39 @@ class Bundle(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertIn("changed_lines=0", output)
 
+    def test_packet_and_declaration_come_from_the_bundle_commit(self):
+        """#14932: the bundle is checked out at the commit the workflow resolved,
+        so the enforcement packet and the generated-path declaration must be read
+        from that same commit. Hold the anchor's packet active while the live
+        tip's is inactive: the run must refuse cut_frozen, which only an anchor
+        read can produce. Without the anchor the live tip is used, so the same
+        case admits - the input is load-bearing, not a no-op."""
+        anchor = "e" * 40
+        code, output, executed = self.run_case(trusted_sha=anchor, anchor_active=True)
+        self.assertFalse(executed)
+        self.assertEqual(code, 1, output)
+        self.assertIn("cut_frozen", output)
+        code, output, executed = self.run_case(trusted_sha=anchor)
+        self.assertFalse(executed)
+        self.assertEqual(code, 0, output)
+        self.assertIn("status=admitted", output)
+        code, output, executed = self.run_case(anchor_active=True)
+        self.assertFalse(executed)
+        self.assertEqual(code, 0, output)
+        self.assertIn("status=admitted", output)
+        # The generated-path declaration follows the same commit: an exemption
+        # only the anchor carries must exempt the file, and the live tip's empty
+        # declaration must not.
+        declaration = "package-lock.json linguist-generated\n"
+        code, output, _ = self.run_case(trusted_sha=anchor, lines=3001,
+                                        filename="package-lock.json", anchor_attributes=declaration)
+        self.assertEqual(code, 0, output)
+        self.assertIn("changed_lines=0", output)
+        code, output, _ = self.run_case(lines=3001, filename="package-lock.json",
+                                        anchor_attributes=declaration)
+        self.assertEqual(code, 1, output)
+        self.assertIn("qualification_scope_oversized", output)
+
     def test_wrong_selector_mutant_exposes_candidate_execution(self):
         code, output, executed = self.run_case(mutant=True)
         self.assertTrue(executed, "mutant did not reach the poisoned candidate wrapper")
@@ -212,6 +264,10 @@ class Bundle(unittest.TestCase):
         self.assertIn("ref: " + PIN, admission)
         self.assertIn("TRUSTED_ADMISSION_SHA: " + PIN, admission)
         self.assertEqual(admission.count("uses: ./.admission-trusted/" + ACTION), 2)
+        # #14932: the commit the bundle was checked out at reaches the action on
+        # the pull_request arm only, so the packet and declaration are read from
+        # the judged tree's base and a merge_group is left unchanged.
+        self.assertIn("trusted-sha: ${{ github.event_name == 'pull_request' && steps.trusted.outputs.sha || '' }}", admission)
         check = step(workflow, "Select trusted admission source")
         self.assertIsNotNone(check)
         with tempfile.TemporaryDirectory(prefix="ripr-admission-collision-") as temporary:
