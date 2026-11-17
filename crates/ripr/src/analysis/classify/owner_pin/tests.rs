@@ -214,8 +214,10 @@ fn module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers(
         .ok_or("clone")?;
     assert!(!Arc::ptr_eq(&old, &cloned));
     assert_eq!(cloned.shadow_computations(), 0);
+    // The replacement still spells `Widget` (without declaring it), so the
+    // answer is computed on the new snapshot rather than short-circuited.
     index.file_data_mut(Path::new(LIB)).ok_or("file")?.source =
-        "mod tests { #[test] fn subject() {} }".into();
+        "mod tests { use super::Widget; #[test] fn subject() {} }".into();
     let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
     assert!(!test_module_shadows_type(
         &test, source, "Widget", None, &index
@@ -227,6 +229,37 @@ fn module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers(
     assert!(!Arc::ptr_eq(&old, &new));
     assert_eq!(old.shadow_computations(), 1);
     assert_eq!(new.shadow_computations(), 1);
+    Ok(())
+}
+
+#[test]
+fn module_shadow_check_skips_the_snapshot_when_the_file_never_spells_the_name() -> Result<(), String>
+{
+    // #12947: a file that spells neither the name nor `r#name` cannot shadow
+    // it, so the answer comes without consulting (or parsing) its snapshot.
+    let source = "mod tests { struct Gadget; trait Render {} #[test] fn subject() {} }";
+    let index = index(&[(LIB, source)]);
+    let test = index.tests().iter().next().ok_or("subject")?.clone();
+    let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+    assert!(!test_module_shadows_type(
+        &test, source, "Widget", None, &index
+    ));
+    assert!(!test_module_shadows_trait(
+        &test, source, "Paint", None, &index
+    ));
+    let snapshot = index
+        .source_syntax
+        .get(&index, Path::new(LIB))
+        .ok_or("snapshot")?;
+    assert_eq!(snapshot.shadow_computations(), 0);
+    // A spelled name still takes the full check: both answers are positive.
+    assert!(test_module_shadows_type(
+        &test, source, "Gadget", None, &index
+    ));
+    assert!(test_module_shadows_trait(
+        &test, source, "Render", None, &index
+    ));
+    assert_eq!(snapshot.shadow_computations(), 2);
     Ok(())
 }
 
