@@ -8900,20 +8900,13 @@ fn added_equality_disjunct<'a>(
     if top_level_connective_operands(before)?.len() != 1 {
         return None;
     }
-    let (kept_left, kept_operator, kept_literal) = bare_equality(before)?;
+    let kept = bare_equality(before)?;
     let added = match (bare_equality(first), bare_equality(second)) {
-        (Some(one), Some(two))
-            if one == (kept_left.clone(), kept_operator, kept_literal.clone()) =>
-        {
-            (*second, two)
-        }
-        (Some(one), Some(two))
-            if two == (kept_left.clone(), kept_operator, kept_literal.clone()) =>
-        {
-            (*first, one)
-        }
+        (Some(one), Some(two)) if one == kept => (*second, two),
+        (Some(one), Some(two)) if two == kept => (*first, one),
         _ => return None,
     };
+    let (kept_left, kept_operator, kept_literal) = kept;
     let (added_text, (added_left, added_operator, added_literal)) = added;
     if kept_operator != "==" || added_operator != "==" || added_left != kept_left {
         return None;
