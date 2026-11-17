@@ -933,8 +933,11 @@ owner's record through another field anywhere in its compared operands
 (`owner_record_read_masked_anywhere`): `assert_eq!(opts("--verbose").retries, 3)`
 feeds the boundary input but never reads the field the predicate sets, and
 `assert_eq!((boundary.retries, opts("-v").verbose), (3, true))` reads it only
-from a call on another input. A local bound by a `let` the reader cannot
-follow (bound twice, too deep) counts as such a read (#14726). The usual caps still
+from a call on another input. Every expression inside the operand is read,
+so a closure or branch the operand's own reading skips
+(`opts("-v").verbose.then(|| boundary.retries)`) is refused too, and a local
+bound by a `let` the reader cannot follow (bound twice, too deep) counts as
+such a read (#14726). The usual caps still
 apply: self-computed expected values, and #14206 masking. A condition that
 compares (`opts(10).big == true`), combines (`&&`, `||`), negates twice,
 calls a method, or reads the field through another field or a helper stays
