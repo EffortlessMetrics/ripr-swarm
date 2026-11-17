@@ -500,17 +500,18 @@ client supports:
   `repair_start_command_for` use, so a seam past the flip is offered the
   repair start without any injected fix-instruction. When that start's own
   dirty-premise preflight (`app::repair_attempt::seam_start_dirty_premise`,
-  the check `ripr check` uses) names uncommitted production files, the start
+  the check `ripr check` uses) names uncommitted tracked source files, the start
   is listed inert as `uncommitted_production_change` and its human reason
   carries the shared commit step
   (`git -C <root> --literal-pathspecs commit -m "<message>" -- <files>`);
   the seam hover names the same commit before the start line (#13636). The
-  preflight runs on each request, not from the snapshot, so a commit
-  re-enables the start without a refresh; an unreadable premise keeps the
-  legacy enabled start. The VS Code "Start Current Repair" command reads that
-  reason by asking the server for code actions directly, because
-  `vscode.executeCodeActionProvider` drops `CodeAction.disabled`, and shows
-  it instead of the refresh hint. `ripr agent repair`
+  preflight runs per request (memoized for one second per root), not from
+  the snapshot, so a commit re-enables the start without a refresh; an
+  unreadable premise keeps the legacy enabled start. When no enabled start
+  exists, the VS Code "Start Current Repair" command asks the server for code
+  actions directly (because `vscode.executeCodeActionProvider` drops
+  `CodeAction.disabled`) and shows the inert start's reason before falling
+  back to any other action, or instead of the refresh hint. `ripr agent repair`
   still re-checks start-time facts (dirty premise, proposal identity, held
   inline target, ignored build directory) and refuses with nothing started. The
   backend health gate also returns retained diagnostic-addressed actions

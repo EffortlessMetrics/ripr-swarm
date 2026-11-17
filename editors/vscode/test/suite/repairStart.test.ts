@@ -1,5 +1,6 @@
 import * as assert from 'assert';
 import {
+  blockedRepairStart,
   blockedRepairStartReason,
   buildAgentRepairBeforeArgs,
   extractAgentRepairLoopTarget,
@@ -19,7 +20,7 @@ suite('repairStart (#4645)', () => {
 
   test('blockedRepairStartReason reads the inert start reason from raw LSP actions (#13636)', () => {
     const commit = 'git -C /repo --literal-pathspecs commit -m "<message>" -- src/lib.rs';
-    const startReason = `Commit your production change first (the repair start refuses to begin while it is uncommitted), then start the repair: ${commit}`;
+    const startReason = `Commit your uncommitted source files first, then run the repair start again; it refuses to begin while they are uncommitted. Commit command: ${commit}`;
     const inert = (actionName: string, reason: string) => ({
       title: actionName,
       kind: 'quickfix.ripr.inspect',
@@ -44,6 +45,15 @@ suite('repairStart (#4645)', () => {
     assert.strictEqual(
       blockedRepairStartReason([enabledPacket, inert('copy_gap_repair_packet', 'gap reason')]),
       'gap reason'
+    );
+    // The caller tells the start's own refusal from a weaker one by name.
+    assert.deepStrictEqual(
+      blockedRepairStart([inert('copy_targeted_test_brief', 'route not ready'), inert('copy_agent_repair_command', startReason)]),
+      { actionName: 'copy_agent_repair_command', reason: startReason }
+    );
+    assert.strictEqual(
+      blockedRepairStart([inert('copy_targeted_test_brief', 'route not ready')])?.actionName,
+      'copy_targeted_test_brief'
     );
     // Negatives: no inert action, an inert action outside the start set, a
     // blank reason, a missing machine name, or a non-array result.

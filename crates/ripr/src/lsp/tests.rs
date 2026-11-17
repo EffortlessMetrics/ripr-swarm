@@ -6309,6 +6309,7 @@ fn repair_start_is_inert_with_the_commit_step_while_production_is_uncommitted() 
         .ok_or("commit step for one file")?;
 
     // Dirty: the start is present, inert, names the reason and the commit.
+    super::actions::forget_recent_premise();
     let actions = code_action_response(&params, Some(&snapshot), &disabled_client);
     let literals = code_action_literals(&actions)?;
     let start = literals
@@ -6327,7 +6328,7 @@ fn repair_start_is_inert_with_the_commit_step_while_production_is_uncommitted() 
     assert_eq!(
         reason,
         format!(
-            "Commit your production change first (the repair start refuses to begin while it is uncommitted), then start the repair: {commit}"
+            "Commit your uncommitted source files first, then run the repair start again; it refuses to begin while they are uncommitted. Commit command: {commit}"
         )
     );
     let data = start.data.as_ref().ok_or("inert start carries data")?;
@@ -6358,7 +6359,7 @@ fn repair_start_is_inert_with_the_commit_step_while_production_is_uncommitted() 
         other => return Err(format!("expected markdown hover, got {other:?}")),
     };
     let commit_at = hover
-        .find(&format!("- commit first (the repair start refuses to begin while your production change is uncommitted): `{commit}`"))
+        .find(&format!("- commit first (the repair start refuses to begin while source files are uncommitted): `{commit}`"))
         .ok_or_else(|| format!("hover must name the commit first:\n{hover}"))?;
     let then_at = hover
         .find("- then repair: `ripr agent repair ")
@@ -6368,8 +6369,31 @@ fn repair_start_is_inert_with_the_commit_step_while_production_is_uncommitted() 
         "{hover}"
     );
 
+    // The retained-health conversion keeps the more specific refusal and its
+    // commit step instead of rewriting it to "refresh analysis".
+    let mut retained = actions.clone();
+    super::actions::disable_retained_analysis_actions(
+        &mut retained,
+        &AnalysisHealth {
+            state: AnalysisAttemptState::Succeeded,
+            ..AnalysisHealth::default()
+        },
+    );
+    let retained_start = code_action_literals(&retained)?
+        .into_iter()
+        .find(|action| action.title == start_title)
+        .ok_or("retained start listed")?;
+    assert_eq!(
+        retained_start
+            .disabled
+            .as_ref()
+            .map(|disabled| disabled.reason.as_str()),
+        Some(reason)
+    );
+
     // Committed: the same snapshot offers the enabled start again.
     commit_all("change")?;
+    super::actions::forget_recent_premise();
     let actions = code_action_response(&params, Some(&snapshot), &disabled_client);
     let literals = code_action_literals(&actions)?;
     let start = literals

@@ -1418,7 +1418,7 @@ fn push_editor_commands(
         // commit step first, as the inert "Start repair" action does.
         if let Some(commit) = super::actions::seam_start_commit_step(&snapshot.root, &root) {
             lines.push(format!(
-                "- commit first (the repair start refuses to begin while your production change is uncommitted): `{commit}`"
+                "- commit first (the repair start refuses to begin while source files are uncommitted): `{commit}`"
             ));
             lines.push(format!("- then repair: `{repair}`"));
         } else {

@@ -407,6 +407,9 @@ pub(super) fn resolve_action(
             return Ok(action);
         }
         // Revalidation passed: the action resolves in its enabled form.
+        // An enabled repair start is not re-checked against the dirty
+        // premise here (#13636): resolve is not advertised, the action only
+        // copies the command, and the before phase it names still refuses.
         action.disabled = None;
     }
     // An action that arrives without a command (already inert when emitted)
@@ -547,8 +550,52 @@ fn seam_start_dirty_files(snapshot_root: &Path) -> Result<Vec<String>, String> {
     if let Some(files) = test_premise::overridden() {
         return Ok(files);
     }
-    crate::app::repair_attempt::seam_start_dirty_premise(snapshot_root)
+    recent_premise::get_or_probe(snapshot_root)
 }
+
+/// A one-second, one-root memo of the dirty-premise preflight (#13636).
+/// Editors send a code-action and a hover request together on each cursor
+/// move; without it each spawns the preflight's git calls. One second keeps
+/// the check effectively live: a commit or a new edit shows on the next
+/// request after that. An error is never memoized.
+mod recent_premise {
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    const TTL: Duration = Duration::from_secs(1);
+
+    type Entry = (PathBuf, Instant, Vec<String>);
+
+    static RECENT: Mutex<Option<Entry>> = Mutex::new(None);
+
+    pub(super) fn get_or_probe(root: &Path) -> Result<Vec<String>, String> {
+        if let Ok(guard) = RECENT.lock()
+            && let Some((cached_root, at, files)) = guard.as_ref()
+            && cached_root == root
+            && at.elapsed() < TTL
+        {
+            return Ok(files.clone());
+        }
+        let files = crate::app::repair_attempt::seam_start_dirty_premise(root)?;
+        if let Ok(mut guard) = RECENT.lock() {
+            *guard = Some((root.to_path_buf(), Instant::now(), files.clone()));
+        }
+        Ok(files)
+    }
+
+    /// Drops the memo so the next request probes git again (tests that
+    /// change the repository between requests).
+    #[cfg(test)]
+    pub(crate) fn forget() {
+        if let Ok(mut guard) = RECENT.lock() {
+            *guard = None;
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) use recent_premise::forget as forget_recent_premise;
 
 /// Test-only premise pin (#13636). The checked-in LSP goldens render from
 /// fixture roots inside this repository's own checkout, where the live
@@ -568,12 +615,21 @@ pub(super) mod test_premise {
         PINNED.with(|pinned| pinned.borrow().clone())
     }
 
+    /// Restores the previous pin on drop, so a panicking body cannot leak
+    /// its pin to a later test on a reused thread.
+    struct Restore(Option<Vec<String>>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            PINNED.with(|pinned| *pinned.borrow_mut() = previous);
+        }
+    }
+
     /// Runs `body` with the dirty premise pinned to `files` on this thread.
     pub(crate) fn with_pinned_premise<T>(files: Vec<String>, body: impl FnOnce() -> T) -> T {
-        let previous = PINNED.with(|pinned| pinned.replace(Some(files)));
-        let result = body();
-        PINNED.with(|pinned| *pinned.borrow_mut() = previous);
-        result
+        let _restore = Restore(PINNED.with(|pinned| pinned.replace(Some(files))));
+        body()
     }
 }
 
@@ -605,7 +661,8 @@ fn uncommitted_start_disabled_action(
 /// Human text for the inert start (#13636), in the `ripr check` route's words.
 pub(super) fn uncommitted_start_reason(commit: &str) -> String {
     format!(
-        "Commit your production change first (the repair start refuses to begin while it is uncommitted), then start the repair: {commit}"
+        "{} Commit command: {commit}",
+        ActionDisabledReason::UncommittedProductionChange.human_reason()
     )
 }
 

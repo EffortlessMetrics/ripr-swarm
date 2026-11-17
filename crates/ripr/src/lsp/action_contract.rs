@@ -56,7 +56,7 @@ pub(super) enum ActionDisabledReason {
     /// limitation, which names something ripr cannot trace.
     RepairRouteNotReady,
     /// The seam repair start would be refused right now because tracked
-    /// production files differ from HEAD (#13636): the shared before-phase
+    /// source files differ from HEAD (#13636): the shared before-phase
     /// dirty-premise preflight
     /// (`app::repair_attempt::seam_start_dirty_premise`) names them. The
     /// emitted human text carries the commit step.
@@ -133,7 +133,7 @@ impl ActionDisabledReason {
                 "ripr does not have a complete repair route for this finding yet (a test to extend and the exact value it must check); copy the context packet and inspect it by hand"
             }
             Self::UncommittedProductionChange => {
-                "Commit your production change first (the repair start refuses to begin while it is uncommitted), then run the repair start again"
+                "Commit your uncommitted source files first, then run the repair start again; it refuses to begin while they are uncommitted."
             }
             Self::StaleDocument => "The document changed after this analysis snapshot",
             Self::WorkspaceRootBlocked => "The workspace root is blocked for analysis",

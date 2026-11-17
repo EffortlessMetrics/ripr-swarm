@@ -33,7 +33,7 @@ import type {
   RiprStatusContext,
   RiprReceiptArtifactStatus
 } from './client';
-import { blockedRepairStartReason } from './repairStart';
+import { blockedRepairStart, REPAIR_START_ACTION_NAME, type BlockedRepairStart } from './repairStart';
 
 export interface AgentHandoffHost {
   readonly runtime: RiprClientRuntime;
@@ -519,13 +519,16 @@ function nearestGapDiagnostic(editor: vscode.TextEditor): vscode.Diagnostic | un
 }
 
 /**
- * The diagnostic Start Current Repair works from: the nearest gap diagnostic,
- * else the nearest seam diagnostic (#13636). Seam diagnostics carry the
+ * The diagnostic Start Current Repair works from: the gap or seam diagnostic
+ * under or nearest the selection (#13636). Seam diagnostics carry the
  * seam-bound repair start, so a Rust file with seam evidence and no gap
  * record still reaches the start (or its blocked reason).
  */
 function nearestRepairDiagnostic(editor: vscode.TextEditor): vscode.Diagnostic | undefined {
-  return nearestGapDiagnostic(editor) ?? nearestDiagnostic(editor, isRiprSeamDiagnostic);
+  return nearestDiagnostic(
+    editor,
+    (diagnostic) => isRiprGapDiagnostic(diagnostic) || isRiprSeamDiagnostic(diagnostic)
+  );
 }
 
 function nearestDiagnostic(
@@ -917,14 +920,21 @@ export class AgentHandoffController {
       return;
     }
 
+    // #13636: no enabled start here. Ask the server why before falling back
+    // to another action: when the start itself is inert (for example while
+    // source files are uncommitted), say so instead of silently opening the
+    // related test or suggesting a refresh that cannot help.
+    const blocked = await this.serverBlockedStart(editor.document.uri, diagnostic.range);
+    if (blocked?.actionName === REPAIR_START_ACTION_NAME) {
+      this.host.runtime.showInformationMessage(`ripr cannot start this repair yet. ${blocked.reason}`);
+      return;
+    }
+
     const candidates = startRepairActions(actions ?? []);
     if (candidates.length === 0) {
-      // #13636: name the server's own blocker (for example an uncommitted
-      // production change) instead of suggesting a refresh that cannot help.
-      const blocked = await this.serverBlockedStartReason(editor.document.uri, diagnostic.range);
       this.host.runtime.showInformationMessage(
         blocked
-          ? `ripr cannot start this repair yet. ${blocked}`
+          ? `ripr cannot start this repair yet. ${blocked.reason}`
           : 'No bounded ripr repair action is available for the current gap. Refresh saved-workspace analysis if this looks stale.'
       );
       return;
@@ -949,7 +959,7 @@ export class AgentHandoffController {
    * the same ripr diagnostics VS Code would attach. `undefined` when no
    * client is running, the request fails, or no inert action names a reason.
    */
-  private async serverBlockedStartReason(uri: vscode.Uri, range: vscode.Range): Promise<string | undefined> {
+  private async serverBlockedStart(uri: vscode.Uri, range: vscode.Range): Promise<BlockedRepairStart | undefined> {
     const client = this.host.getClient();
     if (!client) {
       return undefined;
@@ -964,7 +974,7 @@ export class AgentHandoffController {
         range: protocolRange(range),
         context: { diagnostics, triggerKind: 1 },
       });
-      return blockedRepairStartReason(actions);
+      return blockedRepairStart(actions);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.host.output.appendLine(`ripr start current repair could not read the blocked-start reason: ${message}`);

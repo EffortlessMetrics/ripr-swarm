@@ -1698,11 +1698,11 @@ suite('Extension Smoke', () => {
   });
 
   for (const blocked of [true, false]) {
-    test(`startCurrentRepair ${blocked ? 'names the server reason for an inert seam start (#13636)' : 'keeps the refresh hint when the server names no blocker'}`, async function (this: Mocha.Context) {
+    test(`startCurrentRepair ${blocked ? 'names the server reason for an inert seam start (#13636)' : 'falls back to the related test when the server names no blocker'}`, async function (this: Mocha.Context) {
       skipUnlessTrustedTestHost(this);
       const seamId = '67fc764ba37d77bd';
       const commit = 'git -C /repo --literal-pathspecs commit -m "<message>" -- src/lib.rs';
-      const reason = `Commit your production change first (the repair start refuses to begin while it is uncommitted), then start the repair: ${commit}`;
+      const reason = `Commit your uncommitted source files first, then run the repair start again; it refuses to begin while they are uncommitted. Commit command: ${commit}`;
       const context = createControllerTestContext({
         lspResult: blocked
           ? [{
@@ -1734,15 +1734,22 @@ suite('Extension Smoke', () => {
         (diagnostic as vscode.Diagnostic & { data?: unknown }).data = { seam_id: seamId };
         collection.set(uri, [diagnostic]);
 
-        // The editor-visible actions carry no enabled start, as when the
-        // server returns the start inert.
+        // The editor-visible actions are the real inert-start set: no
+        // enabled start, but the related-test action (a start candidate) is
+        // still there, as on a real eligible seam.
         provider = vscode.languages.registerCodeActionsProvider(
           { language: 'rust', scheme: 'file' },
           {
             provideCodeActions() {
               const action = new vscode.CodeAction('Agent handoff: copy packet command', vscode.CodeActionKind.QuickFix);
               action.command = { title: 'Agent handoff: copy packet command', command: 'ripr.copyAgentPacketCommand', arguments: [] };
-              return [action];
+              const related = new vscode.CodeAction('Write targeted test: open best related test', vscode.CodeActionKind.QuickFix);
+              related.command = {
+                title: 'Write targeted test: open best related test',
+                command: 'ripr.openRelatedTest',
+                arguments: [{ uri: workspaceFileUri('tests/pricing.rs').toString(), line: 4 }],
+              };
+              return [action, related];
             },
           }
         );
@@ -1767,8 +1774,12 @@ suite('Extension Smoke', () => {
           );
           assert.ok(!context.infoMessages.some((message) => message.includes('Refresh saved-workspace analysis')));
         } else {
+          // No server reason: the related-test candidate runs as before, so
+          // neither the blocked message nor the refresh hint is shown.
           assert.ok(
-            context.infoMessages.some((message) => message.includes('Refresh saved-workspace analysis')),
+            !context.infoMessages.some((message) =>
+              message.includes('cannot start this repair') || message.includes('Refresh saved-workspace analysis')
+            ),
             context.infoMessages.join(' | ')
           );
         }

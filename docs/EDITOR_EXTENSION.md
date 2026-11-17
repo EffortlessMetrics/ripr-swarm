@@ -426,7 +426,9 @@ server can provide seam-aware code actions:
 
 The repair-start, targeted-test, assertion, and related-test actions are
 conditional. `Start repair: copy repair command` is shown only when
-`ripr agent repair` would accept the seam: it passes the fail-closed
+`ripr agent repair` would accept the seam (while tracked source files are
+uncommitted it is listed disabled with the commit command to run first,
+#13636): it passes the fail-closed
 repair-packet flip (RIPR-SPEC-0087 §8) and its recommended test file is a test
 surface, or is the seam's own source file with exactly one governed inline
 `#[cfg(test)]` module that the repair is confined to. Any other seam (for

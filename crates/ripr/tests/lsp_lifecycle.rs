@@ -3377,7 +3377,7 @@ fn real_seam_diagnostic_names_the_commit_step_on_an_uncommitted_change() -> Resu
     if start.get("command").is_some()
         || start.pointer("/data/disabled_reason")
             != Some(&serde_json::json!("uncommitted_production_change"))
-        || !reason.starts_with("Commit your production change first")
+        || !reason.starts_with("Commit your uncommitted source files first")
         || !reason.contains("--literal-pathspecs commit -m \"<message>\" -- src/lib.rs")
     {
         return Err(format!(
@@ -3406,6 +3406,8 @@ fn real_seam_diagnostic_names_the_commit_step_on_an_uncommitted_change() -> Resu
 
     // Commit: the same session re-enables the start without a refresh.
     run_compat_git(&root, &["commit", "-q", "-am", "change boundary"])?;
+    // The server memoizes the preflight for one second per root.
+    std::thread::sleep(Duration::from_millis(1100));
     let start = request_start(&mut session)?;
     if start.get("disabled").is_some()
         || !start

@@ -253,6 +253,21 @@ export const BLOCKED_REPAIR_START_ACTION_NAMES: readonly string[] = [
  * none names one.
  */
 export function blockedRepairStartReason(actions: unknown): string | undefined {
+  return blockedRepairStart(actions)?.reason;
+}
+
+/** An inert ripr action's machine name and human reason (#13636). */
+export interface BlockedRepairStart {
+  actionName: string;
+  reason: string;
+}
+
+/**
+ * {@link blockedRepairStartReason} with the machine name of the inert action
+ * that supplied it, so a caller can tell the start's own refusal
+ * (`copy_agent_repair_command`) from a weaker packet/brief refusal.
+ */
+export function blockedRepairStart(actions: unknown): BlockedRepairStart | undefined {
   if (!Array.isArray(actions)) {
     return undefined;
   }
@@ -266,9 +281,12 @@ export function blockedRepairStartReason(actions: unknown): string | undefined {
       }
       const reason = nonEmptyString(action['disabled']['reason']);
       if (reason) {
-        return reason;
+        return { actionName: name, reason };
       }
     }
   }
   return undefined;
 }
+
+/** The machine name of the seam repair start action (RIPR-SPEC-0129). */
+export const REPAIR_START_ACTION_NAME = 'copy_agent_repair_command';
