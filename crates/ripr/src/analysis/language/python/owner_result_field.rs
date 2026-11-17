@@ -619,7 +619,10 @@ fn binding_of_owner_result(
     let (Some(class_import), None) = (class_imports.next(), class_imports.next()) else {
         return None;
     };
-    if !owner_modules.contains(&class_import.source_module) {
+    // Imported under its own name, which the rebinding check above covers:
+    // `from fx.core import Req as R` then a module-level `R = Other` would not
+    // show as a rebinding of `Req`.
+    if class_import.alias != class || !owner_modules.contains(&class_import.source_module) {
         return None;
     }
     let class_locals: Vec<String> = owner_class_locals(test, owner, class)

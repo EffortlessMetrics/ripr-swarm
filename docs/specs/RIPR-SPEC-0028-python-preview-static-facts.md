@@ -1454,7 +1454,7 @@ read-out: the boolean the classifier uses is derived from the surfaced
   module-level pytest function whose body is straight-line
   (`Assign`/`Expr`/`Assert`/`pass` only), binds `<binding> = Cls(...).method(...)`
   (or `Cls(...)` for `__init__`, `Cls` the test module's one import of the
-  class, `from <owner module> import Cls`, which nothing in the test module
+  class, `from <owner module> import Cls` without an alias, which nothing in the test module
   rebinds or attribute-writes and no autouse fixture, setup hook or opaque
   module code can reach) exactly once, names no dunder, uses
   `<binding>` only as reads of other non-dunder, non-method attributes (a

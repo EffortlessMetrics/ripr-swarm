@@ -605,6 +605,14 @@ fn single_guard_variants_carry_no_fact() -> Result<(), String> {
             "from fx.core import Req\n\n\ndef _fast(self, t):\n    return self\n\n\nReq.timeout = _fast\n\n\ndef test_builder_sets_url():\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
         ),
         (
+            "the test module rebinds an aliased import of the class",
+            "from fx.core import Req as R\nfrom fx.other import Other\nR = Other\n\n\ndef test_builder_sets_url():\n    r = R('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
+        ),
+        (
+            "the test imports the class under an alias",
+            "from fx.core import Req as R\n\n\ndef test_builder_sets_url():\n    r = R('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
+        ),
+        (
             "the test mocks",
             "from unittest import mock\nfrom fx.core import Req\n\n\ndef test_builder_sets_url():\n    m = mock.Mock()\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
         ),
