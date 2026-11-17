@@ -212,6 +212,9 @@ jobs:
             while IFS= read -r -d '' path; do
               case "$path" in
                 CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md) reason=release_surface; return 0 ;;
+                # Rust tests assert the exact prose of the agent-contract markdown
+                # (#14986); classifying it docs-only skips the lanes that read it.
+                .agents/skills/*|.claude/skills/*|docs/agent-context/*) reason=agent_contract_markdown; return 0 ;;
                 docs/specs/*|docs/handoffs/*|docs/spec-index.d/*|policy/doc-artifacts.d/*|.ripr/traceability.d/*|changelog.d/*|fixtures/*-verdict-corpus/spec-scopes/*|*.md) ;;
                 *) return 0 ;;
               esac
@@ -345,6 +348,8 @@ jobs:
               [ -n "$path" ] || continue
               case "$path" in
                 CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md) return 1 ;;
+                # Same non-docs set as the detect-docs-only job (#14986).
+                .agents/skills/*|.claude/skills/*|docs/agent-context/*) return 1 ;;
                 docs/specs/*|docs/handoffs/*|docs/spec-index.d/*|policy/doc-artifacts.d/*|.ripr/traceability.d/*|changelog.d/*|fixtures/*-verdict-corpus/spec-scopes/*|*.md) ;;
                 *) return 1 ;;
               esac
