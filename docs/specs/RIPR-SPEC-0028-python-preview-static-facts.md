@@ -1429,7 +1429,11 @@ read-out: the boolean the classifier uses is derived from the surfaced
   with no `return`) of a plain top-level class (no base, keyword, decorator, or
   class text naming `__getattr`, `__setattr`, `__delattr`, `__slots__`,
   `__dict__`, `__new__`, `__class__`, `property`, `getattr(`, `attrgetter`,
-  `setattr(` or `vars(`; a class body of only undecorated methods, literal
+  `setattr(`, `vars(`, `locals(` or `globals(`; every method taking `self`
+  first and running straight through, with no nested `def` or `class`,
+  lambda, generator expression, `try`, `global`, `nonlocal` or import, since a
+  closure kept from `__init__` can overwrite the field after the builder
+  returns; a class body of only undecorated methods, literal
   bindings, docstrings and `pass`, since any other class-level value could be a
   descriptor; no `case` line; no class-level binding of the field; no other
   write of the field in the method; only plain assignments after the changed

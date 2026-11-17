@@ -497,6 +497,34 @@ fn single_guard_variants_carry_no_fact() -> Result<(), String> {
             "        self.timeout_value = t",
             "\n    def link(self):\n        self.me = self\n",
         ),
+        (
+            "another method keeps a closure that can overwrite the field",
+            "",
+            "        self.timeout_value = t * 2",
+            "        self.timeout_value = t",
+            "\n    def hook(self):\n        def clear():\n            self.timeout_value = 0\n        self.on_send = clear\n",
+        ),
+        (
+            "another method keeps a lambda",
+            "",
+            "        self.timeout_value = t * 2",
+            "        self.timeout_value = t",
+            "\n    def hook(self):\n        self.on_send = lambda: 0\n",
+        ),
+        (
+            "another method names its first parameter otherwise",
+            "",
+            "        self.timeout_value = t * 2",
+            "        self.timeout_value = t",
+            "\n    def leak(this):\n        REG.append(this)\n",
+        ),
+        (
+            "another method uses try",
+            "",
+            "        self.timeout_value = t * 2",
+            "        self.timeout_value = t",
+            "\n    def leak(self):\n        try:\n            pass\n        except ValueError:\n            pass\n",
+        ),
     ] {
         let after = if pre.is_empty() {
             ""

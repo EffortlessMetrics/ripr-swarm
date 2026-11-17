@@ -47,8 +47,10 @@ impl UnreadOwnerResultField {
 
 /// Class-text markers that let an attribute read or write run code, or let a
 /// read reach the changed field under another name.
-const CLASS_REFUSAL_MARKERS: [&str; 12] = [
+const CLASS_REFUSAL_MARKERS: [&str; 14] = [
     "getattr(",
+    "locals(",
+    "globals(",
     "attrgetter",
     "setattr(",
     "vars(",
@@ -402,6 +404,31 @@ fn changed_self_field(
         _ => {}
     });
     if calls != 0 || self_names != self_bases {
+        return None;
+    }
+    // Every method takes `self` first and runs straight through when called:
+    // no nested `def`, `class`, lambda or generator expression (a closure
+    // kept from `__init__` can overwrite the field after the builder
+    // returns), no `try` (handler types are not scanned), and no `global`,
+    // `nonlocal` or import that could leak the instance under another name.
+    let mut deferred = 0usize;
+    for stmt in &class.body {
+        let Stmt::FunctionDef(function) = stmt else {
+            continue;
+        };
+        if !function.args.posonlyargs.is_empty()
+            || function.args.args.first().map(|arg| arg.def.arg.as_str()) != Some("self")
+            || !straight_line_method_body(&function.body)
+        {
+            return None;
+        }
+        visit_exprs_in_statements(&function.body, &mut |expr| {
+            if matches!(expr, Expr::Lambda(_) | Expr::GeneratorExp(_)) {
+                deferred += 1;
+            }
+        });
+    }
+    if deferred != 0 {
         return None;
     }
     // An alias of `self` (`s = self`, `self.me = self`, a module global set
@@ -822,4 +849,33 @@ fn dedent(source: &str) -> String {
         .map(|line| line.get(indent..).unwrap_or(line))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Whether a method body holds only statements that run in place: simple
+/// statements and `if`/`for`/`while`/`with` blocks of them.
+fn straight_line_method_body(body: &[Stmt]) -> bool {
+    body.iter().all(|stmt| match stmt {
+        Stmt::Assign(_)
+        | Stmt::AnnAssign(_)
+        | Stmt::AugAssign(_)
+        | Stmt::Expr(_)
+        | Stmt::Pass(_)
+        | Stmt::Return(_)
+        | Stmt::Assert(_)
+        | Stmt::Raise(_)
+        | Stmt::Break(_)
+        | Stmt::Continue(_)
+        | Stmt::Delete(_) => true,
+        Stmt::If(stmt) => {
+            straight_line_method_body(&stmt.body) && straight_line_method_body(&stmt.orelse)
+        }
+        Stmt::For(stmt) => {
+            straight_line_method_body(&stmt.body) && straight_line_method_body(&stmt.orelse)
+        }
+        Stmt::While(stmt) => {
+            straight_line_method_body(&stmt.body) && straight_line_method_body(&stmt.orelse)
+        }
+        Stmt::With(stmt) => straight_line_method_body(&stmt.body),
+        _ => false,
+    })
 }
