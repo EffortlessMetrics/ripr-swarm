@@ -602,6 +602,7 @@ impl<'a> ReachGraph<'a> {
         reaching: &HashSet<&str>,
         owner_name: &str,
         hops_of: &dyn Fn(&str) -> usize,
+        admit: &mut dyn FnMut(&'a str) -> bool,
     ) -> Option<(String, &'a str)> {
         if self.derive_entries.is_empty() {
             return None;
@@ -609,7 +610,8 @@ impl<'a> ReachGraph<'a> {
         let derives = self.derives_in_file(index, file);
         // Fewest hops to the owner first, then derive and function name, so
         // a file applying several reaching derives offers its closest one to
-        // the witness ranking (#14970).
+        // the witness ranking (#14970). Only admitted derives are ranked, so
+        // a refused nearer derive cannot hide an admitted farther one.
         let mut best: Option<(usize, String, &'a str)> = None;
         for derive in derives.iter() {
             for &function in self.derive_entries.get(derive).into_iter().flatten() {
@@ -622,7 +624,10 @@ impl<'a> ReachGraph<'a> {
                     derive.clone(),
                     function.name.as_str(),
                 );
-                if reaches && best.as_ref().is_none_or(|current| candidate < *current) {
+                if reaches
+                    && best.as_ref().is_none_or(|current| candidate < *current)
+                    && admit(function.name.as_str())
+                {
                     best = Some(candidate);
                 }
             }
@@ -1969,7 +1974,15 @@ impl<'a> TransitiveReachIndex<'a> {
                 let derive = derive_by_file
                     .entry(test.file.as_path())
                     .or_insert_with(|| {
-                        graph.derive_entry(self.index, &test.file, reaching, owner_name, &hops_of)
+                        let file = test.file.as_path();
+                        graph.derive_entry(
+                            self.index,
+                            &test.file,
+                            reaching,
+                            owner_name,
+                            &hops_of,
+                            &mut |function| admit_once(file, function),
+                        )
                     });
                 if derive.is_some() {
                     candidates.push(test_index);
@@ -6632,6 +6645,19 @@ mod tests {
                 .as_ref()
                 .map(|w| (w.entry_symbol.as_str(), w.via_derive.as_deref())),
             Some(("derive_zulu", Some("Zulu")))
+        );
+
+        // A refused nearer derive does not hide an admitted farther one in
+        // the same file.
+        let reach = TransitiveReachIndex::new(&index);
+        let admitted = reach.transitive_witness_admitted("fmt_impl", &|_: &Path, entry: &str| {
+            entry != "derive_zulu"
+        });
+        assert_eq!(
+            admitted
+                .as_ref()
+                .map(|w| (w.entry_symbol.as_str(), w.via_derive.as_deref())),
+            Some(("derive_alpha", Some("Alpha")))
         );
     }
 
