@@ -1066,10 +1066,11 @@ pub(crate) fn inline_const_assertion_lines(source: &str) -> std::collections::BT
 
 /// A statement that is one inline const block holding only an assertion
 /// macro: `const { assert!(..) };`, also `assert_eq!`/`assert_ne!`, the
-/// `debug_` forms and their `core::`/`std::` paths. A rustfmt-split block
-/// is read flattened by [`inline_const_assertion_lines`]. Read on masked text, so a quoted `}` cannot end it. A const
-/// block producing a value (`let x = const { 1 + 2 };`) is runtime-visible
-/// and is not matched.
+/// `debug_` forms and their `core::`/`std::` paths. `text` may span lines:
+/// [`inline_const_assertion_lines`] passes a rustfmt-split block as is.
+/// Read on masked text, so a quoted `}` cannot end it. A const block
+/// producing a value (`let x = const { 1 + 2 };`) is runtime-visible and is
+/// not matched.
 fn is_inline_const_assertion(text: &str, masked: &str) -> bool {
     let Some(rest) = masked.trim().strip_prefix("const") else {
         return false;
