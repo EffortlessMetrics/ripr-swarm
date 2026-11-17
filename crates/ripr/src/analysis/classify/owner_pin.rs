@@ -9456,9 +9456,10 @@ fn constructor_call_span(text: &str, head: &str) -> Option<usize> {
 }
 
 /// #14387: [`ReturnPathGate::ClosedGuardReturn`] when the changed line is
-/// the whole statement `return <value>;`, the changed expression `return
-/// <value>` before and after, so the change moves only that guard's returned
-/// value, and the closed integer subset reads the owner in both versions. The
+/// the whole statement `return <value>;` (the changed expression `return
+/// <value>` before and after) or a tail branch's bare `<value>`, so the change
+/// moves only that exit's returned value, and the closed integer subset reads
+/// the owner in both versions. The
 /// guard condition and every other exit are then the same in both, and the
 /// pin's literal arguments decide per call which exit runs.
 fn closed_guard_return(
@@ -9469,16 +9470,27 @@ fn closed_guard_return(
     before: Option<&str>,
 ) -> Option<ReturnPathGate> {
     let (expression, before) = (expression.trim(), before?.trim());
-    let returned = |text: &str| {
-        text.strip_prefix("return ")
-            .is_some_and(|value| !value.trim().is_empty() && !value.contains([';', '{', '}']))
-    };
+    let value = |text: &str| !text.trim().is_empty() && !text.contains([';', '{', '}']);
+    let returned = |text: &str| text.strip_prefix("return ").is_some_and(value);
     let after = body.lines().nth(changed_line)?;
-    let statement = format!("{expression};");
-    if !(returned(expression) && returned(before) && after.trim() == statement) {
+    // A guard's `return <value>;`, or a tail branch's bare `<value>` on its
+    // own line (`if c { .. } else { .. }`, probed since #14385): the closed subset then
+    // reads both versions, so the line's place in the owner is its reading.
+    let (statement, old_statement) = if returned(expression) && returned(before) {
+        (format!("{expression};"), format!("{before};"))
+    } else if value(expression)
+        && value(before)
+        && !expression.starts_with("return ")
+        && !before.starts_with("return ")
+    {
+        (expression.to_string(), before.to_string())
+    } else {
+        return None;
+    };
+    if after.trim() != statement {
         return None;
     }
-    let old_line = after.replacen(&statement, &format!("{before};"), 1);
+    let old_line = after.replacen(&statement, &old_statement, 1);
     let change = super::owner_value::ClosedChange::read(body, name, changed_line, &old_line)?;
     Some(ReturnPathGate::ClosedGuardReturn { change, old_line })
 }
