@@ -26,9 +26,8 @@ still requests full PR qualification on the explicit `merge-ready` label and
 retains manual dispatch. Ordinary main/master product replay is retired;
 [the landed observer](CI.md#main-health-sentinel) reads exact native G=M proof. The branch summary names
 `Ripr Rust Small Result` (application 15368); a complete current enforcement
-readback is still required before changing settings, and whether the repository's
-merge queue is enabled for `main` is a live setting this document does not
-establish. A file or issue edit does not install new protection.
+readback is still required before changing settings. A file or issue edit does
+not install new protection.
 
 The installed `merge-ready` label requests PR qualification; Ready alone requests
 nothing, and neither one enqueues the PR. After reviewing those results and the
