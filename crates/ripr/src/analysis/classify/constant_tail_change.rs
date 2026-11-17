@@ -43,7 +43,7 @@ use crate::analysis::diff::{ChangedFile, ModuleDeclarations};
 use crate::analysis::facts::FunctionSummary;
 use crate::analysis::rust_index::{RustIndex, find_file_facts};
 use crate::domain::{FlowSinkFact, FlowSinkKind, Probe, ProbeFamily};
-use ra_ap_syntax::{AstNode, ast};
+use ra_ap_syntax::{AstNode, SyntaxKind, ast};
 
 /// Owners longer than this are not read.
 const MAX_OWNER_LINES: usize = 64;
@@ -299,6 +299,16 @@ fn constant_tail_of(function: &ast::Fn) -> Option<ConstantTail> {
 
 fn fold(expr: &ast::Expr, depth: usize, uses_vec: &mut bool) -> Option<Const> {
     if depth > MAX_DEPTH {
+        return None;
+    }
+    // An attribute anywhere in the constant, such as `#[cfg(any())]` on a
+    // collection element, can remove what the syntax shows, so the folded
+    // value would not be the returned value (#14953 review).
+    if expr
+        .syntax()
+        .descendants_with_tokens()
+        .any(|element| element.kind() == SyntaxKind::POUND)
+    {
         return None;
     }
     let next = depth + 1;
@@ -775,6 +785,35 @@ mod tests {
         let old = format!("{rebind}pub fn items() -> Vec<i32> {{\n    vec![1, 2]\n}}\n");
         let new = "\npub fn items() -> Vec<i32> {\n    vec![]\n}\n";
         assert_eq!(read(&old, new, "items", "vec![]")?, None);
+        Ok(())
+    }
+
+    /// #14953 review: `#[cfg(any())]` removes an element, so the syntax
+    /// differs while the returned value does not.
+    #[test]
+    fn an_attribute_inside_the_constant_is_refused() -> Result<(), String> {
+        for (ty, old_tail, new_tail) in [
+            ("Vec<i32>", "vec![]", "vec![#[cfg(any())] 1]"),
+            ("Vec<i32>", "vec![#[cfg(any())] 1]", "vec![]"),
+            (
+                "Vec<Vec<i32>>",
+                "vec![vec![]]",
+                "vec![vec![#[cfg(any())] 1]]",
+            ),
+            ("[i32; 1]", "[1]", "[1, #[cfg(any())] 2]"),
+        ] {
+            let old = format!("pub fn items() -> {ty} {{\n    {old_tail}\n}}\n");
+            let new = format!("pub fn items() -> {ty} {{\n    {new_tail}\n}}\n");
+            assert_eq!(
+                read(&old, &new, "items", new_tail)?,
+                None,
+                "{old_tail} -> {new_tail}"
+            );
+        }
+        // Control: the same edit without the attribute is read.
+        let old = "pub fn items() -> Vec<i32> {\n    vec![]\n}\n";
+        let new = "pub fn items() -> Vec<i32> {\n    vec![1]\n}\n";
+        assert!(read(old, new, "items", "vec![1]")?.is_some());
         Ok(())
     }
 
