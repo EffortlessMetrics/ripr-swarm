@@ -352,6 +352,11 @@ fn called_with_method_syntax(text: &str, name: &str) -> bool {
     found
 }
 
+/// The admission rule of a consumer without one: every witness counts.
+fn admit_any(_test_file: &Path, _entry_symbol: &str) -> bool {
+    true
+}
+
 /// An entry's receiver types, split for [`ReachGraph::test_calls_on_any_type`].
 /// `method_call_resolves_to_impl_type_in` accepts an identifier-shaped type
 /// only where the type is an identifier run of the test's masked body or of
@@ -1666,7 +1671,7 @@ impl<'a> TransitiveReachIndex<'a> {
                 if reaching.is_empty() {
                     return None;
                 }
-                self.witness_through(owner_name, &reaching)
+                self.witness_through(owner_name, &reaching, &admit_any)
             })
     }
 
@@ -1699,7 +1704,7 @@ impl<'a> TransitiveReachIndex<'a> {
         if reaching.is_empty() {
             return None;
         }
-        self.witness_through(owner_name, &reaching)
+        self.witness_through(owner_name, &reaching, &admit_any)
     }
 
     /// Production functions that call `callee`, using path-aware resolution
@@ -1780,9 +1785,45 @@ impl<'a> TransitiveReachIndex<'a> {
         self.witnesses
             .get_or_compute(&self.witnesses.deep, owner_name, || {
                 self.graph().walk_past_bound(owner_name, |deeper| {
-                    self.witness_through(owner_name, deeper)
+                    self.witness_through(owner_name, deeper, &admit_any)
                 })
             })
+    }
+
+    /// [`Self::transitive_witness`] limited to witnesses `admit` accepts (by
+    /// test file and entry symbol), ranked the same way. A consumer with an
+    /// eligibility rule (#10127's cross-package admission) asks this instead
+    /// of filtering the single best witness, so a nearer ineligible witness
+    /// cannot hide an eligible one (#14970). Not memoized: the predicate is
+    /// the caller's.
+    pub(in crate::analysis) fn transitive_witness_admitted(
+        &self,
+        owner_name: &str,
+        admit: &dyn Fn(&Path, &str) -> bool,
+    ) -> Option<TransitiveWitness> {
+        if owner_name.is_empty() {
+            return None;
+        }
+        let reaching = self.graph().names_reaching(owner_name);
+        if reaching.is_empty() {
+            return None;
+        }
+        self.witness_through(owner_name, &reaching, admit)
+    }
+
+    /// [`Self::deep_transitive_witness`] limited to witnesses `admit` accepts;
+    /// a level whose witnesses are all refused does not end the walk.
+    pub(in crate::analysis) fn deep_transitive_witness_admitted(
+        &self,
+        owner_name: &str,
+        admit: &dyn Fn(&Path, &str) -> bool,
+    ) -> Option<TransitiveWitness> {
+        if owner_name.is_empty() {
+            return None;
+        }
+        self.graph().walk_past_bound(owner_name, |deeper| {
+            self.witness_through(owner_name, deeper, admit)
+        })
     }
 
     /// Trait-dispatch ambiguity for `owner_name` (RIPR-SPEC-0114, #11719): the
@@ -1876,6 +1917,7 @@ impl<'a> TransitiveReachIndex<'a> {
         &self,
         owner_name: &str,
         reaching: &HashSet<&'a str>,
+        admit: &dyn Fn(&Path, &str) -> bool,
     ) -> Option<TransitiveWitness> {
         let graph = self.graph();
 
@@ -1935,7 +1977,7 @@ impl<'a> TransitiveReachIndex<'a> {
                 if callee.name == owner_name {
                     continue;
                 }
-                if reaching.contains(callee.name.as_str()) {
+                if reaching.contains(callee.name.as_str()) && admit(&test.file, &callee.name) {
                     let name = callee.name.as_str();
                     let self_types = receiver_types
                         .entry(name)
@@ -1971,7 +2013,9 @@ impl<'a> TransitiveReachIndex<'a> {
                     symbol,
                     None,
                 )
-            } else if let Some(Some((derive, function))) = derive_by_file.get(test.file.as_path()) {
+            } else if let Some(Some((derive, function))) = derive_by_file.get(test.file.as_path())
+                && admit(&test.file, function)
+            {
                 // `#[derive(Name)]` runs the proc-macro function when the
                 // test target compiles; no call fact records that (#6924).
                 (
@@ -4682,6 +4726,76 @@ mod tests {
                 Some("non_breaking_space".to_string())
             );
         }
+    }
+
+    // (a''''') An admission rule ranks only admitted witnesses (#14970): the
+    // nearer `tests/b.rs` witness is refused, so the farther admitted
+    // `tests/a.rs` one is named instead of nothing. Without a rule the
+    // nearer one still wins. Past the bound the same holds.
+    #[test]
+    fn given_an_admission_rule_then_a_refused_nearer_witness_does_not_hide_an_admitted_one() {
+        let fns = || {
+            vec![
+                make_fn("far", vec!["mid"]),
+                make_fn("mid", vec!["inner"]),
+                make_fn("near", vec!["inner"]),
+            ]
+        };
+        let index = index_with(
+            fns(),
+            vec![
+                make_test_at("test_a", "tests/a.rs", 1, vec!["far"]),
+                make_test_at("test_b", "tests/b.rs", 1, vec!["near"]),
+            ],
+        );
+        let reach = TransitiveReachIndex::new(&index);
+        let refuse_b = |file: &Path, _entry: &str| file != Path::new("tests/b.rs");
+        assert_eq!(
+            reach.transitive_witness("inner").map(|w| w.test_name),
+            Some("test_b".to_string())
+        );
+        let admitted = reach.transitive_witness_admitted("inner", &refuse_b);
+        assert_eq!(
+            admitted
+                .as_ref()
+                .map(|w| (w.test_name.as_str(), w.entry_symbol.as_str())),
+            Some(("test_a", "far"))
+        );
+        assert_eq!(admitted.map(|w| w.other_test_count), Some(0));
+        assert!(
+            reach
+                .transitive_witness_admitted("inner", &|_: &Path, _: &str| false)
+                .is_none()
+        );
+
+        // Past the five-hop bound: d6 -> d5 -> ... -> d1 -> inner.
+        let mut chain: Vec<FunctionSummary> = (1..=6)
+            .map(|n| {
+                let callee = if n == 1 {
+                    "inner".to_string()
+                } else {
+                    format!("d{}", n - 1)
+                };
+                make_fn(&format!("d{n}"), vec![callee.as_str()])
+            })
+            .collect();
+        chain.push(make_fn("e6", vec!["d5"]));
+        let deep = index_with(
+            chain,
+            vec![
+                make_test_at("deep_a", "tests/a.rs", 1, vec!["d6"]),
+                make_test_at("deep_b", "tests/b.rs", 1, vec!["e6"]),
+            ],
+        );
+        let reach = TransitiveReachIndex::new(&deep);
+        assert_eq!(
+            reach
+                .deep_transitive_witness_admitted("inner", &|file: &Path, _: &str| {
+                    file != Path::new("tests/a.rs")
+                })
+                .map(|w| w.test_name),
+            Some("deep_b".to_string())
+        );
     }
 
     #[test]
