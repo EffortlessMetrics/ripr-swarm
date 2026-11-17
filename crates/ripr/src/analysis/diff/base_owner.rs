@@ -496,11 +496,21 @@ fn out_of_line_modules(node: &SyntaxNode) -> Vec<ast::Module> {
 
 /// A `#[path]` attribute, directly or inside a `cfg_attr`.
 fn module_retargets(module: &ast::Module) -> bool {
-    ast::HasAttrs::attrs(module).any(|attr| match attr.simple_name().as_deref() {
+    ast::HasAttrs::attrs(module).any(|attr| match attr_name(&attr).as_deref() {
         Some("path") => true,
         Some("cfg_attr") => attr.syntax().text().to_string().contains("path"),
         _ => false,
     })
+}
+
+/// An attribute's name: the last segment of its path with any `r#` removed,
+/// so `#[r#cfg(..)]` reads as `cfg`. `None` when it has no readable path.
+fn attr_name(attr: &ast::Attr) -> Option<String> {
+    if let Some(name) = attr.simple_name() {
+        return Some(unraw(&name).to_string());
+    }
+    let name = attr.path()?.segment()?.name_ref()?;
+    Some(unraw(name.text()).to_string())
 }
 
 /// [`cfg_gated`] for any node: a `cfg`/`cfg_attr` on it, an enclosing item
@@ -509,7 +519,7 @@ fn cfg_gated_node(node: &SyntaxNode) -> bool {
     node.ancestors().any(|node| {
         ast::AnyHasAttrs::cast(node).is_some_and(|owner| {
             ast::HasAttrs::attrs(&owner)
-                .any(|attr| matches!(attr.simple_name().as_deref(), Some("cfg" | "cfg_attr")))
+                .any(|attr| matches!(attr_name(&attr).as_deref(), Some("cfg" | "cfg_attr")))
         })
     })
 }
@@ -823,6 +833,11 @@ mod tests {
             "#[cfg(not(test))]\nmod outer {\n    pub mod real;\n}\n",
             "#![cfg(not(test))]\nmod real;\n",
             "#[cfg_attr(test, path = \"fake.rs\")]\nmod real;\n",
+            // Raw attribute names are the same attributes (#14953 review).
+            "#[r#cfg(not(test))]\nmod real;\n",
+            "#[r#cfg_attr(test, path = \"fake.rs\")]\nmod real;\n",
+            "#[r#path = \"real.rs\"]\nmod real;\n",
+            "#[r#cfg(not(test))]\nmod outer {\n    pub mod real;\n}\n",
         ] {
             let base = verify_in(
                 ("src/real.rs", REAL_OLD, REAL_NEW),
