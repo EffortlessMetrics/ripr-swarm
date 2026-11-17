@@ -22,3 +22,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_computed_return_tail_other_branch (3)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless rust_computed_return_tail_other_branch --reason "..."`
+
+Updated:
+- `expected/human.txt`
