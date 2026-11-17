@@ -368,7 +368,7 @@ index 1111111..2222222 100644
 +        x
      }
  }
- 
+\x20
 -pub mod b {
 +pub mod a {
      pub fn f(x: i32) -> i32 {
@@ -376,7 +376,7 @@ index 1111111..2222222 100644
 +        -x
      }
  }
- 
+\x20
 ";
     assert_tail_not_exposed(lib, patch, 3)
 }
@@ -415,14 +415,14 @@ index 1111111..2222222 100644
 -    -x
 +    x
  }
- 
+\x20
 -#[cfg(not(any()))]
 +#[cfg(any())]
  pub fn f(x: i32) -> i32 {
 -    x
 +    -x
  }
- 
+\x20
 ";
     assert_tail_not_exposed(lib, patch, 3)
 }
@@ -466,7 +466,7 @@ index 1111111..2222222 100644
 +        x
      }
  }
- 
+\x20
 -#[cfg(not(any()))]
 +#[cfg(any())]
  pub mod m {
@@ -475,7 +475,7 @@ index 1111111..2222222 100644
 +        -x
      }
  }
- 
+\x20
 ";
     assert_tail_not_exposed(lib, patch, 4)
 }
@@ -513,7 +513,7 @@ index 1111111..2222222 100644
 -    -x
 +    x
  }
- 
+\x20
  #[cfg(test)]
 ";
     assert_tail_not_exposed(lib, patch, 3)
