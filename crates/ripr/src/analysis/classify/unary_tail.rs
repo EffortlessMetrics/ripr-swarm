@@ -28,7 +28,7 @@
 //! Every other shape is `None` and keeps today's reading.
 
 use super::owner_pin::{OwnerPinSyntax, builtin_type_unshadowed};
-use crate::analysis::diff::ChangedFile;
+use crate::analysis::diff::{ChangedFile, ModuleDeclarations};
 use crate::analysis::facts::{FunctionImplContext, FunctionSummary};
 use crate::analysis::rust_index::RustIndex;
 use crate::analysis::syntax::parse_clean_source_file;
@@ -80,6 +80,7 @@ pub(in crate::analysis) fn unary_tail_change(
     changed: &ChangedFile,
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
+    modules: &ModuleDeclarations,
 ) -> Option<UnaryTailChange> {
     if probe.family != ProbeFamily::ReturnValue
         || !matches!(owner.impl_context, FunctionImplContext::Free)
@@ -128,7 +129,15 @@ pub(in crate::analysis) fn unary_tail_change(
     *baseline_lines.get_mut(offset)? = old_line.to_string();
     let baseline = baseline_lines.join("\n");
 
-    if !base_item_is_the_restored_owner(owner, changed, index, line, current_line, old_line) {
+    if !base_item_is_the_restored_owner(
+        owner,
+        changed,
+        index,
+        modules,
+        line,
+        current_line,
+        old_line,
+    ) {
         return None;
     }
     let current = OwnerTail::read(owner.body.as_str(), offset)?;
@@ -169,13 +178,16 @@ pub(in crate::analysis) fn unary_tail_change(
 /// span while the old line came from the other function. The shared owner
 /// [`crate::analysis::diff::verified_base_owner`] establishes the base-side
 /// item (same qualified path and attributes, unique under it, no changed
-/// header); a `cfg`-gated item refuses, since a test may run a twin compiled
-/// in its place. The verified base item must then be exactly the current
+/// header, no changed `mod` or `#[path]` declaration on its module chain); a
+/// gated item (a `cfg` on the function, an enclosing item, the file or a
+/// `mod` declaration on its chain, or any `#[path]` declaration) refuses,
+/// since a test may run a twin compiled in its place. The verified base item must then be exactly the current
 /// item with the one replaced tail line restored.
 fn base_item_is_the_restored_owner(
     owner: &FunctionSummary,
     changed: &ChangedFile,
     index: &RustIndex,
+    modules: &ModuleDeclarations,
     line: usize,
     current_line: &str,
     old_line: &str,
@@ -185,7 +197,9 @@ fn base_item_is_the_restored_owner(
     };
     let Some(base) = crate::analysis::diff::verified_base_owner(
         &facts.source,
+        &owner.file,
         changed,
+        modules,
         &owner.name,
         owner.start_line,
         owner.end_line,

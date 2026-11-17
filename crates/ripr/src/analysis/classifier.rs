@@ -336,6 +336,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
             changed,
             index,
             candidate_index.owner_pin_syntax(),
+            candidate_index.module_declarations(),
         )
     });
     let reveal_expression = parser_expression_for_probe(
