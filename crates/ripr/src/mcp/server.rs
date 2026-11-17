@@ -1819,3 +1819,7 @@ mod source_recovery_tests;
 #[cfg(test)]
 #[path = "worktree_custody_tests.rs"]
 mod worktree_custody_tests;
+
+#[cfg(test)]
+#[path = "owner_opt_out_tests.rs"]
+mod owner_opt_out_tests;

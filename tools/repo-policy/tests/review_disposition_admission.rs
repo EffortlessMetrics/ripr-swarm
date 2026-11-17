@@ -1412,6 +1412,59 @@ fn a_blocking_verdict_line_after_a_ready_marker_refuses() -> Result<(), String> 
     Ok(())
 }
 
+#[test]
+fn a_labelled_field_whose_value_is_a_state_token_refuses() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let at = "2026-10-15T01:00:01Z";
+    let cases = [
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: REPAIR_REQUIRED 1cc13d3d",
+            false,
+            "verdict field REPAIR_REQUIRED",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: CHANGES_REQUESTED 1cc13d3d",
+            false,
+            "verdict field CHANGES_REQUESTED",
+        ),
+        (
+            "REVIEW_READY\nStatus: REPAIR_REQUIRED",
+            false,
+            "status field REPAIR_REQUIRED",
+        ),
+        (
+            "REVIEW_READY\n- **Verdict:** `CHANGES_REQUESTED`",
+            false,
+            "emphasised verdict field",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d",
+            true,
+            "approve control",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nStatus (round 2): REPAIR_REQUIRED",
+            false,
+            "punctuated status label",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nStatus -> REPAIR_REQUIRED",
+            false,
+            "arrow separator",
+        ),
+        (
+            "REVIEW_READY\n- **Status:** REVIEW_READY",
+            true,
+            "positive value under a label",
+        ),
+    ];
+    for (body, admit, what) in cases {
+        let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, what)?;
+    }
+    Ok(())
+}
+
 /// #8157: a standalone automated VERDICT review states a disposition instead
 /// of superseding an earlier marker from the same login as neutral chatter
 /// (observed on #14652 and #13898). Only an exact column-zero first line

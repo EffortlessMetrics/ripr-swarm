@@ -219,13 +219,19 @@ pub(in crate::cli) fn parse_receipt_write_options(
     }
 
     let canonical_gap_id = canonical_gap_id.ok_or_else(|| {
-        "receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>` (`ripr receipt --help` shows the full command)".to_string()
+        crate::cli::usage_refusal::missing_required(
+            "--gap",
+            "receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>` (`ripr receipt --help` shows the full command)",
+        )
     })?;
     let verify_command = verify_command.ok_or_else(|| {
-        "receipt write requires --verify-command; add `--verify-command` to the command".to_string()
+        crate::cli::usage_refusal::missing_required(
+            "--verify-command",
+            "receipt write requires --verify-command; add `--verify-command` to the command",
+        )
     })?;
     let verify_status = verify_status
-        .ok_or_else(|| "receipt requires --status (passed|failed|not_run|unknown); pass one of those values, such as `--status passed`".to_string())?;
+        .ok_or_else(|| crate::cli::usage_refusal::missing_required("--status", "receipt requires --status (passed|failed|not_run|unknown); pass one of those values, such as `--status passed`"))?;
 
     Ok(ReceiptWriteOptions {
         canonical_gap_id,

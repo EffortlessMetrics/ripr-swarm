@@ -696,11 +696,15 @@ fn candidate_from_guidance_item(source: &str, item: &Value, suppressed: bool) ->
         .to_string();
     let placement = GatePlacement {
         path: string_field(item.pointer("/placement/path"))
-            .or_else(|| string_field(item.pointer("/seam/file"))),
+            .or_else(|| string_field(item.pointer("/seam/file")))
+            // Flat suppressed entries (withheld changed gaps #13892, summary-cap
+            // and nearby-test entries) carry a flat file/line.
+            .or_else(|| string_field(item.get("file"))),
         line: item
             .pointer("/placement/line")
             .and_then(Value::as_u64)
-            .or_else(|| item.pointer("/seam/line").and_then(Value::as_u64)),
+            .or_else(|| item.pointer("/seam/line").and_then(Value::as_u64))
+            .or_else(|| item.get("line").and_then(Value::as_u64)),
     };
     let recommended_file = item
         .pointer("/suggested_test/recommended_file")
@@ -1284,6 +1288,11 @@ fn gate_reason(
     context: GateReasonContext<'_>,
     configured_acknowledgement_labels: &[String],
 ) -> String {
+    if candidate.suppression_reason.as_deref() == Some("static_limitation") {
+        return "changed gap withheld from repair guidance as `static_limitation`; \
+                preserved as advisory, not resolved"
+            .to_string();
+    }
     if candidate.suppressed || candidate.configured_off {
         return format!(
             "configured-hidden or suppressed candidate preserved as `{}`",
@@ -1548,8 +1557,9 @@ fn parser_declined_scope_warning(scope: &Value) -> Option<String> {
 
 /// The gate warning for an analysis scope that discloses reviewed-scope seams
 /// withheld as static limitations (`static_limited_omitted_seams`, present
-/// only when nonzero): ripr could not judge them, so they are not gate
-/// candidates and their absence is not a clean result. A value that is not a
+/// only when nonzero): ripr could not judge them, so they are not blocking
+/// candidates (the changed-scope gap seams among them are evaluated as
+/// `suppressed`, #13892) and their absence is not a clean result. A value that is not a
 /// non-negative integer warns too.
 fn static_limited_scope_warning(scope: &Value) -> Option<String> {
     let value = scope.get("static_limited_omitted_seams")?;
@@ -1558,7 +1568,8 @@ fn static_limited_scope_warning(scope: &Value) -> Option<String> {
         Some(count) => format!(
             "analysis_scope lists static_limited_omitted_seams: {count} seam(s) in the reviewed \
              scope were withheld because their static evidence is opaque or unknown at a \
-             stage; they are not gate candidates, so the absence of a gate candidate for \
+             stage; they are not blocking candidates (changed-scope gap seams among them are \
+             listed as suppressed decisions), so the absence of a blocking candidate for \
              them is not evidence that the changes are tested; run `ripr check` on the same diff to \
              inspect them"
         ),

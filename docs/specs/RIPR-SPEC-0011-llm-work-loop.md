@@ -772,6 +772,15 @@ for each such spot; if none remain, bare repair refuses (`no_eligible_seam`)
 instead of listing starts. When exactly one seam survives and check recommended none, it is not started on its own; the refusal gives its `ripr repair <id>` command. A single eligible seam and an unscoped change keep
 their earlier behavior.
 
+## Amendment (#14872): a lone eligible seam follows the same rule
+
+A single eligible seam on a scoped change is now held to the #12849 rule
+too: when its bound check finding is exposed or static-limited and check
+recommends no start, bare repair does not start it and gives that reason
+instead (`no_eligible_seam`). Before, a lone eligible seam started even while
+check read the same change as already noticed. An unscoped change still keeps
+its earlier behavior. A seam check does recommend still starts.
+
 ## Amendment (#12861): refusal closing step for open spots on the change
 
 A bare-repair refusal for a scoped change that still has open spots which

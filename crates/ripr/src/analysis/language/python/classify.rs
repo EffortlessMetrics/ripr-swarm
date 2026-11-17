@@ -1168,6 +1168,24 @@ fn classify_change_for_owner_inner<'a>(
             )
         })
         .flatten();
+    // #13622: an old-type exact assertion after a raised-type replacement is
+    // recorded as advisory evidence only; it never changes the class here. The
+    // gap-bound repair closure reads it (RIPR-SPEC-0310).
+    let stale_raised_type_pins = if static_limit.is_none()
+        && matches!(family, ProbeFamily::ErrorPath)
+        && !no_behavior.multi_line_def_header_line
+        && exception_variants.is_empty()
+    {
+        super::exception_variant::stale_raised_type_pins(
+            line_text,
+            old_line_text,
+            owner_source,
+            &related_candidates,
+            &focus,
+        )
+    } else {
+        Vec::new()
+    };
     let mut message_pin_downgraded = false;
     // Table-driven expected values that never vary the changed returned
     // operand cannot discriminate `return default` -> `return None` (#6651).
@@ -2100,6 +2118,11 @@ fn classify_change_for_owner_inner<'a>(
             ),
         },
         alignment_prep,
+    );
+    evidence.extend(
+        stale_raised_type_pins
+            .iter()
+            .map(crate::analysis::stale_raised_type_pin::StaleRaisedTypePin::evidence_line),
     );
     for candidate in related_candidates {
         let test = candidate.test;

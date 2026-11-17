@@ -1451,6 +1451,39 @@ fn is_unittest_class_accepts_bare_and_dotted_test_case_bases() -> Result<(), Str
 }
 
 #[test]
+fn is_unittest_class_accepts_isolated_asyncio_test_case_bases_only_by_name() -> Result<(), String> {
+    for (file, source) in [
+        (
+            "tests/test_async_dotted.py",
+            "import unittest\nclass A(unittest.IsolatedAsyncioTestCase):\n    async def test_a(self):\n        pass\n",
+        ),
+        (
+            "tests/test_async_bare.py",
+            "from unittest import IsolatedAsyncioTestCase\nclass B(IsolatedAsyncioTestCase):\n    def test_b(self):\n        pass\n",
+        ),
+    ] {
+        let tests = extract_tests(Path::new(file), source);
+        if tests.first().map(|t| t.framework) != Some(PythonFramework::Unittest) {
+            return Err(format!(
+                "{file}: IsolatedAsyncioTestCase base should mark unittest"
+            ));
+        }
+    }
+    // A project base whose name merely ends with the stdlib name is not it.
+    let lookalike = extract_tests(
+        Path::new("tests/test_lookalike.py"),
+        "from helpers import MyIsolatedAsyncioTestCase\nclass C(MyIsolatedAsyncioTestCase):\n    async def test_c(self):\n        pass\n",
+    );
+    if lookalike
+        .iter()
+        .any(|t| t.framework == PythonFramework::Unittest)
+    {
+        return Err("`MyIsolatedAsyncioTestCase` must not read as a unittest base".to_string());
+    }
+    Ok(())
+}
+
+#[test]
 fn normalized_path_strips_dot_slash_prefix_and_normalizes_separators() {
     assert_eq!(normalized_path(Path::new("./src/foo.py")), "src/foo.py");
     assert_eq!(normalized_path(Path::new("src/foo.py")), "src/foo.py");

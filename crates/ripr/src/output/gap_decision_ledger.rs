@@ -5645,6 +5645,12 @@ mod tests {
                             return Err(format!("orthogonal fixture eligible: {name}"));
                         }
                     }
+                    (Some("orthogonal"), Some("other_behavior_assertion_passed_over")) => {
+                        orthogonal += 1;
+                        if eligible {
+                            return Err(format!("orthogonal fixture eligible: {name}"));
+                        }
+                    }
                     other => {
                         return Err(format!(
                             "unexpected repair-card alignment in {name}: {other:?}"
@@ -5784,11 +5790,14 @@ mod tests {
         // #13869: `python_error_path_shape` pins a builtin `TypeError` ->
         // `ValueError` swap with `pytest.raises(ValueError)`, which now reads as
         // an exact error variant; its `no_strong_oracle` card is gone.
+        // #14267: `python_raises_bare_owner_outside_body_no_credit` keeps its
+        // assertion on the sibling's exception, not the changed owner's, so
+        // its weak finding carries one orthogonal card.
         // #13869: `python_route_response_{sibling, json_patch,
         // equivalent_number}` keep a route response read of a key the diff did
         // not change (or could not establish) weakly exposed; each weak finding
         // carries one orthogonal card, three more in total.
-        if (direct, no_strong, orthogonal, family_selection) != (23, 37, 37, 1) {
+        if (direct, no_strong, orthogonal, family_selection) != (23, 37, 38, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
