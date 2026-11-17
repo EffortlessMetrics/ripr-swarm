@@ -67,7 +67,6 @@ Hidden:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
-
 Note: ripr established no static test path for any of the 27 changed expression(s) in this diff (17
   found no path, 10 could not be classified). Scope analyzed: 4 changed Rust file(s), 27 changed
   expression(s), and 0 statically linked related test(s). This is not a coverage assessment. A test

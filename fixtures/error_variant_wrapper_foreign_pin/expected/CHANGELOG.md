@@ -617,3 +617,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_variant_wrapper_foreign_pin (47)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_foreign_pin --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -190,6 +190,11 @@ remainder that does not exist:
 The two format-pointer lines are identical in both states, so a consumer
 scraping them does not need to know which heading was used.
 
+The block ends with one blank line. A trailing `Note:` after it (an empty
+range caveat, a working-tree or preview-language disclosure) opens directly
+after that blank line, so exactly one blank line separates them; a report
+with no trailing note keeps its final blank line (#14318).
+
 Hidden finding locations use the same shared location renderer as selected
 and full findings: paths under the analysis root carry `./` and a
 workspace-relative path. Outside-root paths, parent-traversal remainders and

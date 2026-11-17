@@ -511,3 +511,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — binding_predicate_positions (37)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless binding_predicate_positions --reason "..."`
+
+Updated:
+- `expected/human.txt`

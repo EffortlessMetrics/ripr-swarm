@@ -413,29 +413,47 @@ pub(crate) fn render_bounded_with_config_and_navigation(
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
         }
+        let mut tail = String::new();
         if let Some(note) = empty_scope_note(output) {
             // #9922: the triage block above already states the empty range
             // and names the compared base in its `Safe next action`, so the
             // note keeps only the caveat it adds instead of saying it twice.
             if output.no_scope_provided && output.base.is_some() {
-                out.push_str(EMPTY_RANGE_CAVEAT_NOTE);
+                tail.push_str(EMPTY_RANGE_CAVEAT_NOTE);
             } else {
-                out.push_str(&note);
+                tail.push_str(&note);
             }
         }
-        render_working_tree_disclosure(&mut out, output);
-        render_preview_language_advisories(&mut out, output);
-        render_language_runs(&mut out, output);
+        render_working_tree_disclosure(&mut tail, output);
+        render_preview_language_advisories(&mut tail, output);
+        render_language_runs(&mut tail, output);
+        push_after_paragraph(&mut out, &tail);
         return out;
     }
 
     let triage = triage::select_human_triage(output, config);
     triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
-    render_all_no_path_disclosure(&mut out, output);
-    render_working_tree_disclosure(&mut out, output);
-    render_preview_language_advisories(&mut out, output);
-    render_language_runs(&mut out, output);
+    let mut tail = String::new();
+    render_all_no_path_disclosure(&mut tail, output);
+    render_working_tree_disclosure(&mut tail, output);
+    render_preview_language_advisories(&mut tail, output);
+    render_language_runs(&mut tail, output);
+    push_after_paragraph(&mut out, &tail);
     out
+}
+
+/// #14318: the `More:` block (and the `Hidden:` list above it) ends with a
+/// blank line, and each trailing note opens with one, so appending a note
+/// as-is printed two blank lines before `Note:`. One blank line separates
+/// paragraphs: when `out` already ends a paragraph, the tail's own leading
+/// newline is dropped. A report with no trailing note keeps its final blank
+/// line.
+fn push_after_paragraph(out: &mut String, tail: &str) {
+    if out.ends_with("\n\n") {
+        out.push_str(tail.strip_prefix('\n').unwrap_or(tail));
+    } else {
+        out.push_str(tail);
+    }
 }
 
 /// Full human form without the per-finding `Drill in:` block: the drill-in
@@ -1786,7 +1804,7 @@ pub(crate) use triage::{multi_comparison_predicate, unresolved_boundary_operand}
 
 #[cfg(test)]
 mod tests {
-    use super::render_full_with_config;
+    use super::{push_after_paragraph, render_full_with_config};
     use super::{render, render_finding, render_header_summary, render_with_config, terminal_safe};
     use crate::analysis::PreviewLanguageAdvisory;
     use crate::app::{CheckOutput, Mode};
@@ -5207,6 +5225,62 @@ mod tests {
             headline.is_some_and(|line| line.starts_with("Nothing to check:")),
             "{rendered}"
         );
+    }
+
+    /// #14318: a trailing `Note:` after the `More:` block opens after
+    /// exactly one blank line, with or without a compared base.
+    #[test]
+    fn bounded_human_output_puts_one_blank_line_before_a_trailing_note() {
+        for base in [None, Some("main".to_string())] {
+            let output = CheckOutput {
+                value_origins: Default::default(),
+                harness_projections: Vec::new(),
+                schema_version: "0.1".to_string(),
+                tool: "ripr".to_string(),
+                mode: Mode::Draft,
+                root: PathBuf::from("repo"),
+                base,
+                summary: Summary::default(),
+                findings: vec![],
+                preview_language_advisories: Vec::new(),
+                language_runs: Vec::new(),
+                no_scope_provided: true,
+                unanalyzed_working_tree: false,
+                untracked_working_tree_source_paths: Vec::new(),
+                ignored_working_tree_source_paths: Vec::new(),
+                unlinked_python_tests: None,
+                owner_opt_outs: Vec::new(),
+                suppression: None,
+                analysis_outcome: None,
+                partial_scope: None,
+                file_fact_cache: None,
+
+                analyzed_revisions: None,
+            };
+
+            let rendered = render(&output);
+
+            assert!(
+                rendered.contains("  Machine data: rerun with --format json\n\nNote: "),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("\n\n\n"), "{rendered}");
+        }
+    }
+
+    #[test]
+    fn push_after_paragraph_keeps_one_blank_line_between_paragraphs() {
+        let mut out = String::from("More:\n  last\n\n");
+        push_after_paragraph(&mut out, "\nNote: a\n");
+        assert_eq!(out, "More:\n  last\n\nNote: a\n");
+
+        let mut out = String::from("headline\n");
+        push_after_paragraph(&mut out, "\nNote: a\n");
+        assert_eq!(out, "headline\n\nNote: a\n");
+
+        let mut out = String::from("More:\n  last\n\n");
+        push_after_paragraph(&mut out, "");
+        assert_eq!(out, "More:\n  last\n\n");
     }
 
     /// #8165: the bounded (default) render leaks no schema token, while

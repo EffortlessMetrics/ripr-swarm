@@ -661,3 +661,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — all_no_path_disclosure (38)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless all_no_path_disclosure --reason "..."`
+
+Updated:
+- `expected/human.txt`
