@@ -5,3 +5,6 @@
   arm selection `ripr check` uses: activation is weak and the arm's pattern
   is the missing input, so `agent brief` lists the arm instead of hiding it
   as already tested (#12078).
+- A changed `match` arm in a trait method (`from`, `fmt`, `eq`) is not
+  named as unselected, in either view, since calls such as `.into()` run it
+  without naming it (#12078).

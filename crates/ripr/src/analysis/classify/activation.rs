@@ -4647,6 +4647,16 @@ fn missing_match_arm_discriminator(
     workspace_complete: bool,
 ) -> Option<MissingDiscriminatorFact> {
     let owner = owner_fn?;
+    // A trait method runs from calls that never name it (`.into()` reaching
+    // `from`, `==` reaching `eq`, `{}` reaching `fmt`), so a test outside the
+    // related set may select the arm and no mention scan below can see it.
+    if matches!(
+        owner.item.container,
+        crate::analysis::facts::FunctionContainer::TraitImpl { .. }
+            | crate::analysis::facts::FunctionContainer::Trait { .. }
+    ) {
+        return None;
+    }
     // A same-named function elsewhere makes a direct call ambiguous, and a
     // partial index cannot show that the name is unique.
     if related_tests.is_empty()
@@ -4657,6 +4667,16 @@ fn missing_match_arm_discriminator(
     }
     let selector = super::arm_selection::ArmSelector::establish(probe, owner)?
         .in_workspace(index, related_tests.iter().map(|test| test.file.as_path()));
+    // Every test's inputs first: one test that selects the arm, or an input
+    // that does not read, refuses before the workspace-wide lookups below.
+    let mut inputs = Vec::new();
+    for test in related_tests {
+        let observed = selector.observed_inputs(test)?;
+        if observed.selection != super::arm_selection::ArmSelection::SelectsOther {
+            return None;
+        }
+        inputs.extend(observed.inputs);
+    }
     // Built once per probe: the helper walk below looks names up for every
     // related test.
     let mut functions_by_name = std::collections::BTreeMap::<&str, Vec<_>>::new();
@@ -4666,16 +4686,11 @@ fn missing_match_arm_discriminator(
             .or_default()
             .push(function);
     }
-    let mut inputs = Vec::new();
-    for test in related_tests {
-        if may_reach_owner_unread(test, &owner.name, &functions_by_name) {
-            return None;
-        }
-        let observed = selector.observed_inputs(test)?;
-        if observed.selection != super::arm_selection::ArmSelection::SelectsOther {
-            return None;
-        }
-        inputs.extend(observed.inputs);
+    if related_tests
+        .iter()
+        .any(|test| may_reach_owner_unread(test, &owner.name, &functions_by_name))
+    {
+        return None;
     }
     // A call's input names the first arm it enters, not every arm it runs
     // (#12078 review): an owner that may run again from inside its own call
@@ -4894,6 +4909,17 @@ fn owner_named_outside_related_tests(
     owner: &str,
     related_tests: &[&TestSummary],
 ) -> bool {
+    // A mention inside a function nothing can run (#15006 review: an unused
+    // `advertised_small_price()` wrapper) cannot run the owner either.
+    let unreachable = index
+        .functions()
+        .iter()
+        .filter(|function| {
+            function.name != owner
+                && unread_mentions(&function.body, owner) > 0
+                && never_runs(index, function)
+        })
+        .collect::<Vec<_>>();
     index.files().iter().any(|(path, file)| {
         let mut seen = std::collections::BTreeSet::new();
         let read: usize = related_tests
@@ -4901,11 +4927,40 @@ fn owner_named_outside_related_tests(
             .filter(|test| test.file == *path && seen.insert(test.name.as_str()))
             .map(|test| unread_mentions(&test.body, owner))
             .sum();
-        unread_mentions(&file.source, owner) > read
+        let unreached: usize = unreachable
+            .iter()
+            .filter(|function| function.file == *path)
+            .map(|function| unread_mentions(&function.body, owner))
+            .sum();
+        unread_mentions(&file.source, owner) > read + unreached
             || doc_comment_names(&file.source, owner)
             || crate::analysis::extract::mask_comments_and_strings(&file.source)
                 .contains("include!")
     })
+}
+
+/// Whether `function` provably never runs: an attribute-free production
+/// `fn` (no `#[test]`, `#[no_mangle]`, `#[export_name]`, `#[cfg]` or harness
+/// attribute) outside any trait and outside an attributed `impl`, not
+/// `main`, whose name no file mentions outside its own header or plain `use`
+/// paths and no doc comment names. A trait method runs from calls that never
+/// name it, and an attribute may register it with a harness or a linker, so
+/// any of those keeps the function reachable.
+fn never_runs(index: &crate::analysis::rust_index::RustIndex, function: &FunctionSummary) -> bool {
+    use crate::analysis::facts::{FunctionContainer, FunctionSourceRole};
+    function.source_role == FunctionSourceRole::Production
+        && function.attrs.is_empty()
+        && function.impl_attrs.is_empty()
+        && matches!(
+            function.item.container,
+            FunctionContainer::Free | FunctionContainer::Inherent { .. }
+        )
+        && function.name != "main"
+        && !function.name.is_empty()
+        && index.files().iter().all(|(_, file)| {
+            unread_mentions(&file.source, &function.name) == 0
+                && !doc_comment_names(&file.source, &function.name)
+        })
 }
 
 /// Whether a doc comment in `source` names `owner`, or a doc attribute

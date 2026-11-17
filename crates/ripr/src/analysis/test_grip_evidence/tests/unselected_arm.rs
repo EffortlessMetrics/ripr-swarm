@@ -157,3 +157,77 @@ fn an_owner_that_may_call_itself_leaves_the_arm_unnamed() -> Result<(), String> 
     }
     Ok(())
 }
+
+/// A trait method runs from calls that never name it: here `.into()` in a
+/// test outside the related set reaches `from` with `Size::Medium`.
+const TRAIT_IMPL: &str = "pub enum Size {\n    Small,\n    Medium,\n    Large,\n}\n\n\
+impl From<Size> for u32 {\n    fn from(size: Size) -> u32 {\n        match size {\n            \
+Size::Small => 300,\n            Size::Medium => 450,\n            \
+Size::Large => 500,\n        }\n    }\n}\n";
+
+/// The same arms in an inherent method, which every caller names.
+const INHERENT: &str = "pub enum Size {\n    Small,\n    Medium,\n    Large,\n}\n\n\
+pub struct Prices;\n\n\
+impl Prices {\n    pub fn from(size: Size) -> u32 {\n        match size {\n            \
+Size::Small => 300,\n            Size::Medium => 450,\n            \
+Size::Large => 500,\n        }\n    }\n}\n";
+
+#[test]
+fn a_trait_method_owner_leaves_the_arm_unnamed() -> Result<(), String> {
+    let (full, compact, class) = arm_evidence_in(
+        TRAIT_IMPL,
+        "    assert_eq!(u32::from(Size::Small), 300);\n    assert_eq!(u32::from(Size::Large), 500);",
+        "Size::Medium",
+    )?;
+    assert_ne!(class[0], SeamGripClass::WeaklyGripped, "{full:?}");
+    assert_ne!(class[1], SeamGripClass::WeaklyGripped, "{compact:?}");
+    for evidence in [&full, &compact] {
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert_eq!(missing_values(evidence), Vec::<&str>::new());
+    }
+    // Control: the same arms and calls on an inherent method name the arm.
+    let (full, compact, class) = arm_evidence_in(
+        INHERENT,
+        "    assert_eq!(Prices::from(Size::Small), 300);\n    assert_eq!(Prices::from(Size::Large), 500);",
+        "Size::Medium",
+    )?;
+    assert_eq!(class, [SeamGripClass::WeaklyGripped; 2]);
+    for evidence in [&full, &compact] {
+        assert_eq!(missing_values(evidence), ["Size::Medium"]);
+    }
+    Ok(())
+}
+
+/// #15006 review: a production wrapper nothing calls cannot run the owner,
+/// so it leaves the arm named.
+const UNUSED_WRAPPER: &str = "pub enum Size {\n    Small,\n    Medium,\n    Large,\n}\n\n\
+pub fn price_cents(size: Size) -> u32 {\n    match size {\n        Size::Small => 300,\n        \
+Size::Medium => 450,\n        Size::Large => 500,\n    }\n}\n\n\
+pub fn advertised_small_price() -> u32 {\n    price_cents(Size::Small)\n}\n";
+
+/// The same wrapper with a caller: a test outside the related set may reach
+/// the owner through `menu()`, so the arm stays unnamed.
+const CALLED_WRAPPER: &str = "pub enum Size {\n    Small,\n    Medium,\n    Large,\n}\n\n\
+pub fn price_cents(size: Size) -> u32 {\n    match size {\n        Size::Small => 300,\n        \
+Size::Medium => 450,\n        Size::Large => 500,\n    }\n}\n\n\
+pub fn price_of(size: Size) -> u32 {\n    price_cents(size)\n}\n\n\
+pub fn menu() -> u32 {\n    price_of(Size::Medium)\n}\n";
+
+#[test]
+fn an_uncalled_wrapper_keeps_the_arm_named_and_a_called_one_does_not() -> Result<(), String> {
+    let test_body = "    assert_eq!(price_cents(Size::Small), 300);\n    assert_eq!(price_cents(Size::Large), 500);";
+    let (full, compact, class) = arm_evidence_in(UNUSED_WRAPPER, test_body, "Size::Medium")?;
+    assert_eq!(class, [SeamGripClass::WeaklyGripped; 2]);
+    for evidence in [&full, &compact] {
+        assert_eq!(evidence.activate.state, StageState::Weak);
+        assert_eq!(missing_values(evidence), ["Size::Medium"]);
+    }
+    let (full, compact, class) = arm_evidence_in(CALLED_WRAPPER, test_body, "Size::Medium")?;
+    assert_ne!(class[0], SeamGripClass::WeaklyGripped, "{full:?}");
+    assert_ne!(class[1], SeamGripClass::WeaklyGripped, "{compact:?}");
+    for evidence in [&full, &compact] {
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert_eq!(missing_values(evidence), Vec::<&str>::new());
+    }
+    Ok(())
+}
