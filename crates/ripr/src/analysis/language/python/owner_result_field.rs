@@ -18,7 +18,7 @@
 
 use super::bool_oracle::count_bindings;
 use super::module_constants::visit_exprs_in_statements;
-use super::related_tests::{PythonRelatedCandidate, owner_class_locals};
+use super::related_tests::{PythonRelatedCandidate, owner_class_locals, owner_module_paths};
 use super::source_facts::parse_module_result;
 use super::{PythonFramework, PythonOwner, PythonTest};
 use crate::domain::{OracleStrength, OwnerKind, ProbeFamily, RelatedTest};
@@ -66,8 +66,9 @@ const CLASS_REFUSAL_MARKERS: [&str; 14] = [
 
 /// Test-text markers that can replace the owner, read the binding's
 /// attributes by name, or rebind names dynamically.
-const TEST_REFUSAL_MARKERS: [&str; 12] = [
+const TEST_REFUSAL_MARKERS: [&str; 13] = [
     "patch",
+    "__",
     "mock",
     "Mock",
     "monkeypatch",
@@ -215,6 +216,17 @@ fn changed_self_field(
         return None;
     }
     let class_text = text_of(source, class.range)?;
+    // Nothing else in the owner module names the class: `Req.timeout = _fixed`
+    // or `Req.timeout_value = Desc()` after the class body replaces the
+    // method or the field's storage.
+    let outside = format!(
+        "{}{}",
+        source.get(..usize::from(class.range.start()))?,
+        source.get(usize::from(class.range.end())..)?
+    );
+    if names_identifier(&outside, class_name) {
+        return None;
+    }
     if CLASS_REFUSAL_MARKERS
         .iter()
         .any(|marker| class_text.contains(marker))
@@ -441,7 +453,10 @@ fn changed_self_field(
             continue;
         };
         let body = match function.body.split_last() {
-            Some((Stmt::Return(ret), rest)) if matches!(ret.value.as_deref(), Some(Expr::Name(name)) if name.id.as_str() == "self") => {
+            Some((Stmt::Return(ret), rest))
+                if function.name.as_str() == owner.name
+                    && matches!(ret.value.as_deref(), Some(Expr::Name(name)) if name.id.as_str() == "self") =>
+            {
                 rest
             }
             _ => function.body.as_slice(),
@@ -562,9 +577,23 @@ fn binding_of_owner_result(
     }) {
         return None;
     }
+    // The class reaches the test through exactly one `from <owner module>
+    // import <Class>`: a same-named class in another module (a subclass that
+    // overrides the builder) is not the owner.
+    let owner_modules = owner_module_paths(&owner.file);
+    let mut class_imports = test
+        .imports
+        .iter()
+        .filter(|import| import.imported == class);
+    let (Some(class_import), None) = (class_imports.next(), class_imports.next()) else {
+        return None;
+    };
+    if !owner_modules.contains(&class_import.source_module) {
+        return None;
+    }
     let class_locals: Vec<String> = owner_class_locals(test, owner, class)
         .into_iter()
-        .filter(|local| plain_identifier(local))
+        .filter(|local| plain_identifier(local) && *local == class_import.alias)
         .collect();
     let mut bindings = body.iter().filter_map(|stmt| {
         let Stmt::Assign(assign) = stmt else {
@@ -877,5 +906,17 @@ fn straight_line_method_body(body: &[Stmt]) -> bool {
         }
         Stmt::With(stmt) => straight_line_method_body(&stmt.body),
         _ => false,
+    })
+}
+
+/// Whether `text` holds `name` as a whole identifier.
+fn names_identifier(text: &str, name: &str) -> bool {
+    let is_ident = |c: char| c == '_' || c.is_alphanumeric();
+    text.match_indices(name).any(|(start, _)| {
+        let before = text.get(..start).and_then(|head| head.chars().next_back());
+        let after = text
+            .get(start + name.len()..)
+            .and_then(|tail| tail.chars().next());
+        !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
     })
 }

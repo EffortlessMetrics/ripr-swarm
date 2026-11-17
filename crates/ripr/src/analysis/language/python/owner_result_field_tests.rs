@@ -498,6 +498,20 @@ fn single_guard_variants_carry_no_fact() -> Result<(), String> {
             "\n    def link(self):\n        self.me = self\n",
         ),
         (
+            "the owner module replaces the method after the class",
+            "",
+            "        self.timeout_value = t * 2",
+            "        self.timeout_value = t",
+            "\n\ndef _fixed(self, t):\n    return self\n\n\nReq.timeout = _fixed\n",
+        ),
+        (
+            "another method returns self",
+            "",
+            "        self.timeout_value = t * 2",
+            "        self.timeout_value = t",
+            "\n    def chain(self):\n        return self\n",
+        ),
+        (
             "another method keeps a closure that can overwrite the field",
             "",
             "        self.timeout_value = t * 2",
@@ -570,6 +584,14 @@ fn single_guard_variants_carry_no_fact() -> Result<(), String> {
         (
             "the test text names patch",
             "from fx.core import Req\n\n\ndef test_builder_sets_url():\n    label = 'patch'\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
+        ),
+        (
+            "the test imports a same-named class from another module",
+            "from fx.http import Req\n\n\ndef test_builder_sets_url():\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
+        ),
+        (
+            "the test names a dunder",
+            "from fx.core import Req\n\n\ndef test_builder_sets_url():\n    n = len.__name__\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
         ),
         (
             "the test mocks",

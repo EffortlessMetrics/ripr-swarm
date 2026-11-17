@@ -1433,12 +1433,13 @@ read-out: the boolean the classifier uses is derived from the surfaced
   first and running straight through, with no nested `def` or `class`,
   lambda, generator expression, `try`, `global`, `nonlocal` or import, since a
   closure kept from `__init__` can overwrite the field after the builder
-  returns; a class body of only undecorated methods, literal
+  returns; nothing else in the owner module naming the class, since
+  `Req.timeout = _fixed` after the class body replaces the method; a class body of only undecorated methods, literal
   bindings, docstrings and `pass`, since any other class-level value could be a
   descriptor; no `case` line; no class-level binding of the field; no other
   write of the field in the method; only plain assignments after the changed
   line besides the final `return self`, with no call and no bare `self`; no
-  bare `self` anywhere in the class but a method's final `return self` (an
+  bare `self` anywhere in the class but the owner's final `return self` (an
   `s = self` or `self.me = self` alias can overwrite the field); no other store
   of `.<field>` in the class but `self.<field> = ...` in `__init__`, which runs
   first (another method's write, kept as a bound method, can overwrite it); no
@@ -1450,7 +1451,8 @@ read-out: the boolean the classifier uses is derived from the surfaced
   when the one related test is a strong, undecorated, fixture-free,
   module-level pytest function whose body is straight-line
   (`Assign`/`Expr`/`Assert`/`pass` only), binds `<binding> = Cls(...).method(...)`
-  (or `Cls(...)` for `__init__`, `Cls` the owner class import) exactly once, uses
+  (or `Cls(...)` for `__init__`, `Cls` the test module's one import of the
+  class, `from <owner module> import Cls`) exactly once, names no dunder, uses
   `<binding>` only as reads of other non-dunder, non-method attributes (a
   bound method read like `reset = r.reset` can be called later; no call, method
   call, subscript, whole-value use, rebinding or walrus), calls the owner once,
