@@ -1041,3 +1041,8 @@ reason = "VS Code managed-server download archive-inspection rule; not an exposu
 id = "RIPR-SPEC-0440"
 scope = "out"
 reason = "CLI output-path safety rule (an --out naming a command input is refused); not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0450"
+scope = "out"
+reason = "owner opt-out withholding rule (a cargo-mutants skip attribute withholds and discloses findings); not an exposure-verdict example a corpus case labels"

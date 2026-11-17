@@ -324,6 +324,21 @@ impl ClassifiedProbeEvidence {
         ) {
             flow_sinks = vec![sink];
         }
+        // #14815: the owner's whole tail is the changed `a`/`-a`/`!a`, so the
+        // change reaches the owner's return. The tail text carries no cue the
+        // text reader takes as a return, so its sink is otherwise unknown.
+        if let Some(change) = context.unary_tail.as_ref()
+            && flow_sinks
+                .iter()
+                .all(|sink| sink.kind == FlowSinkKind::Unknown)
+        {
+            flow_sinks = vec![FlowSinkFact {
+                kind: FlowSinkKind::ReturnValue,
+                text: change.tail.clone(),
+                line: change.line,
+                owner: context.owner_fn.map(|owner| owner.id.clone()),
+            }];
+        }
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
                 context.index.files().get(&owner.file).and_then(|file| {
@@ -604,6 +619,7 @@ impl ClassifiedProbeEvidence {
                 owner: context.owner_fn,
                 literal_length_boundary: gathered.literal_length_boundary.as_ref(),
                 slice_counter_boundary: gathered.slice_counter_boundary.as_ref(),
+                unary_tail: context.unary_tail.as_ref(),
             },
             owner_has_other_callers,
             assertion_macros_rebound,
@@ -953,9 +969,14 @@ impl ClassifiedProbeEvidence {
             fmt_literal_edit && fmt_display_assertion(test, assertion)
         };
         let assertion_admitted = |test: &TestSummary, assertion: &OracleFact| {
-            pin_syntax.admits_equality_assertion(context.probe, test, assertion, context.index)
-                && (!field_oracle_needs_admission
-                    || pin_syntax.admits(test, assertion, context.index))
+            pin_syntax.admits_equality_assertion(
+                context.probe,
+                context.owner_fn,
+                test,
+                assertion,
+                context.index,
+            ) && (!field_oracle_needs_admission
+                || pin_syntax.admits(test, assertion, context.index))
         };
         // RIPR-SPEC-0094 Part D: the state a deleted `self.callee(..)` writes,
         // established once per probe; `None` keeps the Part C reading.
@@ -2168,6 +2189,7 @@ impl ClassifiedProbeEvidence {
                     for assertion in &test.assertions {
                         let Some(refusal) = pin_syntax.equality_assertion_refusal(
                             context.probe,
+                            context.owner_fn,
                             test,
                             assertion,
                             context.index,
@@ -2287,6 +2309,7 @@ impl ClassifiedProbeEvidence {
                         pin_syntax
                             .equality_assertion_refusal(
                                 context.probe,
+                                context.owner_fn,
                                 test,
                                 assertion,
                                 context.index,

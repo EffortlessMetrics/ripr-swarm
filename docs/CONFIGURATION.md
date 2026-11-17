@@ -937,12 +937,18 @@ A changed function or method that already carries cargo-mutants'
 `#[mutants::skip]` (or `#[cfg_attr(<predicate>, mutants::skip)]`) needs no
 entry here: `ripr check` reads the attribute as an owner opt-out, withholds
 that owner's findings and discloses the count with the `owner_mutants_skip`
-reason (#13819; see [Output schema](OUTPUT_SCHEMA.md)). The human, JSON,
+reason (#13819; see [Output schema](OUTPUT_SCHEMA.md)). As in cargo-mutants,
+the attribute also counts on a scope that encloses the changed owner
+(#13910): an `impl` or `trait` block, an inline `mod name { .. }` at any
+depth, or the whole file through an inner `#![mutants::skip]`; JSON names the
+scope in `findings[].withheld_scope`. A `#[mutants::skip] mod name;`
+declaration is not followed into the module's own file; put
+`#![mutants::skip]` at the top of that file instead. The human, JSON,
 GitHub, SARIF, `missed-txt` and diff-scope badge formats of `ripr check`
-withhold them; LSP
-diagnostics, MCP gaps and repair cards, `ripr explain` and repo-scope output
-still report them. There is no setting to turn this off; remove the attribute
-to see the findings again.
+withhold them, and `ripr explain` states the withholding on its first line;
+LSP diagnostics, MCP gaps and repair cards and repo-scope output still report
+them. There is no setting to turn this off; remove the attribute to see the
+findings again.
 
 Validated by `ripr check --format sarif`, `sarif-compact`, `badge-json`, `badge-shields` and the `badge-plus-*` / `repo-badge-plus-*` formats (loaded relative to `--root`).
 In CI, pass the same file to `ripr check --suppression-policy` and to
