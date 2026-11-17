@@ -8,3 +8,7 @@
 - A changed `match` arm in a trait method (`from`, `fmt`, `eq`) is not
   named as unselected, in either view, since calls such as `.into()` run it
   without naming it (#12078).
+- `ripr check` no longer refuses to name an unentered guard only because a
+  production function that nothing calls mentions the owner; a mention
+  anywhere else still leaves the guard unnamed. Unselected-arm naming now
+  applies the same mention rule (#12078).
