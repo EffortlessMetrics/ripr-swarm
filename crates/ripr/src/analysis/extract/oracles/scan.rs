@@ -6608,6 +6608,58 @@ fn t() {
         Ok(())
     }
 
+    /// #14882 review: a member or path segment that shares the placeholder's
+    /// name is not a read of the local, and neither is the brace text of an
+    /// ordinary string literal. A root read through a field is still a read.
+    #[test]
+    fn only_a_real_read_of_the_placeholder_lowers() -> Result<(), String> {
+        let reading = |statement: &str| -> Result<(OracleKind, OracleStrength), String> {
+            let body = format!(
+                "fn t() -> Result<(), String> {{\n    let expected: i32 = todo!(\"x\");\n    {statement}\n    Ok(())\n}}\n"
+            );
+            let lexical = only_fact(&body)?;
+            let parser = err_return_guard_oracles(&body, 1, &placeholder_bound_variables(&body));
+            if statement.starts_with("if ") {
+                let [parser] = parser.as_slice() else {
+                    return Err(format!(
+                        "expected one guard oracle for {statement}: {parser:?}"
+                    ));
+                };
+                if (parser.kind.clone(), parser.strength.clone())
+                    != (lexical.kind.clone(), lexical.strength.clone())
+                {
+                    return Err(format!(
+                        "lexical and parser guard readings disagree for {statement}: {lexical:?} vs {parser:?}"
+                    ));
+                }
+            }
+            Ok((lexical.kind, lexical.strength))
+        };
+        for kept in [
+            "assert!(price(100) == fixture.expected);",
+            "assert!(price(100) == Self::expected);",
+            "assert!(render() == \"{expected}\");",
+            "if render() != \"{expected}\" { return Err(\"wrong\".into()); }",
+            "if price(100) != fixture.expected { return Err(\"wrong\".into()); }",
+        ] {
+            let got = reading(kept)?;
+            if got.1 == OracleStrength::Unknown {
+                return Err(format!("{kept} does not read the placeholder: {got:?}"));
+            }
+        }
+        for lowered in [
+            "assert!(price(100) == expected.value);",
+            "assert!(render() == format!(\"{expected}\"));",
+            "if price(100) != expected.value { return Err(\"wrong\".into()); }",
+        ] {
+            let got = reading(lowered)?;
+            if got != (OracleKind::Unknown, OracleStrength::Unknown) {
+                return Err(format!("{lowered} reads the placeholder: {got:?}"));
+            }
+        }
+        Ok(())
+    }
+
     /// A smoke reading claims no comparison and keeps its kind.
     #[test]
     fn a_smoke_reading_of_a_placeholder_keeps_its_kind() -> Result<(), String> {
