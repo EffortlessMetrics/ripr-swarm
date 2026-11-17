@@ -89,6 +89,7 @@ fn write_pilot_repo_exposure_json(
             python_guidance.as_ref(),
             generated_skip,
             evidence_limitations,
+            crate::analysis::owner_opt_out::RepoOwnerOptOuts::default(),
             context,
             &mut writer,
         ) {

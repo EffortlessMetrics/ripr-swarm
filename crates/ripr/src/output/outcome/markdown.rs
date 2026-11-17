@@ -1,6 +1,7 @@
 use super::{
     SEAM_GRIP_CLASS_ORDER, TargetedTestOutcomeMovement, TargetedTestOutcomeReport,
-    TargetedTestOutcomeSeam, review, targeted_test_outcome_gap_summary,
+    TargetedTestOutcomeSeam, outcome_owner_opt_outs_line, review,
+    targeted_test_outcome_gap_summary,
 };
 use crate::output::markdown::{code_span, inline_prose};
 use std::collections::BTreeMap;
@@ -22,6 +23,11 @@ pub(crate) fn render_targeted_test_outcome_md(report: &TargetedTestOutcomeReport
     out.push_str(&format!("| regressed | {} |\n", report.regressed.len()));
     out.push_str(&format!("| new | {} |\n", report.new.len()));
     out.push_str(&format!("| removed | {} |\n", report.removed.len()));
+    if let Some(line) = outcome_owner_opt_outs_line(report) {
+        out.push('\n');
+        out.push_str(&line);
+        out.push('\n');
+    }
 
     push_targeted_outcome_gap_summary_md(&mut out, report);
 
