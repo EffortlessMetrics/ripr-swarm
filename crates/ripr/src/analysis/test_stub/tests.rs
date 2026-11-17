@@ -2187,7 +2187,7 @@ mod tests {{
 
 /// #14825 CodeRabbit review: a call under `cfg` is not copied, a scope that
 /// imports another `Bucket` (by name or glob, or `super::` from a nested
-/// module, or a `mod Bucket`) blocks the no-argument fallback too, and
+/// module, a `mod Bucket`, a macro naming it, or `extern crate Bucket`) blocks the no-argument fallback too, and
 /// `use super::Bucket;` outside a nested module names the owner, so reuse still applies under it.
 #[test]
 fn receiver_skips_cfg_calls_and_shadowed_fallbacks() -> Result<(), String> {
@@ -2235,6 +2235,16 @@ mod tests {{
         (
             with_capacity,
             "    use super::*;\n    mod Bucket { pub fn new(_s: &str) -> u8 { 0 } }\n    #[test]\n    fn t() { let _x: u8 = Bucket::new(\"x\"); }\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    use super::*;\n    macro_rules! helpers { () => { mod Bucket { pub fn new(_s: &str) -> u8 { 0 } } } }\n    helpers!();\n    #[test]\n    fn t() { let _x: u8 = Bucket::new(\"x\"); }\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    use super::*;\n    extern crate Bucket;\n    #[test]\n    fn t() { let _b = Bucket::new(5); }\n",
             None,
         ),
         (
