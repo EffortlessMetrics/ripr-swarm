@@ -3149,14 +3149,34 @@ pub(in crate::analysis) fn assertion_text_with_local_initializers(
 
 /// #13037: whether `source` may give a primitive type name another meaning
 /// in a top-level owner: a `type` item named like a primitive, a `use` that
-/// names a primitive (an import or an `as` rebinding), or a top-level glob
-/// `use` that could bring either in.
+/// names a primitive (an import or an `as` rebinding), a top-level glob
+/// `use` that could bring either in, or a macro that could expand to one.
 fn file_may_rebind_primitive_type(source: &str) -> bool {
     const PRIMITIVES: [&str; 13] = [
         "bool", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128",
         "isize",
     ];
-    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    // A raw identifier is the same identifier: `type r#i32 = u8;` rebinds
+    // `i32` (#14950 review).
+    let masked = crate::analysis::extract::mask_comments_and_strings(source).replace("r#", "");
+    // A macro can expand to such a `type` or `use` item without spelling it:
+    // a `macro_rules!` definition, or a top-level item macro invocation.
+    if masked.contains("macro_rules")
+        || masked.lines().any(|line| {
+            !line.starts_with(char::is_whitespace)
+                && line
+                    .split(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == ':'))
+                    .next()
+                    .is_some_and(|head| {
+                        !head.is_empty()
+                            && line
+                                .get(head.len()..)
+                                .is_some_and(|rest| rest.trim_start().starts_with('!'))
+                    })
+        })
+    {
+        return true;
+    }
     let words: Vec<(usize, &str)> = masked
         .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
         .scan(0usize, |offset, word| {

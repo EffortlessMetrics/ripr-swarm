@@ -255,8 +255,12 @@ answers no credit.
   narrower width), is not read. Nor is an owner that is not at its file's
   top level, or whose file could give a primitive name another meaning: a
   `type` item named like a primitive (`pub type i32 = u8;`), a `use` naming
-  a primitive (`use core::primitive::u8 as i32;`), or a top-level glob
-  `use`.
+  a primitive (`use core::primitive::u8 as i32;`), a top-level glob `use`,
+  or a macro that could expand to such an item (`macro_rules!`, or a
+  top-level item macro invocation). A raw identifier (`r#i32`) counts as
+  the primitive it spells. The scan is deliberately coarse: a `use` that
+  only names a primitive without rebinding it (`use core::primitive::u8 as
+  Byte;`) also refuses, which only withholds credit.
 
 The admission is the bool field pin's: the test is not `should_panic`, the
 assertion macros are the standard ones, and no `use` rebinds the owner's

@@ -1043,7 +1043,13 @@ fn let_initializer(body: &str, name: &str) -> Option<String> {
                 || after.starts_with("+=")
                 || after.starts_with("-=")
                 || after.starts_with("*=")
-                || after.starts_with("/="))
+                || after.starts_with("/=")
+                || after.starts_with("%=")
+                || after.starts_with("|=")
+                || after.starts_with("&=")
+                || after.starts_with("^=")
+                || after.starts_with("<<=")
+                || after.starts_with(">>="))
     });
     if mutated {
         return None;
@@ -2391,11 +2397,17 @@ impl<'a> Parser<'a> {
             let Value::Int(right_value) = right else {
                 return None;
             };
-            left = Value::Int(self.check_range(match op {
-                "*" => left_value.checked_mul(right_value)?,
-                "/" => left_value.checked_div(right_value)?,
-                _ => left_value.checked_rem(right_value)?,
-            })?);
+            left = Value::Int(
+                self.check_range(match op {
+                    "*" => left_value.checked_mul(right_value)?,
+                    "/" => left_value.checked_div(right_value)?,
+                    // `MIN % -1` overflows (and panics) in the operand's own
+                    // width even though it folds to `0` here (#14950 review).
+                    _ => left_value
+                        .checked_rem(right_value)
+                        .filter(|_| right_value != -1)?,
+                })?,
+            );
         }
     }
 

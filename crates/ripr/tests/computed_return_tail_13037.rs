@@ -274,6 +274,11 @@ fn a_wrapping_local_a_static_or_a_shadowing_closure_is_not_credited() -> Result<
     for (label, rebinding) in [
         ("primitive-named alias", "pub type i32 = u8;"),
         ("primitive-named import", "use core::primitive::u8 as i32;"),
+        ("raw-identifier alias", "pub type r#i32 = u8;"),
+        (
+            "macro-made alias",
+            "macro_rules! alias { ($name:ident) => { pub type $name = u8; }; }\nalias!(i32);",
+        ),
     ] {
         let source = AFTER
             .replace(
