@@ -1218,13 +1218,14 @@ pub(crate) fn resolve_repair_start(
     if let Some(note) = unscoped_diff_note(diff.as_deref(), base) {
         refusal_reasons.insert(0, note);
     }
-    // #12831: several eligible seams on the change. `ripr check` is the
-    // authority on the change, so its single recommended start wins; failing
-    // that, a seam whose check finding is already noticed, or which check
-    // cannot judge (and so offers no start for), is no start here either
-    // (#12849). Only a seam among the eligible ones is taken; no first or
-    // newest pick.
-    if candidates.len() > 1
+    // #12831: eligible seams on the change. `ripr check` is the authority on
+    // the change, so its single recommended start wins; failing that, a seam
+    // whose check finding is already noticed, or which check cannot judge
+    // (and so offers no start for), is no start here either (#12849). Only a
+    // seam among the eligible ones is taken; no first or newest pick. A lone
+    // eligible seam is held to the same rule (#14872): starting it while
+    // check reads its finding as noticed would contradict check.
+    if !candidates.is_empty()
         && matches!(scope, Some(ChangeScope::TouchesSeams(_)))
         && let Some(output) = check_run.get()
     {

@@ -481,11 +481,11 @@ description = "Marketplace and release-asset publish proof."
 id = "server-archive"
 posture = "on_demand_release"
 workflow = ".github/workflows/release-server-binaries.yml"
-jobs = ["build", "manifest", "packages", "package-smoke"]
-commands = ["cargo xtask release-server-archive --packages-from <dir> --out-dir <dir>"]
+jobs = ["build", "manifest", "packages", "package-smoke", "npm-journey", "npm-journey-gate"]
+commands = ["cargo xtask release-server-archive --packages-from <dir> --out-dir <dir>", "node packaging/npm/qualification/bin/journey.cjs --packages <dir> --target <target> --version <version> --receipt <file>", "cargo xtask package-qualification-gate --receipt <file>"]
 estimated_lem = 75
 artifact_families = ["release-readiness"]
-description = "Cross-platform server archive and manifest proof, then the PyPI wheel and npm package family wrapped from those payloads and installed offline on each native runner (#5378). The entrypoint only delegates: the archive jobs run in server-archive-qualification.yml and the package build, package-smoke jobs and the listed command run in package-family-qualification.yml. Actual build commands come from the workflow matrices; no registry write."
+description = "Cross-platform server archive and manifest proof, then the PyPI wheel and npm package family wrapped from those payloads and installed offline on each native runner (#5378), plus the npm install-to-use journey from an isolated loopback registry on each native runner with every receipt gated (#4632). The entrypoint only delegates: the archive jobs run in server-archive-qualification.yml and the package build, package-smoke, npm-journey and npm-journey-gate jobs and the listed commands run in package-family-qualification.yml. Actual build commands come from the workflow matrices; no registry write."
 
 [[lane]]
 id = "python-wheelhouse"

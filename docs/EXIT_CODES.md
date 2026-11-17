@@ -144,15 +144,15 @@ reached the caller.
   command, an unknown flag or stray positional, an unrecognized value
   rejected by the CLI's shared unknown-value builder, `explain --format
   json`, a value flag missing its value or given an empty one (#11979,
-  #14859), a malformed number caught by the CLI's shared numeric readers
+  #14859), a required flag left out (#14877), a malformed number caught by the CLI's shared numeric readers
   (#11979), and a `context` selector
   miss or ambiguity. The document carries
   `schema_version`, `tool`, `status: "refused"` and
   `error {code, message, token?, next}`. Exit code and stderr are
   unchanged, and without a JSON request stdout stays empty. Other argv
-  errors keep empty stdout even under a JSON request: a missing required
-  flag, a value rejected by a command's own parser rather than the shared
-  readers, conflicting flags, and a value rejected outside the shared builder
+  errors keep empty stdout even under a JSON request: required-flag
+  refusals not yet typed (including those #14076 is rewording), a value
+  rejected by a command's own parser rather than the shared readers, conflicting flags, and a value rejected outside the shared builder
   (for example a gate mode); see `docs/OUTPUT_SCHEMA.md`.
   Fresh selector misses also retain producer-owned language limitations for
   that run, with the configured-off or unavailable-binary recovery. These
@@ -399,6 +399,8 @@ whole analysis in one step, and the step does not swallow its exit code:
 
 ```yaml
       - name: Run RIPR
+        env:
+          RIPR_CACHE_DIR: ${{ runner.temp }}/ripr-cache
         run: ripr reports ci-packet --root .
 ```
 

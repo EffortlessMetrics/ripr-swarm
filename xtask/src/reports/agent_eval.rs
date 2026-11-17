@@ -30,6 +30,7 @@
 //! verdict moved as expected, not that a test catches a runtime fault.
 
 mod scenarios;
+mod trial;
 
 use crate::normalize_path;
 use crate::run::{ByteCaptureBudget, capture_bytes_in_dir_with_input_env_budget};
@@ -41,7 +42,7 @@ use std::time::Duration;
 
 const SCHEMA_VERSION: &str = "ripr-agent-eval-v1";
 const BASELINE_PATH: &str = "benchmarks/agent_eval/baseline.json";
-const USAGE: &str = "usage: cargo xtask agent-eval [--ripr <binary>] [--scenario <id>]... [--compare <baseline.json>] [--write-baseline] [--skip-cargo]";
+const USAGE: &str = "usage: cargo xtask agent-eval [--ripr <binary>] [--scenario <id>]... [--compare <baseline.json>] [--write-baseline] [--skip-cargo] | agent-eval trial-setup <dir> | agent-eval trial-score <dir>";
 /// A route regresses when its tokens grow by more than `then / 10` (10%)
 /// plus `REGRESSION_SLACK_TOKENS` over the baseline.
 const REGRESSION_DIVISOR: u64 = 10;
@@ -403,13 +404,21 @@ fn validate_baseline(baseline: &Value) -> Result<(), String> {
     let valid = baseline["scenarios"]
         .as_array()
         .is_some_and(|rows| !rows.is_empty() && rows.iter().all(scenario_ok));
-    if baseline["schema_version"] == SCHEMA_VERSION && valid {
-        Ok(())
-    } else {
-        Err(format!(
+    if baseline["schema_version"] != SCHEMA_VERSION || !valid {
+        return Err(format!(
             "is not a complete {SCHEMA_VERSION} baseline; rerun with --write-baseline"
-        ))
+        ));
     }
+    // A baseline recorded from a noisy run would loosen every later compare.
+    for row in baseline["scenarios"].as_array().into_iter().flatten() {
+        if let Some(detail) = find_runs_disagree(row) {
+            let id = row["id"].as_str().unwrap_or_default();
+            return Err(format!(
+                "recorded {id}: {detail}; rerun with --write-baseline"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Whether the `init --agents` DETAIL step applies to a printed `next=`
@@ -809,7 +818,7 @@ fn verify_complete(agent_report: &str) -> bool {
 
 /// What one `cargo test` run established.
 #[derive(Debug, PartialEq)]
-enum Suite {
+pub(super) enum Suite {
     Pass,
     /// The tests compiled, ran, and at least one failed.
     TestFailed,
@@ -824,7 +833,7 @@ enum Suite {
 /// Classify a finished `cargo test` run. Only a run that compiled and
 /// reported a failing test counts as a failure; a revert that stops the
 /// crate compiling must not credit the agent's tests.
-fn classify_suite(exit: Option<i32>, output: &str) -> Suite {
+pub(super) fn classify_suite(exit: Option<i32>, output: &str) -> Suite {
     let compile_error = output.contains("could not compile") || output.contains("error[E");
     match exit {
         Some(0) if !compile_error => Suite::Pass,
@@ -1223,16 +1232,51 @@ fn render_json(value: &Value, depth: usize) -> Result<String, String> {
 
 /// Every scenario whose cargo key checks could not run.
 fn instrument_failures(report: &Value) -> Vec<String> {
-    report["scenarios"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|scenario| {
-            let reason = scenario["loop"]["cargo_not_established"].as_str()?;
-            let id = scenario["id"].as_str().unwrap_or_default();
-            Some(format!("{id}: cargo key check not established: {reason}"))
-        })
-        .collect()
+    let mut failures = Vec::new();
+    for scenario in report["scenarios"].as_array().into_iter().flatten() {
+        let id = scenario["id"].as_str().unwrap_or_default();
+        if let Some(reason) = scenario["loop"]["cargo_not_established"].as_str() {
+            failures.push(format!("{id}: cargo key check not established: {reason}"));
+        }
+        failures.extend(find_runs_disagree(scenario).map(|detail| format!("{id}: {detail}")));
+    }
+    failures
+}
+
+/// `cli-agent-loop` opens with the same FIND command that `cli-agent-find`
+/// runs, on an identical fresh workspace, so the two captures must match in
+/// exit, bytes and tokens (all the record keeps). When they differ, the run
+/// measured host noise (a stray stderr note, an unnormalized path), not
+/// ripr's output, and must not become a baseline.
+fn find_runs_disagree(scenario: &Value) -> Option<String> {
+    let first_step = |route: &str| {
+        scenario["routes"]
+            .as_array()?
+            .iter()
+            .find(|row| row["route"] == route)?["steps"]
+            .get(0)
+    };
+    let (looped, found) = (first_step("cli-agent-loop")?, first_step("cli-agent-find")?);
+    if looped["exit"] == found["exit"]
+        && looped["bytes"].as_u64() == found["bytes"].as_u64()
+        && looped["tokens"].as_u64() == found["tokens"].as_u64()
+    {
+        return None;
+    }
+    let count = |value: &Value| value.as_u64().map_or("?".to_string(), |n| n.to_string());
+    let show = |step: &Value| {
+        format!(
+            "exit {}, {} bytes/{} tokens",
+            step["exit"],
+            count(&step["bytes"]),
+            count(&step["tokens"])
+        )
+    };
+    Some(format!(
+        "identical FIND runs disagree (cli-agent-loop {}, cli-agent-find {}); the run measured host noise",
+        show(looped),
+        show(found)
+    ))
 }
 
 fn flag(value: &Value) -> &'static str {
@@ -1328,10 +1372,50 @@ fn render_markdown(report: &Value, comparison: Option<&(Vec<String>, Vec<String>
     out
 }
 
+fn trial_dir(args: &[String]) -> Result<PathBuf, String> {
+    match args {
+        // Absolute, so cargo runs in each trial repository resolve it the same
+        // way whatever directory they start in.
+        [_, dir] => {
+            std::path::absolute(dir).map_err(|err| format!("cannot resolve trial dir {dir}: {err}"))
+        }
+        _ => Err(format!("{} needs exactly one <dir>\n{USAGE}", args[0])),
+    }
+}
+
+fn write_trial_score(dir: &Path) -> Result<(), String> {
+    let score = trial::trial_score(dir)?;
+    let report_dir = crate::reports_dir();
+    let path = report_dir.join("agent-eval-trial-score.json");
+    let pretty = serde_json::to_string_pretty(&score)
+        .map_err(|err| format!("failed to render trial score: {err}"))?;
+    write_file(&path, &format!("{pretty}\n"))?;
+    println!("{pretty}");
+    println!(
+        "agent-eval trial-score: {}/{} keyed gaps caught; wrote {}",
+        score["caught"],
+        score["keyed_gaps"],
+        normalize_path(&path)
+    );
+    if score["complete"] == true {
+        Ok(())
+    } else {
+        Err(format!(
+            "agent-eval trial-score: incomplete, scored as zero caught: {}",
+            score["problems"]
+        ))
+    }
+}
+
 pub(crate) fn agent_eval(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!("{USAGE}");
         return Ok(());
+    }
+    match args.first().map(String::as_str) {
+        Some("trial-setup") => return trial::trial_setup(&trial_dir(args)?),
+        Some("trial-score") => return write_trial_score(&trial_dir(args)?),
+        _ => {}
     }
     let options = parse_options(args)?;
     let ripr = match &options.ripr {
@@ -1682,6 +1766,42 @@ verify=refused|outcome=complete_with_findings\n";
                 scenario.id
             );
         }
+    }
+
+    #[test]
+    fn disagreeing_identical_find_runs_are_an_instrument_failure() {
+        let route = |name: &str, bytes: u64, tokens: u64| {
+            json!({"route": name, "answer_reached": true, "failed_steps": 0, "total_tokens": tokens,
+                "tokens_to_answer": tokens, "steps": [{"step": "find", "exit": 0, "bytes": bytes, "tokens": tokens}]})
+        };
+        let checks = json!({"missed_gaps": 0, "extra_gaps": 0, "silent_on_control": null, "weak_test_still_flagged": true,
+            "reference_test_closes_loop": true, "reference_key_valid": true, "weak_key_valid": null});
+        let run = |loop_bytes: u64, loop_tokens: u64| {
+            json!({"schema_version": SCHEMA_VERSION, "scenarios": [{"id": "s", "loop": checks.clone(), "routes": [
+                route("cli-agent-loop", loop_bytes, loop_tokens), route("cli-agent-find", 232, 75)]}]})
+        };
+        let agreeing = run(232, 75);
+        assert!(instrument_failures(&agreeing).is_empty());
+        assert_eq!(validate_baseline(&agreeing), Ok(()));
+        let noisy = run(776, 243);
+        let expected = "s: identical FIND runs disagree (cli-agent-loop exit 0, 776 bytes/243 tokens, cli-agent-find exit 0, 232 bytes/75 tokens); the run measured host noise";
+        assert_eq!(instrument_failures(&noisy), vec![expected.to_string()]);
+        assert!(
+            validate_baseline(&noisy)
+                .is_err_and(|error| error.contains(expected.trim_start_matches("s: ")))
+        );
+        // Same size is all the record keeps; a byte or a token difference alone fails.
+        assert_eq!(instrument_failures(&run(233, 75)).len(), 1);
+        assert_eq!(instrument_failures(&run(232, 76)).len(), 1);
+        let mut exited = agreeing.clone();
+        exited["scenarios"][0]["routes"][0]["steps"][0]["exit"] = json!(2);
+        assert_eq!(instrument_failures(&exited).len(), 1);
+        // A report without one of the two routes has nothing to compare.
+        let mut lone = noisy.clone();
+        if let Some(routes) = lone["scenarios"][0]["routes"].as_array_mut() {
+            routes.truncate(1);
+        }
+        assert!(instrument_failures(&lone).is_empty());
     }
 
     #[test]

@@ -792,7 +792,7 @@ fn owner_parameter_literals(
         .collect()
 }
 
-fn assertion_is_discriminating(assertion: &OracleFact) -> bool {
+pub(in crate::analysis) fn assertion_is_discriminating(assertion: &OracleFact) -> bool {
     matches!(assertion.strength, OracleStrength::Strong)
         || matches!(
             assertion.kind,

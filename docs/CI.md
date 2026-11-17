@@ -105,15 +105,31 @@ script is covered by the bundle hash check). The admission job refuses at reques
 time; the Result job repeats the read before the eligibility recheck. A trusted
 (OWNER/MEMBER/COLLABORATOR) reviewer must post a native APPROVED, or a COMMENT whose
 first line is the readiness marker with an allowed tail; a trusted reviewer's later
-negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding signal;
-free-prose retraction on later lines is best-effort (#12835). A later line changes the
+negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding signal.
+An explicit `VERDICT:` field is recognized only at line start after the same list,
+quote, heading, emphasis or code prefix. Its whole value must be `APPROVE`, with an
+optional 7-40 hexadecimal head SHA, to admit; `BLOCK`, `ABSTAIN`, empty and
+unrecognized values refuse. An `APPROVE`-led value that is not exactly that form
+(such as `APPROVE <sha> — no blocking findings`) is neutral: it neither attests nor
+refuses, so it cannot veto the marker, while one that also names a blocking word
+still refuses. A table row whose first cell is `Verdict` uses that same
+grammar: the trailing pipe is optional, a row whose value side carries more than one
+non-empty cell refuses as ambiguous, and a `Verdict` header row above a delimiter
+row states nothing. An APPROVE field is not a readiness carrier: the
+separate first-line readiness marker is still required. A PR description carrying `VERDICT:` or a first-cell
+`Verdict` table row has a competing field and attests nothing, whatever the value.
+Free-prose retraction on later lines is best-effort (#12835). A later line changes the
 disposition only when it states one: it opens, after list (bulleted, numbered or task),
 quote, heading, emphasis or code markers, with a `disposition:` field or a state token;
 it is a state token alone; it carries a `disposition` field label anywhere (such as
 `Final disposition:` or a `| Disposition | ... |` table row); or it is a table row with a
 cell that holds only a state token. Fenced text is still scanned for any state token. A
 PR description that carries any of these field shapes besides its `Source review:` line
-is ambiguous and attests nothing.
+is ambiguous and attests nothing. In a review body only, a field label of up to 61
+characters without backticks, followed by a colon (ASCII or fullwidth), `->`, `=>` or `=`
+and a non-positive state token, also states it (`VERDICT: REPAIR_REQUIRED`,
+`Status (round 2): CHANGES_REQUESTED`, `Status -> REPAIR_REQUIRED`, #14592). A positive
+value under a label (`- **Status:** REVIEW_READY`) is narration, not a refusal.
 A COMMENT whose first line is `VERDICT: APPROVE <full 40-character head SHA>` at
 column zero, with the SHA equal to that review's head and only a blocker-free tail
 after it, is the same attestation in verdict form, and `VERDICT: BLOCK` /
@@ -1775,8 +1791,13 @@ repository has chosen a baseline policy.
 
 A released `ripr` generates a workflow that installs the exact version
 that generated it, because its steps use that version's commands and flags;
-a later release does not change CI behavior until you regenerate. It
-downloads that release's prebuilt binary from the `EffortlessMetrics/ripr`
+a later release does not change CI behavior until you regenerate. Its
+`Install ripr` step runs the `ripr-check` composite Action from the same
+release tag (`EffortlessMetrics/ripr/.github/actions/ripr-check@v<version>`,
+`install-only: true`), so the installer lives in one place rather than being
+copied into every generated workflow (#5409). The tag is the same trust root as
+the release archive and checksum the installer downloads. That installer
+downloads the release's prebuilt binary from the `EffortlessMetrics/ripr`
 GitHub Release and checks it against the release's published SHA-256, which
 takes seconds instead of the minutes `cargo install` spends compiling. A
 checksum mismatch, a missing checksum, or a malformed archive fails the step
@@ -1786,9 +1807,10 @@ Windows ARM64 is reported as unsupported. On a runner with no prebuilt archive
 (for example Linux ARM32), or when the download fails, it falls back to
 `cargo install ripr --version <that version> --locked`, which needs a Rust
 toolchain on the runner; on a runner without `cargo` the step fails and says
-to install Rust or add a toolchain step. A development build newer than the
-latest release cannot pin itself — that version has no release archive and
-no crates.io package, so both install routes would fail. Instead it pins the
+to add a toolchain step. A `ripr` already on PATH is reused only when it
+reports exactly the pinned version. A development build newer than the
+latest release cannot pin itself — that version has no release tag, archive
+or crates.io package, so the install would fail. Instead it pins the
 latest release and warns on stderr, naming both versions and the refresh
 command (#5208); the installed release may be older than the generating
 steps, so review the workflow and regenerate with a released `ripr` when one
@@ -1918,7 +1940,8 @@ HEAD meets the base, so the diff has a merge base (#14800). A full checkout is
 not touched. On other events, or with an explicit `base`, use
 `fetch-depth: 0`. If history is still missing, `ripr check` names the repair.
 
-Inputs: `version` (default: the release pinned in the Action at that tag; installs that
+Inputs: `install-only` (`true` installs ripr onto PATH and skips `ripr check`
+and the cache step; the generated workflow uses this), `version` (default: the release pinned in the Action at that tag; installs that
 release's prebuilt archive after checking its published SHA-256, and falls
 back to `cargo install ripr --version <version> --locked` where no archive
 exists), `mode` (`draft`, `deep`, `ready`), `format` (any `ripr check` format,
@@ -1948,8 +1971,8 @@ request, and the cache lives outside the checkout. Run it on `pull_request`,
 never `pull_request_target`. For the summary comment, inline comments, SARIF
 upload and artifacts, use the generated workflow above.
 
-The Action's `Install ripr` step follows the same contract as the generated
-workflow's (#6245): Windows x64 installs the release `zip` (extracted with the
+The Action's `Install ripr` step is the generated workflow's installer
+(#5409, #6245): Windows x64 installs the release `zip` (extracted with the
 `tar.exe` under `%SystemRoot%\System32`, flat-root listing only), Windows ARM64
 stops with an explicit unsupported error, a missing or mismatched checksum, bad
 archive or wrong payload exits 1 with no `cargo install` fallback, and the
@@ -2086,7 +2109,7 @@ A PR whose diff is larger than the per-language changed-line limits
 as a bounded partition instead of refused (#13641). `ripr check` analyzes a
 deterministic subset of whole files within the partial budgets
 (`RIPR_PARTIAL_DIFF_FILE_BUDGET`, `RIPR_PARTIAL_DIFF_LINE_BUDGET`, the line
-budget clamped to the smallest enabled limit) and reports
+budget clamped to the smallest limit among the languages the diff contains) and reports
 `analysis_scope.run_status = limited_partial_scope` with the selected files,
 lower-bound uninspected counts, the stop reason, and
 `gate_eligibility = ineligible`. A file that alone exceeds its language's
@@ -2127,6 +2150,8 @@ partial result's widen instruction names the exact values. See
 
 ```yaml
       - name: Run RIPR
+        env:
+          RIPR_CACHE_DIR: ${{ runner.temp }}/ripr-cache
         run: ripr reports ci-packet --root .
 ```
 
@@ -2246,7 +2271,8 @@ Steps:
   that write there still work. ripr's analysis cache lives outside the
   checkout, so the cleanup never discards it.
 - **Install ripr** pins the version whose commands the steps use; an unpinned
-  install takes the newest release, whose CLI may not match. It downloads that
+  install takes the newest release, whose CLI may not match. It runs the
+  `ripr-check` Action of that release tag with `install-only: true`, which downloads that
   release's prebuilt binary (a zip on Windows x64) and checks it against the
   published SHA-256 before extracting it, falls back to `cargo install` only
   where there is no prebuilt binary, and fails with the fix when the runner has
