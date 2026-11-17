@@ -2428,7 +2428,12 @@ fn has_ranked_repair_route(finding: &Finding) -> bool {
         // static-limited finding never prints a repair route
         // (`printed_repair_route`), so its advisory next step must not lift
         // it to the routed tier over a gap whose route does print.
-        return !is_static_limited(finding) && has_repair_route(finding);
+        // #14919: an unreferenced owner is a gap but prints no repair route
+        // either (the app's repair gate still refuses it), so it ranks by
+        // class among the gaps, behind every gap whose route prints.
+        return !is_static_limited(finding)
+            && !finding.is_unreferenced_no_static_path()
+            && has_repair_route(finding);
     }
     finding.language == Some(LanguageId::Python) && python_repair_card(finding).is_some()
 }
@@ -5102,6 +5107,30 @@ mod tests {
         assert_eq!(
             check_case_for_triage(&triage, &output),
             NextActionCheckCase::TopGap
+        );
+    }
+
+    /// #14919 review: an unreferenced owner prints no repair route, so its
+    /// advisory next step must not lift it over a gap whose route prints.
+    #[test]
+    fn unreferenced_owner_ranks_behind_a_routed_gap() {
+        let mut unreferenced = unreferenced_owner_finding("finding:unreferenced");
+        unreferenced.recommended_next_step = Some("add a test that calls levy".to_string());
+        unreferenced.confidence = 0.9;
+        let mut routed = finding_at(
+            "finding:routed",
+            "src/lib.rs",
+            ExposureClass::ReachableUnrevealed,
+        );
+        routed.recommended_next_step = Some("assert the exact result".to_string());
+        routed.confidence = 0.3;
+        assert!(!has_ranked_repair_route(&unreferenced));
+        assert!(has_ranked_repair_route(&routed));
+        let output = test_output(vec![unreferenced, routed]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:routed")
         );
     }
 

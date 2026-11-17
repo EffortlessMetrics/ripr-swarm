@@ -1077,7 +1077,9 @@ when no missing discriminator is named, and it suppresses the all-limited
 scores the same shape as a gap. Since #14919 the human check triage and the
 JSON canonical next action read the same predicate: `triage::is_static_limited`
 is false for such a finding, so `Start here` selects it with
-`State: a test gap to inspect or repair`, it ranks with the other gaps, and the
+`State: a test gap to inspect or repair`, it ranks by class among the gaps
+(behind every gap whose repair route prints, since the repair gate still
+offers it no start), and the
 JSON `canonical_next_action` stops on `top_gap` instead of `static_limited`.
 Every other `no_static_path`, unknown or static-limited finding stays
 a fail-closed limit: an owner some code calls on a path ripr cannot trace may

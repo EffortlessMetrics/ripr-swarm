@@ -11345,6 +11345,7 @@ tests = [
   "crates/ripr/tests/agent_unreferenced_owner_gap.rs::agent_human_and_json_agree_the_uncalled_owner_is_a_gap",
   "crates/ripr/tests/agent_unreferenced_owner_gap.rs::a_named_owner_keeps_its_static_limit_on_the_human_surface",
   "crates/ripr/src/output/human/triage.rs::unreferenced_owner_is_a_top_gap_not_a_static_limit",
+  "crates/ripr/src/output/human/triage.rs::unreferenced_owner_ranks_behind_a_routed_gap",
   "crates/ripr/src/output/human/triage.rs::ambiguous_no_static_path_stays_static_limited",
   "crates/ripr/tests/cli_smoke.rs::explain_format_agent_prints_compact_lines_and_json_is_refused",
   "crates/ripr/tests/cli_smoke.rs::explain_format_agent_from_artifact_replays_the_context_next_command",
