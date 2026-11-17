@@ -17,6 +17,9 @@ pub(in super::super) fn identified_route_response_names(
     }
     let receivers = super::super::route_client::client_receivers(&test.body_text);
     let mut names = Vec::new();
+    // The names bound once to a call of each receiver and verb, computed once
+    // per lookup rather than once per route or assignment.
+    let mut bound_once: HashMap<(String, String), Vec<String>> = HashMap::new();
     for (index, route) in owner.route_paths.iter().enumerate() {
         let verbs = owner
             .route_methods
@@ -34,9 +37,6 @@ pub(in super::super) fn identified_route_response_names(
             {
                 continue;
             }
-            // The names bound once to a call of each verb, computed once per
-            // verb rather than once per assignment.
-            let mut bound_once: HashMap<String, Vec<String>> = HashMap::new();
             for (name, verb, path) in route_response_assignments(test, receiver) {
                 let http_verb = ["get", "post", "put", "patch", "delete", "options", "head"]
                     .contains(&verb.as_str());
@@ -47,7 +47,8 @@ pub(in super::super) fn identified_route_response_names(
                 {
                     continue;
                 }
-                let bound = bound_once.entry(verb.clone()).or_insert_with(|| {
+                let key = (receiver.clone(), verb.clone());
+                let bound = bound_once.entry(key).or_insert_with(|| {
                     super::super::route_client::single_call_bindings(
                         &test.body_text,
                         &format!("{receiver}.{verb}"),

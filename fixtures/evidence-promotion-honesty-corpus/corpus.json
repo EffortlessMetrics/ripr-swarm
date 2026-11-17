@@ -397,6 +397,60 @@
       ]
     },
     {
+      "id": "python_route_response_tuple_dict",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_tuple_dict",
+      "vector": "route_response_tuple_bound_dict_annotation_is_not_the_body",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
+      "id": "python_route_response_unpacked_options",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_unpacked_options",
+      "vector": "route_response_unpacked_application_options_are_not_established",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
       "id": "python_route_response_parenthesized_alias",
       "language": "python",
       "tier": "pure",

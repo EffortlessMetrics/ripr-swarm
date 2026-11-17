@@ -107,7 +107,9 @@ fn route_patterns_overlap(left: &str, right: &str) -> bool {
 /// base, `routes += [...]`), a route verb named in a string (`getattr(app,
 /// "get")`), or a patch of the `json` attribute or a response class
 /// (`monkeypatch.setattr(Response, "json", ...)`, `"httpx.Response.json"`,
-/// `Response.json = ...`, `response.__class__ = ...`).
+/// `Response.json = ...`, `response.__class__ = ...`), or a `**` unpack in
+/// call arguments, which may pass application options (a custom schema or
+/// docs path) under a name the source does not spell.
 pub(in super::super) fn workspace_reshapes_responses(source: &str) -> bool {
     const MARKERS: [&str; 32] = [
         "openapi_url",
@@ -147,6 +149,12 @@ pub(in super::super) fn workspace_reshapes_responses(source: &str) -> bool {
     // the markers are matched against the source without it.
     let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
     MARKERS.iter().any(|marker| compact.contains(marker))
+        // A `**` unpack in call arguments (`FastAPI(**{"openapi" "_url":
+        // "/price"})`, `FastAPI(**options)`) passes options the source does
+        // not spell, such as a schema or docs path that answers before a user
+        // route, so the application's configuration is not established.
+        || compact.contains("(**")
+        || compact.contains(",**")
         || rebinds_builtin_dict(source)
         || compact
             .match_indices("APIRoute")
@@ -161,40 +169,181 @@ pub(in super::super) fn workspace_reshapes_responses(source: &str) -> bool {
 
 /// Whether a source may rebind the name `dict` (#13869): FastAPI reads a
 /// `-> dict` return annotation as a response model when the name is a model
-/// class, which may coerce the returned values. A `dict` token after `class`,
-/// `def`, `as`, `for`, `global` or `nonlocal`, before an assignment `=` or
-/// `:`, or on an `import` line is a rebinding (an over-read only refuses).
+/// class, which may coerce the returned values. The scan runs over logical
+/// lines (a bracketed or continued statement joined) and fails closed: a
+/// `dict` token anywhere in an assignment target (`dict = ...`, `dict, x =
+/// ...`, `(dict, x) = ...`, `dict: T`, `dict := ...`, `dict += ...`), in a
+/// `for` target, after `as`, `class`, `def`, `global` or `nonlocal`, in a
+/// `case` pattern or on an `import` line is a rebinding, as is a reach into
+/// the builtins (`builtins`, `__builtins__`) or the name in a string
+/// (`globals()["dict"]`). An over-read only refuses.
 fn rebinds_builtin_dict(source: &str) -> bool {
-    source.lines().any(|line| {
-        let line = strip_line_comment(line);
-        let trimmed = line.trim_start();
-        let tokens: Vec<&str> = line
-            .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let tokens_of = |text: &str| -> Vec<String> {
+        text.split(|ch: char| !word(ch))
             .filter(|token| !token.is_empty())
-            .collect();
-        if !tokens.contains(&"dict") {
+            .map(str::to_string)
+            .collect()
+    };
+    let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
+    if compact.contains("\"dict\"")
+        || compact.contains("'dict'")
+        || tokens_of(source)
+            .iter()
+            .any(|token| token == "builtins" || token == "__builtins__")
+    {
+        return true;
+    }
+    logical_lines(source).iter().any(|line| {
+        let tokens = tokens_of(line);
+        if !tokens.iter().any(|token| token == "dict") {
             return false;
         }
-        if trimmed.starts_with("import ") || trimmed.starts_with("from ") {
+        let first = tokens.first().map(String::as_str);
+        if matches!(
+            first,
+            Some("import" | "from" | "case" | "global" | "nonlocal")
+        ) {
             return true;
         }
-        tokens.windows(2).any(|pair| {
-            pair[1] == "dict"
-                && matches!(
-                    pair[0],
-                    "class" | "def" | "as" | "for" | "global" | "nonlocal"
-                )
-        }) || line.match_indices("dict").any(|(at, _)| {
-            let before = line[..at].chars().next_back();
-            let rest = line[at + "dict".len()..].trim_start();
-            !before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.')
-                && !line[at + "dict".len()..]
-                    .starts_with(|ch: char| ch.is_alphanumeric() || ch == '_')
-                && ((rest.starts_with('=') && !rest.starts_with("=="))
-                    || rest.starts_with(':')
-                    || rest.starts_with(":="))
-        })
+        // A `dict` after `as`, `class` or `def`, or between `for` and `in`.
+        let mut in_for_target = false;
+        for pair in tokens.windows(2) {
+            match pair[0].as_str() {
+                "for" => in_for_target = true,
+                "in" => in_for_target = false,
+                _ => {}
+            }
+            if pair[1] == "dict"
+                && (in_for_target || matches!(pair[0].as_str(), "as" | "class" | "def" | "for"))
+            {
+                return true;
+            }
+        }
+        assignment_targets(line)
+            .iter()
+            .any(|target| tokens_of(target).iter().any(|token| token == "dict"))
     })
+}
+
+/// The statements of a source with each `#` comment dropped and each
+/// bracketed or backslash-continued statement joined onto one line.
+fn logical_lines(source: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0i64;
+    for physical in source.lines() {
+        let line = strip_line_comment(physical);
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
+        for ch in line.chars() {
+            match quote {
+                Some(open) => {
+                    if escaped {
+                        escaped = false;
+                    } else if ch == '\\' {
+                        escaped = true;
+                    } else if ch == open {
+                        quote = None;
+                    }
+                }
+                None => match ch {
+                    '"' | '\'' => quote = Some(ch),
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' => depth -= 1,
+                    _ => {}
+                },
+            }
+        }
+        let continued = line.trim_end().ends_with('\\');
+        current.push_str(line.trim_end().trim_end_matches('\\'));
+        current.push(' ');
+        if depth <= 0 && !continued {
+            lines.push(std::mem::take(&mut current));
+            depth = 0;
+        }
+    }
+    if !current.trim().is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+/// The assignment targets of a logical line: the text before each `=` that
+/// sits outside brackets and strings (not `==`, `!=`, `<=`, `>=`), the text
+/// before a top-level annotation `:` of an annotated assignment, and the
+/// name before each `:=` at any depth. An augmented `+=` keeps its operator
+/// in the target, which only over-reads.
+fn assignment_targets(line: &str) -> Vec<String> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut targets = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut depth = 0i64;
+    for (at, &ch) in chars.iter().enumerate() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        let prev = at
+            .checked_sub(1)
+            .and_then(|index| chars.get(index))
+            .copied();
+        let next = chars.get(at + 1).copied();
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            '=' if next == Some('=') || matches!(prev, Some('=' | '!' | '<' | '>')) => {}
+            '=' if prev == Some(':') => {
+                // A walrus binds the name just before it, at any depth.
+                let before: String = chars[..at - 1].iter().collect();
+                let name: String = before
+                    .trim_end()
+                    .chars()
+                    .rev()
+                    .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+                    .collect();
+                targets.push(name.chars().rev().collect());
+            }
+            '=' if depth == 0 => targets.push(chars[..at].iter().collect()),
+            ':' if depth == 0 && next != Some('=') => {
+                // An annotated assignment `name: T` binds the text before the
+                // colon unless the line opens a compound statement.
+                let before: String = chars[..at].iter().collect();
+                let first = before.split_whitespace().next().unwrap_or_default();
+                if !matches!(
+                    first,
+                    "def"
+                        | "async"
+                        | "class"
+                        | "if"
+                        | "elif"
+                        | "else"
+                        | "for"
+                        | "while"
+                        | "with"
+                        | "try"
+                        | "except"
+                        | "finally"
+                        | "match"
+                        | "case"
+                        | "lambda"
+                ) && !before.contains("lambda")
+                {
+                    targets.push(before);
+                }
+            }
+            _ => {}
+        }
+    }
+    targets
 }
 
 /// A physical line without its `#` comment (a `#` inside a one-line string

@@ -548,8 +548,13 @@ Relations, first match wins (rank, oracle-eligible):
   a name that is later called or used as a decorator, or wrapped in
   parentheses or a line continuation on an assignment's right side
   (comments are not read; an unclosed call is opaque), or any source has
-  custom docs or schema URLs (`openapi_url`, `docs_url`, `redoc_url`), rebinds
-  `dict` (which a `-> dict` annotation would then name as a model), or has an exception
+  custom docs or schema URLs (`openapi_url`, `docs_url`, `redoc_url`) or a
+  `**` unpack in call arguments (which may pass such an option under a name
+  the source does not spell), may rebind `dict` (which a `-> dict` annotation
+  would then name as a model: `dict` in any assignment, `for`, `as`, `case`
+  or `import` target, a `class` or `def` name, a reach into the builtins or
+  the name in a string; a `-> dict` annotation, a `dict(...)` call or an
+  `isinstance(x, dict)` argument is not a rebinding), or has an exception
   handler, middleware, a request hook, `dependency_overrides`, a custom
   route class, an imperative or declarative route registration, a router
   or blueprint inclusion, a mount, a `:path` catch-all, a route object

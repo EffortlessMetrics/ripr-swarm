@@ -67,6 +67,8 @@ fixtures/python_route_response_list_subscript/input/pyproject.toml|fixture_input
 fixtures/python_route_response_adjacent_list_tokens/input/pyproject.toml|fixture_input|analysis-fixtures|Python route-response honesty control keeps a dependency-free project marker as analyzed input (#13869).
 fixtures/python_route_response_duplicate_old_key/input/pyproject.toml|fixture_input|analysis-fixtures|Python route-response honesty control keeps a dependency-free project marker as analyzed input (#13869).
 fixtures/python_route_response_shadowed_dict/input/pyproject.toml|fixture_input|analysis-fixtures|Python route-response honesty control keeps a dependency-free project marker as analyzed input (#13869).
+fixtures/python_route_response_tuple_dict/input/pyproject.toml|fixture_input|analysis-fixtures|Python route-response honesty control keeps a dependency-free project marker as analyzed input (#13869).
+fixtures/python_route_response_unpacked_options/input/pyproject.toml|fixture_input|analysis-fixtures|Python route-response honesty control keeps a dependency-free project marker as analyzed input (#13869).
 fixtures/python_route_response_parenthesized_alias/input/pyproject.toml|fixture_input|analysis-fixtures|Python route-response honesty control keeps a dependency-free project marker as analyzed input (#13869).
 fixtures/python_route_response_compact_loop/input/pyproject.toml|fixture_input|analysis-fixtures|Python route-response honesty control keeps a dependency-free project marker as analyzed input (#13869).
 fixtures/python_route_response_replaced_content/input/pyproject.toml|fixture_input|analysis-fixtures|Python route-response honesty control keeps a dependency-free project marker as analyzed input (#13869).
