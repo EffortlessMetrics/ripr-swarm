@@ -208,7 +208,9 @@ fn a_call_that_may_never_run_is_not_reachable_unrevealed() -> Result<(), String>
         "let _unused = || f(5);",
         "if false { let _ = f(5); }",
         "for _ in 0..0 { let _ = f(5); }",
+        "return;\n        let _ = f(5);",
         "return;\n        #[allow(unreachable_code)]\n        let _ = f(5);",
+        "#[cfg(any())]\n        let _ = f(5);",
     ] {
         let (class, finding) = tail_class("i32", "-a", "a", test_body)?;
         assert!(

@@ -889,6 +889,11 @@ pub(in crate::analysis) fn every_owner_call_separates(
         // `async` block, or after a `return` may never run, so it does not
         // show the input reached the owner (#14961 review). An unbalanced or
         // unparsed body reads nothing.
+        // An attribute in the body can gate a statement or hide a dead one
+        // from the reach scan (`return;` then `#[allow(..)] let _ = f(5);`).
+        if masked.contains('#') {
+            return None;
+        }
         let unreached = crate::analysis::extract::lines_touching_unreached(body)?;
         let deferred = deferred_lines(test)?;
         let mut separating = 0usize;
