@@ -4920,6 +4920,20 @@ fn owner_named_outside_related_tests(
                 && never_runs(index, function)
         })
         .collect::<Vec<_>>();
+    // A nested `fn` is its own function and also sits in its parent's body:
+    // count each mention once, from the outermost function only.
+    let unreachable = unreachable
+        .iter()
+        .filter(|inner| {
+            !unreachable.iter().any(|outer| {
+                outer.id != inner.id
+                    && outer.file == inner.file
+                    && outer.start_line <= inner.start_line
+                    && inner.end_line <= outer.end_line
+            })
+        })
+        .copied()
+        .collect::<Vec<_>>();
     index.files().iter().any(|(path, file)| {
         let mut seen = std::collections::BTreeSet::new();
         let read: usize = related_tests
@@ -4942,8 +4956,8 @@ fn owner_named_outside_related_tests(
 /// Whether `function` provably never runs: an attribute-free production
 /// `fn` (no `#[test]`, `#[no_mangle]`, `#[export_name]`, `#[cfg]` or harness
 /// attribute) outside any trait and outside an attributed `impl`, not
-/// `main`, whose name no file mentions outside its own header or plain `use`
-/// paths and no doc comment names. A trait method runs from calls that never
+/// `main`, whose name appears nowhere in the workspace but its own header
+/// (no call, `use`, comment or string names it). A trait method runs from calls that never
 /// name it, and an attribute may register it with a harness or a linker, so
 /// any of those keeps the function reachable.
 fn never_runs(index: &crate::analysis::rust_index::RustIndex, function: &FunctionSummary) -> bool {
@@ -4957,10 +4971,31 @@ fn never_runs(index: &crate::analysis::rust_index::RustIndex, function: &Functio
         )
         && function.name != "main"
         && !function.name.is_empty()
-        && index.files().iter().all(|(_, file)| {
-            unread_mentions(&file.source, &function.name) == 0
-                && !doc_comment_names(&file.source, &function.name)
+        // Every whole-word spelling of the name, in code, comments and
+        // strings alike, must be its own `fn` header: a string can name it
+        // to a derive (`#[serde(default = "medium_price")]`) that runs it.
+        && index
+            .files()
+            .iter()
+            .map(|(_, file)| whole_word_count(&file.source, &function.name))
+            .sum::<usize>()
+            == 1
+}
+
+/// How many times `word` appears in `source` with no identifier character on
+/// either side, unmasked.
+fn whole_word_count(source: &str, word: &str) -> usize {
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    source
+        .match_indices(word)
+        .filter(|(offset, _)| {
+            !source[..*offset].chars().next_back().is_some_and(is_word)
+                && !source[offset + word.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_word)
         })
+        .count()
 }
 
 /// Whether a doc comment in `source` names `owner`, or a doc attribute

@@ -231,3 +231,47 @@ fn an_uncalled_wrapper_keeps_the_arm_named_and_a_called_one_does_not() -> Result
     }
     Ok(())
 }
+
+/// A wrapper named only in a string a derive reads (`serde(default)`) runs
+/// whenever the struct deserializes, so its call keeps the arm unnamed.
+const STRING_NAMED_WRAPPER: &str = "pub enum Size {\n    Small,\n    Medium,\n    Large,\n}\n\n\
+pub fn price_cents(size: Size) -> u32 {\n    match size {\n        Size::Small => 300,\n        \
+Size::Medium => 450,\n        Size::Large => 500,\n    }\n}\n\n\
+pub struct Order {\n    #[serde(default = \"medium_price\")]\n    pub cents: u32,\n}\n\n\
+pub fn medium_price() -> u32 {\n    price_cents(Size::Medium)\n}\n";
+
+/// An uncalled `Prices::inner`, declared in an uncalled `outer`, holds one
+/// mention, which counts once, so the call in `menu()`, which `checkout()`
+/// reaches, still keeps the arm unnamed.
+const NESTED_DEAD_AND_LIVE_CALLER: &str = "pub enum Size {\n    Small,\n    Medium,\n    Large,\n}\n\n\
+pub fn price_cents(size: Size) -> u32 {\n    match size {\n        Size::Small => 300,\n        \
+Size::Medium => 450,\n        Size::Large => 500,\n    }\n}\n\n\
+pub struct Prices;\n\n\
+fn outer() {\n    impl Prices {\n        fn inner() -> u32 {\n            price_cents(Size::Medium)\n        }\n    }\n}\n\n\
+pub fn menu() -> u32 {\n    price_cents(Size::Medium)\n}\n\n\
+pub fn checkout() -> u32 {\n    menu()\n}\n";
+
+#[test]
+fn a_string_named_or_live_caller_keeps_the_arm_unnamed() -> Result<(), String> {
+    let test_body = "    assert_eq!(price_cents(Size::Small), 300);\n    assert_eq!(price_cents(Size::Large), 500);";
+    for (label, source) in [
+        ("string-named wrapper", STRING_NAMED_WRAPPER),
+        (
+            "nested dead beside a live caller",
+            NESTED_DEAD_AND_LIVE_CALLER,
+        ),
+    ] {
+        let (full, compact, class) = arm_evidence_in(source, test_body, "Size::Medium")?;
+        assert_ne!(class[0], SeamGripClass::WeaklyGripped, "{label}: {full:?}");
+        assert_ne!(
+            class[1],
+            SeamGripClass::WeaklyGripped,
+            "{label}: {compact:?}"
+        );
+        for evidence in [&full, &compact] {
+            assert_eq!(evidence.activate.state, StageState::Yes, "{label}");
+            assert_eq!(missing_values(evidence), Vec::<&str>::new(), "{label}");
+        }
+    }
+    Ok(())
+}
