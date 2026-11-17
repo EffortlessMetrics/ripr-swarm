@@ -74,6 +74,7 @@ pub(crate) fn note_unknown_argument(token: &str, message: &str, pointer: &str) {
             purpose: PURPOSE_LIST_ARGUMENTS,
             command: pointer.to_string(),
         }),
+        disposition: None,
     });
 }
 
@@ -88,6 +89,7 @@ pub(crate) fn note_unknown_value(token: &str, message: &str, pointer: Option<&st
             purpose: PURPOSE_LIST_ARGUMENTS,
             command: command.to_string(),
         }),
+        disposition: None,
     });
 }
 
@@ -101,6 +103,7 @@ pub(crate) fn note_unknown_command(token: &str, message: &str) {
             purpose: PURPOSE_LIST_COMMANDS,
             command: "ripr --help".to_string(),
         }),
+        disposition: None,
     });
 }
 
@@ -112,6 +115,7 @@ pub(crate) fn note_missing_value(flag: &str, message: &str) {
         message: message.to_string(),
         token: Some(flag.to_string()),
         next: None,
+        disposition: None,
     });
 }
 
@@ -130,6 +134,7 @@ pub(crate) fn missing_required(flag: &str, message: &str) -> String {
         message: message.to_string(),
         token: Some(flag.to_string()),
         next: None,
+        disposition: None,
     });
     message.to_string()
 }
@@ -143,6 +148,7 @@ pub(crate) fn conflicting_flags(flag: &str, message: &str) -> String {
         message: message.to_string(),
         token: Some(flag.to_string()),
         next: None,
+        disposition: None,
     });
     message.to_string()
 }
@@ -155,6 +161,7 @@ pub(crate) fn note_invalid_value(value: &str, message: &str) {
         message: message.to_string(),
         token: (!value.is_empty()).then(|| value.to_string()),
         next: None,
+        disposition: None,
     });
 }
 
@@ -167,7 +174,18 @@ pub(crate) fn note_selector_miss(selector: &str, message: &str) {
         message: message.to_string(),
         token: Some(selector.to_string()),
         next: None,
+        disposition: None,
     });
+}
+
+/// Note a typed `repair`/`continue` refusal (exit 3) at its one owner
+/// (#14931). The code and disposition are the `RepairRefusalCode` the
+/// stderr `refusal code=` line already names; `next` is only a runnable
+/// step the prose states, lifted fail-closed by the shared remedy owner.
+pub(crate) fn note_typed_refusal(code: &str, disposition: &'static str, message: &str) {
+    let mut block = RefusalBlock::from_prose(code, message);
+    block.disposition = Some(disposition);
+    record(block);
 }
 
 /// Whether argv explicitly requests JSON: a `--json` token, or `--format`
@@ -241,14 +259,26 @@ fn fills_help_route(code: &str) -> bool {
 /// escaped. Consumes the note either way.
 pub(super) fn document_for(args: &[String], error: &CommandError) -> Option<String> {
     let mut block = take()?;
-    if !matches!(error, CommandError::Failure(_)) || !json_requested(args) {
+    // A usage error is a could-not-complete failure; a typed repair/continue
+    // refusal is a decision (exit 3) and the only decision that carries a
+    // disposition.
+    let class_matches = match error {
+        CommandError::Failure(_) => block.disposition.is_none(),
+        CommandError::Decision(_) => block.disposition.is_some(),
+        _ => false,
+    };
+    if !class_matches || !json_requested(args) {
         return None;
     }
     if !error.message().contains(&block.message) {
         return None;
     }
-    // The document's message is the stderr prose the process printed.
-    block.message = error.message().to_string();
+    // The document's message is the stderr prose the process printed. A
+    // typed refusal keeps its plain-words prose: the `refusal code=` line
+    // that follows it on stderr is the `code` and `disposition` fields.
+    if block.disposition.is_none() {
+        block.message = error.message().to_string();
+    }
     if block.next.is_none()
         && fills_help_route(&block.code)
         && let Some(command) = argv_command(args)

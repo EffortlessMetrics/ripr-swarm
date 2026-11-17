@@ -4174,6 +4174,47 @@ pub(crate) mod tests {
         assert_eq!(code, None);
     }
 
+    /// #14931: the `cli_refusal` schema's closed `code` and `disposition`
+    /// enums carry every repair/continue code and disposition, so the JSON
+    /// document a typed refusal writes under `--json` validates.
+    #[test]
+    fn cli_refusal_schema_names_every_refusal_code_and_disposition() -> Result<(), String> {
+        let text = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../schemas/ripr/cli-refusal.schema.json"),
+        )
+        .map_err(|error| format!("read cli-refusal schema: {error}"))?;
+        let schema: serde_json::Value =
+            serde_json::from_str(&text).map_err(|error| format!("parse schema: {error}"))?;
+        let error = &schema["properties"]["error"]["properties"];
+        let enum_of = |key: &str| -> Vec<String> {
+            error[key]["enum"]
+                .as_array()
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(|value| value.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let codes = enum_of("code");
+        let dispositions = enum_of("disposition");
+        for code in RepairRefusalCode::ALL {
+            if !codes.iter().any(|known| known == code.as_str()) {
+                return Err(format!("schema code enum misses {}", code.as_str()));
+            }
+            let disposition = code.disposition().as_str();
+            if !dispositions.iter().any(|known| known == disposition) {
+                return Err(format!("schema disposition enum misses {disposition}"));
+            }
+        }
+        if dispositions.len() != 4 {
+            return Err(format!("unexpected dispositions {dispositions:?}"));
+        }
+        Ok(())
+    }
+
     /// #11597: the refusal-code vocabulary is closed and snake_case, every
     /// code is unique, each is documented with its disposition in
     /// `docs/EXIT_CODES.md`, and the stderr line carries both.

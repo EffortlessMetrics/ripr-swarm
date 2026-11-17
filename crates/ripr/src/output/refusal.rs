@@ -52,6 +52,10 @@ pub(crate) struct RefusalBlock {
     /// standalone `cli_refusal` document carries one.
     pub(crate) token: Option<String>,
     pub(crate) next: Option<RefusalNext>,
+    /// What the caller can do about a typed repair/continue refusal
+    /// (`retryable`, `terminal`, `needs_selection`, `not_started`, #14931).
+    /// Only the standalone `cli_refusal` document carries one.
+    pub(crate) disposition: Option<&'static str>,
 }
 
 impl RefusalBlock {
@@ -68,6 +72,7 @@ impl RefusalBlock {
             message: message.to_string(),
             token: None,
             next: next_from_remedy(remedy),
+            disposition: None,
         }
     }
 
@@ -77,6 +82,9 @@ impl RefusalBlock {
         error.insert("message".to_string(), json!(self.message));
         if let Some(token) = &self.token {
             error.insert("token".to_string(), json!(token));
+        }
+        if let Some(disposition) = self.disposition {
+            error.insert("disposition".to_string(), json!(disposition));
         }
         let next = match &self.next {
             Some(next) => json!({ "purpose": next.purpose, "command": next.command }),
@@ -174,6 +182,7 @@ mod tests {
                 purpose: PURPOSE_LIST_ARGUMENTS,
                 command: "ripr check --help --all".to_string(),
             }),
+            disposition: None,
         };
         let value: Value = serde_json::from_str(&block.render_cli_refusal()?)
             .map_err(|error| error.to_string())?;

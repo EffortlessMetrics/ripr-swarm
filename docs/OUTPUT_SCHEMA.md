@@ -1989,6 +1989,20 @@ and nothing is lifted from caller-controlled text. No argv echo and no
 partial analysis. Without a JSON request stdout stays empty. Schema:
 `schemas/ripr/cli-refusal.schema.json`.
 
+Typed `repair`/`continue` refusals (#14931). Under `--json`, a `ripr
+repair`, `ripr continue` or `ripr status` refusal that stops before any check
+runs and writes the stderr `refusal code=<code> disposition=<disposition>`
+line (exit `3`) also writes this document. Its `code` is that reason code
+(the table in `docs/EXIT_CODES.md`), the extra `disposition` field is one of
+`retryable`, `terminal`, `needs_selection` or `not_started`, and `message` is
+the plain-words prose without the code line. `next` is a runnable step the
+prose states, or `null` when the prose offers more than one (the fail-closed
+remedy rule above). For example, `ripr continue --json` with no attempt
+writes `code: "no_current_attempt"` and `disposition: "not_started"`.
+Refusals inside the after-phase check keep their own documents
+(`repair_after_refusal`, `repair_after_failure`, the verify document) and
+never add this one. Exit code and stderr are unchanged.
+
 ```json
 {
   "finding_alignment": {
@@ -17975,7 +17989,8 @@ Field contract:
   focused test edit at the same HEAD starts nothing and prints that
   attempt's `agent_attempt_status` document (what `ripr status --attempt
   <id> --json` prints) instead, so it carries no `repair_attempt` block.
-  `ripr repair --json` refusals keep exit `3`, stderr prose and empty stdout;
+  `ripr repair --json` refusals keep exit `3` and stderr prose and write the
+  `cli_refusal` document with the reason `code` and `disposition` (#14931);
   an unknown flag under `ripr repair --json` keeps exit `2` and its stderr
   prose and writes the standalone `cli_refusal` document.
   It names the durable transaction the packet was prepared
