@@ -199,6 +199,34 @@ fn a_bare_call_reads_reachable_unrevealed() -> Result<(), String> {
     Ok(())
 }
 
+/// #14961 review: a call that may never run (an uncalled closure, a
+/// literal-false block, an empty loop, after a `return`) does not show the
+/// input reached the owner, so it is neither revealed nor reached.
+#[test]
+fn a_call_that_may_never_run_is_not_reachable_unrevealed() -> Result<(), String> {
+    for test_body in [
+        "let _unused = || f(5);",
+        "if false { let _ = f(5); }",
+        "for _ in 0..0 { let _ = f(5); }",
+        "return;\n        #[allow(unreachable_code)]\n        let _ = f(5);",
+    ] {
+        let (class, finding) = tail_class("i32", "-a", "a", test_body)?;
+        assert!(
+            !matches!(
+                class,
+                ExposureClass::Exposed
+                    | ExposureClass::WeaklyExposed
+                    | ExposureClass::ReachableUnrevealed
+            ),
+            "{test_body}: {finding:?}"
+        );
+    }
+    // Control: the same call made directly is reached.
+    let (class, finding) = tail_class("i32", "-a", "a", "let _ = f(5);")?;
+    assert_eq!(class, ExposureClass::ReachableUnrevealed, "{finding:?}");
+    Ok(())
+}
+
 /// `-a` and `a` are equal at `0`: a pin there cannot tell them apart.
 #[test]
 fn a_pin_where_minus_and_plain_agree_is_weakly_exposed() -> Result<(), String> {

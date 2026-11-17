@@ -885,6 +885,12 @@ pub(in crate::analysis) fn every_owner_call_separates(
         if masked.len() != body.len() {
             return None;
         }
+        // A call in an uncalled closure or fn, a loop, a branch, an unpolled
+        // `async` block, or after a `return` may never run, so it does not
+        // show the input reached the owner (#14961 review). An unbalanced or
+        // unparsed body reads nothing.
+        let unreached = crate::analysis::extract::lines_touching_unreached(body)?;
+        let deferred = deferred_lines(test)?;
         let mut separating = 0usize;
         for (start, _) in masked.match_indices(owner.name.as_str()) {
             let end = start + owner.name.len();
@@ -892,6 +898,13 @@ pub(in crate::analysis) fn every_owner_call_separates(
             let ident = |at: usize| bytes.get(at).is_some_and(|byte| is_ident_byte(*byte));
             if (start > 0 && ident(start - 1)) || ident(end) {
                 continue;
+            }
+            let line = masked[..start]
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count();
+            if unreached.contains(&line) || deferred.contains(&line) {
+                return None;
             }
             // A method receiver or a qualified path names another entity.
             let before = masked[..start].trim_end();
