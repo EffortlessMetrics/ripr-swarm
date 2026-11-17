@@ -324,6 +324,9 @@ enum CrateRootTestRun {
 struct MetadataInventory {
     tests: BTreeMap<PathBuf, Vec<MetadataTestOwner>>,
     crate_roots: BTreeMap<PathBuf, Vec<CrateRootTestRun>>,
+    /// Every workspace member's package directory, as cargo reports it
+    /// (#14962 review: the mount scan reads every member's sources).
+    package_dirs: BTreeSet<PathBuf>,
 }
 
 /// The lazily initialized `cargo metadata` view of the analyzed workspace
@@ -501,6 +504,38 @@ impl ManifestInventory {
                 !runs.is_empty() && runs.iter().all(|run| *run == CrateRootTestRun::Skipped)
             }
             InventoryLookup::Unavailable | InventoryLookup::Missing => false,
+        }
+    }
+
+    /// True when cargo metadata lists `path` as the `src_path` of a target
+    /// that is not an established skip (#14962 review): a live or unmodeled
+    /// target (a `[[test]] path`, a `build` script, an example) may compile
+    /// the file's tests. Unavailable metadata is doubt; a path cargo does not
+    /// list is no target.
+    pub(crate) fn crate_root_may_run(&mut self, workspace_root: &Path, path: &Path) -> bool {
+        match self
+            .lookup_in(workspace_root, path, |inventory| &inventory.crate_roots)
+            .1
+        {
+            InventoryLookup::Present(runs) => {
+                runs.iter().any(|run| *run != CrateRootTestRun::Skipped)
+            }
+            InventoryLookup::Unavailable => true,
+            InventoryLookup::Missing => false,
+        }
+    }
+
+    /// Every workspace member's package directory from cargo metadata
+    /// (#14962 review), or `None` when the probe is unavailable. Members are
+    /// cargo's own resolution, so a member no index holds is still listed.
+    pub(crate) fn workspace_package_dirs(
+        &mut self,
+        workspace_root: &Path,
+    ) -> Option<BTreeSet<PathBuf>> {
+        self.ensure_workspace_metadata(workspace_root);
+        match &self.metadata {
+            MetadataState::Loaded(inventory) => Some(inventory.package_dirs.clone()),
+            MetadataState::Unloaded | MetadataState::Failed => None,
         }
     }
 
@@ -809,6 +844,7 @@ fn required_features_satisfied(target: &serde_json::Value, enabled: &BTreeSet<St
 fn workspace_target_inventory(value: &serde_json::Value) -> MetadataInventory {
     let mut owners: BTreeMap<PathBuf, Vec<MetadataTestOwner>> = BTreeMap::new();
     let mut crate_roots: BTreeMap<PathBuf, Vec<CrateRootTestRun>> = BTreeMap::new();
+    let mut package_dirs: BTreeSet<PathBuf> = BTreeSet::new();
     let Some(packages) = value.get("packages").and_then(serde_json::Value::as_array) else {
         return MetadataInventory::default();
     };
@@ -821,6 +857,7 @@ fn workspace_target_inventory(value: &serde_json::Value) -> MetadataInventory {
         let Some(manifest_dir) = manifest_dir else {
             continue;
         };
+        package_dirs.insert(manifest_dir.clone());
         let Some(targets) = package.get("targets").and_then(serde_json::Value::as_array) else {
             continue;
         };
@@ -865,6 +902,7 @@ fn workspace_target_inventory(value: &serde_json::Value) -> MetadataInventory {
     MetadataInventory {
         tests: owners,
         crate_roots,
+        package_dirs,
     }
 }
 

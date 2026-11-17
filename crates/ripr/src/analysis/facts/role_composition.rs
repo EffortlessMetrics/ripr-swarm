@@ -213,11 +213,20 @@ fn withhold_tests_outside_module_tree(index: &mut RustIndex, outside: &BTreeSet<
 /// because the probe reads the working tree rather than the `HEAD` bytes the
 /// files were loaded from (the #8016 rule).
 ///
-/// Unmodeled: a parent outside the index (a `tests/` file that reaches a
-/// `src/` file through `#[path]` while only `src/` is indexed) is not seen,
-/// so such a shared file can lose its credit. A holder whose own package
+/// The index is only part of the workspace: a draft or instant run indexes
+/// less, and a build-script `include!` never enters it. So a skip also needs
+/// [`WorkspaceMountScan`] over every workspace source on disk: no source
+/// outside the file's own skipped ancestry may spell its file name or
+/// declare a `mod` of its stem, no source may build a `mod`/`include!`
+/// operand dynamically, and cargo metadata may list the file as no live or
+/// unmodeled target (#14962 review). The verdict then does not depend on how
+/// much of the workspace the run indexed. A holder whose own package
 /// manifest switches nothing off is never asked, even when `#[path]` places
 /// it under another package's skipped root (it keeps its credit).
+///
+/// Cost: one `cargo metadata --no-deps --offline` probe per composition pass
+/// that has a premise (a check builds up to two indexes), plus one walk of
+/// the workspace sources once a candidate passes the metadata checks.
 fn files_in_skipped_unit_test_targets(
     index: &RustIndex,
     workspace_root: &Path,
@@ -243,6 +252,7 @@ fn files_in_skipped_unit_test_targets(
     let mut may_skip: BTreeMap<PathBuf, bool> = BTreeMap::new();
     let mut inventory = crate::analysis::workspace::ManifestInventory::default();
     let mut verdicts: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut mounts: Option<Option<WorkspaceMountScan>> = None;
     for file in holders {
         // The cheap manifest premise first: a holder whose own package
         // switches no target off skips no ancestry walk.
@@ -277,11 +287,157 @@ fn files_in_skipped_unit_test_targets(
             verdicts.insert(root.clone(), verdict);
             verdict
         });
-        if all_skipped {
+        if !all_skipped {
+            continue;
+        }
+        // #14962 review: the index is a subset of the workspace (a draft or
+        // instant run indexes less, and a generated `include!` never enters
+        // it), so a running target may mount the file where no indexed edge
+        // shows it. Every workspace source on disk is asked instead.
+        let scan = mounts.get_or_insert_with(|| {
+            inventory
+                .workspace_package_dirs(workspace_root)
+                .and_then(|package_dirs| WorkspaceMountScan::read(workspace_root, &package_dirs))
+        });
+        let Some(scan) = scan.as_ref() else {
+            return BTreeSet::new();
+        };
+        let mut chain: BTreeSet<&Path> = context.roots.iter().map(PathBuf::as_path).collect();
+        for edge in &context.edges {
+            chain.insert(&edge.parent);
+            chain.insert(&edge.child);
+        }
+        chain.insert(file);
+        if !scan.may_mount(file, &chain) && !inventory.crate_root_may_run(workspace_root, file) {
             skipped.insert(file.clone());
         }
     }
     skipped
+}
+
+/// Upper bound on the files the mount scan reads; a larger tree is doubt.
+const MOUNT_SCAN_FILE_LIMIT: usize = 20_000;
+
+/// Every Rust source and `Cargo.toml` of the workspace on disk (#14962
+/// review), read once per composition pass that has a skip candidate. The
+/// walk covers the workspace root and every metadata member directory,
+/// skipping `target` and hidden directories. In a committed-history check a
+/// dirty file contributes both its working-tree and its `HEAD` text, so a
+/// mention in either keeps the file.
+struct WorkspaceMountScan {
+    /// Workspace-relative path (when the file sits under the root), its
+    /// lowercased text, and the module names it declares.
+    sources: Vec<(Option<PathBuf>, String, BTreeSet<String>)>,
+}
+
+impl WorkspaceMountScan {
+    /// `None` is doubt for the whole workspace: an unreadable file, a tree
+    /// past [`MOUNT_SCAN_FILE_LIMIT`], or any source that may assemble a
+    /// `mod` or `include!` operand the text cannot name (a dynamic
+    /// `include!(concat!(env!("OUT_DIR"), ..))`, a macro-built `mod`) or that
+    /// spells a `path`/`include!` operand with escapes.
+    fn read(workspace_root: &Path, package_dirs: &BTreeSet<PathBuf>) -> Option<Self> {
+        let absolute_root = std::path::absolute(workspace_root).ok()?;
+        let canonical_root = std::fs::canonicalize(workspace_root).ok();
+        let relative = |path: &Path| -> Option<PathBuf> {
+            path.strip_prefix(&absolute_root)
+                .ok()
+                .or_else(|| {
+                    canonical_root
+                        .as_ref()
+                        .and_then(|root| path.strip_prefix(root).ok())
+                })
+                .map(Path::to_path_buf)
+        };
+        let mut files: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut pending: Vec<PathBuf> = vec![absolute_root.clone()];
+        pending.extend(package_dirs.iter().cloned());
+        let mut visited: BTreeSet<PathBuf> = BTreeSet::new();
+        while let Some(dir) = pending.pop() {
+            if !visited.insert(dir.clone()) {
+                continue;
+            }
+            let entries = std::fs::read_dir(&dir).ok()?;
+            for entry in entries {
+                let entry = entry.ok()?;
+                let path = entry.path();
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                let kind = entry.file_type().ok()?;
+                if kind.is_dir() {
+                    if name != "target" && !name.starts_with('.') {
+                        pending.push(path);
+                    }
+                } else if name.ends_with(".rs") || name == "Cargo.toml" {
+                    files.insert(path);
+                }
+                if files.len() + pending.len() > MOUNT_SCAN_FILE_LIMIT {
+                    return None;
+                }
+            }
+        }
+        let mut sources = Vec::with_capacity(files.len());
+        for path in files {
+            let text = std::fs::read_to_string(&path).ok()?;
+            let manifest = path.ends_with("Cargo.toml");
+            sources.push((relative(&path), text, manifest));
+        }
+        if let Some(overlay) = crate::analysis::committed_source::current_overlay() {
+            for dirty in overlay.dirty_paths() {
+                let dirty = PathBuf::from(dirty);
+                if let Ok(Some(bytes)) =
+                    crate::analysis::committed_source::read_source_bytes(workspace_root, &dirty)
+                {
+                    let manifest = dirty.ends_with("Cargo.toml");
+                    let text = String::from_utf8_lossy(&bytes).into_owned();
+                    sources.push((Some(dirty), text, manifest));
+                }
+            }
+        }
+        let mut lowered = Vec::with_capacity(sources.len());
+        for (path, text, manifest) in sources {
+            if stray_files::spells_a_path_with_escapes(&text)
+                || (!manifest && stray_files::builds_module_operands(&text))
+            {
+                return None;
+            }
+            if manifest {
+                // A manifest names a file only as a target `path` or a
+                // `build` script, and cargo metadata already lists every
+                // target's `src_path`: `crate_root_may_run` asks it.
+                continue;
+            }
+            let mut declared = BTreeSet::new();
+            stray_files::collect_declared_modules(&text, &mut declared);
+            lowered.push((path, text.to_ascii_lowercase(), declared));
+        }
+        Some(Self { sources: lowered })
+    }
+
+    /// True when a source outside `chain` (the file and its own skipped
+    /// ancestry) may compile `file` into another target: it spells the file
+    /// name anywhere (a `#[path]`, an `include!`, a manifest `path`, a build
+    /// script that writes a mount) or declares a `mod` of the file's stem. A
+    /// `mod.rs` is named by its directory, which the text cannot tie to the
+    /// file, so it is always doubt. Names compare ASCII-case-insensitively.
+    fn may_mount(&self, file: &Path, chain: &BTreeSet<&Path>) -> bool {
+        let Some(name) = file.file_name().and_then(|name| name.to_str()) else {
+            return true;
+        };
+        if name == "mod.rs" {
+            return true;
+        }
+        let name = name.to_ascii_lowercase();
+        let stem = file
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        self.sources.iter().any(|(path, text, declared)| {
+            !path.as_deref().is_some_and(|path| chain.contains(path))
+                && (text.contains(name.as_str()) || declared.contains(&stem))
+        })
+    }
 }
 
 /// Cheap premise for the metadata probe (#14962): the package manifest sets

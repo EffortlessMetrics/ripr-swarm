@@ -45,6 +45,23 @@ impl TempCrate {
         changed_file: &str,
         fn_line: usize,
     ) -> Result<Self, String> {
+        Self::create_in(
+            &format!(
+                "[package]\nname = \"lib-test-false\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n{manifest_extra}"
+            ),
+            files,
+            changed_file,
+            fn_line,
+        )
+    }
+
+    /// A crate or workspace whose root manifest is exactly `root_manifest`.
+    fn create_in(
+        root_manifest: &str,
+        files: &[(&str, &str)],
+        changed_file: &str,
+        fn_line: usize,
+    ) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-lib-test-false-{}-{}",
@@ -63,12 +80,7 @@ impl TempCrate {
             }
             std::fs::write(&path, text).map_err(|error| format!("write {relative} failed: {error}"))
         };
-        write(
-            "Cargo.toml",
-            &format!(
-                "[package]\nname = \"lib-test-false\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n{manifest_extra}"
-            ),
-        )?;
+        write("Cargo.toml", root_manifest)?;
         for (relative, text) in files {
             write(relative, text)?;
         }
@@ -78,11 +90,15 @@ impl TempCrate {
 
     /// The one return-value finding for the changed `a + 2`.
     fn finding(&self) -> Result<Finding, String> {
+        self.finding_in(Mode::Ready)
+    }
+
+    fn finding_in(&self, mode: Mode) -> Result<Finding, String> {
         let output = check_workspace(CheckInput {
             root: self.root.clone(),
             base: None,
             diff_file: Some(self.root.join("diff.patch")),
-            mode: Mode::Ready,
+            mode,
             format: OutputFormat::Json,
             include_unchanged_tests: true,
             ..CheckInput::default()
@@ -253,5 +269,113 @@ fn lib_test_false_module_shared_with_a_tested_bin_keeps_credit() -> Result<(), S
         ExposureClass::Exposed,
         "a module a tested bin also compiles keeps its tests: {finding:?}"
     );
+    Ok(())
+}
+
+const MEMBER_A: &str =
+    "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[lib]\ntest = false\n";
+
+const MEMBER_B: &str = "[package]\nname = \"b\"\nversion = \"0.0.0\"\nedition = \"2021\"\n";
+
+const WORKSPACE: &str = "[workspace]\nmembers = [\"a\", \"b\"]\nresolver = \"2\"\n";
+
+/// Every mode, so no mode's narrower index can drop a credit (#14962 review).
+const MODES: [Mode; 5] = [
+    Mode::Instant,
+    Mode::Draft,
+    Mode::Fast,
+    Mode::Deep,
+    Mode::Ready,
+];
+
+fn assert_exposed_in_every_mode(fixture: &TempCrate, label: &str) -> Result<(), String> {
+    for mode in MODES {
+        let finding = fixture.finding_in(mode.clone())?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label} in {mode:?}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_member_path_mount_of_a_skipped_library_file_keeps_credit_in_every_mode() -> Result<(), String>
+{
+    // #14962 review B3: `b` compiles `a/src/shared.rs` through `#[path]`
+    // without depending on `a`, so `cargo test -p b` runs `t`. A draft run
+    // that does not index `b` must not withhold it.
+    let fixture = TempCrate::create_in(
+        WORKSPACE,
+        &[
+            ("a/Cargo.toml", MEMBER_A),
+            ("a/src/lib.rs", "pub mod shared;\n"),
+            ("a/src/shared.rs", &lib_source(UNIT_TESTS)),
+            ("b/Cargo.toml", MEMBER_B),
+            (
+                "b/src/lib.rs",
+                "#[path = \"../../a/src/shared.rs\"]\npub mod shared;\n",
+            ),
+        ],
+        "a/src/shared.rs",
+        1,
+    )?;
+    assert_exposed_in_every_mode(&fixture, "a `#[path]` mount in another member")
+}
+
+#[test]
+fn an_integration_target_path_mount_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review B3: `tests/it.rs` mounts `src/util.rs`, so the
+    // integration binary runs `t` even though the library's does not.
+    let fixture = TempCrate::create_changing(
+        LIB_TEST_FALSE,
+        &[
+            ("src/lib.rs", "pub mod util;\n"),
+            ("src/util.rs", &lib_source(UNIT_TESTS)),
+            ("tests/it.rs", "#[path = \"../src/util.rs\"]\nmod util;\n"),
+        ],
+        "src/util.rs",
+        1,
+    )?;
+    assert_exposed_in_every_mode(&fixture, "a `#[path]` mount from `tests/`")
+}
+
+#[test]
+fn a_build_script_generated_mount_keeps_credit() -> Result<(), String> {
+    // #14962 review B1: `b`'s build script writes `#[path = ...] pub mod
+    // shared;` into `OUT_DIR`, and `b` includes it, so `cargo test -p b`
+    // runs `t`. The dynamic `include!` is doubt, not a skip.
+    let build = "use std::path::PathBuf;\nfn main() {\n    let out = PathBuf::from(std::env::var(\"OUT_DIR\").unwrap());\n    let shared = PathBuf::from(std::env::var(\"CARGO_MANIFEST_DIR\").unwrap()).join(\"../a/src/shared.rs\");\n    std::fs::write(out.join(\"plain.rs\"), format!(\"#[path = {:?}] pub mod shared;\\n\", shared.display().to_string())).unwrap();\n}\n";
+    let fixture = TempCrate::create_in(
+        WORKSPACE,
+        &[
+            ("a/Cargo.toml", MEMBER_A),
+            ("a/src/lib.rs", "pub mod shared;\n"),
+            ("a/src/shared.rs", &lib_source(UNIT_TESTS)),
+            ("b/Cargo.toml", &format!("{MEMBER_B}build = \"build.rs\"\n")),
+            ("b/build.rs", build),
+            (
+                "b/src/lib.rs",
+                "include!(concat!(env!(\"OUT_DIR\"), \"/plain.rs\"));\n",
+            ),
+        ],
+        "a/src/shared.rs",
+        1,
+    )?;
+    assert_exposed_in_every_mode(&fixture, "a build-script-generated mount")
+}
+
+#[test]
+fn a_skipped_library_is_withheld_in_every_mode() -> Result<(), String> {
+    // The skip itself does not depend on the mode either.
+    let fixture = TempCrate::create(LIB_TEST_FALSE, &[("src/lib.rs", &lib_source(UNIT_TESTS))])?;
+    for mode in MODES {
+        let finding = fixture.finding_in(mode.clone())?;
+        assert!(
+            !credits_a_discriminator(&finding.class),
+            "{mode:?}: {finding:?}"
+        );
+    }
     Ok(())
 }

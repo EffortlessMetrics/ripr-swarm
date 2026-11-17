@@ -137,7 +137,7 @@ pub(super) fn never_compiled(
 /// cannot name: any `$` beside a `mod`/`include` word (macro metavariables,
 /// whatever comments, strings or whitespace sit between them), or an
 /// `include!` whose operand is not a plain string literal.
-fn builds_module_operands(source: &str) -> bool {
+pub(super) fn builds_module_operands(source: &str) -> bool {
     if source.contains('$') && (source.contains("mod") || source.contains("include")) {
         return true;
     }
@@ -209,7 +209,7 @@ fn collect_referenced_file_names(
 /// backslash before its operand closes (an escape such as `\x2e`, `\u{72}`,
 /// a line continuation or a Windows separator), so the operand could spell a
 /// name the substring scan cannot match.
-fn spells_a_path_with_escapes(text: &str) -> bool {
+pub(super) fn spells_a_path_with_escapes(text: &str) -> bool {
     ["path", "include!"].iter().any(|key| {
         text.match_indices(key).any(|(at, _)| {
             let window = &text[at..];
@@ -224,7 +224,7 @@ fn spells_a_path_with_escapes(text: &str) -> bool {
 
 /// Every identifier following a `mod` keyword, in any position. Comments and
 /// strings count too: this only ever adds doubt.
-fn collect_declared_modules(source: &str, out: &mut BTreeSet<String>) {
+pub(super) fn collect_declared_modules(source: &str, out: &mut BTreeSet<String>) {
     collect_modules_in(source, out);
     collect_modules_in(&without_comments(source), out);
 }

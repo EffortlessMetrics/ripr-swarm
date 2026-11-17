@@ -154,7 +154,20 @@ impl Workspace {
             "Cargo.toml",
             &format!("[workspace]\nmembers = {members}\nresolver = \"2\"\n"),
         )?;
-        write("a/Cargo.toml", &package("a", "\n[lib]\ndoctest = false\n"))?;
+        write(
+            "a/Cargo.toml",
+            // #14962: with `[lib] test = false` only `b`'s mount of
+            // `shared.rs` runs its tests. `PlainStd` has no `b`, so there
+            // `cargo test` would run 0 tests; it leaves `test` on instead.
+            &package(
+                "a",
+                if placement == Placement::PlainStd {
+                    "\n[lib]\ndoctest = false\n"
+                } else {
+                    "\n[lib]\ntest = false\ndoctest = false\n"
+                },
+            ),
+        )?;
         write("a/src/lib.rs", "mod shared;\n")?;
         let before = shared_source(shape, test_statement, "4");
         let after = shared_source(shape, test_statement, "5");
@@ -923,7 +936,7 @@ fn a_dependency_macro_in_the_test_packages_import_scope_keeps_the_gap() -> Resul
         workspace.write_file(
             "a/Cargo.toml",
             &format!(
-                "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[lib]\ndoctest = false\n\n[dependencies]\n{dependency}\n"
+                "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[lib]\ntest = false\ndoctest = false\n\n[dependencies]\n{dependency}\n"
             ),
         )?;
         let exports = "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n";
@@ -1132,7 +1145,7 @@ fn with_dependencies(workspace: &Workspace, dependencies: &str) -> Result<(), St
     workspace.write_file(
         "a/Cargo.toml",
         &format!(
-            "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\ndoctest = false\n\n[dependencies]\n{dependencies}\n"
+            "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\ntest = false\ndoctest = false\n\n[dependencies]\n{dependencies}\n"
         ),
     )
 }

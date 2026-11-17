@@ -109,6 +109,21 @@ file are withheld, exactly as for an uncompiled file, when all of these hold:
    subprocess.
 4. No `Cargo.toml` is dirty in a committed-history check: the probe reads the
    working tree, not the `HEAD` bytes the files were loaded from (#8016).
+5. No other target can mount the file, judged from every workspace source on
+   disk rather than from the run's index, because a draft or instant run
+   indexes less and a build-script `include!` never enters any index (#14962
+   review). The walk covers the workspace root and every cargo metadata
+   member, skipping `target` and hidden directories, and in a
+   committed-history check also reads the `HEAD` text of dirty files. The
+   file keeps its tests when any source outside its own skipped ancestry
+   spells its file name (a `#[path]`, a static `include!`, a build script that
+   writes a mount) or declares a `mod` of its stem; when any source builds a
+   `mod`/`include!` operand dynamically (`include!(concat!(env!("OUT_DIR"),
+   ..))`, a macro metavariable) or spells such an operand with escapes; when
+   the file is a `mod.rs`; when cargo metadata lists the file itself as a
+   live or unmodeled target (`[[test]] path`, `build`, an example); or when
+   the walk cannot finish (an unreadable file, more than 20,000 entries).
+   So the verdict does not change with `--mode`.
 
 The file and its functions stay indexed. Doctests are a separate rustdoc run
 (`[lib] doctest`) and register after this pass, so a doc example keeps its
@@ -138,6 +153,10 @@ running test; no named stop reason is added on this issue.
   false` crate still read `exposed`, as does a module a tested bin also
   declares; and a same-run index extension that revives withheld tests
   matches a fresh build.
+- Mounts (#14962 review): a `#[path]` mount of the file from another member,
+  from a `tests/` target, and from a build-script-generated `include!` keep
+  `exposed` in every `--mode`, and the plain skip reads the same in every
+  mode.
 
 ## Known Limits
 
@@ -151,17 +170,24 @@ running test; no named stop reason is added on this issue.
 - Build scripts that write sources into the tree, `cargo script` files and
   other non-Cargo compilers are not modelled; a file only they compile loses
   its tests here.
-- Skipped targets (#14962): a parent the index does not hold (a `tests/`
-  file reaching a `src/` file through `#[path]` while only `src/` is
-  indexed) is not seen, so such a shared file can lose its credit. `[lib]
-  harness = false` is not modelled.
+- Skipped targets (#14962): a non-member package outside the workspace root
+  that `#[path]`-mounts the file is not walked. The mount scan is textual, so
+  an unrelated mention of the file name or a same-named `mod` anywhere keeps
+  the credit (more doubt, never less). A file whose skipped ancestry the run
+  did not index keeps its tests (`--mode instant` can then credit what
+  `ready` withholds, the over-credit direction the base already had).
+  `[lib] harness = false` is not modelled.
 
 ## Non-Goals
 
 - Runtime mutation proof or sufficiency claims.
 - A general module resolver. The haystack rule makes no `cargo metadata`
-  call; the skipped-target rule reuses the existing `ManifestInventory`
-  probe and adds no new one.
+  call. The skipped-target rule uses the existing `ManifestInventory` probe,
+  but in a new instance per composition pass: a repository whose manifest
+  switches a lib or bin `test` off (or a bin names `required-features`) pays
+  one `cargo metadata --no-deps --offline` per index build (a check builds up
+  to two), plus one walk of the workspace sources once a candidate passes the
+  metadata checks. Other repositories pay nothing.
 
 ## Acceptance Examples
 
