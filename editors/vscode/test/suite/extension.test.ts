@@ -1734,28 +1734,30 @@ suite('Extension Smoke', () => {
         (diagnostic as vscode.Diagnostic & { data?: unknown }).data = { seam_id: seamId };
         collection.set(uri, [diagnostic]);
 
-        // The editor-visible actions are the real inert-start set: no
-        // enabled start, but the related-test action (a start candidate) is
-        // still there, as on a real eligible seam.
+        // The editor-visible actions carry no enabled start, but a start
+        // candidate is still there (a real eligible seam keeps its
+        // related-test action); a copy-packet candidate makes its run
+        // observable on the clipboard.
         provider = vscode.languages.registerCodeActionsProvider(
           { language: 'rust', scheme: 'file' },
           {
             provideCodeActions() {
               const action = new vscode.CodeAction('Agent handoff: copy packet command', vscode.CodeActionKind.QuickFix);
               action.command = { title: 'Agent handoff: copy packet command', command: 'ripr.copyAgentPacketCommand', arguments: [] };
-              const related = new vscode.CodeAction('Write targeted test: open best related test', vscode.CodeActionKind.QuickFix);
-              related.command = {
-                title: 'Write targeted test: open best related test',
-                command: 'ripr.openRelatedTest',
-                arguments: [{ uri: workspaceFileUri('tests/pricing.rs').toString(), line: 4 }],
+              const fallback = new vscode.CodeAction('Copy repair instructions for an AI agent', vscode.CodeActionKind.QuickFix);
+              fallback.command = {
+                title: 'Copy repair instructions for an AI agent',
+                command: 'ripr.copyContext',
+                arguments: [{ label: 'first_repair_packet', packet: 'fallback repair packet' }],
               };
-              return [action, related];
+              return [action, fallback];
             },
           }
         );
 
         await context.controller.start();
-        await waitForCodeAction(uri, diagnostic.range, (action) => action.title === 'Agent handoff: copy packet command');
+        await writeClipboardText('start-blocked-repair-sentinel');
+        await waitForCodeAction(uri, diagnostic.range, (action) => action.title === 'Copy repair instructions for an AI agent');
         await context.controller.startCurrentRepair();
 
         const request = context.client.requests.find((entry) => entry.method === 'textDocument/codeAction');
@@ -1773,9 +1775,14 @@ suite('Extension Smoke', () => {
             context.infoMessages.join(' | ')
           );
           assert.ok(!context.infoMessages.some((message) => message.includes('Refresh saved-workspace analysis')));
+          // The blocked start wins: the fallback candidate never ran.
+          assert.strictEqual(await vscode.env.clipboard.readText(), 'start-blocked-repair-sentinel');
         } else {
-          // No server reason: the related-test candidate runs as before, so
-          // neither the blocked message nor the refresh hint is shown.
+          // No server reason: the fallback candidate runs as before.
+          assert.strictEqual(
+            await waitForClipboardText((text) => text === 'fallback repair packet'),
+            'fallback repair packet'
+          );
           assert.ok(
             !context.infoMessages.some((message) =>
               message.includes('cannot start this repair') || message.includes('Refresh saved-workspace analysis')
