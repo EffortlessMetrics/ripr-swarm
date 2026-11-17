@@ -440,6 +440,10 @@ impl std::fmt::Debug for CallIdentityMemos {
 /// off) and how the package splits `src/` between its crates.
 struct PackageCallIdentityShape {
     remaps_module_paths: bool,
+    /// A `tests/` file remaps only modules of its own directory
+    /// ([`path_attributes_stay_in_test_dir`]): that moves no module of an
+    /// owner outside `tests/`, so only owners under `tests/` turn the rule off.
+    remaps_test_modules: bool,
     layout: CrateLayout,
 }
 
@@ -452,17 +456,27 @@ struct PackageCallIdentityShape {
 fn scan_call_identity_shapes(
     index: &RustIndex,
 ) -> BTreeMap<Option<String>, std::sync::Arc<PackageCallIdentityShape>> {
-    let mut remaps: BTreeMap<Option<String>, bool> = BTreeMap::new();
+    // Per package: (a `#[path]` that may move any module, a `#[path]` that
+    // only rearranges an integration-test crate).
+    let mut remaps: BTreeMap<Option<String>, (bool, bool)> = BTreeMap::new();
     let mut libs: BTreeMap<Option<String>, Vec<std::sync::Arc<str>>> = BTreeMap::new();
     let mut mains: BTreeMap<Option<String>, Vec<std::sync::Arc<str>>> = BTreeMap::new();
     for (path, facts) in index.files().iter() {
         let package = package_key(path);
-        let remapped = remaps.entry(package.clone()).or_insert(false);
-        if !*remapped
-            && has_path_attribute(&facts.data().source)
+        remaps.entry(package.clone()).or_insert((false, false));
+        if has_path_attribute(&facts.data().source)
             && !path_attributes_only_select_cfg_alternatives(&facts.data().source)
         {
-            *remapped = true;
+            // A `tests/` file whose remaps stay in its own directory can only
+            // rearrange that integration-test crate (#12771).
+            let in_tests =
+                under_tests_dir(path) && path_attributes_stay_in_test_dir(&facts.data().source);
+            let flags = remaps.entry(package.clone()).or_insert((false, false));
+            if in_tests {
+                flags.1 = true;
+            } else {
+                flags.0 = true;
+            }
         }
         if under_tests_dir(path) {
             continue;
@@ -483,7 +497,7 @@ fn scan_call_identity_shapes(
     // already holds every package with an indexed file.
     remaps
         .into_iter()
-        .map(|(package, remaps_module_paths)| {
+        .map(|(package, (remaps_module_paths, remaps_test_modules))| {
             let lib = libs.get(&package).cloned().unwrap_or_default();
             let main = mains.get(&package).cloned().unwrap_or_default();
             let declared = |sources: Vec<std::sync::Arc<str>>| match sources.as_slice() {
@@ -495,6 +509,7 @@ fn scan_call_identity_shapes(
                 (!lib.is_empty() && !main.is_empty()).then(|| (declared(lib), declared(main)));
             let shape = PackageCallIdentityShape {
                 remaps_module_paths,
+                remaps_test_modules,
                 layout: CrateLayout {
                     package: package.clone(),
                     roots,
@@ -554,6 +569,7 @@ fn call_identity_shape(
             // replaces both answered `false`/no-roots for this case.
             std::sync::Arc::new(PackageCallIdentityShape {
                 remaps_module_paths: false,
+                remaps_test_modules: false,
                 layout: CrateLayout {
                     package: package.map(str::to_string),
                     roots: None,
@@ -803,9 +819,7 @@ impl OwnerCallIdentity {
                 rivals.push(function);
             }
         }
-        if (rivals.is_empty() && !solo)
-            || package_remaps_module_paths(index, owner_package.as_deref())
-        {
+        if (rivals.is_empty() && !solo) || package_remaps_owner_module_paths(index, owner) {
             return None;
         }
         let layout = CrateLayout::new(index, owner_package.as_deref());
@@ -1326,7 +1340,16 @@ fn join(left: &[String], right: &[String]) -> Vec<String> {
 /// [`file_module_segments`] reads. A raw scan: a match inside a string or
 /// comment only switches the rule off.
 fn package_remaps_module_paths(index: &RustIndex, package: Option<&str>) -> bool {
-    call_identity_shape(index, package).remaps_module_paths
+    let shape = call_identity_shape(index, package);
+    shape.remaps_module_paths || shape.remaps_test_modules
+}
+
+/// Whether a `#[path]` in `package` may move a module path of `owner`'s
+/// crate: any remap outside `tests/`, or a `tests/` remap when the owner
+/// itself lives under `tests/` (#12771).
+fn package_remaps_owner_module_paths(index: &RustIndex, owner: &FunctionSummary) -> bool {
+    let shape = call_identity_shape(index, package_key(&owner.file).as_deref());
+    shape.remaps_module_paths || (shape.remaps_test_modules && under_tests_dir(&owner.file))
 }
 
 /// Whether every `#[path]` in `source` only selects between the two files of
@@ -1422,6 +1445,63 @@ fn path_attributes_only_select_cfg_alternatives(source: &str) -> bool {
             }
             _ => false,
         })
+}
+
+/// Whether every `#[path]` in a `tests/` file is a plain `#[path = ".."]` on
+/// a module declaration whose literal stays below the declaring directory: no
+/// `..` segment, no absolute or drive path, no backslash (#12771). Such a remap
+/// only rearranges modules of that integration-test crate, which never holds
+/// the owner or a same-crate rival, so it cannot move a module path the owner
+/// identity reads. A `#[path]` inside a macro body, a `cfg_attr` carrier, a
+/// parse error or any other shape fails closed (`false`).
+fn path_attributes_stay_in_test_dir(source: &str) -> bool {
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, HasAttrs},
+    };
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return false;
+    };
+    let file = parse.tree();
+    if file
+        .syntax()
+        .descendants()
+        .filter_map(ast::TokenTree::cast)
+        .any(|tree| has_path_attribute(&tree.syntax().text().to_string()))
+    {
+        return false;
+    }
+    let mut accepted = 0usize;
+    for module in file.syntax().descendants().filter_map(ast::Module::cast) {
+        for attr in module.attrs() {
+            let text = attr.syntax().text().to_string();
+            if !attribute_sets_path(&text) {
+                continue;
+            }
+            let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+            let Some(value) = compact
+                .strip_prefix("#[path=\"")
+                .and_then(|rest| rest.strip_suffix("\"]"))
+            else {
+                return false;
+            };
+            if value.is_empty()
+                || value.starts_with('/')
+                || value.contains(['\\', ':', '"'])
+                || value.split('/').any(|segment| segment == "..")
+            {
+                return false;
+            }
+            accepted += 1;
+        }
+    }
+    let total = file
+        .syntax()
+        .descendants()
+        .filter_map(ast::Attr::cast)
+        .filter(|attr| attribute_sets_path(&attr.syntax().text().to_string()))
+        .count();
+    accepted > 0 && total == accepted
 }
 
 pub(super) fn has_path_attribute(source: &str) -> bool {
@@ -4776,6 +4856,34 @@ mod blocks {
             assert!(!std::sync::Arc::ptr_eq(&root, &other));
         }
         Ok(())
+    }
+
+    /// A `tests/` remap that stays in its own directory cannot move an
+    /// owner's module path; every other `#[path]` shape keeps the rule off
+    /// (#12771).
+    #[test]
+    fn test_dir_path_attributes_stay_only_below_their_directory() {
+        use super::path_attributes_stay_in_test_dir as stays;
+        assert!(stays("mod rows;\n#[path = \"other/rows.rs\"]\nmod far;\n"));
+        assert!(stays(
+            "#[path = \"a.rs\"] mod a;\nmod b { #[path = \"c/d.rs\"] mod d; }\n"
+        ));
+        // No `#[path]` at all is not this shape.
+        assert!(!stays("mod rows;\n"));
+        for declined in [
+            "#[path = \"../src/lib.rs\"] mod lib;",
+            "#[path = \"other/../../src/x.rs\"] mod x;",
+            "#[path = \"/abs/x.rs\"] mod x;",
+            "#[path = \"C:/x.rs\"] mod x;",
+            "#[path = \"other\\\\x.rs\"] mod x;",
+            "#[path = r\"x.rs\"] mod x;",
+            "#[cfg_attr(unix, path = \"x.rs\")] mod x;",
+            "#[r#path = \"x.rs\"] mod x;",
+            "macro_rules! m { () => { #[path = \"x.rs\"] mod x; } }",
+            "#[path = \"x.rs\"] mod x; fn broken(",
+        ] {
+            assert!(!stays(declined), "{declined}");
+        }
     }
 
     /// Two same-named owners on one source line (inline sibling modules)
