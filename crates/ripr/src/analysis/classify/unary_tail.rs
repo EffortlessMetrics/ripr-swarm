@@ -34,7 +34,7 @@ use crate::analysis::rust_index::RustIndex;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
-    AstNode,
+    AstNode, SyntaxKind,
     ast::{self, HasGenericArgs, HasGenericParams, HasName},
 };
 
@@ -365,6 +365,16 @@ impl OwnerTail {
             return None;
         }
         let body = function.body()?;
+        // An attribute anywhere in the body (`#![cfg(any())]` on the block,
+        // `#[cfg(..)]` on the tail) can compile out syntax this reading
+        // compares, so any `#` in the body refuses.
+        if body
+            .syntax()
+            .descendants_with_tokens()
+            .any(|element| element.kind() == SyntaxKind::POUND)
+        {
+            return None;
+        }
         let list = body.stmt_list()?;
         if list.statements().next().is_some() {
             return None;
@@ -496,6 +506,13 @@ mod tests {
             ("pub fn f(a: i32) -> i32 {\n    -B\n}", 1),
             ("pub fn f(p: P) -> i32 {\n    -p.x\n}", 1),
             ("pub fn f(&self) -> i32 {\n    -self\n}", 1),
+            // An attribute in the body: an inner one on the block, an outer
+            // one on the tail.
+            (
+                "pub fn f(a: i32) -> i32 {\n    #![cfg(any())]\n    -a\n}",
+                2,
+            ),
+            ("pub fn f(a: i32) -> i32 {\n    #[cfg(any())]\n    -a\n}", 2),
             // A generic or async owner.
             ("pub fn f<T>(a: i32) -> i32 {\n    -a\n}", 1),
             ("pub async fn f(a: i32) -> i32 {\n    -a\n}", 1),

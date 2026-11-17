@@ -828,3 +828,45 @@ index 1111111..2222222 100644
         2,
     )
 }
+
+/// An inner attribute on the owner's block can compile out the tail this
+/// reading compares (#14852 companion finding), so a body holding any `#`
+/// is never credited.
+#[test]
+fn an_attribute_inside_the_owner_body_is_not_exposed() -> Result<(), String> {
+    let lib = "pub fn f(x: i32) -> i32 {
+    #![cfg_attr(any(), rustfmt::skip)]
+    x
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn pins() {
+        assert_eq!(f(5), 5);
+    }
+}
+";
+    let patch = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,4 +1,4 @@
+ pub fn f(x: i32) -> i32 {
+     #![cfg_attr(any(), rustfmt::skip)]
+-    -x
++    x
+ }
+";
+    let findings = TempRepo::create(lib, patch)?.findings()?;
+    let finding = tail_finding(&findings, 3, "x")?;
+    assert!(
+        !matches!(
+            finding.class,
+            ExposureClass::Exposed | ExposureClass::WeaklyExposed
+        ) && finding.ripr.propagate.state != StageState::Yes,
+        "{finding:?}"
+    );
+    Ok(())
+}
