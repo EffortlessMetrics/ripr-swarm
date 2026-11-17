@@ -313,6 +313,7 @@ pub(super) fn disable_retained_analysis_actions(
                         | "receipt_route_unavailable"
                         | "preview_or_static_limitation"
                         | "repair_route_not_ready"
+                        | "uncommitted_production_change"
                 )
             )
         {
@@ -527,6 +528,85 @@ fn cross_language_disabled_action(
         disabled.reason = CROSS_LANGUAGE_LIMITATION_REASON.to_string();
     }
     Some(action)
+}
+
+/// The commit step a seam repair start needs before it can begin (#13636):
+/// `Some(git ... commit ...)` when the shared before-phase preflight
+/// (`app::repair_attempt::seam_start_dirty_premise`) names dirty production
+/// files under `snapshot_root`, spelled with the `root_display` the start
+/// command binds. `None` on a clean premise. An unreadable premise is also
+/// `None`: the start keeps its legacy form and its own before phase stays the
+/// final authority that refuses.
+pub(super) fn seam_start_commit_step(snapshot_root: &Path, root_display: &str) -> Option<String> {
+    let files = seam_start_dirty_files(snapshot_root).ok()?;
+    crate::app::commit_prerequisite_command(root_display, &files)
+}
+
+fn seam_start_dirty_files(snapshot_root: &Path) -> Result<Vec<String>, String> {
+    #[cfg(test)]
+    if let Some(files) = test_premise::overridden() {
+        return Ok(files);
+    }
+    crate::app::repair_attempt::seam_start_dirty_premise(snapshot_root)
+}
+
+/// Test-only premise pin (#13636). The checked-in LSP goldens render from
+/// fixture roots inside this repository's own checkout, where the live
+/// preflight would report the developer's uncommitted edits (as `../..`
+/// paths) and drift the golden. Those harnesses pin a clean premise for the
+/// current thread; every other test, and production, reads the live
+/// preflight.
+#[cfg(test)]
+pub(super) mod test_premise {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static PINNED: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn overridden() -> Option<Vec<String>> {
+        PINNED.with(|pinned| pinned.borrow().clone())
+    }
+
+    /// Runs `body` with the dirty premise pinned to `files` on this thread.
+    pub(crate) fn with_pinned_premise<T>(files: Vec<String>, body: impl FnOnce() -> T) -> T {
+        let previous = PINNED.with(|pinned| pinned.replace(Some(files)));
+        let result = body();
+        PINNED.with(|pinned| *pinned.borrow_mut() = previous);
+        result
+    }
+}
+
+/// The inert "Start repair" action for a seam whose start the dirty-premise
+/// preflight refuses (#13636): same title, kind and command identity as the
+/// enabled start, no command, and a human reason naming the commit step.
+fn uncommitted_start_disabled_action(
+    commit: &str,
+    diagnostic: &Diagnostic,
+    snapshot: &AnalysisSnapshot,
+) -> Option<CodeActionOrCommand> {
+    let mut action = disabled_action(
+        AGENT_REPAIR_COMMAND_TITLE,
+        "quickfix.ripr.inspect",
+        "copy_agent_repair_command",
+        COPY_AGENT_REPAIR_COMMAND,
+        diagnostic,
+        Some(snapshot),
+        ActionDisabledReason::UncommittedProductionChange,
+    )?;
+    if let CodeActionOrCommand::CodeAction(code_action) = &mut action
+        && let Some(disabled) = code_action.disabled.as_mut()
+    {
+        disabled.reason = uncommitted_start_reason(commit);
+    }
+    Some(action)
+}
+
+/// Human text for the inert start (#13636), in the `ripr check` route's words.
+pub(super) fn uncommitted_start_reason(commit: &str) -> String {
+    format!(
+        "Commit your production change first (the repair start refuses to begin while it is uncommitted), then start the repair: {commit}"
+    )
 }
 
 /// A gap diagnostic the current snapshot no longer carries (#1892): any
@@ -764,21 +844,37 @@ fn push_seam_actions(
     if !instruction_blocks_repair
         && let Some(command) = repair_start_command_for(context.seam, &root)
     {
-        actions.push(copy_agent_loop_command_action(
-            AGENT_REPAIR_COMMAND_TITLE,
-            COPY_AGENT_REPAIR_COMMAND,
-            "copy_agent_repair_command",
-            agent_loop_command_target(
-                context.snapshot,
+        // #13636: `ripr agent repair` refuses a dirty production premise
+        // ("commit first ... Nothing was started"). Ask its own preflight so
+        // the editor names the commit step on an inert start instead of
+        // offering one that refuses. Checked live on each request, not from
+        // the snapshot, so committing re-enables the start without a
+        // refresh. A client without disabled support keeps the legacy
+        // omission.
+        if let Some(commit) = seam_start_commit_step(&context.snapshot.root, &root) {
+            if client_features.code_action_disabled
+                && let Some(action) =
+                    uncommitted_start_disabled_action(&commit, context.diagnostic, context.snapshot)
+            {
+                actions.push(action);
+            }
+        } else {
+            actions.push(copy_agent_loop_command_action(
+                AGENT_REPAIR_COMMAND_TITLE,
+                COPY_AGENT_REPAIR_COMMAND,
+                "copy_agent_repair_command",
+                agent_loop_command_target(
+                    context.snapshot,
+                    context.diagnostic,
+                    context.seam,
+                    "agent_repair",
+                    REPAIR_ATTEMPT_DIRECTORY,
+                    command,
+                ),
                 context.diagnostic,
-                context.seam,
-                "agent_repair",
-                REPAIR_ATTEMPT_DIRECTORY,
-                command,
-            ),
-            context.diagnostic,
-            Some(context.snapshot),
-        ));
+                Some(context.snapshot),
+            ));
+        }
     }
     actions.push(copy_agent_loop_command_action(
         AGENT_PACKET_COMMAND_TITLE,

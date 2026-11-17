@@ -1,5 +1,6 @@
 import * as assert from 'assert';
 import {
+  blockedRepairStartReason,
   buildAgentRepairBeforeArgs,
   extractAgentRepairLoopTarget,
   findLiveRepairAttemptForSeam,
@@ -14,6 +15,46 @@ suite('repairStart (#4645)', () => {
       buildAgentRepairBeforeArgs('/workspace', '67fc764ba37d77bd'),
       ['agent', 'repair', '--root', '/workspace', '--seam-id', '67fc764ba37d77bd', '--phase', 'before', '--json']
     );
+  });
+
+  test('blockedRepairStartReason reads the inert start reason from raw LSP actions (#13636)', () => {
+    const commit = 'git -C /repo --literal-pathspecs commit -m "<message>" -- src/lib.rs';
+    const startReason = `Commit your production change first (the repair start refuses to begin while it is uncommitted), then start the repair: ${commit}`;
+    const inert = (actionName: string, reason: string) => ({
+      title: actionName,
+      kind: 'quickfix.ripr.inspect',
+      disabled: { reason },
+      data: { action_name: actionName, disabled_reason: 'uncommitted_production_change' },
+    });
+    const enabledPacket = {
+      title: 'Agent handoff: copy packet command',
+      command: { command: 'ripr.copyAgentPacketCommand', title: 'packet' },
+      data: { action_name: 'copy_agent_packet_command' },
+    };
+    // The start's own reason wins over a less specific inert action, whatever
+    // order the server lists them in.
+    assert.strictEqual(
+      blockedRepairStartReason([
+        inert('copy_targeted_test_brief', 'route not ready'),
+        enabledPacket,
+        inert('copy_agent_repair_command', startReason),
+      ]),
+      startReason
+    );
+    assert.strictEqual(
+      blockedRepairStartReason([enabledPacket, inert('copy_gap_repair_packet', 'gap reason')]),
+      'gap reason'
+    );
+    // Negatives: no inert action, an inert action outside the start set, a
+    // blank reason, a missing machine name, or a non-array result.
+    assert.strictEqual(blockedRepairStartReason([enabledPacket]), undefined);
+    assert.strictEqual(blockedRepairStartReason([inert('copy_agent_verify_command', 'verify')]), undefined);
+    assert.strictEqual(blockedRepairStartReason([inert('copy_agent_repair_command', '  ')]), undefined);
+    assert.strictEqual(
+      blockedRepairStartReason([{ title: 'Start repair: copy repair command', disabled: { reason: startReason } }]),
+      undefined
+    );
+    assert.strictEqual(blockedRepairStartReason(null), undefined);
   });
 
   test('findLiveRepairAttemptForSeam returns only resumable awaiting or prepared rows', () => {

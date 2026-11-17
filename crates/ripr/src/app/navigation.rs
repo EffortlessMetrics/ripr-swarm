@@ -85,12 +85,13 @@ impl RepairRoute {
 
 /// `git -C <root> --literal-pathspecs commit -m "<message>" -- <files>`: the
 /// one commit spelling every repair route prints before its start (#10698,
-/// #13636). `None` for an empty file list.
+/// #13636), and the editor's blocked repair start (#13636). `None` for an
+/// empty file list.
 ///
 /// The command runs from any directory: `git -C <root>` anchors it at the
 /// analyzed root, `--literal-pathspecs` keeps names like `src/[ab].py`
 /// literal, and the files are shell-quoted and spelled relative to that root.
-fn commit_prerequisite_command(root_display: &str, files: &[String]) -> Option<String> {
+pub(crate) fn commit_prerequisite_command(root_display: &str, files: &[String]) -> Option<String> {
     if files.is_empty() {
         return None;
     }

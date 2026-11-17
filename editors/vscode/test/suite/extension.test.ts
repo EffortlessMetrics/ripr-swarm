@@ -1697,6 +1697,91 @@ suite('Extension Smoke', () => {
     }
   });
 
+  for (const blocked of [true, false]) {
+    test(`startCurrentRepair ${blocked ? 'names the server reason for an inert seam start (#13636)' : 'keeps the refresh hint when the server names no blocker'}`, async function (this: Mocha.Context) {
+      skipUnlessTrustedTestHost(this);
+      const seamId = '67fc764ba37d77bd';
+      const commit = 'git -C /repo --literal-pathspecs commit -m "<message>" -- src/lib.rs';
+      const reason = `Commit your production change first (the repair start refuses to begin while it is uncommitted), then start the repair: ${commit}`;
+      const context = createControllerTestContext({
+        lspResult: blocked
+          ? [{
+            title: 'Start repair: copy repair command',
+            kind: 'quickfix.ripr.inspect',
+            disabled: { reason },
+            data: { action_name: 'copy_agent_repair_command', disabled_reason: 'uncommitted_production_change' },
+          }]
+          : [],
+      });
+      const relativePath = `src/start-blocked-repair-${blocked ? 'named' : 'unnamed'}.rs`;
+      const uri = workspaceFileUri(relativePath);
+      const collection = vscode.languages.createDiagnosticCollection('ripr-start-blocked-repair');
+      let provider: vscode.Disposable | undefined;
+      try {
+        await writeWorkspaceFile(relativePath, 'pub fn near() {}\n');
+        const document = await vscode.workspace.openTextDocument(uri);
+        const editor = await vscode.window.showTextDocument(document);
+        editor.selection = new vscode.Selection(new vscode.Position(0, 2), new vscode.Position(0, 2));
+        // A seam diagnostic alone (no gap record): Start Current Repair must
+        // still reach the seam's start or its blocked reason.
+        const diagnostic = new vscode.Diagnostic(
+          new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 12)),
+          'weakly gripped seam',
+          vscode.DiagnosticSeverity.Information
+        );
+        diagnostic.source = 'ripr';
+        diagnostic.code = 'ripr-seam-weakly-gripped';
+        (diagnostic as vscode.Diagnostic & { data?: unknown }).data = { seam_id: seamId };
+        collection.set(uri, [diagnostic]);
+
+        // The editor-visible actions carry no enabled start, as when the
+        // server returns the start inert.
+        provider = vscode.languages.registerCodeActionsProvider(
+          { language: 'rust', scheme: 'file' },
+          {
+            provideCodeActions() {
+              const action = new vscode.CodeAction('Agent handoff: copy packet command', vscode.CodeActionKind.QuickFix);
+              action.command = { title: 'Agent handoff: copy packet command', command: 'ripr.copyAgentPacketCommand', arguments: [] };
+              return [action];
+            },
+          }
+        );
+
+        await context.controller.start();
+        await waitForCodeAction(uri, diagnostic.range, (action) => action.title === 'Agent handoff: copy packet command');
+        await context.controller.startCurrentRepair();
+
+        const request = context.client.requests.find((entry) => entry.method === 'textDocument/codeAction');
+        assert.ok(request, `the controller must ask the server directly: ${JSON.stringify(context.client.requests)}`);
+        const sent = request.params as { textDocument: { uri: string }; context: { diagnostics: Array<{ code?: unknown; data?: unknown }> } };
+        assert.strictEqual(sent.textDocument.uri, uri.toString());
+        assert.ok(
+          sent.context.diagnostics.some((wire) => wire.code === 'ripr-seam-weakly-gripped' && (wire.data as { seam_id?: string } | undefined)?.seam_id === seamId),
+          JSON.stringify(sent.context.diagnostics)
+        );
+        assert.ok(!context.runRiprCalls.some((call) => call.args[0] === 'agent' && call.args[1] === 'repair'));
+        if (blocked) {
+          assert.ok(
+            context.infoMessages.some((message) => message === `ripr cannot start this repair yet. ${reason}`),
+            context.infoMessages.join(' | ')
+          );
+          assert.ok(!context.infoMessages.some((message) => message.includes('Refresh saved-workspace analysis')));
+        } else {
+          assert.ok(
+            context.infoMessages.some((message) => message.includes('Refresh saved-workspace analysis')),
+            context.infoMessages.join(' | ')
+          );
+        }
+      } finally {
+        provider?.dispose();
+        collection.dispose();
+        await context.dispose();
+        await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+        await removeWorkspacePath(relativePath);
+      }
+    });
+  }
+
   test('copyRepairPacketAtCursor uses only the packet action for the containing diagnostic', async function (this: Mocha.Context) {
     skipUnlessTrustedTestHost(this);
     const relativePath = 'src/copy-repair-packet-at-cursor.rs';

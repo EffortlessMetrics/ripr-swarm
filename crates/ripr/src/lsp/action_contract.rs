@@ -55,6 +55,12 @@ pub(super) enum ActionDisabledReason {
     /// check (#13716). Distinct from a static
     /// limitation, which names something ripr cannot trace.
     RepairRouteNotReady,
+    /// The seam repair start would be refused right now because tracked
+    /// production files differ from HEAD (#13636): the shared before-phase
+    /// dirty-premise preflight
+    /// (`app::repair_attempt::seam_start_dirty_premise`) names them. The
+    /// emitted human text carries the commit step.
+    UncommittedProductionChange,
     // Reserved below: closed-vocabulary members with named future producers.
     // The emit guard (`disabled_reason_emittable`) keeps every reserved
     // reason unemitted until its producer lands — real producers only.
@@ -91,6 +97,7 @@ impl ActionDisabledReason {
             Self::ReceiptRouteUnavailable => "receipt_route_unavailable",
             Self::PreviewOrStaticLimitation => "preview_or_static_limitation",
             Self::RepairRouteNotReady => "repair_route_not_ready",
+            Self::UncommittedProductionChange => "uncommitted_production_change",
             Self::WorkspaceRootBlocked => "workspace_root_blocked",
             Self::FixSiteUnavailable => "fix_site_unavailable",
             Self::ExactReplacementUnavailable => "exact_replacement_unavailable",
@@ -125,6 +132,9 @@ impl ActionDisabledReason {
             Self::RepairRouteNotReady => {
                 "ripr does not have a complete repair route for this finding yet (a test to extend and the exact value it must check); copy the context packet and inspect it by hand"
             }
+            Self::UncommittedProductionChange => {
+                "Commit your production change first (the repair start refuses to begin while it is uncommitted), then run the repair start again"
+            }
             Self::StaleDocument => "The document changed after this analysis snapshot",
             Self::WorkspaceRootBlocked => "The workspace root is blocked for analysis",
             Self::FixSiteUnavailable => "No fix site is available for this finding",
@@ -152,6 +162,7 @@ pub(super) const EMITTED_DISABLED_REASONS: &[ActionDisabledReason] = &[
     ActionDisabledReason::ReceiptRouteUnavailable,
     ActionDisabledReason::PreviewOrStaticLimitation,
     ActionDisabledReason::RepairRouteNotReady,
+    ActionDisabledReason::UncommittedProductionChange,
 ];
 
 /// Reserved reasons with named future producers. Never emitted until the
@@ -522,6 +533,7 @@ mod tests {
             ActionDisabledReason::ReceiptRouteUnavailable,
             ActionDisabledReason::PreviewOrStaticLimitation,
             ActionDisabledReason::RepairRouteNotReady,
+            ActionDisabledReason::UncommittedProductionChange,
             ActionDisabledReason::WorkspaceRootBlocked,
             ActionDisabledReason::FixSiteUnavailable,
             ActionDisabledReason::ExactReplacementUnavailable,

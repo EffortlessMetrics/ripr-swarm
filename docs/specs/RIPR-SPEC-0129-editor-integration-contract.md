@@ -95,7 +95,8 @@ fix-instruction summaries, and no retrieval references — those belong to
 `lsp/action_contract.rs`; only reasons with a real producer are emitted —
 today `analysis_not_current`, `stale_snapshot`, `client_capability_missing`,
 `verification_route_unavailable`, `receipt_route_unavailable`,
-`preview_or_static_limitation`, and `repair_route_not_ready` — while the reserved members
+`preview_or_static_limitation`, `repair_route_not_ready`, and
+`uncommitted_production_change` — while the reserved members
 (`stale_document`, `workspace_root_blocked`, `fix_site_unavailable`,
 `exact_replacement_unavailable`, `ambiguous_fix_site`,
 `outside_allowed_edit_surface`, `configuration_invalid`) stay unemittable
@@ -317,10 +318,15 @@ This presentation must preserve the snapshot's diagnostics and result IDs.
   under `context.only`, and the named suppression reasons (`stale_snapshot`,
   `analysis_not_current`,
   `verification_route_unavailable`, `receipt_route_unavailable`,
-  `preview_or_static_limitation`, `repair_route_not_ready`).
+  `preview_or_static_limitation`, `repair_route_not_ready`,
+  `uncommitted_production_change`).
   `tests.rs::seam_not_yet_repairable_names_route_not_ready_not_a_language_boundary`
   pins the truthful reason, and the repair-start tests build their seam
   diagnostics with the production producer (no injected fix-instruction).
+  `tests.rs::repair_start_is_inert_with_the_commit_step_while_production_is_uncommitted`
+  and `lsp_lifecycle.rs::real_seam_diagnostic_names_the_commit_step_on_an_uncommitted_change`
+  pin the inert start, its commit step, the hover order, the CLI refusal it
+  mirrors, and re-enabling after a commit without a refresh (#13636).
 - `tests.rs::retained_code_actions_disclose_health_on_the_public_handler`
   verifies inert action identity/diagnostic preservation across shared health
   states, kind filtering, active refresh recovery and fail-closed resolve.
@@ -492,7 +498,19 @@ client supports:
   action reads its readiness from the seam's own producer-owned
   repair-packet flip, the same gate the seam hover and
   `repair_start_command_for` use, so a seam past the flip is offered the
-  repair start without any injected fix-instruction. `ripr agent repair`
+  repair start without any injected fix-instruction. When that start's own
+  dirty-premise preflight (`app::repair_attempt::seam_start_dirty_premise`,
+  the check `ripr check` uses) names uncommitted production files, the start
+  is listed inert as `uncommitted_production_change` and its human reason
+  carries the shared commit step
+  (`git -C <root> --literal-pathspecs commit -m "<message>" -- <files>`);
+  the seam hover names the same commit before the start line (#13636). The
+  preflight runs on each request, not from the snapshot, so a commit
+  re-enables the start without a refresh; an unreadable premise keeps the
+  legacy enabled start. The VS Code "Start Current Repair" command reads that
+  reason by asking the server for code actions directly, because
+  `vscode.executeCodeActionProvider` drops `CodeAction.disabled`, and shows
+  it instead of the refresh hint. `ripr agent repair`
   still re-checks start-time facts (dirty premise, proposal identity, held
   inline target, ignored build directory) and refuses with nothing started. The
   backend health gate also returns retained diagnostic-addressed actions

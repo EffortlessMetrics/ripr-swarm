@@ -351,8 +351,8 @@ without re-running workspace analysis.
 ### Start Current Repair
 
 The `ripr: Start Current Repair` command is editor-side orchestration over the
-current projected gap. It selects the current or nearest `ripr` gap diagnostic,
-asks the LSP for the existing code actions at that diagnostic range, and runs
+current projected gap. It selects the current or nearest `ripr` gap diagnostic
+(or, when there is none, the nearest seam diagnostic), asks the LSP for the existing code actions at that diagnostic range, and runs
 one of those already-bounded actions. It does not read report files, parse hover
 text, rerun hidden analysis, generate tests, edit source, or change gate
 authority.
@@ -360,8 +360,12 @@ authority.
 When a current repair is available, the command offers the same actions exposed
 on the diagnostic: copy the first repair packet, copy the gap repair packet,
 open the best related test, copy the verify command, copy the receipt command,
-or copy a static-limit note. If only refresh/setup actions are available, the
-command reports that no current bounded repair action is available.
+or copy a static-limit note. When the server lists the start (or the repair
+packet) disabled, the command shows the server's reason instead. For example,
+while the production change is uncommitted it names the commit step to run
+first (#13636). If only refresh/setup actions are available and the server names
+no reason, the command reports that no current bounded repair action is
+available.
 
 ### Actionable Gap Queue Actions
 
