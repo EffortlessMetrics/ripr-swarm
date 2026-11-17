@@ -320,24 +320,26 @@ impl UnseenReachNames {
         // run on the rayon pool; `build` can also be reached from a
         // classification worker (through a `OnceLock` init), where the scans
         // run in line, as `memoize_many` does.
-        let unanswered: Vec<(&str, bool)> = index
-            .files()
-            .values()
-            .filter(|file| file.data().external_docs.is_none())
-            .map(|file| {
-                (
-                    file.data().source.as_ref(),
-                    file.data().macro_candidates.is_some(),
-                )
-            })
-            .collect();
         let external_docs = index
             .files()
             .values()
             .any(|file| file.data().external_docs == Some(true))
-            || includes_external_docs_many(&unanswered)
-                .into_iter()
-                .any(|includes| includes);
+            || {
+                let unanswered: Vec<(&str, bool)> = index
+                    .files()
+                    .values()
+                    .filter(|file| file.data().external_docs.is_none())
+                    .map(|file| {
+                        (
+                            file.data().source.as_ref(),
+                            file.data().macro_candidates.is_some(),
+                        )
+                    })
+                    .collect();
+                includes_external_docs_many(&unanswered)
+                    .into_iter()
+                    .any(|includes| includes)
+            };
         // Each source's tallies are a pure function of its text, and one diff
         // run builds this struct over several overlapping indexes (admission,
         // main, each widened reach index), so the run scope scans each
@@ -466,7 +468,9 @@ pub(in crate::analysis) fn includes_external_docs_with(source: &str, clean: bool
 /// parse of [`includes_external_docs_with`]. The producer stores macro
 /// candidates only for a source it parsed without errors, which is what the
 /// text gate may rely on.
-fn file_includes_external_docs(file: &crate::analysis::facts::FileData) -> bool {
+pub(in crate::analysis) fn file_includes_external_docs(
+    file: &crate::analysis::facts::FileData,
+) -> bool {
     file.external_docs.unwrap_or_else(|| {
         includes_external_docs_with(&file.source, file.macro_candidates.is_some())
     })
