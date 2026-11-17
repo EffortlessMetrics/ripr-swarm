@@ -64,6 +64,156 @@ pub(crate) fn classify_assertion_in(line: &str, decl_source: &str) -> OracleClas
     classify_assertion_with(line, &LocalDecls::from_source(decl_source))
 }
 
+/// #14810: an assertion compared with a local the test body binds only to an
+/// unfilled placeholder macro (`let expected: i32 = todo!(..)`) pins no
+/// expected value, so it earns no strong credit. `ripr agent stub --write`
+/// writes exactly this shape, and crediting it tells an agent that wrote the
+/// stub that the gap is closed. Only a strong reading is lowered: a weak or
+/// relational reading already withholds the credit.
+pub(crate) fn without_unfilled_expected(
+    classification: OracleClassification,
+    assertion: &str,
+    placeholders: &std::collections::BTreeSet<String>,
+) -> OracleClassification {
+    if classification.strength != OracleStrength::Strong || placeholders.is_empty() {
+        return classification;
+    }
+    // #14810 round 3: match against the assertion's semantic operands, not
+    // the whole text, and mask what is not a read. The diagnostic message is
+    // not a read; a string literal, a comment and an escaped `{{expected}}`
+    // are not reads; a `format!("{expected}")` interpolation is. Unknown
+    // helpers keep the whole-text fallback.
+    let operand_text = assertion_oracle_text(assertion).unwrap_or_else(|| assertion.to_string());
+    let masked = mask_assertion_reads(&operand_text);
+    let tokens = crate::analysis::extract::text::extract_identifier_tokens(&masked);
+    if !placeholders
+        .iter()
+        .any(|name| tokens.iter().any(|token| token == name))
+    {
+        return classification;
+    }
+    OracleClassification {
+        kind: OracleKind::Unknown,
+        strength: OracleStrength::Unknown,
+    }
+}
+
+/// [`without_unfilled_expected`] for a caller that holds the kind and strength
+/// as separate fields (the line-scanned oracle path, #14810 round 3).
+pub(crate) fn without_unfilled_expected_parts(
+    kind: OracleKind,
+    strength: OracleStrength,
+    assertion: &str,
+    placeholders: &std::collections::BTreeSet<String>,
+) -> (OracleKind, OracleStrength) {
+    let classification = without_unfilled_expected(
+        OracleClassification { kind, strength },
+        assertion,
+        placeholders,
+    );
+    (classification.kind, classification.strength)
+}
+
+/// Mask what is not a read in an assertion operand: comments, string
+/// literals, and the escaped `{{`/`}}` braces of a format string. The
+/// contents of a `{...}` interpolation hole survive, because
+/// `format!("{expected}")` reads `expected` while `"expected"`,
+/// `/* expected */` and `"{{expected}}"` do not (#14810 round 3).
+fn mask_assertion_reads(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let mut in_string = false;
+    while i < chars.len() {
+        let ch = chars[i];
+        if in_line_comment {
+            if ch == '\n' {
+                in_line_comment = false;
+                out.push('\n');
+            } else {
+                out.push(' ');
+            }
+            i += 1;
+            continue;
+        }
+        if in_block_comment {
+            if ch == '*' && chars.get(i + 1) == Some(&'/') {
+                in_block_comment = false;
+                out.push_str("  ");
+                i += 2;
+            } else {
+                out.push(if ch == '\n' { '\n' } else { ' ' });
+                i += 1;
+            }
+            continue;
+        }
+        if in_string {
+            if ch == '\\' {
+                out.push(' ');
+                if let Some(&next) = chars.get(i + 1) {
+                    out.push(if next == '\n' { '\n' } else { ' ' });
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+            if ch == '"' {
+                in_string = false;
+                out.push('"');
+                i += 1;
+                continue;
+            }
+            if ch == '{' {
+                if chars.get(i + 1) == Some(&'{') {
+                    // `{{` is an escaped brace: literal text, not a read.
+                    out.push_str("  ");
+                    i += 2;
+                    continue;
+                }
+                // An interpolation hole: keep its contents.
+                out.push('{');
+                i += 1;
+                while i < chars.len() && chars[i] != '}' {
+                    out.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    out.push('}');
+                    i += 1;
+                }
+                continue;
+            }
+            out.push(if ch == '\n' { '\n' } else { ' ' });
+            i += 1;
+            continue;
+        }
+        if ch == '/' && chars.get(i + 1) == Some(&'/') {
+            in_line_comment = true;
+            out.push_str("  ");
+            i += 2;
+            continue;
+        }
+        if ch == '/' && chars.get(i + 1) == Some(&'*') {
+            in_block_comment = true;
+            out.push_str("  ");
+            i += 2;
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+            out.push('"');
+            i += 1;
+            continue;
+        }
+        out.push(ch);
+        i += 1;
+    }
+    out
+}
+
 fn classify_assertion_against(line: &str, decls: &LocalDecls) -> OracleClassification {
     // Preserve the full outer-assertion boundary before semantic operand
     // projection removes wrappers or trailing tokens from the input.

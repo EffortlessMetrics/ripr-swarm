@@ -102,11 +102,73 @@ STATE_LINE_PREFIX = r"^(?:[ \t>*\-+_#~`]|\d{1,9}[.)]|\[[ \txX]?\])*"
 # A ``disposition`` field label anywhere on the line (``Final disposition:``, a
 # ``| Disposition | ... |`` table row) and a table cell that holds only a state token
 # also state one.
+# A short field label (at most 61 characters, no backticks, so a quoted
+# ``Status: REPAIR_REQUIRED`` inside prose stays narration) whose value is a
+# non-positive state token states it too: ``Status: REPAIR_REQUIRED``,
+# ``Status (round 2): REPAIR_REQUIRED``, ``Verdict, after review: CHANGES_REQUESTED``,
+# ``Status -> REPAIR_REQUIRED``. The separator is a colon (ASCII or fullwidth), an
+# arrow or an equals sign. A positive value (``- **Status:** REVIEW_READY``) is not
+# matched here, so it stays narration rather than voiding the body (#14653).
+NEGATIVE_STATE_TOKEN = (
+    r"(?:SOURCE_)?REVIEW_(?:INCOMPLETE|BLOCKED)|REPAIR_REQUIRED"
+    r"|NOT_READY|WITHDRAWN|SUPERSEDED|CHANGES_REQUESTED"
+)
+LABELLED_STATE_FIELD = (
+    STATE_LINE_PREFIX
+    + r"[A-Za-z][^:\uff1a\n`]{0,60}?[ \t*_`]*(?::|\uff1a|->|=>|=)[ \t*_`]*(?:"
+    + NEGATIVE_STATE_TOKEN
+    + r")\b"
+)
 STATE_LINE = re.compile(
     STATE_LINE_PREFIX + r"(?:disposition[ \t*_`]*:|(?:" + STATE_TOKEN.pattern + r")\b)"
     r"|" + STATE_LINE_PREFIX + r"(?:" + STATE_TOKEN.pattern + r")[ \t*_`.:!]*$"
     r"|^.*?\bdisposition[ \t*_`]*[:|]"
-    r"|^[ \t]*\|(?:.*\|)?[ \t*_`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.]*\|",
+    r"|^[ \t]*\|(?:.*\|)?[ \t*_`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.]*\|"
+    r"|" + LABELLED_STATE_FIELD,
+    re.IGNORECASE,
+)
+# #14603: VERDICT is a typed decision field, not a growing list of blocker words.
+# Its whole value must be APPROVE with an optional short or full head SHA. BLOCK,
+# ABSTAIN, empty and unrecognized values are all negative. An APPROVE-led value that
+# is not exactly that form is neutral: the house marker review ends its verdict line
+# with an explanation, and scoring that as a block disarmed the queue. It never
+# attests either, so prose cannot carry a positive disposition; a value that also
+# names an alternative disposition still refuses. An APPROVE field constrains a
+# separate ready marker; it never becomes an attestation carrier itself.
+VERDICT_TABLE_LABEL = r"^[ \t]*\|?[ \t*_`]*verdict[ \t*_`]*\|"
+VERDICT_TABLE_HEADER = re.compile(VERDICT_TABLE_LABEL, re.IGNORECASE)
+# #14592: a GFM table row may omit its trailing pipe, so the value part is the
+# whole remainder of the row and is split into cells by ``verdict_table_value``.
+# Matching only ``[^|]*|`` made "| Verdict | BLOCK" fall through as neutral prose.
+VERDICT_FIELD = re.compile(
+    STATE_LINE_PREFIX + r"verdict[ \t*_`]*:[ \t]*(?P<value>.*)$"
+    r"|" + VERDICT_TABLE_LABEL + r"(?P<table_row>[^\n]*)$",
+    re.IGNORECASE,
+)
+VERDICT_ROW_CELL_MARKUP = " \t*_`"
+POSITIVE_VERDICT_VALUE = re.compile(r"approve(?:[ \t]+[0-9a-f]{7,40})?[ \t]*", re.IGNORECASE)
+APPROVE_LED = re.compile(r"approve(?:[ \t]+[0-9a-f]{7,40})?", re.IGNORECASE)
+# A second disposition word after APPROVE is a contradiction, not an explanation.
+VERDICT_ALTERNATIVE = re.compile(
+    r"(?<![a-z])(?:block(?:ed|s|ing)?|abstain|maybe|reject(?:ed|s)?|nack|hold|"
+    r"not[ \t_-]*ready|incomplete|no[ \t_-]*go|fail(?:ed|s|ure)?|"
+    r"changes?[ \t_-]*requested|repairs?[ \t_-]*required)(?![a-z])",
+    re.IGNORECASE,
+)
+# #14603 review repair: `| Verdict | Notes |` names a column, not a disposition.
+# A GFM header row is the row immediately above a delimiter row.
+GFM_DELIMITER_ROW = re.compile(
+    r"^[ \t]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$"
+)
+# #14603 review repair: a `| Verdict | BLOCK |` row above a delimiter row is a
+# real verdict, not a column header; dropping it reopened the fail-open carrier
+# this grammar closes. A value cell that names a disposition keeps the row.
+# #14603 review repair: a Verdict row above a delimiter is a header only when its
+# value cell is a known non-disposition column label. An unrecognised value is a
+# real verdict and refuses; the closed grammar must not fail open.
+VERDICT_TABLE_CELL_LABEL = re.compile(
+    r"[\s*_`~>\-]*(?:value|notes?|result|detail|state|status|check|field|"
+    r"description|comment)\b",
     re.IGNORECASE,
 )
 # Retraction and blocker phrases for body prose after the marker (and for fenced text,
@@ -212,17 +274,21 @@ TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 # value must be exactly the positive form; an empty value is the unfilled template.
 BODY_FIELD = re.compile(r"^source review:[ \t]*(?P<value>.*?)[ \t]*$", re.IGNORECASE)
 BODY_FIELD_VALUE = re.compile(r"^(?:SOURCE_REVIEW_READY|REVIEW_READY) (?P<sha>[0-9a-f]{40})$")
-# A second, competing state field in the description. The review-body form is a
-# ``disposition:`` line, so a description that carries one (whatever its value, and
-# however it is quoted, listed, emphasised or fenced) is ambiguous and attests nothing.
-# The field shapes match the review side's state lines (#11566): a ``disposition``
-# label after any list (bulleted, numbered, task), quote or emphasis markup or later in
-# the line (``Final disposition:``, ``| Disposition | ... |``), and a table row with a
-# cell that holds only a state token.
+# A second, competing state field in the description. A ``disposition:`` or
+# ``VERDICT:`` line, or a first-cell ``Verdict`` table row, is ambiguous whatever
+# its value and however it is quoted, listed, emphasised or fenced, so it attests
+# nothing. Other field shapes match the review side's state lines (#11566): a
+# ``disposition`` label after list/quote/emphasis markup or later in the line, and a
+# table row with a cell that holds only a state token.
 BODY_COMPETING_FIELD = re.compile(
-    STATE_LINE_PREFIX + r"disposition[ \t*_`]*:"
-    r"|^.*?\bdisposition[ \t*_`]*[:|]"
-    r"|^[ \t]*\|(?:.*\|)?[ \t*_`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.]*\|",
+    STATE_LINE_PREFIX
+    + r"(?:disposition|verdict)[ \t*_`]*:"
+    + r"|^.*?\bdisposition[ \t*_`]*[:|]"
+    + r"|"
+    + VERDICT_TABLE_LABEL
+    + r"|^[ \t]*\|(?:.*\|)?[ \t*_`]*(?:"
+    + STATE_TOKEN.pattern
+    + r")[ \t*_`.]*\|",
     re.IGNORECASE,
 )
 
@@ -292,6 +358,87 @@ def positive_line(line: str) -> bool:
         return False
     tail = match.group("tail") or ""
     return not STATE_TOKEN.search(tail) and tail_allowed(tail)
+
+
+def verdict_table_value(row: str) -> str:
+    """The value cell of a recognized Verdict row, or an ambiguous marker.
+
+    #14592: the row is read as cells, not as "everything up to the next pipe", so
+    the trailing pipe is optional and an extra non-empty value cell cannot be
+    ignored. ``"| APPROVE <sha> |"`` yields one cell; ``"| BLOCK"`` yields one cell;
+    ``"| APPROVE <sha> | BLOCK |"`` yields two, which is ambiguous whatever the
+    cells say. The caller treats a cell list that is not exactly one entry as
+    negative, so an ambiguous row never reads as a positive verdict.
+    """
+    cells = [cell.strip(VERDICT_ROW_CELL_MARKUP) for cell in row.split("|")]
+    while cells and not cells[-1]:
+        cells.pop()
+    if len(cells) != 1:
+        return ""
+    return cells[0]
+
+
+def verdict_disposition(line: str) -> bool | None:
+    """Return an explicit verdict's disposition, or None when the line has no field.
+
+    #14603 review repair: an APPROVE-led value that is not exactly APPROVE with an
+    optional head SHA is neutral. It cannot attest, and it must not veto another
+    carrier: the house marker review explains itself on the verdict line. A value
+    that also names an alternative disposition is a contradiction and refuses.
+    """
+    match = VERDICT_FIELD.match(normalize_body(line))
+    if match is None:
+        return None
+    value = match.group("value")
+    if value is None:
+        value = verdict_table_value(match.group("table_row"))
+    stripped = value.strip()
+    if POSITIVE_VERDICT_VALUE.fullmatch(stripped) is not None:
+        return True
+    approve = APPROVE_LED.match(stripped)
+    if approve is None:
+        return False
+    remainder = _strip_negated_verdict_words(stripped[approve.end() :])
+    if VERDICT_ALTERNATIVE.search(remainder) is not None:
+        return False
+    if NEGATION.search(strip_negated_change(remainder)) is not None:
+        return False
+    return None
+
+
+def verdict_row_is_label(line: str) -> bool:
+    """Whether a ``| Verdict | ... |`` row's value cell is a known column label."""
+    cells = [
+        cell.strip(VERDICT_ROW_CELL_MARKUP)
+        for cell in line.strip().strip("|").split("|")
+    ]
+    values = [cell for cell in cells[1:] if cell]
+    return (
+        len(values) == 1
+        and VERDICT_TABLE_CELL_LABEL.fullmatch(values[0]) is not None
+    )
+
+
+def verdict_table_header(lines: list[str], index: int) -> bool:
+    """Whether ``lines[index]`` is a table header row, not a verdict.
+
+    #14603 review repair: ``| Verdict | Notes |`` above a GFM delimiter row names a
+    column. Only a known non-disposition label is a header; an unrecognised value
+    (``Needs work``, ``Denied``, ``NO``) is a real verdict and refuses.
+    """
+    normalized = normalize_body(lines[index])
+    if VERDICT_TABLE_HEADER.match(normalized) is None:
+        return False
+    if not verdict_row_is_label(normalized):
+        return False
+    return index + 1 < len(lines) and GFM_DELIMITER_ROW.match(lines[index + 1]) is not None
+
+
+def without_verdict_table_headers(lines: list[str]) -> list[str]:
+    """Drop ``Verdict`` column header rows, which state no disposition."""
+    return [
+        line for index, line in enumerate(lines) if not verdict_table_header(lines, index)
+    ]
 
 
 MARKER_NEUTRAL_TAIL = re.compile(
@@ -440,6 +587,21 @@ NEGATED_VERDICT_WORD = re.compile(
 SENTENCE_END = re.compile(r"[.!;]")
 
 
+def _strip_negated_verdict_words(text: str) -> str:
+    """Remove resolved negated findings from ``text`` unless they are refuted."""
+
+    def replace(match: re.Match[str]) -> str:
+        before_clause = text[: match.start()].rsplit(",", 1)[-1]
+        after = text[match.end() :]
+        end = SENTENCE_END.search(after)
+        next_sentence = after[end.start() :] if end else ""
+        if REFUTES_NEGATION.search(before_clause) or REFUTATION_AFTER.search(next_sentence):
+            return match.group(0)
+        return " "
+
+    return NEGATED_VERDICT_WORD.sub(replace, text)
+
+
 def strip_negated_verdict_word(line: str) -> str:
     """Remove a resolved negated finding from a verdict line unless it is refuted.
 
@@ -450,17 +612,7 @@ def strip_negated_verdict_word(line: str) -> str:
     """
     if not VERDICT_LINE.match(line):
         return line
-
-    def replace(match: re.Match[str]) -> str:
-        before_clause = line[: match.start()].rsplit(",", 1)[-1]
-        after = line[match.end() :]
-        end = SENTENCE_END.search(after)
-        next_sentence = after[end.start() :] if end else ""
-        if REFUTES_NEGATION.search(before_clause) or REFUTATION_AFTER.search(next_sentence):
-            return match.group(0)
-        return " "
-
-    return NEGATED_VERDICT_WORD.sub(replace, line)
+    return _strip_negated_verdict_words(line)
 
 
 def negation_hit(line: str) -> bool:
@@ -470,6 +622,11 @@ def negation_hit(line: str) -> bool:
     Only an unrefuted statement-position phrase is removed, so a genuine blocker
     elsewhere on the same line still refuses.
     """
+    verdict = verdict_disposition(line)
+    if verdict is not None:
+        return not verdict
+    # #14592 landed after this branch: keep its resolved-negating-verdict-word scan
+    # for lines that are not recognized verdict fields.
     return bool(NEGATION.search(strip_negated_verdict_word(strip_negated_change(line))))
 
 
@@ -484,16 +641,27 @@ def comment_body_ready(body: str) -> bool:
     if parts is None:
         return False
     visible, fenced = parts
+    visible = without_verdict_table_headers(visible)
+    fenced = without_verdict_table_headers(fenced)
     substantive = [line for line in visible if line.strip()]
     if not substantive or not positive_line(substantive[0]):
         return False
     if any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced):
         return False
-    return all(
-        positive_line(line)
-        or not (STATE_LINE.match(line) or negation_hit(line))
-        for line in substantive[1:]
-    )
+    first_seen = False
+    for line in visible:
+        if not line.strip():
+            continue
+        if not first_seen:
+            first_seen = True
+            continue
+        verdict = verdict_disposition(line)
+        if verdict is not None:
+            if not verdict:
+                return False
+        elif not positive_line(line) and (STATE_LINE.match(line) or negation_hit(line)):
+            return False
+    return True
 
 
 def comment_body_negative(body: str) -> bool:
@@ -511,6 +679,8 @@ def comment_body_negative(body: str) -> bool:
     if parts is None:
         return True
     visible, fenced = parts
+    visible = without_verdict_table_headers(visible)
+    fenced = without_verdict_table_headers(fenced)
     substantive = [line for line in visible if line.strip()]
     neutral_first = bool(substantive) and marker_line_neutral(substantive[0])
     first_index = next(
@@ -521,7 +691,11 @@ def comment_body_negative(body: str) -> bool:
     for index, line in enumerate(visible):
         if neutral_first and index == first_index:
             continue
-        if STATE_LINE.match(line) or (STATE_MENTION.search(line) and negation_hit(line)):
+        if (
+            verdict_disposition(line) is False
+            or STATE_LINE.match(line)
+            or (STATE_MENTION.search(line) and negation_hit(line))
+        ):
             return True
     # #14728 review: a mis-formatted marker is neutral only when the body says
     # nothing else. Any other prose after it keeps main's negative reading, so a
@@ -588,6 +762,8 @@ def body_attests_head(body: str, head: str) -> bool:
     if parts is None:
         return False
     visible, fenced = parts
+    visible = without_verdict_table_headers(visible)
+    fenced = without_verdict_table_headers(fenced)
     if any(BODY_FIELD.match(line.strip()) for line in fenced):
         return False
     if any(BODY_COMPETING_FIELD.match(line) for line in (*visible, *fenced)):
@@ -1018,7 +1194,12 @@ def self_test() -> None:
         ("REVIEW_READY\nVerdict: not ready", False),
         ("REVIEW_READY\n```\nverdict: blocked\n```", False),
         ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5", True),
-        ("REVIEW_READY\nVerdict: no blocking findings on this head.", True),
+        # #14603 supersedes #14592's approving-prose allowance on a verdict line: the
+        # field's whole value must be APPROVE with an optional SHA, so approving prose
+        # is not a verdict. The explanation belongs on its own line, where the ordinary
+        # resolved-finding scan still reads it as neutral.
+        ("REVIEW_READY\nVerdict: no blocking findings on this head.", False),
+        ("REVIEW_READY\nNo blocking findings on this head.", True),
         ("REVIEW_READY\nThe verdict on the earlier block was reversed; the fix landed.", True),
         ("SOURCE_REVIEW_READY\nThe earlier verdict: BLOCK was cleared.", True),
         ('SOURCE_REVIEW_READY\nVERDICT: "BLOCK"', False),
@@ -1092,6 +1273,24 @@ def self_test() -> None:
         # Any cell position, including the first and a sole cell.
         ("REVIEW_READY\n| State | Detail |\n| --- | --- |\n| REPAIR_REQUIRED | fix oracle |", False),
         ("REVIEW_READY\n| a | REPAIR_REQUIRED | b |", False),
+        # A short field label whose value is a negative state token states it (#14592):
+        # ``VERDICT: REPAIR_REQUIRED`` and ``Status: CHANGES_REQUESTED`` refuse.
+        ("SOURCE_REVIEW_READY\nVERDICT: REPAIR_REQUIRED 1cc13d3d", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: CHANGES_REQUESTED 1cc13d3d", False),
+        ("REVIEW_READY\nStatus: REPAIR_REQUIRED", False),
+        ("REVIEW_READY\n- **Verdict:** `CHANGES_REQUESTED`", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d", True),
+        # Labels with punctuation and arrow or fullwidth separators (#14653 review).
+        ("SOURCE_REVIEW_READY\nStatus (round 2): REPAIR_REQUIRED", False),
+        ("SOURCE_REVIEW_READY\nVerdict, after the second thread: REPAIR_REQUIRED", False),
+        ("SOURCE_REVIEW_READY\nStatus -> REPAIR_REQUIRED", False),
+        ("SOURCE_REVIEW_READY\nVerdict\uff1aREPAIR_REQUIRED", False),
+        # A positive value under a label is not a refusal (#14653 review).
+        ("REVIEW_READY\n- **Status:** REVIEW_READY", True),
+        ("REVIEW_READY\nStatus: REVIEW_READY", True),
+        ("REVIEW_READY\n- **Status:** green", True),
+        # A quoted label inside prose stays narration.
+        ("REVIEW_READY\nThe earlier `Status: REPAIR_REQUIRED` review was superseded.", True),
         ("REVIEW_READY\n| REPAIR_REQUIRED |", False),
         ("REVIEW_READY\n| **`REPAIR_REQUIRED`** | fix oracle |", False),
         ("REVIEW_READY\n| Check | Result |\n| --- | --- |\n| fmt | pass |", True),
@@ -1099,6 +1298,68 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY - head 314f6893124dc719aabe2a4da3df6d5bf5f33ef5\n\n- One-line delta.\n\nThe earlier `SOURCE_REVIEW_READY` at c0d7341941 is superseded by this exact-head attestation.", True),
         ("REVIEW_READY\nThe previous run quoted `SOURCE_REVIEW_READY` in a later line and was refused.", True),
         ("REVIEW_READY\nThe admission script reads the review disposition from the first line.", True),
+        # #14603: an explicit verdict field is a closed decision, not another prose
+        # vocabulary. Only APPROVE with an optional head annotation is positive.
+        ("SOURCE_REVIEW_READY\nVERDICT: BLOCK 1cc13d3de7941b83f2488853e120fbdfd3d9cee5", False),
+        ("SOURCE_REVIEW_READY\n  VERDICT: ABSTAIN 1cc13d3d", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE", True),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5", True),
+        ("SOURCE_REVIEW_READY\nVERDICT: MAYBE", False),
+        ("SOURCE_REVIEW_READY\nVERDICT:", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE / BLOCK", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d — no blocking findings on this head.", True),
+        # #14603 review repair: the house marker review explains itself on the verdict
+        # line. An APPROVE-led value that is not the exact form is neutral, so it cannot
+        # veto the marker; a contradiction or a blocker phrase still refuses.
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5 — no blocking findings on this head.", True),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE, but the docs need work.", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE — tests fail.", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE — no code change needed.", True),
+        # Narration that quotes an approving verdict line is not a negative.
+        ("REVIEW_READY\n> VERDICT: APPROVE 1cc13d3d — no blocking findings on this head.", True),
+        ("REVIEW_READY\nrestores the bare carrier and quotes \"VERDICT: APPROVE 1cc13d3d — no blocking findings on this head.\"", True),
+        # A table header row names a column, not a disposition.
+        ("SOURCE_REVIEW_READY\n| Verdict | Notes |\n| --- | --- |\n| APPROVE |", True),
+        ("SOURCE_REVIEW_READY\n| Verdict | Notes |\n| --- | --- |", True),
+        # #14603 review repair: a row whose value cell states a disposition is a
+        # real verdict even above a delimiter row, so it must be kept and refused.
+        ("SOURCE_REVIEW_READY\n| Verdict | BLOCK |\n| --- | --- |", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | ABSTAIN |\n| --- | --- |", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | not ready |\n| --- | --- |", False),
+        # A row whose value cell is not a disposition is a header and states
+        # nothing; REPAIR_REQUIRED is a disposition and must refuse.
+        ("SOURCE_REVIEW_READY\n| Verdict | Value |\n| --- | --- |", True),
+        ("SOURCE_REVIEW_READY\n| Verdict | Notes |\n| --- | --- |", True),
+        ("SOURCE_REVIEW_READY\n| Verdict | Result |\n| --- | --- |", True),
+        ("SOURCE_REVIEW_READY\n| Verdict | REPAIR_REQUIRED |\n| --- | --- |", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | CHANGES_REQUESTED |\n| --- | --- |", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | REVIEW_INCOMPLETE |\n| --- | --- |", False),
+        # An unrecognised value is a real verdict, not a column label.
+        ("SOURCE_REVIEW_READY\n| Verdict | Needs work |\n| --- | --- |", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | Denied |\n| --- | --- |", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | Unsafe |\n| --- | --- |", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | NO |\n| --- | --- |", False),
+        # GFM permits an omitted leading pipe, so the same row without it must
+        # keep the same disposition.
+        ("SOURCE_REVIEW_READY\nField | Value\n--- | ---\nVerdict | BLOCK", False),
+        ("SOURCE_REVIEW_READY\nVerdict | REPAIR_REQUIRED", False),
+        ("SOURCE_REVIEW_READY\nVerdict | CHANGES_REQUESTED", False),
+        ("SOURCE_REVIEW_READY\nVerdict | Value\n--- | ---", True),
+        ("SOURCE_REVIEW_READY\nVerdict | Notes\n--- | ---", True),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d\nNo blocking findings on this head.", True),
+        ("SOURCE_REVIEW_READY\n- **Verdict:** ABSTAIN", False),
+        ("SOURCE_REVIEW_READY\n```\nVERDICT: BLOCK\n```", False),
+        ("SOURCE_REVIEW_READY\n| Field | Value |\n| --- | --- |\n| Verdict | BLOCK |", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | APPROVE 1cc13d3d |", True),
+        # #14592: a GFM row may omit its trailing pipe, so the same row must not
+        # change disposition by losing it, and an extra value cell is ambiguous.
+        ("SOURCE_REVIEW_READY\n| Verdict | BLOCK", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | APPROVE 1cc13d3d", True),
+        ("SOURCE_REVIEW_READY\n| Verdict | ABSTAIN", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | APPROVE 1cc13d3d | BLOCK |", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | APPROVE 1cc13d3d | BLOCK", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | BLOCK | approve |", False),
+        ("SOURCE_REVIEW_READY\nThe earlier verdict: BLOCK was cleared.", True),
     ]
     for body, expected in cases:
         actual = comment_body_ready(body)
@@ -1363,7 +1624,16 @@ def self_test() -> None:
         ("| Disposition | REPAIR_REQUIRED |", False),
         ("| REPAIR_REQUIRED | fix oracle |", False),
         ("| REPAIR_REQUIRED |", False),
+        ("VERDICT: CHANGES_REQUESTED 1cc13d3d", False),
         ("The earlier `SOURCE_REVIEW_READY` was for the previous head.", True),
+        ("VERDICT: BLOCK 1cc13d3de7941b83f2488853e120fbdfd3d9cee5", False),
+        ("VERDICT: ABSTAIN", False),
+        ("VERDICT: APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5", True),
+        ("| Verdict | BLOCK |", False),
+        ("| Verdict | APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5 |", True),
+        ("| Verdict | BLOCK", False),
+        ("| Verdict | APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5", True),
+        ("| Verdict | APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5 | BLOCK |", False),
     ):
         assert reviews_allow_source_attestation(
             [
@@ -1420,6 +1690,21 @@ def self_test() -> None:
         (f"{line}\n| REPAIR_REQUIRED | fix oracle |", False),
         (f"{line}\n| REPAIR_REQUIRED |", False),
         (f"{line}\n| a | REVIEW_READY | b |", False),  # ambiguous even when positive
+        (f"{line}\n| Verdict | BLOCK |", False),
+        # #14592: the same competing row without the optional trailing pipe.
+        (f"{line}\n| Verdict | BLOCK", False),
+        (f"{line}\n| Verdict | APPROVE {head}", False),
+        (f"{line}\nVERDICT: APPROVE", False),
+        # #14603 review repair: a Verdict column header is not a competing field.
+        (f"{line}\n| Verdict | Notes |\n| --- | --- |\n| APPROVE |", True),
+        # A Verdict row whose value cell is a disposition is not a header, so it
+        # competes with the description carrier and attests nothing.
+        (f"{line}\n| Verdict | REPAIR_REQUIRED |\n| --- | --- |", False),
+        (f"{line}\n| Verdict | Value |\n| --- | --- |", True),
+        # The same rows without the optional leading pipe.
+        (f"{line}\nVerdict | BLOCK", False),
+        (f"{line}\nVerdict | REPAIR_REQUIRED", False),
+        (f"{line}\nVerdict | Value\n--- | ---", True),
         (f"{line}\n| Check | Result |\n| --- | --- |\n| fmt | pass |", True),
         (f"{line}\nAccepted winner and losing candidate disposition (when decided): none", True),
         ("", False),

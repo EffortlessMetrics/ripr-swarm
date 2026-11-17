@@ -520,7 +520,10 @@ fn parse_typescript_limitations_options(
     }
 
     let Some(check_output) = check_output else {
-        return Err("reports ts-limitations requires --check-output PATH; pass the JSON saved by `ripr check --format json > check.json`".to_string());
+        return Err(crate::cli::usage_refusal::missing_required(
+            "--check-output",
+            "reports ts-limitations requires --check-output PATH; pass the JSON saved by `ripr check --format json > check.json`",
+        ));
     };
 
     super::refuse_output_naming_input(
@@ -588,7 +591,10 @@ fn parse_typescript_false_actionable_options(
     }
 
     let Some(corpus) = corpus else {
-        return Err("reports ts-false-actionable requires --corpus PATH; pass the TypeScript preview audit corpus JSON (run `ripr help reports` for the format)".to_string());
+        return Err(crate::cli::usage_refusal::missing_required(
+            "--corpus",
+            "reports ts-false-actionable requires --corpus PATH; pass the TypeScript preview audit corpus JSON (run `ripr help reports` for the format)",
+        ));
     };
 
     super::refuse_output_naming_input(

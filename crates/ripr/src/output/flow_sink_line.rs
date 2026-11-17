@@ -23,7 +23,7 @@ pub(crate) fn flow_sink_evidence_line(sink: &FlowSinkFact) -> String {
 }
 
 /// Plain-meaning gloss for a sink kind whose label is producer vocabulary,
-/// the same way `stop_reason_meaning` glosses stop reasons (#8744). Only
+/// the same way stop-reason sentences gloss stop reasons (#8744). Only
 /// `Unknown` needs one: every classified kind renders as plain words
 /// ("returned value", "constructed field", "state write"), while `unknown
 /// sink` names the producer's failure to classify, not a property of the

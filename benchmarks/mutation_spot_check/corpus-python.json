@@ -1,7 +1,7 @@
 {
   "schema_version": "ripr-mutation-spot-check-python-corpus-v1",
-  "status": "unrun",
-  "note": "Pinned for .github/workflows/mutation-spot-check-python.yml. The workflow has not run yet, so no package here has been confirmed to install, pass its own tests, or produce a cosmic-ray session. Revisions are the HEAD commits read with a read-only ls-remote on 2026-11-08; package contents were not inspected.",
+  "status": "first_run_partial",
+  "note": "Pinned for .github/workflows/mutation-spot-check-python.yml. Run 42538508465 (#13776) confirmed that python-semver installs, passes its own tests and produces a cosmic-ray session; its 853 mutants were scored. cachetools remains unconfirmed in the recorded corpus. Revisions are the HEAD commits read with a read-only ls-remote on 2026-11-08.",
   "cosmic_ray": {
     "version": "8.8.0"
   },

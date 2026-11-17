@@ -258,3 +258,200 @@ fn an_empty_files_entry_under_json_is_an_invalid_value() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// #14877: a required flag the invocation left out is `missing_required`,
+/// with the flag to add as token and the command's help route as `next`.
+#[test]
+fn missing_required_flags_under_json_name_the_flag_to_add() -> Result<(), String> {
+    let cases: [(&[&str], &str, &str); 10] = [
+        (
+            &["agent", "verify", "--json"],
+            "--before",
+            "ripr agent verify --help",
+        ),
+        (
+            &["agent", "receipt", "--json"],
+            "--verify-json",
+            "ripr agent receipt --help",
+        ),
+        (
+            &["agent", "start", "--json"],
+            "--seam-id",
+            "ripr agent start --help",
+        ),
+        (
+            &["swarm", "ingest", "--json"],
+            "--result",
+            "ripr swarm ingest --help",
+        ),
+        (&["rerun", "--json"], "--changed-test", "ripr rerun --help"),
+        (
+            &["rerun", "--gap-ledger", "ledger.json", "--json"],
+            "--gap",
+            "ripr rerun --help",
+        ),
+        (
+            &["agent", "packet", "--gap-ledger", "ledger.json", "--json"],
+            "--gap-id",
+            "ripr agent packet --help",
+        ),
+        (
+            &["agent", "packet", "--gap-id", "gap:x", "--json"],
+            "--gap-ledger",
+            "ripr agent packet --help",
+        ),
+        (
+            &["agent", "repair", "--phase", "after", "--json"],
+            "--attempt",
+            "ripr agent repair --help",
+        ),
+        (
+            &["feedback", "record", "--json"],
+            "--snapshot",
+            "ripr feedback record --help",
+        ),
+    ];
+    for (args, token, help) in cases {
+        let output = run_ripr(args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        let document: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|err| format!("{args:?}: stdout must be one JSON document: {err}"))?;
+        assert_eq!(document["error"]["code"], "missing_required", "{args:?}");
+        assert_eq!(document["error"]["token"], token, "{args:?}");
+        assert_eq!(document["error"]["next"]["command"], help, "{args:?}");
+        let message = document["error"]["message"].as_str().unwrap_or_default();
+        assert!(message.contains("requires"), "{args:?}: {message}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            format!("ripr: {message}\n"),
+            "{args:?}"
+        );
+        let plain: Vec<&str> = args
+            .iter()
+            .copied()
+            .filter(|arg| *arg != "--json")
+            .collect();
+        let plain = run_ripr(&plain);
+        assert_eq!(plain.status.code(), Some(2), "{args:?}");
+        assert!(plain.stdout.is_empty(), "{args:?}");
+    }
+    Ok(())
+}
+
+/// #14925: two given flags that cannot be used together are
+/// `conflicting_flags`, with one of them as token and the command's help
+/// route as `next`. The rerun ledger beside `--changed-test` is a conflict,
+/// not a missing `--gap`: adding `--gap` would conflict again.
+#[test]
+fn conflicting_flags_under_json_name_a_flag_to_drop() -> Result<(), String> {
+    let cases: [(&[&str], &str, &str); 9] = [
+        (
+            &[
+                "rerun",
+                "--json",
+                "--changed-test",
+                "tests/a.rs",
+                "--gap",
+                "g",
+            ],
+            "--gap",
+            "ripr rerun --help",
+        ),
+        (
+            &[
+                "rerun",
+                "--json",
+                "--gap",
+                "g",
+                "--changed-test",
+                "tests/a.rs",
+            ],
+            "--changed-test",
+            "ripr rerun --help",
+        ),
+        (
+            &[
+                "rerun",
+                "--json",
+                "--changed-test",
+                "tests/a.rs",
+                "--gap-ledger",
+                "ledger.json",
+            ],
+            "--gap-ledger",
+            "ripr rerun --help",
+        ),
+        (
+            &["context", "--json", "--base", "main", "--diff", "a.diff"],
+            "--base",
+            "ripr context --help",
+        ),
+        (
+            &["context", "--json", "--worktree", "--diff", "a.diff"],
+            "--worktree",
+            "ripr context --help",
+        ),
+        (
+            &["context", "--json", "--committed", "--worktree"],
+            "--worktree",
+            "ripr context --help",
+        ),
+        (
+            &[
+                "agent",
+                "packet",
+                "--json",
+                "--seam-id",
+                "s",
+                "--gap-id",
+                "g",
+            ],
+            "--seam-id",
+            "ripr agent packet --help",
+        ),
+        (
+            &[
+                "agent",
+                "repair",
+                "--json",
+                "--phase",
+                "after",
+                "--seam-id",
+                "s",
+                "--attempt",
+                "repair-attempt-0123456789abcdef01234567",
+            ],
+            "--seam-id",
+            "ripr agent repair --help",
+        ),
+        (
+            &["capabilities", "--markdown", "--language", "rust", "--json"],
+            "--markdown",
+            "ripr capabilities --help",
+        ),
+    ];
+    for (args, token, help) in cases {
+        let output = run_ripr(args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        let document: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|err| format!("{args:?}: stdout must be one JSON document: {err}"))?;
+        assert_eq!(document["error"]["code"], "conflicting_flags", "{args:?}");
+        assert_eq!(document["error"]["token"], token, "{args:?}");
+        assert_eq!(document["error"]["next"]["command"], help, "{args:?}");
+        let message = document["error"]["message"].as_str().unwrap_or_default();
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            format!("ripr: {message}\n"),
+            "{args:?}"
+        );
+        let plain: Vec<&str> = args
+            .iter()
+            .copied()
+            .filter(|arg| *arg != "--json")
+            .collect();
+        let plain = run_ripr(&plain);
+        assert_eq!(plain.status.code(), Some(2), "{args:?}");
+        assert!(plain.stdout.is_empty(), "{args:?}");
+    }
+    Ok(())
+}

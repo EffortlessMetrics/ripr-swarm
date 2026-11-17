@@ -213,6 +213,10 @@ pub(in crate::analysis) fn split_assertion_not_credited_misses(
 /// oracle, strength or class, so no class can rise from it; only the false
 /// absence claim (and its "add an assertion" repair) is withdrawn.
 ///
+/// A `#[quickcheck]` property returning `bool`/`TestResult`
+/// ([`is_returned_quickcheck_property`], #6643) is the same false absence:
+/// its returned value is the harness check. It is rewritten the same way.
+///
 /// [`ForwardedCallbackLimits::only_limits`] is true when at least one row was
 /// rewritten, no `no_assertion` row is left, no row carries an oracle, and
 /// every oracle-crediting related test, including any the display window
@@ -237,18 +241,29 @@ pub(in crate::analysis) fn name_forwarded_callback_limits(
         if row.miss != Some(RelatedTestMiss::NoAssertion) {
             continue;
         }
-        let Some(limit) = context
+        let line = if let Some(limit) = context
             .index
             .forwarded_callback_limit(&row.file, row.line, &row.name)
-        else {
+        {
+            format!(
+                "{FORWARDED_CALLBACK_PREFIX}test `{}` calls helper `{}`, which asserts after forwarding the closure to `{}`; whether it runs the closure is not established statically",
+                row.name, limit.helper, limit.callee
+            )
+        } else if context.related_tests.iter().any(|(test, _)| {
+            test.file == row.file
+                && test.start_line == row.line
+                && test.name == row.name
+                && is_returned_quickcheck_property(test)
+        }) {
+            format!(
+                "{QUICKCHECK_PROPERTY_PREFIX}`{}` reports failure through the value it returns; ripr does not read that returned check",
+                row.name
+            )
+        } else {
             rows_clear = false;
             continue;
         };
         row.miss = Some(RelatedTestMiss::AssertionAdmissionUnproven);
-        let line = format!(
-            "{FORWARDED_CALLBACK_PREFIX}test `{}` calls helper `{}`, which asserts after forwarding the closure to `{}`; whether it runs the closure is not established statically",
-            row.name, limit.helper, limit.callee
-        );
         if !named.evidence.contains(&line) {
             named.evidence.push(line);
         }
@@ -267,12 +282,84 @@ pub(in crate::analysis) fn name_forwarded_callback_limits(
             .filter(|(_, reason)| credits(*reason))
             .all(|(test, _)| {
                 test.assertions.is_empty()
-                    && context
+                    && (context
                         .index
                         .forwarded_callback_limit(&test.file, test.start_line, &test.name)
                         .is_some()
+                        || is_returned_quickcheck_property(test))
             });
     named
+}
+
+/// #6643: a `#[quickcheck]` property returning `bool` or `TestResult` fails
+/// through its return value, which the harness checks. With no assertion
+/// macro in the body it reads as `no_assertion`, and the finding would tell
+/// the reader to add an assertion the property already has. Recognizing the
+/// shape grants no oracle: the returned expression stays unread, so only the
+/// false absence claim is withdrawn. A same-named local attribute is not
+/// distinguished here; that can only withdraw an absence claim, never credit.
+pub(in crate::analysis) fn is_returned_quickcheck_property(test: &TestSummary) -> bool {
+    let attribute = test.attrs.iter().any(|attr| {
+        let compact: String = attr.chars().filter(|c| !c.is_whitespace()).collect();
+        let compact = compact
+            .strip_prefix("#[")
+            .and_then(|rest| rest.strip_suffix(']'));
+        matches!(
+            compact.map(|path| path.strip_prefix("::").unwrap_or(path)),
+            Some("quickcheck" | "quickcheck_macros::quickcheck")
+        )
+    });
+    attribute && returned_type(&test.body).is_some_and(is_property_result_type)
+}
+
+/// The return type written in the function header before its body's `{`.
+/// The declared return type of the function whose source starts at `body`:
+/// the text after the parameter list's closing parenthesis and its `->`, up to
+/// a `where` clause or the body. A `->` inside generics, parameters or a
+/// `where` bound is never read as the return type.
+fn returned_type(body: &str) -> Option<&str> {
+    let mut angle = 0usize;
+    let mut paren = 0usize;
+    let mut previous = ' ';
+    let mut params_end = None;
+    for (index, c) in body.char_indices() {
+        match c {
+            '<' if paren == 0 => angle += 1,
+            '>' if paren == 0 && previous != '-' => angle = angle.saturating_sub(1),
+            '(' if angle == 0 => paren += 1,
+            ')' if angle == 0 && paren > 0 => {
+                paren -= 1;
+                if paren == 0 {
+                    params_end = Some(index + 1);
+                    break;
+                }
+            }
+            '{' | ';' if angle == 0 && paren == 0 => return None,
+            _ => {}
+        }
+        previous = c;
+    }
+    let rest = body[params_end?..].trim_start().strip_prefix("->")?;
+    let end = rest.find('{').unwrap_or(rest.len());
+    let returned = &rest[..end];
+    let cut = returned
+        .match_indices("where")
+        .find(|(at, _)| {
+            let before = returned[..*at].chars().next_back();
+            let after = returned[at + "where".len()..].chars().next();
+            before.is_some_and(char::is_whitespace) && after.is_none_or(char::is_whitespace)
+        })
+        .map_or(returned.len(), |(at, _)| at);
+    let returned = returned[..cut].trim();
+    (!returned.is_empty()).then_some(returned)
+}
+
+fn is_property_result_type(returned: &str) -> bool {
+    let compact: String = returned.chars().filter(|c| !c.is_whitespace()).collect();
+    matches!(
+        compact.strip_prefix("::").unwrap_or(&compact),
+        "bool" | "TestResult" | "quickcheck::TestResult"
+    )
 }
 
 /// What [`name_forwarded_callback_limits`] rewrote.
@@ -286,6 +373,10 @@ pub(in crate::analysis) struct ForwardedCallbackLimits {
 
 /// Evidence prefix of a [`name_forwarded_callback_limits`] line.
 pub(in crate::analysis) const FORWARDED_CALLBACK_PREFIX: &str = "closure forwarded by helper: ";
+
+/// Evidence prefix of a returned QuickCheck property line (#6643).
+pub(in crate::analysis) const QUICKCHECK_PROPERTY_PREFIX: &str =
+    "QuickCheck property returns its check: ";
 
 #[cfg(test)]
 mod combine_tests {
@@ -311,5 +402,42 @@ mod combine_tests {
             fold(&[AssertionInert, AssertionInert]),
             Some(AssertionInert)
         );
+    }
+}
+
+#[cfg(test)]
+mod returned_type_tests {
+    use super::{is_property_result_type, returned_type};
+
+    fn property(body: &str) -> bool {
+        returned_type(body).is_some_and(is_property_result_type)
+    }
+
+    #[test]
+    fn a_declared_bool_or_test_result_is_a_property_result() {
+        for body in [
+            "fn holds(x: u32) -> bool {\n    true\n}",
+            "fn holds(x: u32) -> TestResult { TestResult::passed() }",
+            "fn holds(x: u32) -> quickcheck::TestResult { TestResult::passed() }",
+            "fn holds<T: Clone>(x: T) -> bool where T: Copy { true }",
+            "fn holds<T>(x: T) -> bool\nwhere\n    T: Copy,\n{ true }",
+            "fn holds(f: fn(u32) -> u32) -> bool { true }",
+        ] {
+            assert!(property(body), "{body}");
+        }
+    }
+
+    #[test]
+    fn an_arrow_outside_the_return_type_is_not_read_as_one() {
+        for body in [
+            "fn p<F>(f: F) where F: Fn() -> bool { f(); }",
+            "fn p<F: Fn() -> bool>(f: F) { f(); }",
+            "fn p(f: impl Fn(u32) -> bool) { f(1); }",
+            "fn p(x: u32) { let _ = x; }",
+            "fn p(x: u32) -> u32 { x }",
+            "fn p(x: u32) -> boolean { x }",
+        ] {
+            assert!(!property(body), "{body}");
+        }
     }
 }

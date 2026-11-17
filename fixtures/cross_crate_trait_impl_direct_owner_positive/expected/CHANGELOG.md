@@ -245,3 +245,15 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_direct_owner_positive (19)
+
+Reason:
+RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`

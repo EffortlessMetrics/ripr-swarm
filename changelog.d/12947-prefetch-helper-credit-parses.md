@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Rust checks: the helper-credit index pass now parses the test and helper bodies it reads on the rayon pool ahead of its serial fold, holds a run memo of its own when the caller has none (the review-stage workspace index), and memoizes the same-file assertion-macro scan within a run, so overlapping index builds no longer parse those bodies one at a time on the analysis thread. Credit decisions and output are unchanged (#12947).

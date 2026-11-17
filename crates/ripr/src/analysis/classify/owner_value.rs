@@ -627,6 +627,31 @@ impl ClosedChange {
         })
     }
 
+    /// #14387: whether an exact pin of `expected` on `call` provably tells the
+    /// two versions apart: both run on the call's literal arguments, they
+    /// return different values, and `expected` is one of the two, so the pin
+    /// passes on one version and fails on the other. `false` is "no
+    /// evidence": an argument or the pinned value outside the subset, an
+    /// unevaluated `Err(..)` payload, or versions that agree.
+    pub(super) fn pin_discriminates(&self, name: &str, call: &str, expected: &str) -> bool {
+        let Some(arguments) = call_arguments(call, name) else {
+            return false;
+        };
+        let (Some(after), Some(before), Some(pinned)) = (
+            self.after.run(&arguments),
+            self.before.run(&arguments),
+            literal_outcome(expected),
+        ) else {
+            return false;
+        };
+        // An `Err(..)` payload is not evaluated, so two `Err` exits may still
+        // differ, and an `Err` pin cannot be matched to either one.
+        if [after, before, pinned].contains(&Outcome::Err) {
+            return false;
+        }
+        after != before && (pinned == after || pinned == before)
+    }
+
     /// Whether `expected` is a value neither version provably returns for
     /// `call`. `false` is "no evidence", or a version agrees with the pin.
     pub(super) fn provably_unpinned(&self, name: &str, call: &str, expected: &str) -> bool {
@@ -1345,5 +1370,35 @@ mod tests {
                 .is_none()
         );
         assert!(ClosedChange::read(DIV, "checked_div", 4, "  ").is_none());
+    }
+
+    /// #14387: an exact pin tells the versions apart only at an input where
+    /// they differ, and only when it names one of the two results.
+    #[test]
+    fn a_pin_discriminates_only_where_the_versions_differ_and_it_names_one() {
+        let after = "pub fn discount(total: u32) -> u32 {\n    if total > 500 {\n        return 1;\n    }\n    if total >= 100 {\n        return total / 5;\n    }\n    0\n}\n";
+        let change = ClosedChange::read(after, "discount", 5, "        return total / 10;");
+        assert!(change.is_some(), "premise: both versions read");
+        let Some(change) = change else {
+            return;
+        };
+        // 200 takes the changed guard: 20 before, 40 after.
+        assert!(change.pin_discriminates("discount", "discount(200)", "20"));
+        assert!(change.pin_discriminates("discount", "discount(200)", "40"));
+        // A value neither version returns, an earlier guard, the tail.
+        assert!(!change.pin_discriminates("discount", "discount(200)", "99"));
+        assert!(!change.pin_discriminates("discount", "discount(600)", "1"));
+        assert!(!change.pin_discriminates("discount", "discount(50)", "0"));
+        // Arguments the subset does not read, and an out-of-range one.
+        assert!(!change.pin_discriminates("discount", "discount(n)", "20"));
+        assert!(!change.pin_discriminates("discount", "discount(100 + 100)", "20"));
+        assert!(!change.pin_discriminates("discount", "discount(-1)", "0"));
+        // An `Err` exit's payload is not evaluated, so it never discriminates.
+        let errs = ClosedChange::read(DIV, "checked_div", 2, "        return Err(1);");
+        assert!(errs.is_some_and(|errs| !errs.pin_discriminates(
+            "checked_div",
+            "checked_div(4, 0)",
+            "Err(())"
+        )));
     }
 }

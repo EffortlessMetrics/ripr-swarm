@@ -143,6 +143,7 @@ pub use ripr_contract::domain::TestCandidateRow;
 pub use ripr_contract::domain::TestCandidateSet;
 pub use ripr_contract::domain::TestEvidenceEntry;
 pub use ripr_contract::domain::TestEvidenceSummary;
+pub(crate) use ripr_contract::domain::UNREFERENCED_IN_WORKSPACE;
 pub use ripr_contract::domain::ValueContext;
 pub use ripr_contract::domain::ValueFact;
 pub use ripr_contract::domain::actionable_verify_source_is_supported;

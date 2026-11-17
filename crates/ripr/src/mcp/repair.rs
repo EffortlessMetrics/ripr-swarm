@@ -17,8 +17,7 @@
 
 use super::gaps::{GapItem, RepairFixSite};
 use super::workspace::{
-    AttemptFailure, CODE_ITEM_NOT_FOUND, RECOVERY_REPAIR_TOO_LARGE, WorkspaceSession,
-    bounded_document,
+    AttemptFailure, RECOVERY_REPAIR_TOO_LARGE, WorkspaceSession, bounded_document,
 };
 use crate::app::repair_attempt::{
     AttemptTerminalReceipt, RepairAttemptInventoryEntry, RepairAttemptState,
@@ -400,7 +399,7 @@ fn durable_attempt_document(
     }
     limitations.extend(route_limitations);
     if let Some(limitation) =
-        crate::app::agent_status::focused_receipt_recovery_limitation(manifest)
+        crate::app::agent_status::focused_receipt_recovery_limitation(root, manifest)
     {
         limitations.push(limitation.to_string());
     }
@@ -852,13 +851,8 @@ impl WorkspaceSession {
     ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
         let snapshot_id = snapshot.snapshot_id.clone();
-        let Some(item) = snapshot.item(canonical_id) else {
-            return Err(AttemptFailure::new(
-                CODE_ITEM_NOT_FOUND,
-                format!("no canonical item {canonical_id} exists in the current snapshot"),
-                "list the current canonical ids with ripr_list_gaps, then retry",
-            ));
-        };
+        // #14138: a withheld owner opt-out id refuses with `owner_opt_out`.
+        let item = snapshot.require_item(canonical_id)?;
         let readiness = &item.repair_readiness;
         if !readiness.ready {
             let reason = readiness.ineligibility.unwrap_or("repair_not_established");
@@ -1306,7 +1300,7 @@ pub(super) mod injected_prepare_panic {
 
 #[cfg(test)]
 pub(super) mod tests {
-    use super::super::workspace::CODE_STALE_SNAPSHOT;
+    use super::super::workspace::{CODE_ITEM_NOT_FOUND, CODE_STALE_SNAPSHOT};
     use super::*;
     use crate::analysis_outcome::{AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind};
     use crate::domain::DiscriminatorShape;
