@@ -487,7 +487,7 @@ function selectedCommandRoots(
       continue;
     }
     const displayRoot = path.normalize(root).replace(/\\/g, '/');
-    if (/[\r\n\0`\\"'\u2018-\u201f]/.test(displayRoot)) {
+    if (/[\r\n\0\x60\\"'\u2018-\u201f]/.test(displayRoot)) {
       continue;
     }
     roots.push({ displayRoot, commandRoot: serverShellArg(displayRoot) });
