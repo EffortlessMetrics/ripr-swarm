@@ -236,9 +236,20 @@ pub(in crate::analysis) fn owner_record_read_masked_anywhere(
         credit: false,
         strict: true,
     };
+    // A sub-expression the operand's own reading never visits (a closure
+    // argument, an `if` branch, a method argument of the owner's value:
+    // `over(9).big.then(|| b.retries)`) can still read another field, so
+    // every expression inside the operand is read too.
     operands
         .iter()
-        .any(|operand| reader.text_sink(operand, 0) == Sink::Masked)
+        .any(|operand| match parse_expression(operand) {
+            Some(parsed) => parsed
+                .syntax()
+                .descendants()
+                .filter_map(ast::Expr::cast)
+                .any(|expr| reader.sink(&expr, 0) == Sink::Masked),
+            None => reader.mentions(operand),
+        })
 }
 
 /// #14701: whether `assertion_text` is a plain `assert!(owner(..).field)` or
@@ -1168,6 +1179,9 @@ mod tests {
             "assert!(b.retries.eq(&u32::from(over(9).big)));",
             "assert_eq!(over(10).retries, 3);",
             "assert!(b.summary().is_empty() || over(9).big);",
+            "assert_eq!(over(9).big.then(|| b.retries), Some(3));",
+            "assert_eq!(if over(9).big { b.retries } else { 0 }, 3);",
+            "assert_eq!(match over(9).big { true => b.retries, false => 0 }, 3);",
         ] {
             let body = format!("{boundary}{assertion}");
             assert!(masked(&body, assertion), "{assertion}");

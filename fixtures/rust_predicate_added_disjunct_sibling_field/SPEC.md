@@ -14,7 +14,9 @@ reads the added `flag == "--verbose"` as its boundary. Both tests feed that
 boundary input, but neither reads `verbose` from it. One asserts the sibling
 field (`options_from_flag("--verbose").retries`). The other binds the
 boundary call, asserts its `retries` and reads `verbose` only from a call on
-the old input, `"-v"`, inside one tuple assertion.
+the old input, `"-v"`, inside one tuple assertion. A third reads the
+boundary binding's `retries` inside a closure passed to the old input's
+`verbose.then(..)`.
 
 ## When
 
@@ -34,5 +36,5 @@ the old and the new code.
 - Pair the boundary input with an assertion that reads only `retries` from
   the boundary call.
 - Let a changed-field read from a call on another input, placed beside a
-  sibling-field read of the boundary binding in one tuple, stand in for a
-  read of the boundary call's `verbose`.
+  sibling-field read of the boundary binding in one tuple or a closure, stand
+  in for a read of the boundary call's `verbose`.

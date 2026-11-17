@@ -21,4 +21,9 @@ fn reads_verbose_only_from_the_old_flag() {
     let boundary = options_from_flag("--verbose");
     assert_eq!((boundary.retries, options_from_flag("-v").verbose), (3, true));
 }
+#[test]
+fn reads_retries_in_a_closure_of_the_old_flag() {
+    let boundary = options_from_flag("--verbose");
+    assert_eq!(options_from_flag("-v").verbose.then(|| boundary.retries), Some(3));
+}
 }
