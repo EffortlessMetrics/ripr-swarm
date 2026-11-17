@@ -163,7 +163,6 @@ pub(in super::super) fn workspace_reshapes_responses(source: &str) -> bool {
         // route, so the application's configuration is not established.
         || contains("(**")
         || contains(",**")
-        || rebinds_builtin_dict(source)
         || compact
             .match_indices("APIRoute")
             .any(|(at, _)| !compact[at + "APIRoute".len()..].starts_with('r'))
@@ -173,6 +172,24 @@ pub(in super::super) fn workspace_reshapes_responses(source: &str) -> bool {
             let name = verb.trim_start_matches('.').trim_end_matches('(');
             compact.contains(&format!("\"{name}\")")) || compact.contains(&format!("'{name}')"))
         })
+}
+
+/// Withdraws the response-body credit from every `-> dict` route handler
+/// when any read source may rebind `dict` (#13869). Only those owners lose
+/// it: the rebinding scan reads broadly (any f-string, any `patch` name), and
+/// an unannotated handler's body does not depend on the name.
+pub(in super::super) fn withdraw_dict_annotated_routes(
+    owners: &mut [PythonOwner],
+    dict_may_be_rebound: bool,
+) {
+    if dict_may_be_rebound {
+        for owner in owners
+            .iter_mut()
+            .filter(|owner| owner.route_dict_annotation)
+        {
+            owner.route_returns_body = false;
+        }
+    }
 }
 
 /// Whether a source may rebind the name `dict` (#13869): FastAPI reads a
@@ -193,7 +210,7 @@ pub(in super::super) fn workspace_reshapes_responses(source: &str) -> bool {
 /// and the like) or that runs code or resolves a dotted target held in a
 /// string (`patch`, `timeit`, `pdb`, `doctest`, `InteractiveConsole`,
 /// `resolve_name`, and the like) all count as a rebinding. An over-read only refuses.
-fn rebinds_builtin_dict(source: &str) -> bool {
+pub(in super::super) fn rebinds_builtin_dict(source: &str) -> bool {
     use rustpython_parser::{Mode, Tok, lexer::lex};
     // Names that reach or write a namespace without spelling the bound
     // name, or run code or resolve a dotted target held in a string.

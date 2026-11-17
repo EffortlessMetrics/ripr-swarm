@@ -1311,6 +1311,21 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             failures.push(format!("{name}: read {:?}", finding.class));
         }
     }
+    // Control: an f-string and a PATCH route trip the `dict` rebinding scan,
+    // which withdraws only `-> dict` credit; an unannotated handler beside
+    // them stays credited, and the same handler under `-> dict` does not.
+    for (name, annotation, credited) in [
+        ("unannotated handler beside an f-string", "", true),
+        ("dict handler beside an f-string", " -> dict", false),
+    ] {
+        let app = format!(
+            "from fastapi import FastAPI\n\napp = FastAPI()\nGREETING = f\"{{app}}\"\n\n\n@app.patch(\"/other\")\ndef other():\n    return {{\"ok\": 1}}\n\n\n@app.get(\"/price\")\ndef price(){annotation}:\n    return {{\"total\": 200 - 10, \"count\": 3}}\n"
+        );
+        let finding = check_style(name, &[("src/app.py", &app)], PRICE_EDIT, &strong)?;
+        if (finding.class == ExposureClass::Exposed) != credited {
+            failures.push(format!("{name}: read {:?}", finding.class));
+        }
+    }
     // A test file that registers its own route on the app.
     let test_route = format!(
         "{CLIENT_IMPORTS}@app.get(\"/price\")\ndef cached():\n    return {{\"total\": 190, \"count\": 3}}\n\n\ndef test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 190\n"

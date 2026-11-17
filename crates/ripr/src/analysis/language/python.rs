@@ -736,6 +736,12 @@ struct PythonOwner {
     /// `false` by default, which grants no response-read credit.
     #[serde(default)]
     route_returns_body: bool,
+    /// The route handler's return annotation is a bare `dict` (#13869). The
+    /// workspace post-pass withdraws `route_returns_body` from such an owner
+    /// when any source may rebind `dict`, which would make the annotation a
+    /// response model; an unannotated handler keeps its credit.
+    #[serde(default)]
+    route_dict_annotation: bool,
 }
 
 /// One declared parameter of a Python function owner.
@@ -1814,6 +1820,13 @@ impl PythonAdapter {
                 .values()
                 .map(|source| related_tests::route_decorator_lines(source))
                 .sum(),
+        );
+        related_tests::withdraw_dict_annotated_routes(
+            &mut all_owners,
+            workspace_read
+                .sources
+                .values()
+                .any(|source| related_tests::rebinds_builtin_dict(source)),
         );
 
         // Walk-count cap disclosure: one named limitation carrying the
