@@ -422,7 +422,7 @@ fn a_proposal_attempt_says_no_test_exists_yet() -> Result<(), String> {
     // #13205: the disclosure is historical wording, so it must stay accurate
     // once the proposed test exists and the after phase has run.
     write(root, PROPOSED_FILE, NEW_TEST)?;
-    let output = after(root, &attempt)?;
+    let output = after_with_result(root, &attempt)?;
     let finished = manifest(root, &attempt)?;
     assert_eq!(
         finished
