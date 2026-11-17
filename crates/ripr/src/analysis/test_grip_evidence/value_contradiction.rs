@@ -1156,7 +1156,13 @@ fn let_initializer(body: &str, name: &str) -> Option<String> {
                 || after.starts_with("+=")
                 || after.starts_with("-=")
                 || after.starts_with("*=")
-                || after.starts_with("/="))
+                || after.starts_with("/=")
+                || after.starts_with("%=")
+                || after.starts_with("|=")
+                || after.starts_with("&=")
+                || after.starts_with("^=")
+                || after.starts_with("<<=")
+                || after.starts_with(">>="))
     });
     if mutated {
         return None;
@@ -2125,6 +2131,9 @@ struct Parser<'a> {
     tokens: &'a [Token],
     position: usize,
     environment: &'a BTreeMap<String, i128>,
+    /// #13037: `bool` bindings, read only by the strict return-seam reach
+    /// fold. Every other fold binds integers alone and leaves this empty.
+    bools: Option<&'a BTreeMap<String, bool>>,
     /// The owner return type's declared width, when recognized. Every
     /// integer produced inside the body must fit it: release builds wrap at
     /// the declared width, so a mathematical value outside the range does
@@ -2501,11 +2510,17 @@ impl<'a> Parser<'a> {
             let Value::Int(right_value) = right else {
                 return None;
             };
-            left = Value::Int(self.check_range(match op {
-                "*" => left_value.checked_mul(right_value)?,
-                "/" => left_value.checked_div(right_value)?,
-                _ => left_value.checked_rem(right_value)?,
-            })?);
+            left = Value::Int(
+                self.check_range(match op {
+                    "*" => left_value.checked_mul(right_value)?,
+                    "/" => left_value.checked_div(right_value)?,
+                    // `MIN % -1` overflows (and panics) in the operand's own
+                    // width even though it folds to `0` here (#14950 review).
+                    _ => left_value
+                        .checked_rem(right_value)
+                        .filter(|_| right_value != -1)?,
+                })?,
+            );
         }
     }
 
@@ -2611,7 +2626,16 @@ impl<'a> Parser<'a> {
                 // the fold's scope; only bound parameters evaluate.
                 match self.peek_symbol() {
                     Some("(" | "::") => None,
-                    _ => self.environment.get(&name).copied().map(Value::Int),
+                    _ => self
+                        .environment
+                        .get(&name)
+                        .copied()
+                        .map(Value::Int)
+                        .or_else(|| {
+                            self.bools
+                                .and_then(|bools| bools.get(&name).copied())
+                                .map(Value::Bool)
+                        }),
                 }
             }
             _ => None,
@@ -2688,6 +2712,7 @@ fn fold_expression(text: &str, environment: &BTreeMap<String, i128>) -> Option<i
         tokens: &tokens,
         position: 0,
         environment,
+        bools: None,
         range: None,
         uniform: None,
     };
@@ -2724,28 +2749,9 @@ pub(super) fn seam_branch_reached_by_call(
     // The assertion may pin a local the call was bound to
     // (`let got = owner(..); assert_eq!(got, 50)`), so resolve the compared
     // operands through their `let` initializers before looking for the call.
-    let operands = assertion_operands(oracle_text, test.body.as_str());
-    let mut calls = Vec::new();
-    for operand in &operands {
-        match owner_call_arguments(&operand.text, &owner.name)
-            .or_else(|| wrapped_owner_call_arguments(&operand.text, &owner.name))
-        {
-            Some(arguments) => calls.push(arguments),
-            // An operand that names an owner call neither parser resolves
-            // (`owner(50, 100) / 2`) leaves one compared value unknown, so the
-            // other operand's call must not decide the branch (#14496 review).
-            None => {
-                if super::named_call_open_paren_index(operand.text.trim(), &owner.name).is_some() {
-                    return None;
-                }
-            }
-        }
-    }
-    let [call_arguments] = calls.as_slice() else {
-        return None;
-    };
+    let call_arguments = single_compared_owner_call(owner, oracle_text, test, true)?;
     let mut values = Vec::with_capacity(call_arguments.len());
-    for argument in call_arguments {
+    for argument in &call_arguments {
         values.push(fold_expression(argument, &BTreeMap::new())?);
     }
     let parse = parse_clean_source_file(owner.body.as_str())?;
@@ -2827,6 +2833,378 @@ pub(super) fn seam_branch_reached_by_call(
     // call from evaluating it. Every enclosing branch on the path must be the
     // taken one too.
     enclosing_branches_reached(if_expr, &environment)
+}
+
+/// The arguments of the one owner call among the assertion's compared
+/// operands, read through a `let` the assertion pins when there is one.
+/// `None` when no operand or more than one operand calls the owner, or when
+/// an operand names an owner call neither parser resolves (`owner(50, 100) /
+/// 2`), which leaves one compared value unknown (#14496 review). With
+/// `through_wrapper`, a value-transparent single-identifier wrapper
+/// (`wrapper(owner(..))`) counts too.
+fn single_compared_owner_call(
+    owner: &FunctionSummary,
+    oracle_text: &str,
+    test: &TestSummary,
+    through_wrapper: bool,
+) -> Option<Vec<String>> {
+    let operands = assertion_operands(oracle_text, test.body.as_str());
+    let mut calls = Vec::new();
+    for operand in &operands {
+        let arguments = owner_call_arguments(&operand.text, &owner.name).or_else(|| {
+            through_wrapper
+                .then(|| wrapped_owner_call_arguments(&operand.text, &owner.name))
+                .flatten()
+        });
+        match arguments {
+            Some(arguments) => calls.push(arguments),
+            None => {
+                if super::named_call_open_paren_index(operand.text.trim(), &owner.name).is_some() {
+                    return None;
+                }
+            }
+        }
+    }
+    let [call_arguments] = <[Vec<String>; 1]>::try_from(calls).ok()?;
+    Some(call_arguments)
+}
+
+/// #13037: whether the oracle's call statically runs the owner into the
+/// branch whose tail returns the changed expression, so an exact pin of the
+/// call's result is a pin of that expression's value. Strict where
+/// [`seam_branch_reached_by_call`] keeps today's credit: every unreadable
+/// shape is `false`.
+///
+/// It holds only when all of these do:
+/// - one compared operand is a bare `owner(..)` call (no wrapper) whose
+///   arguments are integer literals or `true`/`false`;
+/// - the owner is a free function with plain parameters it never rebinds or
+///   mutates;
+/// - the seam is the tail of exactly one `if` branch, and that `if` chain is
+///   the owner body's own tail, so the branch value is the returned value;
+/// - every body statement before the tail is either an `if COND { .. }`
+///   without `else` whose condition folds false, or `let NAME = EXPR;` whose
+///   initializer folds (so it calls nothing and cannot exit), which binds
+///   `NAME` for later conditions;
+/// - every condition on the path folds, reading parameters, those bindings
+///   and same-file integer constants (`constant` gives a declaration's
+///   initializer text and its declared type), and selects the seam's branch;
+/// - every folded integer fits every integer width the owner names (its
+///   parameters, return type, annotations and literal suffixes), each read
+///   constant's declared width, and `i32` (an unconstrained literal's type):
+///   with overflow checks off the runtime wraps where the fold would not.
+pub(in crate::analysis) fn return_seam_tail_reached_by_call(
+    owner: &FunctionSummary,
+    seam_expression: &str,
+    seam_line: usize,
+    oracle_text: &str,
+    test: &TestSummary,
+    constant: &dyn Fn(&str) -> Option<(String, String)>,
+) -> bool {
+    tail_reach(
+        owner,
+        seam_expression,
+        seam_line,
+        oracle_text,
+        test,
+        constant,
+    )
+    .unwrap_or(false)
+}
+
+fn tail_reach(
+    owner: &FunctionSummary,
+    seam_expression: &str,
+    seam_line: usize,
+    oracle_text: &str,
+    test: &TestSummary,
+    constant: &dyn Fn(&str) -> Option<(String, String)>,
+) -> Option<bool> {
+    // Only an equality pins the value; `assert_ne!` excludes one value, and a
+    // `debug_assert_eq!` is compiled out of a release test run.
+    if equality_assertion_shape(oracle_text)?.0
+        || oracle_text
+            .trim_start()
+            .trim_start_matches("::")
+            .starts_with("debug_")
+    {
+        return None;
+    }
+    let call_arguments = single_compared_owner_call(owner, oracle_text, test, false)?;
+    // The expected side must be a value the test fixes itself: an expected
+    // value computed by calling code (`let expected = helper(..)`, where the
+    // helper may call the owner) moves with the mutant (#14950 review).
+    for operand in assertion_operands(oracle_text, test.body.as_str()) {
+        let text = operand.text.trim();
+        if owner_call_arguments(text, &owner.name).is_none()
+            && !matches!(text, "true" | "false")
+            && fold_expression(text, &BTreeMap::new()).is_none()
+        {
+            return None;
+        }
+    }
+    let parse = parse_clean_source_file(owner.body.as_str())?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    for ancestor in function.syntax().ancestors().skip(1) {
+        if ast::Impl::can_cast(ancestor.kind())
+            || ast::Trait::can_cast(ancestor.kind())
+            || ast::Fn::can_cast(ancestor.kind())
+        {
+            return None;
+        }
+    }
+    let param_list = function.param_list()?;
+    if param_list.self_param().is_some() {
+        return None;
+    }
+    let mut names = Vec::new();
+    let mut types = Vec::new();
+    for param in param_list.params() {
+        let ast::Pat::IdentPat(ident) = param.pat()? else {
+            return None;
+        };
+        if ident.pat().is_some() || ident.ref_token().is_some() || ident.mut_token().is_some() {
+            return None;
+        }
+        names.push(ident.name()?.text().to_string());
+        types.push(param.ty()?.syntax().text().to_string());
+    }
+    if names.len() != call_arguments.len() {
+        return None;
+    }
+    let block = function.body()?;
+    // A `#[cfg]` (or any attribute) in the body can drop or swap a statement
+    // the fold would read, so an attributed body is not read. (A cfg twin of
+    // the owner itself fails `callee_is_unique` upstream.)
+    if block.syntax().text().to_string().contains("#[")
+        || parameter_is_rebound_or_mutated(&block, &names)
+    {
+        return None;
+    }
+    let mut ints = BTreeMap::new();
+    let mut bools = BTreeMap::new();
+    // Every intermediate value must fit the narrowest integer width the
+    // owner names anywhere, and `i32`: with overflow checks off the runtime
+    // wraps where the fold would not (#14950 review).
+    let range = named_integer_range(&function.syntax().text().to_string())?;
+    // A type alias (`type Byte = u8;`) or any other named type could hide a
+    // narrower width the scan above cannot see, so every type the owner
+    // spells must be a primitive.
+    if function
+        .syntax()
+        .descendants()
+        .filter_map(ast::PathType::cast)
+        .any(|path| {
+            !matches!(
+                path.syntax().text().to_string().trim(),
+                "bool" | "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64"
+            )
+        })
+    {
+        return None;
+    }
+    for ((name, ty), argument) in names.into_iter().zip(&types).zip(&call_arguments) {
+        match (ty.trim(), argument.trim()) {
+            ("bool", "true") => {
+                bools.insert(name, true);
+            }
+            ("bool", "false") => {
+                bools.insert(name, false);
+            }
+            (ty, text) => {
+                let (low, high) = declared_integer_range(ty)?;
+                let value = fold_expression(text, &BTreeMap::new())?;
+                if !(low..=high).contains(&value) {
+                    return None;
+                }
+                ints.insert(name, value);
+            }
+        }
+    }
+    let fold = |text: &str, ints: &BTreeMap<String, i128>, bools: &BTreeMap<String, bool>| {
+        fold_typed(text, ints, bools, constant, Some(range))
+    };
+    // The seam is the tail of one branch of the `if` chain that is itself the
+    // body's tail expression.
+    let ast::Expr::IfExpr(tail_if) = block.tail_expr()? else {
+        return None;
+    };
+    let target = normalized_expression(seam_expression);
+    let body = owner.body.as_str();
+    let seam_body_line = seam_line.checked_sub(owner.start_line)? + 1;
+    let mut chain = Vec::new();
+    let mut current = Some(tail_if);
+    while let Some(if_expr) = current.take() {
+        chain.push(if_expr.clone());
+        if let Some(ast::ElseBranch::IfExpr(inner)) = if_expr.else_branch() {
+            current = Some(inner);
+        }
+    }
+    let branch_tail_is_seam = |block: &ast::BlockExpr| {
+        block.statements().next().is_none()
+            && block.tail_expr().is_some_and(|tail| {
+                normalized_expression(&tail.syntax().text().to_string()) == target
+                    && line_of_offset(body, usize::from(tail.syntax().text_range().start()))
+                        == seam_body_line
+            })
+    };
+    // (index in the chain, taken through `then`) for the seam's branch.
+    let mut seam_branch = None;
+    for (position, if_expr) in chain.iter().enumerate() {
+        if if_expr
+            .then_branch()
+            .is_some_and(|then| branch_tail_is_seam(&then))
+            && seam_branch.replace((position, true)).is_some()
+        {
+            return None;
+        }
+        if let Some(ast::ElseBranch::Block(else_block)) = if_expr.else_branch()
+            && branch_tail_is_seam(&else_block)
+            && seam_branch.replace((position, false)).is_some()
+        {
+            return None;
+        }
+    }
+    let (seam_position, through_then) = seam_branch?;
+    // Statements before the tail: folded in order, each binding what it lets.
+    for statement in block.statements() {
+        match statement {
+            ast::Stmt::LetStmt(let_stmt) => {
+                let ast::Pat::IdentPat(ident) = let_stmt.pat()? else {
+                    return None;
+                };
+                if ident.pat().is_some()
+                    || ident.mut_token().is_some()
+                    || let_stmt.let_else().is_some()
+                {
+                    return None;
+                }
+                let name = ident.name()?.text().to_string();
+                let text = let_stmt.initializer()?.syntax().text().to_string();
+                match fold(&text, &ints, &bools)? {
+                    Value::Int(value) => {
+                        bools.remove(&name);
+                        ints.insert(name, value);
+                    }
+                    Value::Bool(value) => {
+                        ints.remove(&name);
+                        bools.insert(name, value);
+                    }
+                }
+            }
+            ast::Stmt::ExprStmt(expr_stmt) => {
+                let ast::Expr::IfExpr(guard) = expr_stmt.expr()? else {
+                    return None;
+                };
+                if guard.else_branch().is_some() {
+                    return None;
+                }
+                let condition = guard.condition()?.syntax().text().to_string();
+                if bool_value(fold(&condition, &ints, &bools)?)? {
+                    return None;
+                }
+            }
+            ast::Stmt::Item(_) => return None,
+        }
+    }
+    // The chain's conditions before the seam's branch are not taken; its own
+    // is taken (`then`) or not taken (the final `else`).
+    for (position, if_expr) in chain.iter().enumerate().take(seam_position + 1) {
+        let condition = if_expr.condition()?.syntax().text().to_string();
+        let value = bool_value(fold(&condition, &ints, &bools)?)?;
+        let expected = position == seam_position && through_then;
+        if value != expected {
+            return Some(false);
+        }
+    }
+    Some(true)
+}
+
+/// Fold `text` with integer and `bool` bindings, resolving any other
+/// SCREAMING_CASE name through `constant`, with every integer held to
+/// `range`.
+fn fold_typed(
+    text: &str,
+    ints: &BTreeMap<String, i128>,
+    bools: &BTreeMap<String, bool>,
+    constant: &dyn Fn(&str) -> Option<(String, String)>,
+    range: Option<(i128, i128)>,
+) -> Option<Value> {
+    let mut environment = ints.clone();
+    let range = bind_constants(text, ints, bools, constant, &mut environment, range)?;
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let tokens = tokenize(&masked)?;
+    let mut parser = Parser {
+        tokens: &tokens,
+        position: 0,
+        environment: &environment,
+        bools: Some(bools),
+        range,
+        uniform: None,
+    };
+    let value = parser.parse_expression()?;
+    (parser.position == tokens.len()).then_some(value)
+}
+
+/// Bind each unbound SCREAMING_CASE identifier in `text` to its constant
+/// value, narrowing `range` to each constant's declared width. `None` when
+/// one does not resolve or its type is not a known integer width.
+fn bind_constants(
+    text: &str,
+    ints: &BTreeMap<String, i128>,
+    bools: &BTreeMap<String, bool>,
+    constant: &dyn Fn(&str) -> Option<(String, String)>,
+    environment: &mut BTreeMap<String, i128>,
+    mut range: Option<(i128, i128)>,
+) -> Option<Option<(i128, i128)>> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    for word in masked.split(|ch: char| !(ch.is_alphanumeric() || ch == '_')) {
+        let screaming = word
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
+            && word
+                .chars()
+                .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_');
+        if screaming && !ints.contains_key(word) && !bools.contains_key(word) {
+            let (initializer, ty) = constant(word)?;
+            let (low, high) = declared_integer_range(&ty)?;
+            let value = fold_expression(&initializer, &BTreeMap::new())?;
+            if !(low..=high).contains(&value) {
+                return None;
+            }
+            range = range.map(|(lo, hi)| (lo.max(low), hi.min(high)));
+            environment.insert(word.to_string(), value);
+        }
+    }
+    Some(range)
+}
+
+/// The intersection of `i32` (an unconstrained integer literal's type) with
+/// every integer width `function_text` names, as a type or a literal suffix.
+/// `None` when it names a width the fold cannot bound (`usize`, `isize`,
+/// `u128`, `i128`).
+fn named_integer_range(function_text: &str) -> Option<(i128, i128)> {
+    const WIDTHS: [&str; 12] = [
+        "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+    ];
+    let masked = crate::analysis::extract::mask_comments_and_strings(function_text);
+    let mut range = (i128::from(i32::MIN), i128::from(i32::MAX));
+    for word in masked.split(|ch: char| !(ch.is_alphanumeric() || ch == '_')) {
+        for width in WIDTHS {
+            let names_width = word == width
+                || (word.starts_with(|ch: char| ch.is_ascii_digit()) && word.ends_with(width));
+            if names_width {
+                let (low, high) = declared_integer_range(width)?;
+                range = (range.0.max(low), range.1.min(high));
+            }
+        }
+    }
+    Some(range)
 }
 
 /// Whether the owner body rebinds or mutates one of `names` anywhere, which
@@ -2991,6 +3369,7 @@ fn fold_condition(text: &str, environment: &BTreeMap<String, i128>) -> Option<bo
         tokens: &tokens,
         position: 0,
         environment,
+        bools: None,
         range: None,
         uniform: None,
     };
@@ -3013,6 +3392,7 @@ fn fold_block(
         tokens,
         position: 0,
         environment,
+        bools: None,
         range,
         uniform,
     };
