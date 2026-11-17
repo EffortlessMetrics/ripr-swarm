@@ -1,14 +1,14 @@
 {
   "advisory": true,
-  "ripr_version": "ripr 0.11.0 (b713299dfa7ead3127bf2c403fedd1cf0826ad77)",
+  "ripr_version": "ripr 0.11.0 (e506d700ab4e878afdca9de8b2c4506f30baf9ac)",
   "routes": [
     {"answered":10,"route":"cli-agent-loop","scenarios":10,"tokens_to_answer":3195,"total_tokens":6800},
     {"answered":9,"route":"cli-agent-find","scenarios":10,"tokens_to_answer":2006,"total_tokens":2171},
-    {"answered":9,"route":"cli-human","scenarios":10,"tokens_to_answer":9776,"total_tokens":10886},
+    {"answered":9,"route":"cli-human","scenarios":10,"tokens_to_answer":9718,"total_tokens":10828},
     {"answered":10,"route":"cli-json-terse","scenarios":10,"tokens_to_answer":34783,"total_tokens":34783},
-    {"answered":7,"route":"agent-brief","scenarios":10,"tokens_to_answer":9275,"total_tokens":10991},
-    {"answered":10,"route":"mcp","scenarios":10,"tokens_to_answer":82254,"total_tokens":89579},
-    {"answered":10,"route":"mcp-brief","scenarios":10,"tokens_to_answer":56168,"total_tokens":58127}
+    {"answered":8,"route":"agent-brief","scenarios":10,"tokens_to_answer":10589,"total_tokens":11711},
+    {"answered":10,"route":"mcp","scenarios":10,"tokens_to_answer":82230,"total_tokens":89555},
+    {"answered":10,"route":"mcp-brief","scenarios":10,"tokens_to_answer":56149,"total_tokens":58108}
   ],
   "scenarios": [
     {
@@ -703,11 +703,11 @@
           "failed_steps": 0,
           "route": "cli-human",
           "steps": [
-            {"bytes":3607,"exit":0,"step":"check","tokens":1112}
+            {"bytes":3415,"exit":0,"step":"check","tokens":1054}
           ],
-          "tokens_to_answer": 1112,
-          "total_bytes": 3607,
-          "total_tokens": 1112
+          "tokens_to_answer": 1054,
+          "total_bytes": 3415,
+          "total_tokens": 1054
         },
         {
           "answer_reached": true,
@@ -721,15 +721,15 @@
           "total_tokens": 2813
         },
         {
-          "answer_reached": false,
+          "answer_reached": true,
           "failed_steps": 0,
           "route": "agent-brief",
           "steps": [
-            {"bytes":1580,"exit":0,"step":"brief","tokens":594}
+            {"bytes":3862,"exit":0,"step":"brief","tokens":1314}
           ],
-          "tokens_to_answer": null,
-          "total_bytes": 1580,
-          "total_tokens": 594
+          "tokens_to_answer": 1314,
+          "total_bytes": 3862,
+          "total_tokens": 1314
         },
         {
           "answer_reached": true,
@@ -740,12 +740,12 @@
             {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
             {"bytes":5822,"exit":0,"step":"ripr_workspace_status","tokens":1077},
             {"bytes":3290,"exit":0,"step":"ripr_refresh","tokens":554},
-            {"bytes":4200,"exit":0,"step":"ripr_list_gaps","tokens":787},
-            {"bytes":8845,"exit":0,"step":"ripr_get_gap#1","tokens":1757}
+            {"bytes":4194,"exit":0,"step":"ripr_list_gaps","tokens":787},
+            {"bytes":8683,"exit":0,"step":"ripr_get_gap#1","tokens":1733}
           ],
-          "tokens_to_answer": 8855,
-          "total_bytes": 35252,
-          "total_tokens": 8855
+          "tokens_to_answer": 8831,
+          "total_bytes": 35084,
+          "total_tokens": 8831
         },
         {
           "answer_reached": true,
@@ -756,12 +756,12 @@
             {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
             {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
             {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
-            {"bytes":2641,"exit":0,"step":"ripr_list_gaps","tokens":183},
-            {"bytes":5617,"exit":0,"step":"ripr_get_gap#1","tokens":447}
+            {"bytes":2635,"exit":0,"step":"ripr_list_gaps","tokens":183},
+            {"bytes":5478,"exit":0,"step":"ripr_get_gap#1","tokens":428}
           ],
-          "tokens_to_answer": 5761,
-          "total_bytes": 27373,
-          "total_tokens": 5761
+          "tokens_to_answer": 5742,
+          "total_bytes": 27228,
+          "total_tokens": 5742
         }
       ],
       "summary": "one match arm's value changes; tests only cover the other arms"
