@@ -1830,6 +1830,10 @@ fn apply_probe_and_oracle_limits(
     probes::apply_rust_value_propagation_limit(finding, probe, index);
     oracles::apply_wrapper_error_binding_limit(finding, probe);
     probes::attach_changed_binding_predicate_evidence(finding, binding_relation);
+    // #14951: after every reach-witness limit (an uncalled owner has none) and
+    // after the RIPR-SPEC-0150 binding disclosure, which keeps its finding
+    // limit-free, whichever related-test roles the finding carries.
+    boundary_input::apply_limit(finding, probe, index);
     oracles::apply_cross_language_limit(finding, probe, index);
     // Existing FFI limits own their detail and guidance before this narrower annotation.
     probes::apply_rust_field_match_selector_limit(finding, probe, index);
@@ -1962,11 +1966,6 @@ fn apply_rust_no_static_path_limit(
         return;
     }
     if !needs_no_static_path_limit(finding) {
-        // #14951: an owner nothing in the workspace names has no witness to
-        // search, and its related tests are file-proximity rows, so it lands
-        // here. It names the limit the repo seam withholds for the same
-        // unresolved boundary input.
-        boundary_input::apply_limit(finding, probe, index);
         return;
     }
 
@@ -2026,11 +2025,6 @@ fn apply_rust_no_static_path_limit(
         // #11719: last, so no traced or structural witness is displaced.
         replace_witnessed_no_path_infection_summary(finding);
         apply_rust_trait_dispatch_ambiguity_limit(finding, &owner_name, &ambiguity);
-    } else {
-        // #14951: related rows that are all examined-only land here rather
-        // than above; with no witness either, the same boundary-input limit
-        // applies under the same guards.
-        boundary_input::apply_limit(finding, probe, index);
     }
 }
 

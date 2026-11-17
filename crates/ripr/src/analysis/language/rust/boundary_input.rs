@@ -34,6 +34,12 @@ pub(super) fn apply_limit(finding: &mut Finding, probe: &Probe, index: &RustInde
     if probe.family != ProbeFamily::Predicate
         || finding.class != ExposureClass::NoStaticPath
         || finding.static_limit_kind.is_some()
+        // RIPR-SPEC-0150: a changed binding traced into the predicate is a
+        // disclosure on an otherwise ordinary finding, never a limit.
+        || finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("binding_predicate_relation:"))
         || finding.related_tests.is_empty()
         || finding.ripr.reach.state != StageState::No
         || !finding
