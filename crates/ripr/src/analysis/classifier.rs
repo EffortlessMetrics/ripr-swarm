@@ -313,8 +313,47 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     context.const_readers = const_readers;
     context.const_flow = const_flow;
     context.binding_return_flow = binding_return_flow;
+    // #14852: a returned constant replaced by a different constant, read
+    // from the owner's base-side body in the diff (never `probe.before`).
+    context.constant_tail_change = changed_file.zip(owner_fn).and_then(|(changed, owner)| {
+        super::classify::constant_tail_change(
+            probe,
+            owner,
+            changed,
+            index,
+            candidate_index.module_declarations(),
+            candidate_index.base_may_rebind_trusted_macros(),
+        )
+    });
+    context.compile_time_guarded = owner_fn.is_none()
+        && candidate_index
+            .probe_index_file(probe, index)
+            .and_then(|file| find_file_facts(index, &file))
+            .is_some_and(|facts| {
+                facts.source.contains("assert")
+                    && super::classify::constrained_by_compile_time_assertion(
+                        &crate::analysis::extract::mask_comments_and_strings(&facts.source),
+                        probe.location.line,
+                        probe.changed_const_name(),
+                    )
+            });
     context.unmounted_build_script =
         candidate_index.probe_in_unmounted_build_script(probe, owner_fn, index);
+    // #14815: a prefix `-`/`!` added to or removed from the owner's whole
+    // one-line tail, read from the diff so the base-side owner is established.
+    context.unary_tail = owner_fn.zip(changed_file).and_then(|(owner, changed)| {
+        super::classify::unary_tail_change(
+            probe,
+            owner,
+            changed,
+            index,
+            candidate_index.owner_pin_syntax(),
+            candidate_index.module_declarations(),
+        )
+    });
+    context.owner_sole_change = changed_file
+        .zip(owner_fn)
+        .and_then(|(changed, owner)| owner_sole_change(changed, owner, probe.location.line));
     let reveal_expression = parser_expression_for_probe(
         index,
         &probe.location.file,
@@ -388,6 +427,9 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     if context.tier_flow.is_some() {
         finding.probe.expected_sinks = vec!["return value".to_string()];
         finding.probe.required_oracles = vec!["exact assertion on returned value".to_string()];
+    }
+    if context.compile_time_guarded {
+        withhold_compile_time_guard_as_unknown(&mut finding);
     }
     if let Some(chain) = resolved_chain.as_ref() {
         withhold_helper_uniqueness_as_unknown(&mut finding, chain, index, &reveal_misses);
@@ -607,9 +649,9 @@ pub(in crate::analysis) fn withhold_proc_macro_no_path_as_unknown(
     finding.recommended_next_step = Some(
         "This is proc-macro code, which tests normally reach through `#[derive]` or an attribute in another crate; ripr does not expand macros, so it does not claim that no test reaches this change. Inspect the tests that apply the macro, and add one only if none already does.".to_string(),
     );
-    finding
-        .evidence
-        .retain(|line| !line.contains("No static test path"));
+    finding.evidence.retain(|line| {
+        !line.contains("No static test path") && !line.contains(evidence::UNREFERENCED_IN_WORKSPACE)
+    });
     finding.evidence.push(
         "proc_macro_expansion: changed code is in a proc-macro crate; tests reach it through derive or attribute expansion".to_string(),
     );
@@ -632,6 +674,76 @@ pub(in crate::analysis) fn withhold_proc_macro_no_path_as_unknown(
             .miss
             .filter(|miss| *miss != RelatedTestMiss::NoCallPath);
     }
+}
+
+/// #12040: a changed continuation line of a multi-line compile-time assertion
+/// is classified like any ownerless predicate (`no_static_path`), but a
+/// violating edit fails to build; "no test reaches it" is the wrong claim. The
+/// class abstains as `static_unknown` with the build-time reason, exactly as
+/// the assertion's head line does. Only `no_static_path` is rewritten; nothing
+/// is promoted or credited.
+fn withhold_compile_time_guard_as_unknown(finding: &mut Finding) {
+    let reach_ruled_out = match finding.class {
+        ExposureClass::NoStaticPath => true,
+        ExposureClass::StaticUnknown => finding.ripr.reach.state == StageState::No,
+        _ => false,
+    };
+    if !reach_ruled_out {
+        return;
+    }
+    finding.class = ExposureClass::StaticUnknown;
+    let unknown = StageEvidence::new(
+        StageState::Unknown,
+        Confidence::Low,
+        "Not established: a compile-time assertion constrains this line, and tests are not what checks it",
+    );
+    let mut stale: Vec<String> = Vec::new();
+    for stage in [
+        &mut finding.ripr.reach,
+        &mut finding.ripr.infect,
+        &mut finding.ripr.propagate,
+        &mut finding.ripr.reveal.observe,
+        &mut finding.ripr.reveal.discriminate,
+    ] {
+        if stage.state == StageState::No {
+            stale.push(stage.summary.clone());
+            *stage = unknown.clone();
+        }
+    }
+    finding
+        .evidence
+        .retain(|line| !stale.contains(line) && !line.contains("No static test path"));
+    let ripr = &finding.ripr;
+    finding.confidence = finding.confidence.min(confidence_score(
+        &ripr.reach,
+        &ripr.infect,
+        &ripr.propagate,
+        &ripr.reveal.observe,
+        &ripr.reveal.discriminate,
+        &finding.class,
+    ));
+    finding.stop_reasons.retain(|reason| {
+        !matches!(
+            reason,
+            StopReason::TransitiveReachUnresolved | StopReason::MacroReachUnresolved
+        )
+    });
+    finding.missing = vec![
+        "compile-time assertion constrains this line: the build, not a test, checks the new value against it; ripr has not evaluated it"
+            .to_string(),
+    ];
+    finding.activation.missing_discriminators.clear();
+    for test in &mut finding.related_tests {
+        test.miss = test
+            .miss
+            .filter(|miss| *miss != RelatedTestMiss::NoCallPath);
+    }
+    finding.recommended_next_step = super::classify::recommended_next_step(
+        &finding.probe,
+        &finding.class,
+        false,
+        &finding.stop_reasons,
+    );
 }
 
 /// #11544: an owner whose only candidate tests sit inside opaque property
@@ -667,9 +779,11 @@ pub(in crate::analysis) fn withhold_property_macro_no_path_as_unknown(finding: &
             *stage = unknown(summary);
         }
     }
-    finding
-        .evidence
-        .retain(|line| !stale.contains(line) && !line.contains("No static test path"));
+    finding.evidence.retain(|line| {
+        !stale.contains(line)
+            && !line.contains("No static test path")
+            && !line.contains(evidence::UNREFERENCED_IN_WORKSPACE)
+    });
     let ripr = &finding.ripr;
     finding.confidence = finding.confidence.min(confidence_score(
         &ripr.reach,
@@ -762,9 +876,9 @@ fn withhold_helper_uniqueness_as_unknown(
     finding.recommended_next_step = Some(format!(
         "ripr cannot tell which `{entry}` a test calls because that name is not unique in the workspace, so it does not claim that no test reaches this change. Disambiguate the function, or add a test that calls a unique owner, only if none already does."
     ));
-    finding
-        .evidence
-        .retain(|line| !line.contains("No static test path"));
+    finding.evidence.retain(|line| {
+        !line.contains("No static test path") && !line.contains(evidence::UNREFERENCED_IN_WORKSPACE)
+    });
     finding.evidence.push(format!(
         "helper_chain_uniqueness: `{entry}` is not a unique function in the workspace; tests call that name"
     ));
@@ -794,6 +908,34 @@ fn restore_reveal_misses(
     for (test, reveal_miss) in related_tests.iter_mut().zip(reveal_misses) {
         test.miss = reveal_miss.filter(|miss| *miss != RelatedTestMiss::NoCallPath);
     }
+}
+
+/// #14387: the old text of `line` when it is the one line of `owner` the diff
+/// replaces: exactly one added line inside the owner, at `line`, paired with
+/// exactly one removed line inside it.
+fn owner_sole_change(
+    changed: &crate::analysis::diff::ChangedFile,
+    owner: &crate::analysis::rust_index::FunctionSummary,
+    line: usize,
+) -> Option<String> {
+    let inside = |at: usize| (owner.start_line..=owner.end_line).contains(&at);
+    let mut added = changed
+        .added_lines
+        .iter()
+        .filter(|added| inside(added.new_side_line));
+    let mut removed = changed
+        .removed_lines
+        .iter()
+        .filter(|removed| inside(removed.new_side_line));
+    let (Some(added), None, Some(removed), None) =
+        (added.next(), added.next(), removed.next(), removed.next())
+    else {
+        return None;
+    };
+    let paired = changed.replaced_line_counterpart(line)?;
+    // The counterpart must be this very removed line, not one elsewhere in
+    // the file with the same text (#14786 review).
+    (added.new_side_line == line && std::ptr::eq(paired, removed)).then(|| removed.text.clone())
 }
 
 #[cfg(test)]
@@ -2249,7 +2391,7 @@ pub(super) mod tests {
         assert_eq!(
             finding.recommended_next_step.as_deref(),
             Some(
-                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown."
             )
         );
     }
@@ -3488,14 +3630,14 @@ fn far_above_threshold_discounts() {
             )
             .as_deref(),
             Some(
-                "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+                "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown."
             )
         );
         assert_eq!(
             recommended_next_step(&predicate_probe, &ExposureClass::StaticUnknown, false, &[])
                 .as_deref(),
             Some(
-                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown."
             )
         );
     }
@@ -3573,7 +3715,7 @@ fn far_above_threshold_discounts() {
                 "{step}"
             );
             assert!(
-                step.contains("original and changed") && step.contains("may remain unknown"),
+                step.contains("old and new code") && step.contains("may remain unknown"),
                 "{step}"
             );
         } else {

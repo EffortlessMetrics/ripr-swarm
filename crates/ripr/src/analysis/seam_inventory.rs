@@ -20,6 +20,8 @@ use super::classify::changed_error_variant;
 use super::generated_rust_corpus::{
     AnalyzableRustCorpus, absent_changed_rust_file_limitations, discover_analyzable_rust_corpus,
     discover_analyzable_rust_corpus_for_changed_paths,
+    discover_analyzable_rust_corpus_for_changed_paths_tolerating_unreadable,
+    discover_analyzable_rust_corpus_tolerating_unreadable,
 };
 use super::rust_index::{self, ProbeShapeFact, ProbeShapeKind, RustIndex};
 #[cfg(test)]
@@ -413,8 +415,14 @@ fn refuse_failed_evidence(
     match limitations.first() {
         None => Ok(()),
         Some(limitation) => Err(format!(
-            "{consumer} refused: seam evidence failed ({}; pass-wide, no single file is the cause): {}; next step: {}",
+            "{consumer} refused: seam evidence failed ({}; {}): {}; next step: {}",
             limitation.kind.as_str(),
+            // A named path is an unreadable-input gap this consumer cannot
+            // render; only the unnamed walk failure is pass-wide.
+            match limitation.path.as_deref() {
+                Some(path) => format!("unreadable path `{path}`"),
+                None => "pass-wide, no single file is the cause".to_owned(),
+            },
             limitation
                 .bounded_detail
                 .as_deref()
@@ -456,6 +464,8 @@ fn inventory_classified_seams_report_inner(
     config: &RiprConfig,
     changed_paths: Option<&[PathBuf]>,
 ) -> Result<ClassifiedSeamsReport, String> {
+    #[cfg(test)]
+    WORKSPACE_CLASSIFIED_INVENTORIES.with(|count| count.set(count.get() + 1));
     // Store failures of the classified-seam and corpus-fingerprint families
     // are collected through the same bounded `{path, stage, error}` row
     // owner as file-fact failures (#9633) and surfaced once per run, success
@@ -485,8 +495,11 @@ fn inventory_classified_seams_report_collect(
     repo_exposure_seam_limit()?;
     let collect_started = Instant::now();
     let selection = match changed_paths {
-        Some(paths) => discover_analyzable_rust_corpus_for_changed_paths(root, config, paths),
-        None => scan_corpus_fingerprint(root, config).map(|corpus| (corpus, false)),
+        Some(paths) => discover_analyzable_rust_corpus_for_changed_paths_tolerating_unreadable(
+            root, config, paths,
+        ),
+        None => discover_analyzable_rust_corpus_tolerating_unreadable(root, config)
+            .map(|corpus| (corpus, false)),
     };
     let (corpus, diff_bound_corpus) = match selection {
         Ok(scan) => scan,
@@ -500,6 +513,10 @@ fn inventory_classified_seams_report_collect(
             return Err(err);
         }
     };
+    // A skipped unreadable path is recomputed from this walk (never cached),
+    // so a warm hit still discloses it; the cache key names only what was read.
+    let unreadable_limitations =
+        workspace::limitations_for_unreadable_unchanged_paths(&corpus.unreadable_paths)?;
     let rust_files = corpus.analyzable;
     let analyzed_production_files = production_files_with_role(root, config, &rust_files);
     let fingerprint = corpus.fingerprint;
@@ -545,7 +562,7 @@ fn inventory_classified_seams_report_collect(
                         root,
                         &lexical_fallback_files,
                     ),
-                    evidence_limitations: Vec::new(),
+                    evidence_limitations: unreadable_limitations,
                 });
             }
             CacheLoad::Miss => {
@@ -616,7 +633,7 @@ fn inventory_classified_seams_report_collect(
                     root,
                     &lexical_fallback_files,
                 ),
-                evidence_limitations: Vec::new(),
+                evidence_limitations: unreadable_limitations,
             });
         }
         CacheLoad::Miss => {
@@ -723,7 +740,10 @@ fn inventory_classified_seams_report_collect(
         skipped_generated,
         naming_only_skips,
         declined_rust_files: rust_index::declined_rust_files_at(root, &lexical_fallback_files),
-        evidence_limitations,
+        evidence_limitations: evidence_limitations
+            .into_iter()
+            .chain(unreadable_limitations)
+            .collect(),
     })
 }
 
@@ -901,7 +921,7 @@ pub(crate) fn file_fact_store_failure_rows(stats: &FileFactCacheStats) -> Vec<se
             serde_json::json!({
                 "path": portable_store_failure_path(&failure.path),
                 "stage": failure.stage,
-                "error": failure.error,
+                "error": portable_store_failure_error(&failure.error),
             })
         })
         .collect()
@@ -912,7 +932,7 @@ pub(crate) fn file_fact_store_failure_rows(stats: &FileFactCacheStats) -> Vec<se
 /// rows and states the remainder, so a broken cache cannot flood the terminal.
 const ORDINARY_STORE_FAILURE_LINES: usize = 5;
 
-fn file_fact_store_failure_summary(stats: &FileFactCacheStats) -> Vec<String> {
+pub(crate) fn file_fact_store_failure_summary(stats: &FileFactCacheStats) -> Vec<String> {
     if stats.store_errors == 0 {
         return Vec::new();
     }
@@ -938,7 +958,7 @@ fn file_fact_store_failure_summary(stats: &FileFactCacheStats) -> Vec<String> {
     lines
 }
 
-fn file_fact_cache_receipt(stats: &FileFactCacheStats) -> serde_json::Value {
+pub(crate) fn file_fact_cache_receipt(stats: &FileFactCacheStats) -> serde_json::Value {
     let rows = file_fact_store_failure_rows(stats);
     serde_json::json!({
         "schema_version": "0.1",
@@ -960,13 +980,46 @@ fn file_fact_cache_receipt(stats: &FileFactCacheStats) -> serde_json::Value {
 fn portable_store_failure_path(path: &Path) -> Option<String> {
     let mut parts = Vec::new();
     for component in path.components() {
+        if !matches!(component, std::path::Component::Normal(_)) {
+            return None;
+        }
         let part = component.as_os_str().to_str()?;
-        if part.contains('\\') {
+        if part.contains('\\') || (parts.is_empty() && part.as_bytes().get(1) == Some(&b':')) {
             return None;
         }
         parts.push(part);
     }
-    Some(parts.join("/"))
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+/// Store errors are normally path-free, but an unexpected producer message
+/// must not disclose a host path through the public receipt or stderr.
+fn portable_store_failure_error(error: &str) -> &str {
+    if !error.contains(['/', '\\']) {
+        return error;
+    }
+    // A native OS error may itself contain a slash (for example Linux EIO or
+    // Windows error 1117). Only accept the exact platform-generated message,
+    // optionally following a path-free producer context and a single `: `.
+    let native = error
+        .rsplit_once(" (os error ")
+        .and_then(|(_, code)| code.strip_suffix(')'))
+        .and_then(|code| code.parse::<i32>().ok())
+        .map(|code| std::io::Error::from_raw_os_error(code).to_string());
+    let safe_context = native
+        .as_deref()
+        .and_then(|detail| error.strip_suffix(detail))
+        .is_some_and(|prefix| {
+            prefix.is_empty()
+                || prefix
+                    .strip_suffix(": ")
+                    .is_some_and(|context| !context.contains(['/', '\\', ':']))
+        });
+    if safe_context {
+        error
+    } else {
+        "details withheld: error contains a path separator"
+    }
 }
 
 fn cache_store_status_label(reason: &str) -> String {
@@ -2167,6 +2220,92 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     )
 }
 
+/// The diff-scoped inventory for a lookup that reads one seam by id (#13884):
+/// the same scope and seam walk as
+/// [`inventory_diff_scoped_classified_seams_at_with_config`] with no owner
+/// names, but only the seam whose id is `seam_id` receives evidence and
+/// classification. Evidence is per seam, so that seam's class and evidence
+/// equal its entry in the whole-file result, and an id the file does not
+/// hold yields no entry in either. Without this, a `--at` disclosure lookup
+/// in a large file paid for classifying every other seam in that file.
+pub(crate) fn inventory_diff_scoped_seam_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+    seam_id: &str,
+) -> Result<ScopedClassifiedSeamInventory, String> {
+    let first = |seam: &RepoSeam| seam.id().as_str() == seam_id;
+    let stages = DiffScopeEvidenceStages {
+        first: &first,
+        sufficient: &|_| true,
+        reuse: None,
+    };
+    // Repeated lookups of one seam reuse the result under the same exact-path
+    // rule and content key as the whole-file guidance (#11358), with an
+    // identity that also binds the seam id.
+    let identity = file_seam_guidance_reuse_identity(changed_files, seam_id);
+    let mut inputs = DiffScopeInputs::canonical(changed_files, &[]);
+    inputs.complete_scope_reuse = Some(&identity);
+    inventory_diff_scoped_classified_seams_inner(
+        root,
+        config,
+        inputs,
+        !no_impact_fast_path_disabled(),
+        Some(&stages),
+        None,
+    )
+}
+
+/// Disjoint from the whole-file guidance and staged/bound identities: binds
+/// the native bytes of every scoped file (as `file_guidance_reuse_identity`
+/// does) and the selected seam id.
+fn file_seam_guidance_reuse_identity(files: &[PathBuf], seam_id: &str) -> Vec<u8> {
+    let mut identity = b"file-seam-guidance-v1-lossless-key\0".to_vec();
+    for file in files {
+        identity.extend_from_slice(file.as_os_str().as_encoded_bytes());
+        identity.push(0);
+    }
+    identity.push(1);
+    identity.extend_from_slice(seam_id.as_bytes());
+    identity
+}
+
+/// Complete canonical inventory for one file's stub guidance (#11358).
+/// Only result reuse differs from the ordinary diff-scoped wrapper: every
+/// scoped seam is classified against the full workspace evidence, with no
+/// staged filtering, caller expansion, or repo-wide seam-limit computation.
+/// The full content/configuration key and source revalidation still govern
+/// both memory and disk hits; an unavailable cache falls back to that same work.
+pub(crate) fn inventory_file_guidance_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    file: &Path,
+) -> Result<ScopedClassifiedSeamInventory, String> {
+    let changed = [file.to_path_buf()];
+    let identity = file_guidance_reuse_identity(file);
+    let mut inputs = DiffScopeInputs::canonical(&changed, &[]);
+    inputs.complete_scope_reuse = Some(&identity);
+    inventory_diff_scoped_classified_seams_inner(
+        root,
+        config,
+        inputs,
+        !no_impact_fast_path_disabled(),
+        None,
+        None,
+    )
+}
+
+/// Disjoint from staged/bound identities. Preserve the exact native path
+/// spelling: a literal backslash on Unix must not alias a directory separator.
+/// Equivalent spellings may conservatively miss; neither scope normalization
+/// nor lossy display text owns this cache key. The workspace key separately
+/// binds the root, analyzer, configuration and complete consumed corpus.
+fn file_guidance_reuse_identity(file: &Path) -> Vec<u8> {
+    let mut identity = b"file-guidance-v3-lossless-key\0".to_vec();
+    identity.extend_from_slice(file.as_os_str().as_encoded_bytes());
+    identity
+}
+
 /// Whether a seam can be named by a changed finding's gap: it sits in a
 /// changed file, or its owner is exactly a changed gap owner. Every
 /// seam-to-finding join the card binding and the shared repair validator run
@@ -2235,6 +2374,7 @@ pub(crate) fn inventory_diff_scoped_bound_seams_at_with_config(
             changed_owner_names,
             generated_context: None,
             with_repo_seam_limit: true,
+            complete_scope_reuse: None,
         },
         !no_impact_fast_path_disabled(),
         Some(&stages),
@@ -2513,6 +2653,7 @@ pub(crate) fn classify_seams_in_files_at_with_config(
             changed_owner_names: &[],
             generated_context: Some(changed_paths),
             with_repo_seam_limit: false,
+            complete_scope_reuse: None,
         },
         false,
         Some(&stages),
@@ -2580,22 +2721,39 @@ pub(crate) fn diff_only_rust_files(
         .collect()
 }
 
+/// Admits a test by `(file, header line)`; see [`SecondStageScope`].
+pub(crate) type RelationPoolPredicate<'s> = Box<dyn Fn(&Path, usize) -> bool + 's>;
+
+/// How a consumer narrows the second stage (#12940). A remaining seam is
+/// evaluated when `keep_without_relation` accepts it, or when it relates to
+/// a test that `relation_pool` admits. Every other seam must be one the
+/// consumer provably discards whatever its evidence says.
+pub(crate) struct SecondStageScope<'s> {
+    /// Seam-only predicate, decided without related-test evidence.
+    pub(crate) keep_without_relation: Box<dyn Fn(&RepoSeam) -> bool + Sync + 's>,
+    /// Admits a test by `(file, header line)` when a seam related to it may
+    /// still be kept. Relation lookups run only against admitted tests, so a
+    /// small pool keeps the narrowing cheap.
+    pub(crate) relation_pool: RelationPoolPredicate<'s>,
+    /// Which relation reasons to a pool test keep a seam. Must accept every
+    /// reason through which the consumer could still keep the seam.
+    pub(crate) counts_relation: fn(test_grip_evidence::RelationReason) -> bool,
+    /// False when the pool may be too large for per-seam lookups: any
+    /// admitted test then keeps every seam, as if all were related.
+    pub(crate) relation_lookup: bool,
+}
+
 /// A bounded consumer of classified windows. Implementations retain their
 /// result payloads independently from the complete evaluation denominator.
-/// Predicate over remaining seams; `false` means the consumer provably
-/// discards the seam whatever its evidence says (#12940).
-pub(crate) type SecondStageFilter<'s> = Box<dyn Fn(&RepoSeam) -> bool + 's>;
-
 pub(crate) trait ScopedEvidenceConsumer {
     fn in_first_stage(&self, seam: &RepoSeam) -> bool;
     fn observe(&mut self, ordinal: usize, entry: ClassifiedSeam) -> Result<(), String>;
     fn first_stage_sufficient(&self) -> bool;
     fn retained_payloads(&self) -> usize;
     /// Narrows the second stage after the first stage ran and was not
-    /// sufficient. Returns a predicate over the remaining seams that must be
-    /// `false` only for a seam the consumer will provably discard whatever its
-    /// evidence says. `None` evaluates every remaining seam.
-    fn second_stage_filter<'s>(&'s self, _index: &RustIndex) -> Option<SecondStageFilter<'s>> {
+    /// sufficient; see [`SecondStageScope`]. `None` evaluates every
+    /// remaining seam.
+    fn second_stage_scope(&self) -> Option<SecondStageScope<'_>> {
         None
     }
 }
@@ -2701,8 +2859,8 @@ fn classify_scoped_seams_streamed(
     }
     // Skipped seams are not counted as unevaluated: the consumer proved it
     // would discard them, so no scoped result can depend on them.
-    if let Some(keep) = consumer.second_stage_filter(index) {
-        rest.retain(|ordinal| keep(&seams[*ordinal]));
+    if let Some(scope) = consumer.second_stage_scope() {
+        rest = narrow_second_stage(seams, rest, &pass, &scope)?;
     }
     evaluated = evaluated
         .checked_add(classify_evidence_windows(
@@ -2715,6 +2873,52 @@ fn classify_scoped_seams_streamed(
         .ok_or("review evidence evaluation count overflow")?;
     cancellation::checkpoint()?;
     Ok((evaluated, 0, pass.limitations()?))
+}
+
+/// The remaining ordinals `scope` keeps (#12940). The pool is the tests a
+/// kept seam may relate to; a seam the seam-only predicate rejects survives
+/// only through a relation to a pool test.
+fn narrow_second_stage(
+    seams: &[RepoSeam],
+    rest: Vec<usize>,
+    pass: &test_grip_evidence::EvidencePass<'_>,
+    scope: &SecondStageScope<'_>,
+) -> Result<Vec<usize>, String> {
+    let before = rest.len();
+    let started = std::time::Instant::now();
+    let pool = pass.related_test_pool(|file, line| (scope.relation_pool)(file, line));
+    if !scope.relation_lookup && !pool.is_empty() {
+        trace_latency_phase(
+            "evidence_for_seams",
+            &format!("second_stage_unnarrowed_pool_{}_rest_{before}", pool.len()),
+            started.elapsed(),
+        );
+        return Ok(rest);
+    }
+    let keep_without_relation = &scope.keep_without_relation;
+    let keep = pass.seams_kept_by_scope(
+        seams,
+        &rest,
+        |seam| keep_without_relation(seam),
+        &pool,
+        scope.counts_relation,
+    );
+    cancellation::checkpoint()?;
+    let kept = rest
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(ordinal, kept)| kept.then_some(ordinal))
+        .collect::<Vec<_>>();
+    trace_latency_phase(
+        "evidence_for_seams",
+        &format!(
+            "second_stage_narrowed_pool_{}_rest_{before}_kept_{}",
+            pool.len(),
+            kept.len()
+        ),
+        started.elapsed(),
+    );
+    Ok(kept)
 }
 
 fn classify_evidence_windows(
@@ -2772,6 +2976,10 @@ struct DiffScopeInputs<'a> {
     generated_context: Option<&'a [PathBuf]>,
     /// Also derive the repo-wide seam-limit fact from the built index.
     with_repo_seam_limit: bool,
+    /// Explicit opt-in for exact-path reuse of a canonical file scope (whole,
+    /// or one selected seam of it), independently of the two-stage consumer.
+    /// Its identity must bind the exact scope and seam selection.
+    complete_scope_reuse: Option<&'a [u8]>,
 }
 
 impl<'a> DiffScopeInputs<'a> {
@@ -2781,6 +2989,7 @@ impl<'a> DiffScopeInputs<'a> {
             changed_owner_names,
             generated_context: None,
             with_repo_seam_limit: false,
+            complete_scope_reuse: None,
         }
     }
 }
@@ -2967,6 +3176,7 @@ fn inventory_diff_scoped_classified_seams_inner<'a>(
         changed_owner_names,
         generated_context,
         with_repo_seam_limit,
+        complete_scope_reuse,
     } = inputs;
     cancellation::checkpoint()?;
     let absent_changed_files = workspace::changed_source_files_absent_from_worktree(
@@ -2997,7 +3207,19 @@ fn inventory_diff_scoped_classified_seams_inner<'a>(
             Duration::ZERO,
         );
     }
-    let reuse_requested = stages.and_then(|stages| stages.reuse).is_some() && consumer.is_none();
+    // Complete-scope reuse never changes the staged/streamed consumers or
+    // borrows their identity. Its callers ask for the canonical file scope,
+    // whole or with one selected seam (#13884); a staged caller that carries
+    // its own reuse identity never takes this route.
+    let complete_scope_reuse = complete_scope_reuse.filter(|_| {
+        stages.is_none_or(|stages| stages.reuse.is_none())
+            && generated_context.is_none()
+            && !with_repo_seam_limit
+    });
+    let reuse_candidate = stages
+        .and_then(|stages| stages.reuse)
+        .or(complete_scope_reuse);
+    let reuse_requested = reuse_candidate.is_some() && consumer.is_none();
     let state = if reuse_requested {
         if let Some(paths) = generated_context {
             let (corpus, _) =
@@ -3014,12 +3236,16 @@ fn inventory_diff_scoped_classified_seams_inner<'a>(
         workspace_state_from_paths(root, config, rust_files)
     };
     cancellation::checkpoint()?;
-    let reuse_identity = stages
-        .and_then(|stages| stages.reuse)
-        .filter(|_| consumer.is_none());
     let (reuse_identity, workspace_cache_key) = if reuse_requested {
         let key = state.cache_key();
-        (reuse_identity.filter(|_| key.is_reusable()), Some(key))
+        // The shared key folds lossy text and rewrites `\\` to `/`. Complete
+        // guidance names a file by native bytes, so it reuses only when this
+        // corpus and root round-trip through that key exactly (#11358).
+        let representable = complete_scope_reuse.is_none() || state.key_represents_paths_exactly();
+        (
+            reuse_candidate.filter(|_| consumer.is_none() && key.is_reusable() && representable),
+            Some(key),
+        )
     } else {
         (None, None)
     };
@@ -3032,6 +3258,11 @@ fn inventory_diff_scoped_classified_seams_inner<'a>(
             Duration::ZERO,
         );
         reused.absent_changed_files = absent_changed_files;
+        if complete_scope_reuse.is_some() {
+            // Like a persisted hit, this invocation did no file-fact work. The
+            // persisted entry's own disk read sits outside these file-fact stats.
+            reused.file_fact_cache = FileFactCacheStats::default();
+        }
         // The entry is for the hashed corpus; confirm it is still those bytes.
         // The carrier is this invocation's own observation of that corpus.
         reused.consumed_sources = state.consumed.clone();
@@ -3893,6 +4124,13 @@ fn read_optional(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
+/// Whether the aggregate key's `\` to `/` fold is lossless for `text` when the
+/// platform separator is `separator`. Split out so the Windows rule is testable
+/// on every host.
+fn paths_fold_losslessly_in_key(text: &str, separator: char) -> bool {
+    separator == '\\' || !text.contains('\\')
+}
+
 /// Owned workspace state for the inventory pipeline (issue #4996).
 ///
 /// Holds sorted corpus paths plus the aggregate `files_content_hash` —
@@ -4092,6 +4330,23 @@ impl OwnedWorkspaceState {
         }
     }
 
+    /// Whether the aggregate key distinguishes every corpus path and the root
+    /// by their exact spelling. It folds `to_string_lossy` text and maps `\\`
+    /// to `/`, so a non-UTF-8 name or a literal backslash can collide with a
+    /// different path (for example `tests\\a.rs` against `tests/a.rs`).
+    ///
+    /// Where `\` is the platform separator (native Windows) it is the same
+    /// separator the key folds to `/`, so it loses nothing and stays reusable;
+    /// elsewhere it is an ordinary file-name byte and is unrepresentable.
+    fn key_represents_paths_exactly(&self) -> bool {
+        self.workspace_root.to_str().is_some()
+            && self.files.iter().all(|path| {
+                path.to_str().is_some_and(|text| {
+                    paths_fold_losslessly_in_key(text, std::path::MAIN_SEPARATOR)
+                })
+            })
+    }
+
     fn cache_key(&self) -> super::seam_cache::RepoSeamCacheKey {
         let cfg_features = std::env::var("RIPR_CFG_FEATURES").ok();
         WorkspaceKeyContext {
@@ -4114,12 +4369,7 @@ pub(crate) fn inventory_seams_from_index_checked(
     if let Some(disclosure) = rust_index::lexical_fallback_disclosure(index) {
         eprintln!("{disclosure}");
     }
-    if let Some(disclosure) = rust_index::include_resolution_disclosure(index) {
-        eprintln!("{disclosure}");
-    }
-    if let Some(disclosure) = rust_index::module_composition_disclosure(index) {
-        eprintln!("{disclosure}");
-    }
+    rust_index::eprint_index_limit_disclosures(index);
     seams_from_index_files(production_files, index)
 }
 
@@ -4212,6 +4462,71 @@ pub(crate) fn scoped_file_seams(
     let seams = built.seams_in_file(file)?;
     *seam_index = Some(built);
     Ok(seams)
+}
+
+/// Where [`locate_seam_file_at_with_config`] found a seam.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SeamLocation {
+    /// Root-relative production file that declares the seam.
+    pub(crate) file: PathBuf,
+    /// Whether the capped workspace inventory holds this seam: the cap keeps
+    /// the smallest `SeamSortKey`s, so this is the seam's rank against the
+    /// effective `repo_exposure_seam_limit`. Consumers that still read the
+    /// capped inventory (the repair packet's before phase) cannot find a seam
+    /// for which this is `false`.
+    pub(crate) within_inventory_limit: bool,
+}
+
+/// The production file that declares `seam_id`, or `None` when no seam has
+/// that id (#14369). A seam id is repo-wide, so this walks every production
+/// seam with no exposure seam limit: the capped classified inventory holds
+/// only a prefix of a large workspace, and a seam id past that prefix (any
+/// changed seam `ripr check` reports, for example) would otherwise be
+/// unresolvable. Locating a seam needs no test-grip evidence, so the walk
+/// reads only cached file facts; the caller then runs the file-scoped
+/// classification for the file it names.
+pub(crate) fn locate_seam_file_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    seam_id: &str,
+) -> Result<Option<SeamLocation>, String> {
+    let limit = repo_exposure_seam_limit()?.map(|(limit, _)| limit);
+    let state = collect_workspace_state(root, config)?;
+    let production_files = production_files_from_state_with_role(&state, config);
+    let mut cached = state.build_index(config)?;
+    rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
+    cancellation::checkpoint()?;
+    #[cfg(test)]
+    SEAM_FILE_LOCATIONS.with(|count| count.set(count.get() + 1));
+    let seams = seams_from_index_files(&production_files, &cached.index)?;
+    let Some(target) = seams.iter().find(|seam| seam.id().as_str() == seam_id) else {
+        return Ok(None);
+    };
+    let target_key = SeamSortKey::of(target);
+    // Unique keys that sort before the seam: the capped inventory keeps the
+    // first `limit` of them, so the seam is inside it exactly when fewer than
+    // `limit` precede it.
+    let preceding = seams
+        .iter()
+        .map(SeamSortKey::of)
+        .filter(|key| *key < target_key)
+        .collect::<HashSet<_>>()
+        .len();
+    Ok(Some(SeamLocation {
+        file: target.file().to_path_buf(),
+        within_inventory_limit: limit.is_none_or(|limit| preceding < limit),
+    }))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whole-workspace classified inventories started on this thread.
+    pub(crate) static WORKSPACE_CLASSIFIED_INVENTORIES: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+    /// Uncapped seam-id walks [`locate_seam_file_at_with_config`] ran on this
+    /// thread.
+    pub(crate) static SEAM_FILE_LOCATIONS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
 }
 
 /// Classify only the seams in `file`, gathering test-grip evidence from a
@@ -4438,12 +4753,7 @@ pub(crate) fn inventory_seams_from_index_bounded(
     if let Some(disclosure) = rust_index::lexical_fallback_disclosure(index) {
         eprintln!("{disclosure}");
     }
-    if let Some(disclosure) = rust_index::include_resolution_disclosure(index) {
-        eprintln!("{disclosure}");
-    }
-    if let Some(disclosure) = rust_index::module_composition_disclosure(index) {
-        eprintln!("{disclosure}");
-    }
+    rust_index::eprint_index_limit_disclosures(index);
     let mut collector = BoundedSeamCollector::new(limit);
     let admission = FieldSeamAdmission::new(index);
     for file in production_files {
@@ -4665,7 +4975,7 @@ fn build_seam_from_shape(
         && crate::analysis::classify::field_assignment_target(&shape.text).is_some()
     {
         Some(written_field_of_shape(
-            owners.owner(shape.start_line)?,
+            owners.owner(shape.start_line())?,
             shape,
         )?)
     } else {
@@ -4678,7 +4988,7 @@ fn build_seam_from_shape(
     if kind == SeamKind::CallPresence && shape.value_consumed {
         return None;
     }
-    let owner_fact = owners.owner(shape.start_line)?;
+    let owner_fact = owners.owner(shape.start_line())?;
     // Skip shapes whose owner is itself a test function (e.g.,
     // `#[test] fn ...` inside an in-file `#[cfg(test)] mod tests`).
     // the source-role model already excludes physical test files;
@@ -4695,7 +5005,16 @@ fn build_seam_from_shape(
         Some(field) => RequiredDiscriminator::FieldValue { field },
         None => required_discriminator_for(kind, &expression),
     };
-    let expected_sink = expected_sink_for(kind);
+    let expected_sink = if kind == SeamKind::PredicateBoundary
+        && crate::analysis::classify::predicate_branch_side_effect_only_in_body(
+            owner_fact.body.as_str(),
+            owner_fact.start_line,
+            shape.start_line(),
+        ) {
+        ExpectedSink::SideEffect
+    } else {
+        expected_sink_for(kind)
+    };
     let owner_call = OwnerCallShape::from_function(owner_fact);
     // The ID hashes the line-ending-normalized logical offset (#7203): a
     // CRLF working tree and an LF checkout of the same commit must produce
@@ -4704,15 +5023,28 @@ fn build_seam_from_shape(
         path,
         owner,
         kind,
-        shape.start_byte,
-        shape.start_line,
+        shape.start_byte(),
+        shape.start_line(),
         expression,
         required_discriminator,
         expected_sink,
         crlf_pairs,
     )
     .with_owner_call(owner_call)
-    .with_source_lines(shape.source_lines);
+    .with_source_lines(shape.source_lines())
+    // #14139: the one owner opt-out decision, read from the parser-backed
+    // attributes; a lexically read owner has none and is never opted out.
+    // Owners are resolved by line, so the decision attaches only when no
+    // other function starts or ends on the shape's lines: a shape on a line
+    // shared with another function keeps reporting rather than inherit a
+    // neighbour's opt-out.
+    .with_owner_opt_out(
+        if owners.owns_lines_alone(owner_fact, shape.start_line(), shape.end_line()) {
+            crate::analysis::owner_opt_out::function_owner_opt_out(owner_fact)
+        } else {
+            None
+        },
+    );
     // #12061: a field write is read back from the receiver only when the
     // owner borrows it; record which so every surface words the read alike.
     let seam = if kind == SeamKind::FieldConstruction
@@ -4729,7 +5061,7 @@ fn build_seam_from_shape(
     // not its coverage: use the separately parsed pattern-through-body range.
     // The `match` keyword shape has no arm range and remains line-only.
     let (start_line, start_byte, end_byte) = if shape.kind == ProbeShapeKind::MatchArm {
-        let Some(&(start, end)) = arm_ranges.get(&shape.start_byte) else {
+        let Some(&(start, end)) = arm_ranges.get(&shape.start_byte()) else {
             return Some(seam);
         };
         (
@@ -4738,7 +5070,7 @@ fn build_seam_from_shape(
             end,
         )
     } else {
-        (shape.start_line, shape.start_byte, shape.end_byte)
+        (shape.start_line(), shape.start_byte(), shape.end_byte())
     };
     match byte_span_to_lines_with_starts(source, line_starts, start_line, start_byte, end_byte) {
         Some(span) => Some(seam.with_span(span)),
@@ -4759,7 +5091,7 @@ fn written_field_of_shape(
     crate::analysis::classify::assigned_field_path(
         owner.body.as_str(),
         owner.start_line,
-        shape.start_line,
+        shape.start_line(),
         &shape.text,
         &|_| None,
     )
@@ -4941,6 +5273,128 @@ mod tests {
         assert_eq!(value["store_failures"][1]["path"], expected_bar);
         assert_eq!(value["store_failures"][1]["stage"], "encode");
         assert_eq!(value["store_failures_dropped"], 0);
+    }
+
+    /// Host-path samples are assembled at run time so the repository's local
+    /// context policy does not see a literal machine path in this source.
+    fn host_text(template: &str) -> String {
+        template
+            .replace("<unix-home>", &format!("/{}/user", "home"))
+            .replace("<win-home>", &format!("{}:{}Users{}user", 'C', '\\', '\\'))
+    }
+
+    #[test]
+    fn cache_failure_projection_refuses_host_paths_and_preserves_safe_details() {
+        let mut stats = FileFactCacheStats::zero_work();
+        for (path, message) in [
+            (
+                "<unix-home>/cache/secret",
+                "write <unix-home>/cache/secret failed",
+            ),
+            ("../outside.rs", "permission denied"),
+            ("<win-home>\\cache", "write <win-home>\\cache failed"),
+            ("src/lib.rs", "permission denied"),
+        ] {
+            stats.record_store_failure(
+                PathBuf::from(host_text(path)),
+                super::super::seam_cache::FileFactStoreError {
+                    stage: super::super::seam_cache::FileFactStoreStage::Write,
+                    message: host_text(message),
+                },
+            );
+        }
+        let receipt = file_fact_cache_receipt(&stats);
+        let rows = &receipt["store_failures"];
+        for index in 0..3 {
+            assert!(rows[index]["path"].is_null());
+        }
+        assert_eq!(rows[3]["path"], "src/lib.rs");
+        assert_eq!(rows[3]["error"], "permission denied");
+        let rendered = format!("{receipt} {:?}", file_fact_store_failure_summary(&stats));
+        assert!(!rendered.contains(&host_text("<unix-home>")));
+        assert!(!rendered.contains("Users"));
+    }
+
+    #[test]
+    fn cache_failure_error_preserves_eio_but_not_paths_beside_it() {
+        #[cfg(target_os = "linux")]
+        let eio = format!(
+            "create file fact cache dir failed: {}",
+            std::io::Error::from_raw_os_error(5)
+        );
+        #[cfg(target_os = "linux")]
+        assert_eq!(portable_store_failure_error(&eio), eio);
+        #[cfg(target_os = "linux")]
+        {
+            let remote = format!("write: {}", std::io::Error::from_raw_os_error(121));
+            assert_eq!(portable_store_failure_error(&remote), remote);
+            for errno in 1..=255 {
+                let bare = std::io::Error::from_raw_os_error(errno).to_string();
+                assert_eq!(portable_store_failure_error(&bare), bare, "errno {errno}");
+                let detail = format!("write: {bare}");
+                assert_eq!(
+                    portable_store_failure_error(&detail),
+                    detail,
+                    "errno {errno}"
+                );
+            }
+        }
+        #[cfg(windows)]
+        {
+            let detail = format!("write: {}", std::io::Error::from_raw_os_error(1117));
+            assert_eq!(portable_store_failure_error(&detail), detail);
+        }
+        for safe in [
+            "permission denied (os error 13)",
+            "No space left on device (os error 28)",
+        ] {
+            assert_eq!(portable_store_failure_error(safe), safe);
+        }
+        for unsafe_detail in [
+            "write <unix-home>/cache failed",
+            "write <win-home>\\cache failed",
+            "write \\\\server\\share\\cache failed",
+            "write ../outside/cache failed",
+            "Input/output error (os error 5): <unix-home>/cache",
+            "<unix-home>/Input/output error (os error 5)",
+            "Remote I/O error (os error 121): \\\\server\\share",
+            "C:private: Input/output error (os error 5)",
+            "open <unix-home>: Input/output error (os error 5)",
+            "Input/output error (os error 5): ../outside",
+            "nested: context: Input/output error (os error 5)",
+            "write: Input/output error (os error 99999999999999999999999)",
+            "write: Input/output error (os error five)",
+            "write: Input/output error (os error 5) <unix-home>",
+        ] {
+            assert_eq!(
+                portable_store_failure_error(&host_text(unsafe_detail)),
+                "details withheld: error contains a path separator"
+            );
+        }
+    }
+
+    #[test]
+    fn merged_cache_failure_snapshots_keep_cap_order_and_denominator() {
+        let mut merged = FileFactCacheStats::zero_work();
+        for batch in 0..3 {
+            let mut source = FileFactCacheStats::zero_work();
+            for index in 0..if batch == 1 { 40 } else { 20 } {
+                source.record_store_failure(
+                    PathBuf::from(format!("src/{batch}-{index}.rs")),
+                    super::super::seam_cache::FileFactStoreError {
+                        stage: super::super::seam_cache::FileFactStoreStage::Write,
+                        message: "blocked".to_string(),
+                    },
+                );
+            }
+            merged.merge_from(&source);
+        }
+        let receipt = file_fact_cache_receipt(&merged);
+        assert_eq!(receipt["store_errors"], 80);
+        assert_eq!(receipt["store_failures"].as_array().map(Vec::len), Some(32));
+        assert_eq!(receipt["store_failures_dropped"], 48);
+        assert_eq!(receipt["store_failures"][0]["path"], "src/0-0.rs");
+        assert_eq!(receipt["store_failures"][31]["path"], "src/1-11.rs");
     }
 
     #[test]
@@ -7741,6 +8195,307 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         Ok(())
     }
 
+    /// #12947: same-run reuse keeps the extension path for an added file
+    /// with an `include!` directive or text whenever the retained files'
+    /// include view (parents and target membership) is unchanged, and the
+    /// extension then serializes identically to a fresh build. Each row also
+    /// pins which path ran: a fresh build re-parses every file into a new
+    /// allocation, so only the extension keeps the core's parsed file. The
+    /// refused rows (an added second parent, in any spacing; a retained file
+    /// gaining an include parent; a new limitation or module edge that
+    /// withdraws a withheld file's outside-module-tree claim) must fall back
+    /// and still equal a fresh build.
+    #[test]
+    fn same_run_reuse_extends_past_stable_includes_and_matches_fresh() -> Result<(), String> {
+        let lib = (
+            "src/lib.rs",
+            "include!(\"frag.rs\");\npub fn top() -> i32 { 1 }\n",
+        );
+        let frag = ("src/frag.rs", "pub fn fragment() -> i32 { 2 }\n");
+        let orphan = (
+            "src/orphan.rs",
+            "pub fn orphan() -> i32 { 3 }\n#[test]\nfn orphan_test() { assert_eq!(orphan(), 3); }\n",
+        );
+        let other = (
+            "src/other.rs",
+            "include!(\"late.rs\");\npub fn other() -> i32 { 4 }\n",
+        );
+        let late = ("src/late.rs", "pub fn late() -> i32 { 5 }\n");
+        let other_chain = (
+            "src/other_chain.rs",
+            "include!(\"chain.rs\");\npub fn other_chain() -> i32 { 6 }\n",
+        );
+        let chain = (
+            "src/chain.rs",
+            "include!(\"chain_frag.rs\");\npub fn chain() -> i32 { 7 }\n",
+        );
+        let chain_frag = ("src/chain_frag.rs", "pub fn chain_frag() -> i32 { 8 }\n");
+        // The analyzer's own sources look like this: `include!` inside string
+        // literals, comments and assertion-macro token trees.
+        let mentions = (
+            "tests/mentions.rs",
+            "// include!(\"src/frag.rs\") is how a fragment joins a parent.\n\
+             /* include!(\"src/frag.rs\"); */\n\
+             #[test]\n\
+             fn mentions_include_text() {\n    \
+                 let text = \"include!(\\\"frag.rs\\\");\";\n    \
+                 assert!(text.contains(\"include!(\"), \"{}\", stringify!(include!(\"frag.rs\")));\n    \
+                 assert_eq!(reusefix::top(), 1);\n\
+             }\n",
+        );
+        // A second parent for the core's included fragment: ambiguous.
+        let real = (
+            "tests/real.rs",
+            "include!(\"../src/frag.rs\");\n#[test]\nfn real() { assert_eq!(fragment(), 2); }\n",
+        );
+        let spaced = (
+            "tests/spaced.rs",
+            "include /* fragment */ ! (\"../src/frag.rs\");\n#[test]\nfn spaced() { assert_eq!(fragment(), 2); }\n",
+        );
+        // A directive naming a target outside the index: a limitation only,
+        // which also withdraws the core's outside-module-tree claim.
+        let limit = (
+            "tests/limit.rs",
+            "include!(\"missing.rs\");\n#[test]\nfn limit() { assert_eq!(reusefix::top(), 1); }\n",
+        );
+        let pair = (
+            "tests/pair.rs",
+            "include!(\"pair_frag.rs\");\n#[test]\nfn pair() { assert_eq!(pair_frag(), 9); }\n",
+        );
+        let pair_frag = ("tests/pair_frag.rs", "fn pair_frag() -> i32 { 9 }\n");
+        // A retained file linked by a module edge that an added file then
+        // includes: it gains an include parent (and target membership) it
+        // did not have when the core was composed (#13864's re-parenting
+        // guard).
+        let main_rs = ("src/main.rs", "mod plain;\nfn main() {}\n");
+        let dynamic = (
+            "src/dynamic.rs",
+            "include!(concat!(\"gen\", \".rs\"));\npub fn dynamic() -> i32 { 11 }\n",
+        );
+        let plain = ("src/plain.rs", "pub fn plain() -> i32 { 10 }\n");
+        let grab = (
+            "tests/grab.rs",
+            "include!(\"../src/plain.rs\");\n#[test]\nfn grab() { assert_eq!(plain(), 10); }\n",
+        );
+        let all = [
+            lib,
+            frag,
+            orphan,
+            other,
+            late,
+            other_chain,
+            chain,
+            chain_frag,
+            mentions,
+            real,
+            spaced,
+            limit,
+            pair,
+            pair_frag,
+            main_rs,
+            plain,
+            grab,
+            dynamic,
+        ];
+        let root = reuse_fixture_root("reuse-include-extension", &all)?;
+        // A module edge from an added binary root to a file the core withheld
+        // as outside the module tree: no include moves, but composition then
+        // links the file, and its revived tests would come from function
+        // facts, not the parser's test facts. A separate root keeps this
+        // `src/main.rs` apart from the `mod plain;` one above.
+        let linker = ("src/main.rs", "mod orphan;\nfn main() {}\n");
+        let linked_root = match reuse_fixture_root(
+            "reuse-include-extension-linked",
+            &[lib, frag, orphan, linker],
+        ) {
+            Ok(linked_root) => linked_root,
+            Err(err) => {
+                let _ = std::fs::remove_dir_all(&root);
+                return Err(err);
+            }
+        };
+        let outside = |index: &RustIndex, file: &str| {
+            index
+                .files()
+                .get(Path::new(file))
+                .is_some_and(|facts| facts.role_provenance.outside_module_tree)
+        };
+        type Row<'a> = (
+            &'a str,
+            &'a Path,
+            Vec<(&'a str, &'a str)>,
+            Vec<(&'a str, &'a str)>,
+            bool,
+        );
+        let rows: Vec<Row<'_>> = vec![
+            (
+                "text mentions only",
+                root.as_path(),
+                vec![lib, frag, orphan],
+                vec![mentions],
+                true,
+            ),
+            (
+                "second parent",
+                root.as_path(),
+                vec![lib, frag, orphan],
+                vec![real],
+                false,
+            ),
+            (
+                "spaced second parent",
+                root.as_path(),
+                vec![lib, frag, orphan],
+                vec![spaced],
+                false,
+            ),
+            // The limitation withdraws the core's outside-module-tree claim,
+            // whose withheld test cannot be restored in place: fall back.
+            (
+                "unindexed target",
+                root.as_path(),
+                vec![lib, frag, orphan],
+                vec![limit],
+                false,
+            ),
+            // A new limitation that links a withheld file with no tests
+            // changes nothing a fresh build keeps: extend.
+            (
+                "unindexed target links a withheld file without tests",
+                root.as_path(),
+                vec![lib, frag, plain],
+                vec![limit],
+                true,
+            ),
+            // The first unresolved include in an index without withheld
+            // files moves no retained include state: extend.
+            (
+                "first unresolved include",
+                root.as_path(),
+                vec![lib, frag],
+                vec![limit],
+                true,
+            ),
+            // An index that already had an unresolved include (the
+            // ripr-swarm shape) keeps the extension past another one.
+            (
+                "unindexed target after an unresolved include",
+                root.as_path(),
+                vec![lib, frag, dynamic],
+                vec![limit],
+                true,
+            ),
+            (
+                "extras-only include",
+                root.as_path(),
+                vec![lib, frag],
+                vec![pair, pair_frag],
+                true,
+            ),
+            (
+                "core includes an extra",
+                root.as_path(),
+                vec![lib, frag, other],
+                vec![late],
+                true,
+            ),
+            // The extras reach the merged resolution unrebased, so a chain
+            // through two added files is rebased once, as a fresh build does.
+            (
+                "core includes an extra that includes an extra",
+                root.as_path(),
+                vec![lib, frag, other_chain],
+                vec![chain, chain_frag],
+                true,
+            ),
+            // A retained file gaining an include parent: fall back.
+            (
+                "extra includes a module-linked core file",
+                root.as_path(),
+                vec![lib, frag, main_rs, plain],
+                vec![grab],
+                false,
+            ),
+            // A retained withheld file linked by an added module edge: the
+            // withheld-tests guard falls back.
+            (
+                "extra links a withheld file",
+                linked_root.as_path(),
+                vec![lib, frag, orphan],
+                vec![linker],
+                false,
+            ),
+        ];
+        let result = (|| -> Result<(), String> {
+            for (label, root, core_src, extra_src, extends) in rows {
+                // The withheld file a row revives: outside in the core, linked
+                // after the merge.
+                let withheld = match label {
+                    "unindexed target" | "extra links a withheld file" => Some(orphan.0),
+                    "unindexed target links a withheld file without tests" => Some(plain.0),
+                    _ => None,
+                };
+                let core = bytes_of(&core_src);
+                let target_src = core_src
+                    .iter()
+                    .chain(&extra_src)
+                    .copied()
+                    .collect::<Vec<_>>();
+                let target = bytes_of(&target_src);
+                let core_index =
+                    rust_index::build_analysis_index_from_loaded_files(root, &core, &[])?;
+                if core_index.index.include_parents.is_empty() {
+                    return Err(format!("{label}: the core must resolve an include parent"));
+                }
+                if withheld.is_some_and(|file| !outside(&core_index.index, file)) {
+                    return Err(format!(
+                        "{label}: the core must start with the withheld file outside"
+                    ));
+                }
+                let lib_source = |index: &RustIndex| {
+                    index
+                        .files()
+                        .get(Path::new(lib.0))
+                        .map(|file| std::sync::Arc::clone(&file.source))
+                        .ok_or(format!("{label}: src/lib.rs must be indexed"))
+                };
+                let core_source = lib_source(&core_index.index)?;
+                let reused = rust_index::reuse_cached_index_in_run(core_index, root, &target, &[])?;
+                if std::sync::Arc::ptr_eq(&core_source, &lib_source(&reused.index)?) != extends {
+                    return Err(format!("{label}: extension path taken must be {extends}"));
+                }
+                if extra_src
+                    .iter()
+                    .any(|(path, _)| reused.index.files().get(Path::new(path)).is_none())
+                {
+                    return Err(format!("{label}: every added file must be indexed"));
+                }
+                let fresh = rust_index::build_analysis_index_from_loaded_files(root, &target, &[])?;
+                let reused_json =
+                    serde_json::to_string(&reused.index).map_err(|err| err.to_string())?;
+                let fresh_json =
+                    serde_json::to_string(&fresh.index).map_err(|err| err.to_string())?;
+                if reused_json != fresh_json {
+                    return Err(format!(
+                        "{label}: same-run reuse must serialize identically to a fresh build"
+                    ));
+                }
+                if reused.files_content_hash != fresh.files_content_hash {
+                    return Err(format!("{label}: content hash must match a fresh build"));
+                }
+                if withheld.is_some_and(|file| outside(&reused.index, file)) {
+                    return Err(format!(
+                        "{label}: the added file must withdraw the outside claim"
+                    ));
+                }
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&linked_root);
+        result
+    }
+
     /// A changed file differing from the indexed one only by a BOM is
     /// current: no re-parse, no fact-cache lookup, index untouched.
     #[test]
@@ -10348,6 +11103,103 @@ marker = "libtest_mimic::Trial"
         let bound_all = render(bound.classified.iter().collect())?;
         assert_eq!(bound_all, full_changed);
         Ok(())
+    }
+
+    /// A file holding `functions` predicate seams, every one called by a test
+    /// with a different oracle, so the seams do not all share one class.
+    fn many_seams_layout(root: &Path, functions: usize) -> Result<(), String> {
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = 'one_seam_fixture'\nversion = '0.1.0'\n\n[workspace]\n",
+        )?;
+        write_file(&root.join("src/lib.rs"), "pub mod limits;\n")?;
+        let mut source = String::new();
+        let mut tests = String::new();
+        for n in 0..functions {
+            source.push_str(&format!(
+                "pub fn over_{n}(value: i32) -> bool {{\n    value > {n}\n}}\n"
+            ));
+            let oracle = if n % 2 == 0 {
+                format!("assert!(one_seam_fixture::limits::over_{n}({}));", n + 1)
+            } else {
+                format!("let _ = one_seam_fixture::limits::over_{n}({n});")
+            };
+            tests.push_str(&format!(
+                "#[test]\nfn over_{n}_checks() {{\n    {oracle}\n}}\n"
+            ));
+        }
+        write_file(&root.join("src/limits.rs"), &source)?;
+        write_file(&root.join("tests/limits.rs"), &tests)?;
+        Ok(())
+    }
+
+    /// #13884: a by-id lookup evaluates exactly the selected seam however
+    /// many seams the file holds, and that seam's classified entry is
+    /// byte-identical to its entry in the whole-file inventory.
+    #[test]
+    fn one_seam_inventory_evaluates_only_the_selected_seam() -> Result<(), String> {
+        for functions in [3usize, 9] {
+            let root = make_tempdir(&format!("one-seam-{functions}"))?;
+            many_seams_layout(&root, functions)?;
+            let config = RiprConfig::default();
+            let changed = [PathBuf::from("src/limits.rs")];
+
+            evaluation_probe::reset();
+            let full = inventory_diff_scoped_classified_seams_at_with_config(
+                &root,
+                &config,
+                &changed,
+                &[],
+            )?;
+            let full_evaluated = evaluation_probe::evaluated();
+            // Fixture premises: at least one seam per function, all evaluated by
+            // the whole-file path, and more than one class among them.
+            let seams = full.classified.len();
+            assert!(seams >= functions, "{:?}", class_names(&full));
+            assert_eq!(full_evaluated, seams);
+            let classes = full
+                .classified
+                .iter()
+                .map(|entry| entry.class.as_str())
+                .collect::<BTreeSet<_>>();
+            assert!(classes.len() > 1, "fixture classes: {classes:?}");
+
+            for entry in &full.classified {
+                let id = entry.seam.id().as_str();
+                evaluation_probe::reset();
+                let one = inventory_diff_scoped_seam_at_with_config(&root, &config, &changed, id)?;
+                assert_eq!(evaluation_probe::evaluated(), 1, "{functions} seams, {id}");
+                assert_eq!(one.unevaluated_seams, seams - 1);
+                assert!(!one.evidence_incomplete());
+                let one_json = serde_json::to_value(&one.classified)
+                    .map_err(|error| format!("serialize: {error}"))?;
+                let full_json =
+                    serde_json::to_value([entry]).map_err(|error| format!("serialize: {error}"))?;
+                assert_eq!(one_json, full_json, "{functions} seams, {id}");
+            }
+
+            // Negative control: an id the file does not hold evaluates nothing
+            // and yields no entry, as the whole-file lookup would.
+            evaluation_probe::reset();
+            let missing = inventory_diff_scoped_seam_at_with_config(
+                &root,
+                &config,
+                &changed,
+                "seam-id-not-in-file",
+            )?;
+            assert_eq!(evaluation_probe::evaluated(), 0);
+            assert!(missing.classified.is_empty());
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    fn class_names(inventory: &ScopedClassifiedSeamInventory) -> Vec<(String, &'static str)> {
+        inventory
+            .classified
+            .iter()
+            .map(|entry| (entry.seam.id().as_str().to_string(), entry.class.as_str()))
+            .collect()
     }
 
     /// #9210: an unchanged refresh reuses the classified result; any change
@@ -15923,4 +16775,30 @@ mod first {{ pub struct Alpha; impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x >
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
+
+    #[test]
+    fn unreadable_path_refusal_names_the_path_not_a_pass_wide_failure() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
+        };
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::LanguageScopeUnsupported,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "Restore read access.")?,
+        )
+        .with_path("src/locked")?;
+        let refusal = refuse_failed_evidence(&[limitation], "repo badge")
+            .err()
+            .ok_or("a limitation must refuse")?;
+        assert!(
+            refusal.contains("unreadable path `src/locked`"),
+            "{refusal}"
+        );
+        assert!(!refusal.contains("pass-wide"), "{refusal}");
+        Ok(())
+    }
 }
+
+#[cfg(all(test, feature = "lang-rust"))]
+#[path = "file_guidance_inventory_tests.rs"]
+mod file_guidance_inventory_tests;

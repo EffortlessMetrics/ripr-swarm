@@ -1,7 +1,10 @@
 use super::PythonFramework;
 use super::admission::PythonAssertionAdmission;
-use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
+use super::approx_band::{
+    PythonBandReading, PythonBandSource, parse_expression, python_band_reading,
+};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
+use super::callee_patch::callee_only_patch;
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
 use super::cli_subcommand::CliSubcommand;
 use super::effect_alignment::ChangedEffect;
@@ -9,10 +12,11 @@ use super::fixtures::{inert_tool_fixture, literal_owner_instance_fixture};
 use super::forwarding_decorator::is_forwarding_decorator;
 use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
-    PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
+    HelperOwnerCallCandidate, MAX_CROSS_MODULE_CALLERS, PythonRelatedCandidate, PythonRelationKind,
+    body_calls_owner, body_exercises_dunder_protocol, dunder_method_class,
     import_source_module_matches_owner, is_python_identifier_char,
     line_prefix_looks_like_comment_or_string, test_imports_owner_module,
-    test_may_reach_owner_class,
+    test_may_reach_owner_class, test_references_owner_class,
 };
 use super::sink_alignment::CreditedAssertion;
 use super::source_utils::{SourceText, signature_colon_end};
@@ -20,7 +24,7 @@ use super::{
     PythonImport, PythonOracleShape, PythonOwner, PythonTest, expr_full_name,
     split_python_assignment,
 };
-use crate::domain::{OracleStrength, StaticLimitKind};
+use crate::domain::{OracleStrength, OwnerKind, StaticLimitKind};
 use rustpython_parser::ast::{self, Expr};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,7 +48,15 @@ pub(super) fn static_limit_for_change(
         line_text,
         None,
     );
-    static_limit_for_focused_change(line_text, None, None, &focus, owner, "", related_candidates)
+    static_limit_for_focused_change(
+        line_text,
+        None,
+        None,
+        &focus,
+        owner,
+        PythonBandSource::default(),
+        related_candidates,
+    )
 }
 
 /// A test that rebinds the owner's module object (`route.response = fake`,
@@ -121,9 +133,10 @@ pub(super) fn static_limit_for_focused_change(
     log_evidence: Option<&PythonLogEvidence>,
     focus: &PythonAssertionFocus,
     owner: &PythonOwner,
-    owner_source: &str,
+    source: PythonBandSource<'_>,
     related_candidates: &[PythonRelatedCandidate<'_>],
 ) -> Option<PythonStaticLimit> {
+    let owner_source = source.text;
     let trimmed = line_text.trim();
     if contains_dynamic_dispatch(trimmed) {
         return Some(PythonStaticLimit {
@@ -235,10 +248,16 @@ pub(super) fn static_limit_for_focused_change(
     // An independent active relation can still supply its own oracle. The
     // shared matcher withholds assertions and boundary inputs from controlled
     // tests, so those tests cannot lend credit to a weaker active relation.
+    // A test that provably never runs (`never_runs`) is no evidence either
+    // way, so it does not raise the limit: with no other relation the
+    // finding is a gap, like an `#[ignore]`d Rust test.
     if !related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle())
         && let Some((test, decorator)) = related_candidates.iter().find_map(|candidate| {
+            if super::test_activation::never_runs(candidate.test).is_some() {
+                return None;
+            }
             super::test_activation::activation_control(candidate.test)
                 .map(|decorator| (candidate.test, decorator))
         })
@@ -275,6 +294,15 @@ pub(super) fn static_limit_for_focused_change(
             line_text,
         ) {
             Some(calls) => substituted_calls.extend(calls),
+            // A literal stand-in for a callee the edit neither names nor
+            // feeds leaves the exact assertion reading the edit (#13632).
+            None if callee_only_patch(
+                candidate.test,
+                owner,
+                owner_source,
+                old_line_text,
+                line_text,
+            ) => {}
             None => mocked = true,
         }
     }
@@ -305,7 +333,14 @@ pub(super) fn static_limit_for_focused_change(
     }
     if trimmed.chars().any(|ch| ch.is_ascii_digit())
         && matches!(
-            python_band_reading(old_line_text, trimmed, owner, related_candidates, focus),
+            python_band_reading(
+                old_line_text,
+                trimmed,
+                owner,
+                source,
+                related_candidates,
+                focus
+            ),
             PythonBandReading::Unread
         )
     {
@@ -392,21 +427,63 @@ pub(super) fn implicit_dunder_dispatch_limit(
     if !related_candidates.is_empty() {
         return None;
     }
-    let class = dunder_method_class(owner)?;
-    all_tests
+    if let Some(class) = dunder_method_class(owner) {
+        return all_tests
+            .iter()
+            .any(|test| test_may_reach_owner_class(test, owner, class))
+            .then(|| PythonStaticLimit {
+                kind: StaticLimitKind::DynamicDispatch,
+                evidence: format!(
+                    "static_limit dynamic_dispatch: dunder method `{}` is invoked implicitly by Python syntax",
+                    owner.qualified_name
+                ),
+                missing: format!(
+                    "Static limit `dynamic_dispatch`: `{}` is a dunder method Python invokes through syntax on an instance of `{class}`; tests import `{class}`, its module or its package, or name `{class}`, but the preview adapter cannot bind the instance a test builds to the class, so it does not claim that no test reaches the owner.",
+                    owner.qualified_name
+                ),
+            });
+    }
+    // A helper only a dunder of its own class calls through `self.` /
+    // `cls.` (`Cache.getsizeof` via `__setitem__`, `LFUCache.__touch` via
+    // `__getitem__`) may be reached by that dunder's syntax (#13776). The
+    // reading needs both an import-provenanced reference to the owner's class
+    // and, somewhere in the same test body, the protocol syntax of one of the
+    // reaching dunders. The syntax is not tied to an instance of the owner's
+    // class (a dict subscript counts too); that is accepted because the limit
+    // only withdraws the confident `no_static_path` claim and grants no
+    // relation or credit. A test that only builds the class, or names a
+    // same-named class from another module, keeps `no_static_path`
+    // (RIPR-SPEC-0201).
+    if owner.class_facts.dunder_entries.is_empty()
+        || owner.class_path.is_empty()
+        || !matches!(
+            owner.owner_kind,
+            Some(OwnerKind::Method | OwnerKind::ClassMethod)
+        )
+    {
+        return None;
+    }
+    let class = owner.class_path.as_str();
+    // Name a reaching dunder whose protocol the test actually used.
+    let entry = all_tests
         .iter()
-        .any(|test| test_may_reach_owner_class(test, owner, class))
-        .then(|| PythonStaticLimit {
-            kind: StaticLimitKind::DynamicDispatch,
-            evidence: format!(
-                "static_limit dynamic_dispatch: dunder method `{}` is invoked implicitly by Python syntax",
-                owner.qualified_name
-            ),
-            missing: format!(
-                "Static limit `dynamic_dispatch`: `{}` is a dunder method Python invokes through syntax on an instance of `{class}`; tests import `{class}`, its module or its package, or name `{class}`, but the preview adapter cannot bind the instance a test builds to the class, so it does not claim that no test reaches the owner.",
-                owner.qualified_name
-            ),
-        })
+        .filter(|test| test_references_owner_class(test, owner, class))
+        .find_map(|test| {
+            owner.class_facts.dunder_entries.iter().find(|entry| {
+                body_exercises_dunder_protocol(&test.body_text, std::slice::from_ref(*entry))
+            })
+        })?;
+    Some(PythonStaticLimit {
+        kind: StaticLimitKind::DynamicDispatch,
+        evidence: format!(
+            "static_limit dynamic_dispatch: `{}` is called through `self.` from dunder method `{entry}`, which Python invokes implicitly by syntax",
+            owner.qualified_name
+        ),
+        missing: format!(
+            "Static limit `dynamic_dispatch`: `{}` is reached from dunder method `{entry}` of `{class}` through a same-class call path, and Python invokes that dunder through syntax on an instance of `{class}`; a test references `{class}` through an import of its module and uses the protocol syntax of `{entry}` somewhere in its body (not necessarily on an instance of `{class}`), but the preview adapter cannot bind that syntax to the class, so it does not claim that no test reaches the owner.",
+            owner.qualified_name
+        ),
+    })
 }
 
 pub(super) fn contains_dynamic_dispatch(text: &str) -> bool {
@@ -443,63 +520,135 @@ pub(super) fn line_prefix_before(text: &str, idx: usize) -> &str {
 /// a comment or an open string. A tripled quote opens a string that only the
 /// same tripled delimiter closes, so `'''it's'''` is one balanced literal and
 /// code after it is visible (#9992); a triple string left open at the end of
-/// the prefix hides what follows. F-string fields are not read here.
+/// the prefix hides what follows. The replacement field of an f-string is code
+/// (#14754 review): `f"{parse('')}"` ends the prefix inside a field, so the
+/// call there stays visible.
 pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
+    /// One open string literal on the prefix scanner's stack.
+    struct Literal {
+        quote: char,
+        triple: bool,
+        formatted: bool,
+        /// The scanner is inside this f-string's replacement field: its text
+        /// is code, not string text.
+        in_field: bool,
+        /// Open braces of that field (a dict or set literal nests).
+        field_depth: usize,
+    }
     let chars: Vec<char> = prefix.chars().collect();
-    // The active delimiter and its width (1 or 3).
-    let mut open: Option<(char, usize)> = None;
+    let mut stack: Vec<Literal> = Vec::new();
     let mut index = 0;
     while index < chars.len() {
         let ch = chars[index];
-        if let Some((quote, width)) = open {
-            let closes = ch == quote
-                && chars.len() - index >= width
-                && chars[index..index + width].iter().all(|c| *c == quote);
-            if ch == '\\' {
-                index += 2;
-            } else if closes {
-                open = None;
-                index += width;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-        if ch == '#' {
-            return true;
-        }
-        if ch == '\'' || ch == '"' {
-            let triple = chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch);
-            let width = if triple { 3 } else { 1 };
-            // A single-line f-string whose quote pairing cannot be followed
-            // (3.12 same-quote nesting in a field, a newline in a field)
-            // hides what follows: a miss, never an invented call (#9230).
-            if !triple
-                && chars_end_with_f_prefix(&chars[..index])
-                && single_line_fstring_is_ambiguous(chars[index..].iter().copied())
-            {
+        let in_code = stack.last().is_none_or(|literal| literal.in_field);
+        if in_code {
+            if ch == '#' {
                 return true;
             }
-            open = Some((ch, width));
-            index += width;
+            if ch == '\'' || ch == '"' {
+                let triple = chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch);
+                let formatted = chars_end_with_f_prefix(&chars[..index]);
+                // A single-line f-string whose quote pairing cannot be followed
+                // (3.12 same-quote nesting in a field, a newline in a field)
+                // hides what follows: a miss, never an invented call (#9230).
+                if !triple
+                    && formatted
+                    && single_line_fstring_is_ambiguous(chars[index..].iter().copied())
+                {
+                    return true;
+                }
+                stack.push(Literal {
+                    quote: ch,
+                    triple,
+                    formatted,
+                    in_field: false,
+                    field_depth: 0,
+                });
+                index += if triple { 3 } else { 1 };
+                continue;
+            }
+            if let Some(literal) = stack.last_mut()
+                && literal.in_field
+            {
+                if ch == '{' {
+                    literal.field_depth += 1;
+                } else if ch == '}' {
+                    literal.field_depth = literal.field_depth.saturating_sub(1);
+                    if literal.field_depth == 0 {
+                        literal.in_field = false;
+                    }
+                }
+            }
+            index += 1;
             continue;
+        }
+        let Some((quote, triple, formatted)) = stack
+            .last()
+            .map(|literal| (literal.quote, literal.triple, literal.formatted))
+        else {
+            index += 1;
+            continue;
+        };
+        if ch == '\\' {
+            index += 2;
+            continue;
+        }
+        if triple {
+            if chars.len() - index >= 3 && chars[index..index + 3].iter().all(|c| *c == quote) {
+                stack.pop();
+                index += 3;
+                continue;
+            }
+        } else if ch == quote {
+            stack.pop();
+            index += 1;
+            continue;
+        }
+        if formatted {
+            if ch == '{' {
+                if chars.get(index + 1) == Some(&'{') {
+                    index += 2;
+                    continue;
+                }
+                if let Some(literal) = stack.last_mut() {
+                    literal.in_field = true;
+                    literal.field_depth = 1;
+                }
+                index += 1;
+                continue;
+            }
+            if ch == '}' && chars.get(index + 1) == Some(&'}') {
+                index += 2;
+                continue;
+            }
         }
         index += 1;
     }
-    open.is_some()
+    stack.last().is_some_and(|literal| !literal.in_field)
 }
 
 /// Whether the identifier run that ends `before` is an `f` string prefix
 /// (`f`, `F`, `rf`, `fR`, ...): at most two characters, and not the tail of a
 /// longer name such as `perf`.
 fn chars_end_with_f_prefix(before: &[char]) -> bool {
-    let run = before
-        .iter()
-        .rev()
-        .take_while(|ch| is_python_identifier_char(**ch))
-        .count();
+    // Stop at the third identifier character: the answer is already `false`,
+    // and the caller pays this per quote, so walking (and allocating) the whole
+    // identifier run of a long line is unbounded work for a bounded answer.
+    let mut run = 0usize;
+    for ch in before.iter().rev() {
+        if !is_python_identifier_char(*ch) {
+            break;
+        }
+        run += 1;
+        if run > 2 {
+            return false;
+        }
+    }
+    if run == 0 {
+        return false;
+    }
     let prefix: String = before[before.len() - run..].iter().collect();
-    run <= 2 && matches!(prefix.to_ascii_lowercase().as_str(), "f" | "rf" | "fr")
+    matches!(prefix.to_ascii_lowercase().as_str(), "f" | "rf" | "fr")
 }
 
 /// Whether the single-line f-string literal that starts at the first character
@@ -686,7 +835,10 @@ fn receiver_is_rebound_from_non_stdlib_functools(imports: &[PythonImport], recei
 /// as functools` or `from helpers import functools`). `import functools as
 /// ft` then `@ft.lru_cache` is the same binding unless `ft` is also rebound.
 /// Call arguments are already dropped by `expr_full_name`.
-fn is_imported_functools_memoization_decorator(decorator: &str, imports: &[PythonImport]) -> bool {
+pub(super) fn is_imported_functools_memoization_decorator(
+    decorator: &str,
+    imports: &[PythonImport],
+) -> bool {
     if let Some((receiver, method)) = decorator.rsplit_once('.') {
         if !is_functools_memoization_name(method) {
             return false;
@@ -1616,6 +1768,75 @@ fn contains_identifier(text: &str, identifier: &str) -> bool {
         .any(|(index, _)| has_identifier_boundary(text, index, identifier.len()))
 }
 
+/// Reach into a changed helper that enters its module only from another
+/// module (#12955). Every related test reaches `owner` through a function of
+/// another module that imports and calls it (`cross_module_caller_call`), or
+/// no test relates at all while more functions of other modules call it than
+/// the relation follows. The adapter does not evaluate values across that
+/// module boundary, so the edit is read as unresolved: never graded as a gap,
+/// and never `no_static_path`.
+///
+/// `cross_module_over_cap` is [`cross_module_callers_exceed_cap`] for the
+/// owner, computed by the caller only when no test relates to it.
+pub(super) fn cross_module_reach_limit(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    helper_callers: &[HelperOwnerCallCandidate<'_>],
+    cross_module_over_cap: bool,
+) -> Option<PythonStaticLimit> {
+    if related_candidates.is_empty() {
+        return cross_module_over_cap.then(|| PythonStaticLimit {
+            kind: StaticLimitKind::MissingImportGraph,
+            evidence: format!(
+                "static_limit missing_import_graph: more than {MAX_CROSS_MODULE_CALLERS} functions of other modules call `{}`",
+                owner.name
+            ),
+            missing: format!(
+                "Static limit `missing_import_graph`: more than {MAX_CROSS_MODULE_CALLERS} functions of other modules import and call `{}`; the Python preview adapter does not follow that many cross-module callers, so it does not read this edit as having no test path.",
+                owner.name
+            ),
+        });
+    }
+    // Helpers are only gathered when no test relates to the owner directly,
+    // so equal lengths mean every related candidate is a helper candidate;
+    // the check keeps the limit off if candidates are ever appended later.
+    if helper_callers.is_empty()
+        || related_candidates.len() != helper_callers.len()
+        || !helper_callers.iter().all(|helper| helper.cross_module)
+    {
+        return None;
+    }
+    let mut callers: Vec<&str> = helper_callers
+        .iter()
+        .map(|helper| helper.caller.as_str())
+        .collect();
+    callers.sort_unstable();
+    callers.dedup();
+    let shown = callers
+        .iter()
+        .take(3)
+        .map(|caller| format!("`{caller}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = callers.len().saturating_sub(3);
+    let shown = if more == 0 {
+        shown
+    } else {
+        format!("{shown} and {more} more")
+    };
+    Some(PythonStaticLimit {
+        kind: StaticLimitKind::MissingImportGraph,
+        evidence: format!(
+            "static_limit missing_import_graph: related tests reach `{}` only through callers in other modules ({shown})",
+            owner.name
+        ),
+        missing: format!(
+            "Static limit `missing_import_graph`: related tests reach `{}` only through functions of other modules that import it ({shown}); the Python preview adapter does not evaluate values across the module boundary, so it does not grade this edit as a gap.",
+            owner.name
+        ),
+    })
+}
+
 /// Heuristic-only relations that cannot honestly grade a gap (#9421, #9423).
 ///
 /// - A dunder method owner whose related tests all relate only through
@@ -1756,6 +1977,7 @@ pub(super) mod tests {
             reexport_modules: Vec::new(),
             star_exported: false,
             ambiguous_src_modules: Vec::new(),
+            test_local_shadows: Vec::new(),
             rival_definition_modules: Vec::new(),
             module_constants: Vec::new(),
             same_class_callees: Vec::new(),
@@ -1769,6 +1991,7 @@ pub(super) mod tests {
             nested_called_by_parent: false,
             nested_result_discarded: false,
             trusted_stdlib_click_alias: false,
+            route_returns_body: false,
         }
     }
 

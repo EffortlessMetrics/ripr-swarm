@@ -1,0 +1,8 @@
+[package]
+name = "rust_multi_site_helper_reach_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "rust_multi_site_helper_reach_fixture"
+path = "src/lib.rs"

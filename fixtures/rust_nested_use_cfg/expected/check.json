@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"high"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach thr: at, high, low", "infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "propagation yes: Changed behavior appears to influence returned value: x > 101", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "local flow reaches returned value: x > 101 (line 2)", "related test tests/api.rs:12 at uses weak relational check oracle: assert!(!thr::thr(101));", "related test tests/api.rs:7 high uses weak relational check oracle: assert!(thr::internal::thr(500));", "related test tests/api.rs:2 low uses weak relational check oracle: assert!(!thr::internal::thr(50));", "source function argument value x = 50 at line 3", "source function argument value x = 500 at line 8", "source function argument value x = 101 at line 13"],
       "flow_sinks": [
         {"kind":"return_value","text":"x > 101","line":2}
@@ -128,8 +135,8 @@
       "stop_reasons": ["infection_evidence_unknown"],
       "oracle_kind": "relational_check",
       "oracle_strength": "weak",
-      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -165,6 +172,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"high"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach thr: at, high, low", "infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "related test tests/api.rs:12 at uses weak relational check oracle: assert!(!thr::thr(101));", "related test tests/api.rs:7 high uses weak relational check oracle: assert!(thr::internal::thr(500));", "related test tests/api.rs:2 low uses weak relational check oracle: assert!(!thr::internal::thr(50));", "source function argument value x = 50 at line 3", "source function argument value x = 500 at line 8", "source function argument value x = 101 at line 13"],
       "flow_sinks": [
       ],
@@ -288,6 +302,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach thr: at, high, low", "infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "propagation yes: Complete propagation witness reaches returned value: x > 101", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: x > 101 (line 2)", "related test tests/api.rs:12 at uses no oracle", "related test tests/api.rs:7 high uses no oracle", "related test tests/api.rs:2 low uses no oracle", "source function argument value x = 50 at line 3", "source function argument value x = 500 at line 8", "source function argument value x = 101 at line 13"],
       "flow_sinks": [
         {"kind":"return_value","text":"x > 101","line":2}
@@ -381,8 +402,8 @@
       "stop_reasons": ["infection_evidence_unknown"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

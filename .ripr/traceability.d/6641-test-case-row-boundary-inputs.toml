@@ -1,0 +1,14 @@
+# Registers the test_case row-input controls (#6641): a row's literal cells
+# bind the function's parameters like rstest `#[case]` cells, so a row at a
+# changed boundary is an owner input. Arrow-row comparison is RIPR-SPEC-0231.
+[[extend]]
+id = "RIPR-SPEC-0231"
+tests = [
+  "crates/ripr/tests/test_case_row_boundary_inputs.rs::a_row_at_the_changed_boundary_is_credited",
+  "crates/ripr/tests/test_case_row_boundary_inputs.rs::rows_off_the_boundary_are_not_credited",
+  "crates/ripr/tests/test_case_row_boundary_inputs.rs::a_boundary_row_that_never_reaches_the_owner_is_not_credited",
+  "crates/ripr/src/analysis/value_resolution/tests.rs::test_case_rows_bind_every_parameter_positionally",
+  "crates/ripr/src/analysis/value_resolution/tests.rs::test_case_arrow_rows_bind_only_the_arguments_before_the_arrow",
+  "crates/ripr/src/analysis/value_resolution/tests.rs::test_case_rows_that_cannot_run_or_align_bind_nothing",
+  "crates/ripr/src/analysis/value_resolution/tests.rs::test_case_rows_beside_rstest_rows_or_a_rebinding_bind_nothing",
+]

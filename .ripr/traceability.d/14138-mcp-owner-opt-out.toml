@@ -1,0 +1,18 @@
+# MCP withholds #[mutants::skip] owner opt-out findings from gaps and repair cards (#14138).
+[[extend]]
+id = "RIPR-SPEC-0211"
+tests = [
+  "crates/ripr/src/mcp/owner_opt_out_tests.rs::gap_list_serves_only_the_plain_function_and_discloses_the_opt_out",
+  "crates/ripr/src/mcp/owner_opt_out_tests.rs::plain_function_gap_and_card_are_unchanged_by_a_sibling_opt_out",
+  "crates/ripr/src/mcp/owner_opt_out_tests.rs::all_withheld_snapshot_reports_that_state_not_a_clean_empty_list",
+  "crates/ripr/src/mcp/owner_opt_out_tests.rs::owner_opt_out_results_validate_against_the_advertised_output_schemas",
+  "crates/ripr/src/mcp/owner_opt_out_tests.rs::brief_gap_list_text_names_the_owner_opt_out",
+]
+code = [
+  "crates/ripr/src/mcp/workspace.rs",
+  "crates/ripr/src/mcp/gaps.rs",
+  "crates/ripr/src/mcp/protocol.rs",
+  "crates/ripr/src/mcp/repair.rs",
+  "crates/ripr/src/mcp/repair_card.rs",
+  "crates/ripr/src/app.rs",
+]

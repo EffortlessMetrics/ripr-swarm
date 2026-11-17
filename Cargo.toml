@@ -2,6 +2,7 @@
 members = ["crates/ripr", "crates/ripr-contract", "xtask", "tools/repo-policy"]
 default-members = ["crates/ripr"]
 resolver = "2"
+exclude = ["evals"]
 
 [workspace.package]
 # Single source of truth for the released version. `crates/ripr` inherits this
@@ -16,7 +17,6 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
 repository = "https://github.com/EffortlessMetrics/ripr/"
-homepage = "https://github.com/EffortlessMetrics/ripr/"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -29,6 +29,19 @@ unused_must_use = "deny"
 # carves out an unsafe island, this keeps unsafe operations inside an
 # unsafe fn from skipping the explicit `unsafe { ... }` block.
 unsafe_op_in_unsafe_fn = "deny"
+
+# Rustdoc's default-warn lints are errors: a doc link that does not resolve,
+# or that points a public reader at a private item, renders as dead text on
+# docs.rs. `cargo doc --workspace --no-deps` (the `check-pr` doc gate) then
+# fails closed instead of printing warnings nobody reads.
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+redundant_explicit_links = "deny"
+invalid_codeblock_attributes = "deny"
+invalid_rust_codeblocks = "deny"
+invalid_html_tags = "deny"
+bare_urls = "deny"
 
 # Panic-safety policy: clippy is the fast IDE rail for panic-family code shapes;
 # `cargo xtask check-no-panic-family` is the authoritative semantic gate that
@@ -180,6 +193,16 @@ codegen-units = 16
 # test` when a developer needs to step-debug with variable inspection.
 [profile.dev]
 debug = "line-tables-only"
+
+# Test profile: no debuginfo at all. Test binaries only need panic messages
+# and assertion output, not file:line backtraces, and on MSVC the inherited
+# line-tables-only still emits a separate PDB per test binary (measured
+# 749 MB for the ripr lib-test binary alone; ~43 GB of PDBs across a full
+# local target dir). Dropping test debuginfo shrinks every test artifact
+# and speeds up linking and cache save/restore. Step-debugging a failing
+# test remains available via `CARGO_PROFILE_TEST_DEBUG=line-tables-only`.
+[profile.test]
+debug = 0
 
 # Optimize retained JSON parsing without changing repository code settings or
 # debug assertions in the normal dev and inherited test profiles.

@@ -538,3 +538,61 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_form_parity_assert_msg (41)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_assert_msg --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — assertion_form_parity_assert_msg (42)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_assert_msg --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — assertion_form_parity_assert_msg (43)
+
+Reason:
+RIPR-SPEC-0122: Hidden rows sharing file, owner, class and reason merge into one row (#14299)
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_assert_msg --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — assertion_form_parity_assert_msg (44)
+
+Reason:
+RIPR-SPEC-0154: each own-line branch value of the tail if/else is now a return_value probe (#14385); the else-branch row moves from static_unknown to propagation_unknown and the then-branch row reads weakly_exposed under the same weak assert! oracle
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_assert_msg --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — assertion_form_parity_assert_msg (45)
+
+Reason:
+RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_assert_msg --reason "..."`
+
+Updated:
+- `expected/check.json`

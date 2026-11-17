@@ -177,6 +177,34 @@ exercised boundary from a missing one.
   `end == start` discriminator with `observed end values: unknown`.
 - Char literals in test-call arguments are extracted as exact inputs
   (lifetimes are not).
+- Compound predicate boundary (#9637): comparison binds tighter than `&&`
+  and `||`, so the equality-boundary reading of a predicate with a top-level
+  connective uses only its one comparison operand, never the whole text
+  split at the first comparison operator. `s.starts_with('-') && s.len() > 1`
+  reads `s.len()` against `1`, not `s.starts_with('-') && s.len()`, which no
+  input can equal. The connective scan skips brackets and string and char
+  literals. A quoted operator (`s.starts_with('>')`) is not a comparison,
+  and whitespace inside a literal stays significant when the pre-edit
+  operand is compared. Two or more comparison operands, an operand the pre-edit text
+  already holds unchanged (`x > 1 && a` to `x > 1 && b`), an empty operand
+  (including a continuation line that starts with `&&` or `||`), a block
+  comment, or text the scan cannot balance, with or without a connective,
+  give no boundary reading, so the stage falls back to its existing unknown
+  or connective-change reason. A `//` line comment ends the scanned text.
+  A balanced predicate with no top-level connective and no block comment is
+  read whole, as before. A
+  single-comparison compound is newly readable, so a test input at that
+  comparison's boundary can be observed there. Masking by a sibling operand
+  stays with propagation: the predicate finding of `label == "beta" && on`
+  called only with `on = false` reads `propagation_unknown`, not `exposed`.
+  A comparison joined by `&&` only to bare bool owner parameters
+  (`order_cents >= FREE_OVER_CENTS && !express`) is read by the guarded
+  boundary rule in RIPR-SPEC-0001 (#13037) instead: only a row that holds
+  every guard sits on its boundary, and a guarded shape that rule declines
+  gets no boundary reading here.
+  The Rust canonical gap discriminator reads the same single comparison
+  (#14719), so `a && s.len() > 1` mints `s.len==1`; every other predicate
+  shape keeps the whole-line discriminator it minted before.
 - Literal byte-length boundary (#9637): diff analysis also reads one closed
   owner shape, `fn f(text: &str, width: usize) -> bool { let end =
   text.as_bytes().len(); end <= width }`, with immutable parameters and local,
@@ -376,6 +404,17 @@ only reaches the owner without a bound exact assertion stays below `exposed`.
   string quotes stripped, so a computed `"a_b"` compares equal to a
   literal `"ab"`. The normalization is pre-existing and applies
   identically to parameter operands.
+- A flat owner prelude (#12771) may rebind what a boundary local reads.
+  Every statement between the owner's opening brace and the local's `let`
+  must be either `let NAME = !NAME;` for a parameter or
+  `const NAME: <integer type> = <decimal literal>;`. There must be no
+  braces, calls, macros or other statements, and no macro anywhere in the
+  body. Each rebound name may be mentioned elsewhere in the owner only in
+  the local's own initializer. A negated flag may appear there only as the
+  `if` condition, which is then read flipped. A constant replaces the
+  file's constant of that name. Any other shape keeps the earlier
+  rebinding refusal (`local-boundary-flag-loop`'s `for si in [false]`
+  stays unresolved).
 
 - A local that folds to a plain integer is compared only against an
   integer cell of the other operand's parameter. A string cell is the
@@ -419,14 +458,21 @@ only reaches the owner without a bound exact assertion stays below `exposed`.
 8. Reject: the same local with tests at `(1_000, true)` and `(1_024,
    false)`: each input is the other flag's boundary, no row sits on
    `unit`, and the verdict stays a gap (`local-boundary-flag-trap`).
-9. Reject: `let si = !si;` before the same local, with tests at
-   `(1_024, true)`: the flag the local reads is the opposite of the
-   caller's literal, so the pinned 1_024 is not the boundary and the
-   verdict stays unresolved (`local-boundary-flag-shadowed`).
+9. Accept: `let si = !si;` before the same local, with tests at
+   `(1_024, true)`, `(1_023, true)` and `(999, true)`: the flag the local
+   reads is the opposite of the caller's literal, so `unit` is `1000` under
+   every row, the pinned 1_024 is not the boundary, no row sits on `unit`,
+   and the verdict is a gap (`local-boundary-flag-shadowed`, #12771). The
+   rebinding is read only in a flat owner prelude (see Required guards);
+   any other rebinding shape keeps the verdict unresolved.
 10. Reject: `for si in [false] { let unit = if si { KIB } else { KB }; .. }`
     with tests at `(1_024, true)` (`local-boundary-flag-loop`).
-11. Reject: a function-local `const KB: u64 = 2_000;` shadowing the file's
-    `KB` (`local-boundary-flag-alias`).
+11. Accept: a function-local `const KB: u64 = 2_000;` shadowing the file's
+    `KB`, read by `let unit = KB;`: `unit` is `2000`, the rows at `1_000`
+    and `2_500` are off it, and the verdict is a gap
+    (`local-boundary-flag-alias`, #12771). Only a plain decimal integer
+    `const` item in a flat owner prelude replaces the file constant; any
+    other declaration keeps the verdict unresolved.
 12. Reject: the real `bytesize` edit `bytes < unit` to `bytes <= unit`,
     whose only direct row binds `bytes` to a string literal: the verdict
     stays `infection_unknown` (`bytesize-format-unit-first-run`).
@@ -510,6 +556,10 @@ only reaches the owner without a bound exact assertion stays below `exposed`.
     reached) stay `infection_unknown`.
 
 ## Test Mapping
+
+Compound predicate boundary: `analysis/classify/activation.rs`
+`a_compound_predicate_reads_only_its_one_changed_comparison` and
+`crates/ripr/tests/compound_predicate_boundary.rs`.
 
 `analysis/classify/argument_fold.rs` `tests` (every fold and refusal above);
 `rust-verdict-corpus` cases `spec0158-modfold-const-operand`,

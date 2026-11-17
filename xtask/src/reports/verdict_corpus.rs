@@ -379,6 +379,10 @@ pub(crate) fn score(truth: TruthState, observed: Verdict) -> Outcome {
     }
 }
 
+/// Reach-summary suffix `ripr` writes for a workspace-unreferenced owner; the
+/// classifier owns the wording (`UNREFERENCED_IN_WORKSPACE`).
+const UNREFERENCED_IN_WORKSPACE: &str = "(unreferenced in workspace)";
+
 pub(crate) fn finding_verdict(finding: &Value) -> Verdict {
     let class = finding
         .get("classification")
@@ -390,6 +394,20 @@ pub(crate) fn finding_verdict(finding: &Value) -> Verdict {
     let named_limit = finding
         .get("static_limit_kind")
         .is_some_and(|kind| !kind.is_null());
+    // RIPR-SPEC-0219: `no_static_path` on an owner the workspace never names
+    // (`(unreferenced in workspace)` on the reach stage, only set when no
+    // caller, alias, doctest, macro block or language dispatch can run it
+    // unseen) is a plain missing test, so it reads as a gap. A named limit
+    // still wins.
+    if class == "no_static_path"
+        && !named_limit
+        && finding
+            .pointer("/ripr/reach/summary")
+            .and_then(Value::as_str)
+            .is_some_and(|summary| summary.ends_with(UNREFERENCED_IN_WORKSPACE))
+    {
+        return Verdict::Gap;
+    }
     if named_limit
         || matches!(
             class,
@@ -737,6 +755,13 @@ pub(crate) struct CaseRow {
     pub(crate) changed_since_labeling: bool,
     pub(crate) observed_classifications: Vec<String>,
     pub(crate) outcome: Outcome,
+    /// The tests catch the change, every spec example the case cites is a
+    /// `Reject` example and the case accepts `limited`: its spec withholds the
+    /// only credit that could resolve it, so an abstention here is the
+    /// specified behavior, not a miss analyzer work could remove
+    /// (RIPR-SPEC-0219, [`abstention_expected`]). Absent when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) abstention_expected: bool,
     pub(crate) contradictions: Vec<String>,
     /// Candidate-current findings anywhere in the case's check.
     pub(crate) findings_scored: usize,
@@ -768,6 +793,11 @@ pub(crate) struct Report {
     pub(crate) false_silent_rate: Ratio,
     pub(crate) ideal_rate: Ratio,
     pub(crate) abstention_rate: Ratio,
+    /// Abstained rows that are not [`CaseRow::abstention_expected`]: the
+    /// abstentions analyzer work could remove without breaking a spec's
+    /// `Reject` example. Same denominator as `abstention_rate`, so the
+    /// abstention-expected share is the difference (RIPR-SPEC-0219).
+    pub(crate) avoidable_abstention_rate: Ratio,
     pub(crate) contradiction_rate: Ratio,
     pub(crate) contradictions_by_code: BTreeMap<String, usize>,
     /// Abstained rows again, by what the abstention missed (`gap_missed` or
@@ -812,8 +842,21 @@ pub(crate) struct OriginRates {
     pub(crate) false_silent_rate: Ratio,
     pub(crate) ideal_rate: Ratio,
     pub(crate) abstention_rate: Ratio,
+    /// Abstained rows that are not [`CaseRow::abstention_expected`]: the
+    /// abstentions analyzer work could remove without breaking a spec's
+    /// `Reject` example. Same denominator as `abstention_rate`, so the
+    /// abstention-expected share is the difference (RIPR-SPEC-0219).
+    pub(crate) avoidable_abstention_rate: Ratio,
     /// [`Report::abstention_by_cause`] for this origin's rows only.
     pub(crate) abstention_by_cause: BTreeMap<String, usize>,
+}
+
+/// Abstained rows whose case does not expect the abstention.
+fn avoidable_abstentions<R: std::borrow::Borrow<CaseRow>>(rows: &[R]) -> usize {
+    rows.iter()
+        .map(std::borrow::Borrow::borrow)
+        .filter(|row| row.outcome == Outcome::Abstained && !row.abstention_expected)
+        .count()
 }
 
 /// Count abstained rows by `<side missed>:<classification>`.
@@ -865,6 +908,7 @@ fn origin_rates(rows: &[&CaseRow]) -> OriginRates {
         false_silent_rate: ratio(false_silent, not_fully),
         ideal_rate: ratio(count(Outcome::Ideal), rows.len()),
         abstention_rate: ratio(count(Outcome::Abstained), rows.len()),
+        avoidable_abstention_rate: ratio(avoidable_abstentions(rows), rows.len()),
         abstention_by_cause: abstention_by_cause(rows),
     }
 }
@@ -878,6 +922,7 @@ pub(crate) fn case_row(
     origin: SubjectOrigin,
     check: &Value,
     anchor_line: Option<&str>,
+    reject_examples: &BTreeSet<String>,
 ) -> Result<CaseRow, String> {
     let packet_driven = case.perl_facts.is_some();
     let anchored = anchored_findings(check, &case.anchor, anchor_line, packet_driven);
@@ -938,6 +983,7 @@ pub(crate) fn case_row(
             || classes != case.labeling_observation.full_checkout_classifications,
         observed_classifications: classes,
         outcome: score(case.truth.state, observed),
+        abstention_expected: abstention_expected(case, reject_examples),
         contradictions: contradictions.into_iter().collect(),
         findings_scored: scored,
         findings_contradicted: contradicted,
@@ -947,12 +993,36 @@ pub(crate) fn case_row(
     })
 }
 
+/// Whether the case's spec asks for the abstention: the tests catch the
+/// change (ideal `credited`), the case cites at least one spec example, every
+/// cited example is an abstaining `Reject` example (one that pins the outcome
+/// as unresolved, not one that only forbids a route to credit; see
+/// [`coverage::abstaining_reject_examples`]), and the case lists `limited`
+/// among its acceptable verdicts. Such an example withholds credit, so with
+/// credit ruled out the only verdicts left are `limited`/`silent`. When the
+/// tests miss the change (ideal `gap`), a gap still obeys the Reject example,
+/// so that abstention stays avoidable.
+pub(crate) fn abstention_expected(case: &Case, reject_examples: &BTreeSet<String>) -> bool {
+    case.truth.state.ideal() == Verdict::Credited
+        && !case.spec_examples.is_empty()
+        && case
+            .spec_examples
+            .iter()
+            .all(|id| reject_examples.contains(id))
+        && case
+            .expected
+            .acceptable_verdicts
+            .contains(&Verdict::Limited)
+}
+
 /// `anchor_lines` maps a case id to its anchor line's text, read from the
-/// patched run copy.
+/// patched run copy. `reject_examples` holds the abstaining `Reject`
+/// acceptance examples of the corpus's specs ([`abstention_expected`]).
 pub(crate) fn build_report(
     corpus: &Corpus,
     checks: &[(String, Value)],
     anchor_lines: &BTreeMap<String, String>,
+    reject_examples: &BTreeSet<String>,
 ) -> Result<Report, String> {
     let by_id: BTreeMap<&str, &Value> = checks.iter().map(|(id, v)| (id.as_str(), v)).collect();
     let origins: BTreeMap<&str, SubjectOrigin> = corpus
@@ -979,6 +1049,7 @@ pub(crate) fn build_report(
             origin,
             check,
             anchor_lines.get(&case.case_id).map(String::as_str),
+            reject_examples,
         )?);
     }
     Ok(summarize(
@@ -1050,6 +1121,7 @@ pub(crate) fn summarize(spec: String, non_claims: Vec<String>, rows: Vec<CaseRow
         false_silent_rate: ratio(false_silent, not_fully),
         ideal_rate: ratio(count(Outcome::Ideal), rows.len()),
         abstention_rate: ratio(count(Outcome::Abstained), rows.len()),
+        avoidable_abstention_rate: ratio(avoidable_abstentions(&rows), rows.len()),
         contradiction_rate: ratio(findings_contradicted, findings_scored),
         contradictions_by_code: by_code,
         abstention_by_cause: abstention_by_cause(&rows),
@@ -1071,15 +1143,10 @@ pub(crate) fn summarize(spec: String, non_claims: Vec<String>, rows: Vec<CaseRow
 /// file-name order. Scoreboards and the public proof read the corpus rates
 /// through this instead of a committed summary file.
 pub(crate) fn expected_report(dir: &Path) -> Result<Report, String> {
-    // Only the fields the report repeats; `validate` owns the full header.
-    #[derive(Deserialize)]
-    struct Header {
-        spec: String,
-        non_claims: Vec<String>,
-    }
-    let header_path = dir.join("corpus.json");
-    let header: Header = serde_json::from_value(parse_json(&header_path)?)
-        .map_err(|err| format!("parse {}: {err}", normalize_path(&header_path)))?;
+    // Definitions establish truth and origin; row copies cannot establish
+    // their own eligibility or scoring. This is record consistency, not a
+    // fresh analyzer run or the retained-byte validation owned by `validate`.
+    let corpus = load_corpus(dir)?;
     let rows_dir = dir.join("expected").join(ROWS_DIR);
     let rows = record_files(&rows_dir, "case_id")?
         .into_iter()
@@ -1090,21 +1157,54 @@ pub(crate) fn expected_report(dir: &Path) -> Result<Report, String> {
         .collect::<Result<Vec<_>, _>>()?;
     // The rows must cover exactly the corpus's cases: a missing row would
     // otherwise shrink every denominator into a plausible, wrong rate.
-    let case_ids: BTreeSet<String> = record_files(&dir.join("cases"), "case_id")?
+    let cases: BTreeMap<_, _> = corpus
+        .cases
         .iter()
-        .filter_map(|case| case.get("case_id").and_then(Value::as_str))
-        .map(str::to_string)
+        .map(|case| (case.case_id.as_str(), case))
         .collect();
-    let row_ids: BTreeSet<String> = rows.iter().map(|row| row.case_id.clone()).collect();
-    let missing: Vec<&String> = case_ids.difference(&row_ids).collect();
-    let extra: Vec<&String> = row_ids.difference(&case_ids).collect();
+    let case_ids: BTreeSet<_> = cases.keys().copied().collect();
+    let row_ids: BTreeSet<_> = rows.iter().map(|row| row.case_id.as_str()).collect();
+    let missing: Vec<_> = case_ids.difference(&row_ids).collect();
+    let extra: Vec<_> = row_ids.difference(&case_ids).collect();
     if !missing.is_empty() || !extra.is_empty() {
         return Err(format!(
             "{} does not match the corpus cases (missing rows: {missing:?}; rows without a case: {extra:?}); run `cargo xtask verdict-corpus check`",
             normalize_path(&rows_dir)
         ));
     }
-    Ok(summarize(header.spec, header.non_claims, rows))
+    let subjects: BTreeMap<_, _> = corpus
+        .subjects
+        .iter()
+        .map(|subject| (subject.subject_id.as_str(), subject))
+        .collect();
+    // The abstention-expected flag is derived from the case and the specs'
+    // abstaining `Reject` examples; a committed row cannot carry a flag its
+    // definition does not support (RIPR-SPEC-0219).
+    let reject_examples = coverage::abstaining_reject_example_ids_for_corpus(dir)?;
+    for row in &rows {
+        let case = cases
+            .get(row.case_id.as_str())
+            .ok_or_else(|| format!("row {} has no case", row.case_id))?;
+        let subject = subjects
+            .get(case.subject_id.as_str())
+            .ok_or_else(|| format!("case {} has no subject `{}`", case.case_id, case.subject_id))?;
+        if row.subject_id != case.subject_id
+            || row.truth != case.truth.state
+            || row.origin != subject.origin
+            || row.anchor != format!("{}:{}", case.anchor.file, case.anchor.line)
+            || row.ideal_verdict != case.expected.ideal_verdict
+            || row.ideal_verdict != case.truth.state.ideal()
+            || row.packet_provenance != case.perl_facts.as_ref().map(|facts| facts.provenance)
+            || row.outcome != score(case.truth.state, row.observed_verdict)
+            || row.abstention_expected != abstention_expected(case, &reject_examples)
+        {
+            return Err(format!(
+                "row {} disagrees with its scoring definition",
+                row.case_id
+            ));
+        }
+    }
+    Ok(summarize(corpus.spec, corpus.non_claims, rows))
 }
 
 pub(crate) fn render_report_json(report: &Report) -> Result<String, String> {
@@ -1142,6 +1242,10 @@ pub(crate) fn render_report_markdown(report: &Report, language: &str) -> String 
         (
             "Abstained (limited or silent where acceptable)",
             &report.abstention_rate,
+        ),
+        (
+            "Avoidable abstentions (abstained, not asked for by a spec Reject example)",
+            &report.avoidable_abstention_rate,
         ),
         ("Findings with a contradiction", &report.contradiction_rate),
     ] {
@@ -2618,7 +2722,7 @@ pub(crate) fn run_case_expecting(
         args.push(packet.to_string_lossy().into_owned());
     }
     let cache_value = cache.to_string_lossy().into_owned();
-    let stdout = run_output_owned_with_envs(&binary, &args, &[(CACHE_ENV, &cache_value)])?;
+    let stdout = run_case_output(&binary, &args, &cache_value)?;
     let mut subject = case_subject(
         case,
         &fs::read(&diff).map_err(|err| format!("read {}: {err}", normalize_path(&diff)))?,
@@ -2634,6 +2738,16 @@ pub(crate) fn run_case_expecting(
         relativize_probe_files(&mut check, &canonical);
     }
     Ok((check, anchor_line))
+}
+
+/// Parent workers already parallelize cases. Pin each child Rayon pool to one
+/// worker without changing the parent pool or another case's cache.
+fn run_case_output(binary: &str, args: &[String], cache: &str) -> Result<String, String> {
+    run_output_owned_with_envs(
+        binary,
+        args,
+        &[(CACHE_ENV, cache), ("RAYON_NUM_THREADS", "1")],
+    )
 }
 
 /// What the harness fixed about a live case before ripr ran: the language the
@@ -2888,7 +3002,8 @@ fn run_corpus(dir: &Path, corpus: &Corpus, work_root: &Path) -> Result<Report, S
         }
         checks.push((case.case_id.clone(), check));
     }
-    build_report(corpus, &checks, &anchor_lines)
+    let reject_examples = coverage::abstaining_reject_example_ids_for_corpus(dir)?;
+    build_report(corpus, &checks, &anchor_lines, &reject_examples)
 }
 
 pub(crate) fn validated_corpus(dir: &Path) -> Result<(Corpus, SpecExampleCoverage), String> {
@@ -3502,6 +3617,310 @@ pub(crate) struct CorpusArgs {
     pub(crate) language: Option<String>,
     pub(crate) out: Option<PathBuf>,
     pub(crate) cases: Option<Vec<String>>,
+    pub(crate) paths: Option<Vec<String>>,
+    pub(crate) paths_file: Option<String>,
+}
+
+pub(crate) const KNOWN_CORPUS_LANGUAGES: [&str; 4] = ["rust", "typescript", "python", "perl"];
+
+/// How one changed path affects the verdict-corpus selection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AffectedPath {
+    Language(String),
+    All,
+    Ignored,
+}
+
+/// The corpora selected by a set of changed paths.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AffectedSelection {
+    None,
+    Languages(BTreeSet<String>),
+    All { widened_by: String },
+}
+
+/// Normalize changed paths: forward slashes, no leading `./`, no blanks,
+/// commas split, duplicates removed in first-seen order. An empty result
+/// is an error naming the missing input, never a silent pass.
+pub(crate) fn normalize_affected_paths(raw: &[String]) -> Result<Vec<String>, String> {
+    let mut paths: Vec<String> = Vec::new();
+    for item in raw {
+        for part in item.split(',') {
+            let mut path = part.trim().replace('\\', "/");
+            while let Some(rest) = path.strip_prefix("./") {
+                path = rest.to_string();
+            }
+            let path = path.trim_matches('/').to_string();
+            if !path.is_empty() && path != "." && !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+    }
+    if paths.is_empty() {
+        return Err(
+            "verdict-corpus check-affected: no changed paths supplied; pass --paths <p1,p2,...> or --paths-file <file|-> with at least one path"
+                .to_string(),
+        );
+    }
+    Ok(paths)
+}
+
+/// Classify one normalized changed path; first matching rule wins. Shared
+/// and unknown surfaces widen to all corpora, and only the explicit
+/// allowlist below is ignored, so an unrecognized path is never skipped.
+pub(crate) fn classify_affected_path(path: &str) -> AffectedPath {
+    let normalized = normalize_affected_paths(&[path.to_string()])
+        .unwrap_or_else(|_| vec![path.replace('\\', "/")]);
+    let path = normalized.first().map_or(path, String::as_str);
+    let segments: Vec<&str> = path.split('/').collect();
+    let basename = segments.last().copied().unwrap_or_default();
+    // A corpus for a known language selects it (Perl packets/*.json
+    // included); any other *-verdict-corpus widens.
+    if segments.first() == Some(&"fixtures")
+        && let Some(name) = segments.get(1)
+        && let Some(language) = name.strip_suffix(CORPUS_SUFFIX)
+    {
+        return if KNOWN_CORPUS_LANGUAGES.contains(&language) {
+            AffectedPath::Language(language.to_string())
+        } else {
+            AffectedPath::All
+        };
+    }
+    // One language adapter selects its corpus; the language module,
+    // router, adapter, id and any unknown language surface are shared.
+    if let Some(rest) = path.strip_prefix("crates/ripr/src/analysis/language/") {
+        let first = rest.split('/').next().unwrap_or_default();
+        if !rest.contains('/') && first.ends_with(".rs") {
+            if let Some(language) = first.strip_suffix(".rs")
+                && KNOWN_CORPUS_LANGUAGES.contains(&language)
+            {
+                return AffectedPath::Language(language.to_string());
+            }
+            return AffectedPath::All;
+        }
+        if KNOWN_CORPUS_LANGUAGES.contains(&first) {
+            return AffectedPath::Language(first.to_string());
+        }
+        return AffectedPath::All;
+    }
+    // The verdict-corpus harness itself is shared by every corpus.
+    if (path.starts_with("xtask/src/reports/verdict_corpus") && basename.ends_with(".rs"))
+        || matches!(
+            path,
+            "xtask/src/reports/fixtures.rs" | "xtask/src/command.rs" | "xtask/src/dispatch.rs"
+        )
+    {
+        return AffectedPath::All;
+    }
+    // Shared surfaces widen to every corpus. The analyzer crate itself is
+    // shared outside its language subtrees (handled above): a crate-root or
+    // cross-language helper such as bounded_input feeds every corpus.
+    if path.starts_with("crates/ripr/src/")
+        || path.starts_with("crates/ripr-contract/")
+        || [
+            "crates/ripr/src/domain",
+            "crates/ripr/src/analysis",
+            "crates/ripr/src/output",
+            "crates/ripr/src/app",
+            "crates/ripr/src/cli",
+            "crates/ripr/src/config",
+        ]
+        .iter()
+        .any(|prefix| {
+            path == *prefix
+                || path.starts_with(&format!("{prefix}/"))
+                || path == format!("{prefix}.rs")
+        })
+        || matches!(basename, "Cargo.toml" | "Cargo.lock" | "build.rs")
+        || basename.starts_with("rust-toolchain")
+        || segments.contains(&".cargo")
+        || path.starts_with("docs/specs/")
+        || path.starts_with(".github/")
+        || path.starts_with("schemas/")
+    {
+        return AffectedPath::All;
+    }
+    // The explicit ignored allowlist, anchored at the repository root so a
+    // nested examples/badges/metrics segment in a source tree still selects
+    // its language below; everything else defaults to All.
+    if path.starts_with("docs/")
+        || path.starts_with("editors/")
+        || path.starts_with("plugins/")
+        || path.starts_with("fixtures/")
+        || path.starts_with("examples/")
+        || path.starts_with("badges/")
+        || path.starts_with("metrics/")
+        || basename.starts_with("README")
+        || basename.starts_with("CHANGELOG")
+    {
+        return AffectedPath::Ignored;
+    }
+    // Source extensions, case-sensitive exactly as production route().
+    let extension = basename.rsplit_once('.').map(|(_, ext)| ext);
+    match extension {
+        Some("rs") => AffectedPath::Language("rust".to_string()),
+        Some("py") => AffectedPath::Language("python".to_string()),
+        Some("ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs") => {
+            AffectedPath::Language("typescript".to_string())
+        }
+        Some("pm" | "pl" | "t" | "psgi") => AffectedPath::Language("perl".to_string()),
+        _ => AffectedPath::All,
+    }
+}
+
+/// Aggregate changed paths into one selection; the first widening path
+/// is named so the run says why every corpus was selected.
+pub(crate) fn select_affected(paths: &[String]) -> AffectedSelection {
+    let mut languages = BTreeSet::new();
+    for path in paths {
+        match classify_affected_path(path) {
+            AffectedPath::Language(language) => {
+                languages.insert(language);
+            }
+            AffectedPath::All => {
+                return AffectedSelection::All {
+                    widened_by: path.clone(),
+                };
+            }
+            AffectedPath::Ignored => {}
+        }
+    }
+    if languages.is_empty() {
+        AffectedSelection::None
+    } else {
+        AffectedSelection::Languages(languages)
+    }
+}
+
+/// Header and footer lines for a check-affected run, around the existing
+/// per-corpus `checking` lines from `check_each`. Unselected discovered
+/// languages are named as not run, never as passed.
+pub(crate) fn affected_lines(
+    selection: &AffectedSelection,
+    discovered: &[String],
+    checked: usize,
+) -> Vec<String> {
+    let header = match selection {
+        AffectedSelection::Languages(languages) => format!(
+            "verdict-corpus: check-affected selected: {}",
+            languages
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        AffectedSelection::All { widened_by } => {
+            format!("verdict-corpus: check-affected selected: all (widened: {widened_by})")
+        }
+        AffectedSelection::None => "verdict-corpus: check-affected selected: none".to_string(),
+    };
+    let mut lines = vec![header, format!("verdict-corpus: checked {checked} corpora")];
+    let selected: BTreeSet<&str> = match selection {
+        AffectedSelection::Languages(languages) => languages.iter().map(String::as_str).collect(),
+        AffectedSelection::All { .. } => discovered.iter().map(String::as_str).collect(),
+        AffectedSelection::None => BTreeSet::new(),
+    };
+    let not_run: Vec<&str> = discovered
+        .iter()
+        .map(String::as_str)
+        .filter(|language| !selected.contains(language))
+        .collect();
+    if !not_run.is_empty() {
+        lines.push(format!(
+            "verdict-corpus: {} not run (not a pass)",
+            not_run.join(", ")
+        ));
+    }
+    lines
+}
+
+fn read_affected_paths(parsed: &CorpusArgs) -> Result<Vec<String>, String> {
+    let raw: Vec<String> = if let Some(paths) = &parsed.paths {
+        paths.clone()
+    } else if let Some(file) = &parsed.paths_file {
+        let content = if file == "-" {
+            use std::io::Read as _;
+            let mut content = String::new();
+            std::io::stdin()
+                .read_to_string(&mut content)
+                .map_err(|err| format!("verdict-corpus check-affected: read stdin: {err}"))?;
+            content
+        } else {
+            fs::read_to_string(file).map_err(|err| {
+                format!("verdict-corpus check-affected: read --paths-file {file}: {err}")
+            })?
+        };
+        content.lines().map(str::to_string).collect()
+    } else {
+        return Err(
+            "verdict-corpus check-affected: pass exactly one of --paths <p1,p2,...> or --paths-file <file|->"
+                .to_string(),
+        );
+    };
+    normalize_affected_paths(&raw)
+}
+
+/// Run only the corpora affected by `paths`. Discovered corpora are the
+/// denominator: an unknown or malformed discovered corpus widens the run
+/// (and its error then fails through `check_each`), while a failure to
+/// discover corpora at all propagates.
+fn check_affected(paths: &[String]) -> Result<(), String> {
+    let discovered = corpus_dirs(Path::new(FIXTURES_DIR))?;
+    let mut discovered_languages: Vec<String> = Vec::new();
+    let mut widened_by: Option<String> = None;
+    for entry in &discovered {
+        match entry {
+            Ok(dir) => match corpus_language(dir) {
+                Ok(language) if KNOWN_CORPUS_LANGUAGES.contains(&language.as_str()) => {
+                    if !discovered_languages.contains(&language) {
+                        discovered_languages.push(language);
+                    }
+                }
+                _ => {
+                    widened_by.get_or_insert_with(|| normalize_path(dir));
+                }
+            },
+            Err(_) => {
+                widened_by.get_or_insert_with(|| "fixtures".to_string());
+            }
+        }
+    }
+    discovered_languages.sort();
+    let selection = match (select_affected(paths), widened_by) {
+        (AffectedSelection::All { widened_by }, _) => AffectedSelection::All { widened_by },
+        (_, Some(widened_by)) => AffectedSelection::All { widened_by },
+        (selection, None) => selection,
+    };
+    let selected: Vec<Result<PathBuf, String>> = match &selection {
+        AffectedSelection::All { .. } => discovered,
+        AffectedSelection::None => Vec::new(),
+        AffectedSelection::Languages(languages) => discovered
+            .into_iter()
+            .filter(|entry| {
+                entry.as_ref().is_ok_and(|dir| {
+                    corpus_language(dir).is_ok_and(|language| languages.contains(&language))
+                })
+            })
+            .collect(),
+    };
+    let lines = affected_lines(&selection, &discovered_languages, 0);
+    println!("{}", lines[0]);
+    let checked = check_each(selected, |dir| score_corpus(dir, true, None, None));
+    // The selection footer (checked count, not-run disclosure) must print
+    // even when a selected corpus fails; the error then still propagates.
+    match &checked {
+        Ok(count) => {
+            for line in &affected_lines(&selection, &discovered_languages, *count)[1..] {
+                println!("{line}");
+            }
+        }
+        Err(_) => {
+            if let Some(not_run) = lines.iter().find(|line| line.contains("not run")) {
+                println!("{not_run}");
+            }
+        }
+    }
+    checked.map(|_| ())
 }
 
 /// Parse `verdict-corpus` arguments without touching the filesystem. The
@@ -3514,6 +3933,8 @@ pub(crate) fn parse_corpus_args(args: &[String]) -> Result<CorpusArgs, String> {
         language: None,
         out: None,
         cases: None,
+        paths: None,
+        paths_file: None,
     };
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -3543,6 +3964,31 @@ pub(crate) fn parse_corpus_args(args: &[String]) -> Result<CorpusArgs, String> {
                         .collect(),
                 );
             }
+            "--paths" => {
+                let list = iter
+                    .next()
+                    .ok_or("--paths needs comma-separated changed paths")?;
+                if parsed.paths.is_some() {
+                    return Err("verdict-corpus: --paths is given twice; pass one --paths list or one --paths-file".to_string());
+                }
+                parsed.paths = Some(
+                    list.split(',')
+                        .map(str::trim)
+                        .filter(|path| !path.is_empty())
+                        .map(str::to_string)
+                        .collect(),
+                );
+            }
+            "--paths-file" => {
+                let file = iter.next().ok_or("--paths-file needs a file path or -")?;
+                if parsed.paths_file.is_some() {
+                    return Err(
+                        "verdict-corpus: --paths-file is given twice; pass one --paths list or one --paths-file"
+                            .to_string(),
+                    );
+                }
+                parsed.paths_file = Some(file.clone());
+            }
             other if !other.starts_with("--") && sub.is_none() => sub = Some(other.to_string()),
             other => return Err(format!("verdict-corpus: unknown argument `{other}`")),
         }
@@ -3551,6 +3997,38 @@ pub(crate) fn parse_corpus_args(args: &[String]) -> Result<CorpusArgs, String> {
     let sub = parsed.sub.as_str();
     if sub == "check-all" && parsed.language.is_some() {
         return Err("verdict-corpus check-all checks every corpus; drop --language".to_string());
+    }
+    if sub == "check-affected" {
+        if parsed.language.is_some() {
+            return Err(
+                "verdict-corpus check-affected takes only --paths or --paths-file; drop --language"
+                    .to_string(),
+            );
+        }
+        if parsed.out.is_some() {
+            return Err(
+                "verdict-corpus check-affected takes only --paths or --paths-file; drop --out"
+                    .to_string(),
+            );
+        }
+        if parsed.cases.is_some() {
+            return Err(
+                "verdict-corpus check-affected takes only --paths or --paths-file; drop --cases"
+                    .to_string(),
+            );
+        }
+        if parsed.paths.is_some() == parsed.paths_file.is_some() {
+            return Err(
+                "verdict-corpus check-affected: pass exactly one of --paths <p1,p2,...> or --paths-file <file|->"
+                    .to_string(),
+            );
+        }
+        return Ok(parsed);
+    }
+    if parsed.paths.is_some() || parsed.paths_file.is_some() {
+        return Err(
+            "verdict-corpus: --paths and --paths-file apply only to check-affected".to_string(),
+        );
     }
     let takes_options = matches!(sub, "report" | "check");
     if !takes_options && (parsed.out.is_some() || parsed.cases.is_some()) {
@@ -3565,12 +4043,20 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
     if args.first().map(String::as_str) == Some("relabel") {
         return super::verdict_corpus_relabel::relabel(&args[1..]);
     }
+    let parsed = parse_corpus_args(args)?;
+    // check-affected selects its corpora from changed paths, so it must
+    // dispatch before the default (Rust) corpus directory is resolved.
+    if parsed.sub == "check-affected" {
+        let paths = read_affected_paths(&parsed)?;
+        return check_affected(&paths);
+    }
     let CorpusArgs {
         sub,
         language,
         out,
         cases,
-    } = parse_corpus_args(args)?;
+        ..
+    } = parsed;
     let sub = sub.as_str();
     let dir_buf = match &language {
         Some(language) => language_corpus_dir(language)?,
@@ -3639,7 +4125,7 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         other => Err(format!(
-            "verdict-corpus: unknown subcommand `{other}` (expected validate, check, check-all, report, bless, split, or relabel)"
+            "verdict-corpus: unknown subcommand `{other}` (expected validate, check, check-all, check-affected, report, bless, split, or relabel)"
         )),
     }
 }

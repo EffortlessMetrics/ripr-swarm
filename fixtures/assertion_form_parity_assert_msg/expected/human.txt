@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/assertion_form_parity_assert_msg/input
 
-Summary: 3 changed behaviors checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path, 2 unclear. 3 found, 0 suppressed by your settings
+Summary: 3 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 3 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
   Counts: 2 changed file(s), 15 changed line(s), 3 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
@@ -44,9 +44,10 @@ No test stub here: A related test already reaches the boundary input, but ripr g
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:3 (unknown: static analysis limited); kind: unclear; reason: No strong assertion was detected
-    - ./src/lib.rs:5 (unknown: static analysis limited); kind: unclear; reason: No strong assertion was detected
+    - ./src/lib.rs:3 (weak); kind: return_value; reason: No strong assertion was detected
+    - ./src/lib.rs:5 (unknown: propagation unclear); kind: return_value; reason: No clear propagation path from changed behavior to an observable sink
   Hidden classes:
-    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
+    weak = tests reach it but check it only loosely
+    unknown: propagation unclear = ripr could not follow the change through an opaque boundary
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

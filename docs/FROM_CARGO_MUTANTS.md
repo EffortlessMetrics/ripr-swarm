@@ -1,16 +1,17 @@
 # Coming from cargo-mutants
 
 You already run cargo-mutants and want to know what to use in ripr, and where
-it differs. Short version: ripr does not run mutants. It reads the diff and
-tells you, in seconds, which changed lines have no test that would notice a
-wrong value. Use it as the fast inner loop; keep cargo-mutants as the
-occasional runtime check where the cost is worth it.
+it differs. Short version: ripr does not run mutants. `ripr check` reads the
+diff and reports changed lines where it cannot find a test that appears to
+notice a wrong value. That is static evidence, not a runtime result. Use it as
+the fast inner loop; keep cargo-mutants as the occasional runtime check where
+the cost is worth it.
 
 | | cargo-mutants | ripr |
 | --- | --- | --- |
 | Question | Does a test fail when this mutant runs? | Does a test appear to contain a discriminator for this change? |
 | Method | Builds and runs the suite per mutant | Static: reads the diff, tests and assertions |
-| Cost | Minutes to hours | Seconds on the diff |
+| Cost | Minutes to hours | Under a second on a small crate; 38-53 s and about 1.2 GB for `ripr check` on a two-file diff in a 2,500-file workspace (measured 2026-11-08) |
 | Verdict | `caught` / `missed` / `unviable` / `timeout` | `exposed` / `weakly_exposed` / `reachable_unrevealed` / `no_static_path` / `infection_unknown` / `propagation_unknown` / `static_unknown` |
 | Authority | Runtime | Advisory; never claims a mutant was killed |
 
@@ -26,6 +27,8 @@ result. See [Why ripr](WHY_RIPR.md).
 | `git diff main \| cargo mutants --in-diff /dev/stdin` | `ripr check --base main` | Includes uncommitted edits by default; `--committed` limits to history. |
 | `--file src/foo.rs` / `-f` | `--path src/foo.rs` | Repeatable; file, directory or glob. |
 | `--exclude 'src/gen/**'` / `-e` | `--exclude 'src/gen/**'` | Repeatable; wins over `--path`. |
+| `-p <pkg>` / `--package` | `--path crates/<pkg>` | There is no `-p`; select the package by its directory. Running from inside a member still analyzes the whole workspace. |
+| `--workspace` | `ripr check` | The default considers every changed file in the workspace; configured exclusions and analysis budgets can leave disclosed omissions or a partial result. |
 | `--re REGEX` / `--exclude-re REGEX` | none | Selection is by file path and by diff, not by mutant name. |
 | `--list` / `--list-files` | `ripr check --format json` | Lists probes and findings without any test run (the only mode). |
 | `--check` (compile only) | not applicable | Nothing is built. |
@@ -38,12 +41,14 @@ result. See [Why ripr](WHY_RIPR.md).
 
 ## Config map
 
+ripr does not read `.cargo/mutants.toml`. Carry its settings over by hand:
+
 | cargo-mutants (`.cargo/mutants.toml`) | ripr |
 | --- | --- |
-| `exclude_globs` / `examine_globs` | `--exclude` / `--path` flags ([Configuration](CONFIGURATION.md)) |
+| `exclude_globs` / `examine_globs` | `--exclude` / `--path` flags ([Configuration](CONFIGURATION.md)); the files they leave out count as requested scope, not as an incomplete run |
 | `exclude_re` / `examine_re` | none |
 | `additional_cargo_test_args`, `test_tool` | not applicable |
-| `#[mutants::skip]` | `.ripr/suppressions.toml` ([example](suppressions.example.toml)); applied to findings with `--suppression-policy` |
+| `#[mutants::skip]` | honored as-is on a changed function or method, including `#[cfg_attr(<predicate>, mutants::skip)]`: `ripr check` withholds that owner's findings and discloses them (count and `owner_mutants_skip`; see [Output schema](OUTPUT_SCHEMA.md#owner_opt_outs-and-withheld-findings-top-level-additive-13819)). A skip on an enclosing `impl` or `trait` block, inline module, or a file-level `#![mutants::skip]` is honored the same way and names that scope (RIPR-SPEC-0450). `#[mutants::skip] mod name;` is not followed into the module's file; use `.ripr/suppressions.toml` ([example](suppressions.example.toml)) for that: select the function with `path` + `function` so the entry survives edits, and pass it with `--suppression-policy` to `ripr check` and `ripr review-comments` (see [Suppressing in CI](#suppressing-in-ci)) |
 
 `ripr init` writes a `ripr.toml` with the built-in defaults. It is optional.
 
@@ -51,18 +56,58 @@ result. See [Why ripr](WHY_RIPR.md).
 
 | cargo-mutants CI habit | ripr equivalent |
 | --- | --- |
-| `cargo mutants --in-diff pr.diff` on each PR, fail on exit 2 (missed) | `ripr review-comments` then `ripr gate evaluate --mode acknowledgeable` (exit `3` when blocked; see [CI gate](#ci-gate-the-exit-2-equivalent)), or `ripr init --ci github` and [Adopting in CI](ADOPTING_IN_CI.md) for the full workflow |
+| `cargo mutants --in-diff pr.diff` on each PR, fail on exit 2 (missed) | `ripr gate check --base origin/main` (exit `3` when blocked; see [CI gate](#ci-gate-the-exit-2-equivalent)), or `ripr init --ci github` and [Adopting in CI](ADOPTING_IN_CI.md) for the full workflow |
 | Upload `mutants.out` as an artifact | the generated workflow uploads the reports under `target/ripr/reports` and can render SARIF |
 | Nightly full run | `ripr pilot` for a whole-repo ranked list |
-| Exit code | `ripr check` always exits `0` when it completes; the pass/fail decision is `ripr gate evaluate` (exit `3` when blocked). See [Exit codes](EXIT_CODES.md). |
+| Exit code | `ripr check` always exits `0` when it completes; the pass/fail decision is `ripr gate check` or `ripr gate evaluate` (exit `3` when blocked). See [Exit codes](EXIT_CODES.md). |
 
 Do not build a gate on `ripr check`'s exit code.
+
+### Suppressing in CI
+
+A `#[mutants::skip]` on a changed function already withholds its findings.
+For anything else (a skip on an `impl` block or module, or debt you accept
+without the attribute), use `.ripr/suppressions.toml`. A finding id changes on
+every edit (it hashes the expression), so key the entry on the owning function:
+
+```toml
+# .ripr/suppressions.toml
+schema_version = 1
+
+[[suppressions]]
+kind = "exposure_gap"
+path = "src/retry.rs"
+function = "retry_allowed"
+reason = "Retry policy is covered by the integration suite."
+owner = "team-retry"
+expires = "2026-12-31"
+```
+
+The default file is never applied implicitly. Pass it to every step that
+decides, so one suppression reaches the gate:
+
+```bash
+ripr check --root . --base origin/main --json --suppression-policy .ripr/suppressions.toml > target/ripr/pr/check.json
+ripr review-comments --root . --base origin/main --head HEAD \
+  --check-output target/ripr/pr/check.json \
+  --suppression-policy .ripr/suppressions.toml
+ripr gate evaluate --root . --pr-guidance target/ripr/review/comments.json --mode acknowledgeable
+```
+
+`ripr gate check --base origin/main --suppression-policy .ripr/suppressions.toml`
+does the last two steps in one command.
+
+Suppressed seams stay visible in the `suppressed` array of the review-comments
+JSON (reason `suppressed_by_policy`) and do not block the gate. Expired entries
+do not apply. A `function` entry covers every seam in that function, including
+ones added later, so keep `expires` set. `--check-output` alone also honors findings its check run marked
+suppressed.
 
 ## Output map
 
 | `mutants.out/` | ripr |
 | --- | --- |
-| `missed.txt` (one mutant per line) | `ripr check --format missed-txt`: one sorted line per gap (see below). Otherwise findings with `weakly_exposed`, `reachable_unrevealed` or `no_static_path`, each with the changed line, the missing discriminator and a next step. `ripr check` human output, `--json`, or `ripr agent brief --json` for a bounded fix list |
+| `missed.txt` (one mutant per line) | `ripr check --format missed-txt`: one sorted line per gap (see below). It lists every actionable class except `exposed`: `weakly_exposed`, `reachable_unrevealed`, `no_static_path` and the three `*_unknown` classes. Otherwise use the findings, each with the changed line, the missing discriminator and a next step. `ripr check` human output, `--json`, or `ripr agent brief --json` for a bounded fix list |
 | `caught.txt` | `exposed` findings (a strong discriminator was found) |
 | `unviable.txt` | no equivalent (nothing is compiled) |
 | `timeout.txt` | the `analysis_timeout` refusal (never a clean pass) |
@@ -98,7 +143,13 @@ Two rules for scripts that read this file:
   `# ripr: ...` comments when the run is incomplete, when sources are
   uncommitted, or when findings were left out. Skip them when listing gaps,
   but do not treat comment-only output as clean: only zero bytes means a
-  fully analyzed run with nothing to list.
+  fully analyzed run with nothing to list. Files you leave out on purpose
+  with `--exclude`/`--path` (or a configured `generated_file_patterns`) are
+  requested scope: they do not add a comment, and an otherwise fully analyzed
+  scoped run still prints zero bytes. The human and JSON reports name them in
+  a scope note. Files ripr skips on its own (built-in generated-file names
+  such as `generated.rs` or a `gen/` directory, unsupported languages, parse
+  failures) are not requested scope and still print a comment.
 - `ripr check` exits `0` whether or not it found gaps. A non-zero exit means
   the analysis did not complete. Do not gate on `check`'s exit code.
 
@@ -106,15 +157,24 @@ Full field and selection rules: [output schema, `missed-txt`](OUTPUT_SCHEMA.md#m
 
 ## CI gate: the exit `2` equivalent
 
-Two commands. The first writes PR guidance for the changed lines; the second
-applies the blocking policy to it:
+One command:
+
+```bash
+ripr gate check --base origin/main
+```
+
+It runs the two steps below in one process, defaults to `--mode
+acknowledgeable` and exits like `gate evaluate`. If the first step fails,
+gate check does not reuse an older `comments.json`; it exits `2`. Run the
+steps yourself when you want to keep the guidance from one run and
+evaluate it later:
 
 ```bash
 ripr review-comments --base origin/main --head HEAD
 ripr gate evaluate --pr-guidance target/ripr/review/comments.json --mode acknowledgeable
 ```
 
-| `gate evaluate` exit | Meaning |
+| `gate check` / `gate evaluate` exit | Meaning |
 | --- | --- |
 | `0` | pass, advisory only, or every blocking gap acknowledged |
 | `3` | blocked: at least one policy-eligible gap and no acknowledgement |
@@ -128,8 +188,19 @@ What it blocks: gaps that are policy-eligible and have a complete, bounded
 repair route. It does not block every finding. In the example above
 `missed-txt` listed two lines, while the gate reported one blocking gap and
 kept the other advisory (`incomplete_repair_route`). A gap stays advisory, for
-instance, when ripr cannot name a repair or when a test next to it changed in
-the same pull request. `gate-decision.md` states the reason for each one.
+instance, when ripr cannot name a repair, or when the pull request changed a
+test that calls the gap's function (directly, through a helper, or through a
+verified re-export). Changing an unrelated test, even one in the same file or
+with the same name in another module, does not keep a gap advisory.
+`gate-decision.md` states the reason for each one.
+
+A changed gap that ripr withholds as a static limitation is listed too, not
+dropped. For example, a changed function no test calls, whose boundary operand
+is computed (`cents % 100 > 49`), prints as `no_static_path` in `missed-txt`.
+`comments.json` lists it under `suppressed` with reason `static_limitation`,
+and the gate reports it as `suppressed` with that reason. It does not block:
+ripr cannot yet name a bounded repair for it, so a cargo-mutants run or a
+reviewer has to decide whether it needs a test (#13892).
 
 ### Observed
 
@@ -151,6 +222,18 @@ bare clone as `origin`:
   missing input.
 - The `ripr-waive` label exists in the repository, so a reviewer can
   acknowledge a gap for one pull request. The gap stays visible in the report.
+- Large workspaces: `review-comments` refuses with `review_guidance_oversized`
+  (exit `2`, so the gate also exits `2`) when its index input passes about
+  1,200 files (the workspace corpus plus changed files it reads for
+  attribution). Raise `RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES` on a runner with
+  enough memory; the limit is an input cap, not a memory bound, and its memory
+  cost on large workspaces is not measured here. Separately, `ripr check`
+  can return a partial result when the diff exceeds the 200-file or
+  1,000-changed-line budget. Raise `RIPR_PARTIAL_DIFF_FILE_BUDGET` and/or
+  `RIPR_PARTIAL_DIFF_LINE_BUDGET` as needed. The effective line budget is
+  capped by `RIPR_MAX_DIFF_CHANGED_RUST_LINES` (2,000 by default), and the
+  first selected file is analyzed whole even when it alone exceeds the line
+  budget. See [Configuration](CONFIGURATION.md).
 
 ### Minimal GitHub Actions steps
 
@@ -177,10 +260,7 @@ jobs:
         run: |
           mkdir -p target/ci
           printf '%s' "$LABELS" > target/ci/labels.json
-          ripr review-comments --base "origin/$BASE_REF" --head HEAD
-          ripr gate evaluate \
-            --pr-guidance target/ripr/review/comments.json \
-            --mode acknowledgeable \
+          ripr gate check --base "origin/$BASE_REF" \
             --labels-json target/ci/labels.json
 ```
 
@@ -196,7 +276,10 @@ switching through repository variables), generate it instead:
 ripr init --ci github
 ```
 
-and follow [adopting ripr in CI](ADOPTING_IN_CI.md). That route starts
+and follow [adopting ripr in CI](ADOPTING_IN_CI.md). Until ripr 0.11.0 is
+published, a development build generates a workflow that installs 0.10.0,
+which lacks commands the workflow runs; `ripr init` says so on stderr. Use the
+minimal steps above until then. That route starts
 advisory and moves to `acknowledgeable` or `baseline-check` through
 `RIPR_GATE_MODE`.
 
@@ -217,7 +300,7 @@ costs more than a plain `ripr check`. The import is advisory and does not change
 ## Where you will get stuck
 
 - **No fail-on-missed flag.** `ripr check` never fails on findings. Use the
-  two-command gate above.
+  one-command gate above, `ripr gate check`.
 - **Gaps, not mutants.** `--format missed-txt` lists one line per gap (a probe
   on a changed line), not per mutant, and there is no mutant-level regex
   selection.
@@ -229,5 +312,33 @@ costs more than a plain `ripr check`. The import is advisory and does not change
   missed mutant would be expensive.
 - **Languages.** Rust is the mature path. Python and TypeScript are preview; see
   [Capability matrix](CAPABILITY_MATRIX.md).
+- **Two vocabularies.** `ripr check` reports `weakly_exposed` /
+  `no_static_path`; the gate, `pilot` and calibration describe the same
+  evidence as seams that are `weakly_gripped` / `ungripped`
+  ([mapping](OUTPUT_SCHEMA.md)).
+- **Gate gaps being fixed.** Known cases where the gate is more lenient than
+  `check`: an untested changed function can be left out of review guidance
+  ([#13892](https://github.com/EffortlessMetrics/ripr-swarm/issues/13892));
+  a changed test anywhere in the same file keeps a gap advisory
+  ([#13893](https://github.com/EffortlessMetrics/ripr-swarm/issues/13893)).
+  Until those land, read `missed-txt` alongside the gate decision.
+  Separately, `--suppression-policy` does not reach the gate
+  ([#13895](https://github.com/EffortlessMetrics/ripr-swarm/issues/13895)),
+  so a finding suppressed by `check` can still block. In `acknowledgeable`
+  mode, use `--label ripr-waive` to acknowledge a policy-eligible gap for the
+  run; it remains visible in the reports. The bare label acknowledges every
+  blocking candidate without a matching scoped acknowledgement, not just a
+  finding you already checked, and applies to later workflow runs until
+  removed. Review every affected gap in `gate-decision.md`, then remove the
+  label when review is complete.
+- **Exclusions read as incomplete.** A changed file left out of the analysis
+  currently marks the run `partial_with_limitations`, so `missed-txt` prints a
+  `# ripr:` comment even on a clean change. That happens when a
+  `--path`/`--exclude` scope leaves it out, and also when ripr skips it as
+  generated (`generated_file_patterns`, or names such as `generated.rs` or
+  `src/gen/`), even with no flags
+  ([#13894](https://github.com/EffortlessMetrics/ripr-swarm/issues/13894)).
 - **Mutation operators.** ripr's probe families are not cargo-mutants' operator
-  list, so counts will not line up one to one.
+  list, so counts will not line up one to one. [Mutation operators ripr
+  models](MUTATION_OPERATORS.md) maps each cargo-mutants genre (and mutmut and
+  Stryker operator) to what ripr reports, with the gaps.

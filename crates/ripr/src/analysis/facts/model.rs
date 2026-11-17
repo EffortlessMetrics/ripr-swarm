@@ -932,6 +932,11 @@ pub struct FileFacts {
     /// from the lexical fallback and from hand-built facts; the scans then
     /// parse `source` as before.
     pub(crate) macro_candidates: Option<Box<MacroBindingCandidates>>,
+    /// Whether this file pulls documentation in from outside its own text
+    /// (`#![doc = include_str!(..)]`), answered from the producer's clean
+    /// parse (#13754). `None` from the lexical fallback and from hand-built
+    /// facts; the unseen-reach scan then parses `source` itself.
+    pub(crate) external_docs: Option<bool>,
 }
 
 impl FileFacts {
@@ -1002,7 +1007,8 @@ pub enum FunctionSourceRole {
     /// Ordinary production function: no test-defining attribute and not a
     /// member of a test-required module. The historical `is_test == false`.
     Production,
-    /// A manifest- and namespace-verified QuickCheck input generator. It is
+    /// A manifest- and namespace-verified hand-written `Arbitrary` input
+    /// generator (QuickCheck, proptest, or the `arbitrary` crate). It is
     /// stimulus support, not an executable test or production seam. Diff
     /// analysis retains its changes as explicit uncertainty rather than
     /// silently skipping them with ordinary test helpers (#11545).
@@ -1680,6 +1686,32 @@ impl std::fmt::Display for CallText {
     }
 }
 
+impl std::borrow::Borrow<str> for CallText {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Re-shares equal call lines while one file's facts are decoded. The
+/// extractor gives every call on a line one allocation, but a cache payload
+/// decodes each copy separately, so a warm run held one line copy per call
+/// (#13703).
+#[derive(Default)]
+struct CallTextInterner(std::collections::HashSet<CallText>);
+
+impl CallTextInterner {
+    fn share(&mut self, calls: &mut [CallFact]) {
+        for call in calls {
+            match self.0.get(call.text.as_str()) {
+                Some(shared) => call.text = shared.clone(),
+                None => {
+                    self.0.insert(call.text.clone());
+                }
+            }
+        }
+    }
+}
+
 impl From<String> for CallText {
     fn from(text: String) -> Self {
         Self(text.into())
@@ -1778,19 +1810,23 @@ impl ProbeShapeKind {
     }
 }
 
+/// One parser-owned probe site. Lines and byte offsets are stored as `u32`
+/// (rust-analyzer's `TextSize` bounds every offset, and a 1-based line number
+/// never exceeds its byte offset plus one), which keeps the run-wide shape vectors about a
+/// third smaller (#13703). Read them through the `usize` accessors.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProbeShapeFact {
-    pub start_line: usize,
-    pub end_line: usize,
+    pub start_line: u32,
+    pub end_line: u32,
     /// Byte offset of the shape's start within the source file. Populated
     /// by the parser-backed summarizer; the lexical fallback emits no
     /// probe shapes at all, so this stays accurate.
-    pub start_byte: usize,
+    pub start_byte: u32,
     /// Byte offset one past the shape's parser-owned end within the source
     /// file. Unlike `text` (trimmed, `;`-stripped display snippet), this is
     /// the verbatim syntax range end, so span consumers must derive geometry
     /// from these bytes, never from `text.len()`.
-    pub end_byte: usize,
+    pub end_byte: u32,
     pub kind: ProbeShapeKind,
     pub text: SourceText,
     /// A `call_deletion` shape whose value feeds a consumer (a condition, a
@@ -1801,7 +1837,47 @@ pub struct ProbeShapeFact {
     pub value_consumed: bool,
     /// Inclusive parser-owned match-head lines, independent of the token
     /// anchor and normalized display text. Other shapes retain their bounds.
-    pub source_lines: Option<(usize, usize)>,
+    pub source_lines: Option<(u32, u32)>,
+}
+
+impl ProbeShapeFact {
+    /// First source line, 1-based.
+    pub fn start_line(&self) -> usize {
+        widen(self.start_line)
+    }
+
+    /// Last source line, 1-based and inclusive.
+    pub fn end_line(&self) -> usize {
+        widen(self.end_line)
+    }
+
+    /// Byte offset of the shape's start; see the field.
+    pub fn start_byte(&self) -> usize {
+        widen(self.start_byte)
+    }
+
+    /// Byte offset one past the shape's parser-owned end; see the field.
+    pub fn end_byte(&self) -> usize {
+        widen(self.end_byte)
+    }
+
+    /// Inclusive parser-owned match-head lines; see the field.
+    pub fn source_lines(&self) -> Option<(usize, usize)> {
+        self.source_lines
+            .map(|(start, end)| (widen(start), widen(end)))
+    }
+}
+
+/// `u32` to `usize`, lossless on every target ripr builds for.
+fn widen(value: u32) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+/// A line or byte position as stored in a [`ProbeShapeFact`]. Positions come
+/// from rust-analyzer's `u32` text sizes, so saturation is unreachable for a
+/// parsed file.
+pub(crate) fn probe_shape_position(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
 }
 
 /// Cache payload mirrors of the fact structs. The wire carries [`WireText`]
@@ -1853,17 +1929,17 @@ pub(crate) struct TestFactWire {
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ProbeShapeFactWire {
-    pub start_line: usize,
-    pub end_line: usize,
-    pub start_byte: usize,
-    pub end_byte: usize,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub start_byte: u32,
+    pub end_byte: u32,
     pub kind: ProbeShapeKind,
     pub text: WireText,
     /// Omitted when false, so payloads without it read as unconsumed (#6677).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub value_consumed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_lines: Option<(usize, usize)>,
+    pub source_lines: Option<(u32, u32)>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -1884,6 +1960,8 @@ pub(crate) struct FileFactsWire {
     pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
     #[serde(default)]
     pub(crate) macro_candidates: Option<Box<MacroBindingCandidates>>,
+    #[serde(default)]
+    pub(crate) external_docs: Option<bool>,
 }
 
 impl FunctionFactWire {
@@ -2043,6 +2121,7 @@ impl From<&FileFacts> for FileFactsWire {
             source: facts.source.to_string(),
             item_scopes: facts.item_scopes.clone(),
             macro_candidates: facts.macro_candidates.clone(),
+            external_docs: facts.external_docs,
         }
     }
 }
@@ -2107,12 +2186,15 @@ impl ProbeShapeFactWire {
 impl FileFactsWire {
     fn link(self) -> Result<FileFacts, String> {
         let source: Arc<str> = Arc::from(self.source.as_str());
+        let mut call_texts = CallTextInterner::default();
         let mut functions = Vec::with_capacity(self.functions.len());
-        for wire in self.functions {
+        for mut wire in self.functions {
+            call_texts.share(&mut wire.calls);
             functions.push(wire.link(&source)?);
         }
         let mut tests = Vec::with_capacity(self.tests.len());
-        for wire in self.tests {
+        for mut wire in self.tests {
+            call_texts.share(&mut wire.calls);
             tests.push(wire.link(&source)?);
         }
         let mut probe_shapes = Vec::with_capacity(self.probe_shapes.len());
@@ -2134,6 +2216,7 @@ impl FileFactsWire {
             source,
             item_scopes: self.item_scopes,
             macro_candidates: self.macro_candidates,
+            external_docs: self.external_docs,
         })
     }
 }
@@ -2295,16 +2378,16 @@ struct TestFactWireRef<'a> {
 
 #[derive(serde::Serialize)]
 struct ProbeShapeFactWireRef<'a> {
-    start_line: usize,
-    end_line: usize,
-    start_byte: usize,
-    end_byte: usize,
+    start_line: u32,
+    end_line: u32,
+    start_byte: u32,
+    end_byte: u32,
     kind: ProbeShapeKind,
     text: WireTextRef<'a>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     value_consumed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    source_lines: Option<(usize, usize)>,
+    source_lines: Option<(u32, u32)>,
 }
 
 #[derive(serde::Serialize)]
@@ -2323,6 +2406,7 @@ struct FileFactsWireRef<'a> {
     source: &'a str,
     item_scopes: Option<&'a ModuleItemScopes>,
     macro_candidates: Option<&'a MacroBindingCandidates>,
+    external_docs: Option<bool>,
 }
 
 impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
@@ -2392,6 +2476,7 @@ impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
             source: &facts.source,
             item_scopes: facts.item_scopes.as_deref(),
             macro_candidates: facts.macro_candidates.as_deref(),
+            external_docs: facts.external_docs,
         }
     }
 }
@@ -2627,6 +2712,7 @@ mod tests {
             source: Arc::clone(&source),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
         };
         // The wire carries spans, not copied bodies.
         let wire = serde_json::to_value(&facts)?;
@@ -2657,6 +2743,70 @@ mod tests {
         consumed.probe_shapes[0].value_consumed = true;
         let decoded: FileFacts = serde_json::from_value(serde_json::to_value(&consumed)?)?;
         assert!(decoded.probe_shapes[0].value_consumed);
+        Ok(())
+    }
+
+    #[test]
+    fn decoded_call_facts_share_one_allocation_per_line_text() -> Result<(), String> {
+        let call = |line: usize, name: &str, text: &str| CallFact {
+            line,
+            name: name.to_string(),
+            // A fresh allocation per call, as a cache payload decodes them.
+            text: CallText::from(text.to_string()),
+        };
+        let function = |name: &str, calls: Vec<CallFact>| FunctionFact {
+            id: SymbolId(format!("src/lib.rs::{name}")),
+            name: name.to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 2,
+            body: SourceText::owned(String::new()),
+            calls: calls.into(),
+            returns: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            source_role: FunctionSourceRole::Production,
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            item: FunctionItemFact::default(),
+            impl_context: FunctionImplContext::Unknown,
+        };
+        let line = "    a(); b();";
+        let facts = FileFacts {
+            path: PathBuf::from("src/lib.rs"),
+            functions: vec![
+                function("f", vec![call(2, "a", line), call(2, "b", line)]),
+                function("g", vec![call(2, "a", line), call(3, "c", "    c();")]),
+            ],
+            tests: vec![TestFact {
+                name: "t".to_string(),
+                file: PathBuf::from("src/lib.rs"),
+                start_line: 5,
+                end_line: 6,
+                body: SourceText::owned(String::new()),
+                calls: vec![call(6, "a", line)].into(),
+                assertions: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+                generated: None,
+            }],
+            source: Arc::from(""),
+            ..FileFacts::default()
+        };
+        let wire = serde_json::to_value(&facts).map_err(|e| e.to_string())?;
+        let decoded: FileFacts = serde_json::from_value(wire).map_err(|e| e.to_string())?;
+        assert_eq!(decoded, facts);
+        let f = &decoded.functions[0].calls;
+        let g = &decoded.functions[1].calls;
+        assert!(f[0].text.shares_allocation(&f[1].text));
+        assert!(f[0].text.shares_allocation(&g[0].text));
+        // Tests share with functions in the same file.
+        assert!(f[0].text.shares_allocation(&decoded.tests[0].calls[0].text));
+        assert!(!f[0].text.shares_allocation(&g[1].text));
+        assert_eq!(g[1].text, "    c();");
         Ok(())
     }
 
@@ -2709,6 +2859,7 @@ mod tests {
             source: Arc::clone(&source),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
         };
         let wire = serde_json::to_value(&facts)?;
         assert!(
@@ -2919,6 +3070,7 @@ fn checks_helper() {
             source: Arc::clone(&home),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
         };
         // Paired children span.
         let wire = serde_json::to_value(&facts)?;

@@ -663,3 +663,42 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_sibling_oracle_fake_clean (51)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless error_path_sibling_oracle_fake_clean --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_sibling_oracle_fake_clean (52)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless error_path_sibling_oracle_fake_clean --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_sibling_oracle_fake_clean (53)
+
+Reason:
+RIPR-SPEC-0224: an Ok-only exact pin on a changed error variant is assertion_not_observing, not missing_exact_assertion (#14454)
+
+Command:
+`cargo xtask goldens bless error_path_sibling_oracle_fake_clean --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

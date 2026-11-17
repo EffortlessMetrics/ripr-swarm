@@ -90,6 +90,17 @@ in that matcher. Rust lexical whitespace, including non-ASCII line separators
 and direction marks, and raw identifiers cannot erase the qualifier.
 Bare type heads and enum variants retain their existing bounded handling;
 an independent supported local call can still establish the relation.
+One exception is bounded to the owner's own crate (#14036): in an integration
+test that is a test-crate root of the root package, `krate::Type::ctor(..)`
+reads as the owner's type only when `krate` is the root package's library
+identifier, the changed owner is a method of a top-level `impl` of a library file (a
+function-local or inline-module namesake type is not), a constructor of that type is indexed,
+exactly one type of that name is indexed in the workspace (#14083: with `mod a; mod b; pub use b::Rng;`
+the path names `b::Rng`, so a changed `a::Rng` method gets no direct call; two same-named types
+fail closed to a name-only relation even when the path is the owner's), and
+neither the file nor the test body declares, imports, renames or globs `krate`.
+A foreign crate, a shadowing module, a renamed crate and a test module child
+keep the refusal above.
 Bare generic annotations retain function-pointer, associated-type and
 const-expression arguments; punctuation inside those arguments cannot truncate
 the type or hide a qualified trailing path.
@@ -427,6 +438,14 @@ not shadow the real root and no longer makes every assertion macro ambiguous
 workspace-wide; a binding of the root name in that module, or an item-position
 macro call that may emit one, keeps the whole-file refusal.
 
+An `extern crate` alias from one standard crate to another standard name
+(`extern crate core as std;`, the common `no_std` shim, or
+`extern crate std as core;`) is not a macro-binding site: every macro it can
+bring is the standard one (#14390). The exemption holds only while the
+manifest proves the aliased crate is the standard one, so a Cargo-renamed
+`core`, an `alloc` alias (which has no such proof) and an alias of any other
+crate (`extern crate other as std;`) still refuse.
+
 ### Constructor-field observation linkage
 
 For a `field_construction` seam, repo-scoped evidence may link an exact-field
@@ -598,8 +617,8 @@ against fixture repos.
   owner-result field observation completes the producer-owned missing
   `field_value` fact after known activation; exact field equality stays
   already-gripped; wrapper, helper-transfer, shadow, reassignment, sibling
-  field, token coincidence, unknown activation, failed target authority,
-  mutable field borrow, assertion-message-only field credit, assertion-local
+  field (as a weak observation), token coincidence, unknown activation,
+  failed target authority, mutable field borrow, assertion-message-only field credit, assertion-local
   shadow, and same-name local or imported callees stay non-ready. A grouped
   nested-`super` import of the unique owner completes the route; a foreign
   module, cfg-ambiguous same-name pair, or leading `::` extern-prelude import
@@ -607,6 +626,34 @@ against fixture repos.
   refused DirectOwnerCall related test does not fall through to a Proposed
   target; an advisory related observer does not block an independently
   admitted proposal.
+  When the only related test binds the direct owner result once, every
+  other mention of the binding is a plain `binding.<other_field>` read
+  ended by a closing delimiter, a separator or a comparison, logical or
+  arithmetic operator (a call, turbofish, index, assignment, cast, further
+  `.` chain or `..binding` struct-update base refuses), at least one such
+  read appears in the condition of an `assert!` or in the compared
+  operands of an `assert_eq!` or `assert_ne!` that starts on a line after
+  the binding (appearing there, not deciding the assertion), and the test
+  never reads the changed field (#13700), the same fact completes the
+  route if the field's declared visibility reaches that test file (the
+  binding's name in a string literal, a comment, a format or message
+  argument, a `debug_assert!` or another value's field is not such a read;
+  a sibling-field-only
+  assertion is such a test, and an integration test's `use package::owner`
+  import counts when the shared call-identity authority settles it on the
+  owner); a strong or aliased read, a second candidate test, a binding passed
+  elsewhere, shadowed or format-captured, any other mention of the owner's
+  name in the test (a second call compared whole or snapshotted), a `use`
+  alias of the owner anywhere in the test file, a changed field outside the
+  owner's top-level return construction (a nested record such as
+  `Wrapper { inner: Inner { .. } }`), an owner name imported from
+  a rival module or crate, and a field the test file cannot name stay
+  non-ready, as do a changed literal returned from an `async`, `const`,
+  `try` or `gen` block inside the owner and a declared return type that only
+  aliases the constructed struct. Only the test body is scanned: a helper,
+  constant, macro or trait delegation defined outside it that calls the
+  owner is not seen, and neither is an alias re-exported from the
+  production crate (`pub use config::default_config as dc;`).
 - `analysis/related-test-ranking-v2-stabilization`: tests that direct owner
 calls outrank weaker relationship signals, strong oracles outrank smoke-only
 oracles inside the same relation, activation-value overlap breaks remaining

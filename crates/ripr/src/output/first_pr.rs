@@ -782,7 +782,7 @@ fn materialize_check_output_gap_ledger(
         return Ok(());
     };
     let check_output_path = resolve_path(root, check_output);
-    let contents = fs::read_to_string(&check_output_path).map_err(|err| {
+    let contents = crate::bounded_input::read_to_string(&check_output_path).map_err(|err| {
         format!(
             "first-pr --check-output {} is invalid: read failed: {err}",
             check_output_path.display()
@@ -939,7 +939,7 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
             && (doctor_javascript || doctor_languages.contains(&LanguageId::TypeScript))
             && !doctor_languages.contains(&LanguageId::Python)
             && !doctor_languages.contains(&LanguageId::Rust)
-            && crate::analysis::workspace_rust_files(root).is_empty()
+            && !crate::analysis::workspace_has_rust_source(root)
         {
             let (kind, marker) = if doctor_javascript {
                 ("JavaScript", "jsconfig.json")
@@ -960,7 +960,7 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
         // and doctor loops. Name the languages ripr cannot analyze instead.
         // Rust or preview source below the root (a nested crate) means the
         // root really is wrong, so that case keeps `wrong_root`.
-        let analyzable_below = !crate::analysis::workspace_rust_files(root).is_empty()
+        let analyzable_below = crate::analysis::workspace_has_rust_source(root)
             || !crate::analysis::workspace_preview_language_files(root).is_empty();
         let unanalyzed = crate::analysis::workspace_unanalyzed_source_languages(root);
         if !analyzable_below && !unanalyzed.is_empty() {
@@ -3020,7 +3020,7 @@ enum ArtifactReadError {
 }
 
 fn read_json(path: &Path) -> Result<Value, ArtifactReadError> {
-    let text = fs::read_to_string(path).map_err(|error| {
+    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             ArtifactReadError::Missing
         } else {
@@ -3033,7 +3033,7 @@ fn read_json(path: &Path) -> Result<Value, ArtifactReadError> {
 /// Read and hash the same bytes that selection consumes. A later replacement
 /// at the same path cannot validate an older no-action packet as current.
 fn read_json_with_digest(path: &Path) -> Result<(Value, String), ArtifactReadError> {
-    let bytes = fs::read(path).map_err(|error| {
+    let bytes = crate::bounded_input::read(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             ArtifactReadError::Missing
         } else {
@@ -4719,6 +4719,42 @@ mod tests {
         let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
         assert_eq!(packet["status"], "blocked", "{packet}");
         assert_eq!(packet["selected"]["state"], "wrong_root", "{packet}");
+        cleanup(&repo)
+    }
+
+    /// #13618: a nested Python package under a TypeScript root must not turn
+    /// the missing-marker refusal into `wrong_root`.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn typescript_root_with_nested_python_package_still_names_the_missing_marker()
+    -> Result<(), String> {
+        let repo = write_temp_root(&env::temp_dir(), "first-pr-ts-nested-python")?;
+        fs::write(repo.join("package.json"), r#"{"devDependencies":{}}"#)
+            .map_err(|err| format!("write package.json: {err}"))?;
+        fs::create_dir_all(repo.join("lib")).map_err(|err| format!("create lib: {err}"))?;
+        fs::write(repo.join("lib/pricing.ts"), "export const p = 1;\n")
+            .map_err(|err| format!("write pricing.ts: {err}"))?;
+        fs::create_dir_all(repo.join("tools/py")).map_err(|err| format!("create py: {err}"))?;
+        fs::write(
+            repo.join("tools/py/pyproject.toml"),
+            "[project]\nname='t'\n",
+        )
+        .map_err(|err| format!("write pyproject: {err}"))?;
+        init_git_repo_with_initial_files(
+            &repo,
+            &["package.json", "lib/pricing.ts", "tools/py/pyproject.toml"],
+        )?;
+        let doctor_languages = crate::config::language_detection::detect_languages(&repo);
+        assert!(
+            !doctor_languages.contains(&LanguageId::Python),
+            "nested package under a TS root is not Python: {doctor_languages:?}"
+        );
+        write_first_pr(&repo, &FirstPrOptions::default())?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(
+            packet["selected"]["reason_code"], "typescript_project_marker_missing",
+            "{packet}"
+        );
         cleanup(&repo)
     }
 
@@ -9121,7 +9157,13 @@ mod tests {
             Err(error) => error,
             Ok(()) => return Err("file occupying --out-dir must fail".to_string()),
         };
-        assert!(error.contains(&format!("create {out} failed:")), "{error}");
+        assert!(
+            error.contains(&format!(
+                "--out-dir {out} is an existing file, but --out-dir names the directory"
+            )),
+            "a file occupying the output directory names the flag and the fix: {error}"
+        );
+        assert!(!error.contains("os error"), "{error}");
         assert!(
             !error.contains("write elsewhere"),
             "a file occupying --out-dir is not a not-writable tree: {error}"

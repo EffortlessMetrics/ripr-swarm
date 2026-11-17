@@ -4,6 +4,7 @@ mod classify;
 mod diff;
 mod expectations;
 mod family;
+mod identifier_rename;
 mod ids;
 mod lexical;
 mod macro_definition;
@@ -34,6 +35,7 @@ pub(crate) use ids::{
     collision_ordinals, collision_rank_key, fingerprint_probe_id, legacy_whole_line_diff_probe_id,
     normalize_expression, normalize_rust_expression, sanitize_path,
 };
+pub(crate) use lexical::{inline_const_assertion_lines, is_inline_const_assertion_line};
 pub(crate) use macro_definition::{verus_region_line_spans, verus_region_lines};
 #[cfg(test)]
 pub(crate) use repo::probes_for_repo_file;
@@ -105,6 +107,8 @@ impl SeededProbe {
 
 #[cfg(test)]
 mod error_return_boundary_tests;
+#[cfg(test)]
+mod identifier_rename_tests;
 #[cfg(test)]
 mod parameter_boundary_tests;
 #[cfg(test)]

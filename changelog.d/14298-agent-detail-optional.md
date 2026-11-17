@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- The `ripr init --agents` loop now skips the DETAIL step (`ripr explain`, then `ripr context`) when a gap row's `missing=` is one code value (for example `total == 100`) rather than `-`, a sentence, a clipped value or a row marked `(+N more)`; agent-format gap rows now print `(+N more)` when a gap has further missing facts. On the agent-eval scenarios the loop reads about 70% fewer estimated tokens for the same answers (#14298).

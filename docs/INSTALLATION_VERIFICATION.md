@@ -220,7 +220,8 @@ target/ripr/install-smoke-path/bin/ripr init --ci github --dry-run \
   --root "$smoke" > "$smoke/stdout.txt" 2> "$smoke/stderr.txt" &&
   test ! -s "$smoke/stderr.txt" &&
   ! grep -q 'is unreleased' "$smoke/stdout.txt" &&
-  grep -q "cargo install ripr --version $version --locked" "$smoke/stdout.txt" &&
+  grep -q "ripr/.github/actions/ripr-check@v$version\$" "$smoke/stdout.txt" &&
+  grep -q "^          version: $version\$" "$smoke/stdout.txt" &&
   echo "init self-pin smoke: pass" || { echo "init self-pin smoke: FAIL" >&2; false; }
 ```
 
@@ -311,7 +312,7 @@ available. The extension resolves the server in this order:
 ripr.server.path
 bundled server binary, if present
 downloaded cached server binary
-ripr on PATH, when ripr.server.version is empty
+ripr on PATH, when ripr.server.version is empty and not older than the expected version
 verified first-run download from GitHub Releases
 ripr on PATH, as the fallback when the download fails or a version is pinned
 actionable error

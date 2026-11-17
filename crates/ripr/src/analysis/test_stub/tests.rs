@@ -78,9 +78,8 @@ fn boundary_stub_inserts_into_the_existing_inline_module_and_stops_at_the_expect
         use super::*;
         let amount: u32 = 100;
         let threshold: u32 = 100;
-        let actual = price(amount, threshold);
         let expected: u32 = todo!(\"ripr: write the value `price` should return for amount = 100, threshold = 100\");
-        assert_eq!(actual, expected);
+        assert_eq!(price(amount, threshold), expected);
     }
 ";
     assert_eq!(stub.text, expected);
@@ -104,7 +103,8 @@ fn unrelated_generic_does_not_remove_a_concrete_stub_comparison() -> Result<(), 
         stub.text
     );
     assert!(
-        stub.text.contains("assert_eq!(actual, expected);"),
+        stub.text
+            .contains("assert_eq!(price(amount, threshold), expected);"),
         "{}",
         stub.text
     );
@@ -289,7 +289,7 @@ impl ByteSize {
     assert!(stub.text.contains("let unit: u64 = 0;"));
     assert!(
         stub.text
-            .contains("let actual = subject.as_whole_units(unit);")
+            .contains("assert_eq!(subject.as_whole_units(unit), expected);")
     );
     assert!(!stub.text.contains("= as_whole_units("));
     Ok(())
@@ -459,7 +459,7 @@ pub fn count(n: u8) -> Option<Vec<u8>> { if n > 2 { Some(vec![n]) } else { None 
         stub.text
     );
     assert!(
-        stub.text.contains("assert_eq!(actual, expected);"),
+        stub.text.contains("assert_eq!(seen(n), expected);"),
         "{}",
         stub.text
     );
@@ -471,7 +471,12 @@ pub fn count(n: u8) -> Option<Vec<u8>> { if n > 2 { Some(vec![n]) } else { None 
         boundary(""),
     )?;
     let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
-    assert!(stub.text.contains("assert_eq!(actual, expected);"));
+    assert!(
+        stub.text.contains("assert_eq!(count(n), expected);"),
+        "{}",
+        stub.text
+    );
+    assert!(!stub.text.contains("let actual"), "{}", stub.text);
     Ok(())
 }
 
@@ -1035,9 +1040,22 @@ fn lifetime_only_impl_binds_the_subject_with_an_elided_lifetime() -> Result<(), 
             "{header}: {}",
             stub.text
         );
+        // `&mut self`: the call stays bound before `expected` (#13861 review)
+        // and is made exactly once.
         assert!(
             stub.text
                 .contains("let actual = subject.parse_unit(start, end);"),
+            "{header}: {}",
+            stub.text
+        );
+        assert!(
+            stub.text.contains("assert_eq!(actual, expected);"),
+            "{header}: {}",
+            stub.text
+        );
+        assert_eq!(
+            stub.text.matches("parse_unit(start, end)").count(),
+            1,
             "{header}: {}",
             stub.text
         );
@@ -1053,7 +1071,8 @@ fn lifetime_only_impl_binds_the_subject_with_an_elided_lifetime() -> Result<(), 
         let stub =
             rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
         assert!(
-            stub.text.contains("let actual = Parser::open(src, limit);"),
+            stub.text
+                .contains("assert_eq!(Parser::open(src, limit), expected);"),
             "{header}: {}",
             stub.text
         );
@@ -1223,7 +1242,8 @@ fn field_of_the_returned_struct_literal_asserts_the_whole_return_value() -> Resu
     let stub = rust_test_stub(&seam, None, VERSION, None).map_err(|r| r.reason().to_string())?;
     assert_eq!(stub.test_name, "next_minor_field_discriminator");
     assert!(
-        stub.text.contains("let actual = subject.next_minor();"),
+        stub.text
+            .contains("assert_eq!(subject.next_minor(), expected);"),
         "{}",
         stub.text
     );
@@ -1627,11 +1647,20 @@ fn unit_result_owner_asserts_the_mut_input_after_the_call() -> Result<(), String
     for expected in [
         "let mut out: u64 = todo!(",
         "let actual = add_unit(unit, &mut out);",
+        "assert_eq!(actual, expected);",
         "let expected_out: u64 = todo!(",
         "assert_eq!(out, expected_out);",
     ] {
         assert!(stub.text.contains(expected), "{expected}\n{}", stub.text);
     }
+    // A `&mut` argument keeps the call bound before `expected` and makes it
+    // exactly once (#13861 review).
+    assert_eq!(
+        stub.text.matches("add_unit(unit, &mut out)").count(),
+        1,
+        "{}",
+        stub.text
+    );
     assert!(
         stub.fill_ins
             .iter()
@@ -1898,6 +1927,516 @@ fn proof_obligation_describes_a_single_relational_boundary_and_nothing_else() ->
     ] {
         let seam = seam_at(file, source, needle, kind, boundary(""))?;
         assert_eq!(proof_obligation_for(&seam), None, "{needle} {file}");
+    }
+    Ok(())
+}
+
+/// #8361: the receiver is built from the constructor an existing test calls
+/// with literal arguments; a non-literal call, a cfg-gated constructor and a
+/// constructor that does not return the type are not used.
+#[test]
+fn receiver_reuses_a_literal_constructor_call_from_an_existing_test() -> Result<(), String> {
+    let source = "pub struct Bucket { tokens: u32 }
+impl Bucket {
+    pub fn new(capacity: u32) -> Self { Bucket { tokens: capacity } }
+    pub fn allow(&mut self, n: u32) -> bool {
+        if self.tokens > n { self.tokens -= n; true } else { false }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn variable_capacity() {
+        let cap = 9;
+        let mut b = Bucket::new(cap);
+        assert!(b.allow(1));
+    }
+    #[test]
+    fn literal_capacity() {
+        let mut b = Bucket::new(5);
+        assert!(b.allow(2));
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "self.tokens > n",
+        SeamKind::PredicateBoundary,
+        boundary("self.tokens == n"),
+    )?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text
+            .contains("let mut subject: Bucket = Bucket::new(5);"),
+        "{}",
+        stub.text
+    );
+    assert!(
+        stub.text
+            .contains("// ripr: built like the existing test `literal_capacity`")
+    );
+    assert!(!stub.fill_ins.iter().any(|fill| fill.contains("build the")));
+    assert_eq!(
+        stub.receiver_setup.as_deref(),
+        Some("subject = Bucket::new(5), as in the existing test `literal_capacity`")
+    );
+    Ok(())
+}
+
+#[test]
+fn receiver_stays_a_todo_without_an_established_constructor() -> Result<(), String> {
+    // `new` needs an argument no test supplies as a literal, `fresh` is
+    // cfg-gated, and `maybe` returns `Option<Self>`: none builds a receiver.
+    let source = "pub struct Gauge { v: u32 }
+impl Gauge {
+    pub fn new(v: u32) -> Self { Gauge { v } }
+    #[cfg(feature = \"extra\")]
+    pub fn fresh() -> Self { Gauge { v: 0 } }
+    pub fn maybe() -> Option<Self> { None }
+    pub fn read(&self, n: u32) -> u32 {
+        if n > 4 { self.v } else { 0 }
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "n > 4",
+        SeamKind::PredicateBoundary,
+        boundary("n == 4"),
+    )?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text.contains(
+            "let subject: Gauge = todo!(\"ripr: build the `Gauge` that `read` runs on\");"
+        )
+    );
+    assert_eq!(stub.receiver_setup, None);
+    Ok(())
+}
+
+#[test]
+fn receiver_prefers_a_no_argument_new_then_default() -> Result<(), String> {
+    let with_new = "pub struct Pool { n: u8 }
+impl Pool {
+    pub fn blank() -> Pool { Pool { n: 1 } }
+    pub fn new() -> Self { Pool { n: 0 } }
+    pub fn size(&self, k: u8) -> u8 {
+        if k > 2 { self.n } else { k }
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        with_new,
+        "k > 2",
+        SeamKind::PredicateBoundary,
+        boundary("k == 2"),
+    )?;
+    let stub = rust_test_stub(&seam, None, with_new, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text.contains("let subject: Pool = Pool::new();"),
+        "{}",
+        stub.text
+    );
+
+    let with_default = "#[derive(Default)]
+pub struct Pool { n: u8 }
+impl Pool {
+    pub fn size(&self, k: u8) -> u8 {
+        if k > 2 { self.n } else { k }
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        with_default,
+        "k > 2",
+        SeamKind::PredicateBoundary,
+        boundary("k == 2"),
+    )?;
+    let stub =
+        rust_test_stub(&seam, None, with_default, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text
+            .contains("let subject: Pool = <Pool as ::core::default::Default>::default();"),
+        "{}",
+        stub.text
+    );
+    assert_eq!(
+        stub.receiver_setup.as_deref(),
+        Some("subject = <Pool as ::core::default::Default>::default(), its derived `Default`")
+    );
+    Ok(())
+}
+
+/// #14825 review: a second run must not reuse the first stub's own
+/// receiver call (which would change its comment and write a `_2` copy).
+#[test]
+fn receiver_stub_rerun_is_already_present() -> Result<(), String> {
+    let source = "pub struct Ledger { entries: Vec<i64> }
+impl Ledger {
+    pub fn empty() -> Ledger { Ledger { entries: Vec::new() } }
+}
+impl Ledger {
+    pub fn total(&self, cap: i64) -> i64 {
+        let sum: i64 = self.entries.iter().sum();
+        if sum > cap { cap } else { sum }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+}
+";
+    let needle = "sum > cap";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        needle,
+        SeamKind::PredicateBoundary,
+        boundary("sum == cap"),
+    )?;
+    let first = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        first
+            .text
+            .contains("let subject: Ledger = Ledger::empty();")
+    );
+    assert!(
+        first
+            .text
+            .contains("built with its no-argument constructor")
+    );
+    let close = source.rfind('}').ok_or("module close brace")?;
+    let (head, tail) = source.split_at(close);
+    let rewritten = format!("{head}{}{tail}", first.text.trim_start_matches('\n'));
+    let seam = seam_at(
+        "src/lib.rs",
+        &rewritten,
+        needle,
+        SeamKind::PredicateBoundary,
+        boundary("sum == cap"),
+    )?;
+    let second =
+        rust_test_stub(&seam, None, &rewritten, None).map_err(|r| r.reason().to_string())?;
+    assert!(second.already_present, "{}", second.text);
+    assert_eq!(second.test_name, first.test_name);
+    Ok(())
+}
+
+#[test]
+fn receiver_skips_generic_default_helpers_and_shadowed_names() -> Result<(), String> {
+    // A derived `Default` on a generic type bounds its argument. Such an
+    // owner is refused before any receiver is built; the receiver's own
+    // no-arguments guard on `Default` stays as defence in depth.
+    let generic = "#[derive(Default)]
+pub struct W<T>(Option<T>);
+pub struct NoDef;
+impl W<NoDef> {
+    pub fn f(&self, n: u8) -> u8 { if n > 3 { 1 } else { 0 } }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        generic,
+        "n > 3",
+        SeamKind::PredicateBoundary,
+        boundary("n == 3"),
+    )?;
+    assert_eq!(
+        rust_test_stub(&seam, None, generic, None).err(),
+        Some(TestStubRefusal::OwnerGenericImpl)
+    );
+
+    // A literal call in a non-test helper, and one under a module that
+    // imports its own `Bucket`, are not reused.
+    for tests in [
+        "    use super::*;\n    fn make() -> Bucket { Bucket::new(5) }\n",
+        "    use super::*;\n    use crate::other::Bucket;\n    #[test]\n    fn t() { let _b = Bucket::new(5); }\n",
+    ] {
+        let source = format!(
+            "pub struct Bucket {{ tokens: u32 }}
+impl Bucket {{
+    pub fn new(capacity: u32) -> Self {{ Bucket {{ tokens: capacity }} }}
+    pub fn allow(&self, n: u32) -> bool {{ self.tokens > n }}
+}}
+
+#[cfg(test)]
+mod tests {{
+{tests}}}
+"
+        );
+        let seam = seam_at(
+            "src/lib.rs",
+            &source,
+            "self.tokens > n",
+            SeamKind::PredicateBoundary,
+            boundary("self.tokens == n"),
+        )?;
+        let stub =
+            rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
+        assert_eq!(stub.receiver_setup, None, "{}", stub.text);
+    }
+    Ok(())
+}
+
+/// #14825 CodeRabbit review: a call under `cfg` is not copied, a scope that
+/// imports another `Bucket` (by name or glob, or `super::` from a nested
+/// module, or a `mod Bucket`) blocks the no-argument fallback too, and
+/// `use super::Bucket;` outside a nested module names the owner, so reuse still applies under it.
+#[test]
+fn receiver_skips_cfg_calls_and_shadowed_fallbacks() -> Result<(), String> {
+    let build = |ctor: &str, tests: &str| {
+        format!(
+            "pub struct Bucket {{ tokens: u32 }}
+impl Bucket {{
+{ctor}    pub fn allow(&self, n: u32) -> bool {{ self.tokens > n }}
+}}
+
+#[cfg(test)]
+mod tests {{
+{tests}}}
+"
+        )
+    };
+    let with_capacity = "    pub fn new(capacity: u32) -> Self { Bucket { tokens: capacity } }\n";
+    let no_argument = "    pub fn new() -> Self { Bucket { tokens: 0 } }\n";
+    let cases = [
+        (
+            with_capacity,
+            "    use super::*;\n    #[cfg(any())]\n    #[test]\n    fn off() { let _b = Bucket::new(\"wrong\"); }\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    use super::*;\n    #[test]\n    fn on() {\n        #[cfg(any())]\n        let _b = Bucket::new(\"wrong\");\n    }\n",
+            None,
+        ),
+        (
+            no_argument,
+            "    use super::*;\n    use crate::other::Bucket;\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    use crate::other::*;\n    #[test]\n    fn t() { let _b = Bucket::new(\"x\"); }\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    use super::*;\n    mod inner {\n        use super::Bucket;\n    }\n    #[test]\n    fn t() { let _b = Bucket::new(5); }\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    use super::*;\n    mod Bucket { pub fn new(_s: &str) -> u8 { 0 } }\n    #[test]\n    fn t() { let _x: u8 = Bucket::new(\"x\"); }\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    #[test]\n    fn drains() {\n        use super::*;\n        let _b = Bucket::new(5);\n    }\n",
+            Some("subject = Bucket::new(5), as in the existing test `drains`"),
+        ),
+        (
+            with_capacity,
+            "    use super::Bucket;\n    #[test]\n    fn drains() { let _b = Bucket::new(5); }\n",
+            Some("subject = Bucket::new(5), as in the existing test `drains`"),
+        ),
+    ];
+    for (ctor, tests, expected) in cases {
+        let source = build(ctor, tests);
+        let seam = seam_at(
+            "src/lib.rs",
+            &source,
+            "self.tokens > n",
+            SeamKind::PredicateBoundary,
+            boundary("self.tokens == n"),
+        )?;
+        let stub =
+            rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
+        assert_eq!(stub.receiver_setup.as_deref(), expected, "{}", stub.text);
+    }
+    Ok(())
+}
+
+/// #14825 re-review: the reused-from-a-test origin is stable on rerun, and a
+/// no-argument constructor with a non-neutral name (`connect`) is not used.
+#[test]
+fn receiver_reuse_rerun_is_already_present_and_names_stay_neutral() -> Result<(), String> {
+    let source = "pub struct Bucket { tokens: u32 }
+impl Bucket {
+    pub fn new(capacity: u32) -> Self { Bucket { tokens: capacity } }
+    pub fn allow(&self, n: u32) -> bool { self.tokens > n }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn drains() {
+        let b = Bucket::new(5);
+        assert!(b.allow(2));
+    }
+}
+";
+    let needle = "self.tokens > n";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        needle,
+        SeamKind::PredicateBoundary,
+        boundary("self.tokens == n"),
+    )?;
+    let first = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
+    assert!(first.text.contains("Bucket::new(5);"), "{}", first.text);
+    let close = source.rfind('}').ok_or("module close brace")?;
+    let (head, tail) = source.split_at(close);
+    let rewritten = format!("{head}{}{tail}", first.text.trim_start_matches('\n'));
+    let seam = seam_at(
+        "src/lib.rs",
+        &rewritten,
+        needle,
+        SeamKind::PredicateBoundary,
+        boundary("self.tokens == n"),
+    )?;
+    let second =
+        rust_test_stub(&seam, None, &rewritten, None).map_err(|r| r.reason().to_string())?;
+    assert!(second.already_present, "{}", second.text);
+
+    let connect = "pub struct Link { up: bool }
+impl Link {
+    pub fn connect() -> Self { Link { up: true } }
+    pub fn rate(&self, n: u8) -> u8 { if n > 2 && self.up { n } else { 0 } }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        connect,
+        "n > 2",
+        SeamKind::PredicateBoundary,
+        boundary("n == 2"),
+    )?;
+    let stub = rust_test_stub(&seam, None, connect, None).map_err(|r| r.reason().to_string())?;
+    assert_eq!(stub.receiver_setup, None, "{}", stub.text);
+    Ok(())
+}
+
+/// #14825 Devin review: a namesake `Default` trait has no `default()`, and a
+/// constructor call inside a closure is not known to have returned.
+#[test]
+fn receiver_skips_namesake_default_and_closure_calls() -> Result<(), String> {
+    let namesake = "trait Default {}
+#[derive(Default)]
+pub struct Pool { n: u8 }
+impl Pool {
+    pub fn size(&self, k: u8) -> u8 {
+        if k > 2 { self.n } else { k }
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        namesake,
+        "k > 2",
+        SeamKind::PredicateBoundary,
+        boundary("k == 2"),
+    )?;
+    let stub = rust_test_stub(&seam, None, namesake, None).map_err(|r| r.reason().to_string())?;
+    assert_eq!(stub.receiver_setup, None, "{}", stub.text);
+
+    let closure = "pub struct Bucket { tokens: u32 }
+impl Bucket {
+    pub fn new(capacity: u32) -> Self { Bucket { tokens: capacity } }
+    pub fn allow(&self, n: u32) -> bool { self.tokens > n }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn caught() {
+        let built = std::panic::catch_unwind(|| Bucket::new(0));
+        assert!(built.is_err());
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        closure,
+        "self.tokens > n",
+        SeamKind::PredicateBoundary,
+        boundary("self.tokens == n"),
+    )?;
+    let stub = rust_test_stub(&seam, None, closure, None).map_err(|r| r.reason().to_string())?;
+    assert_eq!(stub.receiver_setup, None, "{}", stub.text);
+    Ok(())
+}
+
+/// #14825 re-review: a nested `use std::{default::Default}` is the standard
+/// trait, not a namesake; an `async` block and a literal holding a raw
+/// control character are not copied.
+#[test]
+fn receiver_reads_nested_std_imports_and_skips_async_and_control_literals() -> Result<(), String> {
+    let nested = "use std::{default::Default, fmt};
+#[derive(Default)]
+pub struct Pool { n: u8 }
+impl Pool {
+    pub fn size(&self, k: u8) -> u8 {
+        if k > 2 { self.n } else { k }
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        nested,
+        "k > 2",
+        SeamKind::PredicateBoundary,
+        boundary("k == 2"),
+    )?;
+    let stub = rust_test_stub(&seam, None, nested, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text
+            .contains("<Pool as ::core::default::Default>::default()"),
+        "{}",
+        stub.text
+    );
+
+    for body in [
+        "let _f = async { Label::new(\"a\") };",
+        "let _l = Label::new(\"a\u{1b}[2J\");",
+    ] {
+        let source = format!(
+            "pub struct Label {{ text: &'static str }}
+impl Label {{
+    pub fn new(text: &'static str) -> Self {{ Label {{ text }} }}
+    pub fn long(&self, n: usize) -> bool {{ self.text.len() > n }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+    #[test]
+    fn t() {{
+        {body}
+    }}
+}}
+"
+        );
+        let seam = seam_at(
+            "src/lib.rs",
+            &source,
+            "self.text.len() > n",
+            SeamKind::PredicateBoundary,
+            boundary("self.text.len() == n"),
+        )?;
+        let stub =
+            rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
+        assert_eq!(stub.receiver_setup, None, "{}", stub.text);
     }
     Ok(())
 }

@@ -333,18 +333,45 @@ fn assert_refusal_code(output: &Output, code: &str, disposition: &str, label: &s
     );
 }
 
-fn attempt_id_from_before_stderr(stderr: &str) -> Result<String, String> {
-    stderr
+/// The one next command a successful before phase printed (#13803): the
+/// stdout `Next, after the test edit:` line of a human start, or the stderr
+/// `ripr: attempt next command:` line that `--json` and an ambiguous
+/// baseline keep.
+fn printed_before_next_command(output: &Output) -> Result<String, String> {
+    let stdout = stdout_text(output);
+    let stderr = stderr_text(output);
+    let from_stdout = stdout
         .lines()
-        .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
-        .and_then(|command| {
-            command
-                .split_whitespace()
-                .skip_while(|word| *word != "--attempt")
-                .nth(1)
-                .map(|id| id.trim_matches('\'').to_string())
+        .find_map(|line| line.strip_prefix("Next, after the test edit: "));
+    // A rendered human summary owns the next command: it may not move back
+    // to stderr. Only `--json` or an ambiguous-baseline start, which keep
+    // the stderr protocol line, read it there.
+    let human_summary = stdout.contains("Repair prepared for seam")
+        && !stdout.contains("baseline records `ambiguous: true`");
+    from_stdout
+        .or_else(|| {
+            (!human_summary)
+                .then(|| {
+                    stderr
+                        .lines()
+                        .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
+                })
+                .flatten()
         })
-        .ok_or_else(|| format!("before phase printed no attempt command:\n{stderr}"))
+        .map(str::to_string)
+        .ok_or_else(|| {
+            format!("before phase printed no next command:\nstdout:\n{stdout}\nstderr:\n{stderr}")
+        })
+}
+
+fn attempt_id_from_before(output: &Output) -> Result<String, String> {
+    let command = printed_before_next_command(output)?;
+    command
+        .split_whitespace()
+        .skip_while(|word| *word != "--attempt")
+        .nth(1)
+        .map(|id| id.trim_matches('\'').to_string())
+        .ok_or_else(|| format!("before phase next command names no attempt:\n{command}"))
 }
 
 /// Control 1: no current actionable item — `ripr repair` emits an honest
@@ -882,11 +909,13 @@ fn repair_single_item_matches_advanced_card() -> Result<(), String> {
         persisted.contains("ripr agent repair") && persisted.contains("--phase after"),
         "persisted next_command stays the advanced after spelling:\n{persisted}"
     );
-    let stderr = stderr_text(&repair);
-    let printed = stderr
-        .lines()
-        .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
-        .ok_or_else(|| format!("before phase printed no attempt command:\n{stderr}"))?;
+    let printed = printed_before_next_command(&repair)?;
+    // #13803: a human start prints the next command once, on stdout.
+    assert!(
+        !stderr_text(&repair).contains("ripr: attempt next command: "),
+        "a human start must not repeat the next command on stderr:\n{}",
+        stderr_text(&repair)
+    );
     assert!(
         printed.starts_with("ripr continue --root ")
             && printed.contains(&format!("--attempt {}", ids[0])),
@@ -918,7 +947,46 @@ fn repair_single_item_matches_advanced_card() -> Result<(), String> {
     let facade_lines: Vec<&str> = facade_stdout.lines().collect();
     let card_stdout = stdout_text(&card);
     let mut cursor = 0usize;
+    // The facade prints the start summary and then the card. Five card lines
+    // would only repeat facts the summary just printed, so the facade card
+    // omits them (token budget, `agent_output_budget`); each omitted line's
+    // payload must still be present in the start summary.
+    let omitted_prefixes = [
+        "  Changed behavior: ",
+        "  Suggested assertion: ",
+        "  Next: write the test, then run `",
+        "  Repair attempt: ",
+        "  Machine-readable details (JSON): ",
+    ];
     for line in card_stdout.lines() {
+        if let Some(prefix) = omitted_prefixes
+            .iter()
+            .find(|prefix| line.starts_with(**prefix))
+        {
+            assert!(
+                !facade_lines.contains(&line),
+                "facade must not repeat the summary line {line:?}:\n{facade_stdout}"
+            );
+            let payload = line
+                .trim_start_matches(*prefix)
+                .trim_end_matches('`')
+                .split(" (")
+                .next()
+                .unwrap_or_default();
+            // Compare on the stable core of each payload: the continue
+            // command and attempt id, the assertion text, the behavior text.
+            let core = match *prefix {
+                "  Next: write the test, then run `" => ids[0].as_str(),
+                "  Repair attempt: " => ids[0].as_str(),
+                "  Machine-readable details (JSON): " => "agent-packet.json",
+                _ => payload,
+            };
+            assert!(
+                facade_stdout.contains(core),
+                "start summary lost the fact behind {line:?} (looked for {core:?}):\n{facade_stdout}"
+            );
+            continue;
+        }
         let Some(offset) = facade_lines[cursor..].iter().position(|c| *c == line) else {
             return Err(format!(
                 "card line {line:?} missing from facade output:\n{facade_stdout}"
@@ -1876,20 +1944,30 @@ fn check_drill_down_prints_repair_identity_that_starts_the_same_seam() -> Result
             "json",
         ],
     )?;
-    // #11976: JSON gains only the additive `finding_routes` projection, and
-    // its repair command is the identity-bound line the screen printed.
+    // #11976: JSON gains only the additive `finding_routes` projection.
+    // #13636: the weakened predicate is still uncommitted, so the start
+    // would refuse; JSON reports the same seam as blocked on that file with
+    // no runnable command, and the screen names the commit step first.
     let json_text = stdout_text(&json);
     let routes = finding_routes(&json_text)?;
     let repair = routes
         .iter()
         .find_map(|route| route.get("repair"))
         .ok_or_else(|| format!("JSON must carry the repair route:\n{json_text}"))?;
-    assert_eq!(repair["status"], "ready");
+    assert_eq!(repair["status"], "blocked_uncommitted", "{json_text}");
     assert_eq!(repair["seam_id"], identity);
-    let command = repair["command"].as_str().unwrap_or_default();
+    assert_eq!(
+        repair["uncommitted_files"],
+        serde_json::json!(["src/lib.rs"]),
+        "{json_text}"
+    );
     assert!(
-        stdout.lines().any(|line| line.trim() == command),
-        "JSON command must be a printed line: {command}\n{stdout}"
+        repair.get("command").is_none(),
+        "a blocked start must carry no runnable command:\n{json_text}"
+    );
+    assert!(
+        stdout.contains("Commit your production change first"),
+        "the screen must name the commit step before the repair start:\n{stdout}"
     );
     // Round-trip: the printed identity resolves through `ripr repair` to
     // the same seam and starts exactly one before-phase attempt for it.
@@ -2872,7 +2950,9 @@ fn repair_refuses_an_ambiguous_probe_id() -> Result<(), String> {
 
 /// #8166 residual (F3): a static-limited top finding (no static test path)
 /// keeps its limitation guidance and prints no runnable `ripr repair` line,
-/// while its explain/context drill-down stays.
+/// while its explain/context drill-down stays. #14919: the base names
+/// `discounted_total` in a comment, so the owner is not an unreferenced one
+/// (that shape reads as a test gap) and stays an ordinary no-path limit.
 #[test]
 fn check_drill_down_omits_repair_for_a_static_limited_finding() -> Result<(), String> {
     let fixture = Fixture::dir("facade-check-drilldown-static-limited")?;
@@ -2880,7 +2960,11 @@ fn check_drill_down_omits_repair_for_a_static_limited_finding() -> Result<(), St
     std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
     std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
-    std::fs::write(root.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        format!("{FIXTURE_LIB}// The host crate wires up discounted_total.\n"),
+    )
+    .map_err(|e| e.to_string())?;
     std::fs::write(
         root.join("tests/pricing.rs"),
         "#[test]\nfn unrelated() {\n    assert_eq!(1 + 1, 2);\n}\n",
@@ -3008,11 +3092,11 @@ fn repair_human_path_identity_journey(name: &str, sibling: &str) -> Result<(), S
             "missing literal artifact path for {file}: {stderr}"
         );
     }
+    // #13803: a human start no longer repeats the manifest path on stderr;
+    // the manifest lives under the lexical root the `wrote` lines name.
     let attempt_relative = format!("target/ripr/repair-attempts/{id}/attempt.json");
     assert!(
-        stderr.contains(&format!(
-            "ripr: attempt manifest: {expected_display}/{attempt_relative}"
-        )),
+        root.join(&attempt_relative).is_file() && !stderr.contains("ripr: attempt manifest: "),
         "{stderr}"
     );
     let attempt_dir = root.join("target/ripr/repair-attempts").join(id);
@@ -3580,7 +3664,7 @@ fn continue_single_attempt_advances_it() -> Result<(), String> {
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
         .map_err(|error| format!("read pricing tests: {error}"))?;
     std::fs::write(
@@ -3651,7 +3735,7 @@ fn continue_no_movement_uses_retained_target_and_recovers_after_edit() -> Result
     let root_arg = root.to_string_lossy().into_owned();
     let before = run_ripr(root, &["repair", "--root", &root_arg])?;
     assert_exit(&before, 0, "prepare pricing attempt");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     assert_eq!(compatibility_packet_target(root)?, "tests/pricing.rs");
 
     // Independently prepare a valid packet with the same production seam
@@ -3775,13 +3859,13 @@ fn continue_no_movement_keeps_inline_test_module_restrictions() -> Result<(), St
     std::fs::remove_file(root.join("tests/pricing.rs")).map_err(|error| error.to_string())?;
     std::fs::write(
         root.join("src/lib.rs"),
-        format!("{FIXTURE_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::discounted_total;\n    #[test]\n    fn below() {{ assert_eq!(discounted_total(50, 100), 50); }}\n}}\n"),
+        format!("{FIXTURE_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::discounted_total;\n    #[test]\n    fn below() {{ assert_eq!(discounted_total(50, 100), 50); }}\n    #[test]\n    fn above() {{ assert_eq!(discounted_total(10_000, 100), 9_990); }}\n}}\n"),
     ).map_err(|error| error.to_string())?;
     run_git(root, &["add", "src", "tests"])?;
     git_commit(root, "inline test target")?;
     let before = run_ripr(root, &["repair"])?;
     assert_exit(&before, 0, "prepare inline attempt");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     assert_eq!(compatibility_packet_target(root)?, "src/lib.rs");
     let refused = run_ripr(root, &["continue", "--attempt", &attempt_id])?;
     assert_exit(&refused, 3, "continue before inline edit");
@@ -3848,6 +3932,55 @@ fn continue_two_attempts_requires_explicit_selection() -> Result<(), String> {
         stderr.contains("ripr continue --attempt"),
         "must name the explicit-selection retry:\n{stderr}"
     );
+    // #14980: under `--json` the same selection is one `cli_refusal`
+    // document whose choices are the per-attempt continue commands.
+    let continued_json = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
+    assert_exit(
+        &continued_json,
+        3,
+        "continue --json with two current attempts",
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&continued_json.stdout).map_err(|error| {
+            format!(
+                "one JSON document: {error}\n{}",
+                stdout_text(&continued_json)
+            )
+        })?;
+    assert_eq!(
+        document["error"]["code"], "ambiguous_attempts",
+        "{document:#}"
+    );
+    let items = document["error"]["choices"]["items"]
+        .as_array()
+        .ok_or_else(|| format!("ambiguity lacks choices: {document:#}"))?;
+    assert_eq!(document["error"]["choices"]["total"], 2, "{document:#}");
+    assert_eq!(items.len(), 2, "{document:#}");
+    assert_eq!(
+        document["error"]["disposition"], "needs_selection",
+        "{document:#}"
+    );
+    assert_eq!(
+        document["error"].get("next"),
+        Some(&serde_json::Value::Null),
+        "{document:#}"
+    );
+    // The root each choice binds is the one the stderr retry line prints.
+    const RETRY: &str = "ripr continue --attempt <attempt-id> --root ";
+    let json_stderr = stderr_text(&continued_json);
+    let root_token = json_stderr
+        .lines()
+        .find_map(|line| line.split_once(RETRY).map(|(_, root)| root.trim_end()))
+        .ok_or_else(|| format!("stderr must print the retry line:\n{json_stderr}"))?;
+    for id in &ids {
+        let expected = format!("ripr continue --attempt {id} --root {root_token}");
+        assert!(
+            items
+                .iter()
+                .any(|item| item["command"] == expected.as_str()),
+            "a choice must be exactly `{expected}`: {document:#}"
+        );
+    }
     for id in &ids {
         assert_eq!(
             read_manifest(root, id)?["state"],
@@ -4201,7 +4334,7 @@ fn retained_ambiguous_baseline_blocks_continue_and_repeat_repair_reuse() -> Resu
     }
     let before = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
     assert_exit(&before, 0, "ambiguous before publication");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     let original = manifest_bytes(root, &attempt_id)?;
     let status = run_ripr(
         root,
@@ -4244,7 +4377,7 @@ fn retained_ambiguous_baseline_blocks_continue_and_repeat_repair_reuse() -> Resu
     }
     let repeated = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
     assert_exit(&repeated, 0, "repair captures a fresh baseline");
-    let new_id = attempt_id_from_before_stderr(&stderr_text(&repeated))?;
+    let new_id = attempt_id_from_before(&repeated)?;
     assert_ne!(new_id, attempt_id);
     assert_eq!(attempt_ids(root).len(), 2);
     assert_eq!(manifest_bytes(root, &attempt_id)?, original);
@@ -4289,7 +4422,7 @@ fn continue_refuses_a_diverged_head_with_recovery() -> Result<(), String> {
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     // Move HEAD to an ancestor of the prepared head: it no longer
     // descends, so the after path must refuse rather than finish.
     run_git(root, &["reset", "--hard", "HEAD~1"])?;
@@ -4346,7 +4479,7 @@ fn continue_json_prints_the_typed_after_refusal_document() -> Result<(), String>
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     run_git(root, &["reset", "--hard", "HEAD~1"])?;
     let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
         .map_err(|error| format!("read pricing tests: {error}"))?;
@@ -4445,7 +4578,7 @@ fn continue_on_a_terminal_attempt_is_already_complete() -> Result<(), String> {
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
         .map_err(|error| format!("read pricing tests: {error}"))?;
     std::fs::write(
@@ -4568,7 +4701,7 @@ fn status_human_and_json_agree_on_live_attempts() -> Result<(), String> {
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     for use_json in [false, true] {
         let mut args = vec![
             "status",
@@ -5003,7 +5136,7 @@ fn continue_on_unsuccessful_terminal_attempts_refuses_without_completion() -> Re
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
         .map_err(|error| format!("read pricing tests: {error}"))?;
     std::fs::write(
@@ -5122,7 +5255,7 @@ fn continue_on_unconfirmed_ready_to_finish_refuses_without_completion() -> Resul
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
         .map_err(|error| format!("read pricing tests: {error}"))?;
     std::fs::write(
@@ -5341,7 +5474,7 @@ fn attempt_with_focused_edit(fixture: &Fixture, test: &str) -> Result<(String, S
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
         .map_err(|error| format!("read pricing tests: {error}"))?;
     std::fs::write(root.join("tests/pricing.rs"), format!("{pricing}{test}"))
@@ -5594,7 +5727,7 @@ fn attempt_refused_by_stray_file(
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
         .map_err(|error| format!("read pricing tests: {error}"))?;
     std::fs::write(root.join("tests/pricing.rs"), format!("{pricing}{test}"))
@@ -5692,7 +5825,7 @@ fn diverged_head_recovery_drops_only_the_restart_when_the_gate_refuses() -> Resu
                 ],
             )?;
             assert_exit(&before, 0, "advanced before phase");
-            let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+            let attempt_id = attempt_id_from_before(&before)?;
             let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
                 .map_err(|error| format!("read pricing tests: {error}"))?;
             std::fs::write(root.join("tests/pricing.rs"), format!("{pricing}{test}"))
@@ -5790,7 +5923,7 @@ fn continue_after_phase_narration_drops_the_start_recipe_when_the_gate_refuses()
             ],
         )?;
         assert_exit(&before, 0, "advanced before phase");
-        let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+        let attempt_id = attempt_id_from_before(&before)?;
         let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
             .map_err(|error| format!("read pricing tests: {error}"))?;
         std::fs::write(root.join("tests/pricing.rs"), format!("{pricing}{test}"))
@@ -6321,7 +6454,21 @@ fn member_directory_agent_artifact_commands_use_the_resolved_workspace_root() ->
     let brief_json = json_stdout("agent brief --files", &brief)?;
     assert_eq!(brief_json["root"], outer.to_string_lossy().as_ref());
     assert_eq!(brief_json["scope"], "working_set");
-    assert_eq!(brief_json["warnings"], serde_json::json!([]));
+    // The only warning is the disclosure that the tail `if`/`else` branch values
+    // (`pkg/src/lib.rs:3` and `:5`, strongly gripped `return_value` seams,
+    // #14385) are configured off; binding adds none.
+    let warnings = brief_json["warnings"].as_array().ok_or("no warnings")?;
+    assert!(
+        warnings.len() == 1
+            && warnings
+                .iter()
+                .all(|warning| warning.as_str().is_some_and(|text| {
+                    text.contains(" at pkg/src/lib.rs:3, ")
+                        && text.contains(" at pkg/src/lib.rs:5 ")
+                        && text.contains("configured off for strongly_gripped seams")
+                })),
+        "unexpected brief warnings: {warnings:?}"
+    );
     let seams = brief_json["top_seams"].as_array().ok_or("no top_seams")?;
     assert!(
         !seams.is_empty() && seams.iter().all(|seam| seam["file"] == "pkg/src/lib.rs"),
@@ -6738,15 +6885,13 @@ fn quiet_drops_narration_and_keeps_results_and_refusals() -> Result<(), String> 
             "--quiet must drop `{dropped}`:\n{quiet_err}"
         );
     }
-    for kept in [
-        "is waiting for your test",
-        "attempt next command: ripr continue",
-    ] {
-        assert!(
-            quiet_err.contains(kept),
-            "--quiet must keep the result line `{kept}`:\n{quiet_err}"
-        );
-    }
+    // #13803: the result (attempt id and next command) is the stdout
+    // `Next, after the test edit:` line, which quiet never drops.
+    let quiet_next = printed_before_next_command(&quiet_start)?;
+    assert!(
+        quiet_next.starts_with("ripr continue ") && quiet_next.contains("--attempt "),
+        "--quiet must keep the next command:\n{quiet_next}"
+    );
     assert!(
         !stdout_text(&quiet_start).is_empty(),
         "--quiet leaves the stdout card in place"
@@ -7169,7 +7314,8 @@ fn continue_json_prints_its_after_phase_document() -> Result<(), String> {
 }
 
 /// #11584: `--json` does not change refusal behavior: a facade refusal keeps
-/// its exit code, empty stdout and stderr prose. An unknown flag under the
+/// its exit code and stderr prose; since #14931 its stdout is the
+/// `cli_refusal` document with the reason code. An unknown flag under the
 /// explicit `--json` request writes the standalone `cli_refusal` document to
 /// stdout (#6834 decision); its exit code 2 and stderr prose are unchanged.
 #[test]
@@ -7241,10 +7387,150 @@ fn repair_and_continue_json_keep_refusals_prose_and_usage_errors_cli_refusal() -
         "not_started",
         "no_eligible_seam",
     );
-    assert!(stdout_text(&refused).is_empty());
+    // #14931: the typed refusal is also the `cli_refusal` document.
+    let refused_doc: serde_json::Value = serde_json::from_slice(&refused.stdout)
+        .map_err(|error| format!("repair --json refusal stdout: {error}"))?;
+    assert_eq!(refused_doc["error"]["code"], "no_eligible_seam");
     let none = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
     assert_exit(&none, 3, "continue --json with no attempt");
-    assert!(stdout_text(&none).is_empty());
+    let none_doc: serde_json::Value = serde_json::from_slice(&none.stdout)
+        .map_err(|error| format!("continue --json refusal stdout: {error}"))?;
+    assert_eq!(none_doc["error"]["code"], "no_current_attempt");
     assert!(stderr_text(&none).contains("no current attempt"));
+    Ok(())
+}
+
+/// #14931: under `--json`, a typed façade refusal that stops before any check
+/// writes the `cli_refusal` document with its reason code and disposition;
+/// stderr keeps the prose and the `refusal code=` line, and without `--json`
+/// stdout stays empty.
+/// Unix-only for the marker-free unanchored directory, like the other
+/// discovery-gate controls.
+#[cfg(unix)]
+#[test]
+fn typed_facade_refusals_under_json_write_code_and_disposition() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-typed-refusal-json")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let unanchored = Fixture {
+        root: marker_free_dir("facade-typed-refusal-unanchored")?,
+    };
+    let two = Fixture::two_seam("facade-typed-refusal-two-seam")?;
+    let two_arg = two.root.to_string_lossy().into_owned();
+    let cases: [(&Path, Vec<&str>, &str, &str); 5] = [
+        (
+            &two.root,
+            vec!["repair", "--root", &two_arg],
+            "several_eligible_seams",
+            "needs_selection",
+        ),
+        (
+            root,
+            vec!["continue", "--root", &root_arg],
+            "no_current_attempt",
+            "not_started",
+        ),
+        (
+            root,
+            vec!["repair", "no-such-item", "--root", &root_arg],
+            "item_names_no_seam",
+            "not_started",
+        ),
+        // A caller-supplied item shaped like a command never becomes a
+        // runnable `next` (the loop asserts `next` is null for every case).
+        (
+            root,
+            vec![
+                "repair",
+                "ripr repair --root . && echo injected | sh",
+                "--root",
+                &root_arg,
+            ],
+            "item_names_no_seam",
+            "not_started",
+        ),
+        (
+            &unanchored.root,
+            vec!["status"],
+            "unanchored_root",
+            "not_started",
+        ),
+    ];
+    for (cwd, args, code, disposition) in cases {
+        let mut json_args = args.clone();
+        json_args.push("--json");
+        let json = run_ripr(cwd, &json_args)?;
+        assert_exit(&json, 3, &format!("{json_args:?}"));
+        let document: serde_json::Value =
+            serde_json::from_slice(&json.stdout).map_err(|error| {
+                format!(
+                    "{json_args:?}: stdout must be one JSON document: {error}\n{}",
+                    stdout_text(&json)
+                )
+            })?;
+        assert_eq!(document["status"], "refused", "{document:#}");
+        assert_eq!(document["error"]["code"], code, "{document:#}");
+        assert_eq!(
+            document["error"]["disposition"], disposition,
+            "{document:#}"
+        );
+        assert_eq!(
+            document["error"].get("next"),
+            Some(&serde_json::Value::Null),
+            "next must be present and null: {document:#}"
+        );
+        let message = document["error"]["message"]
+            .as_str()
+            .filter(|message| !message.trim().is_empty())
+            .ok_or_else(|| format!("message must be a nonempty string: {document:#}"))?;
+        assert!(!message.contains("refusal code="), "{message}");
+        let stderr = stderr_text(&json);
+        assert!(
+            stderr.contains(message),
+            "the document message is the stderr prose:\n{stderr}"
+        );
+        assert!(
+            stderr.contains(&format!(
+                "ripr: refusal code={code} disposition={disposition}"
+            )),
+            "{stderr}"
+        );
+        // #14980: only a selection refusal carries its choices, and each
+        // listed command is the one stderr prints, composed from a seam id.
+        let choices = document["error"].get("choices");
+        if code == "several_eligible_seams" {
+            let choices =
+                choices.ok_or_else(|| format!("selection lacks choices: {document:#}"))?;
+            let items = choices["items"]
+                .as_array()
+                .ok_or_else(|| format!("choices.items must be an array: {document:#}"))?;
+            assert!(items.len() >= 2, "{document:#}");
+            assert_eq!(
+                choices["total"].as_u64(),
+                Some(items.len() as u64),
+                "{document:#}"
+            );
+            for item in items {
+                let command = item["command"].as_str().unwrap_or_default();
+                assert!(command.starts_with("ripr repair "), "{item:#}");
+                assert!(command.contains(" --root "), "{item:#}");
+                assert!(
+                    stderr.contains(command),
+                    "stderr must print {command}:\n{stderr}"
+                );
+                let label = item["label"].as_str().unwrap_or_default();
+                assert!(!label.trim().is_empty(), "{item:#}");
+            }
+        } else {
+            assert_eq!(choices, None, "{code} carries no choices: {document:#}");
+        }
+        let plain = run_ripr(cwd, &args)?;
+        assert_exit(&plain, 3, &format!("{args:?}"));
+        assert!(
+            stdout_text(&plain).is_empty(),
+            "{args:?}: without --json stdout stays empty:\n{}",
+            stdout_text(&plain)
+        );
+    }
     Ok(())
 }

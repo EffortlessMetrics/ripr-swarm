@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python module identity: module-attribute reads (`import pricing; pricing.LIMIT` as a boundary value), `patch("clock.time.time", ...)` target prefixes and callee-only patch targets (`patch("pricing.rate", return_value=3)`) now go through the shared module-identity gate, so a same-named test-local helper module or a rival src-layout module no longer earns the owner's credit there; a `module.Class` construction (`import table; table.Table`) through such a shadowed or rival module no longer names the transitive-reach limitation (#14035).

@@ -1775,11 +1775,11 @@ suite('Extension Smoke', () => {
       assert.ok(String(context.status.tooltip).includes('Workspace root state: workspace_single_root'));
       assert.ok(String(context.status.tooltip).includes('Server command: ripr'));
       assert.ok(String(context.status.tooltip).includes('Extension state: extension_version_ok (0.8.0)'));
-      assert.ok(String(context.status.tooltip).includes('ripr server state: ripr_version_ok (ripr 0.8.0-test)'));
+      assert.ok(String(context.status.tooltip).includes('ripr server state: ripr_version_ok (ripr 0.8.0+test)'));
       assert.ok(String(context.status.tooltip).includes('Workspace trust state: workspace_trusted'));
       assert.ok(String(context.status.tooltip).includes('Config state: config_missing'));
       assert.ok(String(context.status.tooltip).includes('Artifact directory state: artifact_dir_missing'));
-      assert.ok(String(context.status.tooltip).includes('Server version: ripr 0.8.0-test'));
+      assert.ok(String(context.status.tooltip).includes('Server version: ripr 0.8.0+test'));
       assert.ok(String(context.status.tooltip).includes('Server started: yes'));
       assert.ok(String(context.status.tooltip).includes('Config: ripr.toml (missing'));
       assert.ok(String(context.status.tooltip).includes('Editor selectors: rust, typescript'));
@@ -2864,10 +2864,10 @@ suite('Extension Smoke', () => {
       assert.ok(statusOutput.includes('Artifact gap decision ledger: target/ripr/reports/gap-decision-ledger.json (found; found in current workspace'));
       assert.ok(statusOutput.includes('Artifact editor agent receipt: target/ripr/agent/agent-receipt.json (found; found in current workspace'));
       assert.ok(statusOutput.includes('First useful action: Add equality-boundary discriminator test'));
-      assert.ok(statusOutput.includes('ripr server state: ripr_version_ok (ripr 0.8.0-test)'));
+      assert.ok(statusOutput.includes('ripr server state: ripr_version_ok (ripr 0.8.0+test)'));
       assert.ok(statusOutput.includes('Config state: config_found'));
       assert.ok(statusOutput.includes('Artifact directory state: artifact_dir_present'));
-      assert.ok(statusOutput.includes('Server version: ripr 0.8.0-test'));
+      assert.ok(statusOutput.includes('Server version: ripr 0.8.0+test'));
     } finally {
       await context.dispose();
     }
@@ -3099,6 +3099,8 @@ suite('Extension Smoke', () => {
     };
     for (const verify of [
       'python -m pytest tests/test_pricing.py::test_calculate_discount_smoke',
+      '.venv/bin/python -m pytest tests/test_pricing.py::test_calculate_discount_smoke',
+      'venv/bin/python -m pytest tests/test_pricing.py::test_calculate_discount_smoke',
       'npx --no-install jest tests/discount.test.ts',
       'pnpm exec vitest run src/util.test.ts',
       'yarn ava tests/math.test.ts',
@@ -3119,6 +3121,11 @@ suite('Extension Smoke', () => {
       'npm test -- --watch tests/math.test.ts',
       'node --test /tmp/outside.test.js',
       'python -m pytest ..',
+      '.venv/bin/python -m pip install requests',
+      '.venv/bin/python -m pytest -p plugin tests/test_pricing.py',
+      '.venv/bin/python -m pytest ../outside/test_pricing.py',
+      '/opt/venv/bin/python -m pytest tests/test_pricing.py',
+      'venv/bin/python3 -m pytest tests/test_pricing.py',
       // Built at runtime so the local-context policy does not read the
       // fixture as a machine path.
       `npx --no-install jest ${'C'}:/outside/discount.test.ts`
@@ -3304,6 +3311,9 @@ suite('Extension Smoke', () => {
     };
     assert.notStrictEqual(await queueVerifyState('npx --no-install jest tests/discount.test.ts'), 'unsafeCommand');
     assert.notStrictEqual(await queueVerifyState('python -m pytest tests/test_pricing.py::test_smoke'), 'unsafeCommand');
+    assert.notStrictEqual(await queueVerifyState('.venv/bin/python -m pytest tests/test_pricing.py::test_smoke'), 'unsafeCommand');
+    assert.strictEqual(await queueVerifyState('.venv/bin/python -m pip install requests'), 'unsafeCommand');
+    assert.strictEqual(await queueVerifyState('.venv/bin/python -m pytest -p plugin tests/test_pricing.py'), 'unsafeCommand');
     assert.strictEqual(await queueVerifyState('npx jest tests/discount.test.ts'), 'unsafeCommand');
     assert.strictEqual(await queueVerifyState('bunx vitest run src/util.test.ts'), 'unsafeCommand');
     assert.strictEqual(await queueVerifyState('npx --no-install jest ../outside/discount.test.ts'), 'unsafeCommand');
@@ -3882,7 +3892,7 @@ suite('Extension Smoke', () => {
       assertReportIncludes(diagnosis, [
         'ripr setup diagnosis:',
         'Server command: ripr',
-        'Server version: ripr 0.8.0-test',
+        'Server version: ripr 0.8.0+test',
         'Config: ripr.toml (found',
         'Enabled languages: rust',
         'ripr validated 1 actionable gap artifact.',
@@ -4083,11 +4093,11 @@ suite('Extension Smoke', () => {
       const report = context.outputLines.join('\n');
       assert.ok(report.includes('ripr setup diagnosis:'));
       assert.ok(report.includes('Status: ripr saved-workspace analysis is queued.'));
-      assert.ok(report.includes('ripr server state: ripr_version_ok (ripr 0.8.0-test)'));
+      assert.ok(report.includes('ripr server state: ripr_version_ok (ripr 0.8.0+test)'));
       assert.ok(report.includes('Workspace trust state: workspace_trusted'));
       assert.ok(report.includes('Config state: config_found'));
       assert.ok(report.includes('Artifact directory state: artifact_dir_present'));
-      assert.ok(report.includes('Server version: ripr 0.8.0-test'));
+      assert.ok(report.includes('Server version: ripr 0.8.0+test'));
       assert.ok(report.includes('Config: ripr.toml (found; found in current workspace'));
       assert.ok(report.includes('Artifact gap decision ledger: target/ripr/reports/gap-decision-ledger.json (found'));
       assert.ok(report.includes('First useful action: Add equality-boundary discriminator test'));
@@ -4137,8 +4147,8 @@ suite('Extension Smoke', () => {
       assertReportIncludes(report, [
         'Status: ripr saved-workspace analysis is queued.',
         'Server command: ripr',
-        'ripr server state: ripr_version_ok (ripr 0.8.0-test)',
-        'Server version: ripr 0.8.0-test',
+        'ripr server state: ripr_version_ok (ripr 0.8.0+test)',
+        'Server version: ripr 0.8.0+test',
         'Config: ripr.toml (missing',
         'Artifact first useful action report: target/ripr/reports/first-useful-action.json (missing',
         'Evidence freshness: pending refresh'
@@ -4641,14 +4651,14 @@ suite('Extension Smoke', () => {
     }
   });
 
-  test('main status bar visibility hides disabled and serverUnavailable and keeps noWorkspace', () => {
+  test('main status bar visibility hides disabled and keeps serverUnavailable and noWorkspace', () => {
     const expectedVisible: Record<RiprStatusKind, boolean> = {
       disabled: false,
       noWorkspace: true,
       workspaceUntrusted: true,
       workspaceAmbiguous: true,
       resolvingServer: true,
-      serverUnavailable: false,
+      serverUnavailable: true,
       serverFailed: true,
       circuitOpen: true,
       starting: true,
@@ -4759,6 +4769,24 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('a stale unmanaged server warns once per session and still starts (#13638)', async () => {
+    const warning = 'ripr on PATH reports ripr 0.1.0, older than the expected ripr 0.10.0; some editor features may not work. Update it with cargo install ripr --locked, or set ripr.server.path to a current ripr.';
+    const context = createControllerTestContext({ serverVersionWarning: warning });
+    try {
+      await context.controller.start();
+      assert.strictEqual(context.client.startCalls, 1, 'a stale server is still used, not refused');
+      assert.deepStrictEqual(context.warningMessages, [warning]);
+      await context.controller.restart();
+      assert.deepStrictEqual(
+        context.warningMessages,
+        [warning],
+        'a restart must not repeat the same stale-server warning'
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('status bar reports unavailable server without hanging on modal UI', async () => {
     const context = createControllerTestContext({
       resolveFailure: {
@@ -4773,9 +4801,10 @@ suite('Extension Smoke', () => {
       assert.ok(context.status.text.includes('ripr: server missing'));
       assert.strictEqual(
         context.statusVisible(),
-        false,
-        'serverUnavailable must hide the main status-bar item'
+        true,
+        'serverUnavailable must keep the main status-bar item visible after the toast (#13638)'
       );
+      assert.strictEqual(context.status.command, 'ripr.showStatus');
       assert.ok(String(context.status.tooltip).includes('Missing configured ripr server path'));
       assert.ok(String(context.status.tooltip).includes('Workspace:'));
       assert.ok(String(context.status.tooltip).includes('Server: not resolved'));
@@ -6333,6 +6362,7 @@ suite('Start or Continue Repair shell (#2928 / #4647)', () => {
 
 interface ControllerTestOptions {
   enabled?: boolean;
+  serverVersionWarning?: string;
   includeUnchangedTests?: boolean;
   seamDiagnostics?: boolean;
   diagnosticProfile?: 'actionable' | 'full';
@@ -6349,7 +6379,7 @@ interface ControllerTestOptions {
   files?: Record<string, string | null>;
   workspaceRoot?: string | null;
   workspaceRootState?: RiprWorkspaceRootState;
-  resolveFailure?: { message: string; detail: string; kind: 'missing_binary' | 'download' | 'http' | 'checksum' | 'manifest' | 'other' };
+  resolveFailure?: { message: string; detail: string; kind: 'missing_binary' | 'download' | 'network' | 'http' | 'checksum' | 'manifest' | 'other' };
   serverVersion?: string;
   workspaceTrusted?: boolean;
   beforeReadFile?: () => Promise<void>;
@@ -6807,9 +6837,10 @@ function createControllerTestContext(options: ControllerTestOptions) {
       command: 'ripr',
       source: 'path',
       detail: 'test ripr on PATH',
-      binaryVersion: options.serverVersion ?? 'ripr 0.8.0-test',
+      binaryVersion: options.serverVersion ?? 'ripr 0.8.0+test',
       installationState: 'unmanaged',
-      compatibilityResult: compatibleLspEvidence
+      compatibilityResult: compatibleLspEvidence,
+      ...(options.serverVersionWarning ? { versionWarning: options.serverVersionWarning } : {})
     }),
     createLanguageClient: (_serverOptions, options, experimental) => {
       clientOptions = options;

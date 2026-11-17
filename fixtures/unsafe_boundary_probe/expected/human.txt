@@ -8,8 +8,8 @@ Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 6 changed line(s), 3 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
 
 Start here:
-  State: ripr cannot tell from reading the code whether tests would notice this
-  Safe next action: look at the reason below and the existing tests before adding a test
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:2
   Static exposure: no path (severity: warning, confidence 0.35)
   Why no path: no related test was found that reaches this change
@@ -30,7 +30,7 @@ Start here:
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach no: No static test path found for the changed owner
+    - reach no: No static test path found for the changed owner (unreferenced in workspace)
     - infection unknown: Changed syntax is not mapped to a high-confidence change type
     - 4 more detail line(s) in --format human-full
 
