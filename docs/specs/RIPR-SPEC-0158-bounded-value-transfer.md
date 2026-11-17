@@ -197,8 +197,10 @@ exercised boundary from a missing one.
   side, and `A` and `B` are literals of different value. The reading is the
   added `x == B`: an input equal to `B` makes it true and the kept `x == A`
   false, so the predicate flips. An added `&&` conjunct, a third operand, a
-  `!=` or ordered comparison, another left side, a non-literal side, or a
-  second literal equal in value to the first (`5` and `05`) keeps no reading.
+  `!=` or ordered comparison, another left side, a left side that is not a
+  plain place path (`it.next()`, `xs[i]`), a non-literal side, an escaped
+  literal (`"\x41"`), or a second literal equal in value to the first (`5`
+  and `05`) keeps no reading.
   A `//` line comment ends the scanned text.
   A balanced predicate with no top-level connective and no block comment is
   read whole, as before. A

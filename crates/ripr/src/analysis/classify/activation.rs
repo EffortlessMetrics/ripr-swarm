@@ -8879,8 +8879,9 @@ pub(in crate::analysis) fn changed_comparison_conjunct<'a>(
 /// operand, the connective must be a single top-level `||`, the added
 /// operand must be a bare `==` on the same left side, and both right sides
 /// must be literals whose values differ. Any other shape, including an added
-/// `&&` conjunct, a `!=` or ordered comparison, a third operand, or a second
-/// literal equal in value to the first (`5` and `05`), keeps the
+/// `&&` conjunct, a `!=` or ordered comparison, a third operand, a left side
+/// that is not a plain place path (a call or index), an escaped literal, or a
+/// second literal equal in value to the first (`5` and `05`), keeps the
 /// two-comparison refusal (RIPR-SPEC-0158).
 fn added_equality_disjunct<'a>(
     expression: &'a str,
@@ -8915,6 +8916,23 @@ fn added_equality_disjunct<'a>(
     };
     let (added_text, (added_left, added_operator, added_literal)) = added;
     if kept_operator != "==" || added_operator != "==" || added_left != kept_left {
+        return None;
+    }
+    // Both sides must name the same value: a plain place path (`flag`,
+    // `self.mode`), never a call or index that may read a different value on
+    // each evaluation (`it.next() == 1 || it.next() == 2`).
+    let place_path = kept_left.split('.').all(|segment| {
+        segment
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+            && segment
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    });
+    // An escape can spell one value two ways (`"A"` and `"\x41"`), which the
+    // textual literal comparison would read as different values.
+    if !place_path || kept_literal.contains('\\') || added_literal.contains('\\') {
         return None;
     }
     let kept_value = literal_operand_value(&kept_literal)?;
@@ -10386,6 +10404,11 @@ mod tests {
             Some("c == 'b'")
         );
         assert_eq!(conjunct("n == 1 || n == 2", Some("n == 1")), Some("n == 2"));
+        // A field place path names one value too.
+        assert_eq!(
+            conjunct("self.mode == 1 || self.mode == 2", Some("self.mode == 1")),
+            Some("self.mode == 2")
+        );
         for (expression, before) in [
             // No pre-edit text, or a pre-edit text that is not kept verbatim.
             ("flag == \"-v\" || flag == \"--verbose\"", None),
@@ -10401,6 +10424,13 @@ mod tests {
             ("flag == \"-v\" || other == \"--verbose\"", kept),
             ("flag == \"-v\" || flag != \"--verbose\"", kept),
             ("flag == \"-v\" || flag == VERBOSE", kept),
+            // A left side that may read another value on each evaluation.
+            ("it.next() == 1 || it.next() == 2", Some("it.next() == 1")),
+            ("xs[i] == 1 || xs[i] == 2", Some("xs[i] == 1")),
+            ("f(\"a b\") == 1 || f(\"ab\") == 2", Some("f(\"a b\") == 1")),
+            // An escape can spell the kept value again.
+            ("s == \"A\" || s == \"\\x41\"", Some("s == \"A\"")),
+            ("c == 'a' || c == '\\x61'", Some("c == 'a'")),
             (
                 "flag != \"-v\" || flag != \"--verbose\"",
                 Some("flag != \"-v\""),

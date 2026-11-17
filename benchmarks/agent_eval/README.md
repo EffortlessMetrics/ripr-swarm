@@ -181,10 +181,10 @@ Route totals are the `routes` rows at the top of `baseline.json`. What they show
 - `mcp-brief` (#14327) reaches every answer for 56,168 tokens, against 82,254
   on `mcp`. When the route landed, its eight `ripr_get_gap` reads dropped from
   12,294 to 3,083, so the fixed `tools/list` cost now dominates.
-- Loop: after the reference test, two of the eight gap scenarios still end
+- Loop: after the reference test, one of the eight gap scenarios still ends
   with `verify=refused`, so an agent following the block cannot finish there:
-  `struct_field` (above) and `private_helper`. `changed_constant_return`
-  closed once #14380 (#14325) landed.
+  `private_helper`. `changed_constant_return` closed once #14380 (#14325)
+  landed, and `struct_field` once #14726 did.
 - Harder scenarios (`match_arm_value`, `private_helper`, `inclusive_range`,
   `refactor_control`):
   - `match_arm_value` and `inclusive_range` read correctly on the loop: the
