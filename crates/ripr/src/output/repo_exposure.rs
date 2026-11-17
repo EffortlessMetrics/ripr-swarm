@@ -15,6 +15,7 @@ use crate::analysis::SeamLimitInfo;
 use crate::analysis::SeamLimitSource;
 use crate::analysis::TypeScriptRepoReadiness;
 use crate::analysis::canonical_gap::{CanonicalGapIdentity, canonical_gap_identities};
+use crate::analysis::owner_opt_out::RepoOwnerOptOuts;
 use crate::analysis::resource_cost::trace_latency_phase;
 use crate::analysis::seams::SeamGripClass;
 use crate::analysis_outcome::AnalysisLimitation;
@@ -767,6 +768,7 @@ fn write_repo_exposure_json<W: io::Write>(
             analysis_inputs: None,
             byte_bound,
             evidence_limitations,
+            owner_opt_outs: &RepoOwnerOptOuts::default(),
         },
         None,
         None,
@@ -790,6 +792,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
     evidence_limitations: &[AnalysisLimitation],
+    owner_opt_outs: RepoOwnerOptOuts,
     context: &RepoExposureArtifactContext,
     out: &mut W,
 ) -> Result<(), String> {
@@ -824,6 +827,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         analysis_inputs: analysis_inputs.as_ref(),
         byte_bound: None,
         evidence_limitations,
+        owner_opt_outs: &owner_opt_outs,
     };
     // The hash pass streams the document through `Sha256Writer`, which
     // hashes each chunk without buffering it, so no destination I/O
@@ -862,6 +866,10 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
 
 /// Render a producer-owned repo-exposure artifact for non-streaming library
 /// callers.  The CLI uses the streaming sibling above.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the streaming writer's disclosures one for one; bundling them would hide which authority supplies each"
+)]
 pub(crate) fn render_repo_exposure_json_with_context(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
@@ -869,6 +877,7 @@ pub(crate) fn render_repo_exposure_json_with_context(
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
     evidence_limitations: &[AnalysisLimitation],
+    owner_opt_outs: RepoOwnerOptOuts,
     context: &RepoExposureArtifactContext,
 ) -> Result<String, String> {
     let mut bytes = Vec::new();
@@ -879,6 +888,7 @@ pub(crate) fn render_repo_exposure_json_with_context(
         python_guidance,
         generated_skip,
         evidence_limitations,
+        owner_opt_outs,
         context,
         &mut bytes,
     )?;
@@ -1078,6 +1088,9 @@ struct RepoExposureJsonDisclosures<'a> {
     /// The seam-evidence pass's own limitations (#13340); empty for a healthy
     /// walk, which keeps the document byte-identical.
     evidence_limitations: &'a [AnalysisLimitation],
+    /// Seams withheld because their owner opted out (#14139); the top-level
+    /// `owner_opt_outs` member renders only when the count is non-zero.
+    owner_opt_outs: &'a RepoOwnerOptOuts,
 }
 
 fn write_repo_exposure_json_document<W: io::Write>(
@@ -1095,6 +1108,7 @@ fn write_repo_exposure_json_document<W: io::Write>(
         analysis_inputs,
         byte_bound,
         evidence_limitations,
+        owner_opt_outs,
     } = disclosures;
     // The seams' own slice: the entry index below can never run past it.
     let metrics = ExposureMetrics::from(seams.order.iter().map(|idx| &seams.classified[*idx]));
@@ -1434,6 +1448,9 @@ fn write_repo_exposure_json_document<W: io::Write>(
         writeln!(out, "  ],")?;
     }
 
+    if let Some(disclosure) = repo_owner_opt_outs_json(owner_opt_outs) {
+        writeln!(out, "  \"owner_opt_outs\": {disclosure},")?;
+    }
     writeln!(out, "  \"metrics\": {{")?;
     writeln!(out, "    \"seams_total\": {},", metrics.seams_total)?;
     if let Some(bound) = byte_bound {
@@ -1539,13 +1556,40 @@ pub(crate) fn render_summary_refusal_json(
 /// evidence arrays and nested evidence records. It is for badge, queue, and
 /// large-repo planning consumers that need aggregate counts and bounded top
 /// files without multi-GB payloads.
+#[cfg(test)]
 pub(crate) fn render_repo_exposure_summary_json(
     classified: &[ClassifiedSeam],
     root: &Path,
     base: Option<&str>,
     mode: &str,
 ) -> String {
-    let value = repo_exposure_summary_json_value(classified, root, base, mode);
+    render_repo_exposure_summary_json_with_owner_opt_outs(
+        classified,
+        root,
+        base,
+        mode,
+        RepoOwnerOptOuts::default(),
+    )
+}
+
+/// [`render_repo_exposure_summary_json`] for an inventory that already
+/// withheld the seams of opted-out owners (#14139): the counts exclude them
+/// and a top-level `owner_opt_outs` member discloses how many, only when any
+/// were withheld.
+pub(crate) fn render_repo_exposure_summary_json_with_owner_opt_outs(
+    classified: &[ClassifiedSeam],
+    root: &Path,
+    base: Option<&str>,
+    mode: &str,
+    owner_opt_outs: RepoOwnerOptOuts,
+) -> String {
+    let mut value = repo_exposure_summary_json_value(classified, root, base, mode);
+    if let (Some(disclosure), Some(object)) = (
+        repo_owner_opt_outs_json(&owner_opt_outs),
+        value.as_object_mut(),
+    ) {
+        object.insert("owner_opt_outs".to_string(), disclosure);
+    }
     match serde_json::to_string_pretty(&value) {
         Ok(mut json) => {
             json.push('\n');
@@ -1680,6 +1724,34 @@ fn repo_exposure_summary_json_value(
             "top_files_truncated": top_files_total > MAX_TOP_FILES_SUMMARY_JSON,
         },
         "top_files": top_files_json,
+    })
+}
+
+/// The top-level `owner_opt_outs` disclosure every repo-scope JSON format
+/// shares (#14139): the withheld seam count and its reason token, the same
+/// shape as the diff-scope check JSON member. `None` when nothing was
+/// withheld, so the member is absent and the document unchanged.
+pub(crate) fn repo_owner_opt_outs_json(owner_opt_outs: &RepoOwnerOptOuts) -> Option<Value> {
+    (!owner_opt_outs.is_empty()).then(|| {
+        json!({
+            "withheld": owner_opt_outs.withheld(),
+            "reason": owner_opt_outs.reason().as_str(),
+            "seam_ids": owner_opt_outs.seam_ids,
+            "owners": owner_opt_outs.owners,
+        })
+    })
+}
+
+/// The repo-scope Markdown disclosure line (#14139), or `None` when nothing
+/// was withheld.
+pub(crate) fn repo_owner_opt_outs_md(owner_opt_outs: &RepoOwnerOptOuts) -> Option<String> {
+    (!owner_opt_outs.is_empty()).then(|| {
+        format!(
+            "Withheld by owner opt-out ({}): {} {} whose owner carries `#[mutants::skip]`; not counted above.\n",
+            owner_opt_outs.reason().as_str(),
+            owner_opt_outs.withheld(),
+            if owner_opt_outs.withheld() == 1 { "seam" } else { "seams" },
+        )
     })
 }
 
@@ -1916,6 +1988,7 @@ pub(crate) fn render_repo_exposure_md(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn render_repo_exposure_md_with_generated_skip(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
@@ -1942,6 +2015,29 @@ pub(crate) fn render_repo_exposure_md_with_limit(
     generated_skip: Option<&GeneratedRustSkip>,
     evidence_limitations: &[AnalysisLimitation],
 ) -> String {
+    render_repo_exposure_md_with_owner_opt_outs(
+        classified,
+        limit_info,
+        ts_guidance,
+        python_guidance,
+        generated_skip,
+        evidence_limitations,
+        RepoOwnerOptOuts::default(),
+    )
+}
+
+/// [`render_repo_exposure_md_with_limit`] for an inventory that already
+/// withheld the seams of opted-out owners (#14139). The summary counts
+/// exclude them; one line under the table names how many were withheld.
+pub(crate) fn render_repo_exposure_md_with_owner_opt_outs(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<RepoExposureLimit<'_>>,
+    ts_guidance: Option<&TsFullRepoGuidance>,
+    python_guidance: Option<&PythonRepoExposureGuidance>,
+    generated_skip: Option<&GeneratedRustSkip>,
+    evidence_limitations: &[AnalysisLimitation],
+    owner_opt_outs: RepoOwnerOptOuts,
+) -> String {
     let metrics = ExposureMetrics::from(classified.iter());
     let mut out = String::new();
     out.push_str("# ripr repo exposure report\n\n");
@@ -1964,6 +2060,10 @@ pub(crate) fn render_repo_exposure_md_with_limit(
             class.as_str(),
             metrics.count_for(class)
         ));
+    }
+    if let Some(line) = repo_owner_opt_outs_md(&owner_opt_outs) {
+        out.push('\n');
+        out.push_str(&line);
     }
 
     let has_limitations = limit_info.is_some()
@@ -2528,6 +2628,7 @@ pub fn surcharge(total: i32) -> Result<i32, String> {
             analysis_inputs: None,
             byte_bound: None,
             evidence_limitations: &[],
+            owner_opt_outs: &RepoOwnerOptOuts::default(),
         };
         let document = |budget: usize| -> Result<Vec<u8>, String> {
             let mut out = Vec::new();

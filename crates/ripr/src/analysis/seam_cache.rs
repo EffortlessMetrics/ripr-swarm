@@ -756,6 +756,12 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.182`: a module-level `const` read only by a same-module function gains a
 /// reader entry, so cached verdicts for such a value would stay
 /// `no_static_path` (#13592).
+/// #14139 adds `RepoSeam::owner_opt_out` (serde-defaulted, absent unless the
+/// owner carries `#[mutants::skip]`) without a bump: the attribute's bytes are
+/// in `files_content_hash`, so adding or removing it changes the key, and the
+/// key's analyzer build identity already keeps entries written by a build
+/// without the field from this one. A bump would only rewrite
+/// `source_subject.corpus.cache_schema_version` in every repo artifact.
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.182";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass

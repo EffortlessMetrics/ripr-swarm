@@ -1,14 +1,14 @@
 {
   "advisory": true,
-  "ripr_version": "ripr 0.11.0 (b7e43678f947f665fb1ef1cc76fc0d2017f71ccf)",
+  "ripr_version": "ripr 0.11.0 (b713299dfa7ead3127bf2c403fedd1cf0826ad77)",
   "routes": [
-    {"answered":10,"route":"cli-agent-loop","scenarios":10,"tokens_to_answer":3287,"total_tokens":6892},
-    {"answered":9,"route":"cli-agent-find","scenarios":10,"tokens_to_answer":2098,"total_tokens":2263},
-    {"answered":9,"route":"cli-human","scenarios":10,"tokens_to_answer":9718,"total_tokens":10828},
+    {"answered":10,"route":"cli-agent-loop","scenarios":10,"tokens_to_answer":3195,"total_tokens":6800},
+    {"answered":9,"route":"cli-agent-find","scenarios":10,"tokens_to_answer":2006,"total_tokens":2171},
+    {"answered":9,"route":"cli-human","scenarios":10,"tokens_to_answer":9776,"total_tokens":10886},
     {"answered":10,"route":"cli-json-terse","scenarios":10,"tokens_to_answer":34783,"total_tokens":34783},
-    {"answered":8,"route":"agent-brief","scenarios":10,"tokens_to_answer":10589,"total_tokens":11711},
-    {"answered":10,"route":"mcp","scenarios":10,"tokens_to_answer":82230,"total_tokens":89555},
-    {"answered":10,"route":"mcp-brief","scenarios":10,"tokens_to_answer":56149,"total_tokens":58108}
+    {"answered":7,"route":"agent-brief","scenarios":10,"tokens_to_answer":9275,"total_tokens":10991},
+    {"answered":10,"route":"mcp","scenarios":10,"tokens_to_answer":82254,"total_tokens":89579},
+    {"answered":10,"route":"mcp-brief","scenarios":10,"tokens_to_answer":56168,"total_tokens":58127}
   ],
   "scenarios": [
     {
@@ -341,13 +341,13 @@
       "keyed_gaps": 1,
       "loop": {
         "expected_gap_lines": [10],
-        "extra_gaps": 1,
+        "extra_gaps": 0,
         "find_exit": 0,
-        "gaps_header": 2,
+        "gaps_header": 1,
         "missed_gaps": 0,
         "reference_key_valid": true,
         "reference_test_closes_loop": false,
-        "reported_gap_lines": [10,10],
+        "reported_gap_lines": [10],
         "silent_on_control": null,
         "weak_key_valid": true,
         "weak_test_still_flagged": true
@@ -358,22 +358,22 @@
           "failed_steps": 0,
           "route": "cli-agent-loop",
           "steps": [
-            {"bytes":922,"exit":0,"step":"find","tokens":370}
+            {"bytes":705,"exit":0,"step":"find","tokens":278}
           ],
-          "tokens_to_answer": 370,
-          "total_bytes": 922,
-          "total_tokens": 370
+          "tokens_to_answer": 278,
+          "total_bytes": 705,
+          "total_tokens": 278
         },
         {
           "answer_reached": true,
           "failed_steps": 0,
           "route": "cli-agent-find",
           "steps": [
-            {"bytes":922,"exit":0,"step":"find","tokens":370}
+            {"bytes":705,"exit":0,"step":"find","tokens":278}
           ],
-          "tokens_to_answer": 370,
-          "total_bytes": 922,
-          "total_tokens": 370
+          "tokens_to_answer": 278,
+          "total_bytes": 705,
+          "total_tokens": 278
         },
         {
           "answer_reached": true,
@@ -703,11 +703,11 @@
           "failed_steps": 0,
           "route": "cli-human",
           "steps": [
-            {"bytes":3415,"exit":0,"step":"check","tokens":1054}
+            {"bytes":3607,"exit":0,"step":"check","tokens":1112}
           ],
-          "tokens_to_answer": 1054,
-          "total_bytes": 3415,
-          "total_tokens": 1054
+          "tokens_to_answer": 1112,
+          "total_bytes": 3607,
+          "total_tokens": 1112
         },
         {
           "answer_reached": true,
@@ -721,15 +721,15 @@
           "total_tokens": 2813
         },
         {
-          "answer_reached": true,
+          "answer_reached": false,
           "failed_steps": 0,
           "route": "agent-brief",
           "steps": [
-            {"bytes":3862,"exit":0,"step":"brief","tokens":1314}
+            {"bytes":1580,"exit":0,"step":"brief","tokens":594}
           ],
-          "tokens_to_answer": 1314,
-          "total_bytes": 3862,
-          "total_tokens": 1314
+          "tokens_to_answer": null,
+          "total_bytes": 1580,
+          "total_tokens": 594
         },
         {
           "answer_reached": true,
@@ -740,12 +740,12 @@
             {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
             {"bytes":5822,"exit":0,"step":"ripr_workspace_status","tokens":1077},
             {"bytes":3290,"exit":0,"step":"ripr_refresh","tokens":554},
-            {"bytes":4194,"exit":0,"step":"ripr_list_gaps","tokens":787},
-            {"bytes":8683,"exit":0,"step":"ripr_get_gap#1","tokens":1733}
+            {"bytes":4200,"exit":0,"step":"ripr_list_gaps","tokens":787},
+            {"bytes":8845,"exit":0,"step":"ripr_get_gap#1","tokens":1757}
           ],
-          "tokens_to_answer": 8831,
-          "total_bytes": 35084,
-          "total_tokens": 8831
+          "tokens_to_answer": 8855,
+          "total_bytes": 35252,
+          "total_tokens": 8855
         },
         {
           "answer_reached": true,
@@ -756,12 +756,12 @@
             {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
             {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
             {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
-            {"bytes":2635,"exit":0,"step":"ripr_list_gaps","tokens":183},
-            {"bytes":5478,"exit":0,"step":"ripr_get_gap#1","tokens":428}
+            {"bytes":2641,"exit":0,"step":"ripr_list_gaps","tokens":183},
+            {"bytes":5617,"exit":0,"step":"ripr_get_gap#1","tokens":447}
           ],
-          "tokens_to_answer": 5742,
-          "total_bytes": 27228,
-          "total_tokens": 5742
+          "tokens_to_answer": 5761,
+          "total_bytes": 27373,
+          "total_tokens": 5761
         }
       ],
       "summary": "one match arm's value changes; tests only cover the other arms"
