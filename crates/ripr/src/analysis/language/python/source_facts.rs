@@ -795,7 +795,8 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
                 &module.body,
                 &imports,
                 &dotted_dir(file),
-            ),
+            )
+            .with_swallowing_wrappers(source, &module.body, &imports),
         },
         &mut snapshot.tests,
     );

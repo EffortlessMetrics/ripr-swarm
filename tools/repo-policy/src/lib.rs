@@ -1179,7 +1179,7 @@ pub const ROUTED_RUST_REQUEST_LABEL: &str = "merge-ready";
 /// Result job name for every pull_request label event that is not a request.
 pub const ROUTED_RUST_NONREQUEST_RESULT_NAME: &str = "Merge-ready Nonrequest";
 
-/// The result job name expression: the required context only for main/manual
+/// The result job name expression: the required context only for queue/manual
 /// runs and an explicit merge-ready request, a different name otherwise.
 pub const ROUTED_RUST_RESULT_NAME_EXPRESSION: &str = "name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
 
@@ -1260,6 +1260,9 @@ pub fn routed_rust_event_route(
     action: Option<&str>,
     label: Option<&str>,
 ) -> RoutedRustEventRoute {
+    if !routed_rust_event_subscribed(workflow, event_name) {
+        return RoutedRustEventRoute::WorkflowNotTriggered;
+    }
     if event_name == "merge_group" {
         let action = action.unwrap_or("");
         if !routed_rust_event_types(workflow, "merge_group")
@@ -1284,6 +1287,13 @@ pub fn routed_rust_event_route(
     RoutedRustEventRoute::LaunchFullGate
 }
 
+fn routed_rust_event_subscribed(workflow: &str, event: &str) -> bool {
+    // Reuse the lifecycle owner's parser. Unknown syntax cannot establish that
+    // a workflow will stay quiet; the policy validator separately refuses it.
+    workflow_lifecycle::event_declarations(workflow)
+        .map_or(true, |events| events.contains_key(event))
+}
+
 /// Enforce the merge-ready request law declared by
 /// `.github/workflows/routed-rust.yml` (#4986, #8082).
 ///
@@ -1292,11 +1302,16 @@ pub fn routed_rust_event_route(
 /// closed on every path that could let another event produce the protected
 /// required context: only `labeled` is subscribed, the result job name is an
 /// expression yielding the required name solely for a merge-ready request (or
-/// main/manual runs), route, docs detection and admission are withheld from
+/// queue/manual runs), route, docs detection and admission are withheld from
 /// other labels, and the result job always runs so a nonrequest exists only
 /// under a different name.
 pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String> {
     let mut violations = Vec::new();
+    if routed_rust_event_subscribed(workflow, "push") {
+        violations.push(
+            ".github/workflows/routed-rust.yml must not replay ordinary main-push qualification (#14500, #7827)".to_string(),
+        );
+    }
     match routed_rust_event_types(workflow, "merge_group") {
         None => violations.push(
             ".github/workflows/routed-rust.yml must declare an inline merge_group types array so the merge-queue admission contract is auditable (#4986)".to_string(),
@@ -1495,7 +1510,7 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
         line.trim() == ROUTED_RUST_RESULT_NAME_EXPRESSION
     }) {
         violations.push(format!(
-            ".github/workflows/routed-rust.yml result job must be named by exactly `{ROUTED_RUST_RESULT_NAME_EXPRESSION}` so `{ROUTED_RUST_REQUIRED_RESULT_NAME}` is posted only for main/manual runs and a `{ROUTED_RUST_REQUEST_LABEL}` request and every other label event posts `{ROUTED_RUST_NONREQUEST_RESULT_NAME}` (#4986)"
+            ".github/workflows/routed-rust.yml result job must be named by exactly `{ROUTED_RUST_RESULT_NAME_EXPRESSION}` so `{ROUTED_RUST_REQUIRED_RESULT_NAME}` is posted only for queue/manual runs and a `{ROUTED_RUST_REQUEST_LABEL}` request and every other label event posts `{ROUTED_RUST_NONREQUEST_RESULT_NAME}` (#4986)"
         ));
     }
     if !routed_rust_job_block_any(workflow, "result", |line| {

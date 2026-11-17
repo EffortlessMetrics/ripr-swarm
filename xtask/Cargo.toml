@@ -73,6 +73,8 @@ required-features = ["automation"]
 [[example]]
 name = "contabo_product_proof"
 required-features = ["automation"]
+# Keep Linux owner-contract regressions in the required workspace selection.
+test = true
 
 [[example]]
 name = "mandatory_partitions"

@@ -45,7 +45,7 @@ Stop reasons:
   - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
     Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
 Next step
-  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_contradiction_lone_test/input --diff <cwd>/fixtures/rust_contradiction_lone_test/diff.patch --mode fast probe:src_lib.rs:predicate:596620ae
@@ -74,7 +74,7 @@ Stop reasons:
   - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
     Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
 Next step
-  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_contradiction_lone_test/input --diff <cwd>/fixtures/rust_contradiction_lone_test/diff.patch --mode fast probe:src_lib.rs:return_value:fed8ac90
