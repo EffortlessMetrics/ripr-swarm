@@ -727,16 +727,16 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         }
         AgentRepairPhase::After => match (seam_id.is_some(), attempt_id.is_some()) {
             (true, true) => {
-                return Err(
-                    "agent repair --phase after accepts either --attempt <id> or --seam-id <id>, not both"
-                        .to_string(),
-                );
+                return Err(crate::cli::usage_refusal::conflicting_flags(
+                    "--seam-id",
+                    "agent repair --phase after accepts either --attempt <id> or --seam-id <id>, not both",
+                ));
             }
             (false, false) => {
-                return Err(
-                    "agent repair --phase after requires --attempt <id> or --seam-id <id>; pass the attempt ID the before phase printed, or the seam ID"
-                        .to_string(),
-                );
+                return Err(crate::cli::usage_refusal::missing_required(
+                    "--attempt",
+                    "agent repair --phase after requires --attempt <id> or --seam-id <id>; pass the attempt ID the before phase printed, or the seam ID",
+                ));
             }
             _ => {}
         },
@@ -1007,10 +1007,10 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
     }
 
     if seam_id.is_some() && (gap_ledger.is_some() || gap_id.is_some()) {
-        return Err(
-            "agent packet accepts either --seam-id or --gap-ledger with --gap-id, not both"
-                .to_string(),
-        );
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--seam-id",
+            "agent packet accepts either --seam-id or --gap-ledger with --gap-id, not both",
+        ));
     }
     match (seam_id.is_some(), gap_ledger.is_some(), gap_id.is_some()) {
         (true, false, false) | (false, true, true) => {}

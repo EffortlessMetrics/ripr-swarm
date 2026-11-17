@@ -14271,6 +14271,31 @@
       ]
     },
     {
+      "id": "ts_field_construction_multi_value_change_untouched_field",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_multi_value_field_change_sibling",
+      "vector": "multi_value_change_read_of_untouched_field_does_not_pin_the_change",
+      "control": "must_stay_weakly_exposed",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_one_hop_field_projection",
       "language": "rust",
       "tier": "pure",
@@ -19560,6 +19585,30 @@
       "source_fixture": "fixtures/rust_guard_return_changed_guard",
       "vector": "guard_return_closed_pin_cannot_credit_when_the_guard_condition_also_changed",
       "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_stub_todo_expected_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_stub_todo_expected_value",
+      "vector": "an_unfilled_stub_expected_value_pins_nothing",
+      "probe_family": "predicate",
       "assertions": [
         {
           "type": "must_not_report_clean"

@@ -49,8 +49,9 @@ use super::no_behavior::{
     split_top_level_args,
 };
 use super::related_tests::{
-    PythonRelatedCandidate, import_source_module_matches_owner, is_python_identifier_char,
-    owner_module_callees, owner_module_paths, python_text_hides_code, test_body_binds_local,
+    PythonRelatedCandidate, import_module_may_be_owners, import_source_module_matches_owner,
+    is_python_identifier_char, owner_module_callees, owner_module_paths, python_text_hides_code,
+    test_body_binds_local,
 };
 use super::{PythonOwner, PythonTest};
 use crate::{
@@ -2021,6 +2022,9 @@ fn parametrize_case_row(
 /// after `import pricing` / `from pkg import pricing`. The argument is then the
 /// boundary value by identity. A name the test did not import from the
 /// owner's module, or that the test or its module rebinds, stays unresolved.
+/// The module the attribute is read through must still identify the owner's
+/// module for this test: a test-local module of that name ahead on `sys.path`
+/// (#13706) or a rival project's module (#4566) leaves it unresolved (#14035).
 fn imported_constant_value(
     owner: &PythonOwner,
     constants: &[PythonModuleConstant],
@@ -2047,6 +2051,7 @@ fn imported_constant_value(
                 .and_then(|rest| rest.strip_prefix('.'))
                 .is_some_and(|name| name == constant.name)
                 && owner_modules.contains(&module)
+                && import_module_may_be_owners(import, owner, &test.file)
         })
     })?;
     Some(constant.value.clone())

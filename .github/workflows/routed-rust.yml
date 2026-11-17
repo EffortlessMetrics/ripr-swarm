@@ -15,8 +15,8 @@ on:
     # the exact queued merge commit. Both requests coexist while the repository
     # cuts over to the queue; the label request is then retired.
     types: [checks_requested]
-  push:
-    branches: [main, master]
+  # Ordinary landed commits consume their native G qualification; no replay.
+  # Existing H qualification and actual G remain required during App bootstrap.
   workflow_dispatch:
 
 permissions:
@@ -28,7 +28,7 @@ concurrency:
   # A repeated merge-ready request means the prior admission transaction was
   # revoked. Nonrequest label events use a unique group so an ordinary label
   # can never cancel an in-flight qualification. Preserve independent
-  # main/manual work.
+  # queue/manual work.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -731,7 +731,7 @@ jobs:
       disk-guard-threshold: 0
       use-scratch: false
       # The hosted gates leave the nextest step to rust-github-tests (#10507).
-      test-shards: 4
+      test-shards: 2
       pr-labels: ${{ needs.admission.outputs.labels }}
       admission-reason: ${{ needs.admission.outputs.reason }}
       admission-head: ${{ needs.admission.outputs.head }}
@@ -744,7 +744,7 @@ jobs:
       run-advisory-reports: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
       upload-success-artifacts: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
 
-  # The hosted required test phase as four nextest partitions (#10507). It starts
+  # The hosted required test phase as two nextest partitions (#10507). It starts
   # with the hosted gates job, not after it: the merge queue ejects an entry
   # whose required context is still pending at its status-check timeout, and
   # gates-then-shards (about 44 + 32 minutes) outlived it on every code entry
@@ -771,12 +771,13 @@ jobs:
 
   # #12252: the extension e2e is a job of this run, so the Result reads it as a
   # `needs` result bound to this run id and request, with no cross-workflow
-  # correlation. Selection is the diff of the admitted PR against its base plus
-  # the `full-ci`/`vscode` labels; anything unclassifiable selects (#12122).
+  # correlation. PR selection uses the admitted head; queue selection uses the
+  # complete event base-to-group diff, including earlier constituents. Admission
+  # supplies the union of constituent labels. Anything unclassifiable selects.
   vscode-select:
     name: vscode surface
     needs: [admission]
-    if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'
+    if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -795,7 +796,15 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ needs.admission.outputs.head }}
           LABELS: ${{ needs.admission.outputs.labels }}
+          EVENT_NAME: ${{ github.event_name }}
+          GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
+          if [ "$EVENT_NAME" = merge_group ]; then
+            # Never fall back to the tip PR: its diff can omit earlier queued
+            # constituents. Missing group identities conservatively select.
+            BASE_SHA="$GROUP_BASE_SHA" HEAD_SHA="$GROUP_HEAD_SHA"
+          fi
           selected=true reason=unclassified
           classify() {
             reason=label
@@ -839,6 +848,10 @@ jobs:
     needs: [vscode-select]
     if: ${{ !cancelled() && needs.vscode-select.result == 'success' && needs.vscode-select.outputs.selected == 'true' }}
     uses: ./.github/workflows/vscode-e2e.yml
+    with:
+      # On merge_group this is G, the composition already bound by admission.
+      # Preserve the existing synthetic merge checkout for PR qualification.
+      ref: ${{ github.sha }}
 
   docs-gate:
     name: Ripr Docs Gate
@@ -907,7 +920,7 @@ jobs:
           retention-days: 5
 
   result:
-    # Static `Ripr Rust Small Result` only for main/manual runs and an explicit
+    # Static `Ripr Rust Small Result` only for queue/manual runs and an explicit
     # merge-ready request. Any other pull_request label event is a nonrequest
     # under a different name so the required context is never satisfied by it.
     name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}
@@ -1102,7 +1115,7 @@ jobs:
           done
       - name: Require the extension e2e result for the admitted head
         id: vscode
-        if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'
+        if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
         env:
           SELECT_RESULT: ${{ needs.vscode-select.result }}
           SELECTED: ${{ needs.vscode-select.outputs.selected }}
@@ -1213,7 +1226,7 @@ jobs:
           elif [ "$ADMISSION_RESULT" != "success" ]; then status=fail; message="candidate admission result was $ADMISSION_RESULT: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
           elif [ "$ADMISSION_STATUS" != "admitted" ] && [ "$ADMISSION_STATUS" != "not_applicable" ]; then status=fail; message="candidate admission status was ${ADMISSION_STATUS:-missing}: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
           elif { [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; } && [ "$ELIGIBILITY_RESULT" != success ]; then status=fail; message="live eligibility no longer established for the initially admitted head/request"
-          elif [ "$EVENT_NAME" = pull_request ] && [ "$VSCODE_CHECK_RESULT" != success ]; then status=fail; message="the selected VS Code extension e2e did not succeed for the admitted head (see the vscode check step)"
+          elif { [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; } && [ "$VSCODE_CHECK_RESULT" != success ]; then status=fail; message="the selected VS Code extension e2e did not succeed for the admitted head (see the vscode check step)"
           elif [ "$DOCS_DETECT_RESULT" != "success" ]; then
             status=fail
             message="docs-surface detection result was $DOCS_DETECT_RESULT"

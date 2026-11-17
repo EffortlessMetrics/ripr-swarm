@@ -233,11 +233,24 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             })
     };
     let mut selected = Vec::<(ParserProbeShape<'a>, Option<(u8, bool, usize)>)>::new();
+    // #14192: parsed at most once per changed line, and only when a
+    // multi-line returned-value shape spans it.
+    let mut parsed: Option<Option<ra_ap_syntax::Parse<ast::SourceFile>>> = None;
     for shape in &facts.probe_shapes {
         if shape.start_line() > line || line > shape.end_line() {
             continue;
         }
         let family = family_for_probe_shape(shape.kind);
+        if matches!(family, ProbeFamily::ReturnValue | ProbeFamily::ErrorPath)
+            && shape.start_line() < line
+            && line < shape.end_line()
+            && parsed
+                .get_or_insert_with(|| last_file_parse(&facts.source))
+                .as_ref()
+                .is_some_and(|parse| line_is_nested_statement(&facts.source, parse, shape, line))
+        {
+            continue;
+        }
         let unsafe_boundary = shape.kind == ProbeShapeKind::UnsafeBoundary;
         if unsafe_boundary && !unsafe_boundary_owns_changed_line(facts, shape, line) {
             continue;
@@ -302,6 +315,129 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             .then(left.text.cmp(right.text))
     });
     selected.into_iter().map(|(shape, _)| shape).collect()
+}
+
+thread_local! {
+    /// #14192: the last whole-file parse [`line_is_nested_statement`] read.
+    /// A diff visits one file's changed lines in a row, and a large file is
+    /// past the shared memo's size cap, so one entry keyed by the full text
+    /// saves a parse per changed line.
+    static LAST_FILE_PARSE: std::cell::RefCell<Option<(String, Option<ra_ap_syntax::Parse<ast::SourceFile>>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn last_file_parse(source: &str) -> Option<ra_ap_syntax::Parse<ast::SourceFile>> {
+    LAST_FILE_PARSE.with(|last| {
+        let mut last = last.borrow_mut();
+        if let Some((text, parse)) = last.as_ref()
+            && text == source
+        {
+            return parse.clone();
+        }
+        let parse = parse_clean_source_file(source);
+        *last = Some((source.to_string(), parse.clone()));
+        parse
+    })
+}
+
+/// #14192: whether the changed `line` lies wholly inside a statement (`let`,
+/// expression statement or item) of a block nested in the returned
+/// expression `shape` spans: `let doubled = item * 2;` inside
+/// `with(|| { .. })`, `Box::pin(async move { .. })` or an `async { .. }` tail.
+/// Such a line is a statement of its own block, not part of the returned
+/// value, so the outer `return_value` / `error_path` shape does not apply to
+/// it; a `return` on it keeps its own narrower shape. A nested block's tail
+/// expression, a method-chain link and an argument line are not statements
+/// and keep the outer shape. Any shape or line the parse cannot place keeps
+/// today's selection.
+fn line_is_nested_statement(
+    source: &str,
+    parse: &ra_ap_syntax::Parse<ast::SourceFile>,
+    shape: &ProbeShapeFact,
+    line: usize,
+) -> bool {
+    let Some(line_range) = source_line_byte_range(source, line) else {
+        return false;
+    };
+    let Some(text) = source.get(line_range.clone()) else {
+        return false;
+    };
+    let leading = text.len() - text.trim_start().len();
+    let trailing = text.len() - text.trim_end().len();
+    if text.trim().is_empty() {
+        return false;
+    }
+    let (Ok(content_start), Ok(content_end)) = (
+        u32::try_from(line_range.start + leading),
+        u32::try_from(line_range.end - trailing),
+    ) else {
+        return false;
+    };
+    let shape_range = ra_ap_syntax::TextRange::new(shape.start_byte.into(), shape.end_byte.into());
+    let content = ra_ap_syntax::TextRange::new(content_start.into(), content_end.into());
+    if shape_range.is_empty() || !shape_range.contains_range(content) {
+        return false;
+    }
+    let root = parse.tree();
+    if shape_range.end() > root.syntax().text_range().end() {
+        return false;
+    }
+    let ra_ap_syntax::NodeOrToken::Node(outer) = root.syntax().covering_element(shape_range) else {
+        return false;
+    };
+    if outer.text_range() != shape_range {
+        return false;
+    }
+    // A trailing `// comment` sits outside the statement's range, so the line
+    // content ends at its last non-trivia token (#14917 review).
+    let mut content_end = content.end();
+    while content_end > content.start() {
+        let Some(token) = root
+            .syntax()
+            .token_at_offset(content_end)
+            .left_biased()
+            .filter(|token| token.kind().is_trivia())
+        else {
+            break;
+        };
+        content_end = token.text_range().start().max(content.start());
+    }
+    let content = ra_ap_syntax::TextRange::new(content.start(), content_end);
+    if content.is_empty() {
+        return false;
+    }
+    let start = match root.syntax().covering_element(content) {
+        ra_ap_syntax::NodeOrToken::Node(node) => node,
+        ra_ap_syntax::NodeOrToken::Token(token) => match token.parent() {
+            Some(parent) => parent,
+            None => return false,
+        },
+    };
+    // The innermost statement of a block that holds the whole line, walking up
+    // from the line rather than down the whole shape (#14917 review).
+    let Some(statement) = start.ancestors().find(|node| {
+        ast::Stmt::can_cast(node.kind())
+            && node
+                .parent()
+                .is_some_and(|parent| ast::StmtList::can_cast(parent.kind()))
+            && node.text_range().contains_range(content)
+    }) else {
+        return false;
+    };
+    if !shape_range.contains_range(statement.text_range()) || statement == outer {
+        return false;
+    }
+    // Only a closure or `async` body between the statement and the shape runs
+    // as its own unit; a statement of a plain, `if`, `match` or `loop` block
+    // still runs in the owner's own body and feeds its value (#14917 review).
+    statement
+        .ancestors()
+        .skip(1)
+        .take_while(|node| outer.text_range().contains_range(node.text_range()))
+        .any(|node| {
+            ast::ClosureExpr::can_cast(node.kind())
+                || ast::BlockExpr::cast(node).is_some_and(|block| block.async_token().is_some())
+        })
 }
 
 /// A line-only diff cannot identify which bytes changed when code outside an

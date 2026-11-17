@@ -38,6 +38,9 @@ pub(crate) const CODE_SELECTOR_MISS: &str = "selector_miss";
 pub(crate) const CODE_MISSING_VALUE: &str = "missing_value";
 /// Machine code of a required flag the invocation left out (#14076).
 pub(crate) const CODE_MISSING_REQUIRED: &str = "missing_required";
+/// Machine code of two flags the invocation gave that cannot be used
+/// together (#14925).
+pub(crate) const CODE_CONFLICTING_FLAGS: &str = "conflicting_flags";
 /// Machine code of a value that does not have the shape its flag takes,
 /// such as a word where a whole number belongs (#11979).
 pub(crate) const CODE_INVALID_VALUE: &str = "invalid_value";
@@ -131,6 +134,19 @@ pub(crate) fn missing_required(flag: &str, message: &str) -> String {
     message.to_string()
 }
 
+/// The refusal for two given flags that cannot be used together. The token
+/// is one of them: dropping it clears this conflict. Command parsers keep
+/// their own wording.
+pub(crate) fn conflicting_flags(flag: &str, message: &str) -> String {
+    record(RefusalBlock {
+        code: CODE_CONFLICTING_FLAGS.to_string(),
+        message: message.to_string(),
+        token: Some(flag.to_string()),
+        next: None,
+    });
+    message.to_string()
+}
+
 /// Note a value its flag cannot take. The token is the value as typed; an
 /// empty value has no token to name. The boundary fills the help route.
 pub(crate) fn note_invalid_value(value: &str, message: &str) {
@@ -210,7 +226,11 @@ fn argv_command(args: &[String]) -> Option<String> {
 fn fills_help_route(code: &str) -> bool {
     matches!(
         code,
-        CODE_UNKNOWN_VALUE | CODE_MISSING_VALUE | CODE_INVALID_VALUE | CODE_MISSING_REQUIRED
+        CODE_UNKNOWN_VALUE
+            | CODE_MISSING_VALUE
+            | CODE_INVALID_VALUE
+            | CODE_MISSING_REQUIRED
+            | CODE_CONFLICTING_FLAGS
     )
 }
 

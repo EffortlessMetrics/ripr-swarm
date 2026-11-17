@@ -1601,7 +1601,17 @@ stubs), and `repair` (`seam_id` or `canonical_gap_id`,
 `ready`) only for the finding the pipeline selected for repair, by the same gates
 the human screen applies (the gap-bound route wins over the seam route, and a
 static-limited finding gets none). A blocked start names `uncommitted_file` or
-`uncommitted_files` and carries no `command`. An absent key means no route was offered, not
+`uncommitted_files` and carries no `command`: a seam route names
+`uncommitted_file` for a held inline test target and `uncommitted_files` for the
+uncommitted production files `ripr repair` refuses to start over (#13636), and a
+gap route names `uncommitted_files`. Both routes spell the files relative to the
+analyzed root (files outside it as `../...`). The seam route lists the dirty files
+the start's early preflight refuses; a `ready` seam route can still be refused by
+the start's full check (for example a dirty production file carrying an inline
+test module), which names the files itself.
+When the check did not analyze those files (a committed-only run, or source or
+test changes it left unanalyzed), neither route prints a commit step and the
+route is refused instead. An absent key means no route was offered, not
 that none exists. The member is present only on the navigation-aware CLI path
 (never on the generic renderer or `json-terse`), precedes
 `canonical_next_action`, and classification goldens strip it. The schema
@@ -1944,6 +1954,11 @@ classes are:
   `missing_required` with the flag to add as `token`; where the refusal
   offers alternatives (`--diff`, `--base`, `--files` or `--seam-id`), the
   token is the first one it names (#14877);
+- two given flags that cannot be used together (for example `ripr context
+  --json --base main --diff a.diff`, or `ripr rerun --json --changed-test
+  tests/a.rs --gap-ledger ledger.json`), as `conflicting_flags` with one of
+  the conflicting flags as `token`; outside `check`, whose conflicts keep
+  their own check refusal (#14925);
 - a malformed number caught by the CLI's shared numeric parsers (for example
   `context --max-related-tests zz` or `check --timeout zz`), as
   `invalid_value` with the typed value as `token` (#11979); an empty entry in
@@ -1956,16 +1971,16 @@ Every other argv usage error keeps empty stdout even under a JSON request,
 with the cause on stderr only: required-flag refusals not yet typed,
 including those whose wording #14076 is revising (`calibrate cargo-mutants`,
 `zero status`, `pr-ledger record`, `cache export`, `reports gap-ledger`,
-`pr-review front-panel`) and those whose named flag would conflict with one
-already given (`rerun --changed-test` with `--gap-ledger`), a missing or malformed value rejected by a command's own parser rather than
-the shared readers (for example `impacted-evidence`), conflicting or disagreeing flags, an unrecognized value
+`pr-review front-panel`), a missing or malformed value rejected by a
+command's own parser rather than the shared readers (for example
+`impacted-evidence`), conflicting flags not yet typed, an unrecognized value
 rejected outside the CLI's shared builder (for example a gate mode), and any
 other argv error. These are a named gap, not a clean result.
 
 The document carries `schema_version`, `tool`, `status: "refused"` and
 `error {code, message, token?, next}` with `code` one of `unknown_argument`,
 `unknown_command`, `unknown_value`, `missing_value`, `missing_required`,
-`invalid_value`,
+`conflicting_flags`, `invalid_value`,
 `selector_miss`. `token` is the offending argument, command, flag, value or
 selector (an empty malformed value has none); `next` is a fixed help pointer
 (`list_valid_arguments`, `list_valid_commands`) or `null`; `selector_miss`
@@ -3355,6 +3370,18 @@ JSON fields:
   `target shape (not delegatable)` together with a stop condition forbidding
   reuse of the observed call input. A complete packet must not instruct a
   duplicate of a non-discriminating assertion.
+  Pinned error message (#13827): `typescript_error_message_pin: <message>`
+  evidence names the literal message of a changed `throw new Error('<message>')`.
+  It is emitted only when that line is the owner's sole throw site and the old
+  side cannot satisfy the same substring check, either because the line is a
+  pure addition or because the old message (of a built-in error class, with
+  no other call on the old line) does not contain the new one. Every related
+  test must call the owner itself, not an exported wrapper. Any
+  removed line that could have thrown (a `throw`, `reject`, `Promise` or a
+  call other than a pure `Math` method) must be that throw's own paired old
+  line. With
+  it, a bare `toThrow()` packet targets `toThrow('<message>')` (RIPR-SPEC-0087
+  G-C). Without it, the generic `Error` gets no packet.
   Derived boundary input (#4215 follow-up): when the finding carries
   `typescript_boundary_input: parameter=<p>;index=<i>;operand=<o>;value=<v>`
   evidence, the analysis side has pinned the call input that hits the
@@ -16541,6 +16568,12 @@ Field notes:
   status.
 - `static_movement` is copied from the receipt and remains a static
   before/after artifact relationship.
+- A receipt that supplies the movement but does not record the `advisory`
+  status (it is `invalid` or `incomplete`, or carries no recognized status)
+  keeps `status` at `incomplete`. `static_movement` is still copied, and
+  `reviewer_summary.headline`, `reviewer_summary.what_changed` and the
+  Markdown `Receipt:` line say that the recorded movement is not review
+  evidence. The wording is fixed per case and never echoes receipt text.
 - `analysis_outcome` is copied from the producer's typed check envelope. Its
   `analysis_complete` value is derived from the closed outcome kind; it is not
   inferred from receipt movement, packet-budget state, or empty findings.
@@ -20570,7 +20603,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.181",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.182",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21355,7 +21388,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.181",
+      "schema_version": "1.182",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

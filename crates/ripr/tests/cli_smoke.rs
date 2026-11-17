@@ -27928,7 +27928,10 @@ fn check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed() 
 /// run: `limits=` plus the `ripr explain` drill-in (#13594 dropped the
 /// `missing=-` per-finding records, which named nothing to fix), and the terminal must not claim nothing more is
 /// fixable while the human Start-here block recommends adding a co-located
-/// test.
+/// test. #14820: the base names `levy` and `fee` in a comment, so the
+/// RIPR-SPEC-0219 unreferenced-owner marker is withheld and the run stays
+/// all-limited; an owner nothing names reads as a gap instead (see
+/// `tests/agent_unreferenced_owner_gap.rs`).
 #[test]
 fn check_format_agent_all_static_limited_emits_a_route_without_records() -> Result<(), String> {
     let root = unique_temp_workspace("agent-format-all-limited");
@@ -27936,8 +27939,11 @@ fn check_format_agent_all_static_limited_emits_a_route_without_records() -> Resu
     run_git(&root, &["init", "-b", "main"])?;
     run_git(&root, &["config", "user.email", "test@test.com"])?;
     run_git(&root, &["config", "user.name", "Test"])?;
-    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")
-        .map_err(|e| format!("write lib: {e}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn one() -> i32 { 1 }\n// The host crate wires up levy and fee.\n",
+    )
+    .map_err(|e| format!("write lib: {e}"))?;
     std::fs::write(
         root.join("Cargo.toml"),
         "[package]\nname = \"agent-all-limited\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
@@ -27948,7 +27954,7 @@ fn check_format_agent_all_static_limited_emits_a_route_without_records() -> Resu
     run_git(&root, &["commit", "-m", "initial"])?;
     std::fs::write(
         root.join("src/lib.rs"),
-        "pub fn one() -> i32 { 1 }\n\npub fn levy(pct: u32) -> bool {\n    pct >= 50\n}\n\npub fn fee(pct: u32) -> bool {\n    pct >= 90\n}\n",
+        "pub fn one() -> i32 { 1 }\n// The host crate wires up levy and fee.\n\npub fn levy(pct: u32) -> bool {\n    pct >= 50\n}\n\npub fn fee(pct: u32) -> bool {\n    pct >= 90\n}\n",
     )
     .map_err(|e| format!("write lib v2: {e}"))?;
     run_git(&root, &["add", "."])?;
@@ -37661,6 +37667,72 @@ fn agent_repair_after_cage_violation_restores_preexisting_shared_artifacts()
         );
     }
     std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// `init` in a repository that has no commits yet (the state right after
+/// `git init`) must not close by sending the user to a bare `ripr check`:
+/// that command has no base there and exits 2. The closing line names the
+/// commit-first step; once a commit exists the ordinary line returns.
+#[test]
+fn init_next_step_names_commit_first_in_a_repository_without_commits() -> Result<(), String> {
+    let repo = unique_temp_workspace("init-unborn-next-step");
+    std::fs::create_dir_all(&repo).map_err(|e| format!("create repo root: {e}"))?;
+    let git = |args: &[&str]| -> Result<std::process::Output, String> {
+        run_command_with_env("git", &repo, args, &[]).map_err(|e| e.to_string())
+    };
+    assert!(git(&["init", "-q", "-b", "main"])?.status.success());
+    // Fixture check: HEAD really is unborn.
+    assert!(
+        !git(&["rev-parse", "--verify", "--quiet", "HEAD"])?
+            .status
+            .success(),
+        "fixture: expected an unborn HEAD"
+    );
+    let repo_arg = repo.display().to_string();
+
+    // The stumble this guards: the check `init` used to recommend fails here.
+    let check = run_ripr(&["check", "--root", &repo_arg]);
+    assert_eq!(check.status.code(), Some(2), "{check:?}");
+
+    let unborn = run_ripr(&["init", "--root", &repo_arg]);
+    assert_success(&unborn);
+    let stdout = String::from_utf8_lossy(&unborn.stdout);
+    let next = stdout
+        .lines()
+        .find(|line| line.starts_with("Next: "))
+        .ok_or_else(|| format!("init must print a Next line: {stdout}"))?;
+    assert!(
+        next.contains("no commits yet") && next.contains("commit once"),
+        "an unborn repository must be told to commit first: {next}"
+    );
+    assert!(
+        !next.contains("to analyze your branch against its default branch"),
+        "must not promise a check that cannot run yet: {next}"
+    );
+
+    std::fs::write(repo.join("README.md"), "demo\n").map_err(|e| e.to_string())?;
+    assert!(git(&["add", "-A"])?.status.success());
+    let committed = git(&[
+        "-c",
+        "user.name=ripr",
+        "-c",
+        "user.email=ripr@example.invalid",
+        "commit",
+        "-q",
+        "-m",
+        "init",
+    ])?;
+    assert!(committed.status.success(), "{committed:?}");
+    let ready = run_ripr(&["init", "--force", "--root", &repo_arg]);
+    assert_success(&ready);
+    let ready_stdout = String::from_utf8_lossy(&ready.stdout);
+    assert!(
+        ready_stdout.contains("to analyze your branch against its default branch")
+            && !ready_stdout.contains("no commits yet"),
+        "a repository with a commit keeps the ordinary next step: {ready_stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
     Ok(())
 }
 

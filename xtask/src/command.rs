@@ -1071,8 +1071,8 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "report_only",
             "target/ripr/reports and fixture actual outputs under target",
             false,
-            true,
-            "Runs fixture checks and writes local evidence.",
+            false,
+            "Runs fixture checks and writes local evidence; hosted CI uses goldens check-with-fixtures.",
         ),
         command_entry(
             "goldens prepare [--offline]",
@@ -1095,8 +1095,8 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "non_mutating_check",
             "target/ripr/reports/{fixtures,goldens,golden-drift}.md and golden-drift.json",
             false,
-            false,
-            "Checks both obligations from one fixture evaluation; not wired into hosted CI.",
+            true,
+            "Checks both required hosted obligations from one fixture evaluation.",
         ),
         command_entry(
             "goldens bless <name> --reason <reason>",
