@@ -12,9 +12,17 @@ fn arm_evidence(
     test_body: &str,
     arm: &str,
 ) -> Result<(TestGripEvidence, TestGripEvidence, [SeamGripClass; 2]), String> {
+    arm_evidence_in(PRICES, test_body, arm)
+}
+
+fn arm_evidence_in(
+    source: &str,
+    test_body: &str,
+    arm: &str,
+) -> Result<(TestGripEvidence, TestGripEvidence, [SeamGripClass; 2]), String> {
     let tests = format!("use prices::*;\n\n#[test]\nfn prices() {{\n{test_body}\n}}\n");
     let files: Vec<(PathBuf, &str)> = vec![
-        (PathBuf::from("src/lib.rs"), PRICES),
+        (PathBuf::from("src/lib.rs"), source),
         (PathBuf::from("tests/prices.rs"), tests.as_str()),
     ];
     let index = index_from_files(&files)?;
@@ -92,6 +100,42 @@ fn an_input_the_reading_cannot_resolve_leaves_the_arm_unnamed() -> Result<(), St
             "{:?}",
             evidence.missing_discriminators
         );
+    }
+    Ok(())
+}
+
+/// The owner re-enters itself, so a call that selects `Small` runs the
+/// `Medium` arm too and its assertion observes that arm's value.
+const RECURSIVE: &str = "pub enum Size {\n    Small,\n    Medium,\n    Large,\n}\n\n\
+pub fn price_cents(size: Size) -> u32 {\n    match size {\n        \
+Size::Small => price_cents(Size::Medium),\n        Size::Medium => 450,\n        \
+Size::Large => 500,\n    }\n}\n";
+
+/// The same re-entry through a helper the owner calls.
+const MUTUAL: &str = "pub enum Size {\n    Small,\n    Medium,\n    Large,\n}\n\n\
+pub fn price_cents(size: Size) -> u32 {\n    match size {\n        \
+Size::Small => medium_price(),\n        Size::Medium => 450,\n        \
+Size::Large => 500,\n    }\n}\n\n\
+fn medium_price() -> u32 {\n    price_cents(Size::Medium)\n}\n";
+
+#[test]
+fn an_owner_that_calls_itself_leaves_the_arm_unnamed() -> Result<(), String> {
+    for source in [RECURSIVE, MUTUAL] {
+        let (full, compact, class) = arm_evidence_in(
+            source,
+            "    assert_eq!(price_cents(Size::Small), 450);",
+            "Size::Medium",
+        )?;
+        assert_ne!(class[0], SeamGripClass::WeaklyGripped, "{full:?}");
+        assert_ne!(class[1], SeamGripClass::WeaklyGripped, "{compact:?}");
+        for evidence in [&full, &compact] {
+            assert_ne!(evidence.activate.state, StageState::Weak, "{source}");
+            assert!(
+                !missing_values(evidence).contains(&"Size::Medium"),
+                "{source}: {:?}",
+                evidence.missing_discriminators
+            );
+        }
     }
     Ok(())
 }
