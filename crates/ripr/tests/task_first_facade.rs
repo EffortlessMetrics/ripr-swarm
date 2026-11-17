@@ -2940,7 +2940,9 @@ fn repair_refuses_an_ambiguous_probe_id() -> Result<(), String> {
 
 /// #8166 residual (F3): a static-limited top finding (no static test path)
 /// keeps its limitation guidance and prints no runnable `ripr repair` line,
-/// while its explain/context drill-down stays.
+/// while its explain/context drill-down stays. #14919: the base names
+/// `discounted_total` in a comment, so the owner is not an unreferenced one
+/// (that shape reads as a test gap) and stays an ordinary no-path limit.
 #[test]
 fn check_drill_down_omits_repair_for_a_static_limited_finding() -> Result<(), String> {
     let fixture = Fixture::dir("facade-check-drilldown-static-limited")?;
@@ -2948,7 +2950,11 @@ fn check_drill_down_omits_repair_for_a_static_limited_finding() -> Result<(), St
     std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
     std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
-    std::fs::write(root.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        format!("{FIXTURE_LIB}// The host crate wires up discounted_total.\n"),
+    )
+    .map_err(|e| e.to_string())?;
     std::fs::write(
         root.join("tests/pricing.rs"),
         "#[test]\nfn unrelated() {\n    assert_eq!(1 + 1, 2);\n}\n",
