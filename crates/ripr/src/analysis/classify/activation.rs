@@ -4976,13 +4976,17 @@ fn never_runs(index: &crate::analysis::rust_index::RustIndex, function: &Functio
         )
         && function.name != "main"
         && !function.name.is_empty()
+        // `fn r#name` is called as `name`, which the count below would miss.
+        && !function.name.starts_with("r#")
         // An item nested in the body can run without its parent: an `impl`
         // (`impl From<Forward> for u32` reached by `.into()`), an exported
         // `macro_rules!`, an attributed `#[no_mangle]` or `extern` fn.
         && !declares_free_standing_item(&function.body)
         // A macro it invokes may expand to such an item (`reg!(price_cents)`
-        // emitting an `impl Drop`), which no file read here shows.
-        && !invokes_unread_macro(&function.body)
+        // emitting an `impl Drop`), which no file read here shows. A read
+        // macro's name may be rebound (`macro_rules! dbg`), so none is
+        // trusted here.
+        && !invokes_any_macro(&function.body)
         // Every whole-word spelling of the name, in code, comments and
         // strings alike, must be its own `fn` header: a string can name it
         // to a derive (`#[serde(default = "medium_price")]`) that runs it.
@@ -4992,6 +4996,12 @@ fn never_runs(index: &crate::analysis::rust_index::RustIndex, function: &Functio
             .map(|(_, file)| whole_word_count(&file.source, &function.name))
             .sum::<usize>()
             == 1
+        // A macro that pastes identifiers together can spell a call to it
+        // that no file holds whole.
+        && !index.files().iter().any(|(_, file)| {
+            whole_word_count(&file.source, "paste") > 0
+                || whole_word_count(&file.source, "concat_idents") > 0
+        })
 }
 
 /// Whether `body` holds an item that runs or is visible without the
@@ -5007,6 +5017,35 @@ fn declares_free_standing_item(body: &str) -> bool {
         || ["impl", "macro_rules", "extern"]
             .iter()
             .any(|word| whole_word_count(&masked, word) > 0)
+}
+
+/// Whether `body` invokes any macro (`name!(`, `name! [`, `name !{`),
+/// standard or not. Comments and strings are masked.
+fn invokes_any_macro(body: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let bytes = masked.as_bytes();
+    masked.match_indices('!').any(|(offset, _)| {
+        let next = bytes[offset + 1..]
+            .iter()
+            .copied()
+            .find(|byte| !byte.is_ascii_whitespace());
+        if !matches!(next, Some(b'(' | b'[' | b'{')) {
+            return false;
+        }
+        let head = masked[..offset].trim_end();
+        let name_start = head
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !(ch.is_alphanumeric() || *ch == '_'))
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
+        let name = &head[name_start..];
+        // `if !(done)` is a negation after a keyword, not a macro.
+        !name.is_empty()
+            && !matches!(
+                name,
+                "if" | "while" | "match" | "return" | "in" | "else" | "break"
+            )
+    })
 }
 
 /// How many times `word` appears in `source` with no identifier character on

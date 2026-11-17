@@ -291,9 +291,29 @@ pub fn hidden_price() -> u32 {{\n        price_cents(Size::Medium)\n    }}\n}}\n
     )
 }
 
+/// A local `dbg!` shadows the standard macro and expands to a live `impl
+/// Drop` that runs the owner with `Size::Medium`.
+const REBOUND_READ_MACRO: &str = "pub enum Size {\n    Small,\n    Medium,\n    Large,\n}\n\n\
+pub fn price_cents(size: Size) -> u32 {\n    match size {\n        Size::Small => 300,\n        \
+Size::Medium => 450,\n        Size::Large => 500,\n    }\n}\n\n\
+pub struct Big;\n\n\
+macro_rules! dbg {\n    ($f:ident) => {\n        impl Drop for Big {\n            \
+fn drop(&mut self) {\n                $f(Size::Medium);\n            }\n        }\n    };\n}\n\n\
+fn unused() {\n    dbg!(price_cents);\n}\n";
+
+/// `paste!` assembles a call to `medium_price` that no file spells whole.
+const PASTED_CALL: &str = "pub enum Size {\n    Small,\n    Medium,\n    Large,\n}\n\n\
+pub fn price_cents(size: Size) -> u32 {\n    match size {\n        Size::Small => 300,\n        \
+Size::Medium => 450,\n        Size::Large => 500,\n    }\n}\n\n\
+pub fn medium_price() -> u32 {\n    price_cents(Size::Medium)\n}\n\n\
+pub fn menu() -> u32 {\n    paste::paste! { [<medium _price>]() }\n}\n\n\
+pub fn checkout() -> u32 {\n    menu()\n}\n";
+
 #[test]
 fn a_string_named_or_live_caller_keeps_the_arm_unnamed() -> Result<(), String> {
-    let test_body = "    assert_eq!(price_cents(Size::Small), 300);\n    assert_eq!(price_cents(Size::Large), 500);";
+    // Only `Size::Large` is asserted: in the callback and macro cases a
+    // `Size::Small` call also runs the `Medium` arm, so its result differs.
+    let test_body = "    assert_eq!(price_cents(Size::Large), 500);";
     for (label, source) in [
         ("string-named wrapper", STRING_NAMED_WRAPPER),
         (
@@ -318,6 +338,11 @@ fn a_string_named_or_live_caller_keeps_the_arm_unnamed() -> Result<(), String> {
             "contiguous export attribute in an uncalled function",
             spaced_export("#[").as_str(),
         ),
+        (
+            "rebound read macro in an uncalled function",
+            REBOUND_READ_MACRO,
+        ),
+        ("pasted call to an uncalled function", PASTED_CALL),
     ] {
         let (full, compact, class) = arm_evidence_in(source, test_body, "Size::Medium")?;
         assert_ne!(class[0], SeamGripClass::WeaklyGripped, "{label}: {full:?}");
