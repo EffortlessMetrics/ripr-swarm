@@ -318,7 +318,10 @@ impl GuardOperandChange {
         }
         // The shorter version's operands must be the longer one's, in
         // order, with nothing rewritten; what is left over differs.
-        let compact = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+        // Whitespace is layout only outside a string literal: inside one it
+        // is content, so `check(n, "a  b")` and `check(n, "a b")` are
+        // different operands (#14194 review).
+        let compact = |text: &str| compact_operand(text);
         let mut kept = shorter_operands.iter().map(|text| compact(text)).peekable();
         let mut differing = Vec::new();
         for operand in &longer_operands {
@@ -371,6 +374,49 @@ impl GuardOperandChange {
                         .all(|operand| operand.evaluate(values) == Some(identity))
             })
     }
+}
+
+/// `text` with every whitespace run outside a string literal collapsed to
+/// one space and the ends trimmed. Whitespace inside a literal is content,
+/// so it is copied verbatim: an edit to it is a rewritten operand, not a
+/// retained one.
+fn compact_operand(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut pending_space = false;
+    for ch in text.chars() {
+        if in_string {
+            out.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if ch == '"' {
+            if pending_space && !out.is_empty() {
+                out.push(' ');
+            }
+            pending_space = false;
+            in_string = true;
+            out.push(ch);
+            continue;
+        }
+        if ch.is_whitespace() {
+            pending_space = true;
+            continue;
+        }
+        if pending_space && !out.is_empty() {
+            out.push(' ');
+        }
+        pending_space = false;
+        out.push(ch);
+    }
+    out
 }
 
 /// `text` split at each `operator` outside every parenthesis, bracket and
@@ -990,5 +1036,54 @@ mod tests {
         assert!(or.runs_agree(&[run(&["9", "false"])]));
         assert!(!or.runs_agree(&[run(&["9", "true"])]));
         Ok(())
+    }
+
+    #[test]
+    fn a_wrapper_assertion_text_still_names_the_pinned_call() {
+        // #14194 review: a rendered or indexed comparison (`vec![call][0]`,
+        // `format!("{}", call)`) carries no call text, so the guard gate
+        // reads the assertion's own text. The call must still be found
+        // there, or the gate silently skips every wrapper pin.
+        assert_eq!(
+            crate::analysis::classify::activation::call_arguments(
+                "assert_eq!(vec![is_pow2(4)][0], true)",
+                "is_pow2"
+            ),
+            Some(vec!["4".to_string()])
+        );
+        assert_eq!(
+            crate::analysis::classify::activation::call_arguments(
+                "assert_eq!(format!(\"{}\", is_pow2(6)), \"true\")",
+                "is_pow2"
+            ),
+            Some(vec!["6".to_string()])
+        );
+    }
+
+    #[test]
+    fn a_string_literal_edit_is_not_a_retained_operand() {
+        // #14194 review: whitespace inside a string literal is content, not
+        // layout. Collapsing it makes `check(n, "a  b")` and
+        // `check(n, "a b")` compare equal, so the literal edit reads as a
+        // retained operand and only the dropped guard decides the change.
+        let function = "fn f(n: u32) -> bool {\n    check(n, \"a b\")\n}";
+        assert_eq!(
+            GuardOperandChange::read(
+                function,
+                "check(n, \"a b\")",
+                "n != 0 && check(n, \"a  b\")"
+            ),
+            None
+        );
+        // Layout outside the literal is still ignored.
+        let spaced = "fn f(n: u32) -> bool {\n    check(n, \"a b\")\n}";
+        assert!(
+            GuardOperandChange::read(
+                spaced,
+                "check(n, \"a b\")",
+                "n != 0 &&   check(n,   \"a b\")"
+            )
+            .is_some()
+        );
     }
 }

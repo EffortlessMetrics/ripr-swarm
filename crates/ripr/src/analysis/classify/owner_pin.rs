@@ -7543,17 +7543,19 @@ impl OwnerReturnPin {
                 }
                 // #8361: a dropped or added guard operand that every run of
                 // this call leaves at its chain's identity value gives both
-                // versions the same result here.
+                // versions the same result here. A rendered or indexed
+                // comparison carries no call text, so the assertion's own
+                // text is read for the call, as the walk gate above does
+                // (#14194 review): otherwise an agreeing wrapper pin keeps
+                // the credit the equivalent direct assertion loses.
                 if let Some(guards) = &self.guard_operands
-                    && call_text.is_some_and(|text| {
-                        guards.pinned_call_agrees(
-                            test,
-                            loan.as_ref(),
-                            text,
-                            assertion.line,
-                            &self.name,
-                        )
-                    })
+                    && guards.pinned_call_agrees(
+                        test,
+                        loan.as_ref(),
+                        walk_site,
+                        assertion.line,
+                        &self.name,
+                    )
                 {
                     return false;
                 }
