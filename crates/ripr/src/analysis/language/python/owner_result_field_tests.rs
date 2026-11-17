@@ -512,6 +512,20 @@ fn single_guard_variants_carry_no_fact() -> Result<(), String> {
             "\n    def chain(self):\n        return self\n",
         ),
         (
+            "another method reaches the instance dictionary through a dunder",
+            "",
+            "        self.timeout_value = t * 2",
+            "        self.timeout_value = t",
+            "\n    def snapshot(self):\n        self.state = self.__getstate__()\n",
+        ),
+        (
+            "the owner module names the class in non-ASCII text",
+            "",
+            "        self.timeout_value = t * 2",
+            "        self.timeout_value = t",
+            "\n\nLABEL = 'r\u{e9}q'\n",
+        ),
+        (
             "another method shadows the builder on the instance",
             "",
             "        self.timeout_value = t * 2",
@@ -623,6 +637,14 @@ fn single_guard_variants_carry_no_fact() -> Result<(), String> {
         (
             "the test imports another module",
             "from fx.core import Req\nimport fx.helpers\n\n\ndef test_builder_sets_url():\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
+        ),
+        (
+            "the test text names getattr",
+            "from fx.core import Req\n\n\ndef test_builder_sets_url():\n    label = 'getattr'\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
+        ),
+        (
+            "the test text is not ASCII",
+            "from fx.core import Req\n\n\ndef test_builder_sets_url():\n    label = 'r\u{e9}q'\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
         ),
         (
             "the test mocks",

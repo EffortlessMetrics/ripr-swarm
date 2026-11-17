@@ -1434,7 +1434,10 @@ read-out: the boolean the classifier uses is derived from the surfaced
   lambda, generator expression, `try`, `global`, `nonlocal` or import, since a
   closure kept from `__init__` can overwrite the field after the builder
   returns; nothing else in the owner module naming the class, since
-  `Req.timeout = _fixed` after the class body replaces the method; no store
+  `Req.timeout = _fixed` after the class body replaces the method; an ASCII
+  owner module and test body, since Python folds identifiers by NFKC; no dunder
+  attribute in the class (`self.__getstate__()` returns the instance
+  dictionary); no store
   to a method name on any base, since `self.timeout = ...` shadows the
   builder on the instance; a class body of only undecorated methods, literal
   bindings, docstrings and `pass`, since any other class-level value could be a

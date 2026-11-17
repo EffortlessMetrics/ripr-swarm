@@ -215,6 +215,11 @@ fn changed_self_field(
     {
         return None;
     }
+    // Python folds identifiers by NFKC, so `Ｒｅｑ.timeout = _fixed` names the
+    // class without the text check below seeing it: ASCII owner modules only.
+    if !source.is_ascii() {
+        return None;
+    }
     let class_text = text_of(source, class.range)?;
     // Nothing else in the owner module names the class: `Req.timeout = _fixed`
     // or `Req.timeout_value = Desc()` after the class body replaces the
@@ -502,6 +507,20 @@ fn changed_self_field(
     if method_loads != method_calls {
         return None;
     }
+    // No dunder attribute anywhere in the class: `self.__getstate__()`
+    // returns the instance dictionary, whose subscript store writes the
+    // field without an attribute store.
+    let mut dunder_attributes = 0usize;
+    visit_exprs_in_statements(&class.body, &mut |expr| {
+        if let Expr::Attribute(attribute) = expr
+            && attribute.attr.as_str().starts_with("__")
+        {
+            dunder_attributes += 1;
+        }
+    });
+    if dunder_attributes != 0 {
+        return None;
+    }
     // No store to a method name on any base: `self.timeout = _fixed` in
     // `__init__` shadows the builder on the instance.
     let mut method_stores = 0usize;
@@ -552,6 +571,7 @@ fn binding_of_owner_result(
         || !test.fixtures.is_empty()
         || test.parametrized
         || test.qualified_name != test.name
+        || !test.body_text.is_ascii()
         || test.body_text.contains(field) != (field_use == FieldUse::ExactRead)
         || TEST_REFUSAL_MARKERS
             .iter()
