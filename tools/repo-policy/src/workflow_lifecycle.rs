@@ -1,8 +1,8 @@
 //! Development publishes source and evidence without allocating Actions jobs.
 //!
-//! The two legacy label subscribers, required caller's main cache writer and
-//! every-main cut observer are bootstrap remainders under #4838, not a claim that queue
-//! cutover has happened. Keep their admission narrow until their replacement is
+//! The two legacy label subscribers and every-main cut observer are bootstrap
+//! remainders under #4838. Main-push product replay is retired while full H/G
+//! authority remains. Keep other admission narrow until its replacement is
 //! verified. A job-level `if` cannot make a subscribed event workflow-free.
 
 use std::collections::BTreeMap;
@@ -125,8 +125,8 @@ pub fn event_declarations(source: &str) -> Result<BTreeMap<String, Vec<String>>,
 }
 
 /// Enforce the source migration perimeter without weakening the still-installed
-/// required qualification route. #4838 removes all four bootstrap edges only
-/// after admission, queue/cut enforcement and cache continuity work.
+/// required H/G qualification route. Its ordinary main replay is retired; the
+/// remaining label and cut-observer edges retain their existing cutover owners.
 pub fn violations(path: &str, source: &str) -> Vec<String> {
     let events = match event_declarations(source) {
         Ok(events) => events,
@@ -137,8 +137,8 @@ pub fn violations(path: &str, source: &str) -> Vec<String> {
         .filter_map(|(event, configuration)| {
             let allowed = match event.as_str() {
                 "workflow_call" | "workflow_dispatch" => true,
-                // The dependent incident-probe stage retires this exact legacy
-                // timer together with its verdict/tracker redesign (#4842).
+                // The retained sentinel timer reads native qualification without
+                // product execution. Further timer retirement stays with #4842.
                 "schedule" => {
                     (path == MAIN_HEALTH
                         && (configuration == ["- cron: '9,39 * * * *'"]
@@ -157,11 +157,10 @@ pub fn violations(path: &str, source: &str) -> Vec<String> {
                     path == CONFLICT_NOTICE && configuration == ["types: [labeled]"]
                 }
                 "push" => {
-                    (path == CALLER && configuration == ["branches: [main, master]"])
-                        // This observer still allocates on every main commit.
-                        // Retain cut protection during bootstrap, then retire
-                        // its trigger after the protected G/cut join replaces it.
-                        || (path == LEGACY_CUT_WATCH && configuration == ["branches: [main]"])
+                    // This observer still allocates on every main commit.
+                    // Retain cut protection during bootstrap, then retire its
+                    // trigger after the protected G/cut join replaces it.
+                    path == LEGACY_CUT_WATCH && configuration == ["branches: [main]"]
                 }
                 _ => false,
             };
@@ -213,7 +212,6 @@ mod tests {
     fn bootstrap_exceptions_cannot_expand_or_move_to_another_file() {
         for (path, event, fields) in [
             (CALLER, "pull_request", "    types: [labeled]\n"),
-            (CALLER, "push", "    branches: [main, master]\n"),
             (LEGACY_CUT_WATCH, "push", "    branches: [main]\n"),
             (
                 CONFLICT_NOTICE,
@@ -239,6 +237,19 @@ mod tests {
             let source = workflow("pull_request", &format!("    types: [labeled, {action}]\n"));
             assert!(!violations(CALLER, &source).is_empty(), "{action}");
         }
+    }
+
+    #[test]
+    fn retired_main_product_replay_has_no_push_exception() {
+        let source = workflow("push", "    branches: [main, master]\n");
+        assert!(!violations(CALLER, &source).is_empty());
+        assert!(
+            violations(
+                LEGACY_CUT_WATCH,
+                &workflow("push", "    branches: [main]\n")
+            )
+            .is_empty()
+        );
     }
 
     #[test]

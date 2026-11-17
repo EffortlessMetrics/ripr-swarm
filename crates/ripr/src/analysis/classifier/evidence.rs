@@ -24,7 +24,9 @@ use crate::analysis::classify::{
     unconditional_owner_insert_field, unexercised_mask_bits, use_may_rebind_owner,
     wrapper_return_boundary_pinned,
 };
-use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::extract::{
+    extract_identifier_tokens, mask_comments_and_strings, placeholder_bound_variables,
+};
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::analysis::sync_memo::SyncMemo;
 use crate::domain::*;
@@ -2235,6 +2237,42 @@ impl ClassifiedProbeEvidence {
                 note.location, note.reason
             ));
         }
+        // #14810: an assertion compared with a local the test body binds only
+        // to an unfilled placeholder macro pins no expected value. Disclose it
+        // where a refusal note goes, so a reader learns why the stub's
+        // assertion earns nothing instead of reading "no assertion".
+        if assertion_refusal.is_none() && discriminate.state != StageState::Yes {
+            for (test, _) in &context.related_tests {
+                let placeholders = placeholder_bound_variables(test.body.as_str());
+                if placeholders.is_empty() {
+                    continue;
+                }
+                let Some(assertion) = test.assertions.iter().find(|assertion| {
+                    assertion.strength == OracleStrength::Unknown
+                        && extract_identifier_tokens(&assertion.text)
+                            .iter()
+                            .any(|token| placeholders.contains(token))
+                }) else {
+                    continue;
+                };
+                let macro_name = OwnerPinSyntax::assertion_macro_name(&assertion.text)
+                    .filter(|name| matches!(name.as_str(), "assert_eq" | "assert_ne" | "assert"))
+                    .unwrap_or_default();
+                let assertion_name = if macro_name.is_empty() {
+                    "assertion".to_string()
+                } else {
+                    format!("`{macro_name}!`")
+                };
+                evidence.push(format!(
+                    "{ASSERTION_NOT_CREDITED_PREFIX}{} in {} at {}:{}: the expected value is an unfilled placeholder macro (`todo!`, `unimplemented!`, `unreachable!` or `panic!`), so the assertion pins no value",
+                    assertion_name,
+                    test.name,
+                    crate::analysis::stable_path_text(&test.file),
+                    assertion.line
+                ));
+                break;
+            }
+        }
         let refusals_are_analyzer_limits = observe.summary == ASSERTION_CONTEXT_UNESTABLISHED && {
             // Only tests that could have credited an oracle: a refused
             // assertion in a name-only test cannot stand in for the missing
@@ -2667,8 +2705,10 @@ impl PropagationWitnessDiagnostic {
 }
 
 /// Reach-summary suffix for an owner no source, test or doc in the workspace
-/// names (RIPR-SPEC-0219). The verdict corpus keys on this wording.
-pub(in crate::analysis) const UNREFERENCED_IN_WORKSPACE: &str = "(unreferenced in workspace)";
+/// names (RIPR-SPEC-0219). The verdict corpus keys on this wording; the
+/// domain owns it so `Finding::is_unreferenced_no_static_path` reads the
+/// same text the producer writes (#14820).
+pub(in crate::analysis) use crate::domain::UNREFERENCED_IN_WORKSPACE;
 
 fn unreached_stage(stage: &str) -> StageEvidence {
     StageEvidence::new(

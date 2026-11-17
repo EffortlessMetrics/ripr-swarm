@@ -104,6 +104,14 @@ On the stub path, the grip-class disclosure names the real reason:
 - A class a user severity actually disables keeps the packet/brief wording
   (`seam <id> is configured off for <class> seams and is not included in
   agent results`): there the config is the real reason.
+- The stub's own seam is not `strongly_gripped` while its expected value is
+  still an unfilled placeholder (`let expected: i32 = todo!(..)`), because
+  that assertion pins no value (#14810); for the stub fixture it classifies
+  `propagation_unknown`. In that state the second `--write` emits no
+  grip-omission warning at all: the class is headline-eligible, so nothing
+  is omitted. The contract is that it must not claim `strongly_gripped` and
+  must not say "configured off". Once the value is filled in, the seam is
+  `strongly_gripped` again and the warning above applies.
 - The disclosure remains a warning, not a refusal: a `strongly_gripped`
   seam stays `state: "ready"` / exit 0 (RIPR-SPEC-0003-family scaffold
   semantics, #7290).
@@ -153,7 +161,10 @@ any package. JSON output is unchanged.
 - The `strongly_gripped` disclosure on the stub path names the grip and the
   real reason, never "configured off"; a config-disabled class (for
   example `weakly_gripped = "off"` in `ripr.toml`) still reads "configured
-  off".
+  off". While the stub's expected value is an unfilled placeholder the seam
+  is not `strongly_gripped` (#14810; `propagation_unknown` for the stub
+  fixture), so the second write emits no grip-omission warning and must not
+  claim `strongly_gripped`.
 
 ## Test Mapping
 
@@ -200,6 +211,16 @@ Same run under `--json` (excerpt):
 A user test named `price_boundary_discriminator` with different body
 content still yields `test_name: "price_boundary_discriminator_2"` and a
 normal write.
+
+While the stub's expected value is still an unfilled `todo!()`, the seam is
+not `strongly_gripped` (#14810; `propagation_unknown` for this fixture), so
+the same second `--write` prints no grip line and its `warnings` array is
+empty:
+
+```text
+Stub already written at src/lib.rs:16 (existing inline module).
+Run it: cargo test --manifest-path Cargo.toml clamp_to_boundary_discriminator
+```
 
 With `weakly_gripped = "off"` in `ripr.toml`, a weakly gripped seam's stub
 disclosure still reads `seam <id> is configured off for weakly_gripped

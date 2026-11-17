@@ -1397,3 +1397,21 @@ surface = "ci"
 classification = "test"
 reason = "#14580: stdlib command-entry/ZIP controls execute the actual Python bootstrap and workflow shell with inert binaries and a fixture GitHub API; the Linux repo-policy integration test runs this suite in ordinary workspace qualification."
 covered_by = ["cargo xtask check-file-policy", "cargo xtask check-process-policy"]
+
+[[allow]]
+glob = "tools/ci/main-qualification.py"
+kind = "main_qualification_observer"
+owner = "ci/main-health-sentinel"
+surface = "ci"
+classification = "tooling"
+reason = "#14500: the existing advisory sentinel reads exact landed native GitHub qualification using runner-provided standard Python; no Rust bootstrap, product execution, queue authority or artifact execution."
+covered_by = ["cargo xtask check-file-policy", "cargo xtask check-network-policy"]
+
+[[allow]]
+glob = "tools/ci/test_main_qualification.py"
+kind = "main_qualification_observer_controls"
+owner = "ci/main-health-sentinel"
+surface = "ci"
+classification = "test"
+reason = "#14500: native-fact fixtures exercise the production observer and actual tracker shell, including current-attempt, source identity and late recovery races; the existing sentinel Rust test runs these bounded controls on Linux."
+covered_by = ["cargo xtask check-file-policy", "cargo xtask check-process-policy"]
