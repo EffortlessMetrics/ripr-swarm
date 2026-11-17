@@ -8182,6 +8182,50 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         Ok(())
     }
 
+    /// #14962: a `[lib] test = false` library withholds its module tree's
+    /// unit tests, and an added `src/main.rs` that declares the same module
+    /// compiles it into a bin `cargo test` runs. The revived tests must match
+    /// a fresh build, as #12947 requires for a revived outside-tree file.
+    #[test]
+    fn reuse_reviving_cargo_test_skipped_tests_matches_fresh() -> Result<(), String> {
+        let util = "pub fn f(a: i32) -> i32 { a + 2 }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn t() { assert_eq!(f(5), 7); }\n}\n";
+        let core_src = [("src/lib.rs", "pub mod util;\n"), ("src/util.rs", util)];
+        let main = ("src/main.rs", "mod util;\nfn main() {}\n");
+        let target_src = [core_src[0], core_src[1], main];
+        let root = reuse_fixture_root("reuse-cargo-test-skipped", &target_src)?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"reusefix\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n\n[lib]\ntest = false\n",
+        )?;
+        let util_tests = |index: &RustIndex| {
+            index
+                .files()
+                .get(Path::new("src/util.rs"))
+                .map_or(0, |facts| facts.tests.len())
+        };
+        let core = bytes_of(&core_src);
+        let core_index = rust_index::build_analysis_index_from_loaded_files(&root, &core, &[]);
+        let premise = core_index.map(|core_index| {
+            (
+                util_tests(&core_index.index),
+                core_index
+                    .index
+                    .cargo_test_skipped_files
+                    .contains(Path::new("src/util.rs")),
+            )
+        });
+        let result = reuse_equals_fresh(&root, &core, &bytes_of(&target_src));
+        let _ = std::fs::remove_dir_all(&root);
+        if premise? != (0, true) {
+            return Err("fixture must start with the library's unit tests withheld".into());
+        }
+        let (reused, fresh) = result?;
+        if util_tests(&fresh) != 1 || util_tests(&reused) != 1 {
+            return Err("a tested bin compiling the module must revive its test".into());
+        }
+        Ok(())
+    }
+
     /// #12947: same-run reuse keeps the extension path for an added file
     /// with an `include!` directive or text whenever the retained files'
     /// include view (parents and target membership) is unchanged, and the

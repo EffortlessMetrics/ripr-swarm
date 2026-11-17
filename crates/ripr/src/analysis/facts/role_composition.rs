@@ -159,6 +159,9 @@ pub(super) fn compose_index_source_roles(index: &mut RustIndex, workspace_root: 
         }
     }
     withhold_tests_outside_module_tree(index, &outside_module_tree);
+    let skipped_unit_tests = files_in_skipped_unit_test_targets(index, workspace_root);
+    withhold_tests_outside_module_tree(index, &skipped_unit_tests);
+    index.cargo_test_skipped_files = skipped_unit_tests;
     if granted.is_empty() {
         return;
     }
@@ -187,6 +190,122 @@ fn withhold_tests_outside_module_tree(index: &mut RustIndex, outside: &BTreeSet<
     index
         .test_order
         .retain(|&id| !outside.contains(&test_facts[id].file));
+}
+
+/// The test-holding files whose every execution root is a crate root that
+/// `cargo test` does not build as a libtest binary (#14962): `[lib] test =
+/// false`, `[[bin]] test = false`, or a bin's unmet default-feature
+/// `required-features`, as cargo metadata reports them through
+/// [`ManifestInventory`]. The `#[test]` functions such a module tree
+/// compiles print `running 0 tests`, so they are not discriminators.
+/// Doctests are a separate rustdoc run (`[lib] doctest`) and register after
+/// this pass, so they keep their credit. A skipped `[[test]]` target keeps
+/// its existing owners (#7265 harness verdict, #8016 file drop).
+///
+/// Fail closed toward credit. A file whose module ancestry is unknown
+/// (include edge, lexical fallback, unresolved or cyclic edge) keeps its
+/// tests; so does a file reached from any root cargo runs, a root cargo
+/// metadata does not list or cannot report, and any root an `example`,
+/// `bench` or build-script target owns. The metadata probe runs only when an
+/// execution root's package manifest spells `test = false` on its `[lib]`
+/// or a `[[bin]]` table or a bin names `required-features`, and the pass
+/// stands down while a `Cargo.toml` is dirty in a committed-history check,
+/// because the probe reads the working tree rather than the `HEAD` bytes the
+/// files were loaded from (the #8016 rule).
+///
+/// Unmodeled: a parent outside the index (a `tests/` file that reaches a
+/// `src/` file through `#[path]` while only `src/` is indexed) is not seen,
+/// so such a shared file can lose its credit. A holder whose own package
+/// manifest switches nothing off is never asked, even when `#[path]` places
+/// it under another package's skipped root (it keeps its credit).
+fn files_in_skipped_unit_test_targets(
+    index: &RustIndex,
+    workspace_root: &Path,
+) -> BTreeSet<PathBuf> {
+    let mut skipped = BTreeSet::new();
+    let holders: Vec<&PathBuf> = index
+        .files
+        .iter()
+        .filter(|(_, facts)| !facts.tests.is_empty() && !facts.role_provenance.outside_module_tree)
+        .map(|(file, _)| file)
+        .collect();
+    if holders.is_empty() {
+        return skipped;
+    }
+    if crate::analysis::committed_source::current_overlay().is_some_and(|overlay| {
+        overlay
+            .dirty_paths()
+            .any(|path| path.rsplit('/').next() == Some("Cargo.toml"))
+    }) {
+        return skipped;
+    }
+    let mut crate_roots = CrateRoots::default();
+    let mut may_skip: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut inventory = crate::analysis::workspace::ManifestInventory::default();
+    let mut verdicts: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    for file in holders {
+        // The cheap manifest premise first: a holder whose own package
+        // switches no target off skips no ancestry walk.
+        let holder_premise = crate_roots
+            .package_manifest_dir(workspace_root, file)
+            .is_some_and(|package_dir| {
+                *may_skip
+                    .entry(package_dir.clone())
+                    .or_insert_with(|| manifest_may_skip_unit_tests(workspace_root, &package_dir))
+            });
+        if !holder_premise {
+            continue;
+        }
+        let Some(context) = index.execution_context(file) else {
+            continue;
+        };
+        if context.roots.is_empty() {
+            continue;
+        }
+        let all_skipped = context.roots.iter().all(|root| {
+            if let Some(verdict) = verdicts.get(root) {
+                return *verdict;
+            }
+            let verdict = crate_roots
+                .package_manifest_dir(workspace_root, root)
+                .is_some_and(|package_dir| {
+                    *may_skip.entry(package_dir.clone()).or_insert_with(|| {
+                        manifest_may_skip_unit_tests(workspace_root, &package_dir)
+                    })
+                })
+                && inventory.crate_root_unit_tests_skipped(workspace_root, root);
+            verdicts.insert(root.clone(), verdict);
+            verdict
+        });
+        if all_skipped {
+            skipped.insert(file.clone());
+        }
+    }
+    skipped
+}
+
+/// Cheap premise for the metadata probe (#14962): the package manifest sets
+/// `test = false` on its `[lib]` table or on a `[[bin]]` entry, or a
+/// `[[bin]]` names `required-features`. Anything else cannot skip a lib or
+/// bin target, so no `cargo metadata` subprocess is spent. An unreadable or
+/// unparsable manifest is no premise.
+fn manifest_may_skip_unit_tests(workspace_root: &Path, package_dir: &Path) -> bool {
+    let Some(value) = crate::bounded_input::read_metadata_toml(
+        workspace_root.join(package_dir).join("Cargo.toml"),
+    )
+    .ok()
+    .and_then(|text| toml::from_str::<toml::Value>(&text).ok()) else {
+        return false;
+    };
+    let switches_off = |table: &toml::Value| {
+        table.get("test").and_then(toml::Value::as_bool) == Some(false)
+            || table.get("required-features").is_some()
+    };
+    value.get("lib").is_some_and(switches_off)
+        || value
+            .get("bin")
+            .and_then(toml::Value::as_array)
+            .is_some_and(|entries| entries.iter().any(switches_off))
 }
 
 /// The files positively outside every crate's module tree (#7426): plain

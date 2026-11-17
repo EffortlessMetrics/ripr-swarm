@@ -21,6 +21,9 @@ Linked plan:
 Linked issues:
 
 - #8999
+- #14962 (tests compiled only into a target `cargo test` skips: `[lib]
+  test = false`, `[[bin]] test = false`, a bin's unmet default-feature
+  `required-features`)
 
 Linked PRs:
 
@@ -79,6 +82,45 @@ Any doubt keeps the file as before: it stays indexed with its tests. The
 change only removes credit; it never adds a relation, raises a class or
 strengthens an oracle.
 
+### Targets `cargo test` skips (#14962)
+
+A file Cargo does compile can still hold tests that never run. `[lib] test =
+false` keeps the library's unit-test binary out of `cargo test`, which prints
+`running 0 tests`, so a `#[cfg(test)] mod tests` in `src/lib.rs` or in any
+module the library declares is not a discriminator. The executable tests of a
+file are withheld, exactly as for an uncompiled file, when all of these hold:
+
+1. Composition knows the file's every module ancestry (no include edge,
+   lexical fallback, or unresolved, ambiguous or cyclic edge), so each
+   execution root is known.
+2. Every execution root is the `src_path` of at least one cargo metadata
+   target, and `cargo test` runs none of them: each is a `lib`-family or
+   `bin` target whose metadata `test` flag is false or whose
+   `required-features` are unmet under cargo defaults. The query is
+   `ManifestInventory::crate_root_unit_tests_skipped`, the same metadata
+   owner that already decides `[[test]] test = false` (#7265) and
+   `required-features` (#7266). A skipped `[[test]]` target keeps those
+   existing owners (the harness verdict and the #8016 file drop) and never
+   establishes a skip here; a live `[[test]]` whose `path` is the root keeps
+   the root's tests.
+3. The holder's package manifest spells `test = false` on `[lib]` or a
+   `[[bin]]`, or a `[[bin]]` names `required-features`. This only gates the
+   metadata probe so an ordinary workspace spends no `cargo metadata`
+   subprocess.
+4. No `Cargo.toml` is dirty in a committed-history check: the probe reads the
+   working tree, not the `HEAD` bytes the files were loaded from (#8016).
+
+The file and its functions stay indexed. Doctests are a separate rustdoc run
+(`[lib] doctest`) and register after this pass, so a doc example keeps its
+credit. An integration test under `tests/` is its own `test` target, so it
+keeps its credit while the library's unit tests are withheld. A module that a
+tested target also compiles (a `src/main.rs` declaring the library's module)
+keeps its tests. Unavailable metadata, a root cargo does not list, and an
+`example`, `bench` or build-script root never establish a skip.
+
+The withheld changed owner reads `no_static_path` like any owner without a
+running test; no named stop reason is added on this issue.
+
 ## Required Evidence
 
 - Positive: a haystack `#[test]` is not a related test of the changed owner,
@@ -88,6 +130,14 @@ strengthens an oracle.
   `include!`, by a same-stem `mod`, below a macro that builds `mod` operands,
   or beside a lexical-fallback crate root keeps its tests; so does a package
   whose crate root is not indexed.
+- Skipped targets (#14962): `[lib] test = false` unit tests, in the root or a
+  child module, and `[[bin]] test = false` unit tests do not credit a
+  discriminator (nor, as before, a `[[test]] test = false` target), while
+  the same tests with `test` on read
+  `exposed`; an integration test and a doc example of the `[lib] test =
+  false` crate still read `exposed`, as does a module a tested bin also
+  declares; and a same-run index extension that revives withheld tests
+  matches a fresh build.
 
 ## Known Limits
 
@@ -101,11 +151,17 @@ strengthens an oracle.
 - Build scripts that write sources into the tree, `cargo script` files and
   other non-Cargo compilers are not modelled; a file only they compile loses
   its tests here.
+- Skipped targets (#14962): a parent the index does not hold (a `tests/`
+  file reaching a `src/` file through `#[path]` while only `src/` is
+  indexed) is not seen, so such a shared file can lose its credit. `[lib]
+  harness = false` is not modelled.
 
 ## Non-Goals
 
 - Runtime mutation proof or sufficiency claims.
-- A general module resolver or a `cargo metadata` call.
+- A general module resolver. The haystack rule makes no `cargo metadata`
+  call; the skipped-target rule reuses the existing `ManifestInventory`
+  probe and adds no new one.
 
 ## Acceptance Examples
 
@@ -120,13 +176,21 @@ strengthens an oracle.
 
 - `crates/ripr/tests/outside_target_haystack.rs`.
 - `crates/ripr/src/analysis/facts/stray_files.rs` unit and index tests.
+- `crates/ripr/tests/lib_test_false_credit.rs` (#14962).
+- `crates/ripr/src/analysis/workspace/cargo_targets.rs`:
+  `crate_root_unit_test_skip_follows_metadata_test_flags` (#14962).
+- `crates/ripr/src/analysis/seam_inventory.rs`:
+  `reuse_reviving_cargo_test_skipped_tests_matches_fresh` (#14962).
 
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/facts/stray_files.rs`: `is_stray_shape`,
   `never_compiled`.
 - `crates/ripr/src/analysis/facts/role_composition.rs`:
-  `files_outside_module_tree`, `withhold_tests_outside_module_tree`.
+  `files_outside_module_tree`, `withhold_tests_outside_module_tree`,
+  `files_in_skipped_unit_test_targets` (#14962).
+- `crates/ripr/src/analysis/workspace/cargo_targets.rs`:
+  `ManifestInventory::crate_root_unit_tests_skipped` (#14962).
 
 ## Metrics
 
