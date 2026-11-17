@@ -301,19 +301,22 @@ enum InventoryLookup<T> {
 /// (#14962).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 enum CrateRootTestRun {
-    /// A `lib`-family, `bin` or `test` target that `cargo test` builds and
-    /// runs: metadata `test` is true and its `required-features` hold
-    /// under cargo defaults.
+    /// A `lib`-family, `bin`, `example` or `test` target that `cargo test`
+    /// builds and runs as a libtest binary: metadata `test` is true and its
+    /// `required-features` hold under cargo defaults (`[[example]] test =
+    /// true` runs the example's tests, #14972).
     Runs,
-    /// A `lib`-family or `bin` target that `cargo test` skips: metadata
-    /// `test` is false (`[lib] test = false`, `[[bin]] test = false`) or
-    /// its `required-features` are unmet under cargo defaults.
+    /// A `lib`-family, `bin` or `example` target that `cargo test` does not
+    /// run as a libtest binary: metadata `test` is false (`[lib] test =
+    /// false`, `[[bin]] test = false`, an example's default `test = false`,
+    /// #14972) or its `required-features` are unmet under cargo defaults.
+    /// `cargo test` still builds such an example as a plain executable, so
+    /// its `#[test]` functions compile but never run.
     Skipped,
     /// Any other owner: a skipped `test` target, whose skip the existing
     /// `cargo_test_collection_skipped` query and the #8016 file drop own
-    /// (#7265, #7266), and every `example`, `bench` or `custom-build`
-    /// target, whose unit-test story is not modeled here. It never
-    /// establishes a skip.
+    /// (#7265, #7266), and every `bench` or `custom-build` target, whose
+    /// unit-test story is not modeled here. It never establishes a skip.
     Unmodeled,
 }
 
@@ -523,6 +526,43 @@ impl ManifestInventory {
             InventoryLookup::Unavailable => true,
             InventoryLookup::Missing => false,
         }
+    }
+
+    /// True when cargo metadata loaded, lists the package at `package_dir`
+    /// (workspace-relative) as a workspace member, and lists no target of
+    /// any kind whose `src_path` is `crate_root` (#14972). Cargo did not
+    /// discover the file as a target (`autobins = false`, `autolib = false`
+    /// and kin), so `cargo test` builds no crate from it and the unit tests
+    /// its module tree compiles never run through it. Unavailable metadata,
+    /// a listed path, and a package cargo does not list are never
+    /// undiscovered.
+    pub(crate) fn crate_root_undiscovered(
+        &mut self,
+        workspace_root: &Path,
+        crate_root: &Path,
+        package_dir: &Path,
+    ) -> bool {
+        let (_, lookup) = self.lookup_in(workspace_root, crate_root, |inventory| {
+            &inventory.crate_roots
+        });
+        if !matches!(lookup, InventoryLookup::Missing) {
+            return false;
+        }
+        let MetadataState::Loaded(inventory) = &self.metadata else {
+            return false;
+        };
+        let joined = workspace_root.join(package_dir);
+        let absolute = std::path::absolute(&joined).unwrap_or(joined);
+        let anchored = lexical(&normalize(&crate::analysis::plain_drive_verbatim_path(
+            &absolute,
+            cfg!(windows),
+        )));
+        inventory.package_dirs.contains(&anchored)
+            || std::fs::canonicalize(&absolute).is_ok_and(|real| {
+                inventory.package_dirs.contains(&lexical(&normalize(
+                    &crate::analysis::plain_drive_verbatim_path(&real, cfg!(windows)),
+                )))
+            })
     }
 
     /// Every workspace member's package directory from cargo metadata
@@ -857,7 +897,7 @@ fn workspace_target_inventory(value: &serde_json::Value) -> MetadataInventory {
         let Some(manifest_dir) = manifest_dir else {
             continue;
         };
-        package_dirs.insert(manifest_dir.clone());
+        package_dirs.insert(lexical(&manifest_dir));
         let Some(targets) = package.get("targets").and_then(serde_json::Value::as_array) else {
             continue;
         };
@@ -907,18 +947,20 @@ fn workspace_target_inventory(value: &serde_json::Value) -> MetadataInventory {
 }
 
 /// The crate-root unit-test run state of one metadata target (#14962).
-/// `cargo test` builds a `lib`-family, `bin` or `test` target as a libtest
-/// binary exactly when its effective `test` flag holds, so a live one of
-/// those kinds `Runs`. Only `lib`-family and `bin` targets establish a
-/// skip: a skipped `test` target already has its owner (#7265, #8016).
-/// Examples and benches default to `test = false` yet have their own
-/// `cargo test --examples` / `cargo bench` stories, and a build script runs
-/// no tests, so those kinds never establish a skip.
+/// `cargo test` builds a `lib`-family, `bin`, `example` or `test` target as
+/// a libtest binary exactly when its effective `test` flag holds, so a live
+/// one of those kinds `Runs`. Only `lib`-family, `bin` and `example` targets
+/// establish a skip: a skipped `test` target already has its owner (#7265,
+/// #8016). An example defaults to `test = false`, and plain `cargo test`
+/// then builds it without its tests (#14972); `cargo test --examples` is an
+/// explicit opt-in, as `cargo test --lib` is for a `test = false` library.
+/// Benches keep their `cargo bench` story and a build script runs no tests,
+/// so those kinds never establish a skip.
 fn crate_root_test_run(kinds: &[&str], test_enabled: bool) -> CrateRootTestRun {
     let unit = |kind: &&str| {
         matches!(
             *kind,
-            "lib" | "rlib" | "dylib" | "cdylib" | "staticlib" | "proc-macro" | "bin"
+            "lib" | "rlib" | "dylib" | "cdylib" | "staticlib" | "proc-macro" | "bin" | "example"
         )
     };
     let runs_when_enabled = |kind: &&str| unit(kind) || *kind == "test";
@@ -1845,8 +1887,8 @@ mod harness_verdict {
         assert!(!skipped("pkg/src/lib.rs"), "the default runs lib tests");
         assert!(!skipped("pkg/src/main.rs"), "the default runs bin tests");
         assert!(
-            !skipped("pkg/examples/demo.rs"),
-            "an example's default test = false is unmodeled, not a skip"
+            skipped("pkg/examples/demo.rs"),
+            "#14972: an example's default test = false skips its unit tests"
         );
         assert!(
             !skipped("pkg/src/missing.rs"),
@@ -1878,6 +1920,45 @@ mod harness_verdict {
         assert!(
             !skipped("pkg/src/lib.rs"),
             "a live `[[test]]` compiling the lib root still runs its tests"
+        );
+
+        // #14972: `[[example]] test = true` runs the example's tests, and a
+        // root cargo did not discover is undiscovered only under a member
+        // package cargo lists.
+        write_member_package(
+            &dir,
+            "pkg",
+            &format!(
+                "{package}autobins = false
+
+[[example]]
+name = 'demo'
+test = true
+"
+            ),
+        )?;
+        assert!(
+            !skipped("pkg/examples/demo.rs"),
+            "a `test = true` example runs its tests"
+        );
+        let undiscovered = |relative: &str, package_dir: &str| {
+            ManifestInventory::default().crate_root_undiscovered(
+                &dir,
+                Path::new(relative),
+                Path::new(package_dir),
+            )
+        };
+        assert!(
+            undiscovered("pkg/src/main.rs", "pkg"),
+            "`autobins = false` leaves src/main.rs undiscovered"
+        );
+        assert!(
+            !undiscovered("pkg/src/lib.rs", "pkg"),
+            "a listed lib root is discovered"
+        );
+        assert!(
+            !undiscovered("pkg/src/main.rs", "other"),
+            "a package cargo does not list establishes nothing"
         );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())

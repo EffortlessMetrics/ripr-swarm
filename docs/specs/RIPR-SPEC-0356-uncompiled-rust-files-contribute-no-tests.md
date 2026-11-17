@@ -24,6 +24,8 @@ Linked issues:
 - #14962 (tests compiled only into a target `cargo test` skips: `[lib]
   test = false`, `[[bin]] test = false`, a bin's unmet default-feature
   `required-features`)
+- #14972 (targets `cargo test` never runs: a conventional crate root under
+  `autolib`/`autobins`/... `= false`, and an example's default `test = false`)
 
 Linked PRs:
 
@@ -141,8 +143,31 @@ The file and its functions stay indexed. Doctests are a separate rustdoc run
 credit. An integration test under `tests/` is its own `test` target, so it
 keeps its credit while the library's unit tests are withheld. A module that a
 tested target also compiles (a `src/main.rs` declaring the library's module)
-keeps its tests. Unavailable metadata, a root cargo does not list, and an
-`example`, `bench` or build-script root never establish a skip.
+keeps its tests. Unavailable metadata, a root cargo does not list (outside
+the auto-discovery rule below), and a `bench` or build-script root never
+establish a skip.
+
+#14972 extends rule 2 to two more shapes, through the same metadata owner:
+
+- An `example` target is modelled like a `bin`: metadata reports an
+  example's default `test = false`, and plain `cargo test` then builds the
+  example as an executable without running its `#[test]` functions. An
+  `[[example]] test = true` (with its `required-features` met) runs them, so
+  that example `Runs` and keeps the credit. `cargo test --examples` is an
+  explicit opt-in, as `cargo test --lib` is for a `test = false` library.
+- A root cargo metadata does not list is a skip only when its package
+  manifest sets a `[package]` `autolib`, `autobins`, `autoexamples`,
+  `autotests` or `autobenches` key to `false` and cargo metadata lists that
+  package as a workspace member
+  (`ManifestInventory::crate_root_undiscovered`). Cargo did not discover the
+  file as a target, so `cargo test` builds no crate from it. A root the
+  manifest declares explicitly (`[lib] path`, `[[bin]] path`) is listed and
+  keeps its credit.
+
+Rule 3's probe premise widens accordingly: a false `auto*` key, an
+`[[example]]` table, or a holder or root under the package's `examples/`
+directory also spends the probe. Rule 5's mount scan applies unchanged, so a
+file a running target mounts keeps its tests.
 
 The withheld changed owner reads `no_static_path` like any owner without a
 running test; no named stop reason is added on this issue.
@@ -175,6 +200,12 @@ running test; no named stop reason is added on this issue.
   tests-on controls read (`exposed`); the plain skip reads the same in every
   mode, also beside an ordinary `macro_rules!` and a symlinked directory
   without Rust sources.
+- Undiscovered and example targets (#14972): `#[test]` in `src/main.rs`
+  under `autobins = false`, in `src/lib.rs` under `autolib = false`, and in
+  `examples/demo.rs` (default `test = false`) does not credit a
+  discriminator in any `--mode`, while the autodiscovered controls, the same
+  root declared explicitly under `auto* = false`, and `[[example]] test =
+  true` read `exposed` in every mode.
 
 ## Known Limits
 
@@ -206,6 +237,12 @@ running test; no named stop reason is added on this issue.
   withheld although `cargo test` of the mounting crate runs them. Sources
   under a build directory are unusual and Cargo may delete them on
   `cargo clean`.
+
+- Undiscovered and example targets (#14972): a file in another package
+  compiled only through `#[path]` by a skipped target is still judged by its
+  own package's premise (the #14962 limit). A bench root is not modelled.
+  `autolib` needs Cargo 1.83 or later; an older Cargo ignores the key and
+  lists the library, which keeps the credit.
 
 ## Non-Goals
 

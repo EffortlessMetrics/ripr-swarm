@@ -7,6 +7,10 @@
 //! crate still runs, a doc example still runs under rustdoc, and a library
 //! that leaves `test` on keeps its in-crate credit. The skip is read from
 //! cargo metadata, so these controls need the `cargo` that runs them.
+//!
+//! #14972 adds roots cargo never discovers (`autobins = false`, `autolib =
+//! false`) and examples, which `cargo test` builds without their tests
+//! unless `[[example]] test = true`.
 
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, ProbeFamily, check_workspace};
 use std::path::PathBuf;
@@ -607,4 +611,117 @@ fn a_symlinked_directory_without_sources_does_not_restore_credit() -> Result<(),
     std::os::unix::fs::symlink("assets", fixture.root.join("linked-assets"))
         .map_err(|error| format!("symlink assets failed: {error}"))?;
     assert_withheld_in_every_mode(&fixture)
+}
+
+/// A single-package manifest with `package_keys` in `[package]` and `tail`
+/// after `[workspace]` (#14972).
+fn package_manifest(package_keys: &str, tail: &str) -> String {
+    format!(
+        "[package]\nname = \"auto-targets\"\nversion = \"0.0.0\"\nedition = \"2021\"\n{package_keys}\n[workspace]\n{tail}"
+    )
+}
+
+/// `OWNER`, a `main`, and `UNIT_TESTS`: a crate root whose own `#[test]`
+/// is the only candidate discriminator for the changed `a + 2`.
+fn main_source() -> String {
+    format!("{OWNER}\nfn main() {{\n    println!(\"{{}}\", f(1));\n}}\n{UNIT_TESTS}")
+}
+
+#[test]
+fn autobins_false_main_unit_tests_are_not_a_discriminator_in_every_mode() -> Result<(), String> {
+    // #14972 c04: `autobins = false` and no `[[bin]]`: cargo builds no bin
+    // from `src/main.rs`, so `cargo test` runs 0 tests from it.
+    let lib = ("src/lib.rs", "pub fn g() {}\n");
+    let main = main_source();
+    let skipped = TempCrate::create_in(
+        &package_manifest("autobins = false\n", ""),
+        &[lib, ("src/main.rs", &main)],
+        "src/main.rs",
+        1,
+    )?;
+    assert_withheld_in_every_mode(&skipped)?;
+    // Controls: auto-discovery on, and `autobins = false` with the bin
+    // declared explicitly, both run `t` under `cargo test`.
+    let discovered = TempCrate::create_in(
+        &package_manifest("", ""),
+        &[lib, ("src/main.rs", &main)],
+        "src/main.rs",
+        1,
+    )?;
+    assert_exposed_in_every_mode(&discovered, "an autodiscovered bin")?;
+    let declared = TempCrate::create_in(
+        &package_manifest(
+            "autobins = false\n",
+            "\n[[bin]]\nname = \"auto-targets\"\npath = \"src/main.rs\"\n",
+        ),
+        &[lib, ("src/main.rs", &main)],
+        "src/main.rs",
+        1,
+    )?;
+    assert_exposed_in_every_mode(&declared, "a declared bin under autobins = false")
+}
+
+#[test]
+fn autolib_false_lib_unit_tests_are_not_a_discriminator_in_every_mode() -> Result<(), String> {
+    // #14972 c18: `autolib = false` and no `[lib]`: `src/lib.rs` is no
+    // target, so `cargo test` runs 0 tests from it.
+    let lib = lib_source(UNIT_TESTS);
+    let main = ("src/main.rs", "fn main() {}\n");
+    let skipped = TempCrate::create_in(
+        &package_manifest("autolib = false\n", ""),
+        &[("src/lib.rs", &lib), main],
+        "src/lib.rs",
+        1,
+    )?;
+    assert_withheld_in_every_mode(&skipped)?;
+    let discovered = TempCrate::create_in(
+        &package_manifest("", ""),
+        &[("src/lib.rs", &lib), main],
+        "src/lib.rs",
+        1,
+    )?;
+    assert_exposed_in_every_mode(&discovered, "an autodiscovered lib")?;
+    let declared = TempCrate::create_in(
+        &package_manifest("autolib = false\n", "\n[lib]\npath = \"src/lib.rs\"\n"),
+        &[("src/lib.rs", &lib), main],
+        "src/lib.rs",
+        1,
+    )?;
+    assert_exposed_in_every_mode(&declared, "a declared lib under autolib = false")
+}
+
+/// An example whose own `#[test]` calls the library's changed `f`.
+const EXAMPLE_TESTS: &str = "fn main() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        assert_eq!(auto_targets::f(5), 7);\n    }\n}\n";
+
+#[test]
+fn example_unit_tests_are_not_a_discriminator_unless_the_example_is_tested() -> Result<(), String> {
+    // #14972 c25: `cargo test` builds `examples/demo.rs` as a plain
+    // executable (examples default to `test = false`), so `t` never runs
+    // and the library's changed `f` has no running discriminator.
+    let lib = lib_source("");
+    let files = [
+        ("src/lib.rs", lib.as_str()),
+        ("examples/demo.rs", EXAMPLE_TESTS),
+    ];
+    let skipped = TempCrate::create_in(&package_manifest("", ""), &files, "src/lib.rs", 1)?;
+    assert_withheld_in_every_mode(&skipped)?;
+    // Control: `test = true` makes `cargo test` run the example's tests.
+    // `--mode instant` does not index `examples/` at all, so it finds no
+    // static path there with or without this change; every other mode
+    // credits the running example test.
+    let tested = TempCrate::create_in(
+        &package_manifest("", "\n[[example]]\nname = \"demo\"\ntest = true\n"),
+        &files,
+        "src/lib.rs",
+        1,
+    )?;
+    for mode in [Mode::Draft, Mode::Fast, Mode::Deep, Mode::Ready] {
+        let finding = tested.finding_in(mode.clone())?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "a `test = true` example in {mode:?}: {finding:?}"
+        );
+    }
+    Ok(())
 }
