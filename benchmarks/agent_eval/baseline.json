@@ -1,14 +1,14 @@
 {
   "advisory": true,
-  "ripr_version": "ripr 0.11.0 (73012945f9714e3ceae6eca3de4cbc97eaf50d70)",
+  "ripr_version": "ripr 0.11.0 (b7e43678f947f665fb1ef1cc76fc0d2017f71ccf)",
   "routes": [
-    {"answered":10,"route":"cli-agent-loop","scenarios":10,"tokens_to_answer":3287,"total_tokens":6909},
+    {"answered":10,"route":"cli-agent-loop","scenarios":10,"tokens_to_answer":3287,"total_tokens":6892},
     {"answered":9,"route":"cli-agent-find","scenarios":10,"tokens_to_answer":2098,"total_tokens":2263},
-    {"answered":9,"route":"cli-human","scenarios":10,"tokens_to_answer":9793,"total_tokens":10903},
-    {"answered":10,"route":"cli-json-terse","scenarios":10,"tokens_to_answer":34800,"total_tokens":34800},
-    {"answered":7,"route":"agent-brief","scenarios":10,"tokens_to_answer":9275,"total_tokens":10991},
-    {"answered":10,"route":"mcp","scenarios":10,"tokens_to_answer":82254,"total_tokens":89596},
-    {"answered":10,"route":"mcp-brief","scenarios":10,"tokens_to_answer":56168,"total_tokens":58126}
+    {"answered":9,"route":"cli-human","scenarios":10,"tokens_to_answer":9718,"total_tokens":10828},
+    {"answered":10,"route":"cli-json-terse","scenarios":10,"tokens_to_answer":34783,"total_tokens":34783},
+    {"answered":8,"route":"agent-brief","scenarios":10,"tokens_to_answer":10589,"total_tokens":11711},
+    {"answered":10,"route":"mcp","scenarios":10,"tokens_to_answer":82230,"total_tokens":89555},
+    {"answered":10,"route":"mcp-brief","scenarios":10,"tokens_to_answer":56149,"total_tokens":58108}
   ],
   "scenarios": [
     {
@@ -703,11 +703,11 @@
           "failed_steps": 0,
           "route": "cli-human",
           "steps": [
-            {"bytes":3607,"exit":0,"step":"check","tokens":1112}
+            {"bytes":3415,"exit":0,"step":"check","tokens":1054}
           ],
-          "tokens_to_answer": 1112,
-          "total_bytes": 3607,
-          "total_tokens": 1112
+          "tokens_to_answer": 1054,
+          "total_bytes": 3415,
+          "total_tokens": 1054
         },
         {
           "answer_reached": true,
@@ -721,15 +721,15 @@
           "total_tokens": 2813
         },
         {
-          "answer_reached": false,
+          "answer_reached": true,
           "failed_steps": 0,
           "route": "agent-brief",
           "steps": [
-            {"bytes":1580,"exit":0,"step":"brief","tokens":594}
+            {"bytes":3862,"exit":0,"step":"brief","tokens":1314}
           ],
-          "tokens_to_answer": null,
-          "total_bytes": 1580,
-          "total_tokens": 594
+          "tokens_to_answer": 1314,
+          "total_bytes": 3862,
+          "total_tokens": 1314
         },
         {
           "answer_reached": true,
@@ -740,12 +740,12 @@
             {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
             {"bytes":5822,"exit":0,"step":"ripr_workspace_status","tokens":1077},
             {"bytes":3290,"exit":0,"step":"ripr_refresh","tokens":554},
-            {"bytes":4200,"exit":0,"step":"ripr_list_gaps","tokens":787},
-            {"bytes":8845,"exit":0,"step":"ripr_get_gap#1","tokens":1757}
+            {"bytes":4194,"exit":0,"step":"ripr_list_gaps","tokens":787},
+            {"bytes":8683,"exit":0,"step":"ripr_get_gap#1","tokens":1733}
           ],
-          "tokens_to_answer": 8855,
-          "total_bytes": 35252,
-          "total_tokens": 8855
+          "tokens_to_answer": 8831,
+          "total_bytes": 35084,
+          "total_tokens": 8831
         },
         {
           "answer_reached": true,
@@ -756,12 +756,12 @@
             {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
             {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
             {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
-            {"bytes":2641,"exit":0,"step":"ripr_list_gaps","tokens":183},
-            {"bytes":5617,"exit":0,"step":"ripr_get_gap#1","tokens":447}
+            {"bytes":2635,"exit":0,"step":"ripr_list_gaps","tokens":183},
+            {"bytes":5478,"exit":0,"step":"ripr_get_gap#1","tokens":428}
           ],
-          "tokens_to_answer": 5761,
-          "total_bytes": 27373,
-          "total_tokens": 5761
+          "tokens_to_answer": 5742,
+          "total_bytes": 27228,
+          "total_tokens": 5742
         }
       ],
       "summary": "one match arm's value changes; tests only cover the other arms"
@@ -1008,11 +1008,11 @@
           "steps": [
             {"bytes":516,"exit":0,"step":"find","tokens":170},
             {"bytes":553,"exit":0,"step":"detail:explain","tokens":193},
-            {"bytes":3036,"exit":0,"step":"detail:context","tokens":1096}
+            {"bytes":2973,"exit":0,"step":"detail:context","tokens":1079}
           ],
           "tokens_to_answer": 170,
-          "total_bytes": 4105,
-          "total_tokens": 1459
+          "total_bytes": 4042,
+          "total_tokens": 1442
         },
         {
           "answer_reached": true,
@@ -1030,22 +1030,22 @@
           "failed_steps": 0,
           "route": "cli-human",
           "steps": [
-            {"bytes":3789,"exit":0,"step":"check","tokens":1146}
+            {"bytes":3726,"exit":0,"step":"check","tokens":1129}
           ],
-          "tokens_to_answer": 1146,
-          "total_bytes": 3789,
-          "total_tokens": 1146
+          "tokens_to_answer": 1129,
+          "total_bytes": 3726,
+          "total_tokens": 1129
         },
         {
           "answer_reached": true,
           "failed_steps": 0,
           "route": "cli-json-terse",
           "steps": [
-            {"bytes":9235,"exit":0,"step":"check","tokens":4030}
+            {"bytes":9172,"exit":0,"step":"check","tokens":4013}
           ],
-          "tokens_to_answer": 4030,
-          "total_bytes": 9235,
-          "total_tokens": 4030
+          "tokens_to_answer": 4013,
+          "total_bytes": 9172,
+          "total_tokens": 4013
         },
         {
           "answer_reached": true,
@@ -1068,11 +1068,11 @@
             {"bytes":5822,"exit":0,"step":"ripr_workspace_status","tokens":1077},
             {"bytes":3290,"exit":0,"step":"ripr_refresh","tokens":554},
             {"bytes":4432,"exit":0,"step":"ripr_list_gaps","tokens":833},
-            {"bytes":8231,"exit":0,"step":"ripr_get_gap#1","tokens":1560}
+            {"bytes":8105,"exit":0,"step":"ripr_get_gap#1","tokens":1543}
           ],
           "tokens_to_answer": 7144,
-          "total_bytes": 34870,
-          "total_tokens": 8704
+          "total_bytes": 34744,
+          "total_tokens": 8687
         },
         {
           "answer_reached": true,
@@ -1084,11 +1084,11 @@
             {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
             {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
             {"bytes":2887,"exit":0,"step":"ripr_list_gaps","tokens":227},
-            {"bytes":5445,"exit":0,"step":"ripr_get_gap#1","tokens":451}
+            {"bytes":5382,"exit":0,"step":"ripr_get_gap#1","tokens":452}
           ],
           "tokens_to_answer": 5358,
-          "total_bytes": 27447,
-          "total_tokens": 5809
+          "total_bytes": 27384,
+          "total_tokens": 5810
         }
       ],
       "summary": "a behavior-preserving refactor (extracted local); the useful answer is silence"
