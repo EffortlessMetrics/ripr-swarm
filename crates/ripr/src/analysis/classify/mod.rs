@@ -71,10 +71,10 @@ mod variant_field_pattern;
 
 pub(in crate::analysis) use absorbing_tail::absorbing_tail_sink;
 pub(in crate::analysis) use activation::{
-    LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_of,
-    assigned_field_read_confirms, assigned_field_seed_is_visible, assigned_field_weak_read_start,
-    call_parameter_names, chain_row_transfer_stop, changed_comparison_conjunct,
-    comparison_operands, computed_input_parameters,
+    LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_gap_is_placed,
+    assigned_field_of, assigned_field_read_confirms, assigned_field_seed_is_visible,
+    assigned_field_weak_read_start, call_parameter_names, chain_row_transfer_stop,
+    changed_comparison_conjunct, comparison_operands, computed_input_parameters,
     function_parameters as whole_signature_parameters, guarded_boundary_row_reaches,
     literal_operand_value, local_boundary, macro_names_rebound, owner_plain_written_value,
     owner_receiver_borrow, owner_writes_field_only_at_probe, predicate_line_bool_guards,

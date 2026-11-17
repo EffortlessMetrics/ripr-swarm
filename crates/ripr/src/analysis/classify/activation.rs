@@ -5777,6 +5777,36 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
     tests: &[&TestSummary],
     index: &crate::analysis::rust_index::RustIndex,
 ) -> bool {
+    assigned_field_unchecked(owner, expression, path, tests, index, false)
+}
+
+/// RIPR-SPEC-0228 examples 3, 4 and 6 (#12771): whether the changed field
+/// write is a placed gap for `check`'s class. The same policy as
+/// [`assigned_field_weak_read_start`], except that a test may also read only
+/// other declared fields of the binding it ran the owner on, directly or
+/// through a getter that plainly returns one ([`sibling_field_read`]). Such a
+/// test cannot observe the write, and every other guard still withholds when
+/// anything else may read it. The repair start stays with the weak-read
+/// policy alone: a sibling-only test holds no weak read of the field to
+/// strengthen, like a test that reads nothing (`reachable_unrevealed`).
+pub(in crate::analysis) fn assigned_field_gap_is_placed(
+    owner: &FunctionSummary,
+    expression: &str,
+    path: &str,
+    tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    assigned_field_unchecked(owner, expression, path, tests, index, true)
+}
+
+fn assigned_field_unchecked(
+    owner: &FunctionSummary,
+    expression: &str,
+    path: &str,
+    tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+    sibling_reads: bool,
+) -> bool {
     if !owner_borrows_receiver(&owner.body)
         || path.is_empty()
         || tests.iter().any(|test| {
@@ -5808,7 +5838,13 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
             if assigned_field_read_confirms(owner, path, test, assertion, index) {
                 return false;
             }
-            if let Some(binding) = weak_assigned_field_read(owner, path, test, assertion) {
+            if let Some(binding) =
+                weak_assigned_field_read(owner, path, test, assertion).or_else(|| {
+                    sibling_reads
+                        .then(|| sibling_field_read(owner, path, test, assertion, index))
+                        .flatten()
+                })
+            {
                 weak_reads.push((at, binding));
             }
         }
@@ -6002,6 +6038,143 @@ fn weak_assigned_field_read(
             assertion.line,
         ))
     .then_some(binding)
+}
+
+/// RIPR-SPEC-0228 example 4 (#12771): the binding `assertion` reads only
+/// other fields of, after the test ran the owner on it. Every member access
+/// in the masked assertion must be on that one bare binding, and each must be
+/// either a plain field `<binding>.g` or a getter `<binding>.m()` that
+/// [`getter_plainly_reads`](super::builder_override::getter_plainly_reads)
+/// resolves to a field `g`, where `g` is declared on the owner's impl type and
+/// is not the written field `path` (nor a projection of it). The binding
+/// appears nowhere else in the assertion (`&c`, `c.clone()`), and the
+/// confirming rule's binding guards hold. Such a read cannot observe the
+/// write, so it places a test for [`assigned_field_gap_is_placed`]: the rest
+/// of that policy still withholds when anything
+/// else in the test may read `path`. Any other shape (a method on another
+/// local, a chained projection, a computed getter, an unknown field) is
+/// unplaced, so it fails closed.
+fn sibling_field_read(
+    owner: &FunctionSummary,
+    path: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
+    let call = super::builder_override::OwnerCall::from_symbol(&owner.id.0)?;
+    let impl_type = call.impl_type()?;
+    let root = path.split('.').next().filter(|root| !root.is_empty())?;
+    let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+    let text = masked.trim();
+    let (name, _) = text.split_once('!')?;
+    // A `.<root>` access is refused in the loop below unless it is a getter
+    // resolved to another field (`c.count()` returning `self.other`).
+    if !matches!(name.trim(), "assert_eq" | "assert_ne" | "assert") {
+        return None;
+    }
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut binding: Option<&str> = None;
+    let mut accesses = 0usize;
+    for (dot, _) in text.match_indices('.') {
+        let before = &text[..dot];
+        let receiver_start = before
+            .char_indices()
+            .rev()
+            .take_while(|(_, ch)| is_ident(*ch))
+            .last()
+            .map(|(at, _)| at)?;
+        let receiver = &before[receiver_start..];
+        let preceded = before[..receiver_start].chars().next_back();
+        if receiver.is_empty()
+            || receiver.starts_with(|ch: char| ch.is_ascii_digit())
+            || preceded.is_some_and(|ch| is_ident(ch) || ch == '.' || ch == ':')
+        {
+            return None;
+        }
+        if binding.is_some_and(|known| known != receiver) {
+            return None;
+        }
+        binding = Some(receiver);
+        let after = &text[dot + 1..];
+        let member_len = after.find(|ch: char| !is_ident(ch)).unwrap_or(after.len());
+        let member = &after[..member_len];
+        let tail = &after[member_len..];
+        if member.is_empty() || member.starts_with(|ch: char| ch.is_ascii_digit()) {
+            return None;
+        }
+        let field = if let Some(rest) = tail.strip_prefix("()") {
+            if rest.trim_start().starts_with(['.', '[', '?']) {
+                return None;
+            }
+            getter_field(index, impl_type, member)?
+        } else {
+            if tail.trim_start().starts_with(['.', '[', '(', '?']) {
+                return None;
+            }
+            member.to_string()
+        };
+        if field == root || super::field_reach::declared_field_reach(owner, &field, index).is_none()
+        {
+            return None;
+        }
+        accesses += 1;
+    }
+    let binding = binding?;
+    // Every mention of the binding is one of the member accesses above.
+    if accesses == 0
+        || text
+            .match_indices(binding)
+            .filter(|(at, _)| {
+                !text[..*at].chars().next_back().is_some_and(is_ident)
+                    && !text[at + binding.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_ident)
+            })
+            .count()
+            != accesses
+        || names_format_capture(&assertion.text, binding)
+    {
+        return None;
+    }
+    let binding = binding.to_string();
+    (!super::reveal::owner_called_on_other_receiver(&test.body, &binding, call.name())
+        && super::reveal::owner_call_precedes_read(
+            &test.body,
+            test.start_line,
+            &binding,
+            call.name(),
+            assertion.line,
+            call.impl_type(),
+        )
+        && super::reveal::binding_untouched_after_owner_call(
+            &test.body,
+            test.start_line,
+            &binding,
+            call.name(),
+            assertion.line,
+        ))
+    .then_some(binding)
+}
+
+/// The field a getter `<impl_type>::<getter>(&self)` plainly returns
+/// (`self.g`, `&self.g`, a clone of it; see
+/// [`getter_plainly_reads`](super::builder_override::getter_plainly_reads)).
+fn getter_field(
+    index: &crate::analysis::rust_index::RustIndex,
+    impl_type: &str,
+    getter: &str,
+) -> Option<String> {
+    let body = super::builder_override::inherent_method_body(index, impl_type, getter)?;
+    let at = body.rfind("self.")?;
+    let rest = &body[at + "self.".len()..];
+    let len = rest
+        .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .unwrap_or(rest.len());
+    let field = &rest[..len];
+    (!field.is_empty()
+        && super::builder_override::getter_plainly_reads(index, impl_type, getter, field))
+    .then(|| field.to_string())
 }
 
 /// The binding whose field `path` the masked assertion reads as one whole

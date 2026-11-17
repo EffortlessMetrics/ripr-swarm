@@ -80,9 +80,11 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// `classify` keeps such a finding out of `reachable_unrevealed` (#12900).
     pub(in crate::analysis) proximity_reach_of_named_owner: bool,
     /// #11870: a related test reads the field this probe's assignment writes
-    /// with a weak relational check, under the one start policy the seam side
-    /// asks too (`assigned_field_weak_read_start`). Only then does a weakly
-    /// exposed field assignment keep its class instead of abstaining.
+    /// with a weak relational check, under the start policy the seam side asks
+    /// too (`assigned_field_weak_read_start`), or reads only other fields of
+    /// the receiver (RIPR-SPEC-0228 examples 3, 4 and 6;
+    /// `assigned_field_gap_is_placed`). Only then does a weakly exposed field
+    /// assignment keep its class instead of abstaining.
     pub(in crate::analysis) assigned_field_weakly_read: bool,
     /// When the reveal is not fully established: where a refused related
     /// assertion is, why it was refused, and whether its text calls the
@@ -1980,7 +1982,7 @@ impl ClassifiedProbeEvidence {
                             .filter(|(_, reason)| reason.establishes_reach(true))
                             .map(|(test, _)| *test)
                             .collect();
-                        crate::analysis::classify::assigned_field_weak_read_start(
+                        crate::analysis::classify::assigned_field_gap_is_placed(
                             owner,
                             &context.probe.expression,
                             &path,
@@ -2612,7 +2614,9 @@ impl ClassifiedProbeEvidence {
         // confirmed read of that field after the owner call. A weak reading
         // there means ripr could not tell whether a related assertion reads
         // the field (a helper, a projection, a getter it cannot resolve), so
-        // it abstains as before instead of claiming a gap.
+        // it abstains as before instead of claiming a gap. A weak relational
+        // read of the field, or reads of only other fields (examples 3, 4 and
+        // 6), placed by `assigned_field_gap_is_placed`, keep the class.
         if class == ExposureClass::WeaklyExposed
             && matches!(probe.family, ProbeFamily::FieldConstruction)
             && crate::analysis::classify::field_assignment_target(&probe.expression).is_some()
