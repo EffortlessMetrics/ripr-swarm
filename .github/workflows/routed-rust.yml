@@ -211,7 +211,7 @@ jobs:
             reason=non_docs
             while IFS= read -r -d '' path; do
               case "$path" in
-                CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md) reason=release_surface; return 0 ;;
+                CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md|docs/ci/PRODUCT_GATE_PLAN.md) reason=release_surface; return 0 ;;
                 docs/specs/*|docs/handoffs/*|docs/spec-index.d/*|policy/doc-artifacts.d/*|.ripr/traceability.d/*|changelog.d/*|fixtures/*-verdict-corpus/spec-scopes/*|*.md) ;;
                 *) return 0 ;;
               esac
@@ -344,7 +344,7 @@ jobs:
             while IFS= read -r path; do
               [ -n "$path" ] || continue
               case "$path" in
-                CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md) return 1 ;;
+                CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md|docs/ci/PRODUCT_GATE_PLAN.md) return 1 ;;
                 docs/specs/*|docs/handoffs/*|docs/spec-index.d/*|policy/doc-artifacts.d/*|.ripr/traceability.d/*|changelog.d/*|fixtures/*-verdict-corpus/spec-scopes/*|*.md) ;;
                 *) return 1 ;;
               esac
@@ -884,6 +884,21 @@ jobs:
         run: |
           cargo policy preflight
           cargo xtask precommit
+      # #14986: a docs-only PR edits markdown that Rust tests pin to exact
+      # prose, and this is the only lane such a PR runs. Without these test
+      # binaries a phrase break in .agents/skills/**, .claude/skills/**,
+      # docs/agent-context/**, docs/PR_AUTOMATION.md or the public guides
+      # reaches main with every Rust lane skipped (#14658). The binaries read
+      # repository markdown; generated reports, workflow YAML and fixture text
+      # stay out. Reuses the build the precommit step above already paid for.
+      - name: Markdown contract tests (prose pinned by Rust tests)
+        run: |
+          cargo test -p xtask \
+            --test gh_pr_status_no_settings \
+            --test ripr_public_guide_contract \
+            --test spec_template_contract \
+            --test pr_readiness_workflow_contract \
+            --test executable_frontdoor
       # #5531: a Markdown-only PR can hand-edit the generated registry block in
       # docs/status/SUPPORT_TIERS.md or docs/LANGUAGE_ADAPTER_PREVIEW.md, or rename a spec a registry cell cites. Both
       # checks need a `ripr` build, so they run only when such a file changed;
