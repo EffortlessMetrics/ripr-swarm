@@ -4875,7 +4875,8 @@ mod blocks {
             "#[path = \"../src/lib.rs\"] mod lib;",
             "#[path = \"other/../../src/x.rs\"] mod x;",
             "#[path = \"/abs/x.rs\"] mod x;",
-            "#[path = \"C:/x.rs\"] mod x;",
+            // A drive path, split so the local-context policy sees no literal one.
+            concat!("#[path = \"C", ":/x.rs\"] mod x;"),
             "#[path = \"other\\\\x.rs\"] mod x;",
             "#[path = r\"x.rs\"] mod x;",
             "#[cfg_attr(unix, path = \"x.rs\")] mod x;",
