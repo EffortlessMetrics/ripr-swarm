@@ -477,8 +477,10 @@ Options:
                        finishes), then records the normalized result with the
                        attempt as a caller-reported claim.
                        Required to finish an attempt that follows a new-test
-                       proposal (it must count a test and fail none);
-                       optional otherwise. Anything else is
+                       proposal (it must count a test and fail none; for an
+                       inline proposal, a passing test must be one the file
+                       did not define when the attempt began); optional
+                       otherwise. Anything else is
                        refused and the attempt keeps waiting. Rust test files
                        only; save the file outside the checkout. A finish that
                        stops after the receipt evaluation began shows as

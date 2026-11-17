@@ -997,8 +997,12 @@ the file stays the caller's claim (see the B amendment).
 For an inline new-test proposal the new test goes into a file that already
 holds tests, so the counted passing run must also include at least one test
 whose name was absent from the file's test functions when the attempt began
-(read from the retained baseline text). A result that counts only tests the
-baseline already defined is refused with the same retry route, and an inline
+(read from the retained baseline text). Names compare as exact file-internal
+paths: a counted libtest name minus the file's own module path (`tests::adds`
+for `math::tests::adds` in `src/math.rs`) is new only when the baseline did not
+define that path, so a new `tests::adds` is not mistaken for a top-level
+`adds`, and a name whose file path cannot be derived is never new. A result
+that counts only tests the baseline already defined is refused with the same retry route, and an inline
 attempt with no retained baseline text fails closed. A new-file (integration)
 proposal needs only a counted passing test in the new file.
 
@@ -1216,6 +1220,10 @@ is not decided here.
 - `crates/ripr/tests/focused_test_result.rs::a_failed_result_is_refused_by_the_finish_gate_and_recoverable` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_proposal_attempt_cannot_finish_without_a_focused_result` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::an_inline_proposal_needs_a_passing_test_absent_from_the_baseline` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::an_inline_proposal_in_a_module_file_refuses_a_test_it_began_with` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::proposal_recovery_refuses_a_finish_without_a_retained_focused_claim` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::proposal_recovery_refuses_a_retained_claim_that_is_not_a_passing_run` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::the_new_test_check_compares_file_internal_paths_exactly` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::review_continue_refusal_recovers_on_the_same_attempt` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::review_printed_focused_retry_preserves_explicit_store` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::the_finish_gate_needs_a_counted_passing_run` (#13203)

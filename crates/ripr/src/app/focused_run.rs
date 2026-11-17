@@ -360,6 +360,15 @@ pub(crate) fn validate_focused_run(
 /// `tests/` file); nothing is then counted rather than guessed. A `#[path]`
 /// module is not detectable from the file alone and stays a caller's claim.
 fn inline_scope_path(file: &str, module: &str) -> Option<Vec<String>> {
+    let mut path = file_module_path(file)?;
+    path.push(module.to_string());
+    Some(path)
+}
+
+/// The module path `file` itself contributes to a libtest name: empty for a
+/// crate root or an integration-test file, `a::b` for `src/a/b.rs`. `None`
+/// when it cannot be derived from the file alone.
+fn file_module_path(file: &str) -> Option<Vec<String>> {
     let parts: Vec<&str> = file.split('/').collect();
     let mut path: Vec<String> = Vec::new();
     if let Some(at) = parts.iter().position(|part| *part == "src") {
@@ -380,8 +389,19 @@ fn inline_scope_path(file: &str, module: &str) -> Option<Vec<String>> {
             _ => return None,
         }
     }
-    path.push(module.to_string());
     Some(path)
+}
+
+/// A libtest name with the file's own module path removed: the
+/// file-internal path `analysis::executable_test_function_names` reports
+/// (`tests::adds`). `None` when the name does not carry that prefix.
+fn file_internal_path<'a>(name: &'a str, file_prefix: &str) -> Option<&'a str> {
+    if file_prefix.is_empty() {
+        Some(name)
+    } else {
+        name.strip_prefix(file_prefix)
+            .and_then(|rest| rest.strip_prefix("::"))
+    }
 }
 
 enum NameScope {
@@ -417,13 +437,7 @@ fn name_is_in_scope(name: &str, defined: &BTreeSet<String>, scope: &NameScope) -
                 return false;
             };
             let file_prefix = file_parts.join("::");
-            let path = if file_prefix.is_empty() {
-                Some(name)
-            } else {
-                name.strip_prefix(&file_prefix)
-                    .and_then(|rest| rest.strip_prefix("::"))
-            };
-            path.is_some_and(|path| {
+            file_internal_path(name, &file_prefix).is_some_and(|path| {
                 path.strip_prefix(module)
                     .is_some_and(|rest| rest.starts_with("::"))
                     && defined.contains(path)
@@ -441,7 +455,7 @@ fn name_is_in_scope(name: &str, defined: &BTreeSet<String>, scope: &NameScope) -
 pub(crate) fn require_passing_run(
     record: Option<&FocusedRunRecord>,
     attempt_id: &str,
-    baseline: Option<&BTreeSet<String>>,
+    baseline: Option<&ProposalBaseline>,
 ) -> Result<(), String> {
     let Some(record) = record else {
         return Err(format!(
@@ -462,31 +476,44 @@ pub(crate) fn require_passing_run(
     require_new_test(&record.ran_tests, attempt_id, baseline)
 }
 
-/// Test names defined by the selected file when the attempt began; the input
+/// The selected file's tests when an inline-proposal attempt began: the input
 /// of the inline-proposal gate, which must not credit a test that already
 /// existed.
-pub(crate) fn baseline_test_names(file: &str, source: &str) -> Result<BTreeSet<String>, String> {
-    executable_test_names(file, source)
+#[derive(Debug)]
+pub(crate) struct ProposalBaseline {
+    /// The module path the file contributes to libtest names; `None` when it
+    /// cannot be derived, and then no ran test is credited as new.
+    file_prefix: Option<String>,
+    /// File-internal test paths (`tests::adds`).
+    tests: BTreeSet<String>,
+}
+
+/// Test names defined by the selected file when the attempt began.
+pub(crate) fn baseline_test_names(file: &str, source: &str) -> Result<ProposalBaseline, String> {
+    Ok(ProposalBaseline {
+        file_prefix: file_module_path(file).map(|parts| parts.join("::")),
+        tests: executable_test_names(file, source)?,
+    })
 }
 
 /// An inline proposal adds a test to a file that already holds tests, so a
-/// passing run must include a test the baseline did not define. A ran name
-/// matches a baseline name when it is that name or ends with `::` and it,
-/// because libtest names carry the file's module path.
+/// passing run must include a test the baseline did not define. A ran name is
+/// new only when, with the file's module path removed, its file-internal path
+/// is not a baseline path; a name whose path cannot be derived is not new.
 fn require_new_test(
     ran: &[String],
     attempt_id: &str,
-    baseline: Option<&BTreeSet<String>>,
+    baseline: Option<&ProposalBaseline>,
 ) -> Result<(), String> {
     let Some(baseline) = baseline else {
         return Ok(());
     };
-    let existing = |name: &str| {
-        baseline
-            .iter()
-            .any(|old| name == old || name.ends_with(&format!("::{old}")))
+    let is_new = |name: &str| {
+        baseline.file_prefix.as_deref().is_some_and(|prefix| {
+            file_internal_path(name, prefix).is_some_and(|path| !baseline.tests.contains(path))
+        })
     };
-    if ran.iter().all(|name| existing(name)) {
+    if !ran.iter().any(|name| is_new(name)) {
         return Err(format!(
             "attempt `{attempt_id}` follows an inline new-test proposal, but every counted test already existed in the file when the attempt began; run the newly added test and pass its events with `--test-result FILE`"
         ));
@@ -499,7 +526,7 @@ fn require_new_test(
 pub(crate) fn require_passing_recorded_run(
     raw: &str,
     attempt_id: &str,
-    baseline: Option<&BTreeSet<String>>,
+    baseline: Option<&ProposalBaseline>,
 ) -> Result<(), String> {
     #[derive(Deserialize)]
     struct Outcome {
@@ -871,7 +898,10 @@ mod tests {
             .err()
             .unwrap_or_default();
         assert!(missing.contains("needs a focused test result"), "{missing}");
-        let baseline: BTreeSet<String> = ["adds".to_string()].into();
+        let baseline = ProposalBaseline {
+            file_prefix: Some(String::new()),
+            tests: ["adds".to_string()].into(),
+        };
         let old_only = ran(serde_json::json!([ok("adds")]));
         let old_only = old_only.as_ref().map_err(String::clone);
         let verdict = old_only.map(|r| require_passing_run(Some(r), "attempt-1", Some(&baseline)));
@@ -889,6 +919,52 @@ mod tests {
             }),
             "{with_new:?}"
         );
+    }
+
+    #[test]
+    fn the_new_test_check_compares_file_internal_paths_exactly() {
+        let before = "fn production() {}\n\n#[test]\nfn existing_discount() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn old() {}\n}\n";
+        let check = |file: &str, names: &[&str]| {
+            let baseline = baseline_test_names(file, before)?;
+            let ran: Vec<String> = names.iter().map(|name| name.to_string()).collect();
+            require_new_test(&ran, "attempt-1", Some(&baseline))
+        };
+        let refused = |result: Result<(), String>| {
+            result
+                .err()
+                .is_some_and(|error| error.contains("already existed"))
+        };
+        let in_math = baseline_test_names("src/math.rs", before);
+        assert_eq!(
+            in_math
+                .as_ref()
+                .map(|b| (b.file_prefix.clone(), b.tests.clone())),
+            Ok((
+                Some("math".to_string()),
+                ["existing_discount".to_string(), "tests::old".to_string()].into()
+            )),
+            "{in_math:?}"
+        );
+        // A governed `tests::existing_discount` is new even though a
+        // top-level `existing_discount` already existed.
+        assert_eq!(
+            check("src/math.rs", &["math::tests::existing_discount"]),
+            Ok(())
+        );
+        assert!(refused(check("src/math.rs", &["math::tests::old"])));
+        assert_eq!(
+            check("src/math.rs", &["math::tests::old", "math::tests::added"]),
+            Ok(())
+        );
+        // A name without the file's module path is not credited.
+        assert!(refused(check("src/math.rs", &["tests::added"])));
+        assert!(refused(check("src/math.rs", &["other::tests::added"])));
+        // A crate root contributes no prefix.
+        assert_eq!(check("src/lib.rs", &["tests::existing_discount"]), Ok(()));
+        assert!(refused(check("src/lib.rs", &["tests::old"])));
+        assert!(refused(check("src/lib.rs", &["existing_discount"])));
+        // A file whose module path cannot be derived credits nothing.
+        assert!(refused(check("src/bin/tool.rs", &["tests::added"])));
     }
 
     #[test]

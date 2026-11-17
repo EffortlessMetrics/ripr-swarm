@@ -8371,7 +8371,7 @@ fn inline_proposal_baseline_tests(
     store: Option<&std::path::Path>,
     attempt_id: &crate::app::repair_attempt::RepairAttemptId,
     policy: &crate::edit_cage::EditCagePolicy,
-) -> Result<Option<std::collections::BTreeSet<String>>, String> {
+) -> Result<Option<crate::app::focused_run::ProposalBaseline>, String> {
     let Some(proposal) = &policy.new_test_proposal else {
         return Ok(None);
     };
