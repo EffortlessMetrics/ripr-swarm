@@ -69,6 +69,10 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// Exact wrapper assertion observing the boundary of a private boolean
     /// whole-return tail (#9849). Separate from direct owner-pin credit.
     pub(in crate::analysis) wrapper_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// #13037: an exact pin of a bare owner call that statically runs into
+    /// the branch whose tail returns the changed expression, so the pinned
+    /// value is that expression's value (`base * 2` under `if express`).
+    pub(in crate::analysis) reached_tail_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     pub(in crate::analysis) assertion_admitted: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// Assertion-local binding for a known typed trait dispatch. `None` means
     /// no such dispatch; `Some(false)` withholds kind-only credit even on a
@@ -206,6 +210,7 @@ fn reveal_evidence(
             owner_return_pin: &|_, _| false,
             fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
+            reached_tail_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             assertion_has_known_implicit_observer: &|_, _| None,
             sibling_exclusion_admitted: &|_, _| true,
@@ -258,6 +263,7 @@ fn reveal_evidence_with_exit(
             owner_return_pin: &|_, _| false,
             fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
+            reached_tail_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
@@ -328,6 +334,7 @@ fn reveal_evidence_proximity_reach_pinning(
             owner_return_pin: &|_, _| false,
             fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
+            reached_tail_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             assertion_has_known_implicit_observer: &|_, _| None,
             sibling_exclusion_admitted: &|_, _| true,
@@ -3229,6 +3236,12 @@ fn analyze_related_assertions(
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
                                         || wrapper_pinned
+                                        || (!match_context.owner_shadowed
+                                            && !import_defeats_owner
+                                            && !cross_package_defeats_owner
+                                            && (return_admission.reached_tail_pin)(
+                                                test, assertion,
+                                            ))
                                         || (is_effect_family(&probe.family)
                                             && effect_kind_confirms
                                             && effect_observer_confirms(assertion)
@@ -6927,6 +6940,7 @@ mod tests {
             owner_return_pin: &|_, _| false,
             fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
+            reached_tail_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
@@ -8506,6 +8520,7 @@ mod tests {
                 owner_return_pin: &pin,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
@@ -8608,6 +8623,7 @@ mod tests {
                     owner_return_pin: &pin,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
@@ -8796,6 +8812,7 @@ mod tests {
                     owner_return_pin: &|_, _| false,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -8912,6 +8929,7 @@ mod tests {
                     owner_return_pin: &pin,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -9341,6 +9359,7 @@ mod tests {
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -9439,6 +9458,7 @@ mod tests {
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -10862,6 +10882,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11372,6 +11393,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11449,6 +11471,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11497,6 +11520,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11564,6 +11588,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11633,6 +11658,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11882,6 +11908,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11933,6 +11960,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -12415,6 +12443,7 @@ return Err(\"typed pin\".into());
                         owner_return_pin: &|_, _| false,
                         fixture_receiver_pin: &|_, _| false,
                         wrapper_return_pin: &|_, _| false,
+                        reached_tail_pin: &|_, _| false,
                         assertion_admitted: &|_, _| true,
                         sibling_exclusion_admitted: &|_, _| true,
                         // The observer sibling may reach the owner (#9167).
@@ -12500,6 +12529,7 @@ return Err(\"typed pin\".into());
                     owner_return_pin: &|_, _| false,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|test, _| {
                         (test.name == "implicit_observer").then_some(true)
@@ -12592,6 +12622,7 @@ return Err(\"typed pin\".into());
                     owner_return_pin: &|_, _| false,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -12934,6 +12965,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -13046,6 +13078,7 @@ return Err(\"typed pin\".into());
                     owner_return_pin: &|_, _| false,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -13101,6 +13134,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -13607,6 +13641,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -14161,6 +14196,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,

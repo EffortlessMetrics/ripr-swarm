@@ -429,6 +429,15 @@ pub(crate) struct RepoSeam {
     /// before the fact existed, which words the read neutrally.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     owner_borrows_receiver: Option<bool>,
+    /// The owner function's opt-out (`#[mutants::skip]`, #14139), read once
+    /// from parser-backed attributes at extraction through
+    /// [`crate::analysis::owner_opt_out::function_owner_opt_out`]. Not part of
+    /// the seam ID. The repo-scope formats withhold such seams from their
+    /// counts and disclose the number; other consumers ignore it. Absent for
+    /// every seam whose owner carries no opt-out, so cached and serialized
+    /// seams without the attribute are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owner_opt_out: Option<crate::analysis::owner_opt_out::OwnerOptOutReason>,
 }
 
 /// How a test can call a seam's owner function, read from the parser's item
@@ -644,6 +653,7 @@ impl RepoSeam {
             source_lines: None,
             owner_call: OwnerCallShape::Unknown,
             owner_borrows_receiver: None,
+            owner_opt_out: None,
         }
     }
 
@@ -679,6 +689,22 @@ impl RepoSeam {
 
     pub(crate) fn owner_borrows_receiver(&self) -> Option<bool> {
         self.owner_borrows_receiver
+    }
+
+    /// Record the owner's opt-out decision (#14139).
+    pub(crate) fn with_owner_opt_out(
+        mut self,
+        opt_out: Option<crate::analysis::owner_opt_out::OwnerOptOutReason>,
+    ) -> Self {
+        self.owner_opt_out = opt_out;
+        self
+    }
+
+    /// The owner's opt-out, when its function carries `#[mutants::skip]`.
+    pub(crate) fn owner_opt_out(
+        &self,
+    ) -> Option<crate::analysis::owner_opt_out::OwnerOptOutReason> {
+        self.owner_opt_out
     }
 
     pub(crate) fn id(&self) -> &SeamId {
@@ -1464,6 +1490,33 @@ mod tests {
         assert_eq!(restored.owner_call(), &OwnerCallShape::Unknown);
         let shaped = seam.with_owner_call(OwnerCallShape::Free);
         assert_eq!(shaped.owner_call(), &OwnerCallShape::Free);
+        Ok(())
+    }
+
+    /// #14139: a seam without an owner opt-out serializes exactly as before
+    /// (no key), and a seam with one keeps it through the cache's serde round
+    /// trip under the stable reason token, without changing its ID.
+    #[test]
+    fn owner_opt_out_is_absent_by_default_and_survives_a_cache_round_trip() -> Result<(), String> {
+        use crate::analysis::owner_opt_out::OwnerOptOutReason;
+        let seam = make_seam("src/lib.rs", "src/lib.rs::f", SeamKind::ReturnValue, 0);
+        let plain = serde_json::to_value(&seam).map_err(|err| err.to_string())?;
+        assert!(plain.get("owner_opt_out").is_none(), "{plain}");
+        assert_eq!(seam.owner_opt_out(), None);
+
+        let skipped = seam
+            .clone()
+            .with_owner_opt_out(Some(OwnerOptOutReason::MutantsSkip));
+        assert_eq!(skipped.id(), seam.id());
+        let stored = serde_json::to_value(&skipped).map_err(|err| err.to_string())?;
+        assert_eq!(stored["owner_opt_out"], "owner_mutants_skip");
+        let restored: RepoSeam = serde_json::from_value(stored).map_err(|err| err.to_string())?;
+        assert_eq!(
+            restored.owner_opt_out(),
+            Some(OwnerOptOutReason::MutantsSkip)
+        );
+        let legacy: RepoSeam = serde_json::from_value(plain).map_err(|err| err.to_string())?;
+        assert_eq!(legacy.owner_opt_out(), None);
         Ok(())
     }
 

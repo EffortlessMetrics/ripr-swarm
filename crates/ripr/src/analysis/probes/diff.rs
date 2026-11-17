@@ -118,6 +118,14 @@ pub(crate) fn probes_for_file_with_relations(
     let removed_string_continuations = old_source
         .map(crate::analysis::syntax::string_literal_continuation_lines)
         .unwrap_or_default();
+    // #14181: lines of a build-time `const { assert!(..) }` block, also when
+    // rustfmt splits it, select no runtime family.
+    let added_const_assertions = find_file_facts(index, &changed.path)
+        .map(|facts| super::lexical::inline_const_assertion_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_const_assertions = old_source
+        .map(super::lexical::inline_const_assertion_lines)
+        .unwrap_or_default();
     // RIPR-SPEC-0368: contract attributes and ghost/logic items are read by a
     // verifier, never by a test; the run discloses them as a typed limitation
     // instead of probing them.
@@ -282,12 +290,17 @@ pub(crate) fn probes_for_file_with_relations(
     };
     // Added lines whose only lexical family is `static_unknown`: a type-bound
     // line, or (#14094) a string-literal continuation line, whose text is
-    // data even when it reads like code. A removed line pairs with them on
-    // that family alone.
+    // data even when it reads like code, or (#14181) a line of a build-time
+    // `const { assert!(..) }` block. A removed line pairs with them on that
+    // family alone.
     let added_static_only = added_bounds
         .iter()
         .zip(&changed.added_lines)
-        .map(|(bound, line)| *bound || added_string_continuations.contains(&line.new_side_line))
+        .map(|(bound, line)| {
+            *bound
+                || added_string_continuations.contains(&line.new_side_line)
+                || added_const_assertions.contains(&line.new_side_line)
+        })
         .collect::<Vec<_>>();
 
     // #8999: a line inside a `macro_rules!` definition is matcher/transcriber
@@ -447,8 +460,10 @@ pub(crate) fn probes_for_file_with_relations(
             text,
             removed_counterpart.as_deref(),
         );
+        let in_const_assertion = added_const_assertions.contains(&added.new_side_line);
         let parser_shapes = parser_shapes
             .into_iter()
+            .filter(|_| !in_const_assertion)
             .filter(|shape| shape.family != ProbeFamily::CallDeletion || shape.standalone_call)
             .filter(|shape| propagation_subject.is_none() || shape.family != ProbeFamily::ErrorPath)
             .collect::<Vec<_>>();
@@ -742,7 +757,9 @@ pub(crate) fn probes_for_file_with_relations(
         // code. Its text (`if x > 3 { return Err(e) }` in a help message)
         // selects no behavioral family; the literal's own rule below decides
         // whether the edited text keeps one `static_unknown`.
-        let families = if added_string_continuations.contains(&added.new_side_line) {
+        let families = if added_string_continuations.contains(&added.new_side_line)
+            || in_const_assertion
+        {
             vec![ProbeFamily::StaticUnknown]
         } else {
             classify_changed_line_against(text, removed_counterpart.as_deref())
@@ -884,6 +901,7 @@ pub(crate) fn probes_for_file_with_relations(
         // #14094: deleted string-literal text is not deleted code either.
         let families = if removed_bounds.lines[removed_index]
             || removed_string_continuations.contains(&removed.line)
+            || removed_const_assertions.contains(&removed.line)
         {
             vec![ProbeFamily::StaticUnknown]
         } else {
@@ -909,6 +927,19 @@ pub(crate) fn probes_for_file_with_relations(
                     || probes
                         .iter()
                         .any(|seeded| seeded.probe.before.as_deref() == Some(text)))
+            {
+                continue;
+            }
+            // #14181: an edited line of a build-time `const { assert!(..) }`
+            // block is judged by its replacement's probe, which carries this
+            // text as `before`; the short operands (`N`) give the token
+            // pairing above nothing to match.
+            if family == ProbeFamily::StaticUnknown
+                && removed_const_assertions.contains(&removed.line)
+                && added_const_assertions.contains(&removed.new_side_line)
+                && probes
+                    .iter()
+                    .any(|seeded| seeded.probe.before.as_deref() == Some(text))
             {
                 continue;
             }

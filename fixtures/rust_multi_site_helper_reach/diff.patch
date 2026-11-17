@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..1111111 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -15,5 +15,5 @@ pub enum ParseError {
+ fn number(s: &str) -> Result<u64, ParseError> {
+-    if s.len() > 2 && s.starts_with('0') {
++    if s.len() > 1 && s.starts_with('0') {
+         return Err(ParseError::LeadingZero);
+     }
+     s.parse().map_err(|_| ParseError::Number)
