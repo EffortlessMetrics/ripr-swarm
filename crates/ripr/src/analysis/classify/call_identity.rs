@@ -1450,9 +1450,10 @@ fn path_attributes_only_select_cfg_alternatives(source: &str) -> bool {
 /// Whether every `#[path]` in a `tests/` file is a plain `#[path = ".."]` on
 /// a module declaration whose literal stays below the declaring directory: no
 /// `..` segment, no absolute or drive path, no backslash (#12771). Such a remap
-/// only rearranges modules of that integration-test crate, which never holds
-/// the owner or a same-crate rival, so it cannot move a module path the owner
-/// identity reads. A `#[path]` inside a macro body, a `cfg_attr` carrier, a
+/// only mounts files below that directory into its integration-test crate, so
+/// it cannot move the module path of an owner or rival read from `src/`
+/// (a file mounted from a nested `src/` under `tests/` is classified by its
+/// own package key, as it was before this rule). A `#[path]` inside a macro body, a `cfg_attr` carrier, a
 /// parse error or any other shape fails closed (`false`).
 fn path_attributes_stay_in_test_dir(source: &str) -> bool {
     use ra_ap_syntax::{
