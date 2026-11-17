@@ -19353,6 +19353,53 @@ mod stored_constant_syntax_tests {
         Ok(())
     }
 
+    /// The fixtures above pin named shapes; this ratchet runs the same
+    /// equivalence over a real tree, ripr's own syntax sources, so a later
+    /// change to the producer's walk that drops or reorders an entry fails
+    /// here instead of silently moving an owner-pin verdict.
+    #[test]
+    fn stored_constant_syntax_matches_a_fresh_parse_on_real_sources() -> Result<(), String> {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/analysis/syntax");
+        let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .map_err(|error| error.to_string())?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .collect();
+        paths.sort();
+        let mut compared = 0usize;
+        let mut with_constants = 0usize;
+        for path in &paths {
+            let source = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+            let Ok(facts) = RaRustSyntaxAdapter.summarize_file(path, &source) else {
+                continue;
+            };
+            let stored = facts
+                .constant_syntax
+                .as_deref()
+                .ok_or_else(|| format!("{} has stored constant syntax", path.display()))?;
+            let parsed = file_constants(&source);
+            assert_eq!(
+                stored_file_constants(&source, stored),
+                Some(parsed.clone()),
+                "{}",
+                path.display()
+            );
+            compared += 1;
+            with_constants += usize::from(!parsed.is_empty());
+        }
+        // Premise: the corpus is real and exercises the stored path.
+        assert!(
+            compared >= 15,
+            "compared {compared} of {} files",
+            paths.len()
+        );
+        assert!(
+            with_constants >= 10,
+            "{with_constants} files declare constants"
+        );
+        Ok(())
+    }
+
     /// A stored range off a character boundary (a corrupt or foreign cache
     /// entry) is not trusted: the caller falls back to parsing.
     #[test]
