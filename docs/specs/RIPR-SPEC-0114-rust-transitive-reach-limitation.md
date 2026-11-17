@@ -76,7 +76,8 @@ the Rust adapter runs a bounded BFS walk over the lexical call facts in the Rust
    unestablished container) but the test calls it with method syntax
    (`.name(..)`, such as a same-named builder setter). Next come fewer call-chain hops from the entry
    to the owner, then test file and line (#14970). The same order picks each
-   test's entry symbol. A consumer with an admission rule, such as the
+   test's entry symbol, and a test file applying several reaching derives
+   offers the one with the fewest hops. A consumer with an admission rule, such as the
    cross-package rule for `reachable_unrevealed` (#10127), ranks only the
    witnesses it admits. It does not filter the single best one, so a nearer
    refused witness never hides an admitted one.
@@ -268,6 +269,10 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
   — method-syntax detection reads whole names outside strings and comments (#14970)
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_an_admission_rule_then_a_refused_nearer_witness_does_not_hide_an_admitted_one`
   — with an admission rule, only admitted witnesses are ranked, within and past the bound (#14970)
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_file_applying_two_derives_offers_the_one_closest_to_the_owner`
+  — a file applying several reaching derives offers its closest one (#14970)
+- `crates/ripr/tests/cross_package_wrapper_reach.rs::a_nearer_unrelated_namesake_does_not_hide_the_dependent_wrapper`
+  — a nearer refused namesake chain does not drop the cross-package limit (#14970)
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_path_at_depth_5_then_witness_is_captured`
   — depth 5 boundary: still finds
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_path_depth_6_then_the_walk_past_the_bound_names_a_witness`

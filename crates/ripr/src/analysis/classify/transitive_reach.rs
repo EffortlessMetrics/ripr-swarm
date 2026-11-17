@@ -601,25 +601,33 @@ impl<'a> ReachGraph<'a> {
         file: &'a Path,
         reaching: &HashSet<&str>,
         owner_name: &str,
+        hops_of: &dyn Fn(&str) -> usize,
     ) -> Option<(String, &'a str)> {
         if self.derive_entries.is_empty() {
             return None;
         }
         let derives = self.derives_in_file(index, file);
-        let mut best: Option<(String, &'a str)> = None;
+        // Fewest hops to the owner first, then derive and function name, so
+        // a file applying several reaching derives offers its closest one to
+        // the witness ranking (#14970).
+        let mut best: Option<(usize, String, &'a str)> = None;
         for derive in derives.iter() {
             for &function in self.derive_entries.get(derive).into_iter().flatten() {
                 let reaches = calls_of(function).any(|call| {
                     !is_macro_call(&call.name)
                         && (call.name == owner_name || reaching.contains(call.name.as_str()))
                 });
-                let candidate = (derive.clone(), function.name.as_str());
+                let candidate = (
+                    hops_of(function.name.as_str()),
+                    derive.clone(),
+                    function.name.as_str(),
+                );
                 if reaches && best.as_ref().is_none_or(|current| candidate < *current) {
                     best = Some(candidate);
                 }
             }
         }
-        best
+        best.map(|(_, derive, function)| (derive, function))
     }
 
     /// Macro invocations in every test and production function body. Every
@@ -1941,6 +1949,14 @@ impl<'a> TransitiveReachIndex<'a> {
         // they are resolved once per entry rather than once per test.
         let mut receiver_types: HashMap<&str, Option<ReceiverTypes>> = HashMap::new();
         let mut free_entries: HashMap<&str, bool> = HashMap::new();
+        // The admission rule depends only on (test file, entry), and a
+        // consumer's rule can scan the workspace, so each pair is asked once.
+        let mut admitted: HashMap<(&Path, &str), bool> = HashMap::new();
+        let mut admit_once = |file: &'a Path, entry: &'a str| {
+            *admitted
+                .entry((file, entry))
+                .or_insert_with(|| admit(file, entry))
+        };
         // A derive entry depends only on the test's file, so it is found once
         // per file. A test with no call to a reaching name and no derive
         // entry in its file has no witness, so only the others are visited.
@@ -1953,7 +1969,7 @@ impl<'a> TransitiveReachIndex<'a> {
                 let derive = derive_by_file
                     .entry(test.file.as_path())
                     .or_insert_with(|| {
-                        graph.derive_entry(self.index, &test.file, reaching, owner_name)
+                        graph.derive_entry(self.index, &test.file, reaching, owner_name, &hops_of)
                     });
                 if derive.is_some() {
                     candidates.push(test_index);
@@ -1977,7 +1993,9 @@ impl<'a> TransitiveReachIndex<'a> {
                 if callee.name == owner_name {
                     continue;
                 }
-                if reaching.contains(callee.name.as_str()) && admit(&test.file, &callee.name) {
+                if reaching.contains(callee.name.as_str())
+                    && admit_once(test.file.as_path(), callee.name.as_str())
+                {
                     let name = callee.name.as_str();
                     let self_types = receiver_types
                         .entry(name)
@@ -2014,7 +2032,7 @@ impl<'a> TransitiveReachIndex<'a> {
                     None,
                 )
             } else if let Some(Some((derive, function))) = derive_by_file.get(test.file.as_path())
-                && admit(&test.file, function)
+                && admit_once(test.file.as_path(), function)
             {
                 // `#[derive(Name)]` runs the proc-macro function when the
                 // test target compiles; no call fact records that (#6924).
@@ -6530,6 +6548,91 @@ mod tests {
             .unwrap_or_default();
         assert!(pointer.contains("applies `#[derive(Error)]`, expanded by `derive_error`"));
         assert!(pointer.contains("may lead here"));
+    }
+
+    // #14970: a test file applying two reaching derives offers its closest
+    // one. `Alpha` expands through `derive_alpha -> a1 -> a2 -> fmt_impl`
+    // (3 hops), `Zulu` through `derive_zulu -> fmt_impl` (1 hop). Name order
+    // alone would keep `Alpha`.
+    #[test]
+    fn a_file_applying_two_derives_offers_the_one_closest_to_the_owner() {
+        let proc_macro_source = "#[proc_macro_derive(Alpha)]\n\
+                                 pub fn derive_alpha(input: TokenStream) -> TokenStream {\n\
+                                     a1(input)\n\
+                                 }\n\
+                                 #[proc_macro_derive(Zulu)]\n\
+                                 pub fn derive_zulu(input: TokenStream) -> TokenStream {\n\
+                                     fmt_impl(input)\n\
+                                 }\n";
+        let at = |name: &str, calls: Vec<&str>, line: usize| {
+            let mut function = make_fn(name, calls);
+            function.file = PathBuf::from("derive/src/lib.rs");
+            function.start_line = line;
+            function.end_line = line + 2;
+            function
+        };
+        let derive_functions = vec![
+            at("derive_alpha", vec!["a1"], 2),
+            at("derive_zulu", vec!["fmt_impl"], 6),
+            at("a1", vec!["a2"], 20),
+            at("a2", vec!["fmt_impl"], 30),
+        ];
+        let file = |path: &str, functions: Vec<FunctionSummary>, source: String| {
+            (
+                PathBuf::from(path),
+                FileFacts {
+                    path: PathBuf::from(path),
+                    functions,
+                    tests: Vec::new(),
+                    returns: Vec::new(),
+                    literals: Vec::new(),
+                    probe_shapes: Vec::new(),
+                    used_lexical_fallback: false,
+                    module_declarations: Vec::new(),
+                    unresolved_property_macros: Vec::new(),
+                    verus_guard_facts: Vec::new(),
+                    role_provenance: Default::default(),
+                    source: source.into(),
+                    item_scopes: None,
+                    macro_candidates: None,
+                },
+            )
+        };
+        let files: BTreeMap<PathBuf, FileFacts> = [
+            file(
+                "derive/src/lib.rs",
+                derive_functions,
+                proc_macro_source.to_string(),
+            ),
+            file(
+                "tests/it.rs",
+                Vec::new(),
+                "#[test]\nfn test_display() {\n    #[derive(Alpha, Zulu)]\n    struct E;\n}\n"
+                    .to_string(),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files,
+            tests: vec![make_test_at(
+                "test_display",
+                "tests/it.rs",
+                2,
+                vec!["assert"],
+            )],
+            functions: Vec::new(),
+            workspace_authority: None,
+            ..Default::default()
+        });
+
+        let witness = find_transitive_witness("fmt_impl", &index);
+        assert_eq!(
+            witness
+                .as_ref()
+                .map(|w| (w.entry_symbol.as_str(), w.via_derive.as_deref())),
+            Some(("derive_zulu", Some("Zulu")))
+        );
     }
 
     // Any call witness outranks a derive witness, even from a test whose file
