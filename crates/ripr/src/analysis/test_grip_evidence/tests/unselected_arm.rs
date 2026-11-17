@@ -251,6 +251,20 @@ fn outer() {\n    impl Prices {\n        fn inner() -> u32 {\n            price_
 pub fn menu() -> u32 {\n    price_cents(Size::Medium)\n}\n\n\
 pub fn checkout() -> u32 {\n    menu()\n}\n";
 
+/// A `#[no_mangle]` wrapper runs from code no file names it in.
+const EXPORTED_WRAPPER: &str = "pub enum Size {\n    Small,\n    Medium,\n    Large,\n}\n\n\
+pub fn price_cents(size: Size) -> u32 {\n    match size {\n        Size::Small => 300,\n        \
+Size::Medium => 450,\n        Size::Large => 500,\n    }\n}\n\n\
+#[no_mangle]\npub extern \"C\" fn medium_price() -> u32 {\n    price_cents(Size::Medium)\n}\n";
+
+/// Two `medium_price` functions: a call to either reads as a mention of
+/// both, so neither counts as never running.
+const SAME_NAMED_WRAPPERS: &str = "pub enum Size {\n    Small,\n    Medium,\n    Large,\n}\n\n\
+pub fn price_cents(size: Size) -> u32 {\n    match size {\n        Size::Small => 300,\n        \
+Size::Medium => 450,\n        Size::Large => 500,\n    }\n}\n\n\
+pub mod a {\n    pub fn medium_price() -> u32 {\n        crate::price_cents(crate::Size::Medium)\n    }\n}\n\n\
+pub mod b {\n    pub fn medium_price() -> u32 {\n        crate::price_cents(crate::Size::Medium)\n    }\n}\n";
+
 #[test]
 fn a_string_named_or_live_caller_keeps_the_arm_unnamed() -> Result<(), String> {
     let test_body = "    assert_eq!(price_cents(Size::Small), 300);\n    assert_eq!(price_cents(Size::Large), 500);";
@@ -260,6 +274,8 @@ fn a_string_named_or_live_caller_keeps_the_arm_unnamed() -> Result<(), String> {
             "nested dead beside a live caller",
             NESTED_DEAD_AND_LIVE_CALLER,
         ),
+        ("exported wrapper", EXPORTED_WRAPPER),
+        ("same-named wrappers", SAME_NAMED_WRAPPERS),
     ] {
         let (full, compact, class) = arm_evidence_in(source, test_body, "Size::Medium")?;
         assert_ne!(class[0], SeamGripClass::WeaklyGripped, "{label}: {full:?}");
@@ -272,6 +288,31 @@ fn a_string_named_or_live_caller_keeps_the_arm_unnamed() -> Result<(), String> {
             assert_eq!(evidence.activate.state, StageState::Yes, "{label}");
             assert_eq!(missing_values(evidence), Vec::<&str>::new(), "{label}");
         }
+    }
+    Ok(())
+}
+
+/// #15006 review: an `impl` declared inside an uncalled function is live,
+/// and `Size::Small => Forward.into()` runs the `Medium` arm through it.
+const IMPL_IN_UNCALLED_FUNCTION: &str = "pub enum Size {\n    Small,\n    Medium,\n    Large,\n}\n\n\
+pub struct Forward;\n\n\
+pub fn price_cents(size: Size) -> u32 {\n    match size {\n        Size::Small => Forward.into(),\n        \
+Size::Medium => 450,\n        Size::Large => 500,\n    }\n}\n\n\
+fn unused_outer() {\n    impl From<Forward> for u32 {\n        fn from(_: Forward) -> u32 {\n            \
+price_cents(Size::Medium)\n        }\n    }\n}\n";
+
+#[test]
+fn an_impl_inside_an_uncalled_function_keeps_the_arm_unnamed() -> Result<(), String> {
+    let (full, compact, class) = arm_evidence_in(
+        IMPL_IN_UNCALLED_FUNCTION,
+        "    assert_eq!(price_cents(Size::Small), 450);",
+        "Size::Medium",
+    )?;
+    assert_ne!(class[0], SeamGripClass::WeaklyGripped, "{full:?}");
+    assert_ne!(class[1], SeamGripClass::WeaklyGripped, "{compact:?}");
+    for evidence in [&full, &compact] {
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert_eq!(missing_values(evidence), Vec::<&str>::new());
     }
     Ok(())
 }

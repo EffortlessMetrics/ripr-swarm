@@ -4650,10 +4650,13 @@ fn missing_match_arm_discriminator(
     // A trait method runs from calls that never name it (`.into()` reaching
     // `from`, `==` reaching `eq`, `{}` reaching `fmt`), so a test outside the
     // related set may select the arm and no mention scan below can see it.
-    if matches!(
+    // An unestablished container may be one, so only a known non-trait
+    // owner reads on.
+    if !matches!(
         owner.item.container,
-        crate::analysis::facts::FunctionContainer::TraitImpl { .. }
-            | crate::analysis::facts::FunctionContainer::Trait { .. }
+        crate::analysis::facts::FunctionContainer::Free
+            | crate::analysis::facts::FunctionContainer::Local
+            | crate::analysis::facts::FunctionContainer::Inherent { .. }
     ) {
         return None;
     }
@@ -4971,6 +4974,10 @@ fn never_runs(index: &crate::analysis::rust_index::RustIndex, function: &Functio
         )
         && function.name != "main"
         && !function.name.is_empty()
+        // An item nested in the body can run without its parent: an `impl`
+        // (`impl From<Forward> for u32` reached by `.into()`), an exported
+        // `macro_rules!`, an attributed `#[no_mangle]` or `extern` fn.
+        && !declares_free_standing_item(&function.body)
         // Every whole-word spelling of the name, in code, comments and
         // strings alike, must be its own `fn` header: a string can name it
         // to a derive (`#[serde(default = "medium_price")]`) that runs it.
@@ -4980,6 +4987,19 @@ fn never_runs(index: &crate::analysis::rust_index::RustIndex, function: &Functio
             .map(|(_, file)| whole_word_count(&file.source, &function.name))
             .sum::<usize>()
             == 1
+}
+
+/// Whether `body` holds an item that runs or is visible without the
+/// enclosing function running: any `impl`, `macro_rules!`, `extern` or
+/// attribute. Comments and strings are masked; an `impl Trait` return type
+/// also refuses, which only keeps the function counted as reachable.
+fn declares_free_standing_item(body: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    masked.contains("#[")
+        || masked.contains("#!")
+        || ["impl", "macro_rules", "extern"]
+            .iter()
+            .any(|word| whole_word_count(&masked, word) > 0)
 }
 
 /// How many times `word` appears in `source` with no identifier character on
