@@ -250,7 +250,9 @@ answers no credit.
   literal's type), every integer width the owner names (parameters, return
   type, annotations, literal suffixes) and each read constant's declared
   width, since with overflow checks off the runtime wraps where the fold
-  would not. An owner naming `usize`, `isize`, `u128` or `i128` is not read.
+  would not. An owner naming `usize`, `isize`, `u128` or `i128`, or spelling
+  any non-primitive type (an alias such as `type Byte = u8;` could hide a
+  narrower width), is not read.
 
 The admission is the bool field pin's: the test is not `should_panic`, the
 assertion macros are the standard ones, and no `use` rebinds the owner's
@@ -270,7 +272,8 @@ Acceptance:
    attributed statement, a same-named function elsewhere, a rebound
    parameter, a computed operand (`f(..) / 2`) or a local argument: not
    `exposed`.
-6. A narrow local that wraps (`let n: u8 = 200; let total = n + 100;`), a
+6. A narrow local that wraps (`let n: u8 = 200; let total = n + 100;`, or
+   the same through `type Byte = u8;`), a
    `static` threshold, a closure that shadows the owner in the test, and an
    expected value computed by a helper that calls the owner: not `exposed`.
    `debug_assert_eq!` and a top-level glob import are refused here too, as a

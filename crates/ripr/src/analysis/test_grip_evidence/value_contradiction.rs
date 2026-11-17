@@ -2866,6 +2866,22 @@ fn tail_reach(
     // owner names anywhere, and `i32`: with overflow checks off the runtime
     // wraps where the fold would not (#14950 review).
     let range = named_integer_range(&function.syntax().text().to_string())?;
+    // A type alias (`type Byte = u8;`) or any other named type could hide a
+    // narrower width the scan above cannot see, so every type the owner
+    // spells must be a primitive.
+    if function
+        .syntax()
+        .descendants()
+        .filter_map(ast::PathType::cast)
+        .any(|path| {
+            !matches!(
+                path.syntax().text().to_string().trim(),
+                "bool" | "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64"
+            )
+        })
+    {
+        return None;
+    }
     for ((name, ty), argument) in names.into_iter().zip(&types).zip(&call_arguments) {
         match (ty.trim(), argument.trim()) {
             ("bool", "true") => {

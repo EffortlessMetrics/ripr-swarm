@@ -252,6 +252,23 @@ fn a_wrapping_local_a_static_or_a_shadowing_closure_is_not_credited() -> Result<
         Ok(false),
         "narrow local"
     );
+    // #14950 review: an alias hides the narrow width from a name scan.
+    let aliased_local = AFTER
+        .replace(
+            "    let base = if weight_g <= 500 { 400 } else { 900 };",
+            "    let base = if weight_g <= 500 { 400 } else { 900 }; let n: Byte = 200; let total = n + 100;",
+        )
+        .replace("    if express {", "    if total > 250 {")
+        + "\npub type Byte = u8;\n";
+    assert_eq!(
+        class_of(
+            &aliased_local,
+            "assert_eq!(shipping_cost(100, 10, true), 400);"
+        )
+        .map(|class| class == ExposureClass::Exposed),
+        Ok(false),
+        "aliased local"
+    );
     // A `static` can be reassigned before the owner reads it.
     let static_threshold = AFTER.replace(
         "pub const FREE_OVER_CENTS: u32 = 5_000;",
