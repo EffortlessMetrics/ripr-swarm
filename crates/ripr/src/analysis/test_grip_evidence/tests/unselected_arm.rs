@@ -111,28 +111,46 @@ pub fn price_cents(size: Size) -> u32 {\n    match size {\n        \
 Size::Small => price_cents(Size::Medium),\n        Size::Medium => 450,\n        \
 Size::Large => 500,\n    }\n}\n";
 
-/// The same re-entry through a helper the owner calls.
+/// The same re-entry through a helper the owner calls by name.
 const MUTUAL: &str = "pub enum Size {\n    Small,\n    Medium,\n    Large,\n}\n\n\
 pub fn price_cents(size: Size) -> u32 {\n    match size {\n        \
 Size::Small => medium_price(),\n        Size::Medium => 450,\n        \
 Size::Large => 500,\n    }\n}\n\n\
 fn medium_price() -> u32 {\n    price_cents(Size::Medium)\n}\n";
 
+/// The same re-entry through a helper passed as a function value, which no
+/// call name in the owner leads to.
+const FUNCTION_VALUE: &str = "pub enum Size {\n    Small,\n    Medium,\n    Large,\n}\n\n\
+pub fn price_cents(size: Size) -> u32 {\n    match size {\n        \
+Size::Small => apply(medium_price),\n        Size::Medium => 450,\n        \
+Size::Large => 500,\n    }\n}\n\n\
+fn apply(f: fn() -> u32) -> u32 {\n    f()\n}\n\n\
+fn medium_price() -> u32 {\n    price_cents(Size::Medium)\n}\n";
+
 #[test]
-fn an_owner_that_calls_itself_leaves_the_arm_unnamed() -> Result<(), String> {
-    for source in [RECURSIVE, MUTUAL] {
+fn an_owner_that_may_call_itself_leaves_the_arm_unnamed() -> Result<(), String> {
+    for (label, source) in [
+        ("recursive", RECURSIVE),
+        ("mutual", MUTUAL),
+        ("function value", FUNCTION_VALUE),
+    ] {
         let (full, compact, class) = arm_evidence_in(
             source,
             "    assert_eq!(price_cents(Size::Small), 450);",
             "Size::Medium",
         )?;
-        assert_ne!(class[0], SeamGripClass::WeaklyGripped, "{full:?}");
-        assert_ne!(class[1], SeamGripClass::WeaklyGripped, "{compact:?}");
+        assert_ne!(class[0], SeamGripClass::WeaklyGripped, "{label}: {full:?}");
+        assert_ne!(
+            class[1],
+            SeamGripClass::WeaklyGripped,
+            "{label}: {compact:?}"
+        );
         for evidence in [&full, &compact] {
-            assert_ne!(evidence.activate.state, StageState::Weak, "{source}");
-            assert!(
-                !missing_values(evidence).contains(&"Size::Medium"),
-                "{source}: {:?}",
+            assert_eq!(evidence.activate.state, StageState::Yes, "{label}");
+            assert_eq!(
+                missing_values(evidence),
+                Vec::<&str>::new(),
+                "{label}: {:?}",
                 evidence.missing_discriminators
             );
         }

@@ -4666,14 +4666,6 @@ fn missing_match_arm_discriminator(
             .or_default()
             .push(function);
     }
-    // A call's input names the first arm it enters, not every arm it runs:
-    // an owner that may call itself again (`Size::Small => price_cents(
-    // Size::Medium)`), directly, through a helper, or through a macro whose
-    // expansion is not read, can run the arm from inside a call that selects
-    // another one, so the arm stays unnamed (#12078 review).
-    if owner_may_call_itself(owner, &functions_by_name) {
-        return None;
-    }
     let mut inputs = Vec::new();
     for test in related_tests {
         if may_reach_owner_unread(test, &owner.name, &functions_by_name) {
@@ -4684,6 +4676,15 @@ fn missing_match_arm_discriminator(
             return None;
         }
         inputs.extend(observed.inputs);
+    }
+    // A call's input names the first arm it enters, not every arm it runs
+    // (#12078 review): an owner that may run again from inside its own call
+    // (`Size::Small => price_cents(Size::Medium)`, a helper or function value
+    // that calls it back, an operator or `Display` impl that names it) can
+    // run the arm from a call that selects another one. Read after every
+    // test, so a test that selects the arm skips the workspace scan.
+    if owner_may_call_itself(owner, &functions_by_name, index, related_tests) {
+        return None;
     }
     inputs.sort();
     inputs.dedup();
@@ -4779,27 +4780,32 @@ fn missing_guard_entry_discriminator(
     Some(guard_unentered_fact(&guard, inputs, flow_sinks))
 }
 
-/// Whether a function the owner reaches through its calls names the owner
-/// or invokes an unread macro, so the owner may run again with an argument
-/// computed inside the call chain rather than passed by a test.
-/// Whether `owner` may run again from inside its own call: its body names
-/// itself beyond its header (a direct or path-qualified self-call, a stored
-/// function value), a function it calls may call it back
-/// ([`owner_may_reenter`]), or its body invokes a macro whose expansion is
-/// not read. Errs toward `true`: a mention in a comment or string refuses
-/// too.
+/// Whether `owner` may run again from inside its own call, so a test input
+/// that selects one arm can still run another. The same refusals as
+/// [`missing_guard_entry_discriminator`]: a callee may call it back
+/// ([`owner_may_reenter`]), its body invokes a macro whose expansion is not
+/// read, or anything outside the related tests names it
+/// ([`owner_named_outside_related_tests`]): its own body (a direct,
+/// `Self::`-qualified or `self.` self-call), a helper passed as a function
+/// value, an operator, `Display` or `Drop` impl, a stored pointer. Comments
+/// and strings are masked; any other mention refuses even when it cannot
+/// run inside the owner's call (a production caller the owner never reaches,
+/// a same-named local), which costs coverage but never names an arm a test
+/// may run.
 fn owner_may_call_itself(
     owner: &FunctionSummary,
     functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
+    index: &crate::analysis::rust_index::RustIndex,
+    related_tests: &[&TestSummary],
 ) -> bool {
-    // The body starts with the owner's own `fn <name>(` header, which the
-    // call facts list as a call of the name too, so only a second mention
-    // is a self-reference.
-    super::operand_pin::whole_word_count(&owner.body, &owner.name) > 1
-        || owner_may_reenter(owner, functions_by_name)
+    owner_may_reenter(owner, functions_by_name)
         || invokes_unread_macro(&owner.body)
+        || owner_named_outside_related_tests(index, &owner.name, related_tests)
 }
 
+/// Whether a function the owner reaches through its calls names the owner
+/// or invokes an unread macro, so the owner may run again with an argument
+/// computed inside the call chain rather than passed by a test.
 fn owner_may_reenter(
     owner: &FunctionSummary,
     functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
