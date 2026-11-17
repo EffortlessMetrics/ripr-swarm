@@ -71,9 +71,10 @@ the Rust adapter runs a bounded BFS walk over the lexical call facts in the Rust
    When several tests witness it, one is named and the rest are counted. The
    order is: a corroborated call before an uncorroborated one, and both before
    a derive entry. A call is uncorroborated when the test's receiver does not
-   resolve to the entry's impl type, or when every reaching entry is a free
-   function but the test calls it with method syntax (`.name(..)`, such as a
-   same-named builder setter). Next come fewer call-chain hops from the entry
+   resolve to the entry's impl type, or when every reaching entry is a
+   module-level or local `fn` (never a trait default method or an
+   unestablished container) but the test calls it with method syntax
+   (`.name(..)`, such as a same-named builder setter). Next come fewer call-chain hops from the entry
    to the owner, then test file and line (#14970). The same order picks each
    test's entry symbol.
 5. Only when step 4 names no witness, the same walk continues past depth 5,

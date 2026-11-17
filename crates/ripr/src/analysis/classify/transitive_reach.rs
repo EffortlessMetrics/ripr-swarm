@@ -321,8 +321,8 @@ type TransitiveCandidate<'t> = (u8, usize, &'t Path, usize, &'t str, &'t str, Op
 /// Whether `text` (a call fact's source line) invokes `name` only with
 /// method syntax: every `name(` or `name::<` whose identifier is whole is
 /// preceded by `.`, and there is at least one. Strings and comments are
-/// masked first. A path call (`Type::name(`, `module::name(`) or a bare call
-/// is not method syntax.
+/// masked first. A path call (`Type::name(`, `module::name(`), a bare call
+/// and a range bound (`0..name(`) are not method syntax.
 fn called_with_method_syntax(text: &str, name: &str) -> bool {
     if name.is_empty() {
         return false;
@@ -342,7 +342,9 @@ fn called_with_method_syntax(text: &str, name: &str) -> bool {
         if !(after.starts_with('(') || after.starts_with("::<")) {
             continue;
         }
-        if !before.trim_end().ends_with('.') {
+        let before = before.trim_end();
+        // `0..name(n)` is a range bound, not a receiver.
+        if !before.ends_with('.') || before.ends_with("..") {
             return false;
         }
         found = true;
@@ -1001,9 +1003,10 @@ impl<'a> ReachGraph<'a> {
         }
     }
 
-    /// Whether every production `entry` that reaches the owner is a free
-    /// function (no `impl` self type), so a method-syntax call `.entry(..)`
-    /// cannot be one of them. An entry with no reaching function is not.
+    /// Whether every production `entry` that reaches the owner is a module
+    /// level or local `fn` (`FunctionContainer::Free` or `Local`), so a
+    /// method-syntax call `.entry(..)` cannot be one of them. An entry with no
+    /// reaching function is not.
     fn entry_is_free_only(&self, entry: &str, reaching: &HashSet<&str>, owner_name: &str) -> bool {
         let mut any = false;
         for function in self.by_name.get(entry).into_iter().flatten() {
@@ -1014,7 +1017,13 @@ impl<'a> ReachGraph<'a> {
             if !reaches {
                 continue;
             }
-            if super::related_tests::impl_self_type_name(&function.id.0).is_some() {
+            // Fail closed: a trait default method (`Trait`), an impl method
+            // and an unestablished container (`Unknown`, the lexical
+            // fallback) can all be called as `.entry(..)`.
+            if !matches!(
+                function.item.container,
+                FunctionContainer::Free | FunctionContainer::Local
+            ) {
                 return false;
             }
             any = true;
@@ -4590,10 +4599,15 @@ mod tests {
     // farther free call; a bare `break_words(..)` call still wins on depth.
     #[test]
     fn given_method_syntax_call_to_a_free_entry_then_it_does_not_win_on_depth() {
+        let free = |name: &str, calls: Vec<&str>| {
+            let mut function = make_fn(name, calls);
+            function.item.container = FunctionContainer::Free;
+            function
+        };
         let fns = || {
             vec![
-                make_fn("wrap", vec!["break_words"]),
-                make_fn("break_words", vec!["break_apart"]),
+                free("wrap", vec!["break_words"]),
+                free("break_words", vec!["break_apart"]),
             ]
         };
         let mut setter = make_test_at("non_breaking_space", "tests/a.rs", 1, vec![]);
@@ -4635,13 +4649,39 @@ mod tests {
         );
 
         // Alone, the setter call is still a (weaker) witness, not dropped.
-        let alone = index_with(fns(), vec![setter]);
+        let alone = index_with(fns(), vec![setter.clone()]);
         assert_eq!(
             find_transitive_witness("break_apart", &alone)
                 .as_ref()
                 .map(|w| w.test_name.clone()),
             Some("non_breaking_space".to_string())
         );
+
+        // A trait default method, or a container the parser did not
+        // establish, may be the method being called: it is not downgraded,
+        // so the method call keeps its depth advantage.
+        for container in [
+            FunctionContainer::Trait {
+                trait_name: "Breaker".to_string(),
+            },
+            FunctionContainer::Unknown,
+        ] {
+            let mut method = make_fn("break_words", vec!["break_apart"]);
+            method.item.container = container;
+            let index = index_with(
+                vec![free("wrap", vec!["break_words"]), method],
+                vec![
+                    setter.clone(),
+                    make_test_at("wraps_long_word", "tests/b.rs", 1, vec!["wrap"]),
+                ],
+            );
+            assert_eq!(
+                find_transitive_witness("break_apart", &index)
+                    .as_ref()
+                    .map(|w| w.test_name.clone()),
+                Some("non_breaking_space".to_string())
+            );
+        }
     }
 
     #[test]
@@ -4657,6 +4697,9 @@ mod tests {
             ("a.unbreak_words(x)", false),
             ("\"a.break_words(x)\"", false),
             ("let break_words = 1;", false),
+            ("for i in 0..break_words(x) {}", false),
+            ("&v[1..break_words(n)]", false),
+            ("opt?.break_words(1)", true),
         ] {
             assert_eq!(
                 called_with_method_syntax(text, "break_words"),
