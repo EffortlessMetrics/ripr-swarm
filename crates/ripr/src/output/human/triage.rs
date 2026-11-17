@@ -658,7 +658,20 @@ pub(crate) fn render_human_triage(
                 Some(PrintedRepairRoute::Seam(route)) => {
                     repair_printed = true;
                     let command = navigation.repair_command(&route.seam_id);
-                    if let Some(file) = route.uncommitted_target.as_deref() {
+                    if let Some(commit) = navigation.repair_prerequisite(route) {
+                        // #13636: `ripr repair` refuses while tracked
+                        // production files differ from HEAD; name the
+                        // commit first, in the gap-bound route's words.
+                        out.push_str(&format!(
+                            "  Commit your production change first (the repair start refuses to begin while it is uncommitted):\n  {commit}\n  Then start the repair:\n"
+                        ));
+                        super::push_labeled_commands(
+                            out,
+                            "  ",
+                            super::SPOT_ID_COMMAND_LABEL,
+                            std::slice::from_ref(&command),
+                        );
+                    } else if let Some(file) = route.uncommitted_target.as_deref() {
                         // `ripr repair` would refuse this start: its
                         // inline test module target begins from the
                         // committed file. State the requirement instead
@@ -1341,7 +1354,7 @@ fn repair_already_noticed(navigation: &crate::app::FindingNavigation) -> bool {
 /// True when the repair advisory on screen (if any) says there is no repair
 /// start for this finding. Refusals that name a route or a recovery
 /// (`SeveralBindingSeams`, `Ineligible`, `SeamLimit`, `ClassificationFailed`,
-/// `GapRouteUnavailable`, `ConfigUnreadable`, and `NoBindingSeam` with seams
+/// `GapRouteUnavailable`, `SeamRouteUnavailable`, `ConfigUnreadable`, and `NoBindingSeam` with seams
 /// in the file, which points at `ripr pilot`) must not sit beside "ripr has no
 /// repair route".
 fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
@@ -1353,6 +1366,7 @@ fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
                 | RepairRouteRefusal::SeamLimit
                 | RepairRouteRefusal::ClassificationFailed
                 | RepairRouteRefusal::GapRouteUnavailable { .. }
+                | RepairRouteRefusal::SeamRouteUnavailable { .. }
                 | RepairRouteRefusal::ConfigUnreadable
         )
     ) && !matches!(
@@ -2311,24 +2325,46 @@ fn decisive_shadows_unknown(decisive: &Finding, unknown: &Finding) -> bool {
 /// level with the unknown classes, ahead of `exposed`.
 const STATIC_LIMITED_REPAIR_TIER: u8 = 5;
 
+/// The `Start here` sort key, lowest first. Fields compare in declaration
+/// order (the derived `Ord`), so the order of the fields is the ranking
+/// (RIPR-SPEC-0122 "Start here" steps 1-6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct TriageRank<'a> {
+    /// #9346: changed-file role leads the ranking. The pair (file role,
+    /// verdict decisiveness) defines the demotion this fixes, an unknown
+    /// verdict on an evidence-role file, while verdict order within one role
+    /// keeps the keys below, so a production unknown still leads a
+    /// production exposed finding and `no_actionable_gap` keeps meaning
+    /// only-exposed-selected.
+    role: u8,
+    /// 1 when a decisive verdict on the same behavior shadows this unknown.
+    shadowed: u8,
+    /// 1 for a preview-language finding.
+    preview: u8,
+    /// 0 for a non-exposed finding with a printable repair route, the shared
+    /// static-limited tier, or the class rank.
+    repair: u8,
+    no_canonical_gap: u8,
+    /// 1 unless a related test is linked by more than a name token (#14734).
+    no_linked_oracle_test: u8,
+    no_missing_evidence: u8,
+    /// Negated confidence percentage, so higher confidence sorts first.
+    negated_confidence: i32,
+    /// #14266: without this key two otherwise equal candidates were ordered
+    /// by file path: an unknown in `analysis/` led a `reachable_unrevealed`
+    /// gap in `provider_contract/`. The class order breaks that tie before
+    /// the path does.
+    class: u8,
+    path: &'a std::path::Path,
+    line: usize,
+}
+
 fn triage_rank<'a>(
     finding: &'a Finding,
     root: &std::path::Path,
     context: &SourceRoleContext,
     decisive_findings: &[&Finding],
-) -> (
-    u8,
-    u8,
-    u8,
-    u8,
-    u8,
-    u8,
-    u8,
-    i32,
-    u8,
-    &'a std::path::Path,
-    usize,
-) {
+) -> TriageRank<'a> {
     let class_rank = match finding.class {
         ExposureClass::ReachableUnrevealed => 2,
         ExposureClass::WeaklyExposed => 3,
@@ -2370,31 +2406,19 @@ fn triage_rank<'a>(
                 .iter()
                 .any(|decisive| decisive_shadows_unknown(decisive, finding)),
     );
-    (
-        // #9346: changed-file role leads the ranking. The pair (file
-        // role, verdict decisiveness) defines the demotion this fixes —
-        // an unknown verdict on an evidence-role file — while verdict
-        // order within one role keeps its existing keys below, so a
-        // production unknown still leads a production exposed finding
-        // and `no_actionable_gap` keeps meaning only-exposed-selected.
-        role_rank,
-        shadowed_rank,
-        preview_rank,
-        repair_rank,
-        u8::from(finding.canonical_gap.is_none()),
-        u8::from(!has_linked_oracle_test(finding)),
-        u8::from(finding.missing.is_empty()),
-        -(finding.confidence * 100.0) as i32,
-        // #14266: a repair route zeroes `repair_rank` for every routed
-        // finding, and every stable finding with a next step counts as
-        // routed, so without this key two otherwise equal candidates were
-        // ordered by file path: an unknown in `analysis/` led a
-        // `reachable_unrevealed` gap in `provider_contract/`. The class
-        // order breaks that tie before the path does.
-        class_rank,
-        finding.probe.location.file.as_path(),
-        finding.probe.location.line,
-    )
+    TriageRank {
+        role: role_rank,
+        shadowed: shadowed_rank,
+        preview: preview_rank,
+        repair: repair_rank,
+        no_canonical_gap: u8::from(finding.canonical_gap.is_none()),
+        no_linked_oracle_test: u8::from(!has_linked_oracle_test(finding)),
+        no_missing_evidence: u8::from(finding.missing.is_empty()),
+        negated_confidence: -(finding.confidence * 100.0) as i32,
+        class: class_rank,
+        path: finding.probe.location.file.as_path(),
+        line: finding.probe.location.line,
+    }
 }
 
 /// Whether `finding` has a decision-set related test linked by more than a
@@ -2530,17 +2554,23 @@ pub(crate) fn finding_routes_json(
         }
         Some(PrintedRepairRoute::Seam(route)) => {
             repair.insert("seam_id".to_string(), route.seam_id.clone().into());
-            match &route.uncommitted_target {
-                None => {
-                    repair.insert("status".to_string(), "ready".into());
-                    repair.insert(
-                        "command".to_string(),
-                        navigation.repair_command(&route.seam_id).into(),
-                    );
-                }
-                Some(file) => {
-                    repair.insert("status".to_string(), "blocked_uncommitted".into());
+            if route.uncommitted_target.is_none() && route.uncommitted_files.is_empty() {
+                repair.insert("status".to_string(), "ready".into());
+                repair.insert(
+                    "command".to_string(),
+                    navigation.repair_command(&route.seam_id).into(),
+                );
+            } else {
+                repair.insert("status".to_string(), "blocked_uncommitted".into());
+                if let Some(file) = &route.uncommitted_target {
                     repair.insert("uncommitted_file".to_string(), file.clone().into());
+                }
+                // #13636: the dirty production premise the start refuses.
+                if !route.uncommitted_files.is_empty() {
+                    repair.insert(
+                        "uncommitted_files".to_string(),
+                        route.uncommitted_files.clone().into(),
+                    );
                 }
             }
         }
