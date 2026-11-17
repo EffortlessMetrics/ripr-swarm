@@ -10519,6 +10519,35 @@ fn agent_repair_before_requires_effective_cargo_build_directory_ignore()
         }) {
             return Err(format!("facade refusal lacks the typed line: {facade_stderr}").into());
         }
+        // #14931: under `--json` the façade's start refusal is the typed
+        // `cli_refusal` document, the same shape `typed_decision` writes.
+        let facade_json = run_ripr(&[
+            "repair",
+            BOUNDARY_GAP_SEAM_ID,
+            "--json",
+            "--root",
+            &root.display().to_string(),
+        ]);
+        if facade_json.status.code() != Some(3) {
+            return Err(
+                format!("facade --json Git-ignore refusal must exit 3: {facade_json:?}").into(),
+            );
+        }
+        let document: serde_json::Value = serde_json::from_slice(&facade_json.stdout)?;
+        let error = &document["error"];
+        if document["status"] != "refused"
+            || error["code"] != "build_output_not_ignored"
+            || error["disposition"] != "not_started"
+            || error["next"] != serde_json::Value::Null
+            || error["message"].as_str().is_none_or(|message| {
+                message.contains("refusal code=") || !message.contains("Nothing was started.")
+            })
+        {
+            return Err(format!(
+                "facade --json must write the typed refusal document: {document:#}"
+            )
+            .into());
+        }
         for artifact in [
             "target/ripr/workflow/workflow.json",
             "target/ripr/workflow/agent-packet.json",

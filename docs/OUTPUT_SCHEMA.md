@@ -1995,9 +1995,10 @@ runs and writes the stderr `refusal code=<code> disposition=<disposition>`
 line (exit `3`) also writes this document. Its `code` is that reason code
 (the table in `docs/EXIT_CODES.md`), the extra `disposition` field is one of
 `retryable`, `terminal`, `needs_selection` or `not_started`, and `message` is
-the plain-words prose without the code line. `next` is a runnable step the
-prose states, or `null` when the prose offers more than one (the fail-closed
-remedy rule above). For example, `ripr continue --json` with no attempt
+the plain-words prose without the code line. `next` is always `null`:
+these prose steps can quote a user-supplied item or selector, so the document
+never lifts one into a runnable field; read the step from `message`. For
+example, `ripr continue --json` with no attempt
 writes `code: "no_current_attempt"` and `disposition: "not_started"`.
 Refusals inside the after-phase check keep their own documents
 (`repair_after_refusal`, `repair_after_failure`, the verify document) and

@@ -180,10 +180,12 @@ pub(crate) fn note_selector_miss(selector: &str, message: &str) {
 
 /// Note a typed `repair`/`continue` refusal (exit 3) at its one owner
 /// (#14931). The code and disposition are the `RepairRefusalCode` the
-/// stderr `refusal code=` line already names; `next` is only a runnable
-/// step the prose states, lifted fail-closed by the shared remedy owner.
+/// stderr `refusal code=` line already names; `next` is always null.
 pub(crate) fn note_typed_refusal(code: &str, disposition: &'static str, message: &str) {
     let mut block = RefusalBlock::from_prose(code, message);
+    // These steps can quote a user-supplied item or selector, so a typed
+    // refusal never offers its step as a runnable `next` (#14931).
+    block.next = None;
     block.disposition = Some(disposition);
     record(block);
 }

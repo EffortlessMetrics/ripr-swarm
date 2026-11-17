@@ -7406,6 +7406,11 @@ fn typed_facade_refusals_under_json_write_code_and_disposition() -> Result<(), S
             document["error"]["disposition"], disposition,
             "{document:#}"
         );
+        assert_eq!(
+            document["error"]["next"],
+            serde_json::Value::Null,
+            "{document:#}"
+        );
         let message = document["error"]["message"].as_str().unwrap_or_default();
         assert!(!message.contains("refusal code="), "{message}");
         let stderr = stderr_text(&json);
