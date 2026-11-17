@@ -4861,6 +4861,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
             source: "fn discounted_total_helper() {}".into(),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
         },
     );
     let seam = RepoSeam::new(

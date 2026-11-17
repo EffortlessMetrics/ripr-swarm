@@ -1,6 +1,7 @@
 mod adapter;
 mod bolero;
 mod constant_return;
+pub(crate) mod external_docs;
 pub(crate) mod fn_signature;
 pub(crate) mod lexical;
 mod local_assertion_macros;
