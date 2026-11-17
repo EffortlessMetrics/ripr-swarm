@@ -545,8 +545,9 @@ cfg-gated, and returns `Self` or the type. No receiver is built when the
 target test module declares or imports another item of the type's name,
 including a module or `extern crate`, or holds any glob import other than
 `use super::*;`, an import of that name or a glob inside a nested module, an
-item-position macro or macro definition that mentions the name, or an
-`include!`; only `use super::Type;` and `use super::*;` outside a nested
+item-position macro call (including `include!`), or a macro definition that
+mentions the name (a macro inside a function body, such as `assert!`, does not
+count); only `use super::Type;` and `use super::*;` outside a nested
 module are known to name the owner.
 In order:
 

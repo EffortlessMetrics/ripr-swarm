@@ -348,16 +348,19 @@ fn scope_shadows(scope: &StubScope<'_>, base_name: &str) -> bool {
                     && full_use_path(&tree) == owner_path);
             }
             ast::Item::cast(node).is_some_and(|item| {
-                // An item-position macro (or a macro definition) can emit an
-                // item of that name, and `include!` hides what it pulls in;
-                // either may rebind the name for existing tests.
+                // An item-position macro call can emit an item of any name
+                // (its definition may sit outside the scope), and `include!`
+                // hides what it pulls in, so any one may rebind the name for
+                // existing tests. A macro in expression or statement position
+                // (`assert!`, `vec!`) is not an item here (#14982 review).
                 if let ast::Item::MacroCall(call) = &item {
-                    let is_include = call
-                        .path()
-                        .and_then(|path| path.segment())
-                        .and_then(|segment| segment.name_ref())
-                        .is_some_and(|name| name.text() == "include");
-                    return is_include || mentions_ident(call.syntax(), base_name);
+                    return call.syntax().parent().is_some_and(|parent| {
+                        matches!(
+                            parent.kind(),
+                            ra_ap_syntax::SyntaxKind::ITEM_LIST
+                                | ra_ap_syntax::SyntaxKind::SOURCE_FILE
+                        )
+                    });
                 }
                 if matches!(item, ast::Item::MacroRules(_) | ast::Item::MacroDef(_)) {
                     return mentions_ident(item.syntax(), base_name);
