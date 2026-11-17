@@ -46,6 +46,8 @@ pub(crate) use relation_index::RelationIndex;
 pub(crate) use std::path::{Path, PathBuf};
 
 mod actionability;
+#[cfg(test)]
+mod actionability_proptest_tests;
 mod admission;
 #[cfg(test)]
 mod admission_tests;

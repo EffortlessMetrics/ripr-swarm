@@ -560,6 +560,18 @@ pub(crate) fn proposed_new_test_json(
     value
 }
 
+/// The canonical item identity a finding projects to: its canonical gap id
+/// when the producer assigned one, else the finding id. One owner for the
+/// served item and the owner opt-out withheld record (#14138), so a withheld
+/// id refuses under the same spelling a served item would have carried.
+pub(crate) fn canonical_id_of(finding: &Finding) -> String {
+    finding
+        .canonical_gap
+        .as_ref()
+        .map(|gap| gap.id.clone())
+        .unwrap_or_else(|| finding.id.clone())
+}
+
 impl GapItem {
     /// `root` is the analyzed workspace root: item locations render through
     /// the shared finding-location owner (#5996), so an MCP item names the
@@ -581,11 +593,7 @@ impl GapItem {
         root: &Path,
         admission: &SeamAdmission,
     ) -> Result<Self, String> {
-        let canonical_id = finding
-            .canonical_gap
-            .as_ref()
-            .map(|gap| gap.id.clone())
-            .unwrap_or_else(|| finding.id.clone());
+        let canonical_id = canonical_id_of(finding);
         let file = crate::analysis::finding_location_text(root, &finding.probe.location.file);
         let class = finding.class.as_str().to_string();
         let language = finding

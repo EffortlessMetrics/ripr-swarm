@@ -234,6 +234,12 @@ keeps its own row. The 20-row window then bounds rows, not findings: beyond
 order above, printed in the order of each row's first finding, and the
 remainder line counts the findings in the rows it left out (#14299).
 
+A row whose reason is longer than 40 bytes and equal to the reason of the row
+printed just above it prints `reason: same as above` instead of repeating the
+sentence, so a run of rows that differ only by file or kind states a shared
+limitation once (#14308). Shorter reasons print on every row. `human-full` and
+machine formats keep every reason.
+
 The canonical next action's two `considered finding` alternates are chosen by
 the same priority order from the findings `Start here` did not select, so a
 gap is offered before an already-noticed finding that sorts earlier in the
@@ -319,7 +325,10 @@ and the machine formats are unchanged.
 
 Start here ranks a finding with a repair route ahead of one without. For a
 stable finding the route is a recommended next step or suggested verify
-command; for a Python preview finding it is a repair card from the Python
+command, and only when the finding is not static-limited: a static-limited
+finding (`no_static_path`, the unknown classes, or a named static limit)
+never prints a repair route, so its advisory next step does not rank it as
+routed (#14266); for a Python preview finding it is a repair card from the Python
 repair-card authority. A card-less Python finding therefore never hides a
 carded one, so `check` does not report "no repair card" while `ripr pilot` and
 `ripr first-pr` route a card for the same diff. Classification is unchanged.
@@ -410,7 +419,10 @@ selector is deterministic:
    different owner, is likewise not shadowed.
 3. Non-preview findings outrank preview-language findings.
 4. Non-exposed findings with repair routes outrank findings without repair
-   routes.
+   routes. A static-limited finding counts as having no repair route, matching
+   the route the screen prints, and all static-limited findings share one tier
+   behind every gap and ahead of `exposed`, so the keys in step 6 order them
+   among themselves (#14266).
 5. `exposed` findings do not outrank non-exposed findings merely because they
    carry generic next-step text.
 6. Gap metadata, related tests, missing evidence, confidence, exposure class,
@@ -1203,6 +1215,8 @@ report with zero records still carries its route.
 - `crates/ripr/src/output/human.rs::tests::hidden_block_keeps_owner_less_rows_apart_and_orders_mixed_rows`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_window_ranks_a_group_by_its_best_member`
 - `crates/ripr/src/output/human/triage.rs::tests::check_adapter_alternates_follow_the_shared_priority_not_report_order`
+- `crates/ripr/src/output/human/triage.rs::tests::start_here_does_not_rank_an_unprintable_route_as_a_repair_route`
+- `crates/ripr/src/output/human/triage.rs::tests::start_here_orders_static_limited_findings_by_evidence_not_class`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail`
 - `crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary`

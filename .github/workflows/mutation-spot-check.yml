@@ -125,7 +125,7 @@ jobs:
     needs: [plan, mutate]
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     env:
       CARGO_TERM_COLOR: never
       CORPUS: ${{ needs.plan.outputs.matrix }}
@@ -154,7 +154,10 @@ jobs:
       # because the harness verifies each mutant diff against the pinned source.
       - name: Score the surviving crates together
         # Advisory lane: a scoring failure must not hide the receipt upload.
+        # Diff mode runs `ripr check --diff` once per sampled mutant (at most
+        # 300 per crate); the step bound leaves time for the upload.
         continue-on-error: true
+        timeout-minutes: 150
         run: |
           set -euo pipefail
           corpus="$RUNNER_TEMP/spot-check-corpus"
@@ -171,7 +174,7 @@ jobs:
           done < <(jq -r '.include[] | [.name, .url, .rev] | @tsv' <<<"$CORPUS")
           test -s "$RUNNER_TEMP/score-args"
           mapfile -t args < "$RUNNER_TEMP/score-args"
-          cargo xtask mutation-spot-check "${args[@]}" --ripr target/release/ripr
+          cargo xtask mutation-spot-check "${args[@]}" --rust-diff-mode --max-mutants 300 --ripr target/release/ripr
 
       - name: Publish the report to the job summary
         if: always()

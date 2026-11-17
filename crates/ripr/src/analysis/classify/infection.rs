@@ -1216,10 +1216,24 @@ fn range_bound_infection(
 fn range_bound_change(before: &str, after: &str) -> Option<RangeConsumer> {
     use crate::analysis::language::mask_rust_comments_and_strings;
     let (before, after) = aligned_range_texts(before, after);
-    let before = mask_rust_comments_and_strings(&before);
-    let after = mask_rust_comments_and_strings(&after);
+    let (raw_before, raw_after) = (before, after);
+    let before = mask_rust_comments_and_strings(&raw_before);
+    let after = mask_rust_comments_and_strings(&raw_after);
     if before == after {
-        return None;
+        // A char endpoint (`'a'..='z'`) is masked like a string literal. An
+        // edit confined to strings or comments is left alone, since their
+        // `..` may be text; a changed char literal is read as an endpoint
+        // whatever else the line holds.
+        if char_literal_contents(&raw_before) == char_literal_contents(&raw_after) {
+            return None;
+        }
+        return range_endpoints_moved(&raw_before, &raw_after).then(|| {
+            if raw_after.contains("=>") {
+                RangeConsumer::Pattern
+            } else {
+                RangeConsumer::Absorbing
+            }
+        });
     }
     let prefix = before
         .bytes()
@@ -1245,19 +1259,193 @@ fn range_bound_change(before: &str, after: &str) -> Option<RangeConsumer> {
         (Some(RangeConsumer::Preserving), _) | (_, Some(RangeConsumer::Preserving)) => None,
         (Some(_), Some(_)) => Some(RangeConsumer::Absorbing),
         _ => {
+            if let Some(kind) = several_range_change(&before, &after) {
+                return kind;
+            }
             let (short, long) = if before.len() < after.len() {
                 (&before, &after)
             } else {
                 (&after, &before)
             };
-            (long.len() == short.len() + 1
+            let one_equals = long.len() == short.len() + 1
                 && long.get(span(long)) == Some("=")
                 && long
                     .get(..prefix)
-                    .is_some_and(|head| head.ends_with("..") && !head.ends_with("...")))
-            .then_some(RangeConsumer::Absorbing)
+                    .is_some_and(|head| head.ends_with("..") && !head.ends_with("..."));
+            // #14538: an edit inside a macro's input (`matches!(n, 1..=5)`
+            // to `0..=6`) or on a line that does not parse: no range node is
+            // read, so the line is gated when a range's written endpoints
+            // or operator differ between the versions.
+            (one_equals || range_endpoints_moved(&before, &after))
+                .then_some(RangeConsumer::Absorbing)
         }
     }
+}
+
+/// #14538: each `..` / `..=` operator of `text` (not `...`) with its
+/// written start and end operand texts, read lexically up to the nearest
+/// delimiter. A macro input or a line that does not parse has no range node,
+/// so its ranges are compared this way.
+fn range_signatures(text: &str) -> Vec<(String, bool, String)> {
+    let mut signatures = Vec::new();
+    let mut from = 0;
+    while let Some(found) = text.get(from..).and_then(|rest| rest.find("..")) {
+        let at = from + found;
+        let rest = &text[at + 2..];
+        if rest.starts_with('.') {
+            from = at + 2 + rest.len() - rest.trim_start_matches('.').len();
+            continue;
+        }
+        let inclusive = rest.starts_with('=');
+        let after = at + 2 + usize::from(inclusive);
+        let head = &text[..at];
+        let tail = &text[after..];
+        let start = &head[operand_start(head)..];
+        let end = &tail[..operand_end(tail)];
+        signatures.push((start.trim().to_string(), inclusive, end.trim().to_string()));
+        from = after;
+    }
+    signatures
+}
+
+/// The byte offset in `head` where a range's start operand begins: after
+/// the nearest unbalanced opener or a top-level `,`, `|`, `;` or `=`, so a
+/// call or index inside the operand (`f(a, b)..`) stays whole.
+fn operand_start(head: &str) -> usize {
+    let mut depth = 0usize;
+    for (at, ch) in head.char_indices().rev() {
+        match ch {
+            ')' | ']' | '}' => depth += 1,
+            '(' | '[' | '{' if depth == 0 => return at + 1,
+            '(' | '[' | '{' => depth -= 1,
+            ',' | '|' | ';' | '=' if depth == 0 => return at + 1,
+            _ => {}
+        }
+    }
+    0
+}
+
+/// The byte offset in `tail` where a range's end operand stops: at the
+/// nearest unbalanced closer, a block `{`, or a top-level `,`, `|`, `;` or
+/// `=`, so `..=v.len() - 1` and `..=f(a, b)` stay whole.
+fn operand_end(tail: &str) -> usize {
+    let mut depth = 0usize;
+    for (at, ch) in tail.char_indices() {
+        match ch {
+            '(' | '[' => depth += 1,
+            ')' | ']' | '}' if depth == 0 => return at,
+            ')' | ']' | '}' => depth -= 1,
+            '{' if depth == 0 => return at,
+            '{' => depth += 1,
+            ',' | '|' | ';' | '=' if depth == 0 => return at,
+            _ => {}
+        }
+    }
+    tail.len()
+}
+
+/// The text of each char literal in code in `text`, in order, as the
+/// comment-and-string masker reads them: a space char (`' '`) counts like
+/// any other, and a quote inside a string or comment is not a char.
+fn char_literal_contents(text: &str) -> Vec<&str> {
+    let (_, spans) = crate::analysis::extract::mask::mask_with_char_literals(text);
+    spans
+        .into_iter()
+        .map(|(start, end)| text.get(start..=end).unwrap_or_default())
+        .collect()
+}
+
+/// Whether `before` and `after` hold the same number of ranges and at least
+/// one range's endpoints or operator differ: a moved bound (`0..=5` to
+/// `0..=6`, `'a'..='z'` to `'b'..='y'`), not an edit beside the ranges
+/// (`[1, len, ..] => len + 2` to `2 + len`) or a range added or removed.
+fn range_endpoints_moved(before: &str, after: &str) -> bool {
+    let (old, new) = (range_signatures(before), range_signatures(after));
+    !old.is_empty() && old.len() == new.len() && old != new
+}
+
+/// #14538: a line where several range expressions changed at once
+/// (`(0..=a).sum() + (0..=b).sum()` to `(0..a).sum() + (0..b).sum()`). The
+/// two versions must have the same outermost ranges in the same places with
+/// the text between them unchanged. `Some(None)` when every changed range
+/// keeps a length-preserving reading, `Some(Some(Absorbing))` when any
+/// changed range feeds an absorbing consumer or pattern, `None` when the
+/// line is not that shape.
+fn several_range_change(before: &str, after: &str) -> Option<Option<RangeConsumer>> {
+    let ranges = |text: &str| -> Option<Vec<std::ops::Range<usize>>> {
+        const PREFIX: &str = "fn __ripr_range_probe() {\n";
+        let closing = if text.trim_end().ends_with('{') {
+            "}"
+        } else {
+            ""
+        };
+        let source = format!("{PREFIX}{text}{closing}\n}}\n");
+        let parse = crate::analysis::syntax::parse_clean_source_file(&source)?;
+        let spans: Vec<_> = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter(|node| ast::RangeExpr::can_cast(node.kind()))
+            .filter(|node| {
+                !node
+                    .ancestors()
+                    .skip(1)
+                    .any(|ancestor| ast::RangeExpr::can_cast(ancestor.kind()))
+            })
+            .map(|node| {
+                let range = node.text_range();
+                usize::from(range.start()) - PREFIX.len()..usize::from(range.end()) - PREFIX.len()
+            })
+            .collect();
+        spans
+            .iter()
+            .all(|span| span.end <= text.len())
+            .then_some(spans)
+    };
+    let (old, new) = (ranges(before)?, ranges(after)?);
+    if old.len() < 2 || old.len() != new.len() {
+        return None;
+    }
+    let skeleton = |text: &str, spans: &[std::ops::Range<usize>]| -> Option<String> {
+        let mut out = String::new();
+        let mut at = 0;
+        for span in spans {
+            out.push_str(text.get(at..span.start)?);
+            out.push('\u{0}');
+            at = span.end;
+        }
+        out.push_str(text.get(at..)?);
+        Some(out)
+    };
+    if skeleton(before, &old)? != skeleton(after, &new)? {
+        return None;
+    }
+    let mut changed = false;
+    for (old_span, new_span) in old.iter().zip(&new) {
+        if before.get(old_span.clone()) == after.get(new_span.clone()) {
+            continue;
+        }
+        changed = true;
+        // A range nested in a changed range (`(0..(0..=a).sum())`) is not
+        // read on its own here.
+        if before
+            .get(old_span.clone())
+            .is_none_or(|text| text.matches("..").count() > 1)
+            || after
+                .get(new_span.clone())
+                .is_none_or(|text| text.matches("..").count() > 1)
+        {
+            return Some(Some(RangeConsumer::Absorbing));
+        }
+        match (
+            range_consumer(before, old_span.clone()),
+            range_consumer(after, new_span.clone()),
+        ) {
+            (Some(RangeConsumer::Preserving), Some(RangeConsumer::Preserving)) => {}
+            _ => return Some(Some(RangeConsumer::Absorbing)),
+        }
+    }
+    changed.then_some(None)
 }
 
 /// `before` and `after` trimmed, and cut to their arm heads when one is a
@@ -1967,6 +2155,131 @@ fn is_wildcard_discard(expression: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::{RangeConsumer, range_bound_change, range_endpoints_moved, several_range_change};
+
+    #[test]
+    fn an_edit_on_a_range_line_inside_a_macro_input_is_gated() {
+        // #14538: `matches!` input is not parsed, so any edit on a line
+        // holding a range operator is gated.
+        let absorbing = |before: &str, after: &str| {
+            range_bound_change(before, after).is_some_and(|kind| kind == RangeConsumer::Absorbing)
+        };
+        assert!(absorbing("matches!(n, 1..=5)", "matches!(n, 0..=5)"));
+        assert!(absorbing("matches!(n, 0..=5)", "matches!(n, 0..=6)"));
+        assert!(absorbing("matches!(n, 0 ..= 5)", "matches!(n, 0 ..= 6)"));
+        assert!(absorbing(
+            "matches!(n, 0..=MAX - 1)",
+            "matches!(n, 0..=MAX - 2)"
+        ));
+        assert!(absorbing("matches!(n, -1..=5)", "matches!(n, 0..=5)"));
+        assert!(absorbing("matches!(n, 0..=5)", "matches!(n, 1..5)"));
+        assert!(absorbing(
+            "matches!(a, 1..=5) || matches!(b, 1..=5)",
+            "matches!(a, 0..=5) || matches!(b, 0..=5)"
+        ));
+        // Char endpoints are masked like strings.
+        assert!(absorbing(
+            "matches!(c, 'a'..='z')",
+            "matches!(c, 'b'..='z')"
+        ));
+        assert!(absorbing(
+            "matches!(c, 'a'..='z')",
+            "matches!(c, 'b'..='y')"
+        ));
+        assert!(absorbing(
+            "matches!(c, '\u{e9}'..='z')",
+            "matches!(c, '\u{e8}'..='z')"
+        ));
+        assert!(absorbing(
+            "matches!(c, 'é'..='z')",
+            "matches!(c, 'è'..='z')"
+        ));
+        // An edit beside the ranges, a range added or removed, or a line
+        // with no range operator is not gated here.
+        assert!(range_bound_change("matches!(n, Some(5))", "matches!(n, Some(6))").is_none());
+        assert!(!range_endpoints_moved(
+            "[1, len, ..] => Status::Complete(*len as usize + 2),",
+            "[1, len, ..] => Status::Complete(2 + *len as usize),"
+        ));
+        assert!(!range_endpoints_moved(
+            "crc: crc(body),",
+            "crc: crc(&body[..]),"
+        ));
+        assert!(!range_endpoints_moved(
+            "b'0'..=b'9' | b'a'..=b'z' | b'_' => true,",
+            "b'0'..=b'9' | b'a'..=b'z' => true,"
+        ));
+        assert!(!range_endpoints_moved("f(a...b)", "f(a...c)"));
+        // A call or index inside an operand stays whole.
+        assert!(absorbing(
+            "println!(\"{}\", (0..=v.len() - 1).sum::<usize>())",
+            "println!(\"{}\", (0..=v.len() - 2).sum::<usize>())"
+        ));
+        assert!(range_endpoints_moved(
+            "m!((f(a, b)..=n))",
+            "m!((f(c, b)..=n))"
+        ));
+        assert!(range_endpoints_moved("m!(0..=f(a, b))", "m!(0..=f(a, c))"));
+        // A string or comment holding `..` is not a char endpoint.
+        assert!(range_bound_change("say(\"Done..\")", "say(\"Finished..\")").is_none());
+        assert!(range_bound_change("x // 0..5", "x // 0..6").is_none());
+        // A string or comment elsewhere on the line does not hide a moved
+        // char endpoint.
+        assert!(
+            range_bound_change("'a'..='z' => 1, // letters", "'b'..='z' => 1, // letters")
+                .is_some_and(|kind| kind == RangeConsumer::Pattern)
+        );
+        assert!(absorbing(
+            "matches!(c, 'a'..='z') && s == \"x\"",
+            "matches!(c, 'b'..='z') && s == \"x\""
+        ));
+        assert!(range_bound_change("' '..='a' => 1,", "'a'..=' ' => 1,").is_some());
+        // A char-like quote inside a string is string text.
+        assert!(range_bound_change("say(\"'a'..='z'\")", "say(\"'b'..='z'\")").is_none());
+        assert!(absorbing(
+            "matches!(c, 'a'..='z') // 0..5",
+            "matches!(c, 'b'..='z') // 0..5"
+        ));
+    }
+
+    #[test]
+    fn several_changed_ranges_are_gated_unless_every_one_preserves_length() {
+        // #14538: two absorbing sums changed on one line.
+        assert!(matches!(
+            several_range_change(
+                "(0..=a).sum::<u32>() + (0..=b).sum::<u32>()",
+                "(0..a).sum::<u32>() + (0..b).sum::<u32>()",
+            ),
+            Some(Some(RangeConsumer::Absorbing))
+        ));
+        // Two collected ranges keep the ordinary reading.
+        assert!(matches!(
+            several_range_change(
+                "((0..=a).collect(), (0..=b).collect())",
+                "((0..a).collect(), (0..b).collect())",
+            ),
+            Some(None)
+        ));
+        // A change outside the ranges is not this shape.
+        assert!(
+            several_range_change(
+                "(0..=a).sum() + (0..=b).sum()",
+                "(0..=a).sum() * (0..=b).sum()"
+            )
+            .is_none()
+        );
+        // A changed range nested inside a length-preserving one.
+        assert!(matches!(
+            several_range_change(
+                "((0..(0..=a).sum()).collect(), (0..b).collect())",
+                "((0..(0..a).sum()).collect(), (0..=b).collect())",
+            ),
+            Some(Some(RangeConsumer::Absorbing))
+        ));
+        // One range is the single-range path's job.
+        assert!(several_range_change("(0..=a).sum()", "(0..a).sum()").is_none());
+    }
+
     #[test]
     fn an_unmapped_local_operand_names_the_input_that_would_settle_it() {
         let local = unresolved_boundary_summary(

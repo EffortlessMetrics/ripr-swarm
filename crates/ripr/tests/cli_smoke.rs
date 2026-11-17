@@ -103,6 +103,9 @@ mod mutation_calibration_provenance;
 mod native_fanout;
 #[path = "cli_smoke/next_action.rs"]
 mod next_action;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/offline_network.rs"]
+mod offline_network;
 #[path = "cli_smoke/output_leaf_identity.rs"]
 mod output_leaf_identity;
 #[cfg(all(
@@ -119,7 +122,6 @@ mod parse_failure_path_outcome;
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
-#[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/pilot_timeout_retry.rs"]
 mod pilot_timeout_retry;
 #[cfg(all(unix, feature = "lang-rust"))]
@@ -150,6 +152,9 @@ mod related_test_count;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/repair_orderfile.rs"]
 mod repair_orderfile;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/requested_scope_complete.rs"]
+mod requested_scope_complete;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/rerun_ledger_recovery.rs"]
 mod rerun_ledger_recovery;
@@ -4322,8 +4327,8 @@ fn scoped_check_fixture(label: &str) -> Result<(PathBuf, PathBuf), String> {
 }
 
 #[test]
-fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() -> Result<(), String>
-{
+fn check_scope_flags_turn_an_oversized_diff_into_a_complete_scoped_result_with_a_note()
+-> Result<(), String> {
     let (dir, diff) = scoped_check_fixture("check-scope-flags")?;
     let root = dir.display().to_string();
     let diff = diff.display().to_string();
@@ -4365,9 +4370,10 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
         let value: serde_json::Value = serde_json::from_str(&stdout)
             .map_err(|err| format!("scoped stdout should parse: {err}\n{stdout}"))?;
         let outcome = &value["analysis_outcome"];
-        assert_eq!(outcome["analysis_complete"], false, "{flags:?}");
+        // #13894: the operator-requested scope is complete.
+        assert_eq!(outcome["analysis_complete"], true, "{flags:?}");
         assert_eq!(
-            outcome["outcome"]["kind"], "partial_with_limitations",
+            outcome["outcome"]["kind"], "complete_with_findings",
             "{flags:?}"
         );
         let limitations = outcome["outcome"]["limitations"]
@@ -4375,7 +4381,7 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
             .ok_or("limitations array")?;
         assert!(
             limitations.iter().any(|limitation| {
-                limitation["kind"] == "language_scope_unsupported"
+                limitation["kind"] == "requested_scope_excluded"
                     && limitation["bounded_detail"]
                         .as_str()
                         .is_some_and(|detail| detail.contains("src/big.rs"))
@@ -18419,7 +18425,7 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
         )
     );
     assert!(stdout.contains(
-        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  # RIPR_GATE_MODE: empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}\n"
+        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }} # empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate\n"
     ));
     assert!(stdout.contains("continue-on-error: true"));
     assert!(stdout.contains("RIPR_UPLOAD_SARIF"));
@@ -18497,14 +18503,13 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
         "the adopter has no local CI guide; the generated header must give its public URL"
     );
     assert!(workflow.contains(
-        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  # RIPR_GATE_MODE: empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}\n"
+        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }} # empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate\n"
     ));
     assert!(!workspace.join("docs/CI.md").exists());
     assert!(workflow.contains("pull_request:"));
     assert!(workflow.contains("workflow_dispatch:"));
     // #5208: the pin/warning pair must stay consistent in both release
-    // states, on both install routes (the prebuilt `version=` and the
-    // cargo fallback). A released generator self-pins silently; an
+    // states, on the action tag and its `version` input (#5409). A released generator self-pins silently; an
     // unreleased one pins an exact released version (its own would
     // neither download nor install) and warns on stderr. Branching on the
     // observed warning keeps this test valid when the package and release
@@ -18523,7 +18528,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
             upgrade_at.is_some(),
             "note must say to upgrade ripr first: {stderr}"
         );
-        // The warning names the fallback pin; both install routes must
+        // The warning names the fallback pin; the tag and the input must
         // carry exactly it (#5244 review: positive exact pins, not just
         // the absence of the generator version).
         let pinned = stderr
@@ -18532,24 +18537,17 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
             .and_then(|rest| rest.split(", the latest published release").next())
             .ok_or_else(|| format!("warning must name the fallback pin: {stderr}"))?;
         assert!(
-            workflow.contains(&format!("          version={pinned}\n")),
-            "a warned run must pin the fallback {pinned} on the prebuilt route"
+            workflow.contains(&format!("ripr/.github/actions/ripr-check@v{pinned}\n")),
+            "a warned run must pin the fallback {pinned} on the action tag"
         );
         assert!(
-            workflow.contains(&format!(
-                "            cargo install ripr --version {pinned} --locked\n"
-            )),
-            "a warned run must pin the fallback {pinned} on the cargo route"
+            workflow.contains(&format!("          version: {pinned}\n")),
+            "a warned run must pin the fallback {pinned} on the version input"
         );
         assert!(
-            !workflow.contains(&format!("          version={generator}\n")),
+            !workflow.contains(&format!("@v{generator}\n"))
+                && !workflow.contains(&format!("          version: {generator}\n")),
             "a warned run must not self-pin the unreleased generator"
-        );
-        assert!(
-            !workflow.contains(&format!(
-                "            cargo install ripr --version {generator} --locked\n"
-            )),
-            "a warned run must not self-pin the fallback either"
         );
         assert!(
             stderr.contains("the latest published release")
@@ -18558,17 +18556,15 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
         );
     } else {
         assert!(
-            workflow.contains(&format!("          version={generator}\n")),
+            workflow.contains(&format!("ripr/.github/actions/ripr-check@v{generator}\n")),
             "an unwarned run must self-pin the released generator"
         );
         assert!(
-            workflow.contains(&format!(
-                "            cargo install ripr --version {generator} --locked\n"
-            )),
-            "an unwarned run must self-pin the fallback too"
+            workflow.contains(&format!("          version: {generator}\n")),
+            "an unwarned run must self-pin the version input too"
         );
     }
-    assert!(!workflow.contains("cargo install ripr --locked"));
+    assert!(!workflow.contains("cargo install"));
     // A newer push cancels the older run of the same PR, so two runs never
     // publish the same inline cards (#4448).
     assert!(workflow.contains(

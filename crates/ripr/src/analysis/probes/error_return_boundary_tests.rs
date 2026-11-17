@@ -225,20 +225,26 @@ fn twin_check_stays_linearithmic_on_a_generated_file() {
             let start = index * line.len();
             [
                 ProbeShapeFact {
-                    start_line: index + 1,
-                    end_line: index + 1,
-                    start_byte: start,
-                    end_byte: start + "return Err(E)".len(),
+                    start_line: crate::analysis::facts::probe_shape_position(index + 1),
+                    end_line: crate::analysis::facts::probe_shape_position(index + 1),
+                    start_byte: crate::analysis::facts::probe_shape_position(start),
+                    end_byte: crate::analysis::facts::probe_shape_position(
+                        start + "return Err(E)".len(),
+                    ),
                     kind: ProbeShapeKind::ErrorPath,
                     text: "return Err(E)".into(),
                     value_consumed: false,
                     source_lines: None,
                 },
                 ProbeShapeFact {
-                    start_line: index + 1,
-                    end_line: index + 1,
-                    start_byte: start + "return ".len(),
-                    end_byte: start + "return Err(E)".len(),
+                    start_line: crate::analysis::facts::probe_shape_position(index + 1),
+                    end_line: crate::analysis::facts::probe_shape_position(index + 1),
+                    start_byte: crate::analysis::facts::probe_shape_position(
+                        start + "return ".len(),
+                    ),
+                    end_byte: crate::analysis::facts::probe_shape_position(
+                        start + "return Err(E)".len(),
+                    ),
                     kind: ProbeShapeKind::ErrorPath,
                     text: "Err(E)".into(),
                     value_consumed: false,
@@ -258,8 +264,8 @@ fn error_shape(start: usize, end: usize) -> ProbeShapeFact {
     ProbeShapeFact {
         start_line: 1,
         end_line: 1,
-        start_byte: start,
-        end_byte: end,
+        start_byte: crate::analysis::facts::probe_shape_position(start),
+        end_byte: crate::analysis::facts::probe_shape_position(end),
         kind: ProbeShapeKind::ErrorPath,
         text: String::new().into(),
         value_consumed: false,

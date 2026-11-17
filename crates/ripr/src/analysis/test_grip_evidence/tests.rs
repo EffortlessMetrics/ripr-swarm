@@ -23935,6 +23935,25 @@ fn field_write_facts_with_tail(
         .collect())
 }
 
+/// #14089: the original name before `as` was measured one byte past a
+/// multibyte char. `क्` ends in U+094D, a virama (an identifier char that is
+/// not alphanumeric, three bytes); the original is now read whole.
+#[test]
+fn renamed_from_keeps_an_original_with_a_multibyte_mark_whole() {
+    assert_eq!(
+        renamed_from("use a::क् as Name;", "Name"),
+        vec!["क्".to_string()]
+    );
+    assert_eq!(
+        renamed_from("use a::क्Original as Name;", "Name"),
+        vec!["क्Original".to_string()]
+    );
+    assert_eq!(
+        renamed_from("use a::Original as Name;", "Name"),
+        vec!["Original".to_string()]
+    );
+}
+
 /// #14496: the owner's early return is one branch of an `if`. A test that
 /// calls the owner with arguments that take the other branch observes the
 /// other value, so it must not strongly grip this seam.

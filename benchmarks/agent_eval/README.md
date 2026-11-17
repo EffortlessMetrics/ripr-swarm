@@ -41,7 +41,7 @@ no timings, paths or dates; only `ripr_version` changes between builds.
 
 | route | what the agent runs |
 |---|---|
-| `cli-agent-loop` | `check --quiet --format agent`, then every printed `next=` command in turn (explain, then context), as the `init --agents` block instructs |
+| `cli-agent-loop` | `check --quiet --format agent`, then, for each printed `next=` whose gap row's `missing=` is `-` or a sentence rather than code, that command and the ones it prints (explain, then context), as the `init --agents` block instructs |
 | `cli-agent-find` | the same first step only |
 | `cli-human` | `check` with the default human output |
 | `cli-json-terse` | `check --format json-terse` |
@@ -54,7 +54,7 @@ copy of the scenario repository, so first-run state cannot leak between routes.
 
 ## Definitions
 
-- **bytes**: a CLI step's stdout plus stderr; for MCP, the response line.
+- **bytes**: a CLI step's stdout plus stderr, or for MCP the response line, after the scratch root is replaced by `<root>`.
 - **tokens**: an estimate, not a billing count. Each run of ASCII letters,
   digits and `_` costs ceil(len/4), other non-whitespace characters cost 1.
   For MCP only what a host shows the model counts: the tool list, each call's
@@ -77,6 +77,11 @@ copy of the scenario repository, so first-run state cannot leak between routes.
 - A cargo key check that cannot build or report a test result is an
   instrument failure: shown as `not established`, never NO. It fails every
   run mode and blocks `--write-baseline`.
+- `cli-agent-loop` opens with the same FIND command that `cli-agent-find`
+  runs, on an identical fresh workspace. When the two captures differ in
+  exit, bytes or tokens, the run measured host noise (a stray stderr note, an
+  unnormalized path), not ripr: that is an instrument failure too, and
+  `--compare` refuses a baseline that recorded one.
 - A silent control counts only when `check --format agent` exited 0, its
   header says `gaps=0` and it printed no `stop=`. The weak and reference
   checks also need exit 0. `--write-baseline` refuses `--compare`.
@@ -95,25 +100,88 @@ To add a scenario, append it there and rerun with `--write-baseline`. Good
 additions are changes agents get wrong today, noisy reports, and silent
 controls. Keep each crate dependency-free so the eval stays offline.
 
+## Agent-in-the-loop trials
+
+The routes above replay ripr's output without a model. To see whether a real
+agent writes better tests, or spends fewer tokens, with ripr than without:
+
+```bash
+cargo xtask agent-eval trial-setup <fresh-dir>   # one repo per gap scenario
+# give an agent each repo, with or without ripr; it adds tests under tests/
+cargo xtask agent-eval trial-score <fresh-dir>   # judges what it left behind
+```
+
+`trial-score` does not ask ripr. For every keyed gap it puts that one changed
+line back to its base text and runs `cargo test`. The gap counts as caught
+only when the suite passes on the changed code, fails with the line reverted,
+and `src/lib.rs` still matches the scenario's head text. A run that does
+not compile or report a test result (for example a revert that breaks the
+build) is recorded as not established and never counts as a catch; the
+command still exits 0. A run that cannot be measured at all (cargo missing, a
+timeout, a signal), a missing repository or a scoring error leaves that
+repository at zero caught, still in the denominator, and makes the command
+exit nonzero. While it scores, the scorer keeps the agent's `src/lib.rs` in
+`.trial-score-agent-lib.rs` (published whole through a staging file) and
+puts it back on every path; if a score is interrupted, the next run restores
+from that copy first. Controls: a fresh setup scores 0/6, the reference tests
+score 6/6, and the weak tests score 0/6.
+
+Limits: agents must put tests under `tests/` (a `#[cfg(test)]` module in
+`src/lib.rs` counts as a production edit). The scorer does not check
+`Cargo.toml`, `build.rs`, `.cargo/config.toml` or edits to
+`tests/existing.rs`, and a test that
+asserts the source text itself (`include_str!`) would count as a catch, so
+read the agent's tests before trusting a surprising score. Record each
+arm's tokens and tool calls next to its score. Use a fresh directory per arm
+and per run; if `trial-setup` stops partway, delete the directory and run it
+again.
+
+### First pilot (2026-11-11, one run per cell, Haiku 5.5, debug ripr with sources at main `2ab9f908`)
+
+Same task text in both arms; the ripr arm also got the `init --agents` block
+and the binary path.
+
+| arm | keyed gaps caught | tokens (5 runs) | tool calls | wall time |
+|---|---:|---:|---:|---:|
+| without ripr | 6/6 | 260,146 | 47 | 102 s |
+| with ripr | 6/6 | 296,330 | 98 | 235 s |
+
+Token totals are the subagent totals the host reported, including the fixed
+system prompt each run pays (about 50k), so the difference (about +36k, +14%)
+is the part ripr added. On these easy tasks both arms hit the ceiling: ripr
+added no caught gaps but doubled tool calls and wall time. Two ripr runs
+(`changed_constant_return`, `struct_field`) wrote the right test and then
+stopped on `verify=refused` (#14325, #14326), which is the loop failure the
+routes table measures. One run per cell supports no rate claim. It does show
+where the cost goes and which scenarios need to be harder before a quality
+difference can appear.
+
 ## Baseline (debug build)
 
 Route totals are the `routes` rows at the top of `baseline.json`. What they show:
 
-- The first agent-format step already carries every answer. The DETAIL steps
-  the loop then prescribes (explain, then context) cost 4.9 times as much and
-  add no keyed fact.
+- The first agent-format step already carries every answer. The `init --agents`
+  DETAIL step is skipped when `missing=` is code (`total == 100`), so the loop
+  follows explain and context only for rows whose `missing=` is `-` or a
+  sentence ("No strong discriminator ..."). Before that rule the loop read
+  8,731 estimated tokens over the six scenarios; with it, 2,619 on the same
+  base, for the same answers. `baseline.json` records the current figure. A
+  row with `(+N more)` or a clipped `…` value is followed too.
+- `struct_field` reads `reference_test_closes_loop: false` since #14565 stopped
+  crediting the sibling field's assertion; the intended bool-field assertion
+  alone does not yet earn credit (#14701).
 - `cli-human` shows one finding and hides the rest, so on the two-gap scenario
   the second gap stays hidden.
 - MCP costs about 35 times the agent CLI to reach the same answer. The tool
   list alone is about 4,300 estimated tokens per session.
 - `mcp-brief` (#14327) reaches every answer for 35,267 tokens, against
-  51,878 on `mcp` (both measured on main 7f40eca6). Its rows were added to
-  `baseline.json` from that run without rewriting the other rows, so the
-  CLI and `agent-brief` drift main accumulated since the baseline stays
-  visible to `--compare`. The eight `ripr_get_gap` reads drop from 12,294 to 3,083, so the
-  fixed `tools/list` cost now dominates.
-- Loop: after the reference test, two of the five gap scenarios
-  (`changed_constant_return`, `struct_field`) still end with
-  `verify=refused`, so an agent following the block cannot finish.
-- `error_variant` gets two identical gap rows for its one changed line
-  (`extra_gaps: 1`), so the header asks for two tests where one is needed.
+  51,875 on `mcp`. The eight `ripr_get_gap` reads drop from 12,294 to 3,083
+  (measured when the route landed), so the fixed `tools/list` cost now
+  dominates.
+- Loop: after the reference test, one of the five gap scenarios
+  (`struct_field`, above) still ends with `verify=refused`, so an agent
+  following the block cannot finish there. `changed_constant_return` closed
+  once #14380 (#14325) landed.
+- `error_variant` once got two identical gap rows for its one changed line;
+  #14453 folded them, so it now reads `extra_gaps: 0`. `struct_field` has one
+  extra gap row (`extra_gaps: 1`).
