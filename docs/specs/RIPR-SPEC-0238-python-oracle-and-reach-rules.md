@@ -556,7 +556,10 @@ Relations, first match wins (rank, oracle-eligible):
   `dict` token counts as a read only after `->`, after a `:` inside brackets
   outside a `case` pattern, or before a call's `(` not after `def` or
   `class`; a source that does not lex, a star import, a non-ASCII name, a
-  `"dict"` string, any f-string (its braces are not read), or a name that
+  string holding the word `dict` or a writer name, any f-string (its braces
+  are not read), a name that runs code or resolves a dotted target held in
+  a string (`patch`, `timeit`, `pdb`, `doctest`, `InteractiveConsole`,
+  `resolve_name`), or a name that
   can reach or write a namespace without spelling the bound name, such as
   `globals`, `vars`, `__dict__`, `getattr`, `setattr`, `exec`,
   `sys.modules`, frame or function globals, `gc` referents or the builtins,

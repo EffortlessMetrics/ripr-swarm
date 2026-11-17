@@ -600,6 +600,14 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nimport os\nb = getattr(os, \"__built\" \"ins__\")\nb[\"tcid\"[::-1]] = Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
         ),
         (
+            "patched module dict",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nfrom unittest.mock import patch\n\npatch(\"src.app.dict\", Price, create=True).start()\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "dict rebound by code in a string",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nimport timeit\n\ntimeit.timeit(\"import sys; sys.modules['src.app'].dict = sys.modules['src.app'].Price\", number=1)\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
             "unpacked application options",
             "from fastapi import FastAPI\n\noptions = {\"docs\" \"_url\": \"/price\"}\napp = FastAPI(\n    **options\n)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n",
         ),

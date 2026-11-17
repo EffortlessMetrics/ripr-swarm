@@ -184,15 +184,20 @@ pub(in super::super) fn workspace_reshapes_responses(source: &str) -> bool {
 /// `:` inside brackets, outside a `case` pattern), or a call (before `(`, not
 /// after `def` or `class`); any other `dict` token may bind it. A source that
 /// does not lex, a star import, a non-ASCII name (Python folds names under
-/// NFKC, so `ｄｉｃｔ` is `dict`), a `"dict"` string, any f-string (the
+/// NFKC, so `ｄｉｃｔ` is `dict`), a string holding the word `dict` or a
+/// writer name (`patch("shop.app.dict")`, code run by `timeit`), any f-string (the
 /// lexer keeps its braces whole, so code inside them is unread), and any name
 /// that can reach or write a namespace without spelling the bound name
 /// (`globals`, `vars`, `__dict__`, `getattr`, `setattr`, `exec`,
 /// `sys.modules`, frame and function globals, `gc` referents, `importlib`,
-/// and the like) all count as a rebinding. An over-read only refuses.
+/// and the like) or that runs code or resolves a dotted target held in a
+/// string (`patch`, `timeit`, `pdb`, `doctest`, `InteractiveConsole`,
+/// `resolve_name`, and the like) all count as a rebinding. An over-read only refuses.
 fn rebinds_builtin_dict(source: &str) -> bool {
     use rustpython_parser::{Mode, Tok, lexer::lex};
-    const NAMESPACE_WRITERS: [&str; 37] = [
+    // Names that reach or write a namespace without spelling the bound
+    // name, or run code or resolve a dotted target held in a string.
+    const NAMESPACE_WRITERS: [&str; 48] = [
         "builtins",
         "__builtins__",
         "globals",
@@ -230,6 +235,17 @@ fn rebinds_builtin_dict(source: &str) -> bool {
         "runpy",
         "InteractiveInterpreter",
         "runsource",
+        "patch",
+        "mock",
+        "timeit",
+        "Timer",
+        "pdb",
+        "cProfile",
+        "profile",
+        "doctest",
+        "InteractiveConsole",
+        "interact",
+        "resolve_name",
     ];
     let mut tokens = Vec::new();
     for result in lex(source, Mode::Module) {
@@ -250,8 +266,16 @@ fn rebinds_builtin_dict(source: &str) -> bool {
             Tok::Newline => in_case_pattern = false,
             Tok::Import if matches!(tokens.get(at + 1), Some(Tok::Star)) => return true,
             // The lexer keeps an f-string whole, so a binding or a call in its
-            // braces (`f"{(dict := Model)}"`) never reaches the name checks.
-            Tok::String { value, kind, .. } if kind.is_any_fstring() || value.trim() == "dict" => {
+            // braces (`f"{(dict := Model)}"`) never reaches the name checks. A
+            // string can also hold code or a dotted target that a runner or a
+            // patcher executes (`patch("shop.app.dict", ...)`), so a word
+            // `dict` or a writer name anywhere in one refuses.
+            Tok::String { value, kind, .. }
+                if kind.is_any_fstring()
+                    || value
+                        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                        .any(|word| word == "dict" || NAMESPACE_WRITERS.contains(&word)) =>
+            {
                 return true;
             }
             Tok::Name { name } => {
