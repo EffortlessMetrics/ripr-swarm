@@ -431,6 +431,22 @@ fn typed_decision(code: RepairRefusalCode, message: String) -> CommandError {
     CommandError::Decision(code.message_with_stderr_line(&message))
 }
 
+/// [`typed_decision`] for a selection refusal: the document also carries the
+/// choice commands the caller composed from the typed ids it just listed on
+/// stderr (#14980).
+fn typed_choice_decision(
+    code: RepairRefusalCode,
+    message: String,
+    choices: crate::output::refusal::RefusalChoices,
+) -> CommandError {
+    crate::cli::usage_refusal::note_typed_refusal_with_choices(
+        code,
+        message.trim_end(),
+        Some(choices),
+    );
+    CommandError::Decision(code.message_with_stderr_line(&message))
+}
+
 fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandError> {
     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
     // #12417: where no project anchors the directory the gate refuses instead
@@ -496,9 +512,10 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                         "{}",
                         crate::app::task_first::render_repair_choice(&candidates, total, &bound)
                     );
-                    return Err(typed_decision(
+                    return Err(typed_choice_decision(
                         RepairRefusalCode::SeveralEligibleSeams,
                         "no repair started; run one of the commands above".to_string(),
+                        crate::app::task_first::repair_choice_items(&candidates, total),
                     ));
                 }
                 eprint!(
@@ -833,6 +850,22 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                 &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             );
             const MAX_LISTED: usize = 8;
+            let choices = crate::output::refusal::RefusalChoices {
+                total: candidates.len(),
+                items: candidates
+                    .iter()
+                    .take(MAX_LISTED)
+                    .map(|id| {
+                        crate::output::refusal::RefusalChoice::new(
+                            format!("repair attempt {id}"),
+                            format!(
+                                "ripr continue --attempt {} --root {root}",
+                                crate::agent::loop_commands::shell_arg(id.as_str())
+                            ),
+                        )
+                    })
+                    .collect(),
+            };
             let mut rendered = format!(
                 "ripr: {} current attempts under {root}; select one explicitly:\n",
                 candidates.len()
@@ -847,9 +880,10 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
             print_retry_line(&format!(
                 "ripr continue --attempt <attempt-id> --root {root}"
             ));
-            Err(typed_decision(
+            Err(typed_choice_decision(
                 RepairRefusalCode::AmbiguousAttempts,
                 "continue selected no attempt; rerun with --attempt".to_string(),
+                choices,
             ))
         }
     }
