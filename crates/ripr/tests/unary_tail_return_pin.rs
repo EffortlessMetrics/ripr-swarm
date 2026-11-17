@@ -245,6 +245,16 @@ fn a_deferred_operand_macro_text_or_call_after_divergence_is_not_reachable_unrev
         "let Ok(_x) = Err::<i32, i32>(1) else { return; };\n        let _ = f(5);",
         "Err::<(), i32>(1)?;\n        let _ = f(5);",
         "None::<i32>?;\n        let _ = f(5);",
+        // #14968 review: an assertion message is formatted only on failure,
+        // a `let`-`else` block runs only on a mismatch, and an evaluating
+        // macro's input with `&&`, a closure, `?` or a branch may skip it.
+        "assert!(true, \"{}\", f(5));",
+        "assert_eq!(1, 1, \"{}\", f(5));",
+        "let Some(_x) = Some(1) else { let _ = f(5); return; };",
+        "assert!(g() && f(5) == 5);",
+        "assert_eq!(o.map(|_| f(5)), None);",
+        "assert_eq!(g()?, f(5));",
+        "assert!(if c { f(5) == 5 } else { true });",
     ] {
         let (class, finding) = tail_class("i32", "-a", "a", test_body)?;
         assert!(
@@ -271,6 +281,7 @@ fn a_deferred_operand_macro_text_or_call_after_divergence_is_not_reachable_unrev
             ExposureClass::ReachableUnrevealed,
         ),
         ("let _ = vec![f(5)];", ExposureClass::ReachableUnrevealed),
+        ("let _ = dbg!(f(5));", ExposureClass::ReachableUnrevealed),
         (
             "let Some(_x) = Some(1) else { return; };\n        let _ = f(5);",
             ExposureClass::ReachableUnrevealed,

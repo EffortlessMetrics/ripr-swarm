@@ -19,7 +19,8 @@
 //!   its literal value (`let Some(x) = None else { .. };`, `Ok` against
 //!   `Err(..)`, `Err` against `Ok(..)`, `None` against `Some(..)`, each
 //!   optionally with a turbofish), or a statement that starts with a literal
-//!   `Err(..)?` or `None?`.
+//!   `Err(..)?` or `None?`. A `return` at the root of that `else` block is
+//!   one execution admission reads, so it governs like a plain `return`.
 //!
 //! Unbalanced delimiters, and regions inside a macro invocation's input,
 //! read as reached. Both adapters filter their oracle facts through
@@ -358,11 +359,35 @@ fn after_refuted_let_else(masked: &str, after_let: usize, groups: &Groups) -> Op
     }
     let region_start = semicolon + 1;
     let region_end = region_end_in_block(masked, region_start, groups)?;
+    // RIPR-SPEC-0197 execution admission reads a `return` at the root of
+    // the `else` block as an earlier return and names it, so a strong
+    // assertion after it stays for that refusal, as after a plain `return`.
     Some(Region {
         start: region_start,
         end: region_end,
-        admission_refused: false,
+        admission_refused: block_has_root_return(masked, block, groups)?,
     })
+}
+
+/// Whether the block opening at `open` holds a `return` at its own depth,
+/// outside any nested group.
+fn block_has_root_return(masked: &str, open: usize, groups: &Groups) -> Option<bool> {
+    let bytes = masked.as_bytes();
+    let close = groups.close_of(open)?;
+    let mut at = open + 1;
+    while at < close {
+        match bytes[at] {
+            b'(' | b'[' | b'{' => at = groups.close_of(at)? + 1,
+            byte if is_ident_start(byte) && !is_ident_byte(bytes[at - 1]) => {
+                if word_end(bytes, at, "return").is_some() {
+                    return Some(true);
+                }
+                at = ident_end(bytes, at);
+            }
+            _ => at += 1,
+        }
+    }
+    Some(false)
 }
 
 /// At a statement start: the end of a literal `Err(..)?` or `None?` head

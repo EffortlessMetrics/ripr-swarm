@@ -1336,8 +1336,8 @@ pub(super) fn bare_owner_call_is_shadowed(
 
 /// #14538: zero-based line offsets of `test.body` inside code that may run
 /// zero times or not at all: a nested `fn` or `macro_rules!`, a closure, an
-/// `async` block, an `if` or `match`, a `for`, `while` or `loop` body, or a
-/// `#[cfg]`-gated statement (`for _ in 0..0 { .. }`, an unpolled
+/// `async` block, an `if` or `match`, a `for`, `while` or `loop` body, the
+/// `else` block of a `let`-`else`, or a `#[cfg]`-gated statement (`for _ in 0..0 { .. }`, an unpolled
 /// `async { .. }`, an uncalled `fn check() { .. }`). An assertion there does
 /// not show that its input ran, so it supplies no separating input. `None`
 /// when the body does not parse.
@@ -1365,6 +1365,9 @@ fn deferred_lines(test: &TestSummary) -> Option<std::collections::BTreeSet<usize
             || ast::IfExpr::can_cast(node.kind())
             || ast::MatchExpr::can_cast(node.kind())
             || ast::MacroRules::can_cast(node.kind())
+            // The `else` block of a `let`-`else` runs only when the pattern
+            // does not match (#14968 review).
+            || ast::LetElse::can_cast(node.kind())
             || (node != *root.syntax()
                 && node.children().any(|child| {
                     ast::Attr::cast(child).is_some_and(|attr| {
@@ -1384,9 +1387,12 @@ fn deferred_lines(test: &TestSummary) -> Option<std::collections::BTreeSet<usize
 ///
 /// - the right operand of `&&` or `||`, unless the left operand is the
 ///   literal that always evaluates it (`true &&`, `false ||`);
-/// - the input of a macro other than `vec!`, the `assert*` /
+/// - the input of a macro other than `vec!`, `dbg!`, the `assert*` /
 ///   `debug_assert*` family and the `format!` / `print!` / `write!` family
 ///   (`stringify!(f(5))` is token text);
+/// - the whole input of an assertion macro that carries a message past its
+///   evaluated operands, which is formatted only when the assertion fails
+///   (`assert!(true, "{}", f(5))`);
 /// - the whole input of one of those evaluating macros when its token text
 ///   holds anything the parser does not read inside a macro input and that
 ///   may skip a call: `&&`, `|` (`||`, a closure), `?`, a nested macro, or a
@@ -1432,7 +1438,10 @@ fn unevaluated_spans(test: &TestSummary, masked: &str) -> Option<Vec<std::ops::R
             .unwrap_or_default();
         let range = span(input.syntax().text_range());
         let text = masked.get(range.clone())?;
-        if !is_evaluating_macro(&name) || macro_input_may_skip(text) {
+        if !is_evaluating_macro(&name)
+            || macro_input_may_skip(text)
+            || has_lazy_message(&name, text)
+        {
             spans.push(range);
         }
     }
@@ -1458,7 +1467,29 @@ fn is_evaluating_macro(name: &str) -> bool {
             | "eprintln"
             | "write"
             | "writeln"
+            | "dbg"
     )
+}
+
+/// Whether an assertion macro's masked input `text` (delimiters included)
+/// holds arguments past its evaluated operands: one for `assert!` /
+/// `debug_assert!`, two for the `*_eq!` / `*_ne!` forms. The rest is a
+/// message formatted only when the assertion fails, so a call there may
+/// never run (`assert!(true, "{}", f(5))`).
+fn has_lazy_message(name: &str, text: &str) -> bool {
+    let operands = match name {
+        "assert" | "debug_assert" => 1,
+        "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
+        _ => return false,
+    };
+    let inner = text
+        .get(1..text.len().saturating_sub(1))
+        .unwrap_or_default();
+    super::split_top_level_commas(inner)
+        .iter()
+        .filter(|argument| !argument.trim().is_empty())
+        .count()
+        > operands
 }
 
 /// Whether masked macro input text holds a token that may skip or defer a

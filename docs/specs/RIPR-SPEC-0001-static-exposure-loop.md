@@ -179,15 +179,19 @@ test that names it is such a literal call; agreeing asserted calls read
 reads `unknown`. So `-a` to `a` tested by `assert_eq!(f(0), 0)` is not
 `exposed`.
 Such a literal call counts only where it runs: a call in a closure, nested
-`fn`, loop, branch, `async` block, `cfg`-gated statement, after a `return` or
+`fn`, loop, branch, `async` block, `let`-`else` `else` block, `cfg`-gated
+statement, after a `return` or
 after a statement that always diverges on a constant (a `let`-`else` whose
 one-variant pattern cannot match its literal value, a literal `Err(..)?` or
 `None?`; RIPR-SPEC-0231 rule 8) refuses the reading. So does a call in the
 right operand of `&&` or `||` (unless the left operand is the literal `true`
 or `false` that always evaluates it), and a call in the input of any macro
-other than `vec!`, the `assert*` / `debug_assert*` family and the `format!` /
-`print!` / `write!` family, because that input is token text
-(`stringify!(f(5))`). An evaluating macro's input that holds `&&`, `|`, `?`, a
+other than `vec!`, `dbg!`, the `assert*` / `debug_assert*` family and the
+`format!` / `print!` / `write!` family, because that input is token text
+(`stringify!(f(5))`). An assertion macro evaluates only its operands (one for
+`assert!` / `debug_assert!`, two for the `*_eq!` / `*_ne!` forms) and formats
+any message only when it fails, so an assertion input with a message refuses
+(`assert!(true, "{}", f(5))`). An evaluating macro's input that holds `&&`, `|`, `?`, a
 nested macro or a control-flow keyword refuses too, even when the call would
 run (`assert!(true && f(5) == 5)`), because the parser does not read inside
 macro input (#14968).

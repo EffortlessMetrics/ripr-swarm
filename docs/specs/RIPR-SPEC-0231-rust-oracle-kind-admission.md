@@ -595,9 +595,11 @@ Two pattern terms are used below.
      (`let Some(x) = None::<i32> else { return; };`), or a statement that
      starts with a literal `Err(..)?` or `None?` (each optionally with a
      turbofish). A value that can match, an or-pattern, a computed value,
-     `Ok(..)?` and `Some(..)?` stay reached. RIPR-SPEC-0197 execution
-     admission reads no exit there either, so every oracle after one is
-     dropped.
+     `Ok(..)?` and `Some(..)?` stay reached. When the `else` block holds a
+     `return` at its own depth, RIPR-SPEC-0197 execution admission reads
+     that earlier return, so a strong assertion after it stays for that
+     refusal, as after a plain `return`; after any other constant
+     divergence admission reads no exit, so every oracle is dropped.
 
    One oracle stays for the authority that already decides it: a strong
    `assert_eq!` or `assert!` in a literal-false block, an uncalled closure

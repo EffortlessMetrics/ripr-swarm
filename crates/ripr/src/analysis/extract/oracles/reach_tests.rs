@@ -168,29 +168,52 @@ fn spec_0231_rule_8_code_after_divergence_is_unreached() {
 fn spec_0231_rule_8_constant_diverging_statements_end_the_block() {
     // #14968: a `let`-`else` whose one-variant pattern cannot match its
     // literal value always runs its diverging `else`, and a literal
-    // `Err(..)?` or `None?` always returns early.
-    for head in [
-        "let Some(_x) = None else { return; };",
-        "let Some(_x) = None::<i32> else { return; };",
-        "let Ok(_x) = Err::<i32, i32>(1) else { return; };",
-        "let Err(_e) = Ok::<i32, ()>(1) else { panic!(\"ok\") };",
-        "let None = Some(1) else { return };",
-        "Err::<(), i32>(1)?;",
-        "Err(\"stop\")?;",
-        "None::<i32>?;",
+    // `Err(..)?` or `None?` always returns early. A `return` at the root of
+    // that `else` block is one RIPR-SPEC-0197 execution admission reads, so
+    // a strong assertion after it stays for that refusal; after any other
+    // constant divergence every oracle is dropped.
+    for (head, kind) in [
+        (
+            "let Some(_x) = None else { return; };",
+            Unreached::AdmissionRefused,
+        ),
+        (
+            "let Some(_x) = None::<i32> else { return; };",
+            Unreached::AdmissionRefused,
+        ),
+        (
+            "let Ok(_x) = Err::<i32, i32>(1) else { return; };",
+            Unreached::AdmissionRefused,
+        ),
+        (
+            "let Err(_e) = Ok::<i32, ()>(1) else { panic!(\"ok\") };",
+            Unreached::Unrefused,
+        ),
+        (
+            "let None = Some(1) else { return };",
+            Unreached::AdmissionRefused,
+        ),
+        (
+            "let None = Some(1) else { if c() { return; } panic!() };",
+            Unreached::Unrefused,
+        ),
+        ("Err::<(), i32>(1)?;", Unreached::Unrefused),
+        ("Err(\"stop\")?;", Unreached::Unrefused),
+        ("None::<i32>?;", Unreached::Unrefused),
     ] {
-        let bodies = [
-            format!("fn t() {{\n    {head}\n    check(300).unwrap_err();\n}}"),
-            format!("fn t() {{\n    {head}\n    assert_eq!(score(2), 4);\n}}"),
-        ];
-        let bodies: Vec<&str> = bodies.iter().map(String::as_str).collect();
-        assert_not_credited(&bodies, "300", head);
-        assert_not_credited(&bodies, "score(2)", head);
+        let reading = format!("fn t() {{\n    {head}\n    check(300).unwrap_err();\n}}");
+        assert_not_credited(&[reading.as_str()], "check(300)", head);
         assert_eq!(
-            unreached(bodies[0]),
-            vec![(3, Unreached::Unrefused)],
+            unreached(&reading),
+            vec![(3, kind)],
             "{head}: only the following statement is unreached"
         );
+        let strong = format!("fn t() {{\n    {head}\n    assert_eq!(score(2), 4);\n}}");
+        if kind == Unreached::AdmissionRefused {
+            assert_credited(&[strong.as_str()], "score(2)", head);
+        } else {
+            assert_not_credited(&[strong.as_str()], "score(2)", head);
+        }
     }
     // Controls: a value that can match, a pattern that is not one variant, a
     // computed value, an `Ok(..)?`, and an `Err` that is not `?`-propagated.
