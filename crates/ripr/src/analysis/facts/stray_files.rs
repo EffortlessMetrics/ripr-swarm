@@ -137,7 +137,7 @@ pub(super) fn never_compiled(
 /// cannot name: any `$` beside a `mod`/`include` word (macro metavariables,
 /// whatever comments, strings or whitespace sit between them), or an
 /// `include!` whose operand is not a plain string literal.
-pub(super) fn builds_module_operands(source: &str) -> bool {
+fn builds_module_operands(source: &str) -> bool {
     if source.contains('$') && (source.contains("mod") || source.contains("include")) {
         return true;
     }

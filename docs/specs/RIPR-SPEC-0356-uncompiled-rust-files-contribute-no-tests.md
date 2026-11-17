@@ -113,13 +113,20 @@ file are withheld, exactly as for an uncompiled file, when all of these hold:
    disk rather than from the run's index, because a draft or instant run
    indexes less and a build-script `include!` never enters any index (#14962
    review). The walk covers the workspace root and every cargo metadata
-   member, skipping `target` and hidden directories, and in a
-   committed-history check also reads the `HEAD` text of dirty files. The
+   member, skipping only Cargo's build directories (`target` directly under
+   the root or a member, and `CARGO_TARGET_DIR`) and `.git`, so a module
+   directory named `target` or a hidden source directory (`#[path =
+   ".gen/m.rs"]`) is read; in a committed-history check it also reads the
+   `HEAD` text of dirty files. A symlinked `.rs` file or directory can alias
+   the file under a name no text ties back to it, so it is doubt. The
    file keeps its tests when any source outside its own skipped ancestry
    spells its file name (a `#[path]`, a static `include!`, a build script that
    writes a mount) or declares a `mod` of its stem; when any source builds a
-   `mod`/`include!` operand dynamically (`include!(concat!(env!("OUT_DIR"),
-   ..))`, a macro metavariable) or spells such an operand with escapes; when
+   `mod`/`include!` operand dynamically (an `include!` whose operand is not a
+   plain string literal, such as `include!(concat!(env!("OUT_DIR"), ..))`, or
+   a macro metavariable as a `mod` name or `path` value: `mod $name`,
+   `path = $p`) or spells such an operand with escapes; an ordinary
+   `macro_rules!` (`($e:expr) => { $e * 2 }`) is no doubt; when
    the file is a `mod.rs`; when cargo metadata lists the file itself as a
    live or unmodeled target (`[[test]] path`, `build`, an example); or when
    the walk cannot finish (an unreadable file, more than 20,000 entries).
@@ -154,9 +161,13 @@ running test; no named stop reason is added on this issue.
   declares; and a same-run index extension that revives withheld tests
   matches a fresh build.
 - Mounts (#14962 review): a `#[path]` mount of the file from another member,
-  from a `tests/` target, and from a build-script-generated `include!` keep
-  `exposed` in every `--mode`, and the plain skip reads the same in every
-  mode.
+  from a `tests/` target, from a build-script-generated `include!`, from a
+  module directory named `target` and through a symlinked alias keep
+  `exposed` in every `--mode`; a mount from a hidden source directory reads in
+  every mode what the same tree reads with the tests left on, with the test
+  still related (that layout's assertion binding stays `static_unknown`
+  either way); the plain skip reads the same in every mode, also beside an
+  ordinary `macro_rules!`.
 
 ## Known Limits
 
@@ -176,7 +187,11 @@ running test; no named stop reason is added on this issue.
   the credit (more doubt, never less). A file whose skipped ancestry the run
   did not index keeps its tests (`--mode instant` can then credit what
   `ready` withholds, the over-credit direction the base already had).
-  `[lib] harness = false` is not modelled.
+  `[lib] harness = false` is not modelled. Further over-credit limits, all
+  in the doubt direction: a same-stem `mod` anywhere keeps the file (the stem
+  is not tied to a directory), a mention inside a comment counts, a file
+  named `tests.rs` is matched by name like any other, and a tree with more
+  than 20,000 entries fails open to credit.
 
 ## Non-Goals
 
@@ -205,6 +220,8 @@ running test; no named stop reason is added on this issue.
 - `crates/ripr/tests/lib_test_false_credit.rs` (#14962).
 - `crates/ripr/src/analysis/workspace/cargo_targets.rs`:
   `crate_root_unit_test_skip_follows_metadata_test_flags` (#14962).
+- `crates/ripr/src/analysis/facts/role_composition.rs`:
+  `mount_operand_doubt_needs_a_dynamic_mount_operand` (#14962 review).
 - `crates/ripr/src/analysis/seam_inventory.rs`:
   `reuse_reviving_cargo_test_skipped_tests_matches_fresh` (#14962).
 

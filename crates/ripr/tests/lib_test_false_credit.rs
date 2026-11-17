@@ -413,6 +413,10 @@ fn a_build_script_generated_mount_keeps_credit() -> Result<(), String> {
 fn a_skipped_library_is_withheld_in_every_mode() -> Result<(), String> {
     // The skip itself does not depend on the mode either.
     let fixture = TempCrate::create(LIB_TEST_FALSE, &[("src/lib.rs", &lib_source(UNIT_TESTS))])?;
+    assert_withheld_in_every_mode(&fixture)
+}
+
+fn assert_withheld_in_every_mode(fixture: &TempCrate) -> Result<(), String> {
     for mode in MODES {
         let finding = fixture.finding_in(mode.clone())?;
         assert!(
@@ -421,4 +425,96 @@ fn a_skipped_library_is_withheld_in_every_mode() -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+/// Member `a` skips its unit tests and member `b` mounts `a/src/shared.rs`
+/// through `extra`, so `cargo test -p b --lib` runs `t` (#14962 review).
+fn mounted_from_b(extra: &[(&str, &str)]) -> Result<TempCrate, String> {
+    mounted_from_b_with(MEMBER_A, extra)
+}
+
+fn mounted_from_b_with(member_a: &str, extra: &[(&str, &str)]) -> Result<TempCrate, String> {
+    let shared = lib_source(UNIT_TESTS);
+    let mut files: Vec<(&str, &str)> = vec![
+        ("a/Cargo.toml", member_a),
+        ("a/src/lib.rs", "pub mod shared;\n"),
+        ("a/src/shared.rs", &shared),
+        ("b/Cargo.toml", MEMBER_B),
+    ];
+    files.extend_from_slice(extra);
+    TempCrate::create_in(WORKSPACE, &files, "a/src/shared.rs", 1)
+}
+
+#[test]
+fn a_mount_inside_a_source_directory_named_target_keeps_credit_in_every_mode() -> Result<(), String>
+{
+    // #14962 review u1: `b/src/target` is a module, not Cargo's build
+    // directory, so the scan must read it.
+    let fixture = mounted_from_b(&[
+        ("b/src/lib.rs", "pub mod target;\n"),
+        (
+            "b/src/target/mod.rs",
+            "#[path = \"../../../a/src/shared.rs\"]\npub mod shared;\n",
+        ),
+    ])?;
+    assert_exposed_in_every_mode(&fixture, "a mount under `src/target`")
+}
+
+#[test]
+fn a_mount_inside_a_hidden_source_directory_keeps_its_tests_in_every_mode() -> Result<(), String> {
+    // #14962 review u2: `#[path = ".gen/m.rs"]` mounts a file in a dot
+    // directory, which mounts the skipped library's file in turn.
+    // This layout reads `static_unknown` with `t` related even with `a`'s
+    // tests left on (the assertion binding through the hidden mount is
+    // unresolved), so each mode must read exactly what that control reads:
+    // the skip may not move the class, and `t` stays a related test.
+    let b_files = [
+        ("b/src/lib.rs", "#[path = \".gen/m.rs\"]\npub mod m;\n"),
+        (
+            "b/src/.gen/m.rs",
+            "#[path = \"../../../a/src/shared.rs\"]\npub mod shared;\n",
+        ),
+    ];
+    let fixture = mounted_from_b(&b_files)?;
+    let control = mounted_from_b_with(MEMBER_B.replace("\"b\"", "\"a\"").as_str(), &b_files)?;
+    for mode in MODES {
+        let skipped = fixture.finding_in(mode.clone())?;
+        let tested = control.finding_in(mode.clone())?;
+        assert_eq!(
+            skipped.class, tested.class,
+            "a mount under `src/.gen` in {mode:?}: {skipped:?}"
+        );
+    }
+    let ready = fixture.finding()?;
+    assert!(
+        related_names(&ready).contains(&"t".to_string()),
+        "the mounted `t` stays a related test: {ready:?}"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_alias_of_a_skipped_library_file_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review u3: `b/src/alias.rs` is a symlink to `a/src/shared.rs`,
+    // so `cargo test -p b` compiles `t` under a name no text mentions.
+    let fixture = mounted_from_b(&[("b/src/lib.rs", "pub mod alias;\n")])?;
+    let alias = fixture.root.join("b/src/alias.rs");
+    std::os::unix::fs::symlink("../../a/src/shared.rs", &alias)
+        .map_err(|error| format!("symlink alias.rs failed: {error}"))?;
+    let text = std::fs::read_to_string(&alias)
+        .map_err(|error| format!("premise: alias.rs resolves: {error}"))?;
+    assert!(text.contains("fn t()"), "premise: alias reads shared.rs");
+    assert_exposed_in_every_mode(&fixture, "a symlinked alias")
+}
+
+#[test]
+fn an_ordinary_macro_does_not_restore_skipped_unit_test_credit() -> Result<(), String> {
+    // #14962 review a1c: a `macro_rules!` whose metavariables build no `mod`
+    // name, `#[path]` value or `include!` operand is no mount doubt.
+    let lib = format!(
+        "{OWNER}\nmacro_rules! twice {{\n    ($e:expr) => {{\n        $e * 2\n    }};\n}}\n{UNIT_TESTS}"
+    );
+    let fixture = TempCrate::create(LIB_TEST_FALSE, &[("src/lib.rs", &lib)])?;
+    assert_withheld_in_every_mode(&fixture)
 }

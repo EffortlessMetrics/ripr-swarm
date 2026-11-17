@@ -315,6 +315,22 @@ fn files_in_skipped_unit_test_targets(
     skipped
 }
 
+/// True when `source` may assemble a module mount the text cannot name: an
+/// `include!` whose operand is not a plain string literal (a generated
+/// `include!(concat!(env!("OUT_DIR"), ..))`), or a macro that emits a `mod`
+/// name, a `#[path]` value or an `include!` operand from a metavariable
+/// (`mod $name`, `path = $p`). Narrower than the haystack rule's any-`$`
+/// check, so an ordinary `macro_rules!` such as `($e:expr) => { $e * 2 }`
+/// is no doubt (#14962 review). Whitespace is ignored.
+fn may_build_mount_operands(source: &str) -> bool {
+    let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
+    compact
+        .match_indices("include!(")
+        .any(|(at, matched)| !compact[at + matched.len()..].starts_with('"'))
+        || compact.contains("mod$")
+        || compact.contains("path=$")
+}
+
 /// Upper bound on the files the mount scan reads; a larger tree is doubt.
 const MOUNT_SCAN_FILE_LIMIT: usize = 20_000;
 
@@ -349,6 +365,21 @@ impl WorkspaceMountScan {
                 })
                 .map(Path::to_path_buf)
         };
+        // Only Cargo's build directories are skipped: `target` directly under
+        // the workspace root or a member root, and `CARGO_TARGET_DIR`. A
+        // `target` or hidden directory anywhere else may hold a mounted
+        // module (`pub mod target;`, `#[path = ".gen/m.rs"]`), so it is read
+        // (#14962 review). `.git` holds no sources.
+        let mut build_dirs: BTreeSet<PathBuf> = BTreeSet::new();
+        build_dirs.insert(absolute_root.join("target"));
+        for dir in package_dirs {
+            build_dirs.insert(dir.join("target"));
+        }
+        if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR")
+            && let Ok(target_dir) = std::path::absolute(PathBuf::from(target_dir))
+        {
+            build_dirs.insert(target_dir);
+        }
         let mut files: BTreeSet<PathBuf> = BTreeSet::new();
         let mut pending: Vec<PathBuf> = vec![absolute_root.clone()];
         pending.extend(package_dirs.iter().cloned());
@@ -364,8 +395,16 @@ impl WorkspaceMountScan {
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
                 let kind = entry.file_type().ok()?;
-                if kind.is_dir() {
-                    if name != "target" && !name.starts_with('.') {
+                if kind.is_symlink() {
+                    // A symlinked source or directory can alias the file
+                    // under another name (`src/alias.rs -> ../../a/src/
+                    // shared.rs`) that no text scan ties back to it: doubt.
+                    let target_is_dir = std::fs::metadata(&path).is_ok_and(|meta| meta.is_dir());
+                    if name.ends_with(".rs") || target_is_dir {
+                        return None;
+                    }
+                } else if kind.is_dir() {
+                    if name != ".git" && !build_dirs.contains(&path) {
                         pending.push(path);
                     }
                 } else if name.ends_with(".rs") || name == "Cargo.toml" {
@@ -397,7 +436,7 @@ impl WorkspaceMountScan {
         let mut lowered = Vec::with_capacity(sources.len());
         for (path, text, manifest) in sources {
             if stray_files::spells_a_path_with_escapes(&text)
-                || (!manifest && stray_files::builds_module_operands(&text))
+                || (!manifest && may_build_mount_operands(&text))
             {
                 return None;
             }
@@ -1522,6 +1561,27 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn mount_operand_doubt_needs_a_dynamic_mount_operand() {
+        // #14962 review a1c: only a metavariable or non-literal operand in a
+        // mount position is doubt; an expression metavariable is not.
+        for doubt in [
+            "include!(concat!(env!(\"OUT_DIR\"), \"/m.rs\"));",
+            "include! ( x );",
+            "macro_rules! m { ($n:ident) => { mod $n; }; }",
+            "macro_rules! m { ($p:literal) => { #[path = $p] mod x; }; }",
+        ] {
+            assert!(may_build_mount_operands(doubt), "{doubt}");
+        }
+        for plain in [
+            "macro_rules! twice { ($e:expr) => { $e * 2 }; }",
+            "include!(\"gen.rs\");",
+            "mod tests;\nfn f() -> u32 { 1 }",
+        ] {
+            assert!(!may_build_mount_operands(plain), "{plain}");
+        }
+    }
 
     fn temp_dir(name: &str) -> Result<PathBuf, String> {
         let stamp = SystemTime::now()
