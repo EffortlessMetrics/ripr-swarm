@@ -4178,7 +4178,7 @@ fn adaptor_element_runs(
     // No direct call: bind the parameter up the resolved helper chain, each
     // hop passing exactly its caller's own, never rebound, parameter.
     let chain = helper_chain?;
-    if chain.hops.is_empty() || chain.hops.iter().any(|hop| hop.through_macro) {
+    if chain.hops.is_empty() || chain.hops.iter().any(|hop| hop.reach_only()) {
         return None;
     }
     let mut position = tail.position;
@@ -7262,7 +7262,7 @@ pub(in crate::analysis) fn computed_input_parameters(
     };
     // #6614: a macro-argument hop binds no argument, so no parameter
     // value crosses it.
-    if chain.hops.iter().any(|hop| hop.through_macro) {
+    if chain.hops.iter().any(|hop| hop.reach_only()) {
         return Vec::new();
     }
     let Some(entry) = chain.hops.last() else {
@@ -7338,7 +7338,7 @@ fn helper_transferred_rows(
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Vec<Vec<ParameterValue>> {
     // #6614: a macro-argument hop binds no argument rows.
-    if chain.hops.iter().any(|hop| hop.through_macro) {
+    if chain.hops.iter().any(|hop| hop.reach_only()) {
         return Vec::new();
     }
     let rows = chain_entry_rows(chain, related_tests, index);
@@ -7517,7 +7517,7 @@ pub(in crate::analysis) fn chain_row_transfer_stop(
     chain: &super::helper_transfer::HelperChain,
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<String> {
-    if chain.hops.iter().any(|hop| hop.through_macro) {
+    if chain.hops.iter().any(|hop| hop.reach_only()) {
         return None;
     }
     let mut rows = chain_entry_rows(chain, related_tests, index);
@@ -15170,6 +15170,7 @@ assert_eq!(input.amount, 100);"#
                     arguments: vec![owner_argument.to_string()],
                     receiver: None,
                     through_macro: false,
+                    multi_site: false,
                     module_qualified: false,
                     crate_qualifier: None,
                     transparent_macros_rebound: false,
@@ -15181,6 +15182,7 @@ assert_eq!(input.amount, 100);"#
                     arguments: vec!["x".to_string()],
                     receiver: None,
                     through_macro: false,
+                    multi_site: false,
                     module_qualified: false,
                     crate_qualifier: None,
                     transparent_macros_rebound: false,
@@ -15258,6 +15260,7 @@ assert_eq!(input.amount, 100);"#
                 .collect(),
             receiver: None,
             through_macro: false,
+            multi_site: false,
             module_qualified: false,
             crate_qualifier: None,
             transparent_macros_rebound: false,
