@@ -2260,6 +2260,16 @@ mod tests {{
         ),
         (
             with_capacity,
+            "    use super::*;\n    macro_rules! mk { () => { struct Bucket; impl Bucket { fn new(_: u8) -> u8 { 0 } } } }\n    #[test]\n    fn t() { mk!(); let _b = Bucket::new(5); }\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    use super::*;\n    extern crate Bucket as other;\n    #[test]\n    fn drains() { let _b = Bucket::new(5); }\n",
+            Some("subject = Bucket::new(5), as in the existing test `drains`"),
+        ),
+        (
+            with_capacity,
             "    use super::*;\n    extern crate Bucket;\n    #[test]\n    fn t() { let _b = Bucket::new(5); }\n",
             None,
         ),
