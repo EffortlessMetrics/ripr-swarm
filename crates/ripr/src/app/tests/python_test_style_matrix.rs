@@ -53,6 +53,15 @@ const WARN_EDIT: Edit = Edit {
     new: "    warnings.warn(\"legacy is deprecated\", UserWarning)",
 };
 
+const PRICE_APP: &str = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+const PRICE_EDIT: Edit = Edit {
+    owner: "src/app.py",
+    old: "    return {\"total\": 200 - 10, \"count\": 3}",
+    new: "    return {\"total\": 200 - 5, \"count\": 3}",
+};
+const CLIENT_IMPORTS: &str =
+    "from fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\n";
+
 const CONFTEST_CART: &str = "import pytest\n\nfrom src.cart import Cart\n\n\n@pytest.fixture\ndef cart():\n    return Cart(200)\n";
 
 #[derive(Clone, Copy)]
@@ -242,6 +251,22 @@ const STYLES: &[Style] = &[
         strong_before: "import pytest\n\nfrom src.checked import checked\n\n\ndef test_negative():\n    with pytest.raises(ValueError):\n        checked(-1)\n",
         strong_after: "import pytest\n\nfrom src.checked import checked\n\n\ndef test_negative():\n    with pytest.raises(TypeError):\n        checked(-1)\n",
     },
+    Style {
+        name: "FastAPI TestClient response JSON",
+        sources: &[("src/app.py", PRICE_APP)],
+        edit: PRICE_EDIT,
+        weak: "from fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\ndef test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.status_code == 200\n",
+        strong_before: "from fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\ndef test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 190\n",
+        strong_after: "from fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\ndef test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 195\n",
+    },
+    Style {
+        name: "unittest assertEqual on a TestClient response",
+        sources: &[("src/app.py", PRICE_APP)],
+        edit: PRICE_EDIT,
+        weak: "import unittest\n\nfrom fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\nclass PriceTests(unittest.TestCase):\n    def test_price(self):\n        client = TestClient(app)\n        response = client.get(\"/price\")\n        self.assertEqual(response.status_code, 200)\n",
+        strong_before: "import unittest\n\nfrom fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\nclass PriceTests(unittest.TestCase):\n    def test_price(self):\n        client = TestClient(app)\n        response = client.get(\"/price\")\n        self.assertEqual(response.json()[\"total\"], 190)\n",
+        strong_after: "import unittest\n\nfrom fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\nclass PriceTests(unittest.TestCase):\n    def test_price(self):\n        client = TestClient(app)\n        response = client.get(\"/price\")\n        self.assertEqual(response.json()[\"total\"], 195)\n",
+    },
 ];
 
 struct WeakOnly {
@@ -394,6 +419,844 @@ fn a_collected_doctest_the_evaluator_cannot_run_abstains() -> Result<(), String>
     )?;
     assert_eq!(finding.class, ExposureClass::StaticUnknown, "{finding:?}");
     assert!(!finding.related_tests.is_empty(), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> Result<(), String> {
+    // Each test calls the edited handler but does not pin the changed
+    // `total` value of the owner's own route through one response, so none
+    // may read `exposed` (#13869).
+    let tests = [
+        (
+            "another key",
+            "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"count\"] == 3\n",
+        ),
+        (
+            "an arithmetic side",
+            "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    other = {\"x\": 0}\n    assert response.json()[\"total\"] + other[\"x\"] == 190\n",
+        ),
+        (
+            "a rebound response",
+            "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    response = client.get(\"/other\")\n    assert response.json()[\"total\"] == 190\n",
+        ),
+        (
+            "another route",
+            "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/other\")\n    assert response.json()[\"total\"] == 190\n",
+        ),
+        (
+            "a method the route does not accept",
+            "def test_price():\n    client = TestClient(app)\n    response = client.post(\"/price\")\n    assert response.json()[\"total\"] == 190\n",
+        ),
+        (
+            "an inequality",
+            "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] != 0\n",
+        ),
+        (
+            "replaced response content",
+            "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    response._content = b'{\"total\": 190}'\n    assert response.json()[\"total\"] == 190\n",
+        ),
+        (
+            "a compact loop rebinding",
+            "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    for response in(client.get(\"/other\"),):\n        pass\n    assert response.json()[\"total\"] == 190\n",
+        ),
+        (
+            "an unconditional disjunction",
+            "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 190 or True\n",
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, body) in tests {
+        let test = format!("{CLIENT_IMPORTS}{body}");
+        let finding = check_style(name, &[("src/app.py", PRICE_APP)], PRICE_EDIT, &test)?;
+        if finding.class == ExposureClass::Exposed {
+            failures.push(format!("{name}: read exposed"));
+        }
+    }
+    // A docstring that spells the binding is not the binding.
+    let docstring = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    \"\"\"\n    response = client.get(\"/price\")\n    \"\"\"\n    client = TestClient(app)\n    response = client.get(\"/other\")\n    assert response.json()[\"total\"] == 190\n"
+    );
+    let finding = check_style(
+        "docstring binding",
+        &[("src/app.py", PRICE_APP)],
+        PRICE_EDIT,
+        &docstring,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        failures.push("docstring binding: read exposed".to_string());
+    }
+    // A response model can drop or reshape the returned dict, and another
+    // `return` may be the one the request takes, so the body is not known.
+    let strong = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 190\n"
+    );
+    let nested = Edit {
+        owner: "src/app.py",
+        old: "        return {\"total\": 200 - 10, \"count\": 3}",
+        new: "        return {\"total\": 200 - 5, \"count\": 3}",
+    };
+    for (name, app, edit) in [
+        (
+            "response model",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\n@app.get(\"/price\", response_model=Price)\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+            PRICE_EDIT,
+        ),
+        (
+            "two returns",
+            "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price(vip: bool = False):\n    if vip:\n        return {\"total\": 200 - 10, \"count\": 3}\n    return {\"total\": 190, \"count\": 3}\n",
+            nested,
+        ),
+    ] {
+        let finding = check_style(name, &[("src/app.py", app)], edit, &strong)?;
+        if finding.class == ExposureClass::Exposed {
+            failures.push(format!("{name}: read exposed"));
+        }
+    }
+    // A whole-body comparison can match a body the changed `return` never
+    // produced (here a validation error for a missing parameter).
+    let error_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price(qty: int):\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let whole = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json() == {{\"detail\": \"missing\"}}\n"
+    );
+    let finding = check_style(
+        "whole error body",
+        &[("src/app.py", error_app)],
+        PRICE_EDIT,
+        &whole,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        failures.push("whole error body: read exposed".to_string());
+    }
+    // A return annotation is an implicit response model, and a decorator
+    // under the route may rewrite what the handler returns.
+    for (name, app) in [
+        (
+            "return annotation",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\n@app.get(\"/price\")\ndef price() -> Price:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "bare dict annotation",
+            "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "parenthesized route alias",
+            "from fastapi import FastAPI\n\napp = FastAPI()\n\n\ndef cached():\n    return {\"total\": 190, \"count\": 3}\n\n\nregister = (\n    app.get(\"/price\")\n)\nregister(cached)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "assembled schema option",
+            "from fastapi import FastAPI\n\napp = FastAPI(**{\"openapi\" \"_url\": \"/price\"})\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "commented schema option",
+            "from fastapi import FastAPI\n\napp = FastAPI(  # options\n    **{\"openapi\" \"_url\": \"/price\"}\n)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "unpacked application options",
+            "from fastapi import FastAPI\n\noptions = {\"docs\" \"_url\": \"/price\"}\napp = FastAPI(\n    **options\n)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "wrapping decorator",
+            "from fastapi import FastAPI\n\nfrom src.wrap import redact\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\n@redact\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+    ] {
+        let finding = check_style(name, &[("src/app.py", app)], PRICE_EDIT, &strong)?;
+        if finding.class == ExposureClass::Exposed {
+            failures.push(format!("{name}: read exposed"));
+        }
+    }
+    // FastAPI installs its docs route (`/docs`) before any user route, so a
+    // user route there never answers; and Python keeps the last of a duplicate
+    // key, so removing the first duplicate leaves the body unchanged.
+    let schema_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/docs\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let schema_test = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/docs\")\n    assert response.json()[\"total\"] == 195\n"
+    );
+    let finding = check_style(
+        "framework schema path",
+        &[("src/app.py", schema_app)],
+        PRICE_EDIT,
+        &schema_test,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        failures.push("framework schema path: read exposed".to_string());
+    }
+    let duplicate_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 0, \"total\": 190, \"count\": 3}\n";
+    let duplicate_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": 0, \"total\": 190, \"count\": 3}",
+        new: "    return {\"total\": 190, \"count\": 3}",
+    };
+    let finding = check_style(
+        "duplicate old key removed",
+        &[("src/app.py", duplicate_app)],
+        duplicate_edit,
+        &strong,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        failures.push("duplicate old key removed: read exposed".to_string());
+    }
+    // A handler that raises can answer with an error body instead of the
+    // returned dict, and `detail` is the key of FastAPI's error bodies, so a
+    // keyed read of either may observe a response the changed `return` never
+    // produced.
+    let raising = "from fastapi import FastAPI, HTTPException\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price(vip: bool = True):\n    if not vip:\n        raise HTTPException(404, detail=\"nope\")\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let finding = check_style(
+        "raising handler",
+        &[("src/app.py", raising)],
+        PRICE_EDIT,
+        &strong,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        failures.push("raising handler: read exposed".to_string());
+    }
+    let detail_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price(qty: int):\n    return {\"detail\": 200 - 10, \"count\": 3}\n";
+    let detail_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"detail\": 200 - 10, \"count\": 3}",
+        new: "    return {\"detail\": 200 - 5, \"count\": 3}",
+    };
+    let detail_read = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"detail\"] == 190\n"
+    );
+    let finding = check_style(
+        "detail key",
+        &[("src/app.py", detail_app)],
+        detail_edit,
+        &detail_read,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        failures.push("detail key: read exposed".to_string());
+    }
+    // Reads that do not pin the changed entry of the body the request gets:
+    // an unchanged sibling field, a changed key only on the expected side, an
+    // entry a later `**` unpack or repeated key overrides, a response a
+    // `match` capture or walrus rebinds, and a request another route of the
+    // workspace also accepts (dispatch order is not read).
+    let read = |assertion: &str| {
+        format!(
+            "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    {assertion}\n"
+        )
+    };
+    let sibling_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"meta\": {\"count\": 3}}\n";
+    let sibling_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": 200 - 10, \"meta\": {\"count\": 3}}",
+        new: "    return {\"total\": 200 - 5, \"meta\": {\"count\": 3}}",
+    };
+    let unpack_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, **{\"total\": 190}}\n";
+    let unpack_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": 200 - 10, **{\"total\": 190}}",
+        new: "    return {\"total\": 200 - 5, **{\"total\": 190}}",
+    };
+    let repeated_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"total\": 190}\n";
+    let repeated_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": 200 - 10, \"total\": 190}",
+        new: "    return {\"total\": 200 - 5, \"total\": 190}",
+    };
+    let shadow_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef cached_price():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let overlap_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/items/latest\")\ndef latest():\n    return {\"total\": 190}\n\n\n@app.get(\"/items/{item_id}\")\ndef item(item_id: str):\n    return {\"total\": 200 - 10}\n";
+    let overlap_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": 200 - 10}",
+        new: "    return {\"total\": 200 - 5}",
+    };
+    let overlap_test = format!(
+        "{CLIENT_IMPORTS}def test_latest():\n    client = TestClient(app)\n    response = client.get(\"/items/latest\")\n    assert response.json()[\"total\"] == 190\n"
+    );
+    let match_test = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    match client.get(\"/other\"):\n        case response:\n            assert response.json()[\"total\"] == 190\n"
+    );
+    let walrus_test = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    if (response := client.get(\"/other\")):\n        assert response.json()[\"total\"] == 190\n"
+    );
+    let handler_app = "from fastapi import FastAPI, Request\nfrom fastapi.exceptions import RequestValidationError\nfrom fastapi.responses import JSONResponse\n\napp = FastAPI()\n\n\n@app.exception_handler(RequestValidationError)\nasync def invalid(request: Request, exc):\n    return JSONResponse({\"total\": 190}, status_code=422)\n\n\n@app.get(\"/price\")\ndef price(qty: int):\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let middleware_app = "from fastapi import FastAPI\nfrom fastapi.responses import JSONResponse\n\napp = FastAPI()\n\n\n@app.middleware(\"http\")\nasync def gate(request, call_next):\n    return JSONResponse({\"total\": 190})\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let imperative_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\ndef cached():\n    return {\"total\": 190, \"count\": 3}\n\n\napp.add_api_route(\"/price\", cached)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let tuple_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": (1, 2), \"count\": 3}\n";
+    let tuple_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": (1, 2), \"count\": 3}",
+        new: "    return {\"total\": [1, 2], \"count\": 3}",
+    };
+    let float_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 5, \"count\": 3}\n";
+    let float_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": 5, \"count\": 3}",
+        new: "    return {\"total\": 5.0, \"count\": 3}",
+    };
+    let catch_all_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/{rest:path}\")\ndef fallback(rest: str):\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let dynamic_app = "from fastapi import FastAPI\n\napp = FastAPI()\nPRICE = \"/price\"\n\n\n@app.get(PRICE)\ndef cached():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let mixed_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": (1, 2), \"count\": 3}\n";
+    let mixed_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": (1, 2), \"count\": 3}",
+        new: "    return {\"total\": [1, 2], \"count\": 4}",
+    };
+    let other_receiver_app = "from fastapi import APIRouter, FastAPI\n\napp = FastAPI()\nshop = APIRouter()\n\n\n@shop.get(\"/price\")\ndef cached():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let direct_call_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\napp.get(\"/price\")(legacy)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let alias_app = "from fastapi import FastAPI\n\napp = FastAPI()\nlegacy_route = app.get(\"/price\")\n\n\n@legacy_route\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let websocket_app = "from fastapi import FastAPI\n\napp = FastAPI()\napplication = app\n\n\n@app.websocket(\"/ws\")\nasync def ws(websocket):\n    await websocket.accept()\n\n\n@application.get(\"/price\")\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let alias_call_app = "from fastapi import FastAPI\n\napp = FastAPI()\nlegacy_route = app.get(\"/price\")\n\n\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\nlegacy_route(legacy)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let split_call_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\napp.get(\n    \"/price\",\n)(legacy)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let partial_route_app = "from functools import partial\n\nfrom fastapi import FastAPI\n\napp = FastAPI()\nprice_route = partial(app.get, \"/price\")\n\n\n@price_route()\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let route_object_app = "from fastapi import FastAPI\nfrom fastapi.routing import APIRoute\n\napp = FastAPI()\n\n\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\napp.router.routes += [APIRoute(\"/price\", legacy, methods=[\"GET\"])]\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let patched_json_app = "import pytest\nfrom fastapi import FastAPI\nfrom starlette.responses import Response\n\napp = FastAPI()\n\n\n@pytest.fixture(autouse=True)\ndef fake_json(monkeypatch):\n    monkeypatch.setattr(Response, \"json\", lambda self: {\"total\": 190})\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let commented_call_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\napp.get(\n    \"/price\",  # don't cache\n)(legacy)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let getattr_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\ndef legacy():\n    return {\"total\": 190, \"count\": 3}\n\n\ngetattr(app, \"get\")(\"/price\")(legacy)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let class_json_app = "import httpx\nfrom fastapi import FastAPI\n\napp = FastAPI()\nhttpx.Response.json = lambda self: {\"total\": 190}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let dotted_patch_app = "import pytest\nfrom fastapi import FastAPI\n\napp = FastAPI()\n\n\n@pytest.fixture(autouse=True)\ndef fake_json(monkeypatch):\n    monkeypatch.setattr(\"httpx.Response.json\", lambda self: {\"total\": 190})\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let name_app = "from fastapi import FastAPI\n\napp = FastAPI()\n_10 = 10\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": _10, \"count\": 3}\n";
+    let name_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": _10, \"count\": 3}",
+        new: "    return {\"total\": 10, \"count\": 3}",
+    };
+    let chained_alias_app = "from fastapi import FastAPI\n\napp = FastAPI()\nlegacy = app.get(\"/price\")\nreg = legacy\n\n\n@reg\ndef cached():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let attribute_alias_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\nclass Routes:\n    pass\n\n\nroutes_holder = Routes()\nroutes_holder.legacy = app.get(\"/price\")\n\n\n@routes_holder.legacy\ndef cached():\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let flag_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 10, \"status\": \"ok\"}\n";
+    let list_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": [5], \"count\": 3}\n";
+    let list_edit = |new: &'static str| Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": [5], \"count\": 3}",
+        new,
+    };
+    let flag_edit = |new: &'static str| Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 10, \"status\": \"ok\"}",
+        new,
+    };
+    let prefix_app = "from fastapi import APIRouter, FastAPI\n\napp = FastAPI()\nrouter = APIRouter()\n\n\n@router.get(\"/{item}\")\ndef cached(item: str):\n    return {\"total\": 190, \"count\": 3}\n\n\napp.include_router(router, prefix=\"/items\")\n\n\n@app.get(\"/items/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let prefix_test = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/items/price\")\n    assert response.json()[\"total\"] == 190\n"
+    );
+    let partial_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/items/{name}.json\")\ndef named(name: str):\n    return {\"total\": 190, \"count\": 3}\n\n\n@app.get(\"/items/latest.json\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let partial_test = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/items/latest.json\")\n    assert response.json()[\"total\"] == 190\n"
+    );
+    let two_responses = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    first = client.get(\"/price\")\n    second = client.get(\"/price\")\n    assert first.json()[\"total\"] == second.json()[\"total\"]\n"
+    );
+    let cases: Vec<(&str, &str, Edit, String)> = vec![
+        (
+            "two responses compared",
+            PRICE_APP,
+            PRICE_EDIT,
+            two_responses,
+        ),
+        (
+            "inline request on the expected side",
+            PRICE_APP,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == client.get(\"/price\").json()[\"total\"]"),
+        ),
+        (
+            "the same read in other quotes",
+            PRICE_APP,
+            PRICE_EDIT,
+            read("assert response.json()['total'] == response.json()[\"total\"]"),
+        ),
+        (
+            "exception handler",
+            handler_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "middleware",
+            middleware_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "imperative route",
+            imperative_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "tuple to list",
+            tuple_app,
+            tuple_edit,
+            read("assert response.json()[\"total\"] == [1, 2]"),
+        ),
+        (
+            "int to float",
+            float_app,
+            float_edit,
+            read("assert response.json()[\"total\"] == 5"),
+        ),
+        (
+            "mixed tuple and value change",
+            mixed_app,
+            mixed_edit,
+            read("assert response.json()[\"total\"] == [1, 2]"),
+        ),
+        (
+            "router on another receiver",
+            other_receiver_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        ("router prefix", prefix_app, PRICE_EDIT, prefix_test),
+        (
+            "partial-segment parameter",
+            partial_app,
+            PRICE_EDIT,
+            partial_test,
+        ),
+        (
+            "expected side bound to a request",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "baseline = client.get(\"/price\").json()[\"total\"]\n    assert response.json()[\"total\"] == baseline",
+            ),
+        ),
+        (
+            "replaced json method",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "response.json = lambda: {\"total\": 190}\n    assert response.json()[\"total\"] == 190",
+            ),
+        ),
+        (
+            "replaced json method with spaced assignment",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "response.json  = lambda: {\"total\": 190}\n    assert response.json()[\"total\"] == 190",
+            ),
+        ),
+        (
+            "json method replaced in a tuple assignment",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "response.json, other = (lambda: {\"total\": 190}), None\n    assert response.json()[\"total\"] == 190",
+            ),
+        ),
+        (
+            "expected side named like a literal",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "TrueFalse = response.json()[\"total\"]\n    assert response.json()[\"total\"] == TrueFalse",
+            ),
+        ),
+        (
+            "json method replaced through setattr",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "setattr(response, \"json\", lambda: {\"total\": 190})\n    assert response.json()[\"total\"] == 190",
+            ),
+        ),
+        (
+            "catch-all route",
+            catch_all_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "dynamic route path",
+            dynamic_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "unchanged sibling",
+            sibling_app,
+            sibling_edit,
+            read("assert response.json()[\"meta\"] == {\"count\": 3}"),
+        ),
+        (
+            "changed key on the expected side",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "expected = {\"total\": 3}\n    assert response.json()[\"count\"] == expected[\"total\"]",
+            ),
+        ),
+        (
+            "overriding unpack",
+            unpack_app,
+            unpack_edit,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "repeated key",
+            repeated_app,
+            repeated_edit,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        ("match capture", PRICE_APP, PRICE_EDIT, match_test),
+        ("walrus rebinding", PRICE_APP, PRICE_EDIT, walrus_test),
+        (
+            "duplicate route",
+            shadow_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "route applied by a direct call",
+            direct_call_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "route bound to an alias decorator",
+            alias_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "websocket route balancing an unrecorded route",
+            websocket_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "quote style only",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 10, \"status\": 'ok'}",
+            ),
+            read("assert response.json()[\"status\"] == \"ok\""),
+        ),
+        (
+            "one to True",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": True, \"zero\": 0, \"ten\": 10, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"flag\"] == 1"),
+        ),
+        (
+            "zero to negative zero float",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": -0.0, \"ten\": 10, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"zero\"] == 0"),
+        ),
+        (
+            "underscore and exponent spellings",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 1e1, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == 10"),
+        ),
+        (
+            "nested int to float",
+            list_app,
+            list_edit("    return {\"total\": [5.0], \"count\": 3}"),
+            read("assert response.json()[\"total\"] == [5]"),
+        ),
+        (
+            "exponent spelling",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1e0, \"zero\": 0, \"ten\": 10, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"flag\"] == 1"),
+        ),
+        (
+            "route alias called directly",
+            alias_call_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "route applied by a call split over lines",
+            split_call_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "route method passed to partial",
+            partial_route_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "route object appended to the routes",
+            route_object_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "json patched by a workspace fixture",
+            patched_json_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "json replaced through object.__setattr__",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "object.__setattr__(response, \"json\", lambda: {\"total\": 190})\n    assert response.json()[\"total\"] == 190",
+            ),
+        ),
+        (
+            "parenthesized value",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": (1), \"zero\": 0, \"ten\": 10, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"flag\"] == 1"),
+        ),
+        (
+            "string prefix only",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 10, \"status\": u\"ok\"}",
+            ),
+            read("assert response.json()[\"status\"] == \"ok\""),
+        ),
+        (
+            "power spelling",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 100**0.5, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == 10"),
+        ),
+        (
+            "applied route call with a comment",
+            commented_call_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "route method read through getattr",
+            getattr_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "json replaced on the response class",
+            class_json_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "json patched by dotted path",
+            dotted_patch_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "response class swapped",
+            PRICE_APP,
+            PRICE_EDIT,
+            read(
+                "response.__class__ = type(\"Fake\", (), {})\n    assert response.json()[\"total\"] == 190",
+            ),
+        ),
+        (
+            "underscore name read as a number",
+            name_app,
+            name_edit,
+            read("assert response.json()[\"total\"] == 10"),
+        ),
+        (
+            "unary minus under a power",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": -2**2 + 14, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == 10"),
+        ),
+        (
+            "intermediate past 2^53",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 2**53 + 1 - 2**53 + 9, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == 10"),
+        ),
+        (
+            "list subscript",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": [10][0], \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == 10"),
+        ),
+        (
+            "adjacent list tokens summing",
+            list_app,
+            list_edit("    return {\"total\": [2 +3], \"count\": 3}"),
+            read("assert response.json()[\"total\"] == [5]"),
+        ),
+        (
+            "adjacent list tokens differencing",
+            list_app,
+            list_edit("    return {\"total\": [6 -1], \"count\": 3}"),
+            read("assert response.json()[\"total\"] == [5]"),
+        ),
+        (
+            "dict expected side",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 11, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == {\"v\": 11}[\"v\"]"),
+        ),
+        (
+            "float floor division",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 3.3 // 0.3, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == 10"),
+        ),
+        (
+            "fractional power",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 100**0.5, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == 10"),
+        ),
+        (
+            "negative integer floor division and remainder",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": -7 // 2 + 7 % -2 + 15, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == 10"),
+        ),
+        (
+            "alias of a route alias",
+            chained_alias_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "route call bound to an attribute",
+            attribute_alias_app,
+            PRICE_EDIT,
+            read("assert response.json()[\"total\"] == 190"),
+        ),
+        (
+            "list formatting only",
+            list_app,
+            list_edit("    return {\"total\": [ 5 , ], \"count\": 3}"),
+            read("assert response.json()[\"total\"] == [5]"),
+        ),
+        (
+            "static route before a parameter route",
+            overlap_app,
+            overlap_edit,
+            overlap_test,
+        ),
+    ];
+    for (name, app, edit, test) in cases {
+        let finding = check_style(name, &[("src/app.py", app)], edit, &test)?;
+        if finding.class == ExposureClass::Exposed {
+            failures.push(format!("{name}: read exposed"));
+        }
+    }
+    // Control: a genuinely different nested value is still a changed key.
+    let finding = check_style(
+        "nested value change",
+        &[("src/app.py", list_app)],
+        list_edit("    return {\"total\": [6], \"count\": 3}"),
+        &read("assert response.json()[\"total\"] == [6]"),
+    )?;
+    if finding.class != ExposureClass::Exposed {
+        failures.push(format!("nested value change: read {:?}", finding.class));
+    }
+    // Controls: an apostrophe in a double-quoted string and an integer past
+    // 2^53 are values like any other, so a real change to them is credited.
+    for (name, old, new, assertion) in [
+        (
+            "string whitespace change",
+            "    return {\"total\": \"a b\", \"count\": 3}",
+            "    return {\"total\": \"ab\", \"count\": 3}",
+            "assert response.json()[\"total\"] == \"ab\"",
+        ),
+        (
+            "apostrophe string change",
+            "    return {\"total\": \"it's fine\", \"count\": 3}",
+            "    return {\"total\": \"it is fine\", \"count\": 3}",
+            "assert response.json()[\"total\"] == \"it is fine\"",
+        ),
+        (
+            "integer floor division change",
+            "    return {\"total\": 10, \"count\": 3}",
+            "    return {\"total\": 23 // 2, \"count\": 3}",
+            "assert response.json()[\"total\"] == 11",
+        ),
+        (
+            "large integer change",
+            "    return {\"total\": 9007199254740993, \"count\": 3}",
+            "    return {\"total\": 9007199254740992, \"count\": 3}",
+            "assert response.json()[\"total\"] == 9007199254740992",
+        ),
+    ] {
+        let app = format!(
+            "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n{old}\n"
+        );
+        let finding = check_style(
+            name,
+            &[("src/app.py", app.as_str())],
+            Edit {
+                owner: "src/app.py",
+                old,
+                new,
+            },
+            &read(assertion),
+        )?;
+        if finding.class != ExposureClass::Exposed {
+            failures.push(format!("{name}: read {:?}", finding.class));
+        }
+    }
+    // Control: punctuation inside a string is part of the value.
+    let comma_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": \"a,]b\", \"count\": 3}\n";
+    let finding = check_style(
+        "string punctuation change",
+        &[("src/app.py", comma_app)],
+        Edit {
+            owner: "src/app.py",
+            old: "    return {\"total\": \"a,]b\", \"count\": 3}",
+            new: "    return {\"total\": \"a]b\", \"count\": 3}",
+        },
+        &read("assert response.json()[\"total\"] == \"a]b\""),
+    )?;
+    if finding.class != ExposureClass::Exposed {
+        failures.push(format!(
+            "string punctuation change: read {:?}",
+            finding.class
+        ));
+    }
+    // A test file that registers its own route on the app.
+    let test_route = format!(
+        "{CLIENT_IMPORTS}@app.get(\"/price\")\ndef cached():\n    return {{\"total\": 190, \"count\": 3}}\n\n\ndef test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 190\n"
+    );
+    let finding = check_style(
+        "test-file route",
+        &[("src/app.py", PRICE_APP)],
+        PRICE_EDIT,
+        &test_route,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        failures.push("test-file route: read exposed".to_string());
+    }
+    // A client over another application does not reach the owner's handler.
+    let rival = "from fastapi import FastAPI\nfrom fastapi.testclient import TestClient\n\nfrom src.app import app\n\nother_app = FastAPI()\n\n\ndef test_price():\n    client = TestClient(other_app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 190\n";
+    let finding = check_style("rival app", &[("src/app.py", PRICE_APP)], PRICE_EDIT, rival)?;
+    if finding.class == ExposureClass::Exposed {
+        failures.push("rival app: read exposed".to_string());
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
     Ok(())
 }
 
