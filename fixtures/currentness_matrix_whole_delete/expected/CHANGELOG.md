@@ -419,6 +419,17 @@ Updated:
 ## Pending — currentness_matrix_whole_delete (33)
 
 Reason:
+RIPR-SPEC-0219/#14919: an unreferenced changed owner is a test gap on the human surface, matching the agent format
+
+Command:
+`cargo xtask goldens bless currentness_matrix_whole_delete --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — currentness_matrix_whole_delete (34)
+
+Reason:
 RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
 
 Command:

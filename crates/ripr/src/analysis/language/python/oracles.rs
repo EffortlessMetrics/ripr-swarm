@@ -6,6 +6,7 @@ use super::{
 use crate::domain::{OracleKind, OracleStrength};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 use rustpython_parser::text_size::TextRange;
+mod handler_types;
 pub(super) mod unittest_list;
 
 pub(super) fn collect_assertions_from_statements(
@@ -91,9 +92,7 @@ fn collect_assertions(
             }
             Stmt::Try(try_stmt) => {
                 let first = out.len();
-                if !handlers_swallow_assertion_errors(&try_stmt.handlers) {
-                    collect_assertions(&try_stmt.body, source, loops, out);
-                }
+                collect_try_body_assertions(&try_stmt.body, &try_stmt.handlers, source, loops, out);
                 collect_except_handler_assertions(&try_stmt.handlers, source, loops, out);
                 collect_assertions(&try_stmt.orelse, source, loops, out);
                 collect_assertions(&try_stmt.finalbody, source, loops, out);
@@ -101,9 +100,7 @@ fn collect_assertions(
             }
             Stmt::TryStar(try_stmt) => {
                 let first = out.len();
-                if !handlers_swallow_assertion_errors(&try_stmt.handlers) {
-                    collect_assertions(&try_stmt.body, source, loops, out);
-                }
+                collect_try_body_assertions(&try_stmt.body, &try_stmt.handlers, source, loops, out);
                 collect_except_handler_assertions(&try_stmt.handlers, source, loops, out);
                 collect_assertions(&try_stmt.orelse, source, loops, out);
                 collect_assertions(&try_stmt.finalbody, source, loops, out);
@@ -265,35 +262,50 @@ fn constant_truth(expr: &Expr) -> Option<bool> {
     }
 }
 
-/// Whether a `try` handler catches the `AssertionError` its body's `assert`
-/// raises and neither re-raises nor fails afterward, so a failing assertion
-/// still lets the test pass (#9691). A handler that raises, asserts or calls a
-/// `fail` helper keeps the body's assertions live.
-fn handlers_swallow_assertion_errors(handlers: &[ast::ExceptHandler]) -> bool {
-    handlers.iter().any(|handler| {
-        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+/// Rule 23: only the first matching handler decides whether the try body's
+/// assertion failure is swallowed. An unknown type cannot be skipped (#14885).
+fn handlers_swallow_assertion_errors(
+    handlers: &[ast::ExceptHandler],
+    source: &SourceText<'_>,
+) -> Option<bool> {
+    for ast::ExceptHandler::ExceptHandler(handler) in handlers {
         let catches = match handler.type_.as_deref() {
             None => true,
-            Some(kind) => catches_assertion_error(kind),
+            Some(kind) => handler_types::catches(kind, source)?,
         };
-        catches && !statements_fail_again(&handler.body)
-    })
-}
-
-fn catches_assertion_error(kind: &Expr) -> bool {
-    match kind {
-        Expr::Name(name) => is_catching_name(name.id.as_str()),
-        Expr::Attribute(attribute) => {
-            matches!(attribute.value.as_ref(), Expr::Name(root) if root.id.as_str() == "builtins")
-                && is_catching_name(attribute.attr.as_str())
+        if catches {
+            return Some(!statements_fail_again(&handler.body));
         }
-        Expr::Tuple(tuple) => tuple.elts.iter().any(catches_assertion_error),
-        _ => false,
     }
+    Some(false)
 }
 
-fn is_catching_name(name: &str) -> bool {
-    matches!(name, "Exception" | "BaseException" | "AssertionError")
+fn collect_try_body_assertions(
+    body: &[Stmt],
+    handlers: &[ast::ExceptHandler],
+    source: &SourceText<'_>,
+    loops: &[String],
+    out: &mut Vec<PythonAssertion>,
+) {
+    let swallowed = handlers_swallow_assertion_errors(handlers, source);
+    if swallowed == Some(true) {
+        return;
+    }
+    let first = out.len();
+    collect_assertions(body, source, loops, out);
+    if swallowed.is_none() {
+        // Retain assertion-like evidence without claiming either a gap or a
+        // discriminator. Reuse the opaque-oracle path, also used for replaced
+        // unittest oracles; do not let later specialized reads restore credit.
+        for assertion in &mut out[first..] {
+            assertion.oracle_kind = OracleKind::Unknown;
+            assertion.oracle_strength = OracleStrength::Unknown;
+            assertion.oracle_shape = PythonOracleShape::UnknownCustomHelper;
+            assertion.bare_bool_call = None;
+            assertion.known_equality_helper = None;
+            assertion.owner_exact_callee = None;
+        }
+    }
 }
 
 fn statements_fail_again(statements: &[Stmt]) -> bool {

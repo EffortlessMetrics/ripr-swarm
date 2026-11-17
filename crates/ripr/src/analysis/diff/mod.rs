@@ -1,3 +1,4 @@
+mod base_owner;
 #[cfg(test)]
 mod differential_tests;
 #[cfg(test)]
@@ -7,7 +8,8 @@ mod model;
 mod parse;
 mod path;
 mod source;
-pub(crate) use source::reconstruct_old_source;
+pub(crate) use base_owner::{ModuleDeclarations, verified_base_owner};
+pub(crate) use source::{reconstruct_old_lines_with_origins, reconstruct_old_source};
 pub mod records;
 
 pub(crate) use load::bare_repository_message;

@@ -360,18 +360,45 @@ impl ClosedOwner {
             parameters: &parameters,
         };
         let mut guards = Vec::new();
+        let mut tail = None;
         while parser.eat_ident("if") {
             let cond = parser.cond()?;
-            if !(parser.eat_sym("{") && parser.eat_ident("return")) {
+            if !parser.eat_sym("{") {
                 return None;
             }
+            if parser.eat_ident("return") {
+                let ret = parser.ret()?;
+                if !(parser.eat_sym(";") && parser.eat_sym("}")) {
+                    return None;
+                }
+                guards.push((cond, ret));
+                continue;
+            }
+            // #14387: a tail `if C { A } else if D { B } else { E }` runs as
+            // the guards `C -> A`, `D -> B` and the tail `E`: each branch
+            // block holds only its value, and the chain ends the body.
             let ret = parser.ret()?;
-            if !(parser.eat_sym(";") && parser.eat_sym("}")) {
+            if !(parser.eat_sym("}") && parser.eat_ident("else")) {
                 return None;
             }
             guards.push((cond, ret));
+            if parser.peek() == Some(&Token::Ident("if".to_string())) {
+                continue;
+            }
+            if !parser.eat_sym("{") {
+                return None;
+            }
+            let last = parser.ret()?;
+            if !parser.eat_sym("}") {
+                return None;
+            }
+            tail = Some(last);
+            break;
         }
-        let tail = parser.ret()?;
+        let tail = match tail {
+            Some(tail) => tail,
+            None => parser.ret()?,
+        };
         (parser.at == body.len()).then_some(Self {
             parameters,
             range,
@@ -1400,5 +1427,30 @@ mod tests {
             "checked_div(4, 0)",
             "Err(())"
         )));
+    }
+
+    /// #14387: a tail `if`/`else if`/`else` chain reads as guards and a tail,
+    /// so a changed branch value discriminates where its branch runs.
+    #[test]
+    fn a_tail_if_else_chain_reads_as_guards_and_a_tail() {
+        let after = "pub fn rate(t: u32) -> u32 {\n    if t > 500 {\n        1\n    } else if t >= 100 {\n        t / 5\n    } else {\n        0\n    }\n}\n";
+        let change = ClosedChange::read(after, "rate", 4, "        t / 10");
+        assert!(change.is_some(), "premise: both versions read");
+        let Some(change) = change else {
+            return;
+        };
+        assert!(change.pin_discriminates("rate", "rate(200)", "40"));
+        assert!(change.pin_discriminates("rate", "rate(200)", "20"));
+        assert!(!change.pin_discriminates("rate", "rate(600)", "1"));
+        assert!(!change.pin_discriminates("rate", "rate(50)", "0"));
+        // A chain without a final `else`, or a branch holding more than its
+        // value, is outside the subset.
+        for outside in [
+            "pub fn rate(t: u32) -> u32 {\n    if t > 5 {\n        1\n    } else if t > 2 {\n        2\n    }\n}\n",
+            "pub fn rate(t: u32) -> u32 {\n    if t > 5 {\n        t;\n        1\n    } else {\n        0\n    }\n}\n",
+            "pub fn rate(t: u32) -> u32 {\n    if t > 5 {\n        1\n    } else {\n        0\n    }\n    2\n}\n",
+        ] {
+            assert!(ClosedOwner::read(outside, "rate").is_none(), "{outside}");
+        }
     }
 }

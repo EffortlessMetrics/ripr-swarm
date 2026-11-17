@@ -443,6 +443,17 @@ Updated:
 ## Pending — currentness_matrix_reuse (34)
 
 Reason:
+RIPR-SPEC-0219/#14919: an unreferenced changed owner is a test gap on the human surface, matching the agent format
+
+Command:
+`cargo xtask goldens bless currentness_matrix_reuse --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — currentness_matrix_reuse (35)
+
+Reason:
 RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
 
 Command:
