@@ -621,3 +621,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_adversarial_hoc_wrapped_owner (38)
+
+Reason:
+RIPR-SPEC-0243 closure continuation (#13592): total = withLogging(computeTotal) relates the test with reach only, static_unknown, no oracle borrowed
+
+Command:
+`cargo xtask goldens bless typescript_adversarial_hoc_wrapped_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
