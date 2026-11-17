@@ -45,6 +45,7 @@ pub(crate) enum Product {
     ItemSyntax,
     FnCfgGates,
     LocalMacroCalls,
+    CfgGatesOfFn,
 }
 
 impl Product {
@@ -69,6 +70,7 @@ impl Product {
             Self::ItemSyntax => "item_syntax",
             Self::FnCfgGates => "fn_cfg_gates",
             Self::LocalMacroCalls => "local_macro_calls",
+            Self::CfgGatesOfFn => "cfg_gates_of_fn",
         }
     }
 }

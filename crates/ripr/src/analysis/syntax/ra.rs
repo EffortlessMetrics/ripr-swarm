@@ -8,6 +8,7 @@ use ra_ap_syntax::{
 mod closure_callbacks;
 #[cfg(test)]
 mod module_scope_walk_tests;
+mod owner_scopes;
 mod probe_shapes;
 mod property_macros;
 pub(crate) use closure_callbacks::{
@@ -17,6 +18,7 @@ pub(crate) use closure_callbacks::{
     param_never_mentioned, passes_call_making_closure, passes_call_making_closure_many,
     unconditionally_invoked_param_positions,
 };
+pub(crate) use owner_scopes::{EnclosingScopeKind, enclosing_scopes};
 use probe_shapes::extract_parser_probe_shapes;
 #[cfg(test)]
 mod probe_shape_walk_tests;
@@ -1051,6 +1053,9 @@ fn summarize_file_with_collectors(
         macro_candidates: Some(Box::new(super::owner_pin::macro_binding_candidates(
             &source,
         ))),
+        external_docs: Some(super::external_docs::parsed_source_includes_external_docs(
+            text, &source,
+        )),
     })
 }
 
@@ -4782,6 +4787,7 @@ pub fn wrapped(input: &str, depth: usize) -> bool {
             source: String::new().into(),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
         };
         let nodes = adapter.changed_nodes(
             crate::analysis::facts::FactSlice::from_slice(&facts.functions),

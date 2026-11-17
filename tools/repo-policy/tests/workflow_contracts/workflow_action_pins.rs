@@ -215,8 +215,8 @@ const PINS: &[Pin] = &[
     (
         "rust-gates.yml",
         "taiki-e/install-action",
-        "v2.87.31",
-        "1e29709c0ec63babbe8f266397a465f29a825f91",
+        "v2.90.3",
+        "cfdb7ed4ccc7c7dce37759eae89dc5674b469b39",
         Some("tool: ${{ inputs.use-scratch && 'sccache,nextest' || 'nextest' }}"),
         1,
     ),
@@ -231,8 +231,8 @@ const PINS: &[Pin] = &[
     (
         "security.yml",
         "taiki-e/install-action",
-        "v2.87.30",
-        "a4d3f3f761dcd95cce1b72cb61cb6d1963438177",
+        "v2.90.3",
+        "cfdb7ed4ccc7c7dce37759eae89dc5674b469b39",
         Some("tool: cargo-deny"),
         1,
     ),
@@ -399,15 +399,15 @@ fn pin_contract_rejects_inputs_in_other_step_mappings() -> Result<(), String> {
 
 #[test]
 fn pin_contract_rejects_uses_headers_in_step_data() -> Result<(), String> {
-    for (action, reference) in [
-        ("dtolnay/rust-toolchain", "1.95.0"),
-        ("Swatinem/rust-cache", "v2"),
-        ("taiki-e/install-action", "v2.87.31"),
-        ("taiki-e/install-action", "v2.87.30"),
+    for (file, action, reference) in [
+        ("ci.yml", "dtolnay/rust-toolchain", "1.95.0"),
+        ("ci.yml", "Swatinem/rust-cache", "v2"),
+        ("rust-gates.yml", "taiki-e/install-action", "v2.90.3"),
+        ("security.yml", "taiki-e/install-action", "v2.90.3"),
     ] {
         let pin = PINS
             .iter()
-            .find(|pin| pin.1 == action && pin.2 == reference)
+            .find(|pin| pin.0 == file && pin.1 == action && pin.2 == reference)
             .ok_or("missing header control")?;
         let header = format!("uses: {}@{} # {}", pin.1, pin.3, pin.2);
         let wrong = format!(

@@ -516,7 +516,73 @@ Relations, first match wins (rank, oracle-eligible):
   another name, a decorator on a receiver the adapter does not recognise) that
   still calls the route's path and verb is `api_client_route_unidentified_app`
   (2, reach only, never an oracle) and reads as the static limit
-  `missing_import_graph`, not as a gap or a credit (#10110);
+  `missing_import_graph`, not as a gap or a credit (#10110). When the
+  edited line is the handler's `return` of a changed dict literal, an
+  `api_client_route_call` test can observe it through the response: the
+  test binds one name once, to a call of an accepted verb on a client over
+  the owner's own application with a first argument the route accepts, and
+  an exact assertion (`assert` with one `==`, or `self.assertEqual` with two
+  plain arguments) compares that name's `.json()` with one quoted key
+  subscript against the other side, and that key is one the edit changed
+  (an unchanged sibling field, or a changed key only on the expected side,
+  is not). The other side must be a literal (numbers, strings without escapes, `True`,
+  `False`, `None`, and lists or tuples of them; a dict is refused): a name, call or
+  attribute may carry the route's own response. A test with a `match`
+  statement, a walrus, a `.json` that is not called at once, a `setattr`, a
+  `._content` access or a quoted `json` grants no credit, and the bound name
+  may be used only in its one assignment and through attribute reads (a loop
+  or `with` target in any spacing, an argument or an attribute write
+  refuses). The
+  handler must not share a request with another route of the workspace
+  (verbs that can meet and paths that can match one request, a segment
+  holding any parameter matching anything; dispatch order is not read), nor
+  a FastAPI docs route installed before any user route (`/openapi.json`,
+  `/docs`, `/docs/oauth2-redirect`, `/redoc`). The
+  credit is off for the whole run when any file was not read or a changed
+  file did not parse, any owner has a dynamic route decorator, the route
+  decorator lines of the read sources (test files included, counting the
+  same verbs the owners record, `websocket` among them) outnumber or
+  undercount the routes the owners record, a route call is applied directly
+  (`app.get("/p")(view)`, on one line or several), a route method is used
+  without being called (`partial(app.get, "/p")`), a route call is bound to
+  a name that is later called or used as a decorator, or wrapped in
+  parentheses or a line continuation on an assignment's right side
+  (comments are not read; an unclosed call is opaque), or any source has
+  custom docs or schema URLs (`openapi_url`, `docs_url`, `redoc_url`) or a
+  `**` unpack in call arguments (which may pass such an option under a name
+  the source does not spell; markers are matched with and without
+  comments), or has an exception
+  handler, middleware, a request hook, `dependency_overrides`, a custom
+  route class, an imperative or declarative route registration, a router
+  or blueprint inclusion, a mount, a `:path` catch-all, a route object
+  (`Route(...)`, `APIRoute` as a value or base, `routes += [...]`), a route
+  verb named as a string argument (`getattr(app, "get")`), or a patch of
+  the `json` attribute or a response class (`"json"` or `"….json"` argument,
+  `.json = ...`, `__class__`). A changed key
+  whose old and new values may give one JSON body to a Python comparison
+  (either quote style; numbers or `+ - * / // % **` expressions of one
+  value under Python's precedence, every step below 2^53, `//`, `%` and `**`
+  evaluated only on integral operands (a non-negative integral exponent;
+  `7.0 // 2` is evaluated, `3.3 // 0.3` is not), with `True`/`False` as 1/0, integers compared exactly; lists of
+  such values, one value per element) or whose value is not established as a
+  literal (a tuple, a dict, a name, a subscript, two tokens in one element, a
+  prefixed, escaped or adjacent string, a float at or past 2^53), and every
+  key when the old dict has a duplicate key or a `**` unpack (Python keeps
+  the last duplicate), is not a changed key for this read, and the run
+  needs the old line (repo mode, which has none, never earns it). The handler must return its body as is:
+  every decorator is a static route decorator whose keywords cannot reshape
+  the body (no `response_model` or `response_class`), there is no return
+  annotation (FastAPI reads one as a response model, and even `-> dict`
+  names a model when the module rebinds `dict`), and the function has exactly one `return`, of a dict literal
+  whose keys are distinct string literals (no `**` unpack), and no `yield`
+  or `raise` (a raised error answers with its own body). A
+  changed `detail` key never earns this credit, because `detail` is the key
+  of FastAPI's `HTTPException` and validation (422) error bodies. A
+  whole-body comparison (which can match an error body the
+  changed `return` never produced), another key, a rebound or inline
+  response, an expression around the read, another route or verb, an
+  unidentified or rival application, or an inequality grants no credit
+  (`strong_oracle_observes_route_response`, #13869);
 - R4: `construct_call` (4, eligible): a `__call__` owner invoked as
   `Class(...)(...)`;
 - R5: `local_binding` (4, eligible): a `__call__` owner invoked through
@@ -1220,10 +1286,20 @@ mutant calibrates the rule; ripr reports only the static shape.
     assertion collector skips the dead arm of an `if` or `while` whose
     condition is a literal (`if False:`, `if 0:`, `if None:`, `while False:`;
     the arm that can run is still read) and the body of a `try` whose
-    handler catches `AssertionError` (a bare `except`, `Exception`,
-    `BaseException`, `AssertionError`, `builtins.AssertionError`, or a tuple
-    naming one) and does not raise, assert, call a `fail` helper or call a
-    unittest `assert*` method. The `else` and `finally` blocks
+    first matching handler catches `AssertionError` (a bare `except`,
+    an unmodified builtin `Exception`, `BaseException` or `AssertionError`,
+    the same names through a plain, unmodified `import builtins`, or a flat
+    tuple of bounded builtin types) and does not raise, assert, call a `fail`
+    helper or call a unittest `assert*` method. Handlers are read in order:
+    proven unrelated builtin types are skipped; a first matching re-raise
+    keeps the assertion even when a later broad handler swallows (#14885).
+    A project, unknown, rebound or otherwise unbounded type before that match
+    retains the assertion as an unresolved oracle, never as a swallowing or
+    strong-oracle claim. Binding custody is conservative across the file:
+    parameters and local/module bindings, opaque scopes, namespace writers
+    and escaping `builtins` references refuse the type read. This does not
+    resolve external monkey-patching or change the existing handler-body
+    failure approximation. The `else` and `finally` blocks
     are still read. A swallowed or dead assertion cannot notice a change, so
     it must not credit one (`py-trap-dead-branch`,
     `py-trap-swallowed-assert`, #9691; the `py-unrun-*` cases add `if 0:`,

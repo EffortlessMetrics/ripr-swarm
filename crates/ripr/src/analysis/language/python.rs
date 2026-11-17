@@ -726,6 +726,15 @@ struct PythonOwner {
     /// click-alias decorators require this; reassigned aliases stay fail-closed.
     #[serde(default)]
     trusted_stdlib_click_alias: bool,
+    /// The owner is a route handler whose response body is its returned dict
+    /// (#13869): every static route decorator takes only keywords that leave
+    /// the body alone (no `response_model` or `response_class`), the return
+    /// annotation is absent, and the function has exactly one
+    /// `return`, of a dict literal with distinct string-literal keys, and no
+    /// `yield` or `raise`. A workspace post-pass may withdraw it.
+    /// `false` by default, which grants no response-read credit.
+    #[serde(default)]
+    route_returns_body: bool,
 }
 
 /// One declared parameter of a Python function owner.
@@ -1780,6 +1789,31 @@ impl PythonAdapter {
         );
         related_tests::apply_rival_definition_modules(&mut all_owners);
         related_tests::apply_class_facts(&mut all_owners);
+        // A rival route in an unread file cannot be ruled out, so a partial
+        // walk or read refuses the route-response credit, as does any source
+        // that reshapes responses or registers unrecorded routes (#13869).
+        // Every route decorator line of every read source (test files
+        // included, whose owners are not collected) is counted against the
+        // routes the owners record; a file that failed to parse records none.
+        related_tests::apply_route_overlaps(
+            &mut all_owners,
+            refused_files != 0
+                || !workspace_read.limits.is_empty()
+                || !workspace_read.io_failures.is_empty()
+                || !parse_failure_paths.is_empty()
+                || workspace_read
+                    .sources
+                    .values()
+                    .any(|source| related_tests::workspace_reshapes_responses(source))
+                || related_tests::workspace_registers_routes_indirectly(
+                    workspace_read.sources.values().map(String::as_str),
+                ),
+            workspace_read
+                .sources
+                .values()
+                .map(|source| related_tests::route_decorator_lines(source))
+                .sum(),
+        );
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's
