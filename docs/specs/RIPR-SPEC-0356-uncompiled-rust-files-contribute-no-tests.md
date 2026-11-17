@@ -117,15 +117,19 @@ file are withheld, exactly as for an uncompiled file, when all of these hold:
    the root or a member, and `CARGO_TARGET_DIR`) and `.git`, so a module
    directory named `target` or a hidden source directory (`#[path =
    ".gen/m.rs"]`) is read; in a committed-history check it also reads the
-   `HEAD` text of dirty files. A symlinked `.rs` file or directory can alias
-   the file under a name no text ties back to it, so it is doubt. The
+   `HEAD` text of dirty files. A symlinked `.rs` file, or a symlinked
+   directory that holds a `.rs` file or another symlink (read up to 1,000
+   entries), can alias the file under a name no text ties back to it, so it
+   is doubt; a directory link without Rust sources is not. The
    file keeps its tests when any source outside its own skipped ancestry
    spells its file name (a `#[path]`, a static `include!`, a build script that
    writes a mount) or declares a `mod` of its stem; when any source builds a
-   `mod`/`include!` operand dynamically (an `include!` whose operand is not a
-   plain string literal, such as `include!(concat!(env!("OUT_DIR"), ..))`, or
-   a macro metavariable as a `mod` name or `path` value: `mod $name`,
-   `path = $p`) or spells such an operand with escapes; an ordinary
+   `mod`/`include!` operand dynamically (an `include!` whose `(`, `{` or `[`
+   delimiter is not followed by a plain string literal, such as
+   `include!(concat!(env!("OUT_DIR"), ..))`, or a macro metavariable as a
+   `mod` name or `path` value: `mod $name`, `path = $p`, read with whitespace
+   ignored and again with comments stripped, so `mod /* m */ $n` counts) or
+   spells such an operand with escapes; an ordinary
    `macro_rules!` (`($e:expr) => { $e * 2 }`) is no doubt; when
    the file is a `mod.rs`; when cargo metadata lists the file itself as a
    live or unmodeled target (`[[test]] path`, `build`, an example); or when
@@ -166,8 +170,11 @@ running test; no named stop reason is added on this issue.
   `exposed` in every `--mode`; a mount from a hidden source directory reads in
   every mode what the same tree reads with the tests left on, with the test
   still related (that layout's assertion binding stays `static_unknown`
-  either way); the plain skip reads the same in every mode, also beside an
-  ordinary `macro_rules!`.
+  either way); a generated `include!{..}`/`include![..]` mount and a macro
+  mount `mod /* m */ $n` into a tested bin read in every mode what their
+  tests-on controls read (`exposed`); the plain skip reads the same in every
+  mode, also beside an ordinary `macro_rules!` and a symlinked directory
+  without Rust sources.
 
 ## Known Limits
 
@@ -192,6 +199,13 @@ running test; no named stop reason is added on this issue.
   is not tied to a directory), a mention inside a comment counts, a file
   named `tests.rs` is matched by name like any other, and a tree with more
   than 20,000 entries fails open to credit.
+- Skipped targets, under-credit (#14962 review n4): the walk does not read
+  Cargo's build directories, so a source kept under a member-root `target/`
+  directory that mounts the file (`#[path = "../target/m.rs"]` whose
+  `m.rs` names `a/src/shared.rs`) is missed, and the file's tests are
+  withheld although `cargo test` of the mounting crate runs them. Sources
+  under a build directory are unusual and Cargo may delete them on
+  `cargo clean`.
 
 ## Non-Goals
 

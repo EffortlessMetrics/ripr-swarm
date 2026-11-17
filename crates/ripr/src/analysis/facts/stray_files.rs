@@ -150,7 +150,7 @@ fn builds_module_operands(source: &str) -> bool {
 /// `source` with every block and line comment replaced by one space; block
 /// comments nest as in Rust. Strings are not tracked, so callers also scan the
 /// raw text and a stripped scan only ever adds names.
-fn without_comments(source: &str) -> String {
+pub(super) fn without_comments(source: &str) -> String {
     let mut out = String::with_capacity(source.len());
     let mut rest = source;
     while let Some(at) = rest.find('/') {

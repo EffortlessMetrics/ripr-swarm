@@ -384,12 +384,16 @@ fn an_integration_target_path_mount_keeps_credit_in_every_mode() -> Result<(), S
     assert_exposed_in_every_mode(&fixture, "a `#[path]` mount from `tests/`")
 }
 
+/// A build script that writes `#[path = ".../a/src/shared.rs"] pub mod
+/// shared;` into `OUT_DIR/plain.rs` for `b` to include.
+const GENERATED_MOUNT_BUILD: &str = "use std::path::PathBuf;\nfn main() {\n    let out = PathBuf::from(std::env::var(\"OUT_DIR\").unwrap());\n    let shared = PathBuf::from(std::env::var(\"CARGO_MANIFEST_DIR\").unwrap()).join(\"../a/src/shared.rs\");\n    std::fs::write(out.join(\"plain.rs\"), format!(\"#[path = {:?}] pub mod shared;\\n\", shared.display().to_string())).unwrap();\n}\n";
+
 #[test]
 fn a_build_script_generated_mount_keeps_credit() -> Result<(), String> {
     // #14962 review B1: `b`'s build script writes `#[path = ...] pub mod
     // shared;` into `OUT_DIR`, and `b` includes it, so `cargo test -p b`
     // runs `t`. The dynamic `include!` is doubt, not a skip.
-    let build = "use std::path::PathBuf;\nfn main() {\n    let out = PathBuf::from(std::env::var(\"OUT_DIR\").unwrap());\n    let shared = PathBuf::from(std::env::var(\"CARGO_MANIFEST_DIR\").unwrap()).join(\"../a/src/shared.rs\");\n    std::fs::write(out.join(\"plain.rs\"), format!(\"#[path = {:?}] pub mod shared;\\n\", shared.display().to_string())).unwrap();\n}\n";
+    let build = GENERATED_MOUNT_BUILD;
     let fixture = TempCrate::create_in(
         WORKSPACE,
         &[
@@ -516,5 +520,91 @@ fn an_ordinary_macro_does_not_restore_skipped_unit_test_credit() -> Result<(), S
         "{OWNER}\nmacro_rules! twice {{\n    ($e:expr) => {{\n        $e * 2\n    }};\n}}\n{UNIT_TESTS}"
     );
     let fixture = TempCrate::create(LIB_TEST_FALSE, &[("src/lib.rs", &lib)])?;
+    assert_withheld_in_every_mode(&fixture)
+}
+
+/// Each mode reads `fixture` exactly as `control` (the same tree with the
+/// tests left on) reads it, and both credit the discriminator.
+fn assert_exposed_like_control_in_every_mode(
+    fixture: &TempCrate,
+    control: &TempCrate,
+    label: &str,
+) -> Result<(), String> {
+    for mode in MODES {
+        let tested = control.finding_in(mode.clone())?;
+        assert_eq!(
+            tested.class,
+            ExposureClass::Exposed,
+            "premise: tests-on {label} in {mode:?}: {tested:?}"
+        );
+        let skipped = fixture.finding_in(mode.clone())?;
+        assert_eq!(
+            skipped.class, tested.class,
+            "{label} in {mode:?}: {skipped:?}"
+        );
+    }
+    Ok(())
+}
+
+/// The issue's member `a` with its unit tests on, for a tests-on control.
+const MEMBER_A_TESTED: &str = "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2021\"\n";
+
+/// [`GENERATED_MOUNT_BUILD`] without spelling `shared.rs` or `mod shared`,
+/// so only the dynamic `include!` in `b` can tie the mount to the file.
+const NAMELESS_MOUNT_BUILD: &str = "use std::path::PathBuf;\nfn main() {\n    let out = PathBuf::from(std::env::var(\"OUT_DIR\").unwrap());\n    let stem = \"shared\";\n    let file = PathBuf::from(std::env::var(\"CARGO_MANIFEST_DIR\").unwrap()).join(\"../a/src\").join(format!(\"{stem}.{}\", \"rs\"));\n    std::fs::write(out.join(\"plain.rs\"), format!(\"#[path = {:?}] pub mod {stem};\", file.display().to_string())).unwrap();\n}\n";
+
+#[test]
+fn a_brace_or_bracket_generated_include_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review n1: `include!{..}` and `include![..]` are the same
+    // dynamic mount as `include!(..)`.
+    for include in [
+        "include!(concat!(env!(\"OUT_DIR\"), \"/plain.rs\"));\n",
+        "include!{concat!(env!(\"OUT_DIR\"), \"/plain.rs\")}\n",
+        "include![concat!(env!(\"OUT_DIR\"), \"/plain.rs\")];\n",
+    ] {
+        let manifest = format!("{MEMBER_B}build = \"build.rs\"\n");
+        let b_files = [
+            ("b/Cargo.toml", manifest.as_str()),
+            ("b/build.rs", NAMELESS_MOUNT_BUILD),
+            ("b/src/lib.rs", include),
+        ];
+        let fixture = mounted_from_b(&b_files)?;
+        let control = mounted_from_b_with(MEMBER_A_TESTED, &b_files)?;
+        assert_exposed_like_control_in_every_mode(&fixture, &control, include.trim())?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_commented_macro_mount_in_a_tested_bin_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review n2: a comment between `mod` and the metavariable must
+    // not hide the macro-built mount of `src/shared.rs` into the tested bin.
+    // (`path = /* x */ $p` is pinned by the operand unit test.)
+    let shared = lib_source(UNIT_TESTS);
+    let main = "macro_rules! m {\n    ($n:ident) => {\n        mod /* m */ $n;\n    };\n}\nm!(shared);\nfn main() {}\n";
+    let files = [
+        ("src/lib.rs", "pub mod shared;\n"),
+        ("src/shared.rs", shared.as_str()),
+        ("src/main.rs", main),
+    ];
+    let fixture = TempCrate::create_changing(LIB_TEST_FALSE, &files, "src/shared.rs", 1)?;
+    let control = TempCrate::create_changing("", &files, "src/shared.rs", 1)?;
+    assert_exposed_like_control_in_every_mode(&fixture, &control, "a commented macro mount")
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_directory_without_sources_does_not_restore_credit() -> Result<(), String> {
+    // #14962 review n3: a directory link holding no Rust source aliases
+    // nothing, so the skip still holds.
+    let fixture = TempCrate::create(
+        LIB_TEST_FALSE,
+        &[
+            ("src/lib.rs", &lib_source(UNIT_TESTS)),
+            ("assets/readme.txt", "no sources\n"),
+        ],
+    )?;
+    std::os::unix::fs::symlink("assets", fixture.root.join("linked-assets"))
+        .map_err(|error| format!("symlink assets failed: {error}"))?;
     assert_withheld_in_every_mode(&fixture)
 }

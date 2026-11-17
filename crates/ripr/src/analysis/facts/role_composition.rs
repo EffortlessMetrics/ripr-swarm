@@ -321,14 +321,58 @@ fn files_in_skipped_unit_test_targets(
 /// name, a `#[path]` value or an `include!` operand from a metavariable
 /// (`mod $name`, `path = $p`). Narrower than the haystack rule's any-`$`
 /// check, so an ordinary `macro_rules!` such as `($e:expr) => { $e * 2 }`
-/// is no doubt (#14962 review). Whitespace is ignored.
+/// is no doubt (#14962 review). Any `include!` delimiter counts (`(`, `{`,
+/// `[`; review n1). Whitespace is ignored, and the check runs on the raw text
+/// and again with comments stripped, so `mod /* x */ $n` is doubt too
+/// (review n2); a stripped pass only ever adds doubt.
 fn may_build_mount_operands(source: &str) -> bool {
+    operands_may_be_built(source) || operands_may_be_built(&stray_files::without_comments(source))
+}
+
+fn operands_may_be_built(source: &str) -> bool {
     let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
-    compact
-        .match_indices("include!(")
-        .any(|(at, matched)| !compact[at + matched.len()..].starts_with('"'))
-        || compact.contains("mod$")
+    compact.match_indices("include!").any(|(at, matched)| {
+        let operand = &compact[at + matched.len()..];
+        operand
+            .strip_prefix(['(', '{', '['])
+            .is_some_and(|inner| !inner.starts_with('"'))
+    }) || compact.contains("mod$")
         || compact.contains("path=$")
+}
+
+/// Upper bound on the entries read below one symlinked directory.
+const LINKED_DIR_ENTRY_LIMIT: usize = 1_000;
+
+/// True when the symlinked directory `link` may hold a Rust source: it holds
+/// a `.rs` file or another symlink at any depth, or cannot be read within
+/// [`LINKED_DIR_ENTRY_LIMIT`] entries (#14962 review n3).
+fn linked_dir_may_hold_sources(link: &Path) -> bool {
+    let mut pending = vec![link.to_path_buf()];
+    let mut seen = 0usize;
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return true;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                return true;
+            };
+            seen += 1;
+            if seen > LINKED_DIR_ENTRY_LIMIT {
+                return true;
+            }
+            let Ok(kind) = entry.file_type() else {
+                return true;
+            };
+            if kind.is_symlink() || entry.file_name().to_string_lossy().ends_with(".rs") {
+                return true;
+            }
+            if kind.is_dir() {
+                pending.push(entry.path());
+            }
+        }
+    }
+    false
 }
 
 /// Upper bound on the files the mount scan reads; a larger tree is doubt.
@@ -399,8 +443,12 @@ impl WorkspaceMountScan {
                     // A symlinked source or directory can alias the file
                     // under another name (`src/alias.rs -> ../../a/src/
                     // shared.rs`) that no text scan ties back to it: doubt.
+                    // A directory link without Rust sources (`node_modules`,
+                    // assets) aliases nothing (#14962 review n3).
                     let target_is_dir = std::fs::metadata(&path).is_ok_and(|meta| meta.is_dir());
-                    if name.ends_with(".rs") || target_is_dir {
+                    if name.ends_with(".rs")
+                        || (target_is_dir && linked_dir_may_hold_sources(&path))
+                    {
                         return None;
                     }
                 } else if kind.is_dir() {
@@ -1571,12 +1619,20 @@ mod tests {
             "include! ( x );",
             "macro_rules! m { ($n:ident) => { mod $n; }; }",
             "macro_rules! m { ($p:literal) => { #[path = $p] mod x; }; }",
+            "include!{concat!(env!(\"OUT_DIR\"), \"/m.rs\")}",
+            "include![concat!(env!(\"OUT_DIR\"), \"/m.rs\")];",
+            "include!(/* generated */ concat!(env!(\"OUT_DIR\"), \"/m.rs\"));",
+            "macro_rules! m { ($n:ident) => { mod /* m */ $n; }; }",
+            "macro_rules! m { ($p:literal) => { #[path = /* x */ $p] mod x; }; }",
+            "macro_rules! m { ($n:ident) => { mod // m\n $n; }; }",
         ] {
             assert!(may_build_mount_operands(doubt), "{doubt}");
         }
         for plain in [
             "macro_rules! twice { ($e:expr) => { $e * 2 }; }",
             "include!(\"gen.rs\");",
+            "include!{\"gen.rs\"}",
+            "include![\"gen.rs\"];",
             "mod tests;\nfn f() -> u32 { 1 }",
         ] {
             assert!(!may_build_mount_operands(plain), "{plain}");
