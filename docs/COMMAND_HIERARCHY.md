@@ -75,11 +75,12 @@ document, or the attempt's status document when it is already complete.
 Under `continue --json`, a typed after-phase refusal or failure prints its
 document on stdout (`repair_after_refusal`, `repair_after_failure`, or the
 verify document) with the same exit code and stderr prose. Every other
-refusal is unchanged by `--json`: `repair` refusals, `continue` selection
-refusals (no current attempt, several attempts, an ended attempt, a blocked
-baseline, an unanchored root), operational errors before the verify step
-and argv usage errors outside the `cli_refusal` classes keep the same exit
-code, prose on stderr and empty stdout. An unknown flag (or, for `continue`,
+refusal keeps its exit code and stderr prose under `--json`. The typed
+`repair` refusals and `continue` selection refusals (no current attempt,
+several attempts, an ended attempt, a blocked baseline, an unanchored root)
+also write the `cli_refusal` document with their reason `code` and
+`disposition` (#14931); operational errors before the verify step and argv
+usage errors outside the `cli_refusal` classes keep empty stdout. An unknown flag (or, for `continue`,
 a stray positional argument) under `--json` keeps exit `2` and its stderr
 prose and also writes the standalone `cli_refusal` document to stdout
 (`docs/OUTPUT_SCHEMA.md`, #6834 decision).

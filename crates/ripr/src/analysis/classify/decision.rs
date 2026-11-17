@@ -317,6 +317,12 @@ pub(in crate::analysis) fn stop_reasons(
         } else {
             reasons.push(StopReason::NoChangedRustLine);
         }
+    } else if probe.family == ProbeFamily::StaticUnknown
+        && crate::analysis::probes::is_inline_const_assertion_line(&probe.expression)
+    {
+        // #14181: `const { assert!(N <= 249) };` inside a function is checked
+        // when the function is built; a violating edit fails to compile.
+        reasons.push(StopReason::CompileTimeInvariant);
     }
     if is_unsafe_obligation(probe) {
         reasons.push(StopReason::UnsafeObligation);

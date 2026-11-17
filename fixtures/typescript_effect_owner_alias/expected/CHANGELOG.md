@@ -415,3 +415,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_effect_owner_alias (33)
+
+Reason:
+RIPR-SPEC-0122: the default digest drops a leading state-token label (#11619)
+
+Command:
+`cargo xtask goldens bless typescript_effect_owner_alias --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -495,8 +495,6 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Whether every matches-binding candidate is this file's verified
     /// standard assertion argument, rather than a real or opaque binding.
     matches_arguments_clear: SyncMemo<BTreeMap<PathBuf, bool>>,
-    /// All sites, including opaque imports that never spell the bound name.
-    matches_binding_sites: OnceLock<Vec<(PathBuf, MacroBindingSite)>>,
     /// #10389: per test file, the known comparison macros it imports by name.
     comparison_imports: SyncMemo<BTreeMap<PathBuf, Arc<BTreeSet<&'static str>>>>,
     /// #10389: every name a `macro_rules!` in the index defines, scanned once.
@@ -1032,11 +1030,12 @@ impl OwnerPinSyntax {
     pub(in crate::analysis) fn admits_equality_assertion(
         &self,
         probe: &Probe,
+        owner: Option<&FunctionSummary>,
         test: &TestSummary,
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> bool {
-        self.admits_assertion_family(probe.family.clone(), test, assertion, index)
+        self.admits_assertion_family(probe.family.clone(), owner, test, assertion, index)
             && self
                 .matches_expected_panic_refusal(probe, test, assertion, index)
                 .is_none()
@@ -1051,7 +1050,7 @@ impl OwnerPinSyntax {
         index: &RustIndex,
     ) -> bool {
         !test.attrs.iter().any(|attr| attr.contains("should_panic"))
-            && self.admits_assertion_family(ProbeFamily::ReturnValue, test, assertion, index)
+            && self.admits_assertion_family(ProbeFamily::ReturnValue, None, test, assertion, index)
     }
 
     fn matches_expected_panic_refusal(
@@ -1088,12 +1087,112 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> bool {
-        self.admits_assertion_family(ProbeFamily::SideEffect, test, assertion, index)
+        self.admits_assertion_family(ProbeFamily::SideEffect, None, test, assertion, index)
+    }
+
+    /// The family-aware refusal for one assertion, including the #14537
+    /// gated-`mod` exception. `None` when the family admits it. Shared by the
+    /// admission and its disclosure note so the note names the refusal that
+    /// actually withheld credit.
+    fn assertion_family_refusal(
+        &self,
+        family: ProbeFamily,
+        owner: Option<&FunctionSummary>,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        matches_context: bool,
+    ) -> Option<AssertionRefusal> {
+        let refusal = if matches_context {
+            self.context_refusal(test, assertion, index, true)
+        } else {
+            self.refusal(test, assertion, index)
+        };
+        // #14537: a predicate equality whose test file is composed through a
+        // gated `mod` declaration shares the bare `assert!`'s admission for
+        // that build-availability step only, and only under the #14463
+        // shared-gate rule: the owner must be reached solely through that same
+        // declaration, so the gate cannot separate the test from the owner.
+        // An owner reachable without the gate (an ungated `lib.rs` item), a
+        // provably-off gate, an include-only context, a shadowed macro, an
+        // uncalled closure or a conditional path still withholds credit
+        // (RIPR-SPEC-0197: an unknown gate grants no credit on its own).
+        if family != ProbeFamily::Predicate {
+            return refusal;
+        }
+        let Some(module_refusal) = refusal
+            .as_ref()
+            .filter(|refusal| matches!(refusal, AssertionRefusal::ModuleDeclaration { .. }))
+        else {
+            return refusal;
+        };
+        let shared_gate = owner.is_some_and(|owner| {
+            super::refusal_miss::owner_compiled_only_under_refused_declaration(
+                index,
+                owner,
+                test,
+                module_refusal,
+            )
+        });
+        // Read the rest of the execution context with only that Module edge
+        // skipped. A refusal that survives the skip is the real reason credit
+        // is withheld (a dead branch, an ignored test, a shadowed macro), so
+        // the disclosure names it rather than the gate. With nothing left to
+        // refuse, the shared gate decides: admitted when the owner is reached
+        // only through the declaration, otherwise the gate itself withholds.
+        let skip = self.module_edge_child_for_test(module_refusal, test, index);
+        let inner = self.context_refusal_without_provenance(
+            test,
+            assertion,
+            index,
+            matches_context,
+            skip.as_deref(),
+        );
+        if let Some(inner) = inner {
+            // #14537 review: only an unestablished gate lets the rest of the
+            // context speak. When the declaration's gate is not unestablished
+            // (`cfg(any())`, an always-off `cfg_attr`, or a declaration ripr
+            // cannot read), no build compiles that code, so a refusal read
+            // past it is not this assertion's limit - and under RIPR-SPEC-0240
+            // only a real limit withholds a gap. Keep the declaration.
+            if !self.module_gate_is_unestablished(module_refusal, index) {
+                return refusal;
+            }
+            return Some(Self::refusal_with_value_guard(inner, assertion));
+        }
+        if shared_gate {
+            return None;
+        }
+        refusal
+    }
+
+    /// Whether the `mod` declaration behind `refusal` carries a `cfg` ripr
+    /// cannot evaluate (so the shared-gate rule can apply), as opposed to a
+    /// provably-off gate, a declaration it cannot read, or a plain module.
+    /// The gate reader is the syntax layer's, the same one the producer and
+    /// the shared-gate rule use (#14537 review).
+    fn module_gate_is_unestablished(&self, refusal: &AssertionRefusal, index: &RustIndex) -> bool {
+        let Some((parent, line, declaration)) = refusal.module_declaration_site() else {
+            return false;
+        };
+        index
+            .files()
+            .get(parent)
+            .filter(|facts| !facts.used_lexical_fallback)
+            .and_then(|facts| {
+                crate::analysis::syntax::module_declaration_unestablished_gate(
+                    &facts.source,
+                    line,
+                    declaration,
+                )
+            })
+            == Some(true)
     }
 
     fn admits_assertion_family(
         &self,
         family: ProbeFamily,
+        owner: Option<&FunctionSummary>,
         test: &TestSummary,
         assertion: &OracleFact,
         index: &RustIndex,
@@ -1148,11 +1247,14 @@ impl OwnerPinSyntax {
         if !gated {
             return true;
         }
-        let refusal = if matches_context {
-            self.context_refusal(test, assertion, index, true)
-        } else {
-            self.refusal(test, assertion, index)
-        };
+        let refusal = self.assertion_family_refusal(
+            family.clone(),
+            owner,
+            test,
+            assertion,
+            index,
+            matches_context,
+        );
         match refusal {
             None => true,
             // Identical spellings on one line, one of which provably runs
@@ -1217,22 +1319,28 @@ impl OwnerPinSyntax {
     pub(in crate::analysis) fn equality_assertion_refusal(
         &self,
         probe: &Probe,
+        owner: Option<&FunctionSummary>,
         test: &TestSummary,
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> Option<AssertionRefusal> {
-        if self.admits_equality_assertion(probe, test, assertion, index) {
+        if self.admits_equality_assertion(probe, owner, test, assertion, index) {
             return None;
         }
-        let refusal = if matches_return_assertion(&probe.family, assertion) {
-            self.context_refusal(test, assertion, index, true)
-        } else {
-            self.refusal(test, assertion, index)
-        }
-        .or_else(|| self.matches_expected_panic_refusal(probe, test, assertion, index))
-        .unwrap_or(AssertionRefusal::Syntax(
-            AssertionContextRefusal::UnidentifiedTest,
-        ));
+        let matches_context = matches_return_assertion(&probe.family, assertion);
+        let refusal = self
+            .assertion_family_refusal(
+                probe.family.clone(),
+                owner,
+                test,
+                assertion,
+                index,
+                matches_context,
+            )
+            .or_else(|| self.matches_expected_panic_refusal(probe, test, assertion, index))
+            .unwrap_or(AssertionRefusal::Syntax(
+                AssertionContextRefusal::UnidentifiedTest,
+            ));
         Some(match refusal {
             AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name)) => {
                 let site = if probe.family == ProbeFamily::FieldConstruction {
@@ -1448,7 +1556,7 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> bool {
-        self.context_ambiguities(test, assertion.line, index)
+        self.context_ambiguities(test, assertion.line, index, None)
             .is_ok_and(|ambiguous| {
                 !["assert", "assert_ne", "matches"]
                     .iter()
@@ -1496,7 +1604,7 @@ impl OwnerPinSyntax {
         test: &TestSummary,
         index: &RustIndex,
     ) -> bool {
-        if self.source_provenance_refusal(test, index).is_some() {
+        if self.source_provenance_refusal(test, index, None).is_some() {
             return false;
         }
         let Some(_facts) = index.files().get(&test.file) else {
@@ -1983,6 +2091,65 @@ impl OwnerPinSyntax {
         }
     }
 
+    /// Every `matches` binding site in the workspace, including opaque
+    /// imports that never spell the name, in index path order. Memoized per
+    /// index (#13754), so every owner-pin syntax instance over one index
+    /// shares one scan. It stays lazy: priming it before the probes cost a
+    /// large diff that never reaches this check more than it saved.
+    fn matches_binding_sites(index: &RustIndex) -> &[(PathBuf, MacroBindingSite)] {
+        index
+            .call_identity_memos
+            .matches_binding_sites
+            .get_or_init(|| {
+                let files: Vec<(&PathBuf, crate::analysis::rust_index::FileFactsView<'_>)> =
+                    index.files().iter().collect();
+                map_scans(&files, |(file, facts)| {
+                    // The stored candidates over-approximate every context's
+                    // sites, so a file that cannot bind `matches` reports
+                    // none and is not parsed (#5363). A file without stored
+                    // candidates is always scanned.
+                    if facts
+                        .macro_candidates
+                        .as_deref()
+                        .is_some_and(|candidates| !candidates.may_bind("matches"))
+                    {
+                        return Vec::new();
+                    }
+                    trusted_macro_binding_sites(
+                        &facts.source,
+                        index.macro_scope_crates(),
+                        &assertion_context_macros(),
+                        &|_, _| false,
+                        &|_| false,
+                    )
+                    .into_iter()
+                    .filter(|(name, _)| name == "matches")
+                    .map(|(_, site)| ((*file).clone(), site))
+                    .collect::<Vec<_>>()
+                })
+                .into_iter()
+                .flatten()
+                .collect()
+            })
+    }
+
+    /// The per-file `matches` argument verdict, memoized by test file. The
+    /// workspace site scan is resolved before the memo lock is taken, so a
+    /// worker that pays it does not hold every sibling on that lock (#13754).
+    fn matches_arguments_clear_for(
+        &self,
+        test: &TestSummary,
+        index: &RustIndex,
+        clear: impl FnOnce(&[(PathBuf, MacroBindingSite)]) -> bool,
+    ) -> bool {
+        let sites = Self::matches_binding_sites(index);
+        *self
+            .matches_arguments_clear
+            .borrow_mut()
+            .entry(test.file.clone())
+            .or_insert_with(|| clear(sites))
+    }
+
     /// #9211: pay the whole workspace macro-site scan once, before the
     /// classify workers start. The first consumer otherwise runs it in line on
     /// one worker while holding the memo lock, and every sibling worker sleeps
@@ -2011,6 +2178,7 @@ impl OwnerPinSyntax {
         &self,
         test: &TestSummary,
         index: &RustIndex,
+        skip_module_child: Option<&Path>,
     ) -> Option<AssertionRefusal> {
         let Some(facts) = index
             .files()
@@ -2028,6 +2196,14 @@ impl OwnerPinSyntax {
             .as_ref()
             .map_or(&facts.role_provenance.edges, |context| &context.edges);
         for edge in edges {
+            // #14537: a caller that has already accounted for the gated `mod`
+            // that composes the test file skips only that Module edge, so an
+            // Include edge further up the chain is still evaluated.
+            if edge.kind == SourceRoleProvenanceEdgeKind::Module
+                && skip_module_child.is_some_and(|child| edge.child == child)
+            {
+                continue;
+            }
             // Module composition already owns resolution. Include expansions
             // lack an exact declaration coordinate here, so remain unknown.
             if edge.kind != SourceRoleProvenanceEdgeKind::Module {
@@ -2078,8 +2254,9 @@ impl OwnerPinSyntax {
         test: &TestSummary,
         line: usize,
         index: &RustIndex,
+        skip_module_child: Option<&Path>,
     ) -> Result<BTreeSet<String>, Box<AssertionRefusal>> {
-        if let Some(refusal) = self.source_provenance_refusal(test, index) {
+        if let Some(refusal) = self.source_provenance_refusal(test, index, skip_module_child) {
             return Err(Box::new(refusal));
         }
         if index.proptest_source(test).is_some() {
@@ -2171,7 +2348,9 @@ impl OwnerPinSyntax {
             )?
             .clone()
         };
-        let ambiguous = self.context_ambiguities(test, assertion.line, index).ok()?;
+        let ambiguous = self
+            .context_ambiguities(test, assertion.line, index, None)
+            .ok()?;
         pin.macros.is_disjoint(&ambiguous).then_some(pin.value)
     }
 
@@ -2247,7 +2426,7 @@ impl OwnerPinSyntax {
         let Some(facts) = index.files().get(&test.file) else {
             return Some(AssertionContextRefusal::UnidentifiedTest);
         };
-        let Ok(ambiguous) = self.context_ambiguities(test, assertion.line, index) else {
+        let Ok(ambiguous) = self.context_ambiguities(test, assertion.line, index, None) else {
             return Some(AssertionContextRefusal::UnidentifiedTest);
         };
         self.by_file
@@ -2270,13 +2449,11 @@ impl OwnerPinSyntax {
             )
     }
 
-    fn refusal(
-        &self,
-        test: &TestSummary,
+    fn refusal_with_value_guard(
+        refusal: AssertionRefusal,
         assertion: &OracleFact,
-        index: &RustIndex,
-    ) -> Option<AssertionRefusal> {
-        Some(match self.context_refusal(test, assertion, index, false)? {
+    ) -> AssertionRefusal {
+        match refusal {
             AssertionRefusal::Syntax(AssertionContextRefusal::GuardedReturn(condition)) => {
                 match value_guard_subject(&condition, &assertion.text) {
                     Some(subject) => AssertionRefusal::ValueGuard {
@@ -2289,7 +2466,19 @@ impl OwnerPinSyntax {
                 }
             }
             refusal => refusal,
-        })
+        }
+    }
+
+    fn refusal(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> Option<AssertionRefusal> {
+        Some(Self::refusal_with_value_guard(
+            self.context_refusal(test, assertion, index, false)?,
+            assertion,
+        ))
     }
 
     fn context_refusal(
@@ -2299,8 +2488,73 @@ impl OwnerPinSyntax {
         index: &RustIndex,
         matches_context: bool,
     ) -> Option<AssertionRefusal> {
+        self.context_refusal_inner(test, assertion, index, matches_context, None)
+    }
+
+    /// [`Self::context_refusal`] with only the Module edge that composes the
+    /// test file skipped, so a caller that has already accounted for that
+    /// build-availability step can read the rest of the execution context
+    /// (#14537). An Include edge further up the chain is still evaluated.
+    fn context_refusal_without_provenance(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        matches_context: bool,
+        skip_module_child: Option<&Path>,
+    ) -> Option<AssertionRefusal> {
+        self.context_refusal_inner(test, assertion, index, matches_context, skip_module_child)
+    }
+
+    /// The Module edge child to skip for a predicate equality whose test file
+    /// is composed through a gated `mod`. The edge is the refused declaration,
+    /// so a test in an ungated child module of that `mod`
+    /// (`lib.rs: mod python;`, `src/python.rs: mod tests;`) skips
+    /// `src/python.rs` rather than the inner declaration (#14537 review). An
+    /// include fragment keeps its parent, and anything unreadable falls back to
+    /// the test file. The Include edge further up the chain is left in place,
+    /// so an include fragment still refuses as `IncludedFile` (#14537).
+    fn module_edge_child_for_test(
+        &self,
+        refusal: &AssertionRefusal,
+        test: &TestSummary,
+        index: &RustIndex,
+    ) -> Option<PathBuf> {
+        let facts = index.files().get(&test.file)?;
+        let context = self.execution_context(&test.file, index);
+        let edges = context
+            .as_ref()
+            .as_ref()
+            .map_or(&facts.role_provenance.edges, |context| &context.edges);
+        if let Some((parent, line, declaration)) = refusal.module_declaration_site()
+            && let Some(edge) = edges.iter().find(|edge| {
+                edge.kind == SourceRoleProvenanceEdgeKind::Module
+                    && edge.parent == parent
+                    && edge.line == line
+                    && edge.declaration == declaration
+            })
+        {
+            return Some(edge.child.clone());
+        }
+        edges
+            .iter()
+            .find(|edge| {
+                edge.kind == SourceRoleProvenanceEdgeKind::Include && edge.child == test.file
+            })
+            .map(|edge| edge.parent.clone())
+            .or_else(|| Some(test.file.clone()))
+    }
+
+    fn context_refusal_inner(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        matches_context: bool,
+        skip_module_child: Option<&Path>,
+    ) -> Option<AssertionRefusal> {
         if let Some((source, offset)) = index.proptest_source(test) {
-            if let Some(refusal) = self.source_provenance_refusal(test, index) {
+            if let Some(refusal) = self.source_provenance_refusal(test, index, skip_module_child) {
                 return Some(refusal);
             }
             let (Some(start), Some(end), Some(line)) = (
@@ -2325,10 +2579,11 @@ impl OwnerPinSyntax {
                 )
                 .map(AssertionRefusal::Syntax);
         }
-        let mut ambiguous = match self.context_ambiguities(test, assertion.line, index) {
-            Ok(ambiguous) => ambiguous,
-            Err(refusal) => return Some(*refusal),
-        };
+        let mut ambiguous =
+            match self.context_ambiguities(test, assertion.line, index, skip_module_child) {
+                Ok(ambiguous) => ambiguous,
+                Err(refusal) => return Some(*refusal),
+            };
         let Some(facts) = index.files().get(&test.file) else {
             return Some(AssertionRefusal::LexicalFallback);
         };
@@ -2381,50 +2636,25 @@ impl OwnerPinSyntax {
                     .root_sites
                     .keys()
                     .any(|(name, _)| name == "matches")
-                && *self
-                    .matches_arguments_clear
-                    .borrow_mut()
-                    .entry(test.file.clone())
-                    .or_insert_with(|| {
-                        // Check every site, not only the earliest disclosure site:
-                        // a later definition must not hide behind std::assert!.
-                        self.matches_binding_sites
-                            .get_or_init(|| {
-                                index
-                                    .files()
-                                    .iter()
-                                    .flat_map(|(file, facts)| {
-                                        trusted_macro_binding_sites(
-                                            &facts.source,
-                                            index.macro_scope_crates(),
-                                            &assertion_context_macros(),
-                                            &|_, _| false,
-                                            &|_| false,
-                                        )
-                                        .into_iter()
-                                        .filter(|(name, _)| name == "matches")
-                                        .map(|(_, site)| (file.clone(), site))
-                                        .collect::<Vec<_>>()
-                                    })
-                                    .collect()
-                            })
-                            .iter()
-                            .all(|(file, site)| {
-                                let MacroBindingKind::MacroArgument(path) = &site.kind else {
-                                    return false;
-                                };
-                                let path: String = path.split_whitespace().collect();
-                                file == &test.file
-                                    && STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
-                                    && rooted.is_unrebound(&path, &facts.source)
-                                    && self.targeted_macro_binding_is_unambiguous(
-                                        test,
-                                        assertion.line,
-                                        &path,
-                                        index,
-                                    )
-                            })
-                    });
+                && self.matches_arguments_clear_for(test, index, |sites| {
+                    // Check every site, not only the earliest disclosure site:
+                    // a later definition must not hide behind std::assert!.
+                    sites.iter().all(|(file, site)| {
+                        let MacroBindingKind::MacroArgument(path) = &site.kind else {
+                            return false;
+                        };
+                        let path: String = path.split_whitespace().collect();
+                        file == &test.file
+                            && STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
+                            && rooted.is_unrebound(&path, &facts.source)
+                            && self.targeted_macro_binding_is_unambiguous(
+                                test,
+                                assertion.line,
+                                &path,
+                                index,
+                            )
+                    })
+                });
             if clear {
                 ambiguous.remove("matches");
             }
@@ -9457,9 +9687,10 @@ fn constructor_call_span(text: &str, head: &str) -> Option<usize> {
 }
 
 /// #14387: [`ReturnPathGate::ClosedGuardReturn`] when the changed line is
-/// the whole statement `return <value>;`, the changed expression `return
-/// <value>` before and after, so the change moves only that guard's returned
-/// value, and the closed integer subset reads the owner in both versions. The
+/// the whole statement `return <value>;` (the changed expression `return
+/// <value>` before and after) or a tail branch's bare `<value>`, so the change
+/// moves only that exit's returned value, and the closed integer subset reads
+/// the owner in both versions. The
 /// guard condition and every other exit are then the same in both, and the
 /// pin's literal arguments decide per call which exit runs.
 fn closed_guard_return(
@@ -9470,16 +9701,27 @@ fn closed_guard_return(
     before: Option<&str>,
 ) -> Option<ReturnPathGate> {
     let (expression, before) = (expression.trim(), before?.trim());
-    let returned = |text: &str| {
-        text.strip_prefix("return ")
-            .is_some_and(|value| !value.trim().is_empty() && !value.contains([';', '{', '}']))
-    };
+    let value = |text: &str| !text.trim().is_empty() && !text.contains([';', '{', '}']);
+    let returned = |text: &str| text.strip_prefix("return ").is_some_and(value);
     let after = body.lines().nth(changed_line)?;
-    let statement = format!("{expression};");
-    if !(returned(expression) && returned(before) && after.trim() == statement) {
+    // A guard's `return <value>;`, or a tail branch's bare `<value>` on its
+    // own line (`if c { .. } else { .. }`, probed since #14385): the closed subset then
+    // reads both versions, so the line's place in the owner is its reading.
+    let (statement, old_statement) = if returned(expression) && returned(before) {
+        (format!("{expression};"), format!("{before};"))
+    } else if value(expression)
+        && value(before)
+        && !expression.starts_with("return ")
+        && !before.starts_with("return ")
+    {
+        (expression.to_string(), before.to_string())
+    } else {
+        return None;
+    };
+    if after.trim() != statement {
         return None;
     }
-    let old_line = after.replacen(&statement, &format!("{before};"), 1);
+    let old_line = after.replacen(&statement, &old_statement, 1);
     let change = super::owner_value::ClosedChange::read(body, name, changed_line, &old_line)?;
     Some(ReturnPathGate::ClosedGuardReturn { change, old_line })
 }

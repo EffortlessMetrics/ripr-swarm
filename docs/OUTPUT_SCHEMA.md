@@ -1989,6 +1989,24 @@ and nothing is lifted from caller-controlled text. No argv echo and no
 partial analysis. Without a JSON request stdout stays empty. Schema:
 `schemas/ripr/cli-refusal.schema.json`.
 
+Typed `repair`/`continue` refusals (#14931). Under `--json`, a `ripr
+repair`, `ripr continue` or `ripr status` refusal that stops before any check
+runs and writes the stderr `refusal code=<code> disposition=<disposition>`
+line (exit `3`) also writes this document. Its `code` is that reason code
+(the table in `docs/EXIT_CODES.md`), the extra `disposition` field is one of
+`retryable`, `terminal`, `needs_selection` or `not_started`, and `message` is
+the plain-words prose without the code line. `next` is always `null`:
+these prose steps can quote a user-supplied item or selector, so the document
+never lifts one into a runnable field. The step is in `message`, except
+that a refusal pointing at text printed above it (the choice commands of
+`several_eligible_seams`, `repair_needs_item` and `ambiguous_attempts`, the
+status of `attempt_baseline_blocked`) prints that text on stderr only. For
+example, `ripr continue --json` with no attempt
+writes `code: "no_current_attempt"` and `disposition: "not_started"`.
+Refusals inside the after-phase check keep their own documents
+(`repair_after_refusal`, `repair_after_failure`, the verify document) and
+never add this one. Exit code and stderr are unchanged.
+
 ```json
 {
   "finding_alignment": {
@@ -3370,6 +3388,18 @@ JSON fields:
   `target shape (not delegatable)` together with a stop condition forbidding
   reuse of the observed call input. A complete packet must not instruct a
   duplicate of a non-discriminating assertion.
+  Pinned error message (#13827): `typescript_error_message_pin: <message>`
+  evidence names the literal message of a changed `throw new Error('<message>')`.
+  It is emitted only when that line is the owner's sole throw site and the old
+  side cannot satisfy the same substring check, either because the line is a
+  pure addition or because the old message (of a built-in error class, with
+  no other call on the old line) does not contain the new one. Every related
+  test must call the owner itself, not an exported wrapper. Any
+  removed line that could have thrown (a `throw`, `reject`, `Promise` or a
+  call other than a pure `Math` method) must be that throw's own paired old
+  line. With
+  it, a bare `toThrow()` packet targets `toThrow('<message>')` (RIPR-SPEC-0087
+  G-C). Without it, the generic `Error` gets no packet.
   Derived boundary input (#4215 follow-up): when the finding carries
   `typescript_boundary_input: parameter=<p>;index=<i>;operand=<o>;value=<v>`
   evidence, the analysis side has pinned the call input that hits the
@@ -3957,15 +3987,21 @@ suppression.
 
 ### `owner_opt_outs` and withheld findings (top-level additive, #13819)
 
-Emitted only when a changed Rust owner function or method carries
-cargo-mutants' `#[mutants::skip]`, written directly or as
+Emitted only when a changed Rust owner function or method, or a scope that
+encloses it, carries cargo-mutants' `#[mutants::skip]`, written directly or as
 `#[cfg_attr(<predicate>, mutants::skip)]` (the predicate is not evaluated).
 Absent otherwise, so runs without the attribute see byte-identical output.
-Does not bump `schema_version`. Only the owner's own attributes count: a skip
-on a sibling function, on the enclosing `impl` block or on a module does not
-withhold, and a file read through the lexical fallback (no parser-backed
-attributes) is never withheld. Diff-scoped `ripr check` only; repo scope
-reports every owner.
+Does not bump `schema_version`. The scopes follow cargo-mutants (#13910): the
+owner function itself, a function whose body declares it, an enclosing `impl`
+or `trait` block, an enclosing inline `mod name { .. }` at any depth, and the
+owner's file through an inner `#![mutants::skip]`. Inner attributes on those
+scopes count like outer ones. A skip on a sibling function or on a different
+`impl` block of the same type does not withhold. Enclosing scopes are read
+from the parsed syntax tree; a file that does not parse cleanly, a file read
+through the lexical fallback, and an owner the parser cannot name exactly once
+are never withheld. A `#[mutants::skip] mod name;` declaration is not followed
+into the module's own file (put `#![mutants::skip]` at the top of that file
+instead). Diff-scoped `ripr check` only; repo scope reports every owner.
 
 The opt-out is the team's recorded intent, not static evidence. A withheld
 finding keeps its `classification` (it is never reclassified as `exposed`),
@@ -3977,6 +4013,9 @@ and ripr makes no runtime claim about it. Three surfaces change:
   `withheld_by_owner_opt_out` add back up to `summary.findings`.
 - `findings[].withheld_by` — the reason token, `"owner_mutants_skip"`. The
   finding stays fully rendered.
+- `findings[].withheld_scope` — present with `withheld_by`: the scope that
+  carried the attribute, one of `"fn"`, `"impl"`, `"trait"`, `"module"` or
+  `"file"` (#13910). The innermost skipped scope wins.
 - top-level `owner_opt_outs` object — `withheld` (count) and `reason`
   (`"owner_mutants_skip"`).
 
@@ -3986,13 +4025,14 @@ once, under `suppression_policy`, and is not listed again here.
 ```json
 "summary": {"findings": 1, "no_static_path": 0, "withheld_by_owner_opt_out": 1},
 "findings": [
-  {"id": "probe:src_lib.rs:predicate:401600b6", "withheld_by": "owner_mutants_skip", "classification": "no_static_path", ...}
+  {"id": "probe:src_lib.rs:predicate:401600b6", "withheld_by": "owner_mutants_skip", "withheld_scope": "impl", "classification": "no_static_path", ...}
 ],
 "owner_opt_outs": {"withheld": 1, "reason": "owner_mutants_skip"}
 ```
 
 Human output prints a `Withheld by owner opt-out (owner_mutants_skip)` block
-with one line per withheld finding (location, class, owner) and names the
+with one line per withheld finding (location, class, owner, scope such as
+`fn`, `impl Cart` or `module a`) and names the
 count on the `Summary` line; the findings leave the triage selection the same
 way policy-suppressed findings do. GitHub output skips their annotations and
 counts them in the denominator `::notice`. SARIF (`sarif`, `sarif-compact`)
@@ -4017,6 +4057,13 @@ removed before the out-of-scope test-file partition; the partition therefore
 cannot reduce it. The fixed `owner_mutants_skip` reason holds while
 the editor supplies no suppression policy (#14610).
 
+`ripr explain <finding>` (default human format, fresh run) still renders a
+withheld finding and starts with one line stating the withholding, taken from
+the same run's `owner_opt_outs`, for example
+``Withheld: owner `limit` is inside impl `Cart` marked #[mutants::skip] (owner_mutants_skip)``.
+`explain --format agent` and `explain --from <artifact>` do not add it (the
+check artifact does not record opt-outs).
+
 The MCP adapter consumes the same set (#14138): `ripr mcp --stdio` serves no
 canonical item for a finding id in `CheckOutput::withheld_finding_ids`. The gap
 list and `ripr://snapshot/{snapshot_id}` resource disclose
@@ -4028,7 +4075,7 @@ repair-card or repair-start read of a withheld id refuses with the typed
 `docs/interop/mcp.md`.
 
 Surfaces that still report withheld findings (not yet wired to the opt-out):
-`ripr explain`; and the repo-scope formats
+the repo-scope formats
 (`repo-*`), which do not read the attribute at all. The canonical next-action stop
 case for a run whose every finding is withheld stays `suppressed_by_policy`;
 the human `Safe next action` line names the owner opt-out.
@@ -17975,7 +18022,8 @@ Field contract:
   focused test edit at the same HEAD starts nothing and prints that
   attempt's `agent_attempt_status` document (what `ripr status --attempt
   <id> --json` prints) instead, so it carries no `repair_attempt` block.
-  `ripr repair --json` refusals keep exit `3`, stderr prose and empty stdout;
+  `ripr repair --json` refusals keep exit `3` and stderr prose and write the
+  `cli_refusal` document with the reason `code` and `disposition` (#14931);
   an unknown flag under `ripr repair --json` keeps exit `2` and its stderr
   prose and writes the standalone `cli_refusal` document.
   It names the durable transaction the packet was prepared
@@ -20591,7 +20639,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.181",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.182",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21376,7 +21424,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.181",
+      "schema_version": "1.182",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

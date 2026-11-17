@@ -768,6 +768,17 @@ open model/relational acceptance of #6643.
    and the unrelated `NOTE` import stays valid. A renamed, nested or glob group
    member is not followed.
 
+In examples 9 to 12 the bare owner call inside the generated test resolves
+through the owner's call identity at the invoking file. A `#[path = ".."]` in
+another integration-test file of the package (`tests/modules.rs` mounting
+`other/rows.rs`) does not switch that identity off when every such literal
+stays below its own directory: it only rearranges that test crate, so the
+owner's module path is unchanged (#12771). A `..` segment, an absolute, drive
+or backslash literal, a raw string, a `cfg_attr` carrier, a `#[path]` inside a
+macro body, a file that does not parse, any `#[path]` outside `tests/`, or an
+owner that itself lives under `tests/` keeps it off, and the owner reads
+unresolved rather than credited.
+
 ## Required Evidence
 
 - `StaticLimitKind::RustMacroReachUnresolved` in
