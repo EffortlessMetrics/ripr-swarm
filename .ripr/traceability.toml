@@ -11383,6 +11383,7 @@ tests = [
   "crates/ripr/src/output/human/agent_tests.rs::rows_without_a_recorded_relation_still_pick_the_stronger_oracle",
   "crates/ripr/src/output/human/agent_tests.rs::a_done_line_names_the_pinning_test_over_a_smoke_only_direct_caller",
   "crates/ripr/src/output/human/agent_tests.rs::identical_gap_rows_fold_into_one_and_any_difference_keeps_both",
+  "crates/ripr/src/output/human/agent_tests.rs::predicate_on_a_field_initializer_folds_into_its_field_construction_row",
   "crates/ripr/src/output/human/agent_tests.rs::unreferenced_owner_reads_as_a_gap_not_a_cannot_tell_limit",
   "crates/ripr/src/output/human/agent_tests.rs::ambiguous_no_static_path_findings_stay_limits",
   "crates/ripr/src/output/human/agent_tests.rs::explain_agent_unreferenced_owner_is_an_open_gap",

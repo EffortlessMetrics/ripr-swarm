@@ -1189,6 +1189,13 @@ verify=complete|outcome=O|findings=N|exposed=N
   separate. Folding is display-only: every folded finding is still a gap (it
   never moves to `limits=`) and still counts in `verify=`; `--format json`
   lists each finding.
+  A `predicate` gap on a struct-literal field initializer (`<value>`) also
+  folds into the `field_construction` gap for that initializer
+  (`<field>: <value>`) when class, `FILE:LINE`, strongest related test
+  (ignoring its `miss=` wording) and `stages=` agree and the predicate names
+  no missing discriminator of its own and only `missing` lines the field row
+  also carries (#14713). The field row is kept, and
+  `next=` names the first printed row.
 - `unconfirmed_gaps=U` follows `gaps=` (#13803) when the report lists gap
   records the static evidence cannot confirm, so the header never reads
   `gaps=0` alone beside a listed gap. It counts every finding on the path
