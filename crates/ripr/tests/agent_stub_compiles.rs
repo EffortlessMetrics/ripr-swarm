@@ -259,9 +259,87 @@ mod more_tests {
 }
 "#;
 
+/// #8361: receivers built from a constructor instead of a `todo!()`.
+const FIXTURE_RECEIVER: &str = r#"pub struct Bucket {
+    tokens: u32,
+}
+
+impl Bucket {
+    pub fn new(capacity: u32) -> Self {
+        Bucket { tokens: capacity }
+    }
+
+    pub fn allow(&mut self, n: u32) -> bool {
+        if self.tokens > n { self.tokens -= n; true } else { false }
+    }
+}
+
+pub struct Ledger {
+    entries: Vec<i64>,
+}
+
+impl Ledger {
+    pub fn empty() -> Ledger {
+        Ledger { entries: Vec::new() }
+    }
+}
+
+impl Ledger {
+    pub fn total(&self, cap: i64) -> i64 {
+        let sum: i64 = self.entries.iter().sum();
+        if sum > cap { cap } else { sum }
+    }
+}
+
+#[derive(Default)]
+pub struct Counter {
+    pub hits: u8,
+}
+
+impl Counter {
+    // An inherent `default` taking an argument must not capture the
+    // derived `Default` call (#14825 review).
+    pub fn default(hits: u8) -> Self {
+        Counter { hits }
+    }
+
+    pub fn over(&self, n: u8) -> u8 {
+        if n > 21 { self.hits } else { 0 }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic]
+    fn panics_first() {
+        let _b = Bucket::new(7);
+        panic!("before");
+    }
+
+    #[test]
+    fn caught() {
+        // A call inside a closure is not copied (#14825 review).
+        let built = std::panic::catch_unwind(|| Bucket::new(0));
+        assert!(built.is_ok());
+    }
+
+    #[test]
+    fn drains() {
+        let mut b = Bucket::new(5);
+        assert!(b.allow(2));
+    }
+}
+"#;
+
 enum Expect {
     /// The stub is written, compiles, and its test stops at a `ripr:` todo.
     StopsAtRiprTodo,
+    /// As `StopsAtRiprTodo`, and the stub text holds this receiver line, so
+    /// the run proves the constructor call compiled and ran before the todo.
+    BuildsReceiver(&'static str),
     /// No stub; the refusal names this kind.
     Refused(&'static str),
 }
@@ -358,10 +436,32 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         ("n > 11", Expect::Refused("owner_unsupported"), None),
     ]
     .map(|(needle, expect, module)| (FIXTURE_5471, needle, expect, module));
+    let cases_receiver = [
+        // The first literal-argument constructor call in the test module,
+        // skipping a `should_panic` test (#8361).
+        (
+            "self.tokens > n",
+            Expect::BuildsReceiver("let mut subject: Bucket = Bucket::new(5);"),
+        ),
+        // A no-argument constructor in a sibling inherent impl.
+        (
+            "sum > cap",
+            Expect::BuildsReceiver("let subject: Ledger = Ledger::empty();"),
+        ),
+        // `#[derive(Default)]` beside an inherent `default(hits)`.
+        (
+            "n > 21",
+            Expect::BuildsReceiver(
+                "let subject: Counter = <Counter as ::core::default::Default>::default();",
+            ),
+        ),
+    ]
+    .map(|(needle, expect)| (FIXTURE_RECEIVER, needle, expect, Some("tests")));
     for (fixture, needle, expect, module) in cases
         .into_iter()
         .map(|(fixture, needle, expect)| (fixture, needle, expect, None))
         .chain(cases_5471)
+        .chain(cases_receiver)
     {
         let line = fixture
             .lines()
@@ -398,7 +498,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                     "{needle}: a refusal must not touch the file"
                 );
             }
-            Expect::StopsAtRiprTodo => {
+            Expect::StopsAtRiprTodo | Expect::BuildsReceiver(_) => {
                 assert!(output.status.success(), "{needle}: {stdout}{stderr}");
                 let ready: serde_json::Value =
                     serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
@@ -410,6 +510,14 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                     .as_str()
                     .ok_or_else(|| format!("{needle}: test_name"))?
                     .to_string();
+                if let Expect::BuildsReceiver(line) = expect {
+                    let text = document["text"].as_str().unwrap_or_default();
+                    assert!(text.contains(line), "{needle}: receiver `{line}`:\n{text}");
+                    assert!(
+                        !text.contains("that `"),
+                        "{needle}: no receiver todo remains:\n{text}"
+                    );
+                }
                 if fixture == FIXTURE_5471 {
                     // Two inline test modules: one is picked, not refused.
                     assert_eq!(
@@ -3214,12 +3322,15 @@ fn stub_for_an_existing_integration_target_is_unique_within_that_file() -> Resul
         .ok_or_else(|| format!("test_name: {first}"))?
         .to_string();
 
-    // Second write: either cleanly refused or a distinct name, never a duplicate.
+    // Second write: cleanly refused, already present, or a distinct name -
+    // never a duplicate. #14810: the stub's expected value is still an
+    // unfilled `todo!()`, so the seam stays an open gap and the second write
+    // reaches the #8891 "already written" path instead of refusing.
     let second = stub_json(&root, "src/lib.rs:2")?;
     let written = std::fs::read_to_string(root.join("tests/discount.rs"))
         .map_err(|error| error.to_string())?;
     assert_eq!(count_fn(&written, &name), 1, "duplicate fn:\n{written}");
-    if second["refused"] != true {
+    if second["refused"] != true && second["already_present"] != true {
         assert_ne!(second["test_name"], first["test_name"], "{second}");
         let compile = cargo_from_run_command(
             second["run_command"]
@@ -3236,15 +3347,18 @@ fn stub_for_an_existing_integration_target_is_unique_within_that_file() -> Resul
     }
 
     // A same-named test already present in the target is not shadowed.
-    std::fs::write(
-        root.join("tests/discount.rs"),
-        format!("{EXISTING_TEST}\n#[test]\nfn {name}() {{}}\n"),
-    )
-    .map_err(|error| error.to_string())?;
+    let collided = format!("{EXISTING_TEST}\n#[test]\nfn {name}() {{}}\n");
+    std::fs::write(root.join("tests/discount.rs"), &collided).map_err(|error| error.to_string())?;
     let third = stub_json(&root, "src/lib.rs:2")?;
     let written = std::fs::read_to_string(root.join("tests/discount.rs"))
         .map_err(|error| error.to_string())?;
     assert_eq!(count_fn(&written, &name), 1, "collision:\n{written}");
+    // The colliding fn has a different body, so a byte-identical render is
+    // not on disk: `already_present` would be a dishonest answer here, and
+    // the old `&& already_present != true` guard skipped the name check
+    // entirely when it was set. The honest outcomes are a refusal or a
+    // distinct name, and a distinct name must not be the colliding one.
+    assert_ne!(third["already_present"], true, "{third}");
     if third["refused"] != true {
         assert_ne!(third["test_name"].as_str(), Some(name.as_str()), "{third}");
     }

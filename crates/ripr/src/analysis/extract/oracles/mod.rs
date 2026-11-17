@@ -9,7 +9,10 @@ mod scan;
 pub(crate) use arguments::{
     assertion_oracle_text, equality_assertion_arguments, outer_assertion_condition,
 };
-pub(crate) use classify::{classify_assertion, classify_assertion_with, is_inequality_assertion};
+pub(crate) use classify::{
+    classify_assertion, classify_assertion_with, is_inequality_assertion,
+    without_unfilled_expected, without_unfilled_expected_parts,
+};
 pub(crate) use pattern_admission::LazyDecls;
 #[cfg(test)]
 pub(crate) use pattern_admission::table_builds;
@@ -25,7 +28,9 @@ pub(crate) use scan::{
     extract_line_scanned_oracles, guarded_result_match_scan_with_shadow_authority,
     terminal_err_return_guard_oracle,
 };
-pub(crate) use scan::{uncompared_unwrap_err, unwrap_err_bound_variables};
+pub(crate) use scan::{
+    placeholder_bound_variables, uncompared_unwrap_err, unwrap_err_bound_variables,
+};
 
 #[cfg(test)]
 mod tests {
