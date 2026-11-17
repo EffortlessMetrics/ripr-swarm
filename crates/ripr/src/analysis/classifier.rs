@@ -339,6 +339,18 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
             });
     context.unmounted_build_script =
         candidate_index.probe_in_unmounted_build_script(probe, owner_fn, index);
+    // #14815: a prefix `-`/`!` added to or removed from the owner's whole
+    // one-line tail, read from the diff so the base-side owner is established.
+    context.unary_tail = owner_fn.zip(changed_file).and_then(|(owner, changed)| {
+        super::classify::unary_tail_change(
+            probe,
+            owner,
+            changed,
+            index,
+            candidate_index.owner_pin_syntax(),
+            candidate_index.module_declarations(),
+        )
+    });
     context.owner_sole_change = changed_file
         .zip(owner_fn)
         .and_then(|(changed, owner)| owner_sole_change(changed, owner, probe.location.line));

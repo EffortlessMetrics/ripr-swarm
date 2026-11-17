@@ -386,7 +386,7 @@ pub(crate) fn render_human_triage(
             // that block, not a policy it never loaded.
             out.push_str(match (output.suppression.is_some(), output.owner_opt_outs.is_empty()) {
                 (false, false) => {
-                    "  Safe next action: all findings are withheld because the changed function carries #[mutants::skip]; review the owner opt-out block before treating this run as actionable\n"
+                    "  Safe next action: all findings are withheld because the changed function or an enclosing scope carries #[mutants::skip]; review the owner opt-out block before treating this run as actionable\n"
                 }
                 (true, false) => {
                     "  Safe next action: all findings are suppressed by policy or withheld by #[mutants::skip]; review the suppression and owner opt-out blocks before treating this run as actionable\n"
@@ -1106,8 +1106,9 @@ const GROUPED_LINE_RUNS_LISTED: usize = 3;
 /// The lines a grouped `Hidden:` row names: each run of consecutive lines as
 /// `a` or `a-b`, comma-separated, so lines 3 and 5 read `3, 5` rather than a
 /// `3-5` range that implies line 4. Beyond [`GROUPED_LINE_RUNS_LISTED`] runs
-/// the row keeps the span and says how many lines it covers:
-/// `1078-1241 (12 lines)`.
+/// the row keeps the span and counts the distinct lines inside it, not the
+/// span length:
+/// `1078-1241 (5 distinct lines)`.
 fn grouped_line_text(lines: impl Iterator<Item = usize>) -> String {
     let distinct: std::collections::BTreeSet<usize> = lines.collect();
     let mut runs: Vec<(usize, usize)> = Vec::new();
@@ -1128,7 +1129,7 @@ fn grouped_line_text(lines: impl Iterator<Item = usize>) -> String {
         return runs.iter().map(run_text).collect::<Vec<_>>().join(", ");
     }
     match (distinct.first(), distinct.last()) {
-        (Some(first), Some(last)) => format!("{first}-{last} ({} lines)", distinct.len()),
+        (Some(first), Some(last)) => format!("{first}-{last} ({} distinct lines)", distinct.len()),
         _ => String::new(),
     }
 }
@@ -2709,8 +2710,11 @@ mod tests {
             (vec![7, 7], "7"),
             (vec![10, 11, 12, 15], "10-12, 15"),
             (vec![1, 3, 5], "1, 3, 5"),
-            (vec![1, 3, 5, 7], "1-7 (4 lines)"),
-            (vec![1078, 1079, 1100, 1200, 1241], "1078-1241 (5 lines)"),
+            (vec![1, 3, 5, 7], "1-7 (4 distinct lines)"),
+            (
+                vec![1078, 1079, 1100, 1200, 1241],
+                "1078-1241 (5 distinct lines)",
+            ),
         ] {
             assert_eq!(
                 grouped_line_text(lines.clone().into_iter()),
@@ -4210,6 +4214,8 @@ mod tests {
             finding_id: "finding:withheld".to_string(),
             owner: "shipping_cents".to_string(),
             reason: crate::analysis::owner_opt_out::OwnerOptOutReason::MutantsSkip,
+            scope: crate::analysis::owner_opt_out::OwnerOptOutScope::Fn,
+            scope_label: String::new(),
         }];
         assert_eq!(
             start_here_lines(&output),

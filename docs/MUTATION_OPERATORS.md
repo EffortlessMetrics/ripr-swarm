@@ -35,7 +35,8 @@ Verdicts:
   not help.
 - **false gap**: `no_static_path` although the test calls the changed code.
 
-Measured 2026-11-15 on main `60114de3`.
+Measured 2026-11-15 on main `60114de3`; the two Rust unary rows were
+re-measured 2026-11-16 with the #14815 change.
 Python tests import names explicitly (`from fx.core import f`). ripr's probe
 family is in parentheses.
 
@@ -47,13 +48,13 @@ family is in parentheses.
 | Relational flip (`x < 10` → `x > 10`) | BinaryOperator | none⁶ | EqualityOperator (`<` → `>=`) | yes (return_value) | yes (predicate) | partial (predicate) |
 | Equality (`==` → `!=`) | BinaryOperator | `==` ↔ `!=` | EqualityOperator | yes (predicate) | yes (return_value) | yes (return_value) |
 | Logical (`&&` → `\|\|`) | BinaryOperator | `and` ↔ `or` | LogicalOperator | unknown | yes (return_value) | yes (return_value) |
-| Negation removed (`!a` → `a`) | UnaryOperator | remove `not` | BooleanLiteral | unknown² | yes (return_value) | yes (return_value) |
+| Negation removed (`!a` → `a`) | UnaryOperator | remove `not` | BooleanLiteral | yes² (return_value) | yes (return_value) | yes (return_value) |
 | Membership (`in` → `not in`) | n/a | `in` ↔ `not in` | n/a | n/a | yes (return_value) | n/a |
 | Arithmetic in the returned expression (`a + b` → `a - b`) | BinaryOperator | `+` ↔ `-` | ArithmeticOperator | yes (return_value) | yes (return_value) | yes (return_value) |
 | Arithmetic in a local binding (`let y = a + b`) | BinaryOperator | `+` ↔ `-` | ArithmeticOperator | unknown | yes (return_value) | partial (return_value) |
 | Compound assignment (`t += b` → `t -= b`) | BinaryOperator | `+=` ↔ `-=`, `+=` → `=` | AssignmentOperator | unknown | yes (predicate) | yes (return_value) |
 | Update (`t++` → `t--`) | n/a | n/a | UpdateOperator | n/a | n/a | partial (predicate) |
-| Unary minus removed (`-a` → `a`) | UnaryOperator | `-a` → `+a` | UnaryOperator (`-a` → `+a`) | unknown² | yes (return_value) | yes (return_value) |
+| Unary minus removed (`-a` → `a`) | UnaryOperator | `-a` → `+a` | UnaryOperator (`-a` → `+a`) | yes² (return_value) | yes (return_value) | yes (return_value) |
 | Bitwise (`a & b` → `a \| b`) | BinaryOperator | `&` ↔ `\|` | none | unknown² | yes (return_value) | yes (return_value) |
 | Module constant (`LIMIT = 100` → `101`) | none | number +1 | none | unknown | false gap | false gap |
 | Number literal in an expression (`x * 3` → `x * 4`) | none | number +1 | none | yes (return_value) | yes (return_value) | yes (return_value) |
@@ -83,10 +84,13 @@ family is in parentheses.
 
 ¹ cargo-mutants' BinaryOperator replaces `>` with `==` and `<` (the flip row).
 It does not generate the `>=` boundary shift, which ripr does model.
-² A returned unary or bitwise expression over names (`-a`, `!ready`, `a & b`)
-stays unknown: ripr cannot yet check whether the test's inputs tell the two
-versions apart (`f(0)` does not for `-a` → `a`), so it does not claim
-`exposed`. [#14815](https://github.com/EffortlessMetrics/ripr-swarm/issues/14815).
+² When the diff changes only the owner's whole one-line tail and that tail is
+a parameter gaining or losing one `-` (signed integer) or `!` (`bool` or
+integer). `-a` and `a` agree at `0`, so a pin at `f(0)` reads
+`weakly_exposed`, and an argument ripr cannot fold to a literal (a local, a
+loop row, a constant) stays `infection_unknown`. Any other unary tail, and a
+returned bitwise expression over names (`a & b`), stays unknown
+([#14815](https://github.com/EffortlessMetrics/ripr-swarm/issues/14815)).
 ³ Not a direct operator. cargo-mutants replaces the callee's body with `()`;
 Stryker empties the whole block.
 ⁴ cargo-mutants only deletes fields of literals with a `..base`.
@@ -125,7 +129,8 @@ Loop range bounds ([#11972](https://github.com/EffortlessMetrics/ripr-swarm/issu
 `break`/`continue` and forced conditions
 ([#14816](https://github.com/EffortlessMetrics/ripr-swarm/issues/14816)) are also
 unknown, as are module constants, a returned `a && b` flipped to `a || b`, and
-unary or bitwise edits on a returned name (#14815).
+bitwise edits on a returned name. Unary `-`/`!` edits are read only on a
+one-line whole-body tail (#14815).
 
 **Python.** A changed module constant reads `no_static_path` even though the
 test calls the function that reads it

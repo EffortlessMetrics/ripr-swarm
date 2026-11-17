@@ -14535,6 +14535,89 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
     Ok(())
 }
 
+/// #13754: the workspace `matches` binding-site scan skips files whose
+/// stored candidates rule `matches` out, still scans a file without stored
+/// candidates, finds exactly the sites an unfiltered scan finds, and is
+/// shared by every syntax instance over one index.
+#[test]
+fn the_matches_site_scan_skips_ruled_out_files_and_is_shared_per_index() {
+    let files = [
+        (
+            "src/lib.rs",
+            "pub fn parse(n: u8) -> Option<u8> { (n > 0).then_some(n) }\n",
+        ),
+        (
+            "src/rebind.rs",
+            "macro_rules! matches { ($e:expr) => { true }; }\n",
+        ),
+        ("src/glob.rs", "use other::*;\npub fn f() {}\n"),
+        (
+            "tests/it.rs",
+            "#[test]\nfn parses() { assert!(matches!(demo::parse(1), Some(1))); }\n",
+        ),
+    ];
+    let mut index = index(&files);
+    // A file with no stored candidates (as a lexical fallback leaves it)
+    // must still be scanned: its glob import may bind every name.
+    let unparsed = PathBuf::from("src/unparsed.rs");
+    let mut facts = summarize_file(unparsed.clone(), "use another::*;\n".to_string());
+    facts.macro_candidates = None;
+    index.insert_file_only(unparsed.clone(), facts);
+    let candidates = |path: &str| {
+        index
+            .files()
+            .get(Path::new(path))
+            .and_then(|facts| facts.macro_candidates.as_deref().cloned())
+    };
+    assert!(
+        candidates("src/lib.rs").is_some_and(|c| !c.may_bind("matches")),
+        "fixture premise: src/lib.rs is ruled out by its candidates"
+    );
+    assert!(
+        candidates("src/rebind.rs").is_some_and(|c| c.may_bind("matches")),
+        "fixture premise: the local definition may bind matches"
+    );
+
+    let unfiltered: Vec<(PathBuf, MacroBindingSite)> = index
+        .files()
+        .iter()
+        .flat_map(|(file, facts)| {
+            trusted_macro_binding_sites(
+                &facts.source,
+                index.macro_scope_crates(),
+                &assertion_context_macros(),
+                &|_, _| false,
+                &|_| false,
+            )
+            .into_iter()
+            .filter(|(name, _)| name == "matches")
+            .map(|(_, site)| (file.clone(), site))
+            .collect::<Vec<_>>()
+        })
+        .collect();
+    let sites = OwnerPinSyntax::matches_binding_sites(&index).to_vec();
+    assert_eq!(sites, unfiltered, "the prefilter drops no site");
+    for file in ["src/rebind.rs", "src/glob.rs", "src/unparsed.rs"] {
+        assert!(
+            sites.iter().any(|(path, _)| path == Path::new(file)),
+            "{file} must report a matches site: {sites:?}"
+        );
+    }
+
+    // Shared per index: the memo is the index's, and a second instance
+    // reads the same slice instead of scanning again.
+    let shared = index
+        .call_identity_memos
+        .matches_binding_sites
+        .get()
+        .map(Vec::as_ptr);
+    assert_eq!(
+        shared,
+        Some(OwnerPinSyntax::matches_binding_sites(&index).as_ptr()),
+        "the scan is memoized on the index"
+    );
+}
+
 #[test]
 fn scalar_names_rebound_sees_type_struct_and_import_rebinding() {
     assert_eq!(declared_type(": Foo<{ A == B }> = 1"), None);
