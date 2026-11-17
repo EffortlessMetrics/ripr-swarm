@@ -123,10 +123,9 @@ fn collect_returns<'a>(body: &'a [Stmt], returns: &mut Vec<Option<&'a Expr>>, es
 }
 
 /// Whether a handler's return annotation leaves its returned dict as the
-/// body: none, or a bare `dict`. FastAPI reads any other annotation as an
-/// implicit response model that filters and coerces the dict (#13869).
+/// body: only none. FastAPI reads an annotation as an implicit response model
+/// that may filter and coerce the dict (#13869), and even a bare `dict` names
+/// a model when the name is rebound, so any annotation withholds the credit.
 pub(super) fn body_returning_annotation(returns: Option<&Expr>) -> bool {
-    returns.is_none_or(
-        |annotation| matches!(annotation, Expr::Name(name) if name.id.as_str() == "dict"),
-    )
+    returns.is_none()
 }
