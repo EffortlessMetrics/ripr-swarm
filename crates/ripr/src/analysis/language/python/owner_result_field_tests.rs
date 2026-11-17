@@ -613,6 +613,18 @@ fn single_guard_variants_carry_no_fact() -> Result<(), String> {
             "from fx.core import Req as R\n\n\ndef test_builder_sets_url():\n    r = R('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
         ),
         (
+            "the test calls an imported helper",
+            "from fx.core import Req\nfrom fx.helpers import install_defaults\n\n\ndef test_builder_sets_url():\n    install_defaults()\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
+        ),
+        (
+            "the test makes another call",
+            "from fx.core import Req\n\n\ndef test_builder_sets_url():\n    n = len('abc')\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
+        ),
+        (
+            "the test imports another module",
+            "from fx.core import Req\nimport fx.helpers\n\n\ndef test_builder_sets_url():\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
+        ),
+        (
             "the test mocks",
             "from unittest import mock\nfrom fx.core import Req\n\n\ndef test_builder_sets_url():\n    m = mock.Mock()\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
         ),

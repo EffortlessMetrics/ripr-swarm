@@ -662,6 +662,31 @@ fn binding_of_owner_result(
     if !shape_ok {
         return None;
     }
+    // The owner call is the test's only code that can run: no other call (an
+    // imported `install_defaults()` can replace the builder on the class),
+    // and no import that could run module code first, other than `pytest`
+    // and the owner module itself.
+    let mut calls = 0usize;
+    visit_exprs_in_statements(body, &mut |expr| {
+        if matches!(expr, Expr::Call(_)) {
+            calls += 1;
+        }
+    });
+    let expected_calls = if owner.name == "__init__" { 1 } else { 2 };
+    let foreign_import = test.imports.iter().any(|import| {
+        let module = if import.source_module.is_empty() {
+            import.imported.as_str()
+        } else {
+            import.source_module.as_str()
+        };
+        module != "pytest"
+            && !owner_modules
+                .iter()
+                .any(|owner_module| owner_module == module)
+    });
+    if calls != expected_calls || foreign_import {
+        return None;
+    }
     match field_use {
         FieldUse::Unread => {
             (uses.field_reads == 0 && uses.other_attribute_reads >= 1).then_some((binding, None))

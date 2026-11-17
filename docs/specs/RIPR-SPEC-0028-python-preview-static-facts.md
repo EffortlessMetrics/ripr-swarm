@@ -1456,7 +1456,9 @@ read-out: the boolean the classifier uses is derived from the surfaced
   (or `Cls(...)` for `__init__`, `Cls` the test module's one import of the
   class, `from <owner module> import Cls` without an alias, which nothing in the test module
   rebinds or attribute-writes and no autouse fixture, setup hook or opaque
-  module code can reach) exactly once, names no dunder, uses
+  module code can reach; the test module importing nothing else but `pytest`)
+  exactly once, makes no call but the owner construction and call, names no
+  dunder, uses
   `<binding>` only as reads of other non-dunder, non-method attributes (a
   bound method read like `reset = r.reset` can be called later; no call, method
   call, subscript, whole-value use, rebinding or walrus), calls the owner once,
