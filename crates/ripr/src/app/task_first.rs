@@ -3794,6 +3794,47 @@ impl RepairRefusalCode {
     pub(crate) fn message_with_stderr_line(self, message: &str) -> String {
         format!("{}\n{}", message.trim_end(), self.stderr_line())
     }
+
+    /// The inverse of [`Self::message_with_stderr_line`]: the code and the
+    /// plain-words prose of a message whose last line is this code's machine
+    /// line. A message routed through a layer that carries only the rendered
+    /// text (the before phase's start refusal) keeps its typed code this
+    /// way (#14931). `None` when the last line is not a known code's line.
+    pub(crate) fn split_stderr_line(message: &str) -> Option<(Self, &str)> {
+        let (prose, line) = message.trim_end().rsplit_once('\n')?;
+        let name = line
+            .strip_prefix("ripr: refusal code=")?
+            .split_once(" disposition=")?
+            .0;
+        let code = Self::from_code_name(name)?;
+        (line == code.stderr_line()).then_some((code, prose.trim_end()))
+    }
+
+    fn from_code_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "item_names_no_seam" => Self::ItemNamesNoSeam,
+            "item_names_several_seams" => Self::ItemNamesSeveralSeams,
+            "seam_not_repair_eligible" => Self::SeamNotRepairEligible,
+            "no_eligible_seam" => Self::NoEligibleSeam,
+            "several_eligible_seams" => Self::SeveralEligibleSeams,
+            "repair_needs_item" => Self::RepairNeedsItem,
+            "start_refused_uncommitted_target" => Self::StartRefusedUncommittedTarget,
+            "build_output_not_ignored" => Self::BuildOutputNotIgnored,
+            "no_test_route" => Self::NoTestRoute,
+            "awaiting_edit" => Self::AwaitingEdit,
+            "retry_budget_exhausted" => Self::RetryBudgetExhausted,
+            "no_current_attempt" => Self::NoCurrentAttempt,
+            "attempt_baseline_blocked" => Self::AttemptBaselineBlocked,
+            "unanchored_root" => Self::UnanchoredRoot,
+            "ambiguous_attempts" => Self::AmbiguousAttempts,
+            "attempt_ended_without_receipt" => Self::AttemptEndedWithoutReceipt,
+            "attempt_completion_unconfirmed" => Self::AttemptCompletionUnconfirmed,
+            "edit_cage_violation" => Self::EditCageViolation,
+            "attempt_stale" => Self::AttemptStale,
+            "attempt_incomparable" => Self::AttemptIncomparable,
+            _ => return None,
+        })
+    }
 }
 
 /// Bound full status reconstruction after a complete eligibility inventory.
@@ -4172,6 +4213,74 @@ pub(crate) mod tests {
             ),
         );
         assert_eq!(code, None);
+    }
+
+    /// #14931: the before phase's start refusal reaches the façade as
+    /// rendered text; its typed code is recovered only from an exact line.
+    #[test]
+    fn split_stderr_line_inverts_message_with_stderr_line_for_every_code() {
+        for code in RepairRefusalCode::ALL {
+            let message = code.message_with_stderr_line("Plain words.\nnext: do it\n");
+            assert_eq!(
+                RepairRefusalCode::split_stderr_line(&message),
+                Some((code, "Plain words.\nnext: do it")),
+                "{message}"
+            );
+        }
+        for message in [
+            "no code line",
+            "prose\nripr: refusal code=not_a_code disposition=terminal",
+            // A known code with the wrong disposition is not its line.
+            "prose\nripr: refusal code=awaiting_edit disposition=terminal",
+            "ripr: refusal code=awaiting_edit disposition=retryable",
+        ] {
+            assert_eq!(
+                RepairRefusalCode::split_stderr_line(message),
+                None,
+                "{message}"
+            );
+        }
+    }
+
+    /// #14931: the `cli_refusal` schema's closed `code` and `disposition`
+    /// enums carry every repair/continue code and disposition, so the JSON
+    /// document a typed refusal writes under `--json` validates.
+    #[test]
+    fn cli_refusal_schema_names_every_refusal_code_and_disposition() -> Result<(), String> {
+        let text = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../schemas/ripr/cli-refusal.schema.json"),
+        )
+        .map_err(|error| format!("read cli-refusal schema: {error}"))?;
+        let schema: serde_json::Value =
+            serde_json::from_str(&text).map_err(|error| format!("parse schema: {error}"))?;
+        let error = &schema["properties"]["error"]["properties"];
+        let enum_of = |key: &str| -> Vec<String> {
+            error[key]["enum"]
+                .as_array()
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(|value| value.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let codes = enum_of("code");
+        let dispositions = enum_of("disposition");
+        for code in RepairRefusalCode::ALL {
+            if !codes.iter().any(|known| known == code.as_str()) {
+                return Err(format!("schema code enum misses {}", code.as_str()));
+            }
+            let disposition = code.disposition().as_str();
+            if !dispositions.iter().any(|known| known == disposition) {
+                return Err(format!("schema disposition enum misses {disposition}"));
+            }
+        }
+        if dispositions.len() != 4 {
+            return Err(format!("unexpected dispositions {dispositions:?}"));
+        }
+        Ok(())
     }
 
     /// #11597: the refusal-code vocabulary is closed and snake_case, every

@@ -19,6 +19,8 @@ mod verify_command_tests;
 mod dunder_entries;
 mod dunder_protocol;
 mod project_names;
+mod route_response;
+mod route_response_bindings;
 mod test_local_shadow;
 pub(super) use dunder_entries::{
     PythonClassFacts, apply_class_facts, operator_entry_in_text_with_factories, with_entry,
@@ -28,6 +30,11 @@ pub(super) use project_names::{
     ProjectNameIndex, apply_project_module_names, apply_project_module_names_with,
     owner_import_modules_for,
 };
+pub(super) use route_response::{
+    apply_route_overlaps, route_decorator_lines, workspace_registers_routes_indirectly,
+    workspace_reshapes_responses,
+};
+pub(super) use route_response_bindings::identified_route_response_names;
 use test_local_shadow::test_local_module_shadows;
 pub(super) use test_local_shadow::{
     TestLocalShadow, TestLocalShadowIndex, apply_test_local_shadows,
@@ -1142,7 +1149,6 @@ fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bo
                     .any(|receiver| calls_through(receiver))
         })
 }
-
 /// Records on each free-function owner the module paths of other workspace
 /// files defining a free function of the same name (#8759), the affirmative
 /// evidence [`bare_name_bound_to_other_module`] needs.
@@ -3181,7 +3187,6 @@ fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> Optio
     }
     found
 }
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ClientApp {
     Own,

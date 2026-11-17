@@ -1092,6 +1092,20 @@ the extra findings. Any printed difference keeps the rows apart. Folding is
 display-only: the folded findings stay gaps for `limits=` and `stop=`, count
 in `verify=`, and stay listed in `--format json`.
 
+A `predicate` gap on one struct-literal field initializer also folds into
+the `field_construction` gap for that initializer (#14713). The field
+probe's expression is `<field>: <value>` and the predicate's is `<value>`.
+Both must have the same class, `FILE:LINE`, strongest related test (file,
+line, name, oracle kind and oracle, though not its `miss=` wording, which
+differs between the two families for one assertion) and `stages=` row, and
+the predicate must name no missing discriminator of its own, and every
+`missing` line the predicate carries must also be on the field row. A
+predicate-only line, such as the boundary-input, pairing or mask advice,
+keeps the predicate row. The field row names the value to assert and is
+kept wherever it ranks; `next=` names the first printed row. The fold says
+only that the predicate row would repeat the field row, not that a test of
+the field settles the predicate.
+
 ### Unreferenced owners are agent gaps (#14820)
 
 A test-side gap in `check --format agent` (and the `open=` predicate of
@@ -1109,10 +1123,14 @@ for this workspace's tests. Such a finding counts in `gaps=`, its row prints
 ``missing=no test calls `<owner>`; assert its exact result in a new test``
 when no missing discriminator is named, and it suppresses the all-limited
 `stop=`, and gap rows fold on that printed hint. The verdict corpus already
-scores the same shape as a gap. The human check triage and the JSON canonical
-next action still classify it as static-limited (`triage::is_static_limited`
-is true for the `no_static_path` class), so this agent row is the only surface
-that names it as a gap until those surfaces adopt the same predicate. Every other `no_static_path`, unknown or static-limited finding stays
+scores the same shape as a gap. Since #14919 the human check triage and the
+JSON canonical next action read the same predicate: `triage::is_static_limited`
+is false for such a finding, so `Start here` selects it with
+`State: a test gap to inspect or repair`, it ranks by class among the gaps
+(behind every gap whose repair route prints, since the repair gate still
+offers it no start), and the
+JSON `canonical_next_action` stops on `top_gap` instead of `static_limited`.
+Every other `no_static_path`, unknown or static-limited finding stays
 a fail-closed limit: an owner some code calls on a path ripr cannot trace may
 already be tested, so reading it as a gap would be a wrong actionable signal.
 

@@ -1189,6 +1189,13 @@ verify=complete|outcome=O|findings=N|exposed=N
   separate. Folding is display-only: every folded finding is still a gap (it
   never moves to `limits=`) and still counts in `verify=`; `--format json`
   lists each finding.
+  A `predicate` gap on a struct-literal field initializer (`<value>`) also
+  folds into the `field_construction` gap for that initializer
+  (`<field>: <value>`) when class, `FILE:LINE`, strongest related test
+  (ignoring its `miss=` wording) and `stages=` agree and the predicate names
+  no missing discriminator of its own and only `missing` lines the field row
+  also carries (#14713). The field row is kept, and
+  `next=` names the first printed row.
 - `unconfirmed_gaps=U` follows `gaps=` (#13803) when the report lists gap
   records the static evidence cannot confirm, so the header never reads
   `gaps=0` alone beside a listed gap. It counts every finding on the path
@@ -1988,6 +1995,24 @@ always carries `next: null`, because its message embeds the caller's selector
 and nothing is lifted from caller-controlled text. No argv echo and no
 partial analysis. Without a JSON request stdout stays empty. Schema:
 `schemas/ripr/cli-refusal.schema.json`.
+
+Typed `repair`/`continue` refusals (#14931). Under `--json`, a `ripr
+repair`, `ripr continue` or `ripr status` refusal that stops before any check
+runs and writes the stderr `refusal code=<code> disposition=<disposition>`
+line (exit `3`) also writes this document. Its `code` is that reason code
+(the table in `docs/EXIT_CODES.md`), the extra `disposition` field is one of
+`retryable`, `terminal`, `needs_selection` or `not_started`, and `message` is
+the plain-words prose without the code line. `next` is always `null`:
+these prose steps can quote a user-supplied item or selector, so the document
+never lifts one into a runnable field. The step is in `message`, except
+that a refusal pointing at text printed above it (the choice commands of
+`several_eligible_seams`, `repair_needs_item` and `ambiguous_attempts`, the
+status of `attempt_baseline_blocked`) prints that text on stderr only. For
+example, `ripr continue --json` with no attempt
+writes `code: "no_current_attempt"` and `disposition: "not_started"`.
+Refusals inside the after-phase check keep their own documents
+(`repair_after_refusal`, `repair_after_failure`, the verify document) and
+never add this one. Exit code and stderr are unchanged.
 
 ```json
 {
@@ -18004,7 +18029,8 @@ Field contract:
   focused test edit at the same HEAD starts nothing and prints that
   attempt's `agent_attempt_status` document (what `ripr status --attempt
   <id> --json` prints) instead, so it carries no `repair_attempt` block.
-  `ripr repair --json` refusals keep exit `3`, stderr prose and empty stdout;
+  `ripr repair --json` refusals keep exit `3` and stderr prose and write the
+  `cli_refusal` document with the reason `code` and `disposition` (#14931);
   an unknown flag under `ripr repair --json` keeps exit `2` and its stderr
   prose and writes the standalone `cli_refusal` document.
   It names the durable transaction the packet was prepared

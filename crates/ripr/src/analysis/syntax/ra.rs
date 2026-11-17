@@ -1053,6 +1053,9 @@ fn summarize_file_with_collectors(
         macro_candidates: Some(Box::new(super::owner_pin::macro_binding_candidates(
             &source,
         ))),
+        external_docs: Some(super::external_docs::parsed_source_includes_external_docs(
+            text, &source,
+        )),
     })
 }
 
@@ -4784,6 +4787,7 @@ pub fn wrapped(input: &str, depth: usize) -> bool {
             source: String::new().into(),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
         };
         let nodes = adapter.changed_nodes(
             crate::analysis::facts::FactSlice::from_slice(&facts.functions),

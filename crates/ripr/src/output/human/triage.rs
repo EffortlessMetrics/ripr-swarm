@@ -2453,7 +2453,12 @@ fn has_ranked_repair_route(finding: &Finding) -> bool {
         // static-limited finding never prints a repair route
         // (`printed_repair_route`), so its advisory next step must not lift
         // it to the routed tier over a gap whose route does print.
-        return !is_static_limited(finding) && has_repair_route(finding);
+        // #14919: an unreferenced owner is a gap but prints no repair route
+        // either (the app's repair gate still refuses it), so it ranks by
+        // class among the gaps, behind every gap whose route prints.
+        return !is_static_limited(finding)
+            && !finding.is_unreferenced_no_static_path()
+            && has_repair_route(finding);
     }
     finding.language == Some(LanguageId::Python) && python_repair_card(finding).is_some()
 }
@@ -2579,6 +2584,12 @@ pub(crate) fn finding_routes_json(
 }
 
 pub(super) fn is_static_limited(finding: &Finding) -> bool {
+    // #14919: a changed owner nothing in the workspace names (RIPR-SPEC-0219)
+    // is a test-side gap on every check surface, not a static limit; the
+    // domain predicate is the one authority, shared with the agent format.
+    if finding.is_unreferenced_no_static_path() {
+        return false;
+    }
     // The producer's named limitation remains authoritative even when its
     // conservative class is reachable_unrevealed or weakly_exposed.
     finding.static_limit_kind.is_some()
@@ -5093,5 +5104,93 @@ mod tests {
             generic_action.contains("static evidence names no concrete missing check"),
             "{generic_action}"
         );
+    }
+
+    fn unreferenced_owner_finding(id: &str) -> Finding {
+        let mut finding = finding_at(id, "src/lib.rs", ExposureClass::NoStaticPath);
+        finding.ripr.reach = StageEvidence::new(
+            StageState::No,
+            Confidence::Medium,
+            format!(
+                "No related test reaches levy {}",
+                crate::domain::UNREFERENCED_IN_WORKSPACE
+            ),
+        );
+        finding
+    }
+
+    /// #14919: an owner nothing in the workspace names is a test gap on the
+    /// human and JSON surfaces too, so `Start here` and the canonical next
+    /// action pick it over a genuine static limit, as `--format agent` does.
+    #[test]
+    fn unreferenced_owner_is_a_top_gap_not_a_static_limit() {
+        let unreferenced = unreferenced_owner_finding("finding:unreferenced");
+        assert!(unreferenced.is_unreferenced_no_static_path());
+        assert!(!is_static_limited(&unreferenced));
+        let limited = finding_at(
+            "finding:limited",
+            "src/lib.rs",
+            ExposureClass::StaticUnknown,
+        );
+        assert!(is_static_limited(&limited));
+        let output = test_output(vec![limited, unreferenced]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(triage.state, HumanTriageState::TopGap);
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unreferenced")
+        );
+        assert_eq!(
+            check_case_for_triage(&triage, &output),
+            NextActionCheckCase::TopGap
+        );
+    }
+
+    /// #14919 review: an unreferenced owner prints no repair route, so its
+    /// advisory next step must not lift it over a gap whose route prints.
+    #[test]
+    fn unreferenced_owner_ranks_behind_a_routed_gap() {
+        let mut unreferenced = unreferenced_owner_finding("finding:unreferenced");
+        unreferenced.recommended_next_step = Some("add a test that calls levy".to_string());
+        unreferenced.confidence = 0.9;
+        let mut routed = finding_at(
+            "finding:routed",
+            "src/lib.rs",
+            ExposureClass::ReachableUnrevealed,
+        );
+        routed.recommended_next_step = Some("assert the exact result".to_string());
+        routed.confidence = 0.3;
+        assert!(!has_ranked_repair_route(&unreferenced));
+        assert!(has_ranked_repair_route(&routed));
+        let output = test_output(vec![unreferenced, routed]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:routed")
+        );
+    }
+
+    /// Fail-closed: without every part of the producer's unreferenced proof
+    /// a no-static-path finding stays a static limit on the human surface.
+    #[test]
+    fn ambiguous_no_static_path_stays_static_limited() {
+        let mut no_marker = unreferenced_owner_finding("finding:no-marker");
+        no_marker.ripr.reach.summary = "No related test reaches levy".to_string();
+        let mut named_limit = unreferenced_owner_finding("finding:named-limit");
+        named_limit.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustAssertionContextUnresolved);
+        let mut unknown_reach = unreferenced_owner_finding("finding:unknown-reach");
+        unknown_reach.ripr.reach.state = StageState::Unknown;
+        let mut base_side = unreferenced_owner_finding("finding:base-side");
+        base_side.source_currentness = SourceCurrentness::BaseDeleted;
+        for finding in [no_marker, named_limit, unknown_reach, base_side] {
+            assert!(!finding.is_unreferenced_no_static_path(), "{}", finding.id);
+            assert!(is_static_limited(&finding), "{}", finding.id);
+        }
+        let mut lone = unreferenced_owner_finding("finding:lone");
+        lone.ripr.reach.summary = "No related test reaches levy".to_string();
+        let only_limited = test_output(vec![lone]);
+        let triage = select_human_triage(&only_limited, &RiprConfig::default());
+        assert_eq!(triage.state, HumanTriageState::StaticLimited);
     }
 }

@@ -65,3 +65,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_contradiction_mates_only (6)
+
+Reason:
+RIPR-SPEC-0219/#14919: an unreferenced changed owner is a test gap on the human surface, matching the agent format
+
+Command:
+`cargo xtask goldens bless rust_contradiction_mates_only --reason "..."`
+
+Updated:
+- `expected/human.txt`
