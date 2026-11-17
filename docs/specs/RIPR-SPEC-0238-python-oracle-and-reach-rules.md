@@ -526,7 +526,7 @@ Relations, first match wins (rank, oracle-eligible):
   subscript against the other side, and that key is one the edit changed
   (an unchanged sibling field, or a changed key only on the expected side,
   is not). The other side must be a literal (numbers, strings without escapes, `True`,
-  `False`, `None`, and lists, tuples or dicts of them): a name, call or
+  `False`, `None`, and lists or tuples of them; a dict is refused): a name, call or
   attribute may carry the route's own response. A test with a `match`
   statement, a walrus, a `.json` that is not called at once, a `setattr` or a
   quoted `json` grants no credit. The
@@ -551,7 +551,8 @@ Relations, first match wins (rank, oracle-eligible):
   `.json = ...`, `__class__`). A changed key
   whose old and new values may give one JSON body to a Python comparison
   (either quote style; numbers or `+ - * / // % **` expressions of one
-  value under Python's precedence, every step below 2^53, with `True`/`False` as 1/0, integers compared exactly; lists of
+  value under Python's precedence, every step below 2^53, `//`, `%` and `**`
+  evaluated only on integers (a non-negative integer exponent), with `True`/`False` as 1/0, integers compared exactly; lists of
   such values) or whose value is not established as a literal (a tuple, a
   dict, a name, a prefixed, escaped or adjacent string, a float at or past
   2^53) is not a changed key for this read, and the run

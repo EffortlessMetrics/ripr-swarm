@@ -246,8 +246,20 @@ fn arithmetic_product(chars: &[char], at: &mut usize) -> Option<f64> {
         value = exact(match op {
             "*" => value * rhs,
             "/" => value / rhs,
-            "//" => (value / rhs).floor(),
-            _ => value - rhs * (value / rhs).floor(),
+            // Python's float `//` and `%` are not `floor(a / b)`
+            // (`3.3 // 0.3 == 10.0`, while `3.3 / 0.3` rounds to 11), so only
+            // integral operands are evaluated, exactly.
+            _ => {
+                let (left, right) = (integral(value)?, integral(rhs)?);
+                let quotient =
+                    left.div_euclid(right) - i128::from(right < 0 && left.rem_euclid(right) != 0);
+                let result = if op == "//" {
+                    quotient
+                } else {
+                    left - right * quotient
+                };
+                result as f64
+            }
         })?;
     }
     Some(value)
@@ -274,9 +286,20 @@ fn arithmetic_power(chars: &[char], at: &mut usize) -> Option<f64> {
     if chars.get(*at) == Some(&'*') && chars.get(*at + 1) == Some(&'*') {
         *at += 2;
         let exponent = arithmetic_unary(chars, at)?;
-        return exact(base.powf(exponent));
+        // A float or negative power may round differently from Python's
+        // `pow`, so only an integral base to a non-negative integral
+        // exponent is evaluated, exactly.
+        let exponent = u32::try_from(integral(exponent)?).ok()?;
+        let result = integral(base)?.checked_pow(exponent)?;
+        return exact(result as f64);
     }
     Some(base)
+}
+
+/// The exact integer an evaluated value holds, when it is integral and
+/// below 2^53 in magnitude (so the `f64` held it exactly).
+fn integral(value: f64) -> Option<i128> {
+    (value.fract() == 0.0 && value.abs() < EXACT_FLOAT_INTEGER as f64).then_some(value as i128)
 }
 
 /// `atom := number | '(' sum ')'`; a number starts with a digit or `.`

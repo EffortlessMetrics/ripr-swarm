@@ -1023,6 +1023,30 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             read("assert response.json()[\"ten\"] == 10"),
         ),
         (
+            "float floor division",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 3.3 // 0.3, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == 10"),
+        ),
+        (
+            "fractional power",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 100**0.5, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == 10"),
+        ),
+        (
+            "negative integer floor division and remainder",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": -7 // 2 + 7 % -2 + 15, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == 10"),
+        ),
+        (
             "alias of a route alias",
             chained_alias_app,
             PRICE_EDIT,
@@ -1077,6 +1101,12 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             "    return {\"total\": \"it's fine\", \"count\": 3}",
             "    return {\"total\": \"it is fine\", \"count\": 3}",
             "assert response.json()[\"total\"] == \"it is fine\"",
+        ),
+        (
+            "integer floor division change",
+            "    return {\"total\": 10, \"count\": 3}",
+            "    return {\"total\": 23 // 2, \"count\": 3}",
+            "assert response.json()[\"total\"] == 11",
         ),
         (
             "large integer change",
