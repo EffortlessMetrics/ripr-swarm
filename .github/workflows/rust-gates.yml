@@ -592,6 +592,12 @@ jobs:
           HEAD_SHA: ${{ steps.admitted.outputs.head || github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           GITHUB_PR_LABELS: ${{ inputs.pr-labels || join(github.event.pull_request.labels.*.name, ',') }}
           RIPR_REVIEW_COMMENTS_TIMEOUT_SECS: "60"
+          # Keeps this lane's pre-#12940 ceiling. The CLI default rose to 5000
+          # files, which admits this workspace into a run that needs more than
+          # this lane's 60 s budget, so without the pin every PR would spend
+          # 60 s to reach analysis_timeout instead of refusing in under a
+          # second. Raise both together only with a deliberate CI-cost change.
+          RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES: "1200"
           # Raised from the 2000 default as the PR #3592 decision artifact, then
           # to 3500 for #3532 (3,060-line capability diff), then to 4500 for
           # #3674 (#3555 PR C, 4,321-line review-hardened capability diff),
