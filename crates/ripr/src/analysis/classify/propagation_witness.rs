@@ -389,6 +389,23 @@ pub(in crate::analysis) fn constant_tail_witness(
     direct_tail_witness(probe, owner, sinks, tail_line, limitation)
 }
 
+/// #14852: a changed whole-body constant tail the classifier read as
+/// replacing a different base-side constant tail
+/// ([`super::ConstantTailChange`]). Nothing sits between the tail and the
+/// owner's return, so the edge is the same direct-return edge as
+/// [`constant_tail_witness`]; it completes only for the change's own sink.
+pub(in crate::analysis) fn constant_tail_change_witness(
+    probe: &Probe,
+    owner: &crate::analysis::facts::FunctionSummary,
+    sinks: &[FlowSinkFact],
+    change: &super::ConstantTailChange,
+) -> Option<PropagationWitnessV1> {
+    if probe.family != ProbeFamily::ReturnValue || probe.owner.as_ref() != Some(&owner.id) {
+        return None;
+    }
+    direct_tail_witness(probe, owner, sinks, change.line, "constant_tail_change")
+}
+
 /// #13037 Defect A: a changed early `return <decimal scalar literal>;` whose
 /// sibling exits build only different scalar literals is an owner-bound exit
 /// for the returned value, exactly like a constant tail: the changed value

@@ -864,6 +864,31 @@ impl<'a> FileOwnerLookup<'a> {
             .map(|i| self.by_start[i])
             .find(|function| line <= function.end_line)
     }
+
+    /// Whether `owner` is the only indexed function that starts or ends on
+    /// a line of `first..=last` (#14139). Ownership is resolved by line, so
+    /// when another function begins or ends on one of those lines (two
+    /// functions written on one line, say) the line cannot say which of them
+    /// holds the shape, and a per-owner decision must not be attached.
+    /// A function that merely encloses the whole span (an outer function
+    /// around a nested one) does not make the owner ambiguous.
+    pub(crate) fn owns_lines_alone(
+        &self,
+        owner: &FunctionSummary,
+        first: usize,
+        last: usize,
+    ) -> bool {
+        let after = self
+            .by_start
+            .partition_point(|function| function.start_line <= last);
+        let bounded = |line: usize| first <= line && line <= last;
+        !(0..after)
+            .rev()
+            .take_while(|&i| self.reach[i] >= first)
+            .map(|i| self.by_start[i])
+            .filter(|function| !std::ptr::eq(*function, owner))
+            .any(|function| bounded(function.start_line) || bounded(function.end_line))
+    }
 }
 
 /// Every indexed function whose line span contains `line`, outermost and
@@ -1026,6 +1051,52 @@ mod tests {
         assert_eq!(lookup.owner(31), None);
         assert_eq!(lookup.owner(45).map(|f| f.name.as_str()), Some("tie_30"));
         assert!(owned > 30, "only {owned} lines had an owner");
+        Ok(())
+    }
+
+    /// #14139: a per-owner decision attaches only when no other function
+    /// starts or ends on the shape's lines; an enclosing function does not
+    /// make a nested owner ambiguous.
+    #[test]
+    fn owns_lines_alone_refuses_lines_shared_with_another_function() -> Result<(), String> {
+        let template = summarize_file(PathBuf::from("src/lib.rs"), "fn t() {}\n".to_string())
+            .functions
+            .into_iter()
+            .next()
+            .ok_or("template function not parsed")?;
+        let function = |name: &str, start_line: usize, end_line: usize| FunctionSummary {
+            name: name.to_string(),
+            start_line,
+            end_line,
+            ..template.clone()
+        };
+        let functions = vec![
+            function("outer", 2, 30),
+            function("child_a", 3, 5),
+            function("child_b", 7, 9),
+            function("grandchild", 8, 8),
+            function("same_line_first", 12, 12),
+            function("same_line_second", 12, 12),
+            function("same_start_wide", 14, 20),
+            function("same_start_narrow", 14, 15),
+        ];
+        let lookup = FileOwnerLookup::new(&functions);
+        let alone = |first: usize, last: usize| -> Result<bool, String> {
+            let owner = lookup
+                .owner(first)
+                .ok_or_else(|| format!("no owner on line {first}"))?;
+            Ok(lookup.owns_lines_alone(owner, first, last))
+        };
+        // Nested owners inside an enclosing function stay unambiguous.
+        assert!(alone(4, 4)?);
+        assert!(alone(8, 8)?);
+        assert!(alone(25, 25)?);
+        assert!(alone(16, 17)?);
+        // Two functions on one line, or another function starting or ending
+        // on one of the shape's lines, leave the owner ambiguous.
+        assert!(!alone(12, 12)?);
+        assert!(!alone(14, 14)?);
+        assert!(!alone(5, 7)?);
         Ok(())
     }
 

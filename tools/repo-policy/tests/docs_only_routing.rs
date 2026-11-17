@@ -624,6 +624,39 @@ fn spec_registration_surfaces_classify_as_docs_only() -> TestResult {
 }
 
 #[test]
+fn agent_contract_markdown_requires_the_rust_lanes() -> TestResult {
+    let production = shell("detect-docs-only")?;
+    // Rust tests assert the exact prose of these files (#14986); a docs-only
+    // classification would skip every lane that reads them.
+    for path in [
+        ".agents/skills/finish-pr/SKILL.md",
+        ".claude/skills/finish-pr/SKILL.md",
+        "docs/agent-context/review-conversations.md",
+    ] {
+        let fixture = Fixture::new()?;
+        let base = fixture.git(&["rev-parse", "HEAD"])?;
+        fixture.write(path, "asserted contract prose\n")?;
+        let head = fixture.commit()?;
+        assert!(
+            !fixture.detect(&production, "pull_request", &base, &head, None)?,
+            "agent-contract markdown must not be docs-only: {path}"
+        );
+    }
+    // A plain markdown change still routes docs-only.
+    for path in ["README.md", "docs/ordinary.md"] {
+        let fixture = Fixture::new()?;
+        let base = fixture.git(&["rev-parse", "HEAD"])?;
+        fixture.write(path, "ordinary documentation\n")?;
+        let head = fixture.commit()?;
+        assert!(
+            fixture.detect(&production, "pull_request", &base, &head, None)?,
+            "plain markdown must stay docs-only: {path}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn filename_records_deletions_and_both_sides_of_renames_are_classified() -> TestResult {
     let production = shell("detect-docs-only")?;
     for (path, expected) in [

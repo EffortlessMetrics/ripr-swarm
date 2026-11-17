@@ -910,6 +910,7 @@ fn write_after_verification_snapshot(root: &Path) -> Result<(String, String), St
             python_guidance.as_ref(),
             generated_skip.as_ref(),
             &report.evidence_limitations,
+            crate::analysis::owner_opt_out::RepoOwnerOptOuts::default(),
             &context,
             &mut writer,
         )

@@ -1365,6 +1365,10 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             "if classify_constituent_docs \"$c_files\"",
         ),
         (
+            "keep agent-contract markdown on the full-proof lane for merge-group constituents",
+            ".agents/skills/*|.claude/skills/*|docs/agent-context/*) return 1 ;;",
+        ),
+        (
             "admit the merge-group tip with its own docs-only classification",
             "docs-only: ${{ steps.entry.outputs.tip_docs_only || needs.detect-docs-only.outputs.docs_only || 'false' }}",
         ),
