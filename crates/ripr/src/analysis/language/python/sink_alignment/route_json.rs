@@ -337,9 +337,10 @@ fn arithmetic_atom(chars: &[char], at: &mut usize) -> Option<f64> {
 }
 
 /// Whether `side` is a literal expected value: numbers, strings without
-/// escapes, `True`/`False`/`None`, and lists, tuples or dicts of them. A
-/// name, call or attribute may carry the route's own response (a binding,
-/// helper or fixture that makes the same request), so it is not one.
+/// escapes, `True`/`False`/`None`, and lists or tuples of them. A dict (or a
+/// subscript of one) is refused. A name, call or attribute may carry the
+/// route's own response (a binding, helper or fixture that makes the same
+/// request), so it is not one.
 fn literal_expected(side: &str) -> bool {
     let mut stripped = String::new();
     let mut chars = side.trim().chars();
@@ -383,7 +384,7 @@ fn literal_expected(side: &str) -> bool {
     !stripped.trim().is_empty()
         && stripped
             .chars()
-            .all(|ch| ch.is_ascii_digit() || ch.is_whitespace() || "-+.[](){},:".contains(ch))
+            .all(|ch| ch.is_ascii_digit() || ch.is_whitespace() || "-+.[](),".contains(ch))
 }
 
 /// Whether an exact assertion compares one changed quoted key of `name.json()`

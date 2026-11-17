@@ -5,6 +5,7 @@ fixtures = [
   "fixtures/python_route_response_sibling",
   "fixtures/python_route_response_json_patch",
   "fixtures/python_route_response_equivalent_number",
+  "fixtures/python_route_response_float_floor_division",
 ]
 
 [[extend]]
@@ -13,4 +14,5 @@ fixtures = [
   "fixtures/python_route_response_sibling",
   "fixtures/python_route_response_json_patch",
   "fixtures/python_route_response_equivalent_number",
+  "fixtures/python_route_response_float_floor_division",
 ]

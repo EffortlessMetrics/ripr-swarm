@@ -1023,6 +1023,14 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             read("assert response.json()[\"ten\"] == 10"),
         ),
         (
+            "dict expected side",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 11, \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == {\"v\": 11}[\"v\"]"),
+        ),
+        (
             "float floor division",
             flag_app,
             flag_edit(
