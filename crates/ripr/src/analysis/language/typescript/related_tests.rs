@@ -415,11 +415,14 @@ impl ReExportIndex {
         }
         // The owner's own exported wrappers are importable too: a caller of
         // `parseQuery` reaches the owner `parseQuery` calls in its module.
+        // A module value (#13592 B2) stays same-module on its call entries;
+        // only its closure entries continue across importers.
         for entry in owner.module_entries.iter().filter(|entry| {
             entry.class_member.is_none()
                 && entry.decorated.is_none()
                 && !entry.instance_factory
                 && entry.cross_module.is_none()
+                && (!module_value || entry.closure)
         }) {
             frontier.push_back(Frame {
                 stand_in: module_entry_owner(&skeleton, entry),

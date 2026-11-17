@@ -277,8 +277,11 @@ pub(crate) fn module_entries_and_outbound<'a>(
             let calls = callees.get(name);
             // A built value also reaches what its factory's returned
             // functions reference.
+            // A factory the module reassigns may no longer be the declared
+            // one, so its returned functions' references are not inherited.
             let built = node
                 .factory
+                .filter(|factory| !reassigned.contains(factory))
                 .and_then(|factory| nodes.get(factory))
                 .map(|factory| factory.returned_references.as_slice())
                 .unwrap_or_default();
@@ -509,6 +512,17 @@ fn collect_function_as<'a>(
     let returned = returned_functions(&body.statements);
     add_function_node(name, func.span, &returned, source, nodes);
     add_function_references(name, &func.params, body, &returned, nodes);
+    // A named function expression binds its own name inside its body
+    // (`const label = function helper() { return helper.name; }`): a
+    // reference to that name is the function itself, never a top-level
+    // declaration of the same name.
+    if let Some(own) = func.id.as_ref().map(|id| id.name.as_str())
+        && own != name
+        && let Some(node) = nodes.get_mut(name)
+    {
+        node.references.retain(|target| *target != own);
+        node.returned_references.retain(|target| *target != own);
+    }
     true
 }
 

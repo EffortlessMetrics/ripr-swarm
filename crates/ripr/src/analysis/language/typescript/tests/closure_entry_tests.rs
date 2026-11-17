@@ -511,3 +511,39 @@ fn a_test_naming_a_call_built_constant_keeps_its_value_use_reading() -> Result<(
     );
     Ok(())
 }
+
+#[test]
+fn a_named_function_expression_self_reference_is_not_the_outer_declaration() {
+    // Positive twin: an anonymous function expression that reads the outer
+    // `helper` as a value reaches it through a closure edge.
+    let anonymous = "function helper(): string {\n  return \"outer\";\n}\n\nexport const label = function (): string {\n  return helper.name;\n};\n";
+    assert_eq!(closure_entry_names(anonymous, "helper"), ["label"]);
+    // The expression's own name binds inside its body, so `helper` there is
+    // the expression itself, not the top-level declaration.
+    let self_named = anonymous.replace(
+        "const label = function ()",
+        "const label = function helper()",
+    );
+    assert!(
+        self_named.contains("function helper(): string {\n  return helper.name;"),
+        "the self-named twin must parse the changed shape"
+    );
+    assert!(entries(&self_named, "helper").is_empty());
+}
+
+#[test]
+fn a_reassigned_factory_lends_no_returned_references() {
+    // Positive twin: the product of `build()` reaches what the function
+    // `build` returns references (`helper`, passed to `JSON.parse`).
+    let kept = "function helper(key: string, value: any): any {\n  return value;\n}\n\nlet build = () => (text: string) => JSON.parse(text, helper);\n\nexport const parse = build();\n";
+    assert_eq!(closure_entry_names(kept, "helper"), ["parse"]);
+    // Once the module reassigns `build`, the product may come from the new
+    // factory, so the original returned function's references are not
+    // inherited.
+    let reassigned = kept.replace(
+        "\n\nexport const parse",
+        "\nbuild = () => (text: string) => text;\n\nexport const parse",
+    );
+    assert!(reassigned.contains("build = () => (text: string) => text;"));
+    assert!(entries(&reassigned, "helper").is_empty());
+}

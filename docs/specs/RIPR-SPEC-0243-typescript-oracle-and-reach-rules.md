@@ -1037,7 +1037,11 @@ Candidates come from the first non-empty tier:
    before closure reach (possibly `no_static_path`); the cap is not yet
    disclosed. A reassignment is a bare identifier target (`x = ...`, `x++`,
    `[x] = ...`, `({ x } = ...)`); a member write (`obj.x = ...`) rebinds
-   nothing. A reference that
+   nothing. A factory the module reassigns lends its product no returned
+   references, and a named function expression's own name
+   (`const label = function helper() { ... }`) binds inside its body, so it is
+   never an edge to a top-level `helper`. A module value (B2) continues across
+   importers only on its closure entries. A reference that
    invokes nothing (`typeof helper === "function"`, an identity comparison)
    still adds an edge; that can only turn a `no_static_path` into
    `static_unknown`, never credit a test. When some related tests reach the
