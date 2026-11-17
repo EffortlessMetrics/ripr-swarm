@@ -730,7 +730,7 @@ Two pattern terms are used below.
     to the probe, as it does the terminal guard
     `if price(amount, threshold) != expected { return Err(..) }`, whose
     assertion twin (#3284) takes this rule on the lexical and parser
-    extraction paths. Harness inline trials do not apply it yet. A smoke
+    extraction paths and in harness inline trials (#15020). A smoke
     or none reading claims no comparison and keeps its kind. The rule
     only removes credit,
     so it creates no path to `exposed`. A filled initializer

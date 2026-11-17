@@ -80,7 +80,9 @@ use super::test_styles::normalized_test_attribute_path as normalized_attribute_p
 use super::{
     HarnessLimitationFact, HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact,
 };
-use crate::analysis::extract::terminal_err_return_guard_oracle;
+use crate::analysis::extract::{
+    placeholder_bound_variables, terminal_err_return_guard_oracle, without_unfilled_expected,
+};
 use crate::analysis::rust_index::{
     OracleFact, classify_assertion, extract_assertions, extract_call_facts,
     extract_identifier_tokens, extract_literal_facts,
@@ -436,12 +438,16 @@ fn apply_libtest_mimic_target(
         let masked_body = mask_dormant_template_spans(&body, &template_spans);
         let mut calls = extract_call_facts(&masked_body, start_line);
         let mut literals = extract_literal_facts(&masked_body, start_line);
+        // #15020: a local the trial binds only to `todo!()` pins nothing, as
+        // on the ordinary `#[test]` paths (#14810, #14882).
+        let placeholder_vars = placeholder_bound_variables(&masked_body);
         let mut assertions = parser_oracles_for_node_tokens(
             source,
             &tokens,
             matched.name_token_index,
             close_index,
             &line_index,
+            &placeholder_vars,
         );
         // #3603: a bare-identifier callback (`Trial::test("name",
         // helper_fn)`) resolves to exactly one top-level function in this
@@ -897,6 +903,7 @@ fn parser_oracles_for_node_tokens(
     name_token_index: usize,
     trial_close_index: usize,
     line_index: &LineIndex,
+    placeholder_vars: &BTreeSet<String>,
 ) -> Vec<OracleFact> {
     let mut assertions = Vec::new();
     let mut depth: usize = 1;
@@ -920,9 +927,7 @@ fn parser_oracles_for_node_tokens(
                     if let Some(oracle) = terminal_err_return_guard_oracle(
                         &text,
                         line_index.line(token.text_range().start()),
-                        // Inline trials do not lower unfilled placeholders
-                        // yet, for guards or assertion macros alike.
-                        &std::collections::BTreeSet::new(),
+                        placeholder_vars,
                     ) {
                         assertions.push(oracle);
                     }
@@ -1137,7 +1142,8 @@ fn parser_oracles_for_node_tokens(
                     Some((_open_index, close_index)) => close_index + 1,
                     None => bang_index + 1,
                 };
-                let classification = classify_assertion(&text);
+                let classification =
+                    without_unfilled_expected(classify_assertion(&text), &text, placeholder_vars);
                 assertions.push(OracleFact {
                     line: line_index.line(tokens[text_start_token].text_range().start()),
                     kind: classification.kind,

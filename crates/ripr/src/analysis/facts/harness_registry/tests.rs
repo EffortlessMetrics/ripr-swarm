@@ -5105,3 +5105,56 @@ fn registered_negated_blocks_keep_twins_and_failure_macros_require_authority()
     }
     Ok(())
 }
+
+/// #15020: a registered trial whose expected value is still an unfilled
+/// `todo!()` pins nothing, through a terminal guard or an assertion macro,
+/// on the inline-closure and helper-callback paths alike (#14810, #14882).
+/// A filled expected value keeps its reading as the control.
+#[test]
+fn registered_trials_lower_an_unfilled_expected_value() -> Result<(), Box<dyn std::error::Error>> {
+    for helper_callback in [false, true] {
+        for statement in [
+            "if value != expected { return Err(\"bad\".into()); }",
+            "if value != expected {\nreturn Err(\"bad\".into());\n}",
+            "assert!(value == expected);",
+            "assert_eq!(value, expected);",
+        ] {
+            for (binding, lowered) in [
+                ("let expected: i32 = todo!(\"x\");", true),
+                ("let expected: i32 = unimplemented!();", true),
+                ("let expected: i32 = 2;", false),
+            ] {
+                let root = temp_dir("unfilled-expected-trial")?;
+                let body = format!("{binding}\n{statement}");
+                let source = registered_matcher_control_source(&body, helper_callback);
+                write_workspace(&root, &[("tests/matcher.rs", &source)])?;
+                declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
+                let files = [PathBuf::from("tests/matcher.rs")];
+                let registrations = [custom_target_registration("tests/matcher.rs")];
+                let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+                let [subject] = index.harness_subjects.as_slice() else {
+                    return Err("unfilled expected control must name one subject".into());
+                };
+                let [oracle] = subject.assertions.as_slice() else {
+                    return Err(format!(
+                        "expected one oracle (helper={helper_callback}) for {body}: {:?}",
+                        subject.assertions
+                    )
+                    .into());
+                };
+                if !oracle.observed_tokens.contains(&"expected".to_string()) {
+                    return Err(format!("premise: the oracle reads `expected`: {oracle:?}").into());
+                }
+                let unknown = oracle.kind == OracleKind::Unknown
+                    && oracle.strength == OracleStrength::Unknown;
+                if unknown != lowered {
+                    return Err(format!(
+                        "helper={helper_callback} {body}: lowered={lowered}, got {oracle:?}"
+                    )
+                    .into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
