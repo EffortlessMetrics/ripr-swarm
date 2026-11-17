@@ -123,8 +123,8 @@ repository at zero caught, still in the denominator, and makes the command
 exit nonzero. While it scores, the scorer keeps the agent's `src/lib.rs` in
 `.trial-score-agent-lib.rs` (published whole through a staging file) and
 puts it back on every path; if a score is interrupted, the next run restores
-from that copy first. Controls: a fresh setup scores 0/6, the reference tests
-score 6/6, and the weak tests score 0/6.
+from that copy first. Controls over the eight gap scenarios: a fresh setup
+scores 0/9, the reference tests score 9/9, and the weak tests score 0/9.
 
 Limits: agents must put tests under `tests/` (a `#[cfg(test)]` module in
 `src/lib.rs` counts as a production edit). The scorer does not check
@@ -139,7 +139,8 @@ again.
 ### First pilot (2026-11-11, one run per cell, Haiku 5.5, debug ripr with sources at main `2ab9f908`)
 
 Same task text in both arms; the ripr arm also got the `init --agents` block
-and the binary path.
+and the binary path. This pilot ran on the first five gap scenarios (six keyed
+gaps), before the harder ones below were added.
 
 | arm | keyed gaps caught | tokens (5 runs) | tool calls | wall time |
 |---|---:|---:|---:|---:|
@@ -164,24 +165,39 @@ Route totals are the `routes` rows at the top of `baseline.json`. What they show
   DETAIL step is skipped when `missing=` is code (`total == 100`), so the loop
   follows explain and context only for rows whose `missing=` is `-` or a
   sentence ("No strong discriminator ..."). Before that rule the loop read
-  8,731 estimated tokens over the six scenarios; with it, 2,619 on the same
-  base, for the same answers. `baseline.json` records the current figure. A
+  8,731 estimated tokens over the original six scenarios; with it, 2,594 for
+  the same answers (#14536). `baseline.json` records the current figure. A
   row with `(+N more)` or a clipped `…` value is followed too.
 - `struct_field` reads `reference_test_closes_loop: false` since #14565 stopped
   crediting the sibling field's assertion; the intended bool-field assertion
   alone does not yet earn credit (#14701).
 - `cli-human` shows one finding and hides the rest, so on the two-gap scenario
   the second gap stays hidden.
-- MCP costs about 35 times the agent CLI to reach the same answer. The tool
-  list alone is about 4,300 estimated tokens per session.
-- `mcp-brief` (#14327) reaches every answer for 35,267 tokens, against
-  51,875 on `mcp`. The eight `ripr_get_gap` reads drop from 12,294 to 3,083
-  (measured when the route landed), so the fixed `tools/list` cost now
-  dominates.
-- Loop: after the reference test, one of the five gap scenarios
-  (`struct_field`, above) still ends with `verify=refused`, so an agent
-  following the block cannot finish there. `changed_constant_return` closed
-  once #14380 (#14325) landed.
+- MCP costs about 25 times the agent loop to reach the same answers (82,254
+  against 3,287 estimated tokens over the ten scenarios). The tool list alone
+  is about 4,300 estimated tokens per session.
+- `mcp-brief` (#14327) reaches every answer for 56,168 tokens, against 82,254
+  on `mcp`. When the route landed, its eight `ripr_get_gap` reads dropped from
+  12,294 to 3,083, so the fixed `tools/list` cost now dominates.
+- Loop: after the reference test, two of the eight gap scenarios still end
+  with `verify=refused`, so an agent following the block cannot finish there:
+  `struct_field` (above) and `private_helper`. `changed_constant_return`
+  closed once #14380 (#14325) landed.
+- Harder scenarios (`match_arm_value`, `private_helper`, `inclusive_range`,
+  `refactor_control`):
+  - `match_arm_value` and `inclusive_range` read correctly on the loop: the
+    row names the new value, and the reference test closes it. When the
+    scenarios were written, the row showed only the arm pattern (#14420) and
+    the range read exposed from an `n = 0` test (#14419); both are fixed.
+  - `private_helper`: the changed private helper reads `no_static_path`
+    with no gap row (`gaps=0` and a `stop=` line, so `missed_gaps: 1`), even
+    though the public caller's test reaches it. The loop finds the fact only
+    in explain/context, and the reference test does not close it (#11481).
+  - `refactor_control`, a behavior-preserving extraction, prints no gap but
+    still ends with a `stop=` line, so it is not silent
+    (`silent_on_control: false`, #12770).
+  - `agent-brief` misses all three harder gaps; `cli-agent-find` misses
+    `private_helper`.
 - `error_variant` once got two identical gap rows for its one changed line;
   #14453 folded them, so it now reads `extra_gaps: 0`. `struct_field` has one
   extra gap row (`extra_gaps: 1`).
