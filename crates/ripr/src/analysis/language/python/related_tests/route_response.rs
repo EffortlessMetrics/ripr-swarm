@@ -163,6 +163,7 @@ pub(in super::super) fn workspace_reshapes_responses(source: &str) -> bool {
         // route, so the application's configuration is not established.
         || contains("(**")
         || contains(",**")
+        || rebinds_builtin_dict(source)
         || compact
             .match_indices("APIRoute")
             .any(|(at, _)| !compact[at + "APIRoute".len()..].starts_with('r'))
@@ -172,6 +173,211 @@ pub(in super::super) fn workspace_reshapes_responses(source: &str) -> bool {
             let name = verb.trim_start_matches('.').trim_end_matches('(');
             compact.contains(&format!("\"{name}\")")) || compact.contains(&format!("'{name}')"))
         })
+}
+
+/// Whether a source may rebind the name `dict` (#13869): FastAPI reads a
+/// `-> dict` return annotation as a response model when the name is a model
+/// class, which may coerce the returned values. The scan runs over logical
+/// lines (a bracketed or continued statement joined) and fails closed: a
+/// `dict` token anywhere in an assignment target (`dict = ...`, `dict, x =
+/// ...`, `(dict, x) = ...`, `dict: T`, `dict := ...`, `dict += ...`), in a
+/// `for` target, after `as`, `class`, `def`, `global` or `nonlocal`, in a
+/// `case` pattern or on an `import` line is a rebinding, as is a star import,
+/// the name in a
+/// string or any namespace write a name cannot be read from (`builtins`,
+/// `__builtins__`, `globals()`, `locals()`, `vars()`, `__dict__`,
+/// `sys.modules`, `setattr`, `exec`, `eval`, `__import__`, so that
+/// `globals()["di" "ct"] = Price` refuses). An over-read only refuses.
+fn rebinds_builtin_dict(source: &str) -> bool {
+    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let tokens_of = |text: &str| -> Vec<String> {
+        text.split(|ch: char| !word(ch))
+            .filter(|token| !token.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
+    if compact.contains("\"dict\"")
+        || compact.contains("'dict'")
+        || tokens_of(source).iter().any(|token| {
+            matches!(
+                token.as_str(),
+                "builtins"
+                    | "__builtins__"
+                    | "globals"
+                    | "locals"
+                    | "vars"
+                    | "__dict__"
+                    | "modules"
+                    | "setattr"
+                    | "exec"
+                    | "eval"
+                    | "__import__"
+            )
+        })
+    {
+        return true;
+    }
+    logical_lines(source).iter().any(|line| {
+        let tokens = tokens_of(line);
+        // A star import (`from models import *`) binds names it does not
+        // spell, `dict` among them.
+        if tokens.first().is_some_and(|token| token == "from")
+            && line
+                .split_whitespace()
+                .collect::<String>()
+                .contains("import*")
+        {
+            return true;
+        }
+        if !tokens.iter().any(|token| token == "dict") {
+            return false;
+        }
+        let first = tokens.first().map(String::as_str);
+        if matches!(
+            first,
+            Some("import" | "from" | "case" | "global" | "nonlocal")
+        ) {
+            return true;
+        }
+        // A `dict` after `as`, `class` or `def`, or between `for` and `in`.
+        let mut in_for_target = false;
+        for pair in tokens.windows(2) {
+            match pair[0].as_str() {
+                "for" => in_for_target = true,
+                "in" => in_for_target = false,
+                _ => {}
+            }
+            if pair[1] == "dict"
+                && (in_for_target || matches!(pair[0].as_str(), "as" | "class" | "def" | "for"))
+            {
+                return true;
+            }
+        }
+        assignment_targets(line)
+            .iter()
+            .any(|target| tokens_of(target).iter().any(|token| token == "dict"))
+    })
+}
+
+/// The statements of a source with each `#` comment dropped and each
+/// bracketed or backslash-continued statement joined onto one line.
+fn logical_lines(source: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0i64;
+    for physical in source.lines() {
+        let line = strip_line_comment(physical);
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
+        for ch in line.chars() {
+            match quote {
+                Some(open) => {
+                    if escaped {
+                        escaped = false;
+                    } else if ch == '\\' {
+                        escaped = true;
+                    } else if ch == open {
+                        quote = None;
+                    }
+                }
+                None => match ch {
+                    '"' | '\'' => quote = Some(ch),
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' => depth -= 1,
+                    _ => {}
+                },
+            }
+        }
+        let continued = line.trim_end().ends_with('\\');
+        current.push_str(line.trim_end().trim_end_matches('\\'));
+        current.push(' ');
+        if depth <= 0 && !continued {
+            lines.push(std::mem::take(&mut current));
+            depth = 0;
+        }
+    }
+    if !current.trim().is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+/// The assignment targets of a logical line: the text before each `=` that
+/// sits outside brackets and strings (not `==`, `!=`, `<=`, `>=`), the text
+/// before a top-level annotation `:` of an annotated assignment, and the
+/// name before each `:=` at any depth. An augmented `+=` keeps its operator
+/// in the target, which only over-reads.
+fn assignment_targets(line: &str) -> Vec<String> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut targets = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut depth = 0i64;
+    for (at, &ch) in chars.iter().enumerate() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        let prev = at
+            .checked_sub(1)
+            .and_then(|index| chars.get(index))
+            .copied();
+        let next = chars.get(at + 1).copied();
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            '=' if next == Some('=') || matches!(prev, Some('=' | '!' | '<' | '>')) => {}
+            '=' if prev == Some(':') => {
+                // A walrus binds the name just before it, at any depth.
+                let before: String = chars[..at - 1].iter().collect();
+                let name: String = before
+                    .trim_end()
+                    .chars()
+                    .rev()
+                    .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+                    .collect();
+                targets.push(name.chars().rev().collect());
+            }
+            '=' if depth == 0 => targets.push(chars[..at].iter().collect()),
+            ':' if depth == 0 && next != Some('=') => {
+                // An annotated assignment `name: T` binds the text before the
+                // colon unless the line opens a compound statement.
+                let before: String = chars[..at].iter().collect();
+                let first = before.split_whitespace().next().unwrap_or_default();
+                if !matches!(
+                    first,
+                    "def"
+                        | "async"
+                        | "class"
+                        | "if"
+                        | "elif"
+                        | "else"
+                        | "for"
+                        | "while"
+                        | "with"
+                        | "try"
+                        | "except"
+                        | "finally"
+                        | "match"
+                        | "case"
+                        | "lambda"
+                ) && !before.contains("lambda")
+                {
+                    targets.push(before);
+                }
+            }
+            _ => {}
+        }
+    }
+    targets
 }
 
 /// A physical line without its `#` comment (a `#` inside a one-line string

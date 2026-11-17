@@ -550,8 +550,13 @@ Relations, first match wins (rank, oracle-eligible):
   (comments are not read; an unclosed call is opaque), or any source has
   custom docs or schema URLs (`openapi_url`, `docs_url`, `redoc_url`) or a
   `**` unpack in call arguments (which may pass such an option under a name
-  the source does not spell; markers are matched with and without
-  comments), or has an exception
+  the source does not spell; markers are matched with and without comments), may rebind `dict` (which a `-> dict` annotation
+  would then name as a model: `dict` in any assignment, `for`, `as`, `case`
+  or `import` target, a star import, a `class` or `def` name, the name in a
+  string, or a
+  namespace write such as `globals()[...]`, `setattr`, `vars()`, `__dict__`,
+  `sys.modules`, `exec` or the builtins; a `-> dict` annotation, a `dict(...)` call or an
+  `isinstance(x, dict)` argument is not a rebinding), or has an exception
   handler, middleware, a request hook, `dependency_overrides`, a custom
   route class, an imperative or declarative route registration, a router
   or blueprint inclusion, a mount, a `:path` catch-all, a route object
@@ -572,8 +577,8 @@ Relations, first match wins (rank, oracle-eligible):
   needs the old line (repo mode, which has none, never earns it). The handler must return its body as is:
   every decorator is a static route decorator whose keywords cannot reshape
   the body (no `response_model` or `response_class`), there is no return
-  annotation (FastAPI reads one as a response model, and even `-> dict`
-  names a model when the module rebinds `dict`), and the function has exactly one `return`, of a dict literal
+  annotation other than a bare `dict` (FastAPI reads one as a response
+  model), and the function has exactly one `return`, of a dict literal
   whose keys are distinct string literals (no `**` unpack), and no `yield`
   or `raise` (a raised error answers with its own body). A
   changed `detail` key never earns this credit, because `detail` is the key

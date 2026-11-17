@@ -730,7 +730,7 @@ struct PythonOwner {
     /// The owner is a route handler whose response body is its returned dict
     /// (#13869): every static route decorator takes only keywords that leave
     /// the body alone (no `response_model` or `response_class`), the return
-    /// annotation is absent, and the function has exactly one
+    /// annotation is absent or a bare `dict`, and the function has exactly one
     /// `return`, of a dict literal with distinct string-literal keys, and no
     /// `yield` or `raise`. A workspace post-pass may withdraw it.
     /// `false` by default, which grants no response-read credit.
