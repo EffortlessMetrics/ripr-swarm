@@ -4587,6 +4587,43 @@ fn missing_error_variant_discriminator(
 /// it to keep an unselected arm from counting as activated.
 pub(in crate::analysis) use crate::domain::ARM_UNSELECTED_REASON_PREFIX;
 
+/// #12078: the repo seam view's reading of [`missing_match_arm_discriminator`]
+/// for a `match_arm` seam on `line` of `owner`, so a test whose inputs all
+/// select other arms grips the arm as `ripr check` reads it, never strongly.
+/// The seam has no diff, so the arm is read as one whose pattern did not
+/// change: the probe is the owner's own source line at the seam. The repo
+/// inventory walks the whole workspace, so its index counts as complete; the
+/// same refusals apply as in `check` (a same-named function, a helper or
+/// unreadable use of the owner, a computed input), each leaving the arm
+/// unnamed.
+pub(in crate::analysis) fn repo_seam_unselected_arm(
+    file: &std::path::Path,
+    line: usize,
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<MissingDiscriminatorFact> {
+    let source_line = owner
+        .body
+        .lines()
+        .nth(line.checked_sub(owner.start_line)?)?
+        .trim()
+        .to_string();
+    let probe = Probe {
+        id: ProbeId(format!("repo-seam-arm:{}:{line}", file.display())),
+        location: SourceLocation::new(file, line, 1),
+        owner: Some(owner.id.clone()),
+        family: ProbeFamily::MatchArm,
+        delta: DeltaKind::Control,
+        before: None,
+        after: Some(source_line.clone()),
+        expression: source_line,
+        expected_sinks: Vec::new(),
+        required_oracles: Vec::new(),
+    };
+    missing_match_arm_discriminator(&probe, Some(owner), related_tests, &[], index, true)
+}
+
 /// RIPR-SPEC-0229 (#5432): name a changed match arm as the missing
 /// discriminator when every related test calls the owner directly and every
 /// call's scrutinee input provably selects a different arm (`reason(Some(5))`
