@@ -441,6 +441,7 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     )
     .map_err(|message| typed_decision(RepairRefusalCode::UnanchoredRoot, message))?;
     ensure_command_root(&options.root, "repair")?;
+    let mut unscoped: Option<UnscopedSelection> = None;
     let seam_id = match options.item.as_deref() {
         Some(item) => {
             let item =
@@ -452,75 +453,103 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                 }
             }
         }
-        None => match resolve_repair_start(&options.root, options.base.as_deref())
-            .map_err(CommandError::from)?
-        {
-            RepairStartDecision::Start { seam_id } => seam_id,
-            RepairStartDecision::NoEligible {
-                total_seams,
-                change,
-                reasons,
-                reasons_total,
-            } => {
-                // A deliberate named outcome, not a failure: the honest
-                // setup/limitation message on stderr, stdout empty.
-                return Err(typed_decision(
-                    RepairRefusalCode::NoEligibleSeam,
-                    no_eligible_seam_message(
-                        &options.root,
-                        options.base.as_deref(),
-                        change,
-                        total_seams,
-                        &reasons,
-                        reasons_total,
-                    ),
-                ));
-            }
-            RepairStartDecision::Action(action, candidates) => {
-                // A deliberate named outcome, not a failure: stderr, stdout
-                // empty (`cmd:repair` declares an empty-stdout refusal),
-                // decision exit code.
-                let bound =
-                    crate::agent::loop_commands::bound_root(&options.root.to_string_lossy());
-                let selection_total = match action.stop() {
-                    Some(crate::domain::NextActionStop::SelectItem { total, .. }) => Some(*total),
-                    _ => None,
-                };
-                if let (Some(total), false) = (selection_total, candidates.is_empty()) {
-                    // #10978 / #11111: a selection is told in plain words:
-                    // where each change is, what a test must check for it,
-                    // and the exact command that starts it. The typed stop
-                    // ids and count are carried by those commands and the
-                    // stated total, so the internal block is not repeated.
+        None => {
+            let resolved = resolve_repair_start(&options.root, options.base.as_deref())
+                .map_err(CommandError::from)?;
+            // #13701: a start or menu chosen with no readable change says it is
+            // not narrowed to the change and names the `--base` rerun.
+            let bound = crate::agent::loop_commands::bound_root(&options.root.to_string_lossy());
+            unscoped = resolved.unscoped_note.map(|note| UnscopedSelection {
+                note,
+                base_command: crate::app::task_first::unscoped_base_command(&bound),
+            });
+            match resolved.decision {
+                RepairStartDecision::Start { seam_id } => {
+                    if let Some(unscoped) = &unscoped {
+                        eprintln!("{}", unscoped.human_line());
+                    }
+                    seam_id
+                }
+                RepairStartDecision::NoEligible {
+                    total_seams,
+                    change,
+                    reasons,
+                    reasons_total,
+                } => {
+                    // A deliberate named outcome, not a failure: the honest
+                    // setup/limitation message on stderr, stdout empty.
+                    return Err(typed_decision(
+                        RepairRefusalCode::NoEligibleSeam,
+                        no_eligible_seam_message(
+                            &options.root,
+                            options.base.as_deref(),
+                            change,
+                            total_seams,
+                            &reasons,
+                            reasons_total,
+                        ),
+                    ));
+                }
+                RepairStartDecision::Action(action, candidates) => {
+                    // A deliberate named outcome, not a failure: stderr, stdout
+                    // empty (`cmd:repair` declares an empty-stdout refusal),
+                    // decision exit code.
+                    let selection_total = match action.stop() {
+                        Some(crate::domain::NextActionStop::SelectItem { total, .. }) => {
+                            Some(*total)
+                        }
+                        _ => None,
+                    };
+                    // #13701: the menu leads with the unscoped note; under
+                    // `--json` the `cli_refusal` message carries it too, the way
+                    // a no-eligible refusal's message carries it.
+                    if let Some(unscoped) = &unscoped {
+                        eprintln!("{}", unscoped.human_line());
+                    }
+                    let json_note = match (&unscoped, options.json) {
+                        (Some(unscoped), true) => format!("; {}", unscoped.human_line()),
+                        _ => String::new(),
+                    };
+                    if let (Some(total), false) = (selection_total, candidates.is_empty()) {
+                        // #10978 / #11111: a selection is told in plain words:
+                        // where each change is, what a test must check for it,
+                        // and the exact command that starts it. The typed stop
+                        // ids and count are carried by those commands and the
+                        // stated total, so the internal block is not repeated.
+                        eprint!(
+                            "{}",
+                            crate::app::task_first::render_repair_choice(
+                                &candidates,
+                                total,
+                                &bound
+                            )
+                        );
+                        return Err(typed_decision(
+                            RepairRefusalCode::SeveralEligibleSeams,
+                            format!("no repair started; run one of the commands above{json_note}"),
+                        ));
+                    }
                     eprint!(
                         "{}",
-                        crate::app::task_first::render_repair_choice(&candidates, total, &bound)
+                        crate::output::next_action::render_next_action_human_at_root(
+                            &action,
+                            &options.root
+                        )
                     );
+                    if action.action_class() == crate::domain::NextActionClass::ChooseItem {
+                        print_retry_line(&format!(
+                            "ripr repair {} --root {}",
+                            crate::output::next_action::SELECT_ITEM_RETRY_PLACEHOLDER,
+                            crate::agent::loop_commands::shell_arg(&bound)
+                        ));
+                    }
                     return Err(typed_decision(
-                        RepairRefusalCode::SeveralEligibleSeams,
-                        "no repair started; run one of the commands above".to_string(),
+                        RepairRefusalCode::RepairNeedsItem,
+                        format!("repair selected no seam; rerun with an explicit item{json_note}"),
                     ));
                 }
-                eprint!(
-                    "{}",
-                    crate::output::next_action::render_next_action_human_at_root(
-                        &action,
-                        &options.root
-                    )
-                );
-                if action.action_class() == crate::domain::NextActionClass::ChooseItem {
-                    print_retry_line(&format!(
-                        "ripr repair {} --root {}",
-                        crate::output::next_action::SELECT_ITEM_RETRY_PLACEHOLDER,
-                        crate::agent::loop_commands::shell_arg(&bound)
-                    ));
-                }
-                return Err(typed_decision(
-                    RepairRefusalCode::RepairNeedsItem,
-                    "repair selected no seam; rerun with an explicit item".to_string(),
-                ));
             }
-        },
+        }
     };
     // A repeated start (a retried or context-lost agent re-running the
     // printed command) resumes the attempt already awaiting its edit at
@@ -542,7 +571,18 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     // `--json` (#11584): the packet envelope with `repair_attempt` is the
     // whole document; the human card is not appended to it.
     if options.json {
-        print!("{before_stdout}");
+        match &unscoped {
+            Some(unscoped) => print!(
+                "{}",
+                crate::output::agent_seam_packets::render_repair_start_scope_stdout(
+                    &before_stdout,
+                    &unscoped.note,
+                    &unscoped.base_command,
+                )
+                .map_err(CommandError::Decision)?
+            ),
+            None => print!("{before_stdout}"),
+        }
         return Ok(());
     }
     // The compact handoff renders through the same card service the
@@ -575,6 +615,22 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     print!("{before_stdout}");
     print!("{card_stdout}");
     Ok(())
+}
+
+/// Why a bare `ripr repair` start or menu is not narrowed to the change
+/// (#13701), and the `--base` rerun that would narrow it.
+struct UnscopedSelection {
+    note: String,
+    base_command: String,
+}
+
+impl UnscopedSelection {
+    fn human_line(&self) -> String {
+        format!(
+            "{}; for example, rerun with an explicit base: `{}`",
+            self.note, self.base_command
+        )
+    }
 }
 
 /// Report the attempt a repeated `ripr repair` resumed (#8742): the same
@@ -883,7 +939,7 @@ fn start_fresh_clause(
 /// consults the same auto selector `ripr repair` runs, so a start the build
 /// would refuse is not offered.
 fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
-    match resolve_repair_start(root, None) {
+    match resolve_repair_start(root, None).map(|resolved| resolved.decision) {
         Ok(RepairStartDecision::NoEligible {
             total_seams,
             change,

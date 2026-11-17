@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- A bare `ripr repair` that could not read your change now says so when it offers a menu or starts a repair, not only when it refuses: the menu and the start say the selection is not narrowed to your change and name the `ripr repair --root <root> --base <ref>` rerun. Under `--json`, the menu's `cli_refusal` message carries the note and the start document carries an additive `repair_start_scope` block (#13701).

@@ -18064,6 +18064,17 @@ Field contract:
   document and the stderr narration print only after the attempt is
   durably published, so a refused preparation never emits a success
   document.
+- `repair_start_scope` — optional envelope-level block, present only in the
+  start stdout of a bare `ripr repair --json` (no item) whose start was
+  chosen with no readable change (no base resolved, an unreadable `--base`,
+  or a diff that changes nothing), so the started spot is not narrowed to
+  the change (#13701). Members: `narrowed_to_change` (always `false`),
+  `note` (the plain note the human start prints on stderr, naming why the
+  change could not be read) and `base_command` (the `ripr repair --root
+  <root> --base <ref>` rerun template; `<ref>` is the reader's to name, so
+  it is not a runnable step). A start scoped by a readable diff carries no
+  such block. The selection menu under `--json` carries the same note in
+  its `cli_refusal` `error.message` instead.
 - `scope` — always `"repo"`, including the one-seam `ripr agent packet`
   expansion. The one-seam command is a filtered view of the repo packet
   contract, not a second packet schema.

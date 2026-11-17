@@ -3221,8 +3221,12 @@ fn repair_same_line_candidates_are_told_apart_in_plain_words() -> Result<(), Str
         choice_lines[0], choice_lines[1],
         "choices must read differently"
     );
+    // The unscoped note's `--base` rerun (#13701) is prose, not a start line.
     assert_eq!(
-        stderr.matches("ripr repair ").count(),
+        stderr
+            .lines()
+            .filter(|line| line.trim_start().starts_with("ripr repair "))
+            .count(),
         2,
         "exactly the two start commands:\n{stderr}"
     );

@@ -713,6 +713,40 @@ pub(crate) fn render_before_phase_attempt_stdout(
     Ok(rendered)
 }
 
+/// Augment the `ripr repair --json` start stdout with the additive
+/// envelope-level `repair_start_scope` block (#13701), present only when the
+/// bare start was chosen with no readable change, so it is not narrowed to
+/// it: `narrowed_to_change` (always `false`), `note` (the same plain note the
+/// human start prints) and `base_command` (the `--base` rerun template; its
+/// `<ref>` is the reader's to name). Like the `repair_attempt` block, it is
+/// inserted into the rendered document without re-rendering packet content.
+pub(crate) fn render_repair_start_scope_stdout(
+    start_stdout: &str,
+    note: &str,
+    base_command: &str,
+) -> Result<String, String> {
+    let mut value: serde_json::Value = serde_json::from_str(start_stdout)
+        .map_err(|error| format!("decode repair start stdout failed: {error}"))?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| "repair start stdout is not a JSON object".to_string())?;
+    if object.contains_key("repair_start_scope") {
+        return Err("repair start stdout already carries a repair_start_scope block".to_string());
+    }
+    object.insert(
+        "repair_start_scope".to_string(),
+        json!({
+            "narrowed_to_change": false,
+            "note": note,
+            "base_command": base_command,
+        }),
+    );
+    let mut rendered = serde_json::to_string_pretty(&value)
+        .map_err(|error| format!("render repair start stdout failed: {error}"))?;
+    rendered.push('\n');
+    Ok(rendered)
+}
+
 /// Render one explicit GapRecord as an agent packet. This is the same
 /// agent-packet envelope used by seam packets, but the source is the gap
 /// decision ledger, so callers do not rerun analysis or infer repairability
