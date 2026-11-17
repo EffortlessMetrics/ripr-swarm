@@ -419,6 +419,17 @@ Updated:
 ## Pending — typescript_effect_owner_alias (33)
 
 Reason:
+RIPR-SPEC-0122: the default digest drops a leading state-token label (#11619)
+
+Command:
+`cargo xtask goldens bless typescript_effect_owner_alias --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — typescript_effect_owner_alias (34)
+
+Reason:
 RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
 
 Command:

@@ -225,11 +225,14 @@ window and a row inside that window can have no stub route (#14687).
 
 Omitted findings that share file, owner, class, currentness label and reason
 (findings with no resolved owner never group)
-print as one row that names the line span, the count, the owner and the
-kinds, for example:
+print as one row that names the members' lines, the count, the owner and the
+kinds. The lines print as their consecutive runs (`3, 5` or `10-12, 15`)
+when there are at most three runs, so a row never names a line that no member
+is on; more runs print the covering span with the distinct line count
+(`1078-1241 (31 lines)`) (#14682). For example:
 
 ```text
-- src/lib.rs:1078-1241 (weak, lower-priority candidate); 44 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
+- src/lib.rs:1078-1241 (31 lines) (weak, lower-priority candidate); 44 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
 ```
 
 Members that share line and kind keep the single
@@ -537,6 +540,41 @@ A stub owner parameter typed `impl Into<T>` (plain, non-generic `T`) is declared
 as `T`, and `impl AsRef<str>` / `impl AsRef<[u8]>` as `&str` / `&[u8]` (#8361).
 Any other `impl Trait` parameter, including `impl AsRef<Path>` whose `Path`
 could be shadowed, still refuses as `parameter_unsupported`.
+
+A method stub placed in an inline test module builds its receiver from a
+constructor instead of a labelled `todo!()` when one is established
+(#8361, #14825). A constructor is an associated function of an inherent impl
+of the same self type, beside the owner's impl in the same module, that takes
+no `self`, has no type or const generics, is not `async`, `unsafe` or
+cfg-gated, and returns `Self` or the type. No receiver is built when the
+target test module declares or imports another item of the type's name,
+including a module, a glob import or an import in a nested module; only
+`use super::Type;` and `use super::*;` outside a nested module are known to
+name the owner.
+In order:
+
+1. the first call in the target test module to such a constructor whose
+   arguments are all literals with no control characters, written directly in
+   a `#[test]` function body (not inside a closure or `async` block) that is not `should_panic`
+   and is not a ripr stub, and not under `cfg` or `cfg_attr` on the test, a
+   statement or a nested module; the call is copied with its arguments;
+2. a no-argument constructor named `new`, `empty` or `default`, in that order;
+3. `<Type as ::core::default::Default>::default()` for a `#[derive(Default)]`
+   type spelled without generic arguments, in a file that declares or imports
+   no other item named `Default`. A hand-written `impl Default` is not read
+   (its trait path is not resolved), and the `::core` path assumes edition
+   2018 or later, where `core` is in the extern prelude.
+
+Otherwise the receiver stays a `todo!()`. The receiver line carries a comment
+naming its source, and human output prints it on a `Receiver:` line; the JSON
+document is unchanged apart from `text` and one fewer `fill_ins` entry. The
+expected value stays a `todo!()`. A second run over a stub this version wrote
+recomputes the same text and reports it already written. A stub written by an
+earlier version, whose receiver is still a `todo!()`, does not match the new
+text, so a rerun writes a second stub with a `_2` suffix beside it; delete or
+fill in the old stub first. Human output also escapes control and bidi
+characters in the stub text and in the `Inputs`, `Receiver:` and `Fill in:`
+lines, since they carry repository text.
 
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie
@@ -1058,6 +1096,30 @@ finding in triage order keeps the row, so the top gap and
 the extra findings. Any printed difference keeps the rows apart. Folding is
 display-only: the folded findings stay gaps for `limits=` and `stop=`, count
 in `verify=`, and stay listed in `--format json`.
+
+### Unreferenced owners are agent gaps (#14820)
+
+A test-side gap in `check --format agent` (and the `open=` predicate of
+`explain --format agent`) is a weakly exposed or reachable-unrevealed finding,
+or a `no_static_path` finding for which `Finding::is_unreferenced_no_static_path`
+holds: candidate-current, no named `static_limit_kind`, reach `no`, and a reach
+summary ending with the RIPR-SPEC-0219 `(unreferenced in workspace)` marker.
+The producer sets that marker only when the whole workspace is indexed, the
+owner is not an entry point, and its name appears nowhere outside its own
+definition. That whole-word naming scan is the evidence: no test in the
+workspace runs the changed code, so the repair (write a test that calls it)
+needs no further analysis. The scan cannot see names built by macros such as
+`paste!` or callers outside the workspace; for those the advice still holds
+for this workspace's tests. Such a finding counts in `gaps=`, its row prints
+``missing=no test calls `<owner>`; assert its exact result in a new test``
+when no missing discriminator is named, and it suppresses the all-limited
+`stop=`, and gap rows fold on that printed hint. The verdict corpus already
+scores the same shape as a gap. The human check triage and the JSON canonical
+next action still classify it as static-limited (`triage::is_static_limited`
+is true for the `no_static_path` class), so this agent row is the only surface
+that names it as a gap until those surfaces adopt the same predicate. Every other `no_static_path`, unknown or static-limited finding stays
+a fail-closed limit: an owner some code calls on a path ripr cannot trace may
+already be tested, so reading it as a gap would be a wrong actionable signal.
 
 ### `explain --format agent` (#12104)
 

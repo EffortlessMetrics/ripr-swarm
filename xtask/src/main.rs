@@ -22818,6 +22818,14 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
     if matches!(
         path,
+        "tools/ci/main-qualification.py" | "tools/ci/test_main_qualification.py"
+    ) {
+        return Some(
+            "The advisory sentinel reads landed GitHub qualification with runner-provided stdlib Python and gh, without building Rust or executing product code; its API and tracker-shell controls run on Linux through the Rust-owned main_health_sentinel_contract target (#14500).",
+        );
+    }
+    if matches!(
+        path,
         "tools/ci/shard-verifier-artifact.py" | "tools/ci/test_shard_verifier_artifact.py"
     ) {
         return Some(

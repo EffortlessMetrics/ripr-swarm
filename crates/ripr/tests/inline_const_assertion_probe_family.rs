@@ -3,7 +3,8 @@
 //! fails to build, so no test can pass a value on the other side of its
 //! comparison. The line must not select a `predicate` family, mint a
 //! `predicate_boundary` gap id or advise boundary inputs. It keeps one
-//! `static_unknown` finding, so an empty result cannot pass these tests. The
+//! `static_unknown` finding that names the `compile_time_invariant` stop
+//! reason, so an empty result cannot pass these tests. The
 //! same comparison in a const block that yields a value keeps its predicate
 //! reading.
 
@@ -163,6 +164,17 @@ fn assert_one_static_unknown(findings: &[Finding]) -> Result<(), String> {
             gap.id
         ));
     }
+    // #14181 part 2: the finding names the build-time check.
+    if !line[0]
+        .stop_reasons
+        .iter()
+        .any(|reason| reason.as_str() == "compile_time_invariant")
+    {
+        return Err(format!(
+            "the inline const assertion must carry compile_time_invariant, got {:?}",
+            line[0].stop_reasons
+        ));
+    }
     let advice = format!("{:?} {:?}", line[0].missing, line[0].recommended_next_step);
     if advice.contains("boundary input") {
         return Err(format!(
@@ -198,7 +210,19 @@ fn value_const_block_keeps_its_predicate_reading() -> Result<(), String> {
         "let _fits = const { N <= 250 };",
     );
     let findings = TempRepo::create(&lib(new), &edited_diff(old, new))?.findings()?;
-    if on_line_five(&findings)
+    let line = on_line_five(&findings);
+    if line.iter().any(|finding| {
+        finding
+            .stop_reasons
+            .iter()
+            .any(|reason| reason.as_str() == "compile_time_invariant")
+    }) {
+        return Err(format!(
+            "a value const block is not a build-time check, got [{}]",
+            describe(&findings)
+        ));
+    }
+    if line
         .iter()
         .any(|finding| finding.probe.family == ProbeFamily::Predicate)
     {

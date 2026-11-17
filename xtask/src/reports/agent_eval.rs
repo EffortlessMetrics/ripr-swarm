@@ -30,6 +30,7 @@
 //! verdict moved as expected, not that a test catches a runtime fault.
 
 mod scenarios;
+mod trial;
 
 use crate::normalize_path;
 use crate::run::{ByteCaptureBudget, capture_bytes_in_dir_with_input_env_budget};
@@ -41,7 +42,7 @@ use std::time::Duration;
 
 const SCHEMA_VERSION: &str = "ripr-agent-eval-v1";
 const BASELINE_PATH: &str = "benchmarks/agent_eval/baseline.json";
-const USAGE: &str = "usage: cargo xtask agent-eval [--ripr <binary>] [--scenario <id>]... [--compare <baseline.json>] [--write-baseline] [--skip-cargo]";
+const USAGE: &str = "usage: cargo xtask agent-eval [--ripr <binary>] [--scenario <id>]... [--compare <baseline.json>] [--write-baseline] [--skip-cargo] | agent-eval trial-setup <dir> | agent-eval trial-score <dir>";
 /// A route regresses when its tokens grow by more than `then / 10` (10%)
 /// plus `REGRESSION_SLACK_TOKENS` over the baseline.
 const REGRESSION_DIVISOR: u64 = 10;
@@ -473,11 +474,7 @@ fn reads_as_sentence(value: &str) -> bool {
 fn route_cli_agent_loop(ripr: &Path, workspace: &Workspace) -> Result<Vec<Step>, String> {
     let find = capture(ripr, &find_args(), &workspace.root, None, &[])?;
     let mut steps = vec![raw_step("find", &find, workspace)];
-    let mut queue: Vec<(String, Vec<String>)> = printed_next_commands(&find.stdout)
-        .into_iter()
-        .filter(|args| needs_detail(&find.stdout, args))
-        .map(|args| ("detail".to_string(), args))
-        .collect();
+    let mut queue = detail_steps(&find.stdout);
     while let Some((label, args)) = queue.first().cloned() {
         queue.remove(0);
         if steps.len() >= MAX_FOLLOWED_STEPS {
@@ -491,6 +488,17 @@ fn route_cli_agent_loop(ripr: &Path, workspace: &Workspace) -> Result<Vec<Step>,
         }
     }
     Ok(steps)
+}
+
+/// The DETAIL commands the `init --agents` loop follows after `find`: every
+/// printed `next=` except those for rows whose `missing=` already names the
+/// exact check.
+fn detail_steps(find_stdout: &str) -> Vec<(String, Vec<String>)> {
+    printed_next_commands(find_stdout)
+        .into_iter()
+        .filter(|args| needs_detail(find_stdout, args))
+        .map(|args| ("detail".to_string(), args))
+        .collect()
 }
 
 fn raw_step(label: &str, output: &Captured, workspace: &Workspace) -> Step {
@@ -817,7 +825,7 @@ fn verify_complete(agent_report: &str) -> bool {
 
 /// What one `cargo test` run established.
 #[derive(Debug, PartialEq)]
-enum Suite {
+pub(super) enum Suite {
     Pass,
     /// The tests compiled, ran, and at least one failed.
     TestFailed,
@@ -832,7 +840,7 @@ enum Suite {
 /// Classify a finished `cargo test` run. Only a run that compiled and
 /// reported a failing test counts as a failure; a revert that stops the
 /// crate compiling must not credit the agent's tests.
-fn classify_suite(exit: Option<i32>, output: &str) -> Suite {
+pub(super) fn classify_suite(exit: Option<i32>, output: &str) -> Suite {
     let compile_error = output.contains("could not compile") || output.contains("error[E");
     match exit {
         Some(0) if !compile_error => Suite::Pass,
@@ -1371,10 +1379,50 @@ fn render_markdown(report: &Value, comparison: Option<&(Vec<String>, Vec<String>
     out
 }
 
+fn trial_dir(args: &[String]) -> Result<PathBuf, String> {
+    match args {
+        // Absolute, so cargo runs in each trial repository resolve it the same
+        // way whatever directory they start in.
+        [_, dir] => {
+            std::path::absolute(dir).map_err(|err| format!("cannot resolve trial dir {dir}: {err}"))
+        }
+        _ => Err(format!("{} needs exactly one <dir>\n{USAGE}", args[0])),
+    }
+}
+
+fn write_trial_score(dir: &Path) -> Result<(), String> {
+    let score = trial::trial_score(dir)?;
+    let report_dir = crate::reports_dir();
+    let path = report_dir.join("agent-eval-trial-score.json");
+    let pretty = serde_json::to_string_pretty(&score)
+        .map_err(|err| format!("failed to render trial score: {err}"))?;
+    write_file(&path, &format!("{pretty}\n"))?;
+    println!("{pretty}");
+    println!(
+        "agent-eval trial-score: {}/{} keyed gaps caught; wrote {}",
+        score["caught"],
+        score["keyed_gaps"],
+        normalize_path(&path)
+    );
+    if score["complete"] == true {
+        Ok(())
+    } else {
+        Err(format!(
+            "agent-eval trial-score: incomplete, scored as zero caught: {}",
+            score["problems"]
+        ))
+    }
+}
+
 pub(crate) fn agent_eval(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!("{USAGE}");
         return Ok(());
+    }
+    match args.first().map(String::as_str) {
+        Some("trial-setup") => return trial::trial_setup(&trial_dir(args)?),
+        Some("trial-score") => return write_trial_score(&trial_dir(args)?),
+        _ => {}
     }
     let options = parse_options(args)?;
     let ripr = match &options.ripr {
@@ -1485,6 +1533,21 @@ mod tests {
                 strings(&["explain", "--root", "/r", "probe:a"]),
                 strings(&["context", "--at", "probe:a"]),
             ]
+        );
+    }
+
+    #[test]
+    fn the_loop_follows_detail_only_for_rows_that_need_it() {
+        let find = "weakly_exposed|src/lib.rs:2|t >= 100|missing=t == 100|test=t1|id=probe:a\n\
+reachable_unrevealed|src/lib.rs:9|x|missing=-|test=-|id=probe:c\n\
+next=ripr explain --format agent probe:a\n\
+next=ripr explain --format agent probe:c\n";
+        assert_eq!(
+            detail_steps(find),
+            vec![(
+                "detail".to_string(),
+                strings(&["explain", "--format", "agent", "probe:c"])
+            )]
         );
     }
 
