@@ -4591,11 +4591,15 @@ pub(in crate::analysis) use crate::domain::ARM_UNSELECTED_REASON_PREFIX;
 /// for a `match_arm` seam on `line` of `owner`, so a test whose inputs all
 /// select other arms grips the arm as `ripr check` reads it, never strongly.
 /// The seam has no diff, so the arm is read as one whose pattern did not
-/// change: the probe is the owner's own source line at the seam. The repo
-/// inventory walks the whole workspace, so its index counts as complete; the
-/// same refusals apply as in `check` (a same-named function, a helper or
-/// unreadable use of the owner, a computed input), each leaving the arm
-/// unnamed.
+/// change: the probe is the owner's own source line at the seam. The index
+/// is read as complete. That holds for the workspace inventories `repair`,
+/// `agent brief` and repo exposure read. The check screen's in-file seam view
+/// indexes only the finding's file and its related tests; there a rival
+/// outside the subset could go unseen, but that view only chooses which
+/// refusal to print (it never starts a repair), and `ripr repair` re-reads the
+/// full inventory. The same refusals apply as in `check` (a same-named
+/// function, a helper or unreadable use of the owner, a computed input), each
+/// leaving the arm unnamed.
 pub(in crate::analysis) fn repo_seam_unselected_arm(
     file: &std::path::Path,
     line: usize,
@@ -4621,6 +4625,9 @@ pub(in crate::analysis) fn repo_seam_unselected_arm(
         expected_sinks: Vec::new(),
         required_oracles: Vec::new(),
     };
+    // The selector read is cheap and refuses most arms (a computed or
+    // guarded arm, a non-parameter scrutinee) before the workspace lookups.
+    super::arm_selection::ArmSelector::establish(&probe, owner)?;
     missing_match_arm_discriminator(&probe, Some(owner), related_tests, &[], index, true)
 }
 

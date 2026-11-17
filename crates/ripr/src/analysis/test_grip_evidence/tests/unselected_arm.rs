@@ -11,7 +11,7 @@ Size::Medium => 450,\n        Size::Large => 500,\n    }\n}\n";
 fn arm_evidence(
     test_body: &str,
     arm: &str,
-) -> Result<(TestGripEvidence, TestGripEvidence, SeamGripClass), String> {
+) -> Result<(TestGripEvidence, TestGripEvidence, [SeamGripClass; 2]), String> {
     let tests = format!("use prices::*;\n\n#[test]\nfn prices() {{\n{test_body}\n}}\n");
     let files: Vec<(PathBuf, &str)> = vec![
         (PathBuf::from("src/lib.rs"), PRICES),
@@ -26,8 +26,8 @@ fn arm_evidence(
     let full = evidence_for_seam(seam, &index);
     let context = CompactGripContext::new(&index);
     let compact = compact_evidence_for_seam(seam, &context);
-    let class = classify_seam(seam, &full);
-    Ok((full, compact, class))
+    let classes = [classify_seam(seam, &full), classify_seam(seam, &compact)];
+    Ok((full, compact, classes))
 }
 
 fn missing_values(evidence: &TestGripEvidence) -> Vec<&str> {
@@ -44,7 +44,7 @@ fn an_arm_no_test_input_selects_is_weakly_gripped_with_its_pattern_missing() -> 
         "    assert_eq!(price_cents(Size::Small), 300);\n    assert_eq!(price_cents(Size::Large), 500);",
         "Size::Medium",
     )?;
-    assert_eq!(class, SeamGripClass::WeaklyGripped);
+    assert_eq!(class, [SeamGripClass::WeaklyGripped; 2]);
     for evidence in [&full, &compact] {
         assert_eq!(evidence.activate.state, StageState::Weak);
         assert_eq!(missing_values(evidence), ["Size::Medium"]);
@@ -66,7 +66,7 @@ fn an_arm_a_test_input_selects_keeps_its_strong_grip() -> Result<(), String> {
         "    assert_eq!(price_cents(Size::Small), 300);\n    assert_eq!(price_cents(Size::Medium), 450);",
         "Size::Medium",
     )?;
-    assert_eq!(class, SeamGripClass::StronglyGripped);
+    assert_eq!(class, [SeamGripClass::StronglyGripped; 2]);
     for evidence in [&full, &compact] {
         assert_eq!(evidence.activate.state, StageState::Yes);
         assert_eq!(missing_values(evidence), Vec::<&str>::new());
@@ -78,14 +78,15 @@ fn an_arm_a_test_input_selects_keeps_its_strong_grip() -> Result<(), String> {
 fn an_input_the_reading_cannot_resolve_leaves_the_arm_unnamed() -> Result<(), String> {
     // A computed input may select the arm, so the shared reading refuses and
     // the seam keeps the stage it had before #12078.
-    let (full, compact, _) = arm_evidence(
+    let (full, compact, class) = arm_evidence(
         "    let size = if std::env::args().count() > 99 { Size::Small } else { Size::Medium };\n    \
          assert_eq!(price_cents(size), 450);\n    \
          assert_eq!(price_cents(Size::Large), 500);",
         "Size::Medium",
     )?;
+    assert_eq!(class, [SeamGripClass::StronglyGripped; 2]);
     for evidence in [&full, &compact] {
-        assert_ne!(evidence.activate.state, StageState::Weak);
+        assert_eq!(evidence.activate.state, StageState::Yes);
         assert!(
             !missing_values(evidence).contains(&"Size::Medium"),
             "{:?}",
