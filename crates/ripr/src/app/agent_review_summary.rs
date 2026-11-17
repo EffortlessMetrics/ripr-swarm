@@ -1361,6 +1361,7 @@ mod tests {
             receipt: crate::app::agent_status::AgentStatusAttemptReceipt::NotApplicable,
             last_after_refusal: None,
             diverged_recovery: None,
+            focused_recovery: None,
         };
         let report = |attempts: Vec<AgentStatusRepairAttempt>| AgentStatusReport {
             root: ".".to_string(),

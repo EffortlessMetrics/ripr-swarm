@@ -19601,6 +19601,30 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "rust_stub_todo_expected_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_stub_todo_expected_value",
+      "vector": "an_unfilled_stub_expected_value_pins_nothing",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }
