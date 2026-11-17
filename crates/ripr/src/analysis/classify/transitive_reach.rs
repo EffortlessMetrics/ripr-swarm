@@ -6610,6 +6610,7 @@ mod tests {
                     source: source.into(),
                     item_scopes: None,
                     macro_candidates: None,
+                    external_docs: None,
                 },
             )
         };
