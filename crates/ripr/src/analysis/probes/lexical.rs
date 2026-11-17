@@ -970,6 +970,13 @@ fn is_constant_declaration(text: &str) -> bool {
     rest.starts_with("const ") || rest.starts_with("static ")
 }
 
+/// #14181: whether a changed line is one inline const assertion block, the
+/// same reading `classify_changed_line` uses to withhold runtime families.
+pub(crate) fn is_inline_const_assertion_line(text: &str) -> bool {
+    let text = text.trim_start();
+    is_inline_const_assertion(text, &mask_comments_and_strings(text))
+}
+
 /// A statement that is one inline const block holding only an assertion
 /// macro: `const { assert!(..) };`, also `assert_eq!`/`assert_ne!`, the
 /// `debug_` forms and their `core::`/`std::` paths. One line only: a
