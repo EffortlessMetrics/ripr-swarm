@@ -196,8 +196,11 @@ Route totals are the `routes` rows at the top of `baseline.json`. What they show
   - `refactor_control`, a behavior-preserving extraction, prints no gap but
     still ends with a `stop=` line, so it is not silent
     (`silent_on_control: false`, #12770).
-  - `agent-brief` misses all three harder gaps; `cli-agent-find` misses
-    `private_helper`.
+  - `agent-brief` reads the repo seam view, so it answers `match_arm_value`
+    since #12078 (an arm no test input selects is weakly gripped there too).
+    It still misses `inclusive_range`, whose gap depends on the before-text
+    (`0..n` and `0..=n` agree at `n = 0`) that the repo view never reads, and
+    `private_helper` (#13069). `cli-agent-find` misses `private_helper`.
 - `error_variant` once got two identical gap rows for its one changed line;
   #14453 folded them, so it now reads `extra_gaps: 0`. `struct_field` has one
   extra gap row (`extra_gaps: 1`).
