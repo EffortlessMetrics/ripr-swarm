@@ -10971,12 +10971,18 @@ fn module_entry_reach_summary(
         .filter(|entry| entry.cross_module.is_some())
         .count();
     let closure_called = called_entries.iter().any(|entry| entry.closure);
+    let opaque_only = called_entries
+        .iter()
+        .all(|entry| entry.closure || entry.cross_module.is_some());
     let scope = if owner.class_name.is_some() {
         "same-class"
-    } else if closure_called {
-        // #13592: some path passes the owner, or a function on the way to
-        // it, as a value.
+    } else if closure_called && opaque_only {
+        // #13592: every path passes the owner, or a function on the way to
+        // it, as a value, or crosses a module.
         "callback or value-passing"
+    } else if closure_called {
+        // Some tests reach it through plain same-module calls too.
+        "same-module or callback"
     } else if cross_module_called > 0 && cross_module_called == called_entries.len() {
         // #13592: every entry the tests call is an export of another module
         // that reaches the owner through an imported binding.

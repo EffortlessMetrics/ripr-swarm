@@ -48,6 +48,9 @@ pub(crate) const MODULE_ENTRY_MAX_HOPS: usize = 3;
 /// `makeRangeAlpha`. Reach along such a path is never more than unknown.
 pub(crate) const MODULE_CLOSURE_MAX_HOPS: usize = 8;
 
+/// Closure entries kept per owner; an owner past it keeps none (#13592).
+pub(crate) const MAX_CLOSURE_ENTRIES_PER_OWNER: usize = 32;
+
 /// An exported name of the owner's module whose code reaches the owner.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptModuleEntry {
@@ -301,26 +304,27 @@ pub(crate) fn module_entries_and_outbound<'a>(
             if reached == local.as_str() {
                 continue;
             }
+            // `reachable_through_closures` leaves out every owner this
+            // export already reaches by calls, and each export is visited
+            // once, so no entry here duplicates another.
             let owner_entries = entries.entry(reached.to_string()).or_default();
-            for entry in exported {
-                if owner_entries
-                    .iter()
-                    .any(|seen| seen.name == entry.name && !seen.closure)
-                {
-                    continue;
-                }
-                let entry = TypeScriptModuleEntry {
-                    hops: u8::try_from(hops).unwrap_or(u8::MAX),
-                    closure: true,
-                    ..entry.clone()
-                };
-                if !owner_entries.contains(&entry) {
-                    owner_entries.push(entry);
-                }
-            }
+            owner_entries.extend(exported.iter().map(|entry| TypeScriptModuleEntry {
+                hops: u8::try_from(hops).unwrap_or(u8::MAX),
+                closure: true,
+                ..entry.clone()
+            }));
         }
     }
     for owner_entries in entries.values_mut() {
+        // A densely connected module (a combinator grammar with many
+        // exports) could give an owner a closure entry per export, and every
+        // related test rechecks them all. Past the cap the owner keeps only
+        // its call entries, which is today's reading (fail closed).
+        if owner_entries.iter().filter(|entry| entry.closure).count()
+            > MAX_CLOSURE_ENTRIES_PER_OWNER
+        {
+            owner_entries.retain(|entry| !entry.closure);
+        }
         owner_entries.sort();
     }
     let outbound = outbound
@@ -615,6 +619,11 @@ fn add_function_references<'a>(
     let mut all = References::default();
     all.visit_formal_parameters(params);
     all.visit_function_body(body);
+    if returned.is_empty() {
+        let node = nodes.entry(name).or_default();
+        push_unbound(&mut node.references, all.referenced, &all.bound);
+        return;
+    }
     // The same statements, minus each top-level `return` of a function the
     // node returns directly (an arrow's expression body is such a return).
     let mut own = References::default();
@@ -631,11 +640,12 @@ fn add_function_references<'a>(
             own.visit_statement(statement);
         }
     }
+    let own_names: std::collections::HashSet<&str> = own.referenced.iter().copied().collect();
     let returned_references: Vec<&'a str> = all
         .referenced
         .iter()
         .copied()
-        .filter(|target| !own.referenced.contains(target))
+        .filter(|target| !own_names.contains(target))
         .collect();
     let node = nodes.entry(name).or_default();
     push_unbound(&mut node.references, own.referenced, &all.bound);
@@ -651,8 +661,9 @@ fn push_unbound<'a>(
     referenced: Vec<&'a str>,
     bound: &std::collections::HashSet<&'a str>,
 ) {
+    let mut seen: std::collections::HashSet<&'a str> = into.iter().copied().collect();
     for target in referenced {
-        if !bound.contains(target) && !into.contains(&target) {
+        if !bound.contains(target) && seen.insert(target) {
             into.push(target);
         }
     }

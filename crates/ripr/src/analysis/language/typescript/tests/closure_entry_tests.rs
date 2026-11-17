@@ -250,7 +250,9 @@ fn closure_edges_are_not_invented_for_rebound_names() {
 #[test]
 fn closure_paths_stop_at_their_hop_bound() {
     // `reviver` passed by `p0`, which `p1`..`p7` call in turn: the export
-    // `p7` is 8 edges away, within the bound; an `p8` would be 9.
+    // `p7` is 8 edges away, inside the total bound, but its path starts with
+    // seven bare calls, past the three a path may take before its first
+    // closure edge.
     let mut chain = String::from(
         "function reviver(key: string, value: any): any {\n  return value;\n}\nfunction p0(text: string): any {\n  return JSON.parse(text, reviver);\n}\n",
     );
@@ -342,5 +344,91 @@ fn closure_reach_crosses_into_an_importing_module() -> Result<(), String> {
         "upper",
     )?;
     assert_closure_related("cross-closure", &finding);
+    Ok(())
+}
+
+#[test]
+fn member_names_object_keys_and_labels_are_not_references() {
+    let twin = REVIVER.to_string();
+    assert_eq!(closure_entry_names(&twin, "reviver"), ["parse"]);
+    let named = REVIVER.replace(
+        "  return JSON.parse(text, reviver);",
+        "  const o: any = { reviver: 1 };\n  reviver: for (const c of text) {\n    break reviver;\n  }\n  return JSON.parse(text, o.reviver);",
+    );
+    assert!(entries(&named, "reviver").is_empty());
+}
+
+#[test]
+fn a_bare_called_combinator_constant_reads_as_a_closure_entry() {
+    // `Rule(s)` is a bare call, but what runs is the callback `match` was
+    // given: the entry reads as closure reach, never a call entry.
+    let direct =
+        GRAMMAR.to_string() + "export function direct(s: string): string {\n  return Rule(s);\n}\n";
+    assert!(
+        entries(&direct, "Rule").contains(&("direct".to_string(), true, 1)),
+        "{:?}",
+        entries(&direct, "Rule")
+    );
+}
+
+#[test]
+fn mixed_call_and_closure_reach_keeps_the_same_module_reading() -> Result<(), String> {
+    // `helper` is called by `a` and passed by `b`: a weak oracle on the call
+    // path stays `weakly_exposed`, and the text does not claim the reach is
+    // only through callbacks.
+    let owner = "function helper(key: string, value: any): any {\n  return key === \"x\" ? null : value;\n}\nexport function a(key: string): any {\n  return helper(key, 1);\n}\nexport function b(text: string): any {\n  return JSON.parse(text, helper);\n}\n";
+    let test = "import { expect, it } from \"vitest\";\nimport { a, b } from \"../src/parse\";\n\nit(\"a\", () => {\n  expect(a(\"y\")).toBeTruthy();\n});\n\nit(\"b\", () => {\n  expect(b(\"1\")).toBeTruthy();\n});\n";
+    assert_eq!(
+        entries(owner, "helper"),
+        [("a".to_string(), false, 1), ("b".to_string(), true, 1)]
+    );
+    let finding = finding_at(
+        "mixed",
+        &reviver_files(owner, test),
+        "src/parse.ts",
+        "  return key === \"x\" ? null : value;",
+        "helper",
+    )?;
+    assert!(
+        relates_through_entry(&finding),
+        "{:?}",
+        finding.related_tests
+    );
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("only through same-module or callback callers")),
+        "missing: {:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+#[test]
+fn a_cross_module_closure_chain_takes_the_closure_bound() -> Result<(), String> {
+    // `shout` is three edges from `apply` (Rule, upper, shout) and the
+    // import makes four: past the call bound, inside the closure bound.
+    let grammar = GRAMMAR.replace(
+        "const upper = (s: string): string => {\n  return s.toUpperCase();\n};",
+        "const shout = (s: string): string => {\n  return s + \"?\";\n};\n\nconst upper = (s: string): string => {\n  return shout(s.toUpperCase());\n};",
+    );
+    assert_eq!(entries(&grammar, "shout"), [("apply".to_string(), true, 3)]);
+    let importer = "import { apply } from \"./grammar\";\nexport function applyAll(input: string): string {\n  return apply(input);\n}\n";
+    let test = "import { expect, it } from \"vitest\";\nimport { applyAll } from \"../src/all\";\n\nit(\"applies\", () => {\n  expect(applyAll(\"x\")).toBe(\"X?!\");\n});\n";
+    let files: Files<'_> = vec![
+        ("src/grammar.ts", grammar),
+        ("src/all.ts", importer.to_string()),
+        ("tests/all.test.ts", test.to_string()),
+    ];
+    let finding = finding_at(
+        "cross-closure-bound",
+        &files,
+        "src/grammar.ts",
+        "  return s + \"?\";",
+        "shout",
+    )?;
+    assert_closure_related("cross-closure-bound", &finding);
     Ok(())
 }

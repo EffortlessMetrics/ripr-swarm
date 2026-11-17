@@ -988,7 +988,16 @@ Candidates come from the first non-empty tier:
    closure entry: at most 3 bare-call edges before the first closure edge
    and at most 8 edges in total (`MODULE_CLOSURE_MAX_HOPS`), and only when
    no bare-call path within its own bound reaches the owner from that export.
-   A call-built constant owner (`ModuleFunction`) gets closure entries only.
+   A call-built constant owner (`ModuleFunction`) reads every entry as a
+   closure entry, a bare call of it (`Rule(s)`) included, because what runs is
+   the callback it was built from. An owner with more than 32 closure entries
+   (`MAX_CLOSURE_ENTRIES_PER_OWNER`) keeps none of them. A reference that
+   invokes nothing (`typeof helper === "function"`, an identity comparison)
+   still adds an edge; that can only turn a `no_static_path` into
+   `static_unknown`, never credit a test. When some related tests reach the
+   owner through plain same-module calls and others through closure entries,
+   the same-module rule decides the class and the text says "same-module or
+   callback callers".
    Closure entries continue across importers like call entries, within the
    closure bound, and a call chain is preferred over a closure chain for the
    same importer export. Reach whose every entry is cross-module or closure

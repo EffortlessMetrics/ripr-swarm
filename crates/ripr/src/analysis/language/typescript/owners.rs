@@ -75,12 +75,15 @@ pub(crate) fn owners_from_program(
         {
             owner.module_entries = if owner.owner_kind == OwnerKind::ModuleFunction {
                 // A call-built constant runs its callbacks when the value is
-                // invoked, which only a closure edge models (#13592); its
-                // initializer is not a callable body a call edge reaches.
+                // invoked, which the graph does not model (#13592): even a
+                // bare call of it (`Rule(s)`) reaches its initializer's code
+                // only as a closure does, so every entry reads as one.
                 owner_entries
                     .iter()
-                    .filter(|entry| entry.closure)
-                    .cloned()
+                    .map(|entry| TypeScriptModuleEntry {
+                        closure: true,
+                        ..entry.clone()
+                    })
                     .collect()
             } else {
                 owner_entries.clone()
