@@ -155,3 +155,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_self_body_same_name_no_unseen_reach (13)
+
+Reason:
+RIPR-SPEC-0068: the uncalled owner's computed boundary operand now carries the typed activation_boundary_input_unresolved limit that PR guidance already withholds the seam under; class stays no_static_path (#14951)
+
+Command:
+`cargo xtask goldens bless owner_self_body_same_name_no_unseen_reach --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

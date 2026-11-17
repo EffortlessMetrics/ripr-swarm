@@ -16,6 +16,7 @@
 //! diff, dispatches to this adapter, and applies sort + summary on the
 //! returned findings.
 
+mod boundary_input;
 mod dependent_scope;
 pub(crate) mod oracles;
 mod probe_shape;
@@ -1961,6 +1962,11 @@ fn apply_rust_no_static_path_limit(
         return;
     }
     if !needs_no_static_path_limit(finding) {
+        // #14951: an owner nothing in the workspace names has no witness to
+        // search, and its related tests are file-proximity rows, so it lands
+        // here. It names the limit the repo seam withholds for the same
+        // unresolved boundary input.
+        boundary_input::apply_limit(finding, probe, index);
         return;
     }
 

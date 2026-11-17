@@ -7678,6 +7678,10 @@ name = "PR review-card use case"
 spec = "docs/specs/RIPR-SPEC-0068-pr-review-card-use-case.md"
 tests = [
   "crates/ripr/src/output/review_comments/mod.rs::tests::spec0068_reject_seam_id_without_source_location",
+  "crates/ripr/tests/check_guidance_parity.rs::check_json_review_guidance_and_agent_header_agree_on_the_withheld_boundary_input",
+  "crates/ripr/tests/check_guidance_parity.rs::a_parameter_operand_on_the_uncalled_owner_is_a_gap_on_every_surface",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/boundary_input_limit.rs::a_computed_operand_names_the_typed_limit_in_the_activate_stage",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/boundary_input_limit.rs::boundary_input_limit_agrees_with_the_seam_for_uncalled_owners",
   "crates/ripr/src/output/review_comments/mod.rs::tests::spec0068_reject_seam_id_without_source_location_summary_only",
   "crates/ripr/src/output/review_comments/mod.rs::tests::spec0068_actionable_card_carries_verify_and_receipt_commands",
   "crates/ripr/src/output/review_comments/mod.rs::tests::actionable_review_card_writes_every_receipt_input",
@@ -7717,7 +7721,8 @@ code = [
   "crates/ripr/src/output/evidence_record.rs",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs",
   "crates/ripr/src/cli/commands.rs",
-  "crates/ripr/src/cli/commands/review_comments.rs"
+  "crates/ripr/src/cli/commands/review_comments.rs",
+  "crates/ripr/src/analysis/language/rust/boundary_input.rs"
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0068-pr-review-card-use-case.md",

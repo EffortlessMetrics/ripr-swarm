@@ -1,5 +1,6 @@
 mod assertion_call_kind;
 mod boolean_owner_pin;
+mod boundary_input_limit;
 mod framework_snapshot;
 mod module_extraction;
 pub(super) mod panic_marker;
