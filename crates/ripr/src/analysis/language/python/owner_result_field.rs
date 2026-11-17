@@ -502,6 +502,20 @@ fn changed_self_field(
     if method_loads != method_calls {
         return None;
     }
+    // No store to a method name on any base: `self.timeout = _fixed` in
+    // `__init__` shadows the builder on the instance.
+    let mut method_stores = 0usize;
+    visit_exprs_in_statements(&class.body, &mut |expr| {
+        if let Expr::Attribute(attribute) = expr
+            && attribute.ctx != ExprContext::Load
+            && method_names.contains(&attribute.attr.as_str())
+        {
+            method_stores += 1;
+        }
+    });
+    if method_stores != 0 {
+        return None;
+    }
     let mut field_reads = 0usize;
     visit_exprs_in_statements(&class.body, &mut |expr| {
         if let Expr::Attribute(attribute) = expr
@@ -580,6 +594,23 @@ fn binding_of_owner_result(
     // The class reaches the test through exactly one `from <owner module>
     // import <Class>`: a same-named class in another module (a subclass that
     // overrides the builder) is not the owner.
+    // Nothing outside the test body reaches the class first: a module-level
+    // `Req.timeout = _fast`, `Req = Other`, a descriptor on the field, or an
+    // autouse fixture or setup hook in the test module.
+    let rebinding = &test.constant_rebinding;
+    if rebinding.rebinds(class)
+        || rebinding.module_opaque
+        || rebinding.assigns_attribute(class)
+        || rebinding.assigns_attribute(&owner.name)
+        || rebinding.assigns_attribute(field)
+        || rebinding.assigns_dunder_attribute()
+        || rebinding.implicit_reach
+        || rebinding.header_reach
+        || rebinding.fixture_substitution
+        || super::test_activation::activation_control(test).is_some()
+    {
+        return None;
+    }
     let owner_modules = owner_module_paths(&owner.file);
     let mut class_imports = test
         .imports

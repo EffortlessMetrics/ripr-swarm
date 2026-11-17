@@ -512,6 +512,13 @@ fn single_guard_variants_carry_no_fact() -> Result<(), String> {
             "\n    def chain(self):\n        return self\n",
         ),
         (
+            "another method shadows the builder on the instance",
+            "",
+            "        self.timeout_value = t * 2",
+            "        self.timeout_value = t",
+            "\n    def shadow(self):\n        self.timeout = 0\n",
+        ),
+        (
             "another method keeps a closure that can overwrite the field",
             "",
             "        self.timeout_value = t * 2",
@@ -592,6 +599,10 @@ fn single_guard_variants_carry_no_fact() -> Result<(), String> {
         (
             "the test names a dunder",
             "from fx.core import Req\n\n\ndef test_builder_sets_url():\n    n = len.__name__\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
+        ),
+        (
+            "the test module replaces the builder outside the test",
+            "from fx.core import Req\n\n\ndef _fast(self, t):\n    return self\n\n\nReq.timeout = _fast\n\n\ndef test_builder_sets_url():\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
         ),
         (
             "the test mocks",

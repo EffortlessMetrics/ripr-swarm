@@ -1434,7 +1434,9 @@ read-out: the boolean the classifier uses is derived from the surfaced
   lambda, generator expression, `try`, `global`, `nonlocal` or import, since a
   closure kept from `__init__` can overwrite the field after the builder
   returns; nothing else in the owner module naming the class, since
-  `Req.timeout = _fixed` after the class body replaces the method; a class body of only undecorated methods, literal
+  `Req.timeout = _fixed` after the class body replaces the method; no store
+  to a method name on any base, since `self.timeout = ...` shadows the
+  builder on the instance; a class body of only undecorated methods, literal
   bindings, docstrings and `pass`, since any other class-level value could be a
   descriptor; no `case` line; no class-level binding of the field; no other
   write of the field in the method; only plain assignments after the changed
@@ -1452,7 +1454,9 @@ read-out: the boolean the classifier uses is derived from the surfaced
   module-level pytest function whose body is straight-line
   (`Assign`/`Expr`/`Assert`/`pass` only), binds `<binding> = Cls(...).method(...)`
   (or `Cls(...)` for `__init__`, `Cls` the test module's one import of the
-  class, `from <owner module> import Cls`) exactly once, names no dunder, uses
+  class, `from <owner module> import Cls`, which nothing in the test module
+  rebinds or attribute-writes and no autouse fixture, setup hook or opaque
+  module code can reach) exactly once, names no dunder, uses
   `<binding>` only as reads of other non-dunder, non-method attributes (a
   bound method read like `reset = r.reset` can be called later; no call, method
   call, subscript, whole-value use, rebinding or walrus), calls the owner once,
