@@ -285,7 +285,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     let complete_with_limitations = output
         .analysis_outcome
         .as_ref()
-        .filter(|outcome| outcome.kind.is_complete() && !outcome.limitations.is_empty());
+        .filter(|outcome| outcome.kind.is_complete() && outcome.has_advisory_limitations());
     // #5011: an empty stream is only "clean" when nothing was left
     // unanalyzed. Run states the human and JSON surfaces disclose as NOT
     // clean (uncommitted working-tree edits, missing analysis scope,
@@ -385,7 +385,13 @@ pub(crate) fn complete_outcome_limitation_message(
         "Analysis outcome: {} (analysis complete; advisory limitation(s) follow).",
         outcome.kind.as_str()
     );
-    for limitation in &outcome.limitations {
+    // #13894: the requested-scope note is informational and stays out of the
+    // quiet PR stream; only real advisory limitations are repeated here.
+    for limitation in outcome
+        .limitations
+        .iter()
+        .filter(|limitation| !limitation.kind.is_requested_scope_note())
+    {
         message.push_str(&format!(
             " Limitation: {}: {}",
             limitation.kind.as_str(),

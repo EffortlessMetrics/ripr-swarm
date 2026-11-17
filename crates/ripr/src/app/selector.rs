@@ -263,6 +263,19 @@ pub(in crate::app) fn locator_paths_match(stored_file: &str, selector_file: &str
         || wanted.ends_with(&format!("/{stored}"))
 }
 
+/// [`locator_paths_match`] ignoring ASCII case (#14416). Resolution stays
+/// case-sensitive; only miss wording reads this, so the explain cause and the
+/// location hint agree on which files a wrong-case selector names (#14676).
+pub(in crate::app) fn locator_paths_match_ignoring_ascii_case(
+    stored_file: &str,
+    selector_file: &str,
+) -> bool {
+    locator_paths_match(
+        &stored_file.to_ascii_lowercase(),
+        &selector_file.to_ascii_lowercase(),
+    )
+}
+
 /// What is known about whether the run behind a finding set analyzed its
 /// whole scope, for the location-miss hint's empty-scope and other-file
 /// wording.
@@ -307,14 +320,16 @@ pub(in crate::app) fn location_miss_hint(
         return None;
     }
     // `file:line:column` splits as file `file:line`; matching is per line.
-    let (selector_file, column_given) = match selector_file.rsplit_once(':') {
-        Some((file, line)) if !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()) => {
-            (file, true)
-        }
-        _ => (selector_file, false),
+    let (selector_file, column_given) = match location_column_form_file(selector_file) {
+        Some(file) => (file, true),
+        None => (selector_file, false),
     };
     let wanted = normalize_locator_path(selector_file);
-    if wanted.is_empty() || !(wanted.contains(['/', '.'])) {
+    // A bare `word:N` may be an opaque id, so it needs a path shape; the
+    // three-part `file:N:M` form is location-shaped by itself, and the
+    // explain cause defers to this hint for it, so an extensionless file
+    // (`Makefile:3:5`) must still get one (#14511).
+    if wanted.is_empty() || !(column_given || wanted.contains(['/', '.'])) {
         return None;
     }
     let column_note = if column_given {
@@ -350,14 +365,13 @@ pub(in crate::app) fn location_miss_hint(
     // stays case-sensitive; the hint names the correctly cased file instead.
     let mut case_folded =
         std::collections::BTreeMap::<String, std::collections::BTreeSet<usize>>::new();
-    let wanted_folded = wanted.to_ascii_lowercase();
     let mut other_files = std::collections::BTreeSet::<String>::new();
     for finding in findings {
         let file = crate::analysis::stable_path_text(&finding.probe.location.file);
         // The same "same file" rule selection uses (#14077's shared helper).
         let matches = locator_paths_match(file.as_ref(), &wanted);
         // #14416: the same rule ignoring ASCII case, for the hint only.
-        let matches_folded = locator_paths_match(&file.to_ascii_lowercase(), &wanted_folded);
+        let matches_folded = locator_paths_match_ignoring_ascii_case(&file, &wanted);
         // Shown root-relative through the shared location projector: a
         // fresh run stores absolute paths (verbatim `\\?\` ones on Windows),
         // and the suffix match accepts the relative form the user types.
@@ -455,6 +469,17 @@ pub(in crate::app) fn location_miss_hint(
     Some(format!(
         " No finding in this scope is in {wanted:?}; findings are in {files}{more}.{column_note}"
     ))
+}
+
+/// The one `file:line:column` detector (#14511). `selector_file` is the text
+/// before a selector's last `:`; when it ends in `:<digits>` the selector is
+/// the column form and this returns the file part. The explain miss cause
+/// and the location hint both read it, so they never disagree on which
+/// selectors are column forms.
+pub(in crate::app) fn location_column_form_file(selector_file: &str) -> Option<&str> {
+    selector_file.rsplit_once(':').and_then(|(file, line)| {
+        (!line.is_empty() && line.bytes().all(|b| b.is_ascii_digit())).then_some(file)
+    })
 }
 
 /// Normalize a path for locator matching: convert `\` to `/`, drop a leading

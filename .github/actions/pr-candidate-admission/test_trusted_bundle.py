@@ -14,6 +14,10 @@ sys.argv = sys.argv[:1]
 ACTION = ".github/actions/pr-candidate-admission"
 FILES = ("action.yml", "candidate_admission.py", "release_cut_admission.py", "review_disposition.py")
 PIN = "${{ steps.trusted.outputs.sha }}"
+# The pull_request anchor is the merge ref's first parent, resolved locally.
+# Replay it with a mocked git so the selector controls do not need a real repo.
+GIT_MOCK = ('git() { case "$1" in fetch) [ -n "$4" ] || return 1; return 0 ;; '
+            'rev-list) printf "%s\\n" "$PARENTS" ;; *) return 90 ;; esac; }\n')
 
 
 def bash():
@@ -215,10 +219,11 @@ class Bundle(unittest.TestCase):
             for collision in (False, True):
                 if collision:
                     (workspace / ".admission-trusted").mkdir()
-                result = subprocess.run([bash(), "-euo", "pipefail", "-c", shell(check)], cwd=workspace,
+                result = subprocess.run([bash(), "-euo", "pipefail", "-c", GIT_MOCK + shell(check)], cwd=workspace,
                                         env=dict(os.environ, GITHUB_WORKSPACE=str(workspace),
                                                  GITHUB_OUTPUT=str(workspace / "outputs"), EVENT_NAME="pull_request",
-                                                 PR_BASE_SHA="b"*40, GROUP_BASE_SHA="c"*40, EVENT_SHA="a"*40), capture_output=True)
+                                                 PARENTS=f'{"a"*40} {"b"*40} {"d"*40}',
+                                                 GROUP_BASE_SHA="c"*40, EVENT_SHA="a"*40), capture_output=True)
                 self.assertEqual(result.returncode, int(collision), result)
 
     def test_event_identity_selection_has_no_candidate_fallback(self):
@@ -226,18 +231,19 @@ class Bundle(unittest.TestCase):
         self.assertIsNotNone(check)
         with tempfile.TemporaryDirectory(prefix="ripr-admission-source-") as temporary:
             output = Path(temporary) / "outputs"
-            for event, field, expected in [("pull_request", "PR_BASE_SHA", "b"),
+            for event, field, expected in [("pull_request", "EVENT_SHA", "b"),
                                             ("merge_group", "GROUP_BASE_SHA", "c"),
                                             ("push", "EVENT_SHA", "a"),
                                             ("workflow_dispatch", "EVENT_SHA", "a")]:
                 for missing in (False, True):
                     with self.subTest(event=event, missing=missing):
                         env = dict(os.environ, GITHUB_WORKSPACE=temporary, GITHUB_OUTPUT=str(output),
-                                   EVENT_NAME=event, PR_BASE_SHA="b"*40, GROUP_BASE_SHA="c"*40, EVENT_SHA="a"*40)
+                                   EVENT_NAME=event, PARENTS=f'{"a"*40} {"b"*40} {"d"*40}',
+                                   GROUP_BASE_SHA="c"*40, EVENT_SHA="a"*40)
                         if missing:
                             env[field] = ""
                         output.write_text("", encoding="utf-8")
-                        result = subprocess.run([bash(), "-euo", "pipefail", "-c", shell(check)],
+                        result = subprocess.run([bash(), "-euo", "pipefail", "-c", GIT_MOCK + shell(check)],
                                                 env=env, capture_output=True)
                         self.assertEqual(result.returncode, int(missing), result)
                         self.assertEqual(output.read_text(encoding="utf-8"), "" if missing else "sha="+expected*40+"\n")

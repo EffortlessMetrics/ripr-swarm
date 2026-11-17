@@ -1,0 +1,47 @@
+{
+  "case_id": "arbitrary_aliased_module_generator_stimulus_not_product",
+  "subject_id": "authored-arbitrary-shapes-quickcheck",
+  "diff": "cases/arbitrary_aliased_module_generator_stimulus_not_product.diff",
+  "anchor": {
+    "file": "src/generators.rs",
+    "line": 7
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "quickcheck_aliased_module_arbitrary_impl_change",
+  "hard_case": "The changed line is the body of `impl Arb for Span` in `src/generators.rs`, a module the crate root loads with `mod generators;`; `Arb` is `use quickcheck::Arbitrary as Arb;`. The generator lives in another module and is spelled through an alias.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Span(a, a.wrapping_add(6))",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: `width(&span) == span.1.wrapping_sub(span.0)` holds for every generated span, so the generator's distribution cannot fail it. Run under rustc 1.95.0 with `cargo test` on the edited subject: tests_passed."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "A changed hand-written `Arbitrary` body is test-input generation, not product behavior (#11545, RIPR-SPEC-0153 TestInputGenerator). ripr must report it as a stimulus change with a stated reason (`static_unknown`, read as limited), never as a missing product test or test credit. The generator file is reached from the crate root through a plain out-of-line `mod` declaration, and every file on that chain is namespace-checked.",
+  "axes": [
+    "test_library_idiom"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "9d0d4fecc0",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,14 +1,16 @@
 use crate::analysis::classify::{
-    ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, BindingReturnFlow, ConstFlow,
-    EffectStateCarrier, HELPER_RESULT_NOT_FORWARDED, OwnerInputs, OwnerPinSyntax, OwnerReturnPin,
-    ProbeContext, PropagationWitnessV1, RecordFieldLine, ReturnOracleAdmission,
-    TransitiveReachIndex, WrapperEntryPairing, activation_and_boundary_input,
-    assertion_compares_hand_built_field, assertion_observes_collection_argument,
-    assertion_observes_scope_end, assertion_out_parameter, assertion_pins_pushed_collection_count,
-    body_contains_owner_call, bool_field_assertion, call_parameter_names,
-    call_text_may_call_free_function, callee_is_unique, chain_entry_pin_admits,
-    chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
-    confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
+    ASSERTION_CONTEXT_UNESTABLISHED, ASSERTION_CONTEXT_UNESTABLISHED_DISCRIMINATE_SUMMARY,
+    ArmSelector, AssertionRefusal, BindingReturnFlow, ConstFlow, EffectStateCarrier,
+    HELPER_RESULT_NOT_FORWARDED, NO_ASSERTION_DISCRIMINATE_SUMMARY, NO_OBSERVING_ASSERTION_SUMMARY,
+    OwnerInputs, OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1,
+    RecordFieldLine, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
+    activation_and_boundary_input, assertion_compares_hand_built_field,
+    assertion_observes_collection_argument, assertion_observes_scope_end, assertion_out_parameter,
+    assertion_pins_pushed_collection_count, body_contains_owner_call, bool_field_assertion,
+    call_parameter_names, call_text_may_call_free_function, callee_is_unique,
+    chain_entry_pin_admits, chain_forwards_to_observed_hops,
+    chain_passes_effect_target_to_observed_hops, classify, confidence_score,
+    constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
     direct_collection_mutation_receiver, error_path_arm_probe, expected_operand_value,
     fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
@@ -22,7 +24,9 @@ use crate::analysis::classify::{
     unconditional_owner_insert_field, unexercised_mask_bits, use_may_rebind_owner,
     wrapper_return_boundary_pinned,
 };
-use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::extract::{
+    extract_identifier_tokens, mask_comments_and_strings, placeholder_bound_variables,
+};
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::analysis::sync_memo::SyncMemo;
 use crate::domain::*;
@@ -850,7 +854,11 @@ impl ClassifiedProbeEvidence {
         };
         let owner_return_pin = context
             .owner_fn
-            .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
+            .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index))
+            // #14387: a guard-return pin reads the old owner as the new one
+            // with only the changed line swapped back, which holds only when
+            // the diff changes no other line of the owner.
+            .filter(|pin| pin.closed_guard_old_line_matches(context.owner_sole_change.as_deref()));
         // RIPR-SPEC-0229: which owner-call input selects a changed arm.
         // A same-named function elsewhere (a trait method on another enum
         // with the same variant names) makes a direct call ambiguous; a
@@ -2001,6 +2009,37 @@ impl ClassifiedProbeEvidence {
             )
         };
 
+        // #9981 forwarding residual: a related test whose helper asserts after
+        // forwarding its closure to an unresolved call has an assertion; the
+        // row reads `assertion_admission_unproven`. When those are the only
+        // assertions the related tests hold, the "no assertion" stage
+        // summaries are false too, so they defer to the existing
+        // refused-context wording (and, through it, its next step). Only the
+        // two exact no-assertion summaries are replaced; the states stay `no`.
+        let forwarded =
+            super::super::classify::name_forwarded_callback_limits(context, &mut related_tests);
+        let (observe, discriminate) = if forwarded.only_limits
+            && observe.state == StageState::No
+            && observe.summary == NO_OBSERVING_ASSERTION_SUMMARY
+            && discriminate.state == StageState::No
+            && discriminate.summary == NO_ASSERTION_DISCRIMINATE_SUMMARY
+        {
+            (
+                StageEvidence::new(
+                    StageState::No,
+                    observe.confidence.clone(),
+                    ASSERTION_CONTEXT_UNESTABLISHED,
+                ),
+                StageEvidence::new(
+                    StageState::No,
+                    discriminate.confidence.clone(),
+                    ASSERTION_CONTEXT_UNESTABLISHED_DISCRIMINATE_SUMMARY,
+                ),
+            )
+        } else {
+            (observe, discriminate)
+        };
+
         let ripr = RiprEvidence {
             reach: reach.clone(),
             infect: infect.clone(),
@@ -2012,6 +2051,7 @@ impl ClassifiedProbeEvidence {
         };
         let mut evidence =
             evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
+        evidence.extend(forwarded.evidence);
         // #12900: computed last, on the final stages, and only when the shared
         // decision reads `reachable_unrevealed` on weak, proximity-only
         // reach, so the caller walk runs for those alone and the evidence
@@ -2134,6 +2174,42 @@ impl ClassifiedProbeEvidence {
                 note.location, note.reason
             ));
         }
+        // #14810: an assertion compared with a local the test body binds only
+        // to an unfilled placeholder macro pins no expected value. Disclose it
+        // where a refusal note goes, so a reader learns why the stub's
+        // assertion earns nothing instead of reading "no assertion".
+        if assertion_refusal.is_none() && discriminate.state != StageState::Yes {
+            for (test, _) in &context.related_tests {
+                let placeholders = placeholder_bound_variables(test.body.as_str());
+                if placeholders.is_empty() {
+                    continue;
+                }
+                let Some(assertion) = test.assertions.iter().find(|assertion| {
+                    assertion.strength == OracleStrength::Unknown
+                        && extract_identifier_tokens(&assertion.text)
+                            .iter()
+                            .any(|token| placeholders.contains(token))
+                }) else {
+                    continue;
+                };
+                let macro_name = OwnerPinSyntax::assertion_macro_name(&assertion.text)
+                    .filter(|name| matches!(name.as_str(), "assert_eq" | "assert_ne" | "assert"))
+                    .unwrap_or_default();
+                let assertion_name = if macro_name.is_empty() {
+                    "assertion".to_string()
+                } else {
+                    format!("`{macro_name}!`")
+                };
+                evidence.push(format!(
+                    "{ASSERTION_NOT_CREDITED_PREFIX}{} in {} at {}:{}: the expected value is an unfilled placeholder macro (`todo!`, `unimplemented!`, `unreachable!` or `panic!`), so the assertion pins no value",
+                    assertion_name,
+                    test.name,
+                    crate::analysis::stable_path_text(&test.file),
+                    assertion.line
+                ));
+                break;
+            }
+        }
         let refusals_are_analyzer_limits = observe.summary == ASSERTION_CONTEXT_UNESTABLISHED && {
             // Only tests that could have credited an oracle: a refused
             // assertion in a name-only test cannot stand in for the missing
@@ -2254,7 +2330,6 @@ impl ClassifiedProbeEvidence {
             pin_syntax,
             &mut related_tests,
         );
-
         Self {
             ripr,
             evidence,
@@ -2567,8 +2642,10 @@ impl PropagationWitnessDiagnostic {
 }
 
 /// Reach-summary suffix for an owner no source, test or doc in the workspace
-/// names (RIPR-SPEC-0219). The verdict corpus keys on this wording.
-pub(in crate::analysis) const UNREFERENCED_IN_WORKSPACE: &str = "(unreferenced in workspace)";
+/// names (RIPR-SPEC-0219). The verdict corpus keys on this wording; the
+/// domain owns it so `Finding::is_unreferenced_no_static_path` reads the
+/// same text the producer writes (#14820).
+pub(in crate::analysis) use crate::domain::UNREFERENCED_IN_WORKSPACE;
 
 fn unreached_stage(stage: &str) -> StageEvidence {
     StageEvidence::new(

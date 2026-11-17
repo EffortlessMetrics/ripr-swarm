@@ -89,20 +89,40 @@ fn build_index_from_loaded_files_with_cache_and_adapters(
 /// as a fresh whole build does. The caller re-runs the shared post-parse
 /// phases, so the result equals a fresh build over the union file set
 /// without re-decoding or re-parsing the files already indexed.
+///
+/// The extras are parsed raw (no include resolution, resource edges or
+/// root-level metadata of their own): every one of those is recomputed over
+/// the merged index below, so an extras-only finish was discarded work, and
+/// the extras' function identities reach the merged resolution unrebased,
+/// exactly as in a fresh build.
+///
+/// The returned flag is `false` when the merged include resolution changed
+/// the include view the retained files were composed against (see
+/// [`super::includes::RetainedIncludeView`]); the index is then not known
+/// to equal a fresh build and the caller must discard it.
 pub(crate) fn extend_index_from_loaded_files_with_cache(
     index: &mut RustIndex,
     root: &Path,
     files: &[(PathBuf, Vec<u8>)],
-) -> Result<FileFactCacheStats, String> {
-    let extra = build_index_from_loaded_files_with_cache(root, files, MissAttribution::Skipped)?;
-    let stats = extra.file_fact_cache;
-    let extra_index = extra.index;
+) -> Result<(FileFactCacheStats, bool), String> {
+    let cache = RepoFileFactCache::at(root);
+    let (extra_index, stats, _) = parse_cached_file_batches(
+        root,
+        files.chunks(PARSE_BATCH_FILES).map(Ok),
+        &RaRustSyntaxAdapter,
+        &LexicalRustSyntaxAdapter,
+        &cache,
+        process_fact_memo(),
+        KnownFilePaths::default,
+    )?;
     let paths: Vec<PathBuf> = extra_index
         .files()
         .iter()
         .map(|(path, _)| path.clone())
         .collect();
-    for path in paths {
+    // The include view the retained files were composed against.
+    let retained_includes = super::includes::RetainedIncludeView::capture(index);
+    for path in paths.iter().cloned() {
         if let Some(facts) = extra_index.owned_file(&path) {
             index.remove_file(&path);
             index.insert_file(path, facts, true);
@@ -111,19 +131,9 @@ pub(crate) fn extend_index_from_loaded_files_with_cache(
     index
         .non_utf8_sources
         .extend(extra_index.non_utf8_sources.iter().cloned());
-    index.include_parents.extend(
-        extra_index
-            .include_parents
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone())),
-    );
-    index
-        .include_limitations
-        .extend(extra_index.include_limitations.iter().cloned());
-    index
-        .include_targets
-        .extend(extra_index.include_targets.iter().cloned());
     super::includes::resolve_repository_local_includes(root, index);
+    let added: std::collections::BTreeSet<&Path> = paths.iter().map(PathBuf::as_path).collect();
+    let includes_exact = retained_includes.preserved(index, &added);
     super::resource_dependencies::attach_resource_dependencies(root, index);
     index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
         root,
@@ -138,7 +148,7 @@ pub(crate) fn extend_index_from_loaded_files_with_cache(
     index.workspace_member_dirs = absolute_member_dirs(root);
     index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
     index.member_crates = super::member_crates::MemberCrates::new(root);
-    Ok(stats)
+    Ok((stats, includes_exact))
 }
 
 /// Streaming variant of [`build_index_from_loaded_files_with_cache`]
@@ -290,30 +300,17 @@ fn build_index_with_file_fact_cache_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
     cache: &RepoFileFactCache,
     memo: Option<&ProcessFactMemo>,
-    mut load_known_file_paths: impl FnMut() -> KnownFilePaths,
+    load_known_file_paths: impl FnMut() -> KnownFilePaths,
 ) -> Result<CachedRustIndex, String> {
-    cancellation::checkpoint()?;
-    cache.sweep_stale_temp_files();
-    let mut accounting = CacheAccounting::default();
-    let batched = insert_cached_file_batches(
+    let (mut index, stats, files_content_hash) = parse_cached_file_batches(
         root,
         batches,
         adapter,
         fallback,
-        FactCaches { disk: cache, memo },
-        &mut load_known_file_paths,
-        &mut accounting,
-    );
-    let CacheAccounting {
-        stats,
-        first_corrupt_reason,
-    } = accounting;
-    // Emitted once on every exit after lookup began, before finalization.
-    // A complete build reports the whole-corpus count. An aborted build
-    // reports the entries found in the batches it admitted: later batches
-    // are never looked up, so their entries are not claimed either way.
-    emit_corrupt_entries_warning(stats.corrupt_ignored, first_corrupt_reason.as_deref());
-    let (mut index, files_content_hash) = batched?;
+        cache,
+        memo,
+        load_known_file_paths,
+    )?;
     cancellation::checkpoint()?;
     super::includes::resolve_repository_local_includes(root, &mut index);
     super::resource_dependencies::attach_resource_dependencies(root, &mut index);
@@ -339,6 +336,45 @@ fn build_index_with_file_fact_cache_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
         file_fact_cache: stats,
         files_content_hash,
     })
+}
+
+/// The cached parse of `batches` into a raw index: file facts and non-UTF-8
+/// disclosures only, without include resolution, resource edges or any
+/// root-level workspace metadata. Shared by the whole build, which finishes
+/// the index, and by [`extend_index_from_loaded_files_with_cache`], whose
+/// merged index recomputes every finishing step itself.
+fn parse_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
+    root: &Path,
+    batches: impl Iterator<Item = Result<B, String>>,
+    adapter: &(dyn RustSyntaxAdapter + Send + Sync),
+    fallback: &(dyn RustSyntaxAdapter + Send + Sync),
+    cache: &RepoFileFactCache,
+    memo: Option<&ProcessFactMemo>,
+    mut load_known_file_paths: impl FnMut() -> KnownFilePaths,
+) -> Result<(RustIndex, FileFactCacheStats, String), String> {
+    cancellation::checkpoint()?;
+    cache.sweep_stale_temp_files();
+    let mut accounting = CacheAccounting::default();
+    let batched = insert_cached_file_batches(
+        root,
+        batches,
+        adapter,
+        fallback,
+        FactCaches { disk: cache, memo },
+        &mut load_known_file_paths,
+        &mut accounting,
+    );
+    let CacheAccounting {
+        stats,
+        first_corrupt_reason,
+    } = accounting;
+    // Emitted once on every exit after lookup began, before finalization.
+    // A complete build reports the whole-corpus count. An aborted build
+    // reports the entries found in the batches it admitted: later batches
+    // are never looked up, so their entries are not claimed either way.
+    emit_corrupt_entries_warning(stats.corrupt_ignored, first_corrupt_reason.as_deref());
+    let (index, files_content_hash) = batched?;
+    Ok((index, stats, files_content_hash))
 }
 
 /// Cache statistics plus the first corrupt-entry reason, owned by the caller
@@ -885,7 +921,7 @@ fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
 /// underscores. `None` when the manifest is missing, unparseable, declares no
 /// package, or moves the library root (`[lib] path` other than `src/lib.rs`),
 /// so every consumer under-credits.
-fn manifest_library_name(root: &Path) -> Option<String> {
+pub(in crate::analysis) fn manifest_library_name(root: &Path) -> Option<String> {
     let text = crate::bounded_input::read_metadata_toml(root.join("Cargo.toml")).ok()?;
     let value = text.parse::<toml::Table>().ok()?;
     let package = value
@@ -2181,13 +2217,23 @@ pub fn check(x: i32) -> bool {
         }
         let entry = entries.first().ok_or("missing seeded entry")?.path();
         let original = fs::read(&entry)?;
-        let mut edited: serde_json::Value = serde_json::from_slice(&original)?;
-        fs::write(&entry, serde_json::to_vec(&edited)?)?;
+        // Entries are framed as `<digest>\n<body>` and verified over the
+        // stored body bytes (#9216), so edits below keep the digest line.
+        let split = original
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .ok_or("entry must be framed behind a digest line")?;
+        let (digest_line, original_body) = original.split_at(split + 1);
+        let framed = |body: &[u8]| [digest_line, body].concat();
+        let mut edited: serde_json::Value = serde_json::from_slice(original_body)?;
+        fs::write(&entry, framed(&serde_json::to_vec(&edited)?))?;
         let reformatted = build()?;
-        if reformatted.file_fact_cache.hits != 1 || reformatted.index.tests() != cold.index.tests()
+        if reformatted.file_fact_cache.hits + reformatted.file_fact_cache.corrupt_ignored != 1
+            || reformatted.index.tests() != cold.index.tests()
         {
-            return Err("semantic-preserving JSON formatting must remain a warm hit".into());
+            return Err("a re-serialized body must hit or recompute the same index".into());
         }
+        fs::write(&entry, &original)?;
         let changed_source_key = RepoFileFactCacheKey::new(
             &PathBuf::from("src/lib.rs"),
             b"pub fn changed_source() {}\n",
@@ -2217,7 +2263,7 @@ pub fn check(x: i32) -> bool {
                 return Err("identity or digest changed".into());
             }
         }
-        let altered = serde_json::to_vec(&edited)?;
+        let altered = framed(&serde_json::to_vec(&edited)?);
         if altered == original {
             return Err("payload edit must change bytes".into());
         }

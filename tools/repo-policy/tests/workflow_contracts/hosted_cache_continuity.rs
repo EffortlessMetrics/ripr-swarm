@@ -1,11 +1,12 @@
-//! Source contract for the hosted cache writer opportunity (#7827).
+//! Hosted cache lifecycle after main-push retirement (#7827, #14500).
 //!
-//! This does not observe a save, a hit, or cross-ref readability. When retiring
-//! main-push qualification, replace this temporary contract with the reviewed
-//! selected-route lifecycle proof; do not retain full qualification just to warm
-//! a cache. The archive-boundary contract (#7685) remains independent.
+//! Existing default-branch entries accelerate compatible reads until mismatch
+//! or eviction. There is no ordinary automatic writer. An already-selected
+//! manual main qualification may save; cache absence never skips compilation or
+//! tests. This source contract does not claim a hit, persistence or cold timing.
 const CALLER: &str = include_str!("../../../../.github/workflows/routed-rust.yml");
-const PRODUCER: &str = include_str!("../../../../.github/workflows/rust-gates.yml");
+const GATES: &str = include_str!("../../../../.github/workflows/rust-gates.yml");
+const SHARDS: &str = include_str!("../../../../.github/workflows/rust-test-shards.yml");
 
 fn block<'a>(source: &'a str, name: &str, indent: usize) -> Option<&'a str> {
     let marker = format!("{}{name}:", " ".repeat(indent));
@@ -25,238 +26,232 @@ fn block<'a>(source: &'a str, name: &str, indent: usize) -> Option<&'a str> {
     }
     Some(tail)
 }
-fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
+
+fn step<'a>(source: &'a str, name: &str) -> &'a str {
+    source
+        .split("\n      - ")
+        .find(|candidate| candidate.starts_with(&format!("name: {name}\n")))
+        .unwrap_or("")
+}
+
+fn findings(caller: &str, gates: &str, shards: &str) -> Vec<&'static str> {
     let mut findings = Vec::new();
     let events = block(caller, "on", 0).unwrap_or("");
-    let push = block(events, "push", 2);
-    if push.map(str::trim) != Some("branches: [main, master]") {
-        findings.push("main-only hosted cache loses its automatic writer opportunity; reconcile #7827 before retirement");
+    if block(events, "push", 2).is_some() || block(events, "schedule", 2).is_some() {
+        findings.push("ordinary push or scheduled qualification cannot be a cache warmer");
     }
-    let hosted = block(caller, "jobs", 0)
-        .and_then(|jobs| block(jobs, "rust-github", 2))
-        .unwrap_or("");
-    let detector = block(caller, "jobs", 0)
-        .and_then(|jobs| block(jobs, "detect-docs-only", 2))
-        .unwrap_or("");
-    let admission = block(caller, "jobs", 0)
-        .and_then(|jobs| block(jobs, "admission", 2))
-        .unwrap_or("");
-    let scope = admission
-        .split_once("      - name: Select admitted qualification scope\n")
-        .map(|(_, tail)| tail.split("\n      - name: ").next().unwrap_or(""))
-        .unwrap_or("");
-    // #12437 selects history-sync's full qualification scope inside admission.
-    // A main push still needs the detector's `false` to reach the hosted job:
-    // the changed guard is not merely a new spelling of the old output.
-    if !detector.contains("docs_only=false reason=not_pull_request")
-        || !admission.contains("      docs_only: ${{ steps.scope.outputs.docs_only }}\n")
-        || !scope.contains("DOCS_ONLY: ${{ needs.detect-docs-only.outputs.docs_only }}")
-        || !scope.contains("DOCS_ONLY=false")
-        || !scope.contains("pull_request:admitted:history_sync_admitted:validated")
-        || !scope.contains("echo \"docs_only=$DOCS_ONLY\" >> \"$GITHUB_OUTPUT\"")
-    {
-        findings.push(
-            "admission scope no longer preserves the main-push hosted cache writer opportunity",
-        );
-    }
-    for required in [
-        "    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]\n",
-        "    uses: ./.github/workflows/rust-gates.yml\n",
-        "      use-scratch: false\n",
-    ] {
-        if !hosted.contains(required) {
-            findings
-                .push("hosted caller/cache producer binding changed; requalify writer eligibility");
+    for event in ["pull_request", "merge_group", "workflow_dispatch"] {
+        if block(events, event, 2).is_none() {
+            findings.push("retained H/G/manual qualification is missing");
         }
     }
-    let guard = hosted.split_once("    if: >-\n").map(|(_, tail)| {
-        tail.lines()
-            .take_while(|line| line.starts_with("      "))
-            .map(str::trim)
-            .collect::<Vec<_>>()
-            .join(" ")
-    });
-    if guard.as_deref()
-        != Some(
-            "!cancelled() && needs.admission.result == 'success' && needs.detect-docs-only.result == 'success' && needs.admission.outputs.docs_only != 'true' && (needs.route.outputs.router_target == 'github' || (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))",
-        )
-    {
-        findings.push("hosted job eligibility changed; requalify the main writer opportunity");
-    }
-    let producer_job = block(producer, "jobs", 0)
-        .and_then(|jobs| block(jobs, "rust-gates", 2))
-        .unwrap_or("");
-    let header = producer_job.split("    steps:\n").next().unwrap_or("");
-    if producer_job.is_empty()
-        || header
-            .lines()
-            .any(|line| line.starts_with("    if:") || line.starts_with("    needs:"))
-    {
-        findings.push("producer job admission changed; requalify the main writer opportunity");
-    }
-    let cache_steps: Vec<_> = producer_job
-        .split("\n      - ")
-        .filter(|step| {
-            step.lines()
-                .any(|line| line.trim().starts_with("uses: Swatinem/rust-cache@"))
-        })
-        .collect();
-    if cache_steps.len() != 1 {
-        findings.push("producer cache action set changed; review every cache write authority");
-    }
-    let step = cache_steps.first().copied().unwrap_or("");
-    if !step.starts_with("name: Restore hosted Rust cache\n") {
-        findings.push("declared hosted producer is missing from its job");
-    }
-    for required in [
-        "        if: ${{ !inputs.use-scratch }}\n",
-        "        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2\n",
-        "          save-if: ${{ github.ref == 'refs/heads/main' }}\n",
+    for (job, producer) in [
+        ("rust-github", "rust-gates"),
+        ("rust-github-tests", "rust-test-shards"),
     ] {
-        if !step.contains(required) {
-            findings.push("main-only cache write authority changed; review ref/trust scope instead of enabling PR saves");
+        let hosted = block(caller, "jobs", 0)
+            .and_then(|jobs| block(jobs, job, 2))
+            .unwrap_or("");
+        if !hosted.contains(&format!("    uses: ./.github/workflows/{producer}.yml\n")) {
+            findings.push("selected hosted producer binding changed");
+        }
+    }
+    for (source, key, guard, scratch) in [
+        (
+            gates,
+            "ripr-swarm-rust-small-${{ runner.os }}",
+            "${{ github.ref == 'refs/heads/main' }}",
+            true,
+        ),
+        (
+            shards,
+            "ripr-swarm-rust-shards-${{ runner.os }}",
+            "${{ github.ref == 'refs/heads/main' && matrix.shard == 1 }}",
+            false,
+        ),
+    ] {
+        let caches: Vec<_> = source
+            .split("\n      - ")
+            .filter(|step| {
+                step.lines()
+                    .any(|line| line.trim().starts_with("uses: Swatinem/rust-cache@"))
+            })
+            .collect();
+        if caches.len() != 1 {
+            findings.push("each selected hosted producer has exactly one cache domain");
+            continue;
+        }
+        let cache = caches[0];
+        for expected in [
+            "uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0".to_string(),
+            format!("          shared-key: {key}\n"),
+            format!("          save-if: {guard}\n"),
+        ] {
+            if !cache.contains(&expected) {
+                findings.push("cache key/version or default-branch-only save authority changed");
+            }
+        }
+        if scratch && !cache.contains("        if: ${{ !inputs.use-scratch }}\n") {
+            findings.push("hosted cache must not enter owned scratch storage");
+        }
+        if cache.contains("cache-workspace-crates:")
+            || cache.contains("cache-targets:")
+            || cache.contains("workspaces:")
+        {
+            findings.push("cache storage domain requires separate contamination review");
+        }
+    }
+    for (source, name, command) in [
+        (
+            gates,
+            "Repository policy preflight",
+            "run: cargo xtask ci-policy",
+        ),
+        (
+            gates,
+            "Strict all-features ripr Clippy",
+            "run: cargo clippy -p ripr --all-targets --all-features -- -D warnings",
+        ),
+        (
+            gates,
+            "Strict workspace Clippy",
+            "run: cargo clippy --workspace --all-targets -- -D warnings",
+        ),
+        (
+            shards,
+            "Build the test binaries one memory-heavy crate at a time",
+            "build_phase workspace cargo test --no-run --locked --workspace",
+        ),
+        (
+            shards,
+            "Required Rust tests (shard ${{ matrix.shard }} of 2)",
+            "          cargo nextest run --workspace --profile ci --partition hash:${{ matrix.shard }}/2\n",
+        ),
+    ] {
+        let selected = step(source, name);
+        if !selected.contains(command)
+            || selected.lines().any(|line| {
+                line.starts_with("        if:") || line.starts_with("        continue-on-error:")
+            })
+        {
+            findings.push("cache hits or misses must not skip mandatory recomputation/proof");
         }
     }
     findings
 }
 
 #[test]
-fn current_source_preserves_a_main_scope_writer_opportunity() {
-    assert_eq!(continuity_findings(CALLER, PRODUCER), Vec::<&str>::new());
+fn current_source_restores_opportunistically_and_recomputes_required_proof() {
+    assert_eq!(findings(CALLER, GATES, SHARDS), Vec::<&str>::new());
 }
 
 #[test]
-fn retiring_main_push_is_not_cache_continuity() {
-    let retired = CALLER.replace("  push:\n    branches: [main, master]\n", "");
-    assert_ne!(retired, CALLER, "control must remove the real trigger");
-    let findings = continuity_findings(&retired, PRODUCER);
-    assert!(
-        findings
-            .iter()
-            .any(|finding| finding.contains("loses its automatic writer")),
-        "{findings:?}"
-    );
-    // Dispatch still exists, but an available manual run is not an automatic
-    // lifecycle and a pre-merge ref cannot satisfy the producer's save guard.
-    assert!(retired.contains("  workflow_dispatch:"));
-    assert!(retired.contains("types: [labeled]"));
-}
-
-#[test]
-fn admission_scope_cannot_remove_the_main_push_cache_writer() {
-    for changed in [
-        CALLER.replace(
-            "docs_only=false reason=not_pull_request",
-            "docs_only=true reason=not_pull_request",
-        ),
-        CALLER.replace(
-            "docs_only: ${{ steps.scope.outputs.docs_only }}",
-            "docs_only: 'true'",
-        ),
-        CALLER.replace(
-            "DOCS_ONLY: ${{ needs.detect-docs-only.outputs.docs_only }}",
-            "DOCS_ONLY: 'true'",
-        ),
-        CALLER.replace(
-            "pull_request:admitted:history_sync_admitted:validated",
-            "push:admitted:history_sync_admitted:validated",
-        ),
+fn ordinary_warmer_cannot_return() {
+    for event in [
+        "  push:\n    branches: [main, master]\n",
+        "  schedule:\n    - cron: '0 * * * *'\n",
     ] {
-        assert_ne!(changed, CALLER, "negative must mutate the actual workflow");
+        let changed = CALLER.replacen("on:\n", &format!("on:\n{event}"), 1);
         assert!(
-            continuity_findings(&changed, PRODUCER)
+            findings(&changed, GATES, SHARDS)
                 .iter()
-                .any(|finding| finding.contains("main-push hosted cache writer opportunity")),
-            "scope mutation did not invalidate cache-writer evidence"
+                .any(|f| f.contains("cache warmer"))
         );
     }
 }
 
 #[test]
-fn broadening_saves_is_not_a_trusted_default_scope_writer() {
-    let broadened = PRODUCER.replace(
-        "save-if: ${{ github.ref == 'refs/heads/main' }}",
-        "save-if: true",
-    );
-    assert_ne!(broadened, PRODUCER);
-    assert!(
-        continuity_findings(CALLER, &broadened)
-            .iter()
-            .any(|finding| finding.contains("write authority changed"))
-    );
+fn neither_gate_nor_shard_can_broaden_write_authority() {
+    for (gates, shards) in [
+        (
+            GATES.replace(
+                "save-if: ${{ github.ref == 'refs/heads/main' }}",
+                "save-if: true",
+            ),
+            SHARDS.to_owned(),
+        ),
+        (
+            GATES.to_owned(),
+            SHARDS.replace(
+                "save-if: ${{ github.ref == 'refs/heads/main' && matrix.shard == 1 }}",
+                "save-if: ${{ github.event_name == 'merge_group' }}",
+            ),
+        ),
+    ] {
+        assert!(!findings(CALLER, &gates, &shards).is_empty());
+    }
 }
 
 #[test]
-fn missing_or_rebound_producer_is_not_a_writer_opportunity() {
-    for changed in [
-        CALLER.replace(
-            "uses: ./.github/workflows/rust-gates.yml",
-            "uses: ./.github/workflows/other.yml",
+fn missing_changed_or_duplicate_cache_domains_refuse() {
+    for source in [GATES, SHARDS] {
+        for changed in [
+            source.replace("uses: Swatinem/rust-cache@", "uses: other/cache@"),
+            source.replace(
+                "          shared-key:",
+                "          cache-workspace-crates: true\n          shared-key:",
+            ),
+            source.replace(
+                "          shared-key:",
+                "          workspaces: '. -> shared'\n          shared-key:",
+            ),
+            format!("{source}\n      - uses: Swatinem/rust-cache@other\n"),
+        ] {
+            let actual = if source == GATES {
+                findings(CALLER, &changed, SHARDS)
+            } else {
+                findings(CALLER, GATES, &changed)
+            };
+            assert!(!actual.is_empty());
+        }
+    }
+}
+
+#[test]
+fn hit_or_miss_never_substitutes_for_compilation_or_tests() {
+    for (source, name) in [
+        (GATES, "Repository policy preflight"),
+        (GATES, "Strict workspace Clippy"),
+        (
+            SHARDS,
+            "Build the test binaries one memory-heavy crate at a time",
         ),
-        CALLER.replace("use-scratch: false", "use-scratch: true"),
+        (
+            SHARDS,
+            "Required Rust tests (shard ${{ matrix.shard }} of 2)",
+        ),
     ] {
-        assert_ne!(changed, CALLER);
+        let needle = format!("      - name: {name}\n");
+        let changed = source.replace(
+            &needle,
+            &format!("{needle}        if: steps.cache.outputs.cache-hit != 'true'\n"),
+        );
+        assert_ne!(changed, source);
+        let actual = if source == GATES {
+            findings(CALLER, &changed, SHARDS)
+        } else {
+            findings(CALLER, GATES, &changed)
+        };
         assert!(
-            continuity_findings(&changed, PRODUCER)
+            actual
                 .iter()
-                .any(|finding| finding.contains("binding changed"))
+                .any(|finding| finding.contains("mandatory recomputation"))
         );
     }
-    assert!(!continuity_findings("", PRODUCER).is_empty());
-    assert!(!continuity_findings(CALLER, "").is_empty());
 }
 
 #[test]
-fn disabled_hosted_job_or_filtered_push_is_not_writer_continuity() {
-    // Address this exact job, rather than whichever multiline guard occurs first.
-    let hosted = block(CALLER, "jobs", 0)
-        .and_then(|jobs| block(jobs, "rust-github", 2))
-        .unwrap_or("");
-    let disabled = CALLER.replace(
-        hosted,
-        &hosted.replace("    if: >-\n", "    if: false\n    # former guard: >-\n"),
+fn absent_proof_or_rebound_caller_is_not_cache_continuity() {
+    let no_build = SHARDS.replace(
+        "build_phase workspace cargo test --no-run --locked --workspace",
+        "true",
     );
-    assert_ne!(disabled, CALLER);
-    assert!(
-        continuity_findings(&disabled, PRODUCER)
-            .iter()
-            .any(|finding| finding.contains("job eligibility changed"))
-    );
-    let filtered = CALLER.replace(
-        "    branches: [main, master]\n",
-        "    branches: [main, master]\n    paths: ['cache-writer-only/**']\n",
-    );
-    assert_ne!(filtered, CALLER);
-    assert!(
-        continuity_findings(&filtered, PRODUCER)
-            .iter()
-            .any(|finding| finding.contains("loses its automatic writer"))
-    );
-}
-
-#[test]
-fn missing_caller_dependencies_cannot_supply_guard_outputs() {
-    for needs in [
-        "needs: [admission, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]",
-        "needs: [admission, route, rust-cx43, rust-cpx42, rust-cx53]",
-        "needs: [route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]",
-    ] {
+    assert!(!findings(CALLER, GATES, &no_build).is_empty());
+    for producer in ["rust-gates", "rust-test-shards"] {
         let changed = CALLER.replace(
-            "needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]",
-            needs,
+            &format!("uses: ./.github/workflows/{producer}.yml"),
+            "uses: ./.github/workflows/other.yml",
         );
-        assert_ne!(changed, CALLER);
-        assert!(!continuity_findings(&changed, PRODUCER).is_empty());
-    }
-}
-
-#[test]
-fn disabled_producer_or_additional_cache_is_not_writer_continuity() {
-    for changed in [
-        PRODUCER.replace("  rust-gates:\n", "  rust-gates:\n    if: false\n"),
-        PRODUCER.replace("      - name: Restore hosted Rust cache\n", "      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2\n        with:\n          save-if: true\n      - name: Restore hosted Rust cache\n"),
-    ] {
-        assert_ne!(changed, PRODUCER);
-        assert!(!continuity_findings(CALLER, &changed).is_empty());
+        assert!(!findings(&changed, GATES, SHARDS).is_empty());
     }
 }

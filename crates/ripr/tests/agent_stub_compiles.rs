@@ -2844,14 +2844,14 @@ fn first_action_real_callee_only_wrapper_keeps_its_refusal() -> Result<(), Strin
             );
         }
     }
-    let wrapper_card = wrapper_guidance["comments"]
-        .as_array()
-        .and_then(|cards| cards.first())
-        .or_else(|| {
-            wrapper_guidance["summary_only"]
-                .as_array()
-                .and_then(|cards| cards.first())
-        })
+    // The wrapper line carries an error_variant card and a return_value card;
+    // the brief ranks error_variant first on a shared line (#14702), so pick
+    // the return_value card by kind rather than by position.
+    let wrapper_card = ["comments", "summary_only"]
+        .iter()
+        .filter_map(|bucket| wrapper_guidance[*bucket].as_array())
+        .flatten()
+        .find(|card| card["kind"] == "return_value")
         .ok_or("producer must retain its genuine non-actionable wrapper card")?;
     assert_eq!(wrapper_card["owner"], "src/lib.rs::parse_summary");
     assert_eq!(wrapper_card["kind"], "return_value");
@@ -3322,12 +3322,15 @@ fn stub_for_an_existing_integration_target_is_unique_within_that_file() -> Resul
         .ok_or_else(|| format!("test_name: {first}"))?
         .to_string();
 
-    // Second write: either cleanly refused or a distinct name, never a duplicate.
+    // Second write: cleanly refused, already present, or a distinct name -
+    // never a duplicate. #14810: the stub's expected value is still an
+    // unfilled `todo!()`, so the seam stays an open gap and the second write
+    // reaches the #8891 "already written" path instead of refusing.
     let second = stub_json(&root, "src/lib.rs:2")?;
     let written = std::fs::read_to_string(root.join("tests/discount.rs"))
         .map_err(|error| error.to_string())?;
     assert_eq!(count_fn(&written, &name), 1, "duplicate fn:\n{written}");
-    if second["refused"] != true {
+    if second["refused"] != true && second["already_present"] != true {
         assert_ne!(second["test_name"], first["test_name"], "{second}");
         let compile = cargo_from_run_command(
             second["run_command"]
@@ -3344,15 +3347,18 @@ fn stub_for_an_existing_integration_target_is_unique_within_that_file() -> Resul
     }
 
     // A same-named test already present in the target is not shadowed.
-    std::fs::write(
-        root.join("tests/discount.rs"),
-        format!("{EXISTING_TEST}\n#[test]\nfn {name}() {{}}\n"),
-    )
-    .map_err(|error| error.to_string())?;
+    let collided = format!("{EXISTING_TEST}\n#[test]\nfn {name}() {{}}\n");
+    std::fs::write(root.join("tests/discount.rs"), &collided).map_err(|error| error.to_string())?;
     let third = stub_json(&root, "src/lib.rs:2")?;
     let written = std::fs::read_to_string(root.join("tests/discount.rs"))
         .map_err(|error| error.to_string())?;
     assert_eq!(count_fn(&written, &name), 1, "collision:\n{written}");
+    // The colliding fn has a different body, so a byte-identical render is
+    // not on disk: `already_present` would be a dishonest answer here, and
+    // the old `&& already_present != true` guard skipped the name check
+    // entirely when it was set. The honest outcomes are a refusal or a
+    // distinct name, and a distinct name must not be the colliding one.
+    assert_ne!(third["already_present"], true, "{third}");
     if third["refused"] != true {
         assert_ne!(third["test_name"].as_str(), Some(name.as_str()), "{third}");
     }

@@ -5520,6 +5520,56 @@ pub(crate) fn conservative_dirty_premise_violations(
         .collect())
 }
 
+/// The dirty production premise a seam start would refuse right now
+/// (#13636): [`conservative_dirty_premise_violations`] at the current HEAD
+/// with the default store, the same policy-free preflight the before phase
+/// applies before any inventory. Consumers that print a repair start (the
+/// `ripr check` route) ask this instead of re-deriving dirtiness. Paths are
+/// relative to `root` (outside it as `../...`, #13962). Being a subset of the
+/// exact before-phase check, a non-empty answer means the start refuses; an
+/// empty one does not promise it starts.
+pub(crate) fn seam_start_dirty_premise(root: &Path) -> Result<Vec<String>, String> {
+    let head = crate::agent::artifact::current_git_head(root)?;
+    conservative_dirty_premise_violations(root, &head, None, None)
+}
+
+/// The before-phase refusal for a dirty production premise (#5262), for a
+/// seam-bound start: names the paths, states the production-vs-test boundary,
+/// and gives the commit-first route. Called by the CLI before phase
+/// (`ripr repair` / `ripr agent repair --phase before`), which has written
+/// nothing yet, so the tail says so. A start through the `ripr repair <item>`
+/// façade is told to rerun that command, not the advanced `ripr agent repair`
+/// route it never typed (#14394).
+pub(crate) fn seam_dirty_premise_refusal(
+    seam_id: &str,
+    root: &Path,
+    store: Option<&Path>,
+    facade_start: bool,
+    violations: &[String],
+) -> String {
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let seam_arg = shell_arg(seam_id);
+    let store_flag = quoted_store_flag(store);
+    let restart = if facade_start && store.is_none() {
+        format!("ripr repair {seam_arg} --root {root_arg}")
+    } else {
+        format!(
+            "ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before"
+        )
+    };
+    dirty_premise_refusal(&restart, violations)
+}
+
+/// [`seam_dirty_premise_refusal`] for any start spelling: the seam and
+/// gap-bound (#9103) starts differ only in the command they name.
+pub(crate) fn dirty_premise_refusal(restart: &str, violations: &[String]) -> String {
+    let first = violations.first().map(String::as_str).unwrap_or_default();
+    format!(
+        "ripr repair needs your source changes committed first, so it can tell your new test apart from them. Uncommitted: {}. Commit them (for example `git commit -- {first}`) or restore them, then rerun `{restart}`. A test file you are still editing is fine. Nothing was started.",
+        violations.join(", "),
+    )
+}
+
 /// The tracked subtrees the exact policy check always allows as operational
 /// writes: the default `target/ripr` subtree plus the explicit store
 /// subtree when one is configured outside it. Built with the same rules the

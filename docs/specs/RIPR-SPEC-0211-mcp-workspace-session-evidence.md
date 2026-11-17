@@ -118,11 +118,23 @@ official SDK transport:
   its `attempt` block (a completed document, `isError` false per the #5254
   commit contract).
   A sequential repeated signal before attempt settlement restores native
-  termination as the escape; process exit itself stays transport-owned
-  (stdin EOF). One atomic terminal exchange consumes the attempt's signal:
-  a signal observed during final projection converts an otherwise successful
-  result to the typed cancellation, and a signal after that boundary belongs
-  to the next attempt. Configuration refusals also settle the pending signal.
+  termination as the escape. One atomic terminal exchange consumes the
+  attempt's signal: a signal observed during final projection converts an
+  otherwise successful result to the typed cancellation. Configuration
+  refusals also settle the pending signal.
+- A signal with no attempt to consume it stops the server (#14102, Unix).
+  A signal interrupts what the server is doing: a running refresh when there
+  is one, otherwise the server itself. The stdio transport observes a
+  still-pending SIGINT or SIGTERM at its idle point (no request admitted,
+  every earlier reply flushed), before or after `initialize`, and ends the
+  session as it does on stdin EOF: exit 0, no extra stdout frame, nothing on
+  stderr. A signal that lands while a non-refresh request is admitted is
+  honoured after that reply is flushed. A signal a refresh attempt consumed
+  never ends the session, and no later refresh inherits an idle signal as a
+  cancellation. The exit consumes the signal, so a later session in the same
+  process starts clear. Without this rule one `kill`, one supervisor SIGTERM (the npm
+  launcher forwards exactly one, RIPR-SPEC-0212) or one Ctrl-C at a terminal
+  left the server running until stdin closed.
   Repeated native death can bypass cooperative cleanup and leave active children;
   it is an escape, not a cleanup guarantee. Process-group containment covers
   descendants that remain in the owned group, not deliberate group/session escape.
@@ -614,6 +626,26 @@ official SDK transport:
   anywhere. MCP does not call the LSP server, parse LSP diagnostics, or
   read VS Code artifacts as authority.
 
+### Owner opt-out withholding (#14138)
+
+- A finding `ripr check` withholds because its changed owner carries
+  `#[mutants::skip]` is not a canonical item. Snapshot binding filters on the
+  shared `CheckOutput::withheld_finding_ids()` owner; no attribute is read
+  under `mcp/`, and the adapter stays read-only (ADR 0022).
+- The gap list and the snapshot resource carry the additive
+  `owner_opt_outs: {"withheld": N, "reason": "owner_mutants_skip"}`; the
+  refresh `snapshot` summary and the status `last_completed_snapshot` carry
+  the same object. When no item is left it adds `"all_withheld": true` and the
+  outcome or summary carries `clean: false`. Absent when nothing is withheld.
+  Each advertised output schema declares it as an optional closed object.
+- The `brief` text of a gap list names the withheld count and reason, and
+  says an all-withheld list is not clean.
+- `ripr_get_gap`, `ripr_get_top_limitation`, `ripr_get_repair_card`,
+  `ripr_prepare_repair` and their resources refuse a withheld canonical or
+  finding id with the typed `owner_opt_out` failure (`data.reason`
+  `owner_mutants_skip`); no document and no transaction. The withheld set
+  rides the snapshot identity.
+
 ### Unknown-resource recovery (#7767)
 
 An unrecognized resource URI returns a bounded, static human-readable message
@@ -778,9 +810,22 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
    status URI and every template in both prose and structured arrays. A
    recognized snapshot read before refresh still reports `no_snapshot`,
    and the same connection can subsequently read the valid status resource.
+7. Over a workspace with one changed `#[mutants::skip]` function and one
+   changed plain function, `ripr_list_gaps` serves only the plain function and
+   discloses `owner_opt_outs` with the withheld count and `owner_mutants_skip`;
+   the withheld set equals `ripr check`'s for the same input, and a card,
+   limitation, gap or repair start for the withheld id refuses with
+   `owner_opt_out`. The plain function's documents are unchanged, and a
+   snapshot whose every finding is withheld says so instead of reading clean
+   (#14138).
 
 ## Test Mapping
 
+- `crates/ripr/src/mcp/owner_opt_out_tests.rs::gap_list_serves_only_the_plain_function_and_discloses_the_opt_out` — real Git fixture: the withheld set equals `CheckOutput::withheld_finding_ids()` for the same input, the list, snapshot index, refresh and status disclose the count and reason, and every single-item read refuses the withheld id with `owner_opt_out` (#14138).
+- `crates/ripr/src/mcp/owner_opt_out_tests.rs::plain_function_gap_and_card_are_unchanged_by_a_sibling_opt_out` — negative: the plain function's gap, limitation and card outcome match a same-length control with no opt-out (#14138).
+- `crates/ripr/src/mcp/owner_opt_out_tests.rs::all_withheld_snapshot_reports_that_state_not_a_clean_empty_list` — negative: an all-withheld snapshot says `all_withheld` and `clean: false` on the list, snapshot resource, refresh and status (#14138).
+- `crates/ripr/src/mcp/owner_opt_out_tests.rs::owner_opt_out_results_validate_against_the_advertised_output_schemas` — mixed and all-withheld list, refresh, status and `owner_opt_out` refusals validate against the full advertised output schemas; malformed or undeclared disclosures fail the same oracle (#14138).
+- `crates/ripr/src/mcp/owner_opt_out_tests.rs::brief_gap_list_text_names_the_owner_opt_out` — the brief gap-list text names the withheld count and reason, says all-withheld is not clean, and adds nothing without an opt-out (#14138).
 - `crates/ripr/src/mcp/workspace.rs::tests::independent_continuations_cover_both_axes_without_replay` — pinned filtered walks cover the stored selected and omitted identities once, avoid other-axis replay, and reject a stale snapshot.
 - `crates/ripr/src/mcp/workspace.rs::tests::independent_omission_route_uses_filtered_end_and_respects_envelope` — a strict filtered subset binds the opposite-axis end and checks the envelope boundary.
 - `crates/ripr/tests/mcp_stdio.rs::independent_gap_pages_walk_both_axes_over_stdio` — a refreshed real workspace follows both opt-in routes in full, summary and brief modes, preserves structured output, and checks default and explicit-false compatibility.
@@ -903,9 +948,17 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
 - `crates/ripr/tests/mcp_interrupts.rs::cooperative_interrupt_lifecycle`
   (Linux) — real stdio and gated git children cover SIGINT, SIGTERM,
   early-primary pipe holders, typed failure, last-good retention, same-session
-  recovery and an independently owned surviving sentinel. Identity-pinned
+  recovery, the clean idle-signal exit with stdin held open (SIGTERM after
+  settled refreshes, SIGINT before any refresh; #14102) and an independently
+  owned surviving sentinel. Identity-pinned
   process handles and adopted descendant wait statuses distinguish product
   settlement from harness cleanup.
+- `crates/ripr/src/mcp/transport_tests.rs::pending_signal_ends_an_idle_session_while_input_stays_open`,
+  `::signal_pending_before_initialize_ends_the_handshake_cleanly`,
+  `::signal_raised_during_a_request_ends_the_session_after_its_reply` and
+  `::consumed_signal_wake_keeps_the_session_serving` — the #14102 idle rule
+  on the in-memory transport: both observation paths (the wake of a blocked
+  read and the flag check at the idle point) and the consumed-signal negative.
 - `crates/ripr/src/cli/interrupt.rs::tests` — isolated native signal controls,
   concurrent installation, repeated mixed/TERM escape, terminal signal epochs
   and bounded adverse harness controls.

@@ -3034,6 +3034,9 @@ mod tests {
             write_source_from_receipt(&dir, source, &receipts.join(receipt))?;
         }
         copy_lane_baselines(&real, &dir)?;
+        // The corpus rows' abstention-expected flags are re-derived from the
+        // specs beside `fixtures/` (RIPR-SPEC-0219), so the copy carries them.
+        crate::tests::copy_dir_recursive(&real.join("docs/specs"), &dir.join("docs/specs"))?;
         // In sync: the check passes before any source moves.
         check_receipts(&dir)?;
         // Bump one bar's title in the dx source; a refresh must move that page line.

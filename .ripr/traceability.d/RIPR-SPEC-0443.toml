@@ -1,0 +1,38 @@
+[[behavior]]
+id = "RIPR-SPEC-0443"
+name = "Branch-local return-value grip needs a reaching call"
+spec = "docs/specs/RIPR-SPEC-0443-branch-local-return-value-grip.md"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_not_strongly_gripped_by_an_else_branch_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_not_gripped_by_a_let_bound_else_branch_call",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_behind_an_untaken_enclosing_guard_is_not_gripped",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_a_rebound_parameter_keeps_its_grip",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_a_loop_carried_rebind_keeps_its_grip",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_a_for_pattern_rebind_keeps_its_grip",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_identical_arms_keeps_its_grip",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_a_sibling_duplicate_keeps_its_grip",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_a_destructured_rebind_keeps_its_grip",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_a_mutable_borrow_keeps_its_grip",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_behind_a_short_circuited_or_keeps_its_grip",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_an_unresolved_operand_call_keeps_its_grip",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_summary_names_the_branch_refusal",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_stage_is_not_stronger_than_a_missing_branch",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_not_gripped_by_a_wrapped_else_branch_call",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_record_agrees_with_the_stage",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_strongly_gripped_by_a_reaching_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_in_the_taken_branch_stays_strong",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::committed_boundary_gap_fixture_stays_strongly_gripped",
+]
+fixtures = [
+  "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/branch-local-else-only",
+]
+code = [
+  "crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs",
+  "crates/ripr/src/analysis/test_grip_evidence.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0443-branch-local-return-value-grip.md",
+]
+metrics = [
+  "branch_local_return_value_false_promotions",
+]

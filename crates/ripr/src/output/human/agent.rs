@@ -32,8 +32,7 @@ use super::triage::{self, HumanTriage};
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
 use crate::domain::{
-    ExposureClass, Finding, NextActionCheckCase, OracleStrength, RelatedTest, RelatedTestMiss,
-    RelationConfidence,
+    ExposureClass, Finding, NextActionCheckCase, OracleStrength, RelatedTest, RelationConfidence,
 };
 use crate::output::next_action::render_next_action_plain_at_root;
 use crate::output::path::repository_display_path;
@@ -154,6 +153,7 @@ fn render_report(
         },
     );
     out.push_str(&incomplete_lines);
+    out.push_str(&requested_scope_note_line(output));
     let unanalyzed = render_unanalyzed_changes(&mut out, output);
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
@@ -244,6 +244,28 @@ fn render_report(
     out
 }
 
+/// #13894: one informational line for files the operator left out with
+/// `--path`, `--exclude` or a configured pattern. The requested scope was
+/// analyzed in full, so this is a note, not a limitation, and a run with no
+/// such files prints nothing.
+fn requested_scope_note_line(output: &CheckOutput) -> String {
+    let Some(outcome) = output.analysis_outcome.as_ref() else {
+        return String::new();
+    };
+    let left_out: u64 = outcome
+        .limitations
+        .iter()
+        .filter(|limitation| limitation.kind.is_requested_scope_note())
+        .map(|limitation| limitation.affected_items.unwrap_or(0))
+        .sum();
+    if left_out == 0 {
+        return String::new();
+    }
+    format!(
+        "scope_note={left_out} file(s) left out at your request (--path/--exclude or a configured pattern); not a limitation\n"
+    )
+}
+
 /// Project the producer's closed completeness decision, before any terminal
 /// claim. Retained gaps may still be useful, but do not complete this run.
 /// The pipeline already projects partial-scope budgets into this outcome.
@@ -282,10 +304,15 @@ fn render_incomplete_analysis(out: &mut String, output: &CheckOutput) -> bool {
             field(&clip(reason)),
             field(&limitation.recovery.detail)
         ));
-        if outcome.limitations.len() > 1 {
+        let others = outcome
+            .limitations
+            .iter()
+            .filter(|other| !other.kind.is_requested_scope_note())
+            .count();
+        if others > 1 {
             out.push_str(&format!(
                 "+{} more analysis limitations; `--format json` lists all\n",
-                outcome.limitations.len() - 1
+                others - 1
             ));
         }
     }
@@ -684,14 +711,43 @@ fn render_limited_records(
     out
 }
 
+/// A test-side gap: a weak or unobserved related test, or (#14820) a changed
+/// owner the producer established nothing in the workspace calls. The second
+/// is the plainest gap there is (write a test that calls it), so it counts in
+/// `gaps=` instead of reading as a "cannot tell" limit. Every other
+/// `no_static_path` or unknown class stays a fail-closed limit: an owner some
+/// code calls on a path ripr cannot trace may already be tested.
 fn is_test_side_gap(finding: &Finding) -> bool {
-    finding.is_candidate_actionable()
-        && matches!(
-            finding.class,
-            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
-        )
-        && !triage::is_static_limited(finding)
-        && !triage::is_preview_limited(finding)
+    if triage::is_preview_limited(finding) {
+        return false;
+    }
+    finding.is_unreferenced_no_static_path()
+        || (finding.is_candidate_actionable()
+            && matches!(
+                finding.class,
+                ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+            )
+            && !triage::is_static_limited(finding))
+}
+
+/// The `missing=` hint for an unreferenced owner (#14820): the producer's
+/// `missing` lines there are generic ("No relevant oracle was detected"), so
+/// the row names the uncalled owner instead.
+fn unreferenced_owner_hint(finding: &Finding) -> Option<String> {
+    if !finding.is_unreferenced_no_static_path()
+        || !finding.activation.missing_discriminators.is_empty()
+    {
+        return None;
+    }
+    Some(match finding.probe.owner.as_ref() {
+        Some(owner) => {
+            let name = owner.0.rsplit("::").next().unwrap_or(owner.0.as_str());
+            format!("no test calls `{name}`; assert its exact result in a new test")
+        }
+        None => {
+            "no test calls the changed function; assert its exact result in a new test".to_string()
+        }
+    })
 }
 
 /// RIPR-SPEC-0429: the compact staged-evidence row, printed directly after a
@@ -988,10 +1044,10 @@ fn strongest_test(finding: &Finding) -> Option<&RelatedTest> {
             (
                 test.relation_confidence
                     .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
-                // #14454: within a confidence tier, a row whose assertion
-                // cannot observe the change is never the test to edit while
-                // another row can.
-                test.miss == Some(RelatedTestMiss::AssertionNotObserving),
+                // #14454, #14483: within a confidence tier, a row whose
+                // assertion cannot observe the change is never the test to
+                // edit while another row can (the shared observation tier).
+                std::cmp::Reverse(test.observation_tier()),
                 strength_rank(&test.oracle_strength),
             )
         })
@@ -1000,7 +1056,10 @@ fn strongest_test(finding: &Finding) -> Option<&RelatedTest> {
 /// The related test a `done=` line names as the one that appears to notice
 /// the change: the strongest oracle leads, so a direct caller holding only a
 /// smoke check is never named as the noticer over a test that pins the value;
-/// relation confidence breaks ties (#13603 review).
+/// relation confidence breaks ties (#13603 review). The shared observation
+/// tier leads (#14483), so a strong oracle on a test with no established path
+/// to the change is never named as the noticer while a reaching test is
+/// listed.
 fn noticing_test(finding: &Finding) -> Option<&RelatedTest> {
     finding
         .related_tests
@@ -1008,6 +1067,7 @@ fn noticing_test(finding: &Finding) -> Option<&RelatedTest> {
         .filter(|test| test.is_contributing())
         .min_by_key(|test| {
             (
+                std::cmp::Reverse(test.observation_tier()),
                 strength_rank(&test.oracle_strength),
                 test.relation_confidence
                     .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
@@ -1091,8 +1151,11 @@ fn gap_row_key(root: &Path, finding: &Finding) -> String {
     // Each fact also keys its shape, flow sink and drafted boundary call: one
     // value asserted at two different sinks, or drafted against two different
     // calls, is two tests.
+    // #14820: an unreferenced owner prints the owner hint, so the key uses it.
     let missing: Vec<String> = if finding.activation.missing_discriminators.is_empty() {
-        finding.missing.clone()
+        unreferenced_owner_hint(finding)
+            .map(|hint| vec![hint])
+            .unwrap_or_else(|| finding.missing.clone())
     } else {
         finding
             .activation
@@ -1140,14 +1203,34 @@ fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missin
     );
     // An open limited finding has no established missing discriminator; its
     // `missing` text is the limitation prose, which is not a value to assert.
+    let owner_hint = unreferenced_owner_hint(finding);
     let missing = finding
         .activation
         .missing_discriminators
         .first()
         .map(|fact| fact.value.as_str())
+        .or(owner_hint.as_deref())
         .or_else(|| finding.missing.first().map(String::as_str))
         .filter(|_| with_missing)
         .unwrap_or("-");
+    // The row shows one fact; `(+N more)` tells a reader that explain has the
+    // rest, so a single code value is never mistaken for the whole check.
+    // Counts distinct discriminator values; `finding.missing` prose lines are
+    // generic labels, not further facts.
+    // A plain loop: a map/collect chain here sends ripr's own PR-evidence
+    // check past its time budget (#13884).
+    let mut values: Vec<&str> = Vec::new();
+    for fact in &finding.activation.missing_discriminators {
+        if !values.contains(&fact.value.as_str()) {
+            values.push(fact.value.as_str());
+        }
+    }
+    let more = values.len().saturating_sub(1);
+    let missing = if with_missing && more > 0 {
+        format!("{} (+{more} more)", clip(missing))
+    } else {
+        clip(missing)
+    };
     let test = test_ref.map_or_else(|| "-".to_string(), |index| format!("t{index}"));
     format!(
         "{}|{}|{}|missing={}|test={}|id={}",
@@ -1157,7 +1240,7 @@ fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missin
             finding,
             &finding.probe.expression
         ))),
-        field(&clip(missing)),
+        field(&missing),
         test,
         finding.id
     )

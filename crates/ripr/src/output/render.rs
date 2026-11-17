@@ -513,8 +513,7 @@ fn detect_ts_full_repo_guidance(
     // Guard: if there are Rust files, the empty-seam result is a legitimate
     // Rust analysis outcome (e.g. a workspace with no production shapes), not
     // a TS-first scan gap. Only fire when Rust is absent.
-    let rust_files = analysis::workspace_rust_files(root);
-    if !rust_files.is_empty() {
+    if analysis::workspace_has_rust_source(root) {
         return None;
     }
 
@@ -549,7 +548,7 @@ fn detect_python_repo_exposure_guidance(
     if python_file_count == 0 {
         return None;
     }
-    if !analysis::workspace_rust_files(root).is_empty() {
+    if analysis::workspace_has_rust_source(root) {
         return None;
     }
 
@@ -1166,6 +1165,7 @@ mod tests {
             finding_id: finding.id.clone(),
             seam_id: "seam-abc".to_string(),
             uncommitted_target: uncommitted.map(str::to_string),
+            uncommitted_files: Vec::new(),
         })
     }
 
@@ -1285,6 +1285,26 @@ mod tests {
         {
             return Err(format!(
                 "blocked seam repair must carry no command: {repair}"
+            ));
+        }
+        // #13636: a held inline target and a dirty production premise
+        // together name both blockers and still carry no command.
+        let both = crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
+            finding_id: finding.id.clone(),
+            seam_id: "seam-abc".to_string(),
+            uncommitted_target: Some("src/lib.rs".to_string()),
+            uncommitted_files: vec!["src/other.rs".to_string(), "../shared.rs".to_string()],
+        });
+        let seam = FindingNavigation::legacy().with_repair_route_outcome(both);
+        let (routes, _) = routes_for(vec![finding.clone()], seam)?;
+        let repair = &routes[0]["repair"];
+        if repair["status"] != "blocked_uncommitted"
+            || repair["uncommitted_file"] != "src/lib.rs"
+            || repair["uncommitted_files"] != serde_json::json!(["src/other.rs", "../shared.rs"])
+            || repair.get("command").is_some()
+        {
+            return Err(format!(
+                "a seam repair blocked twice must name both blockers: {repair}"
             ));
         }
         let gap = FindingNavigation::legacy()

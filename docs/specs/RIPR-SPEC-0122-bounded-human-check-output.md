@@ -220,11 +220,14 @@ window and a row inside that window can have no stub route (#14687).
 
 Omitted findings that share file, owner, class, currentness label and reason
 (findings with no resolved owner never group)
-print as one row that names the line span, the count, the owner and the
-kinds, for example:
+print as one row that names the members' lines, the count, the owner and the
+kinds. The lines print as their consecutive runs (`3, 5` or `10-12, 15`)
+when there are at most three runs, so a row never names a line that no member
+is on; more runs print the covering span with the distinct line count
+(`1078-1241 (31 lines)`) (#14682). For example:
 
 ```text
-- src/lib.rs:1078-1241 (weak, lower-priority candidate); 44 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
+- src/lib.rs:1078-1241 (31 lines) (weak, lower-priority candidate); 44 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
 ```
 
 Members that share line and kind keep the single
@@ -233,6 +236,12 @@ keeps its own row. The 20-row window then bounds rows, not findings: beyond
 20 rows it keeps the rows whose best member ranks highest in the priority
 order above, printed in the order of each row's first finding, and the
 remainder line counts the findings in the rows it left out (#14299).
+
+A row whose reason is longer than 40 bytes and equal to the reason of the row
+printed just above it prints `reason: same as above` instead of repeating the
+sentence, so a run of rows that differ only by file or kind states a shared
+limitation once (#14308). Shorter reasons print on every row. `human-full` and
+machine formats keep every reason.
 
 The canonical next action's two `considered finding` alternates are chosen by
 the same priority order from the findings `Start here` did not select, so a
@@ -319,7 +328,10 @@ and the machine formats are unchanged.
 
 Start here ranks a finding with a repair route ahead of one without. For a
 stable finding the route is a recommended next step or suggested verify
-command; for a Python preview finding it is a repair card from the Python
+command, and only when the finding is not static-limited: a static-limited
+finding (`no_static_path`, the unknown classes, or a named static limit)
+never prints a repair route, so its advisory next step does not rank it as
+routed (#14266); for a Python preview finding it is a repair card from the Python
 repair-card authority. A card-less Python finding therefore never hides a
 carded one, so `check` does not report "no repair card" while `ripr pilot` and
 `ripr first-pr` route a card for the same diff. Classification is unchanged.
@@ -410,7 +422,10 @@ selector is deterministic:
    different owner, is likewise not shadowed.
 3. Non-preview findings outrank preview-language findings.
 4. Non-exposed findings with repair routes outrank findings without repair
-   routes.
+   routes. A static-limited finding counts as having no repair route, matching
+   the route the screen prints, and all static-limited findings share one tier
+   behind every gap and ahead of `exposed`, so the keys in step 6 order them
+   among themselves (#14266).
 5. `exposed` findings do not outrank non-exposed findings merely because they
    carry generic next-step text.
 6. Gap metadata, related tests, missing evidence, confidence, exposure class,
@@ -418,7 +433,12 @@ selector is deterministic:
    compared even when step 4 put both findings in the same repair-route
    band, so two candidates equal through confidence order
    `reachable_unrevealed`, `weakly_exposed`, `no_static_path`, the unknown
-   classes, then `exposed`, rather than by file path (#14266).
+   classes, then `exposed`, rather than by file path (#14266). The
+   related-test key counts only a decision-set row linked above `low`
+   relation confidence: a row joined by a shared name token or fixture
+   affinity is advisory, so it does not lift a finding over a
+   higher-confidence one (#14734). A row with no recorded relation
+   confidence (an older artifact) still counts.
 
 Apart from the same-behavior shadowing in step 2, verdict order within one
 file role is unchanged: an unshadowed production unknown still leads a
@@ -1072,6 +1092,30 @@ the extra findings. Any printed difference keeps the rows apart. Folding is
 display-only: the folded findings stay gaps for `limits=` and `stop=`, count
 in `verify=`, and stay listed in `--format json`.
 
+### Unreferenced owners are agent gaps (#14820)
+
+A test-side gap in `check --format agent` (and the `open=` predicate of
+`explain --format agent`) is a weakly exposed or reachable-unrevealed finding,
+or a `no_static_path` finding for which `Finding::is_unreferenced_no_static_path`
+holds: candidate-current, no named `static_limit_kind`, reach `no`, and a reach
+summary ending with the RIPR-SPEC-0219 `(unreferenced in workspace)` marker.
+The producer sets that marker only when the whole workspace is indexed, the
+owner is not an entry point, and its name appears nowhere outside its own
+definition. That whole-word naming scan is the evidence: no test in the
+workspace runs the changed code, so the repair (write a test that calls it)
+needs no further analysis. The scan cannot see names built by macros such as
+`paste!` or callers outside the workspace; for those the advice still holds
+for this workspace's tests. Such a finding counts in `gaps=`, its row prints
+``missing=no test calls `<owner>`; assert its exact result in a new test``
+when no missing discriminator is named, and it suppresses the all-limited
+`stop=`, and gap rows fold on that printed hint. The verdict corpus already
+scores the same shape as a gap. The human check triage and the JSON canonical
+next action still classify it as static-limited (`triage::is_static_limited`
+is true for the `no_static_path` class), so this agent row is the only surface
+that names it as a gap until those surfaces adopt the same predicate. Every other `no_static_path`, unknown or static-limited finding stays
+a fail-closed limit: an owner some code calls on a path ripr cannot trace may
+already be tested, so reading it as a gap would be a wrong actionable signal.
+
 ### `explain --format agent` (#12104)
 
 `ripr explain <finding> --format agent` prints the selected finding in the
@@ -1233,6 +1277,8 @@ report with zero records still carries its route.
 - `crates/ripr/src/output/human.rs::tests::hidden_block_keeps_owner_less_rows_apart_and_orders_mixed_rows`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_window_ranks_a_group_by_its_best_member`
 - `crates/ripr/src/output/human/triage.rs::tests::check_adapter_alternates_follow_the_shared_priority_not_report_order`
+- `crates/ripr/src/output/human/triage.rs::tests::start_here_does_not_rank_an_unprintable_route_as_a_repair_route`
+- `crates/ripr/src/output/human/triage.rs::tests::start_here_orders_static_limited_findings_by_evidence_not_class`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail`
 - `crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary`

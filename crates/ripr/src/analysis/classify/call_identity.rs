@@ -2793,7 +2793,7 @@ fn own_crate_names_of(
 /// historic admission (#9218) — the import names the owner closely enough
 /// that no rival claims it. Declined calls supply no row; activation retains
 /// the unresolved identity.
-pub(super) fn qualified_owner_calls_resolve(
+pub(in crate::analysis) fn qualified_owner_calls_resolve(
     index: &RustIndex,
     owner: &FunctionSummary,
     test: &TestSummary,
@@ -3821,16 +3821,35 @@ impl LocalModules {
                         .skip(index + 1)
                         .find(|(_, token)| matches!(token, LexToken::Semi))
                         .map(|(at, _)| *at);
+                    // A `#[cfg(..)]` on the item decides whether it can bind
+                    // the name at all: a definitely-disabled item binds
+                    // nothing, and one whose predicate this reader cannot
+                    // evaluate is not settled, so it keeps the production
+                    // relation (#14744 review).
                     let text = end.and_then(|end| masked.get(offset + 3..end));
-                    if let Some(item) = text.and_then(UseItem::parse) {
-                        let module = stack.iter().map(|(name, _)| name.clone()).collect();
-                        found.file_uses.push((module, item));
-                    } else if let Some(text) = text {
-                        found.unreadable_owner_use |= mentions_word(text, owner);
-                        found.unreadable_uses.push(text.to_string());
-                    } else {
-                        found.unreadable_owner_use = true;
-                        found.nested_blocked = true;
+                    match cfg_state(&masked, *offset) {
+                        CfgState::Disabled => {}
+                        CfgState::Unsettled => {
+                            if let Some(text) = text {
+                                found.unreadable_owner_use |= mentions_word(text, owner);
+                                found.unreadable_uses.push(text.to_string());
+                            } else {
+                                found.unreadable_owner_use = true;
+                            }
+                        }
+                        CfgState::Enabled => {
+                            if let Some(item) = text.and_then(UseItem::parse) {
+                                let module: Vec<String> =
+                                    stack.iter().map(|(name, _)| name.clone()).collect();
+                                found.file_uses.push((module, item));
+                            } else if let Some(text) = text {
+                                found.unreadable_owner_use |= mentions_word(text, owner);
+                                found.unreadable_uses.push(text.to_string());
+                            } else {
+                                found.unreadable_owner_use = true;
+                                found.nested_blocked = true;
+                            }
+                        }
                     }
                 }
                 LexToken::Word(_) | LexToken::Semi => {}
@@ -3838,7 +3857,24 @@ impl LocalModules {
         }
         let body_masked = mask_comments_and_strings(body);
         for range in use_item_ranges(&body_masked) {
+            // The same attribute rule as the module-level items: a disabled
+            // body import binds nothing and an unevaluable one is not
+            // settled (#14744 review).
             let text = body_masked.get(range.start + 3..range.end.saturating_sub(1));
+            match cfg_state(&body_masked, range.start) {
+                CfgState::Disabled => continue,
+                CfgState::Unsettled => {
+                    if let Some(text) = text {
+                        found.unreadable_owner_use |= mentions_word(text, owner);
+                        found.unreadable_uses.push(text.to_string());
+                    } else {
+                        found.unreadable_owner_use = true;
+                        found.nested_blocked = true;
+                    }
+                    continue;
+                }
+                CfgState::Enabled => {}
+            }
             let top_block = body_masked.get(..range.start).is_some_and(|before| {
                 before.matches('{').count() == before.matches('}').count() + 1
             });
@@ -3925,13 +3961,29 @@ impl LocalModules {
             return Binding::Conflict;
         }
         match resolve(self.body_uses.iter().collect()) {
-            Binding::Unbound => resolve(
-                self.file_uses
-                    .iter()
-                    .filter(|(module, _)| *module == self.scope)
-                    .map(|(_, item)| item)
-                    .collect(),
-            ),
+            Binding::Unbound => {
+                // A body-level glob shadows the test module's explicit
+                // import for every name it provides, and the reader cannot
+                // tell which names a non-rival glob provides, so the
+                // module-level binding is not settled (#14744 review). A
+                // glob of a public rival module is left to
+                // `bare_names_rival`, which names the rival.
+                let body_glob_unsettled = self.body_uses.iter().any(|item| {
+                    item.glob
+                        && !Self::absolute(&self.scope, &item.path, integration_crate)
+                            .is_some_and(|module| self.public_rivals.contains(&module))
+                });
+                if body_glob_unsettled {
+                    return Binding::Conflict;
+                }
+                resolve(
+                    self.file_uses
+                        .iter()
+                        .filter(|(module, _)| *module == self.scope)
+                        .map(|(_, item)| item)
+                        .collect(),
+                )
+            }
             bound => bound,
         }
     }
@@ -4063,6 +4115,74 @@ fn value_mentions(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
         mentions.push(qualifier_before(head));
     }
     mentions
+}
+
+/// The attribute state of the item that starts at `start` in masked `text`.
+enum CfgState {
+    /// A preceding `#[cfg(..)]` is definitely false: the item does not exist.
+    Disabled,
+    /// No preceding `#[cfg(..)]`, or every one is definitely true.
+    Enabled,
+    /// A preceding predicate names a feature or target this reader cannot
+    /// evaluate, so whether the item binds is not settled.
+    Unsettled,
+}
+
+/// Whether a `#[cfg(..)]` attribute immediately preceding the item at `start`
+/// disables it (#14744 review). Only constant predicates are decided: `test`,
+/// `any()`, `all()` and `not(..)` over those. Anything else (`feature = "x"`,
+/// `target_os = ..`) is `Unsettled`, which keeps the production relation.
+fn cfg_state(text: &str, start: usize) -> CfgState {
+    let head = &text[..start];
+    let boundary = head
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| matches!(ch, ';' | '{' | '}'))
+        .map_or(0, |(at, ch)| at + ch.len_utf8());
+    let head = &head[boundary..];
+    if !head.contains("#[cfg") {
+        return CfgState::Enabled;
+    }
+    let mut state = CfgState::Enabled;
+    let mut rest = head;
+    while let Some(at) = rest.find("#[") {
+        rest = &rest[at + 2..];
+        let Some(end) = rest.find(']') else {
+            return CfgState::Unsettled;
+        };
+        let attribute = &rest[..end];
+        rest = &rest[end + 1..];
+        let Some(predicate) = attribute
+            .trim()
+            .strip_prefix("cfg(")
+            .and_then(|inner| inner.strip_suffix(')'))
+        else {
+            continue;
+        };
+        match cfg_predicate(predicate.trim()) {
+            Some(false) => state = CfgState::Disabled,
+            Some(true) => {}
+            None => {
+                if !matches!(state, CfgState::Disabled) {
+                    state = CfgState::Unsettled;
+                }
+            }
+        }
+    }
+    state
+}
+
+/// A constant `cfg` predicate's value, when the reader can decide it.
+fn cfg_predicate(predicate: &str) -> Option<bool> {
+    match predicate {
+        "test" | "all()" => Some(true),
+        "any()" => Some(false),
+        _ => predicate
+            .strip_prefix("not(")
+            .and_then(|inner| inner.strip_suffix(')'))
+            .and_then(|inner| cfg_predicate(inner.trim()))
+            .map(|value| !value),
+    }
 }
 
 /// Byte ranges of the `use` items in masked `text`, each from its `use`
@@ -4229,6 +4349,88 @@ mod tests {
         assert_eq!(withheld("tests/boundary.rs"), Some(true));
         // `crate::` is the library root elsewhere: the production relation stays.
         assert_eq!(withheld("src/boundary.rs"), Some(false));
+    }
+
+    /// #14744 review: a body-level glob shadows the module's explicit rival
+    /// import, so the production call keeps its relation instead of being
+    /// demoted.
+    #[test]
+    fn a_body_glob_shadows_the_module_rival_import() {
+        let prod =
+            "pub fn discounted_total(a: i32, t: i32) -> i32 { if a >= t { a - 10 } else { a } }\n";
+        let tests = "mod local {\n    pub fn discounted_total(_a: i32, _t: i32) -> i32 { 777 }\n}\nuse local::discounted_total;\n\n#[test]\nfn body_glob() {\n    use discount_lib::pricing::*;\n    assert_eq!(discounted_total(100, 100), 90);\n}\n";
+        assert_eq!(
+            withheld_local_rival(prod, tests, "body_glob"),
+            Some(false),
+            "a body glob of the production module shadows the module-level rival import"
+        );
+    }
+
+    /// #14744 review: a `#[cfg(..)]` on a rival import decides whether it
+    /// binds. A definitely-disabled one binds nothing and an unevaluable one
+    /// is not settled, so either way a genuine production call keeps its
+    /// relation; `#[cfg(test)]` still binds the rival.
+    #[test]
+    fn a_cfg_decides_whether_a_rival_import_binds() {
+        let prod =
+            "pub fn discounted_total(a: i32, t: i32) -> i32 { if a >= t { a - 10 } else { a } }\n";
+        let rival =
+            "mod local {\n    pub fn discounted_total(_a: i32, _t: i32) -> i32 { 777 }\n}\n";
+        let case = |attribute: &str, name: &str| {
+            format!(
+                "{rival}{attribute}\nuse local::discounted_total;\n\n#[test]\nfn {name}() {{\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"
+            )
+        };
+        assert_eq!(
+            withheld_local_rival(
+                prod,
+                &case("#[cfg(any())]", "disabled_rival"),
+                "disabled_rival"
+            ),
+            Some(false),
+            "a `#[cfg(any())]` rival import binds nothing"
+        );
+        assert_eq!(
+            withheld_local_rival(
+                prod,
+                &case("#[cfg(feature = \"loud\")]", "feature_rival"),
+                "feature_rival"
+            ),
+            Some(false),
+            "an unevaluable cfg is not settled, so the production relation stays"
+        );
+        assert_eq!(
+            withheld_local_rival(
+                prod,
+                &case("#[cfg(test)]", "cfg_test_rival"),
+                "cfg_test_rival"
+            ),
+            Some(true),
+            "`#[cfg(test)]` is enabled in a test file, so the rival import binds"
+        );
+        // The body-level shape of the same defect: an active production
+        // import at file scope beside a disabled rival import in the test.
+        let body_disabled = format!(
+            "{rival}use discount_lib::discounted_total;\n\n#[test]\nfn body_disabled_rival() {{\n    #[cfg(any())] use local::discounted_total;\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"
+        );
+        assert_eq!(
+            withheld_local_rival(prod, &body_disabled, "body_disabled_rival"),
+            Some(false),
+            "a disabled body rival import never shadows the production import"
+        );
+    }
+
+    fn withheld_local_rival(prod: &str, test_source: &str, test_name: &str) -> Option<bool> {
+        let files = [("src/lib.rs", prod), ("tests/boundary.rs", test_source)];
+        let idx = index(&files);
+        let owner = idx
+            .functions()
+            .iter()
+            .find(|function| function.file == Path::new("src/lib.rs"))?;
+        let test = idx.tests().iter().find(|test| test.name == test_name)?;
+        Some(test_calls_only_through_local_rival_module(
+            &idx, owner, test,
+        ))
     }
 
     /// #13868: the memo key names the test body, so two same-named tests that

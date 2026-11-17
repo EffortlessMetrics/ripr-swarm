@@ -1944,20 +1944,30 @@ fn check_drill_down_prints_repair_identity_that_starts_the_same_seam() -> Result
             "json",
         ],
     )?;
-    // #11976: JSON gains only the additive `finding_routes` projection, and
-    // its repair command is the identity-bound line the screen printed.
+    // #11976: JSON gains only the additive `finding_routes` projection.
+    // #13636: the weakened predicate is still uncommitted, so the start
+    // would refuse; JSON reports the same seam as blocked on that file with
+    // no runnable command, and the screen names the commit step first.
     let json_text = stdout_text(&json);
     let routes = finding_routes(&json_text)?;
     let repair = routes
         .iter()
         .find_map(|route| route.get("repair"))
         .ok_or_else(|| format!("JSON must carry the repair route:\n{json_text}"))?;
-    assert_eq!(repair["status"], "ready");
+    assert_eq!(repair["status"], "blocked_uncommitted", "{json_text}");
     assert_eq!(repair["seam_id"], identity);
-    let command = repair["command"].as_str().unwrap_or_default();
+    assert_eq!(
+        repair["uncommitted_files"],
+        serde_json::json!(["src/lib.rs"]),
+        "{json_text}"
+    );
     assert!(
-        stdout.lines().any(|line| line.trim() == command),
-        "JSON command must be a printed line: {command}\n{stdout}"
+        repair.get("command").is_none(),
+        "a blocked start must carry no runnable command:\n{json_text}"
+    );
+    assert!(
+        stdout.contains("Commit your production change first"),
+        "the screen must name the commit step before the repair start:\n{stdout}"
     );
     // Round-trip: the printed identity resolves through `ripr repair` to
     // the same seam and starts exactly one before-phase attempt for it.
@@ -3843,7 +3853,7 @@ fn continue_no_movement_keeps_inline_test_module_restrictions() -> Result<(), St
     std::fs::remove_file(root.join("tests/pricing.rs")).map_err(|error| error.to_string())?;
     std::fs::write(
         root.join("src/lib.rs"),
-        format!("{FIXTURE_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::discounted_total;\n    #[test]\n    fn below() {{ assert_eq!(discounted_total(50, 100), 50); }}\n}}\n"),
+        format!("{FIXTURE_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::discounted_total;\n    #[test]\n    fn below() {{ assert_eq!(discounted_total(50, 100), 50); }}\n    #[test]\n    fn above() {{ assert_eq!(discounted_total(10_000, 100), 9_990); }}\n}}\n"),
     ).map_err(|error| error.to_string())?;
     run_git(root, &["add", "src", "tests"])?;
     git_commit(root, "inline test target")?;
@@ -6394,13 +6404,14 @@ fn member_directory_agent_artifact_commands_use_the_resolved_workspace_root() ->
     // #14385) are configured off; binding adds none.
     let warnings = brief_json["warnings"].as_array().ok_or("no warnings")?;
     assert!(
-        warnings
-            .iter()
-            .all(|warning| warning.as_str().is_some_and(|text| {
-                text.contains(" at pkg/src/lib.rs:3, ")
-                    && text.contains(" at pkg/src/lib.rs:5 ")
-                    && text.contains("configured off for strongly_gripped seams")
-            })),
+        warnings.len() == 1
+            && warnings
+                .iter()
+                .all(|warning| warning.as_str().is_some_and(|text| {
+                    text.contains(" at pkg/src/lib.rs:3, ")
+                        && text.contains(" at pkg/src/lib.rs:5 ")
+                        && text.contains("configured off for strongly_gripped seams")
+                })),
         "unexpected brief warnings: {warnings:?}"
     );
     let seams = brief_json["top_seams"].as_array().ok_or("no top_seams")?;

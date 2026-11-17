@@ -15,7 +15,8 @@ pub(crate) use super::extract::{
     extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
     extract_literals, extract_return_facts, guarded_result_match_scan_with_shadow_authority,
     has_oracle_text_shape, is_inequality_assertion, is_inline_unwrap_err_error_assertion,
-    is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
+    is_unwrap_err_bound_error_assertion, placeholder_bound_variables, unwrap_err_bound_variables,
+    without_unfilled_expected, without_unfilled_expected_parts,
 };
 use super::facts::ModulePathTarget;
 pub(crate) use super::facts::SecondaryPassGuard;
@@ -464,12 +465,12 @@ pub(crate) fn error_path_twins(shapes: &[ProbeShapeFact], source: &str) -> Vec<b
         let (Some((_, outer)), Some((_, inner))) = (outers.first(), inners.first()) else {
             continue;
         };
-        let Some(prefix) = source.get(outer.start_byte..inner.start_byte) else {
+        let Some(prefix) = source.get(outer.start_byte()..inner.start_byte()) else {
             continue;
         };
         let inner_is_err = wraps_err.get(at).copied().unwrap_or(false)
             || source
-                .get(inner.start_byte..)
+                .get(inner.start_byte()..)
                 .is_some_and(err_call_opening_at_start);
         if is_return_prefix(prefix) {
             mark_returns(outers, inners, inner_is_err, source, &mut twins);
@@ -509,7 +510,7 @@ fn mark_wrappers(
         return false;
     };
     let whole_argument = source
-        .get(inner.end_byte..call.end_byte)
+        .get(inner.end_byte()..call.end_byte())
         .is_some_and(|suffix| suffix.trim_start().starts_with([',', ')']));
     if !whole_argument {
         return false;
@@ -635,7 +636,7 @@ fn mark_returns(
             continue;
         };
         let closes = source
-            .get(inner.end_byte..outer.end_byte)
+            .get(inner.end_byte()..outer.end_byte())
             .is_some_and(|suffix| {
                 let rest = suffix.trim_start_matches(|c: char| c == ')' || c.is_whitespace());
                 // `..` after the constructor is a range, not a method chain.
@@ -738,7 +739,7 @@ fn mark_payloads(
         });
         for (_, outer) in outers.get(first..).unwrap_or_default() {
             twin_work!();
-            let Some(suffix) = source.get(inner.end_byte..outer.end_byte) else {
+            let Some(suffix) = source.get(inner.end_byte()..outer.end_byte()) else {
                 break;
             };
             match err_call_closing(suffix, opening) {

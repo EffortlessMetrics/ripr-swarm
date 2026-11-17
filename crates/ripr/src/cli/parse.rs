@@ -7,7 +7,7 @@ use std::io::IsTerminal;
 
 pub(crate) use format::parse_format;
 pub(crate) use mode::parse_mode;
-pub(crate) use value::{expect_value, reconcile_root};
+pub(crate) use value::{expect_value, missing_value, reconcile_root};
 
 /// The parse-time conflict error for a command whose synopsis offers
 /// `[--base REV|--diff PATH]` when both flags are given explicitly (#4319).
@@ -20,8 +20,11 @@ pub(crate) use value::{expect_value, reconcile_root};
 /// `--from`, both flags are assertions verified against the recording
 /// (RIPR-SPEC-0140), not alternative diff sources.
 pub(crate) fn base_with_diff_conflict_error(command: &str) -> String {
-    format!(
-        "{command} --base cannot be combined with --diff: --base and --diff are alternative diff sources; pass one"
+    crate::cli::usage_refusal::conflicting_flags(
+        "--base",
+        &format!(
+            "{command} --base cannot be combined with --diff: --base and --diff are alternative diff sources; pass one"
+        ),
     )
 }
 

@@ -103,6 +103,9 @@ mod mutation_calibration_provenance;
 mod native_fanout;
 #[path = "cli_smoke/next_action.rs"]
 mod next_action;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/offline_network.rs"]
+mod offline_network;
 #[path = "cli_smoke/output_leaf_identity.rs"]
 mod output_leaf_identity;
 #[cfg(all(
@@ -119,7 +122,6 @@ mod parse_failure_path_outcome;
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
-#[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/pilot_timeout_retry.rs"]
 mod pilot_timeout_retry;
 #[cfg(all(unix, feature = "lang-rust"))]
@@ -150,6 +152,9 @@ mod related_test_count;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/repair_orderfile.rs"]
 mod repair_orderfile;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/requested_scope_complete.rs"]
+mod requested_scope_complete;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/rerun_ledger_recovery.rs"]
 mod rerun_ledger_recovery;
@@ -222,6 +227,8 @@ mod unsupported_check_exit;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unsupported_diff_exit.rs"]
 mod unsupported_diff_exit;
+#[path = "cli_smoke/value_refusal_json.rs"]
+mod value_refusal_json;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/verify_execute_root.rs"]
 mod verify_execute_root;
@@ -4320,8 +4327,8 @@ fn scoped_check_fixture(label: &str) -> Result<(PathBuf, PathBuf), String> {
 }
 
 #[test]
-fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() -> Result<(), String>
-{
+fn check_scope_flags_turn_an_oversized_diff_into_a_complete_scoped_result_with_a_note()
+-> Result<(), String> {
     let (dir, diff) = scoped_check_fixture("check-scope-flags")?;
     let root = dir.display().to_string();
     let diff = diff.display().to_string();
@@ -4363,9 +4370,10 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
         let value: serde_json::Value = serde_json::from_str(&stdout)
             .map_err(|err| format!("scoped stdout should parse: {err}\n{stdout}"))?;
         let outcome = &value["analysis_outcome"];
-        assert_eq!(outcome["analysis_complete"], false, "{flags:?}");
+        // #13894: the operator-requested scope is complete.
+        assert_eq!(outcome["analysis_complete"], true, "{flags:?}");
         assert_eq!(
-            outcome["outcome"]["kind"], "partial_with_limitations",
+            outcome["outcome"]["kind"], "complete_with_findings",
             "{flags:?}"
         );
         let limitations = outcome["outcome"]["limitations"]
@@ -4373,7 +4381,7 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
             .ok_or("limitations array")?;
         assert!(
             limitations.iter().any(|limitation| {
-                limitation["kind"] == "language_scope_unsupported"
+                limitation["kind"] == "requested_scope_excluded"
                     && limitation["bounded_detail"]
                         .as_str()
                         .is_some_and(|detail| detail.contains("src/big.rs"))
@@ -18417,7 +18425,7 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
         )
     );
     assert!(stdout.contains(
-        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  # RIPR_GATE_MODE: empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}\n"
+        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }} # empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate\n"
     ));
     assert!(stdout.contains("continue-on-error: true"));
     assert!(stdout.contains("RIPR_UPLOAD_SARIF"));
@@ -18495,14 +18503,13 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
         "the adopter has no local CI guide; the generated header must give its public URL"
     );
     assert!(workflow.contains(
-        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  # RIPR_GATE_MODE: empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}\n"
+        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }} # empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate\n"
     ));
     assert!(!workspace.join("docs/CI.md").exists());
     assert!(workflow.contains("pull_request:"));
     assert!(workflow.contains("workflow_dispatch:"));
     // #5208: the pin/warning pair must stay consistent in both release
-    // states, on both install routes (the prebuilt `version=` and the
-    // cargo fallback). A released generator self-pins silently; an
+    // states, on the action tag and its `version` input (#5409). A released generator self-pins silently; an
     // unreleased one pins an exact released version (its own would
     // neither download nor install) and warns on stderr. Branching on the
     // observed warning keeps this test valid when the package and release
@@ -18521,7 +18528,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
             upgrade_at.is_some(),
             "note must say to upgrade ripr first: {stderr}"
         );
-        // The warning names the fallback pin; both install routes must
+        // The warning names the fallback pin; the tag and the input must
         // carry exactly it (#5244 review: positive exact pins, not just
         // the absence of the generator version).
         let pinned = stderr
@@ -18530,24 +18537,17 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
             .and_then(|rest| rest.split(", the latest published release").next())
             .ok_or_else(|| format!("warning must name the fallback pin: {stderr}"))?;
         assert!(
-            workflow.contains(&format!("          version={pinned}\n")),
-            "a warned run must pin the fallback {pinned} on the prebuilt route"
+            workflow.contains(&format!("ripr/.github/actions/ripr-check@v{pinned}\n")),
+            "a warned run must pin the fallback {pinned} on the action tag"
         );
         assert!(
-            workflow.contains(&format!(
-                "            cargo install ripr --version {pinned} --locked\n"
-            )),
-            "a warned run must pin the fallback {pinned} on the cargo route"
+            workflow.contains(&format!("          version: {pinned}\n")),
+            "a warned run must pin the fallback {pinned} on the version input"
         );
         assert!(
-            !workflow.contains(&format!("          version={generator}\n")),
+            !workflow.contains(&format!("@v{generator}\n"))
+                && !workflow.contains(&format!("          version: {generator}\n")),
             "a warned run must not self-pin the unreleased generator"
-        );
-        assert!(
-            !workflow.contains(&format!(
-                "            cargo install ripr --version {generator} --locked\n"
-            )),
-            "a warned run must not self-pin the fallback either"
         );
         assert!(
             stderr.contains("the latest published release")
@@ -18556,17 +18556,15 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
         );
     } else {
         assert!(
-            workflow.contains(&format!("          version={generator}\n")),
+            workflow.contains(&format!("ripr/.github/actions/ripr-check@v{generator}\n")),
             "an unwarned run must self-pin the released generator"
         );
         assert!(
-            workflow.contains(&format!(
-                "            cargo install ripr --version {generator} --locked\n"
-            )),
-            "an unwarned run must self-pin the fallback too"
+            workflow.contains(&format!("          version: {generator}\n")),
+            "an unwarned run must self-pin the version input too"
         );
     }
-    assert!(!workflow.contains("cargo install ripr --locked"));
+    assert!(!workflow.contains("cargo install"));
     // A newer push cancels the older run of the same PR, so two runs never
     // publish the same inline cards (#4448).
     assert!(workflow.contains(
@@ -27930,7 +27928,10 @@ fn check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed() 
 /// run: `limits=` plus the `ripr explain` drill-in (#13594 dropped the
 /// `missing=-` per-finding records, which named nothing to fix), and the terminal must not claim nothing more is
 /// fixable while the human Start-here block recommends adding a co-located
-/// test.
+/// test. #14820: the base names `levy` and `fee` in a comment, so the
+/// RIPR-SPEC-0219 unreferenced-owner marker is withheld and the run stays
+/// all-limited; an owner nothing names reads as a gap instead (see
+/// `tests/agent_unreferenced_owner_gap.rs`).
 #[test]
 fn check_format_agent_all_static_limited_emits_a_route_without_records() -> Result<(), String> {
     let root = unique_temp_workspace("agent-format-all-limited");
@@ -27938,8 +27939,11 @@ fn check_format_agent_all_static_limited_emits_a_route_without_records() -> Resu
     run_git(&root, &["init", "-b", "main"])?;
     run_git(&root, &["config", "user.email", "test@test.com"])?;
     run_git(&root, &["config", "user.name", "Test"])?;
-    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")
-        .map_err(|e| format!("write lib: {e}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn one() -> i32 { 1 }\n// The host crate wires up levy and fee.\n",
+    )
+    .map_err(|e| format!("write lib: {e}"))?;
     std::fs::write(
         root.join("Cargo.toml"),
         "[package]\nname = \"agent-all-limited\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
@@ -27950,7 +27954,7 @@ fn check_format_agent_all_static_limited_emits_a_route_without_records() -> Resu
     run_git(&root, &["commit", "-m", "initial"])?;
     std::fs::write(
         root.join("src/lib.rs"),
-        "pub fn one() -> i32 { 1 }\n\npub fn levy(pct: u32) -> bool {\n    pct >= 50\n}\n\npub fn fee(pct: u32) -> bool {\n    pct >= 90\n}\n",
+        "pub fn one() -> i32 { 1 }\n// The host crate wires up levy and fee.\n\npub fn levy(pct: u32) -> bool {\n    pct >= 50\n}\n\npub fn fee(pct: u32) -> bool {\n    pct >= 90\n}\n",
     )
     .map_err(|e| format!("write lib v2: {e}"))?;
     run_git(&root, &["add", "."])?;
@@ -37663,6 +37667,72 @@ fn agent_repair_after_cage_violation_restores_preexisting_shared_artifacts()
         );
     }
     std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// `init` in a repository that has no commits yet (the state right after
+/// `git init`) must not close by sending the user to a bare `ripr check`:
+/// that command has no base there and exits 2. The closing line names the
+/// commit-first step; once a commit exists the ordinary line returns.
+#[test]
+fn init_next_step_names_commit_first_in_a_repository_without_commits() -> Result<(), String> {
+    let repo = unique_temp_workspace("init-unborn-next-step");
+    std::fs::create_dir_all(&repo).map_err(|e| format!("create repo root: {e}"))?;
+    let git = |args: &[&str]| -> Result<std::process::Output, String> {
+        run_command_with_env("git", &repo, args, &[]).map_err(|e| e.to_string())
+    };
+    assert!(git(&["init", "-q", "-b", "main"])?.status.success());
+    // Fixture check: HEAD really is unborn.
+    assert!(
+        !git(&["rev-parse", "--verify", "--quiet", "HEAD"])?
+            .status
+            .success(),
+        "fixture: expected an unborn HEAD"
+    );
+    let repo_arg = repo.display().to_string();
+
+    // The stumble this guards: the check `init` used to recommend fails here.
+    let check = run_ripr(&["check", "--root", &repo_arg]);
+    assert_eq!(check.status.code(), Some(2), "{check:?}");
+
+    let unborn = run_ripr(&["init", "--root", &repo_arg]);
+    assert_success(&unborn);
+    let stdout = String::from_utf8_lossy(&unborn.stdout);
+    let next = stdout
+        .lines()
+        .find(|line| line.starts_with("Next: "))
+        .ok_or_else(|| format!("init must print a Next line: {stdout}"))?;
+    assert!(
+        next.contains("no commits yet") && next.contains("commit once"),
+        "an unborn repository must be told to commit first: {next}"
+    );
+    assert!(
+        !next.contains("to analyze your branch against its default branch"),
+        "must not promise a check that cannot run yet: {next}"
+    );
+
+    std::fs::write(repo.join("README.md"), "demo\n").map_err(|e| e.to_string())?;
+    assert!(git(&["add", "-A"])?.status.success());
+    let committed = git(&[
+        "-c",
+        "user.name=ripr",
+        "-c",
+        "user.email=ripr@example.invalid",
+        "commit",
+        "-q",
+        "-m",
+        "init",
+    ])?;
+    assert!(committed.status.success(), "{committed:?}");
+    let ready = run_ripr(&["init", "--force", "--root", &repo_arg]);
+    assert_success(&ready);
+    let ready_stdout = String::from_utf8_lossy(&ready.stdout);
+    assert!(
+        ready_stdout.contains("to analyze your branch against its default branch")
+            && !ready_stdout.contains("no commits yet"),
+        "a repository with a commit keeps the ordinary next step: {ready_stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
     Ok(())
 }
 

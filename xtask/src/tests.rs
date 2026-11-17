@@ -6819,6 +6819,8 @@ fn rust_conversion_candidates_derive_retention_from_the_enforced_owner() -> Resu
         "tools/test-activate-rust.sh",
         "tools/ci/shard-verifier-artifact.py",
         "tools/ci/test_shard_verifier_artifact.py",
+        "tools/ci/main-qualification.py",
+        "tools/ci/test_main_qualification.py",
     ] {
         let enforced_reason = non_rust_programming_retention_reason(path)
             .ok_or_else(|| format!("approved boundary must be enforced-retained: {path}"))?;
@@ -6871,6 +6873,11 @@ fn rust_conversion_candidates_keep_neighboring_unapproved_paths_actionable() -> 
         ".agents/skills/finish-pr/scripts/other.rb",
         "tools/python/installed-provider-recovery/other.py",
         "tools/python/other.py",
+        "tools/ci/main-qualification-extra.py",
+        "tools/ci/test_main_qualification_extra.py",
+        "tools/ci/nested/main-qualification.py",
+        "tools/ci/main-qualification.py.extra.py",
+        "tools/ci/main-qualification.sh",
         "benchmarks/muse-plugin/fixtures/typescript-weak-assertion/src/other.rb",
         "scripts/check.py",
     ] {
@@ -9733,7 +9740,12 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             None,
             RoutedRustEventRoute::WorkflowNotTriggered,
         ),
-        ("push", None, None, RoutedRustEventRoute::LaunchFullGate),
+        (
+            "push",
+            None,
+            None,
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
         (
             "workflow_dispatch",
             None,
@@ -9869,8 +9881,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "|| [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\"",
         ),
         (
-            "more than one queued PR",
-            "[ \"$parents\" = \"1\" ] && [ \"$parent\" = \"$GROUP_BASE_SHA\" ] && [[ \"$subject\" == *\"(#${pr})\" ]]",
+            "single-parent linear chain",
+            "[ -n \"${p1:-}\" ] && [ -z \"${p2_extra:-}\" ] && [ \"$p1\" = \"$expected_parent\" ]",
         ),
         (
             "bind the queue ref sha",
@@ -9878,11 +9890,23 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         ),
         (
             "PR ref to still name the live head",
-            "[ \"$fetched\" = \"$head\" ]",
+            "[ \"$fetched\" = \"$c_head\" ]",
+        ),
+        (
+            "constituent from its own changed paths",
+            "if classify_constituent_docs \"$c_files\"",
+        ),
+        (
+            "tip with its own docs-only classification",
+            "docs-only: ${{ steps.entry.outputs.tip_docs_only || needs.detect-docs-only.outputs.docs_only || 'false' }}",
+        ),
+        (
+            "constituents with their own docs-only classifications",
+            "while IFS=$'\\t' read -r c_pr c_head c_docs_only; do",
         ),
         (
             "tree to the live head merged onto the group base",
-            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${GROUP_HEAD_SHA}^{tree}\")\" ]",
+            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${c_sha}^{tree}\")\" ]",
         ),
         (
             "same-head succession read as the last live eligibility check",
@@ -19689,7 +19713,7 @@ jobs:
 RIPR is advisory static evidence. It does not edit source, generate tests, or run mutation testing.
 
 ### Start here
-- Open `start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
+- Open `ripr/reports/start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
 - {GENERATED_CI_FIRST_ACTION_REPAIR}
 - {GENERATED_CI_FIRST_PR_REPAIR}
 - {GENERATED_CI_FRONT_PANEL_REPAIR}
@@ -19749,6 +19773,30 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
         mutated.errors
     );
     assert!(!mutated.start_here);
+
+    // A heading alone cannot rescue a stale or wrong artifact destination.
+    for path in [
+        "start-here.md",
+        "target/ripr/reports/start-here.md",
+        "ripr/review/start-here.md",
+    ] {
+        let wrong_path = dogfood_generated_ci_cockpit_run_from_surfaces(
+            "wrong-start-here-artifact-path",
+            command,
+            10,
+            workflow,
+            &summary.replace("ripr/reports/start-here.md", path),
+        );
+        assert!(!wrong_path.start_here, "accepted {path}");
+        assert!(
+            wrong_path
+                .errors
+                .iter()
+                .any(|error| error.contains("Start here")),
+            "missing path error for {path}: {:?}",
+            wrong_path.errors
+        );
+    }
 
     // Dropping the gate boundary wording must fail the scenario (#12261).
     let no_gate = dogfood_generated_ci_cockpit_run_from_surfaces(
@@ -54136,8 +54184,9 @@ fn require_single_bare_precommit_line(lines: &[String], context: &str) -> Result
 /// The routed Rust lanes must delegate the required gate table to the shared
 /// reusable workflow, not inline a lane-only gate command where it could drift
 /// from `.github/workflows/rust-gates.yml`. The reusable workflow enumerates
-/// each gate as its own named per-producer step; the per-step shape (exact
-/// command, unconditional, ordered, outcome-reported) is owned by
+/// standalone producers; dependency, process and network policy remain required
+/// inside `ci-policy`. The producer shape (exact command, unconditional, ordered,
+/// outcome-reported) and collected leaf ownership are guarded by
 /// `xtask/tests/rust_gate_workflow_contract.rs`. `cargo xtask precommit` and
 /// the lightweight `cargo policy preflight` stay inline in the docs-gate job,
 /// which `routed_rust_docs_gate_runs_full_precommit_table` covers.
@@ -54161,11 +54210,7 @@ fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
     let reusable = reusable_rust_workflow_text()?;
     for lane_only in [
         "cargo xtask check-evidence-promotion-honesty",
-        "cargo xtask check-dependencies",
-        "cargo xtask check-process-policy",
-        "cargo xtask check-network-policy",
-        "cargo xtask goldens check",
-        "cargo xtask fixtures",
+        "cargo xtask goldens check-with-fixtures",
     ] {
         let count = reusable.matches(lane_only).count();
         if count != 1 {

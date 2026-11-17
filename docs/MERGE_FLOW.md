@@ -11,11 +11,14 @@ proof, ordinary protected squash, or separate release authority.
 Since #9106, `.github/workflows/routed-rust.yml` also subscribes to
 `merge_group` (`checks_requested`) so the required `Ripr Rust Small Result` can be
 earned once per queue entry on the exact queued merge commit (see
-[CI](CI.md#merge-queue-request-cutover)). Admission is per PR, so the queue must
-use a group size of 1 and the queued commit must be a single squash commit on the
-group's `base_sha`; batching needs per-PR admission (#8082). The workflow also
-still requests PR qualification on the explicit `merge-ready` label and runs on
-main/master push and manual dispatch. The branch summary names
+[CI](CI.md#merge-queue-request-cutover)). Admission is per constituent PR in
+`merge_group.base_sha..merge_group.head_sha` (#8082): every constituent commit
+must form a linear single-parent squash chain, bind to its live PR head and
+queue entry, pass candidate/cut/review/thread admission, and belong to the
+base repository before self-hosted runners are selected. The workflow also
+still requests full PR qualification on the explicit `merge-ready` label and
+retains manual dispatch. Ordinary main/master product replay is retired;
+[the landed observer](CI.md#main-health-sentinel) reads exact native G=M proof. The branch summary names
 `Ripr Rust Small Result` (application 15368); a complete current enforcement
 readback is still required before changing settings, and whether the repository's
 merge queue is enabled for `main` is a live setting this document does not
@@ -30,9 +33,9 @@ remain separate states.
 ## Who owns the change
 
 Development publication, updates and review use no Actions workflow after the
-#4842 auxiliary-trigger retirement. The two legacy label subscribers and the
-required caller's main cache writer remain explicit cutover obligations; source
-retirement alone does not establish the final zero-label/native-queue state.
+#4842 auxiliary-trigger retirement. Label cutover and hosted App activation remain
+open. Main replay is retired with full H/G protection, opportunistic caches and
+mandatory cold recomputation; no recurring warmer is introduced (#7827).
 See [the event inventory](CI.md#development-events-and-retained-bootstrap-route).
 
 This source stage retains the installed required H producer. While GitHub still
@@ -156,8 +159,9 @@ Sequence the rollout:
    Keep full legacy PR qualification during the bounded queue bootstrap.
 4. Apply/read back queue enforcement through #4838. Demonstrate an actual native
    queue transaction before changing protected PR success to cheap admission.
-5. Retire duplicate expensive label/main-push and child routes coherently. Keep
-   cheap main reconciliation and distinct incident/deep/release obligations.
+5. Retire the remaining duplicate label and child routes coherently. The bounded
+   main-push retirement already keeps full H/G authority, cold recomputation and
+   cheap landed observation. Distinct incident/deep/release obligations remain.
 6. Observe a real operating cohort before declaring economics or adoption accepted.
 
 Rollback restores and verifies full PR qualification before queue-only protection

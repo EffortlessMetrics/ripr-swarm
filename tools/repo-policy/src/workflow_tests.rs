@@ -1133,7 +1133,12 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             None,
             RoutedRustEventRoute::WorkflowNotTriggered,
         ),
-        ("push", None, None, RoutedRustEventRoute::LaunchFullGate),
+        (
+            "push",
+            None,
+            None,
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
         (
             "workflow_dispatch",
             None,
@@ -1269,8 +1274,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "|| [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\"",
         ),
         (
-            "more than one queued PR",
-            "[ \"$parents\" = \"1\" ] && [ \"$parent\" = \"$GROUP_BASE_SHA\" ] && [[ \"$subject\" == *\"(#${pr})\" ]]",
+            "single-parent linear chain",
+            "[ -n \"${p1:-}\" ] && [ -z \"${p2_extra:-}\" ] && [ \"$p1\" = \"$expected_parent\" ]",
         ),
         (
             "bind the queue ref sha",
@@ -1278,11 +1283,23 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         ),
         (
             "PR ref to still name the live head",
-            "[ \"$fetched\" = \"$head\" ]",
+            "[ \"$fetched\" = \"$c_head\" ]",
+        ),
+        (
+            "constituent from its own changed paths",
+            "if classify_constituent_docs \"$c_files\"",
+        ),
+        (
+            "tip with its own docs-only classification",
+            "docs-only: ${{ steps.entry.outputs.tip_docs_only || needs.detect-docs-only.outputs.docs_only || 'false' }}",
+        ),
+        (
+            "constituents with their own docs-only classifications",
+            "while IFS=$'\\t' read -r c_pr c_head c_docs_only; do",
         ),
         (
             "tree to the live head merged onto the group base",
-            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${GROUP_HEAD_SHA}^{tree}\")\" ]",
+            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${c_sha}^{tree}\")\" ]",
         ),
         (
             "same-head succession read as the last live eligibility check",
@@ -1551,6 +1568,26 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "job {job} must be guarded against nonrequest labels: {violations:?}"
         );
     }
+}
+
+#[test]
+fn routed_rust_main_replay_retirement_uses_the_actual_event_declaration() {
+    let workflow = include_str!("../../../.github/workflows/routed-rust.yml");
+    assert_eq!(
+        routed_rust_event_route(workflow, "push", None, None),
+        RoutedRustEventRoute::WorkflowNotTriggered
+    );
+    let restored = workflow.replacen("on:\n", "on:\n  push:\n    branches: [main, master]\n", 1);
+    assert_ne!(restored, workflow);
+    assert_eq!(
+        routed_rust_event_route(&restored, "push", None, None),
+        RoutedRustEventRoute::LaunchFullGate
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&restored)
+            .iter()
+            .any(|finding| finding.contains("must not replay ordinary main-push"))
+    );
 }
 
 #[test]

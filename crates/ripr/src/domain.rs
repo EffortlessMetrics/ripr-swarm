@@ -143,6 +143,7 @@ pub use ripr_contract::domain::TestCandidateRow;
 pub use ripr_contract::domain::TestCandidateSet;
 pub use ripr_contract::domain::TestEvidenceEntry;
 pub use ripr_contract::domain::TestEvidenceSummary;
+pub(crate) use ripr_contract::domain::UNREFERENCED_IN_WORKSPACE;
 pub use ripr_contract::domain::ValueContext;
 pub use ripr_contract::domain::ValueFact;
 pub use ripr_contract::domain::actionable_verify_source_is_supported;
@@ -174,7 +175,9 @@ pub(crate) use ripr_contract::domain::is_unselected_input_reason;
 pub(crate) use ripr_contract::domain::normalize_transport_path;
 #[cfg(feature = "lang-perl")]
 pub(crate) use ripr_contract::domain::perl_fact_packet_guidance;
+pub(crate) use ripr_contract::domain::pytest_verify_interpreter;
 pub(crate) use ripr_contract::domain::python_pytest_verify_display;
+pub(crate) use ripr_contract::domain::python_pytest_verify_display_for;
 pub(crate) use ripr_contract::domain::python_unittest_verify_display;
 pub(crate) use ripr_contract::domain::row_exact_discriminator_fact;
 pub(crate) use ripr_contract::domain::rust_markers_at;
