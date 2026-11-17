@@ -924,7 +924,15 @@ export class AgentHandoffController {
     // to another action: when the start itself is inert (for example while
     // source files are uncommitted), say so instead of silently opening the
     // related test or suggesting a refresh that cannot help.
+    const generation = this.host.getStartGeneration();
     const blocked = await this.serverBlockedStart(editor.document.uri, diagnostic.range);
+    if (
+      !this.host.actionRootStillCurrent(generation, editor.document.uri, (target) =>
+        this.host.copyActionRootBlocker(target)
+      )
+    ) {
+      return;
+    }
     if (blocked?.actionName === REPAIR_START_ACTION_NAME) {
       this.host.runtime.showInformationMessage(`ripr cannot start this repair yet. ${blocked.reason}`);
       return;

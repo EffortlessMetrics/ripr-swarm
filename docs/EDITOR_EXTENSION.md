@@ -351,8 +351,8 @@ without re-running workspace analysis.
 ### Start Current Repair
 
 The `ripr: Start Current Repair` command is editor-side orchestration over the
-current projected gap. It selects the current or nearest `ripr` gap diagnostic
-(or, when there is none, the nearest seam diagnostic), asks the LSP for the existing code actions at that diagnostic range, and runs
+current projected gap. It selects the `ripr` gap or seam diagnostic that
+contains the cursor, or else the nearest one, asks the LSP for the existing code actions at that diagnostic range, and runs
 one of those already-bounded actions. It does not read report files, parse hover
 text, rerun hidden analysis, generate tests, edit source, or change gate
 authority.
