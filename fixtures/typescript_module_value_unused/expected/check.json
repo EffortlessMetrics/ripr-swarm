@@ -4,7 +4,7 @@
   "mode": "fast",
   "root": "fixtures/typescript_module_value_unused/input",
   "config_path": "<cwd>/fixtures/typescript_module_value_unused/input/ripr.toml",
-  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"rust","files":0},{"language":"typescript","files":1}]},
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":1,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":0},{"language":"typescript","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:35781e9143f4cfc1","base_revision":null,"input_identity":"sha256:4175f38a30defc95f5e8c44eedc6805467ac743da0ec3fe0fce5bd4fe3d1c24e","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -13,15 +13,15 @@
     {
       "id": "probe:src_sentinel.ts:typescript_preview:54306095",
       "canonical_gap_id": "gap:typescript:typescript_preview:54306095",
-      "classification": "static_unknown",
-      "severity": "note",
+      "classification": "no_static_path",
+      "severity": "warning",
       "confidence": 0.40,
       "confidence_basis": [
         {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
         {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
-        {"code": "discriminator_not_established", "summary": "whether a test checks this behavior is not established"}
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
       ],
-      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.",
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_sentinel.ts:typescript_preview:54306095",
         "family": "side_effect",
@@ -32,25 +32,25 @@
         "owner": "typescript:src/sentinel.ts::stop"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `stop`"},
+        "reach": {"state":"no","confidence":"low","summary":"0 related test(s) found for owner `stop`"},
         "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
         "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
-        "observe": {"state":"unknown","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
-        "discriminate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter: the related tests reach the changed owner only through code that passes it, or a function that leads to it, as a value (a callback or a combinator-built constant); when that value runs is not modeled, so discriminate unknown (RIPR-SPEC-0243)."}
+        "observe": {"state":"no","confidence":"low","summary":"Strongest extracted oracle kind: `unknown` (rank 0)"},
+        "discriminate": {"state":"no","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands."}
        },
       "evidence_stages": [
-        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"reach","state":"no","confidence":"low","basis":[{"code":"no_related_test","summary":"no related test reaches the changed owner"}]},
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
-        {"stage":"observe","state":"unknown","confidence":"low"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}]}
+        {"stage":"observe","state":"no","confidence":"low"},
+        {"stage":"discriminate","state":"no","confidence":"low"}
       ],
-      "evidence_path": ["reach yes: 1 related test(s) found for owner `stop`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator unknown: TypeScript preview adapter: the related tests reach the changed owner only through code that passes it, or a function that leads to it, as a value (a callback or a combinator-built constant); when that value runs is not modeled, so discriminate unknown (RIPR-SPEC-0243).", "local flow reaches call effect: export const stop = Symbol('stop'); (line 2)", "related test tests/sentinel.test.ts:3 collect skips the skip sentinel uses strong exact value oracle: expect(...).toEqual(...)"],
+      "evidence_path": ["reach no: 0 related test(s) found for owner `stop`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation no: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator no: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "local flow reaches call effect: export const stop = Symbol('stop'); (line 2)"],
       "flow_sinks": [
         {"kind":"call_effect","text":"export const stop = Symbol('stop');","line":2}
       ],
-      "evidence": ["owner: stop", "typescript_oracle_observed: collect([1, skip, 2])", "typescript_oracle_expected: [1, 2]", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/sentinel.test.ts:5", "gap_state: unknown", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/sentinel.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_sentinel.ts:typescript_preview:54306095;owner=stop", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related tests reach `stop` only through callback or value-passing callers (`collect`); static evidence cannot confirm whether the changed behavior reaches their assertions, so whether a test checks the changed behavior is not established either way.", "TypeScript preview actionability `unknown` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target check or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
+      "evidence": ["owner: stop", "gap_state: unknown", "actionability_category: missing_context", "why_not_actionable: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route", "repair_route: add trusted related-test matching for this owner shape before emitting a repair packet", "missing_actionability_fields: related_test_or_observer, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/sentinel.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_sentinel.ts:typescript_preview:54306095;owner=stop", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["No trusted TypeScript module-initializer observer for `stop`. Direct `expect(IMPORTED_CONST)...` and `expect(namespace.EXPORT)...` observers are supported, but helper-derived values, shadowed aliases, dynamic initialization, and non-expect references stay advisory in preview.", "TypeScript preview actionability `unknown` / `missing_context`: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route. Repair route: add trusted related-test matching for this owner shape before emitting a repair packet"],
       "assertion_texts": {
       },
       "activation": {
@@ -63,18 +63,8 @@
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 1,
+      "related_tests_total": 0,
       "related_tests": [
-        {
-          "name": "collect skips the skip sentinel",
-          "file": "tests/sentinel.test.ts",
-          "line": 3,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "expect(...).toEqual(...)",
-          "relation_reason": "helper_owner_call",
-          "relation_confidence": "medium"
-        }
       ],
       "typescript_preview_card": {
         "authority_boundary": "preview_advisory_only",
@@ -89,33 +79,29 @@
           "This card is advisory and is not a repair packet."
         ],
         "missing_discriminator": null,
-        "oracle_kind": "exact_value",
-        "oracle_strength": "strong",
+        "oracle_kind": "unknown",
+        "oracle_strength": "none",
         "owner": "stop",
         "owner_kind": "module_function",
         "probe_family": "side_effect",
-        "related_test": {
-          "file": "tests/sentinel.test.ts",
-          "line": 3,
-          "name": "collect skips the skip sentinel"
-        },
+        "related_test": null,
         "repair_packet_ready": false,
-        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "repair_route": "add trusted related-test matching for this owner shape before emitting a repair packet",
         "source": "check_typescript_preview",
         "static_limits": [],
-        "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
+        "suggested_assertion_shape": "Add an exact call/output/log assertion for the changed side effect.",
         "verify": {
           "command": null
         },
-        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
+        "why_not_actionable": "no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route"
       },
       "preview_actionability": {
-        "actionability_category": "missing_target_shape",
+        "actionability_category": "missing_context",
         "authority_boundary": "preview_advisory_only",
-        "evidence_needed_to_promote": "safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries",
+        "evidence_needed_to_promote": "trusted related test or observer, target shape, verify command, receipt command, and edit boundaries",
         "gap_state": "unknown",
         "missing_actionability_fields": [
-          "repair_kind",
+          "related_test_or_observer",
           "target_test_shape",
           "verify_command",
           "receipt_command",
@@ -137,15 +123,15 @@
           }
         ],
         "repair_packet_ready": false,
-        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "repair_route": "add trusted related-test matching for this owner shape before emitting a repair packet",
         "unlock_condition": null,
-        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
+        "why_not_actionable": "no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route"
       },
-      "stop_reasons": ["propagation_evidence_unknown"],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
-      "recommended_next_step": "TypeScript preview advisory: the related test reaches the changed owner only through a callback or a value passed between functions, so no new assertion is needed on that evidence; no repair packet is emitted.",
-      "suggested_next_action": "TypeScript preview advisory: the related test reaches the changed owner only through a callback or a value passed between functions, so no new assertion is needed on that evidence; no repair packet is emitted.",
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "TypeScript preview advisory: module initializer observer is missing context; add a direct `expect(IMPORTED_CONST).toBe(...)` or `expect(namespace.EXPORT).toEqual(...)` observer when safe, and keep helper-derived or dynamic initialization evidence advisory.",
+      "suggested_next_action": "TypeScript preview advisory: module initializer observer is missing context; add a direct `expect(IMPORTED_CONST).toBe(...)` or `expect(namespace.EXPORT).toEqual(...)` observer when safe, and keep helper-derived or dynamic initialization evidence advisory.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "module_function",

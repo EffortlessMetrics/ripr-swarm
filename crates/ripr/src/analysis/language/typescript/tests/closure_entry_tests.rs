@@ -467,11 +467,13 @@ fn an_owner_past_the_closure_entry_cap_keeps_none() {
     assert!(entries(&exports(MAX_CLOSURE_ENTRIES_PER_OWNER + 1), "reviver").is_empty());
 }
 
-/// `stop` is a call-built constant that `collect` reads. A test that names
-/// `stop` itself keeps the `module_value_use` reading (#8568); only a test
-/// that reaches it solely through `collect` reads the closure path.
-const SENTINEL: &str = "export const skip = Symbol('skip');\nexport const stop = Symbol('stop');\n\nexport function collect(values: unknown[]): unknown[] {\n  const out: unknown[] = [];\n  for (const value of values) {\n    if (value === stop) break;\n    if (value === skip) continue;\n    out.push(value);\n  }\n  return out;\n}\n";
-const SENTINEL_LINE: &str = "export const stop = Symbol('stop');";
+/// `stop` is a call-built constant (a factory product, so a graph node; a
+/// `Symbol(...)` constant is a B2 value instead) that `collect` reads. A test
+/// that names `stop` itself keeps the `module_value_use` reading (#8568);
+/// only a test that reaches it solely through `collect` reads the closure
+/// path.
+const SENTINEL: &str = "function sentinel(name: string): object {\n  return { name };\n}\n\nexport const skip = sentinel('skip');\nexport const stop = sentinel('stop');\n\nexport function collect(values: unknown[]): unknown[] {\n  const out: unknown[] = [];\n  for (const value of values) {\n    if (value === stop) break;\n    if (value === skip) continue;\n    out.push(value);\n  }\n  return out;\n}\n";
+const SENTINEL_LINE: &str = "export const stop = sentinel('stop');";
 
 fn sentinel_finding(label: &str, test_source: &str) -> Result<Finding, String> {
     finding_at(

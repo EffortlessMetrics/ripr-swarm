@@ -414,7 +414,9 @@ wrong credits.
    availability in a test build. The existing `cfg_predicates` owner evaluates
    `test = true`, `all`/`any`/`not` and nested `cfg_attr`; `all()` is true and
    `any()` false. Feature/target/custom atoms remain unknown and cannot grant
-   credit. Ordinary lint/doc attributes and definitely enabled forms such as
+   credit. The exception for an owner and test compiled only under the same
+   refused declaration is #14463's shared gate (RIPR-SPEC-0240). Ordinary
+   lint/doc attributes and definitely enabled forms such as
    `cfg(test)` or `any(test, feature = "unknown")` remain supported. Raw attribute
    heads (including raw introduced attributes) remain unestablished; refusing
    them does not alter the cached source-role classifier. Malformed
@@ -2629,8 +2631,14 @@ A literal that takes an earlier guard or the tail, a pinned value that
 neither version returns, a non-literal argument, an `Err(..)` result whose
 payload the subset leaves unevaluated, and two versions that agree at the
 pinned input (`100 / 5` and `100 - 80`) all keep their earlier reading.
-Anything the subset cannot read refuses. The tail `if`/`else` form waits on
-the branch probe of #14385.
+Anything the subset cannot read refuses.
+
+The tail `if`/`else` form is read the same way. The subset reads a tail
+`if C { A } else if D { B } else { E }` whose branch blocks hold only their
+values as the guards `C -> A`, `D -> B` and the tail `E`. A changed branch
+value on its own line (the #14385 branch probe) is credited by the same per-call
+rule when the diff changes only that line. A chain without a final `else`, a
+branch holding a statement, or code after the chain is outside the subset.
 
 ## Required Evidence
 

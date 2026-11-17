@@ -229,15 +229,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — typescript_module_value_unused (20)
-
-Reason:
-RIPR-SPEC-0243 closure continuation (#13592): the test calls collect, which reads stop, so reach is related and reads static_unknown
-
-Command:
-`cargo xtask goldens bless typescript_module_value_unused --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

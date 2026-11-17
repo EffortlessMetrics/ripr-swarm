@@ -64,16 +64,22 @@ pub(crate) fn owners_from_program(
     // #7812: keep the original owner when `export default ident`
     // snapshots the binding before that reassignment.
     owners = without_reassigned_esm_bindings(&program.body, owners);
-    let (entries, outbound) = module_entries_and_outbound(
+    let (entries, outbound, value_names) = module_entries_and_outbound(
         &program.body,
         source,
         &extract_imports_for_test_file(&program.body),
     );
     for owner in &mut owners {
+        // A `ModuleFunction` owner is a non-callable `const` initializer. A
+        // followable read-only value node (#13592 B2) keeps its reader
+        // entries as they are; any other (a call-built constant) reads every
+        // entry as a closure entry.
         if owner.class_name.is_none()
             && let Some(owner_entries) = entries.get(&owner.name)
         {
-            owner.module_entries = if owner.owner_kind == OwnerKind::ModuleFunction {
+            owner.module_entries = if owner.owner_kind == OwnerKind::ModuleFunction
+                && !value_names.contains(&owner.name)
+            {
                 // A call-built constant runs its callbacks when the value is
                 // invoked, which the graph does not model (#13592): even a
                 // bare call of it (`Rule(s)`) reaches its initializer's code
