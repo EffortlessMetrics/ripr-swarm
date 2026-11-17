@@ -466,3 +466,46 @@ fn an_owner_past_the_closure_entry_cap_keeps_none() {
     );
     assert!(entries(&exports(MAX_CLOSURE_ENTRIES_PER_OWNER + 1), "reviver").is_empty());
 }
+
+/// `stop` is a call-built constant that `collect` reads. A test that names
+/// `stop` itself keeps the `module_value_use` reading (#8568); only a test
+/// that reaches it solely through `collect` reads the closure path.
+const SENTINEL: &str = "export const skip = Symbol('skip');\nexport const stop = Symbol('stop');\n\nexport function collect(values: unknown[]): unknown[] {\n  const out: unknown[] = [];\n  for (const value of values) {\n    if (value === stop) break;\n    if (value === skip) continue;\n    out.push(value);\n  }\n  return out;\n}\n";
+const SENTINEL_LINE: &str = "export const stop = Symbol('stop');";
+
+fn sentinel_finding(label: &str, test_source: &str) -> Result<Finding, String> {
+    finding_at(
+        label,
+        &vec![
+            ("src/sentinel.ts", SENTINEL.to_string()),
+            ("tests/sentinel.test.ts", test_source.to_string()),
+        ],
+        "src/sentinel.ts",
+        SENTINEL_LINE,
+        "stop",
+    )
+}
+
+#[test]
+fn a_test_naming_a_call_built_constant_keeps_its_value_use_reading() -> Result<(), String> {
+    let through_caller = sentinel_finding(
+        "closure-sentinel-caller",
+        "import { expect, it } from \"vitest\";\nimport { collect } from \"../src/sentinel\";\n\nit(\"keeps plain values\", () => {\n  expect(collect([1, 2])).toEqual([1, 2]);\n});\n",
+    )?;
+    assert_closure_related("closure-sentinel-caller", &through_caller);
+
+    let named = sentinel_finding(
+        "closure-sentinel-named",
+        "import { expect, it } from \"vitest\";\nimport { collect, skip, stop } from \"../src/sentinel\";\n\nit(\"halts at stop\", () => {\n  expect(collect([1, skip, 2, stop, 3])).toEqual([1, 2]);\n});\n",
+    )?;
+    assert_eq!(
+        named.class,
+        ExposureClass::WeaklyExposed,
+        "a test that names the constant reads module_value_use, not the closure path: {named:?}"
+    );
+    assert!(
+        !relates_through_entry(&named),
+        "the named use must not relate through a module entry: {named:?}"
+    );
+    Ok(())
+}

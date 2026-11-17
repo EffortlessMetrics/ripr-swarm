@@ -2059,6 +2059,26 @@ pub(crate) fn related_test_candidates<'a>(
                 .map(|relation| related_candidate(test, relation, owner, alias_map, workspace_root))
         })
         .collect();
+    let heuristic_candidates = || -> Vec<TypeScriptRelatedCandidate<'a>> {
+        all_tests
+            .iter()
+            .filter(in_owner_package)
+            .filter_map(|test| {
+                heuristic_relation(test, owner, alias_map, workspace_root).map(|relation| {
+                    related_candidate(test, relation, owner, alias_map, workspace_root)
+                })
+            })
+            .collect()
+    };
+    // A test that names a call-built constant itself keeps the
+    // `module_value_use` reading (#8568): a direct value use is nearer
+    // evidence than a closure path through a function that reads it, so its
+    // closure entries apply only when no test names it (#13592).
+    let mut heuristic_tried = false;
+    if candidates.is_empty() && owner.owner_kind == OwnerKind::ModuleFunction {
+        candidates = heuristic_candidates();
+        heuristic_tried = true;
+    }
     // Same-module entry reach is admitted only when no test calls the owner
     // itself, so a direct relation's oracle alone decides exposure.
     if candidates.is_empty() && !owner.module_entries.is_empty() {
@@ -2098,16 +2118,8 @@ pub(crate) fn related_test_candidates<'a>(
             })
             .collect();
     }
-    if candidates.is_empty() {
-        candidates = all_tests
-            .iter()
-            .filter(in_owner_package)
-            .filter_map(|test| {
-                heuristic_relation(test, owner, alias_map, workspace_root).map(|relation| {
-                    related_candidate(test, relation, owner, alias_map, workspace_root)
-                })
-            })
-            .collect();
+    if candidates.is_empty() && !heuristic_tried {
+        candidates = heuristic_candidates();
     }
     sort_related_candidates(&mut candidates);
     candidates

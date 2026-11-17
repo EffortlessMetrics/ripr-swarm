@@ -990,7 +990,10 @@ Candidates come from the first non-empty tier:
    no bare-call path within its own bound reaches the owner from that export.
    A call-built constant owner (`ModuleFunction`) reads every entry as a
    closure entry, a bare call of it (`Rule(s)`) included, because what runs is
-   the callback it was built from. An owner with more than 32 closure entries
+   the callback it was built from. A test that names the constant itself
+   keeps the `module_value_use` relation (#8568) and its closure entries are
+   not consulted, so a direct value use never reads worse than before. An
+   owner with more than 32 closure entries
    (`MAX_CLOSURE_ENTRIES_PER_OWNER`) keeps none of them and reads as it did
    before closure reach (possibly `no_static_path`); the cap is not yet
    disclosed. A reassignment is a bare identifier target (`x = ...`, `x++`,
