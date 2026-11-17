@@ -100,6 +100,62 @@ To add a scenario, append it there and rerun with `--write-baseline`. Good
 additions are changes agents get wrong today, noisy reports, and silent
 controls. Keep each crate dependency-free so the eval stays offline.
 
+## Agent-in-the-loop trials
+
+The routes above replay ripr's output without a model. To see whether a real
+agent writes better tests, or spends fewer tokens, with ripr than without:
+
+```bash
+cargo xtask agent-eval trial-setup <fresh-dir>   # one repo per gap scenario
+# give an agent each repo, with or without ripr; it adds tests under tests/
+cargo xtask agent-eval trial-score <fresh-dir>   # judges what it left behind
+```
+
+`trial-score` does not ask ripr. For every keyed gap it puts that one changed
+line back to its base text and runs `cargo test`. The gap counts as caught
+only when the suite passes on the changed code, fails with the line reverted,
+and `src/lib.rs` still matches the scenario's head text. A run that does
+not compile or report a test result (for example a revert that breaks the
+build) is recorded as not established and never counts as a catch; the
+command still exits 0. A run that cannot be measured at all (cargo missing, a
+timeout, a signal), a missing repository or a scoring error leaves that
+repository at zero caught, still in the denominator, and makes the command
+exit nonzero. While it scores, the scorer keeps the agent's `src/lib.rs` in
+`.trial-score-agent-lib.rs` (published whole through a staging file) and
+puts it back on every path; if a score is interrupted, the next run restores
+from that copy first. Controls: a fresh setup scores 0/6, the reference tests
+score 6/6, and the weak tests score 0/6.
+
+Limits: agents must put tests under `tests/` (a `#[cfg(test)]` module in
+`src/lib.rs` counts as a production edit). The scorer does not check
+`Cargo.toml`, `build.rs`, `.cargo/config.toml` or edits to
+`tests/existing.rs`, and a test that
+asserts the source text itself (`include_str!`) would count as a catch, so
+read the agent's tests before trusting a surprising score. Record each
+arm's tokens and tool calls next to its score. Use a fresh directory per arm
+and per run; if `trial-setup` stops partway, delete the directory and run it
+again.
+
+### First pilot (2026-11-11, one run per cell, Haiku 5.5, debug ripr with sources at main `2ab9f908`)
+
+Same task text in both arms; the ripr arm also got the `init --agents` block
+and the binary path.
+
+| arm | keyed gaps caught | tokens (5 runs) | tool calls | wall time |
+|---|---:|---:|---:|---:|
+| without ripr | 6/6 | 260,146 | 47 | 102 s |
+| with ripr | 6/6 | 296,330 | 98 | 235 s |
+
+Token totals are the subagent totals the host reported, including the fixed
+system prompt each run pays (about 50k), so the difference (about +36k, +14%)
+is the part ripr added. On these easy tasks both arms hit the ceiling: ripr
+added no caught gaps but doubled tool calls and wall time. Two ripr runs
+(`changed_constant_return`, `struct_field`) wrote the right test and then
+stopped on `verify=refused` (#14325, #14326), which is the loop failure the
+routes table measures. One run per cell supports no rate claim. It does show
+where the cost goes and which scenarios need to be harder before a quality
+difference can appear.
+
 ## Baseline (debug build)
 
 Route totals are the `routes` rows at the top of `baseline.json`. What they show:
