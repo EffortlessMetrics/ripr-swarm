@@ -829,44 +829,50 @@ index 1111111..2222222 100644
     )
 }
 
-/// An inner attribute on the owner's block can compile out the tail this
-/// reading compares (#14852 companion finding), so a body holding any `#`
-/// is never credited.
+/// An inner attribute on the owner's block (`#![cfg(any())]` compiles the
+/// tail out; `cfg_attr` may carry any attribute) is not a gate the shared
+/// identity reads (#14952), so a body holding any `#` is never credited.
 #[test]
 fn an_attribute_inside_the_owner_body_is_not_exposed() -> Result<(), String> {
-    let lib = "pub fn f(x: i32) -> i32 {
-    #![cfg_attr(any(), rustfmt::skip)]
+    for attribute in ["#![cfg(any())]", "#![cfg_attr(any(), rustfmt::skip)]"] {
+        let lib = format!(
+            "pub fn f(x: i32) -> i32 {{
+    {attribute}
     x
-}
+}}
 
 #[cfg(test)]
-mod tests {
+mod tests {{
     use super::*;
     #[test]
-    fn pins() {
+    fn pins() {{
         assert_eq!(f(5), 5);
-    }
-}
-";
-    let patch = "diff --git a/src/lib.rs b/src/lib.rs
+    }}
+}}
+"
+        );
+        let patch = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs
 index 1111111..2222222 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -1,4 +1,4 @@
- pub fn f(x: i32) -> i32 {
-     #![cfg_attr(any(), rustfmt::skip)]
+ pub fn f(x: i32) -> i32 {{
+     {attribute}
 -    -x
 +    x
- }
-";
-    let findings = TempRepo::create(lib, patch)?.findings()?;
-    let finding = tail_finding(&findings, 3, "x")?;
-    assert!(
-        !matches!(
-            finding.class,
-            ExposureClass::Exposed | ExposureClass::WeaklyExposed
-        ) && finding.ripr.propagate.state != StageState::Yes,
-        "{finding:?}"
-    );
+ }}
+"
+        );
+        let findings = TempRepo::create(&lib, &patch)?.findings()?;
+        let finding = tail_finding(&findings, 3, "x")?;
+        assert!(
+            !matches!(
+                finding.class,
+                ExposureClass::Exposed | ExposureClass::WeaklyExposed
+            ) && finding.ripr.propagate.state != StageState::Yes,
+            "{attribute}: {finding:?}"
+        );
+    }
     Ok(())
 }
