@@ -51,8 +51,7 @@ unknown checks are not passed. A settings-read 403 is not a blanket blocker or
 a reason to request broader access. An ordinary PR/check read failure is a
 separate evidence gap. After required proof and review, the native merge queue is
 the installed landing route for ordinary PRs; landing is only via native enqueue.
-Direct expected-head squash and
-`.agents/skills/finish-pr/scripts/guarded_merge.py` are a refused
+Direct expected-head squash and the guarded merge script are a refused
 historical route (#14247), not an alternative landing route, and must not be used
 after a rejection or for any other reason. Verify the current required
 Result and all other applicable checks; do not arm auto-merge or retry without
