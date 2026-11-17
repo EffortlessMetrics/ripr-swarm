@@ -1109,10 +1109,14 @@ for this workspace's tests. Such a finding counts in `gaps=`, its row prints
 ``missing=no test calls `<owner>`; assert its exact result in a new test``
 when no missing discriminator is named, and it suppresses the all-limited
 `stop=`, and gap rows fold on that printed hint. The verdict corpus already
-scores the same shape as a gap. The human check triage and the JSON canonical
-next action still classify it as static-limited (`triage::is_static_limited`
-is true for the `no_static_path` class), so this agent row is the only surface
-that names it as a gap until those surfaces adopt the same predicate. Every other `no_static_path`, unknown or static-limited finding stays
+scores the same shape as a gap. Since #14919 the human check triage and the
+JSON canonical next action read the same predicate: `triage::is_static_limited`
+is false for such a finding, so `Start here` selects it with
+`State: a test gap to inspect or repair`, it ranks by class among the gaps
+(behind every gap whose repair route prints, since the repair gate still
+offers it no start), and the
+JSON `canonical_next_action` stops on `top_gap` instead of `static_limited`.
+Every other `no_static_path`, unknown or static-limited finding stays
 a fail-closed limit: an owner some code calls on a path ripr cannot trace may
 already be tested, so reading it as a gap would be a wrong actionable signal.
 
