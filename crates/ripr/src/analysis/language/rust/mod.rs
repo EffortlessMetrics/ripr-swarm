@@ -2026,6 +2026,11 @@ fn apply_rust_no_static_path_limit(
         // #11719: last, so no traced or structural witness is displaced.
         replace_witnessed_no_path_infection_summary(finding);
         apply_rust_trait_dispatch_ambiguity_limit(finding, &owner_name, &ambiguity);
+    } else {
+        // #14951: related rows that are all examined-only land here rather
+        // than above; with no witness either, the same boundary-input limit
+        // applies under the same guards.
+        boundary_input::apply_limit(finding, probe, index);
     }
 }
 
