@@ -1637,7 +1637,10 @@ int rename(const char *old, const char *new) {
     int result = next(old, new);
     const char *target = getenv("RIPR_TRUST_HOOK_TARGET");
     if (result || !target || strcmp(new, target)) return result;
-    if (!strcmp(getenv("RIPR_TRUST_HOOK_MODE"), "stop-receipt")) _exit(79);
+    const char *mode = getenv("RIPR_TRUST_HOOK_MODE");
+    const char *marker_path = getenv("RIPR_TRUST_HOOK_MARKER");
+    if (!mode || !marker_path) _exit(89);
+    if (!strcmp(mode, "stop-receipt")) _exit(79);
     FILE *file = fopen(new, "r"); if (!file) _exit(90);
     if (fseek(file, 0, SEEK_END)) _exit(94);
     long size = ftell(file); if (size < 0 || size > 10485760) _exit(95);
@@ -1646,10 +1649,10 @@ int rename(const char *old, const char *new) {
     fclose(file); body[size] = 0;
     int retained = strstr(body, "\"terminal_artifacts\"") && strstr(body, "\"role\": \"focused_test_result\"");
     free(body);
-    if (retained && (!strcmp(getenv("RIPR_TRUST_HOOK_MODE"), "stop-retention") || !strcmp(getenv("RIPR_TRUST_HOOK_MODE"), "change-manifest"))) {
-        FILE *marker = fopen(getenv("RIPR_TRUST_HOOK_MARKER"), "w");
+    if (retained && (!strcmp(mode, "stop-retention") || !strcmp(mode, "change-manifest"))) {
+        FILE *marker = fopen(marker_path, "w");
         if (!marker) _exit(98); fclose(marker);
-        if (!strcmp(getenv("RIPR_TRUST_HOOK_MODE"), "stop-retention")) _exit(79);
+        if (!strcmp(mode, "stop-retention")) _exit(79);
         unsetenv("LD_PRELOAD");
         if (system("python3 \"$RIPR_TRUST_HOOK_SCRIPT\"") != 0) _exit(91);
     }

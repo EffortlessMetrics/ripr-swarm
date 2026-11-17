@@ -1207,6 +1207,7 @@ is not decided here.
 - `crates/ripr/src/app/repair_attempt/mod.rs::tests::focused_restore_refuses_another_finish_or_committed_evidence` (#13203)
 - `crates/ripr/tests/python_repair_attempt.rs::failed_focused_apply_record_publication_stays_retryable` (#13203)
 - `crates/ripr/tests/python_repair_attempt.rs::focused_trust_interruption_after_receipt_retries_apply` (#13203)
+- `crates/ripr/tests/python_repair_attempt.rs::focused_pending_promotion_reports_replaced_trust_manifest_as_decision` (#13203)
 - `crates/ripr/tests/python_repair_attempt.rs::focused_trust_interruption_after_retention_recovers_missing_apply` (#13203)
 - `crates/ripr/tests/python_repair_attempt.rs::focused_apply_failure_does_not_restore_a_changed_terminal_manifest` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::focused_result_does_not_bind_a_replaced_test_file` (#13203)
