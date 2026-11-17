@@ -198,7 +198,30 @@ Test discovery:
   flat-layout package at the repository root imports without a `pythonpath`
   setting; bare `pytest path::node` fails collection there with
   `ModuleNotFoundError`. Both forms spell the interpreter `python`, which names
-  the virtual environment's interpreter on every platform
+  the virtual environment's interpreter on every platform when one is active;
+  the next item replaces it with a project venv interpreter when one exists
+- the pytest verify route's interpreter and confidence are decided once by the
+  Python producer, before findings leave the adapter (#13801). When the
+  selected root holds a project `.venv/bin/python` or `venv/bin/python`
+  (POSIX only; Windows keeps `python`), every generated pytest command
+  (`suggested_verify_command` and each `test_verify_command`) names that
+  root-relative interpreter, for example
+  `.venv/bin/python -m pytest path::node`. The venv's pytest is read
+  statically from its `site-packages` listing and `pyvenv.cfg`; nothing in
+  the checkout is executed. `suggested_verify_command_confidence` stays at the
+  classifier's value when pytest is present, becomes `low` when the venv
+  statically lacks pytest, and `medium` when its layout cannot be read
+  statically (system site-packages included, ambiguous `lib/python3.X`); the
+  fact rides as `suggested_verify_venv_pytest: present|missing|unknown`.
+  With no project venv the command keeps PATH `python` at its existing
+  confidence: a static producer cannot know whether system Python has pytest,
+  and a runtime probe would make reports and goldens host-dependent, so
+  `ripr doctor` checks PATH `python -m pytest` instead (RIPR-SPEC-0007). The
+  unittest route is unchanged. JSON (`evidence`, `repair_placement`,
+  `python_repair_card`), SARIF, GitHub, human, pilot and MCP gap evidence all
+  carry this one decision; renderers never read the filesystem, and the
+  native pytest route accepts only `python`, `.venv/bin/python` or
+  `venv/bin/python` as its program
 
 The default name prefix is case-sensitive and does not require an underscore:
 `test`, `testCamelCase`, and `test_with_underscore` all qualify. `_test_private`,
@@ -388,10 +411,18 @@ Known limits of this pass: directories a pytest `pythonpath` setting
 `sys.path` are not read, so a shadowing module reachable only through one is not
 detected; the model is one pytest invocation per project, so cross-project
 `sys.path` and `sys.modules` effects of a repository-wide run are not modeled,
-nor is a subproject directory used as the working directory; and the
-module-attribute credit sites (`boundary.rs`, `transitive_reach.rs`) match
-`owner_module_paths` directly and are not gated by the shadow, the same as the
-pre-existing rival-module case (#4566).
+nor is a subproject directory used as the working directory.
+The module-attribute sites go through the same identity gate (#14035): a module
+constant read as `pricing.LIMIT` binds a boundary value, `table.Table` after
+`import table` witnesses the owner's class for the same-class transitive-reach
+limitation, and the target prefix of a `patch("clock.time.time",
+return_value=...)` substitution or of a callee-only patch such as
+`patch("pricing.rate", return_value=3)` names the owner's module only while
+that module name identifies the owner for the test, so a test-local shadow
+(#13706) or a rival src-layout module (#4566) of that name gives none of them.
+The source-import reachability walk of `imported_call_operator` is deliberately
+not gated: a stricter walk would find fewer withholding operator definitions
+and so widen credit.
 A test that imports a free-function owner's name from a workspace module that
 defines its own function of that name, when no import reaches the owner's module,
 is not related to the owner even if its call text matches the name (#8759). The
@@ -1374,7 +1405,11 @@ read-out: the boolean the classifier uses is derived from the surfaced
   asserts a local the same test bound once to such a call as its whole value
   (`result = utils.sign(0)`, not `result = utils.sign(0) or 1`; #4567). The
   call or local must be an asserted operand: nested in another call
-  (`always_true(utils.sign(0))`) it is not the compared value. A later import
+  (`always_true(utils.sign(0))`) it is not the compared value. An exception
+  assertion compares no operand, so for it the call is read in the code the
+  assertion runs: its `with` body or its rule 13 callable
+  (`with pytest.raises(ValueError, match="blank"): utils.sign(0)`; #14090),
+  not when a `lambda` or nested `def`/`class` in that body defers it. A later import
   of the same name inside the test replaces the earlier binding, and the
   test's own `import pkg.mod as alias` is not a rebinding of `alias`. Those calls also bind boundary activation, so the
   relational-boundary gate still applies to them.
@@ -1887,6 +1922,42 @@ A conjunction is false when any conjunct is false, so a conjunct this reader
 cannot evaluate no longer hides a false one (`vip and total > 1000`); this
 also applies to live guarded lines and only moves a verdict from `exposed` to
 `weakly_exposed`.
+
+## Cross-Module Caller Amendment (2026-11-08, #12955)
+
+A top-level helper that no test calls itself, reached by a test only through a
+function of another module that imports it, no longer reads `no_static_path`.
+The first `helper_owner_call` hop may also enter from a top-level function of
+another module that binds the helper through `from <helper module> import
+<name>` (aliased or not) and bare-calls that binding; later hops stay in the
+file of the function they call, within the same three-hop bound, and past the
+module boundary only top-level functions are callers. A method of another
+module is never followed, because a test's bare call of its name is not shown
+to reach it. Such a
+test is related with the reach-only `cross_module_caller_call` relation: it
+carries no oracle, and when every related test is reached that way the finding
+is `static_unknown` with no repair card. Its limit is `missing_import_graph`,
+naming the caller and its file, unless a limit read from the changed line itself
+(for example `dynamic_dispatch`) applies first; either way the finding stays
+`static_unknown`. A test that also reaches the helper through a
+same-module caller keeps the existing `helper_owner_call` reading.
+
+The binding is read from the caller file's top-level import statements and
+top-level definitions only: the import's module must be the helper's module
+under the same provenance rules a test import uses (src-layout ambiguity and
+rival definitions included); it must be the only top-level import binding that
+local name; and no top-level `def` or `class` of the caller's file may share
+it. A module-level assignment, or a second import inside a `try`/`if` block,
+that rebinds a name a top-level import already binds is not seen, so that
+top-level binding can still make an edge; that only moves `no_static_path` to
+`static_unknown`. A binding that exists only inside a function or a `try`/`if`
+block makes no edge. A plain `import M` read as `M.helper(...)`, a star import, a parameter or
+local rebinding, a binding passed as a value rather than called, and a
+same-named function of another module make no edge. When more than 32
+top-level functions of other modules call the helper, none of them is followed; with no
+other related test the finding is `static_unknown` and says that reach through
+them was not checked, so a heavily imported helper never reads
+`no_static_path` on that account alone.
 
 ## Metrics
 

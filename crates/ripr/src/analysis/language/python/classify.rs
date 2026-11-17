@@ -1,4 +1,6 @@
-use super::approx_band::{PythonBandReading, PythonBandVerdict, python_band_reading};
+use super::approx_band::{
+    PythonBandReading, PythonBandSource, PythonBandVerdict, python_band_reading,
+};
 use super::arm_activation;
 use super::assertion_selection::{
     PythonAssertionFocus, PythonAssertionSelection, select_relevant_assertion,
@@ -26,9 +28,10 @@ use super::probe_shape::{
     python_infection_evidence, python_propagation_evidence,
 };
 use super::related_tests::{
-    PythonRelatedCandidate, PythonRelationKind, RelatedCandidateMemo, helper_owner_call_candidates,
-    python_repair_placement, related_test_candidates, related_tests_for_candidates,
-    sort_related_candidates, verify_command_for_test,
+    PythonRelatedCandidate, PythonRelationKind, RelatedCandidateMemo,
+    cross_module_callers_exceed_cap, helper_owner_call_candidates, python_repair_placement,
+    related_test_candidates, related_tests_for_candidates, sort_related_candidates,
+    verify_command_for_test,
 };
 use super::row_miss::{RowMissChange, annotate_row_misses};
 use super::sink_alignment::{
@@ -36,7 +39,7 @@ use super::sink_alignment::{
     enclosing_literal_pair,
 };
 use super::static_limits::{
-    LAMBDA_LIMIT_EVIDENCE, PythonStaticLimit, contains_lambda_keyword,
+    LAMBDA_LIMIT_EVIDENCE, PythonStaticLimit, contains_lambda_keyword, cross_module_reach_limit,
     heuristic_only_relation_limit, implicit_dunder_dispatch_limit, integer_literal_swap,
     module_object_rebind_limit, static_limit_for_focused_change, unpinned_equality_dunder_limit,
     unresolved_pytest_fixture_names,
@@ -126,6 +129,11 @@ pub(super) fn classify_change_with_source(
 pub(super) struct PythonNoBehaviorContext {
     pub(super) new_line_in_docstring: bool,
     pub(super) old_line_in_docstring: bool,
+    /// The changed line lies in the body of `if TYPE_CHECKING:`, which never
+    /// runs (`type_checking_block.rs`, #14156).
+    pub(super) new_line_type_checking_only: bool,
+    /// The paired old line lay in such a body of the old file.
+    pub(super) old_line_type_checking_only: bool,
     /// The changed line lies inside a string literal that crosses a line
     /// break, or the file could not be lexed to rule that out. A spacing or
     /// comment-looking change there edits the string (#10706).
@@ -265,9 +273,17 @@ fn classify_change_full<'a>(
     // tests notice a behavior change that does not exist. The change is a no-op only
     // when BOTH sides are non-behavioral: if real code was replaced by a docstring
     // (old line behavioral), keep analyzing rather than silently dropping it.
-    let new_is_noop = no_behavior.new_line_in_docstring || is_python_no_behavior_line(line_text);
-    let old_is_noop = old_line_text
-        .is_none_or(|old| no_behavior.old_line_in_docstring || is_python_no_behavior_line(old));
+    // A line in a type-checking-only block (#14156) is the same kind of fact:
+    // it never runs. Runtime code moved INTO such a block (old line
+    // behavioral) keeps its probe.
+    let new_is_noop = no_behavior.new_line_in_docstring
+        || no_behavior.new_line_type_checking_only
+        || is_python_no_behavior_line(line_text);
+    let old_is_noop = old_line_text.is_none_or(|old| {
+        no_behavior.old_line_in_docstring
+            || no_behavior.old_line_type_checking_only
+            || is_python_no_behavior_line(old)
+    });
     if new_is_noop && old_is_noop {
         return None;
     }
@@ -344,6 +360,7 @@ fn classify_change_full<'a>(
 /// Where a change is classified: its file, the line its evidence names, and
 /// the owner that holds it. A deleted line (#7587) names its own projected
 /// line while its owner is resolved from a live neighbour.
+#[derive(Clone)]
 pub(super) struct ChangeSite<'a> {
     pub(super) file: &'a Path,
     pub(super) line: usize,
@@ -356,6 +373,7 @@ pub(super) struct ChangeSite<'a> {
 /// to old-side coordinates and the old line number. The guarded-arm reader
 /// walks the guards around that line exactly as it does for a live one, so a
 /// deleted line that no observed input could enter is not credited.
+#[derive(Clone)]
 pub(super) struct OldGuardView<'a> {
     pub(super) owner: PythonOwner,
     pub(super) source: &'a str,
@@ -366,6 +384,11 @@ pub(super) struct OldGuardView<'a> {
 }
 
 /// Classify a change at a resolved owner.
+///
+/// A non-substituting related test is credited independently of mock-patched
+/// siblings (#13633): the finding is first read with the siblings set aside,
+/// and kept only when that reading is `exposed`. Any weaker reading falls back
+/// to the full read, where the siblings still keep their `mocked_module` limit.
 #[allow(
     clippy::too_many_arguments,
     reason = "resolved owner inputs plus explicit run-local origin context"
@@ -378,8 +401,66 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     all_tests: &'a [PythonTest],
     no_behavior: PythonNoBehaviorContext,
     owner_source: Option<&str>,
+    mut value_origins: Option<&mut crate::value_origins::ValueOrigins>,
+    mut related: Option<&mut RelatedCandidateMemo<'a>>,
+) -> Option<Finding> {
+    let mut dropped = false;
+    // The sibling-dropped pass is speculative: it records into a fresh scratch
+    // that is merged into the real receipts only when its result is returned.
+    let mut scratch = value_origins
+        .as_deref()
+        .map(|_| crate::value_origins::ValueOrigins::default());
+    let independent = classify_change_for_owner_inner(
+        site.clone(),
+        line_text,
+        old_line_text,
+        owners,
+        all_tests,
+        no_behavior,
+        owner_source,
+        scratch.as_mut(),
+        related.as_deref_mut(),
+        Some(&mut dropped),
+    );
+    let keep_independent = !dropped
+        || independent
+            .as_ref()
+            .is_some_and(|finding| finding.class == ExposureClass::Exposed);
+    if keep_independent {
+        if let (Some(real), Some(recorded)) = (value_origins.as_deref_mut(), scratch) {
+            real.extend(recorded);
+        }
+        return independent;
+    }
+    classify_change_for_owner_inner(
+        site,
+        line_text,
+        old_line_text,
+        owners,
+        all_tests,
+        no_behavior,
+        owner_source,
+        value_origins,
+        related,
+        None,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "resolved owner inputs plus explicit run-local origin context"
+)]
+fn classify_change_for_owner_inner<'a>(
+    site: ChangeSite<'_>,
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owners: &[PythonOwner],
+    all_tests: &'a [PythonTest],
+    no_behavior: PythonNoBehaviorContext,
+    owner_source: Option<&str>,
     value_origins: Option<&mut crate::value_origins::ValueOrigins>,
     mut related: Option<&mut RelatedCandidateMemo<'a>>,
+    set_aside_mock_siblings: Option<&mut bool>,
 ) -> Option<Finding> {
     let ChangeSite {
         file,
@@ -427,6 +508,14 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     } else {
         helper_owner_call_candidates(owner, owners, all_tests)
     };
+    // #12955: with no related test at all, whether too many cross-module
+    // callers went unfollowed decides between `no_static_path` and unknown.
+    let cross_module_over_cap = related_candidates.is_empty()
+        && helper_callers.is_empty()
+        && match related.as_deref_mut() {
+            Some(memo) => memo.cross_module_over_cap(owner, owners),
+            None => cross_module_callers_exceed_cap(owner, owners),
+        };
     related_candidates.extend(helper_callers.iter().map(|helper| helper.candidate));
     // `f(g(x)) == g(x)` pins `f` but not `g` (#9814): the exact reading is
     // per finding, so a test with such an assertion is replaced by its
@@ -443,6 +532,15 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             relation: candidate.relation,
         })
         .collect();
+    if let Some(dropped) = set_aside_mock_siblings {
+        *dropped = super::callee_patch::drop_substituting_siblings(
+            &mut related_candidates,
+            owner,
+            owner_source.unwrap_or(""),
+            old_line_text,
+            line_text,
+        );
+    }
     // A module-level constant edit has no callable owner. A test whose
     // assertion provably holds under the old value and fails under the new one
     // (`module_value.rs`, #9423) is related through that value, and its
@@ -779,13 +877,21 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // Limits that apply when the leading one does not; re-read when the
     // imported-literal lift (#9226) drops the leading limit.
     let fallback_limits = || {
-        module_object_rebind_limit(
-            line_text,
-            old_line_text,
+        cross_module_reach_limit(
             owner,
             &related_candidates,
-            alignment.credited.as_ref().filter(|_| alignment.observes()),
+            &helper_callers,
+            cross_module_over_cap,
         )
+        .or_else(|| {
+            module_object_rebind_limit(
+                line_text,
+                old_line_text,
+                owner,
+                &related_candidates,
+                alignment.credited.as_ref().filter(|_| alignment.observes()),
+            )
+        })
         .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates))
         .or_else(|| heuristic_only_relation_limit(owner, &related_candidates))
         .or_else(|| {
@@ -798,7 +904,10 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         log_evidence.as_ref(),
         &focus,
         owner,
-        owner_source.unwrap_or(""),
+        PythonBandSource {
+            text: owner_source.unwrap_or(""),
+            sole_line_replacement: no_behavior.sole_line_replacement,
+        },
         &related_candidates,
     )
     // A pinned lambda body edit or dataclass default edit is read by the
@@ -1076,6 +1185,24 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             )
         })
         .flatten();
+    // #13622: an old-type exact assertion after a raised-type replacement is
+    // recorded as advisory evidence only; it never changes the class here. The
+    // gap-bound repair closure reads it (RIPR-SPEC-0310).
+    let stale_raised_type_pins = if static_limit.is_none()
+        && matches!(family, ProbeFamily::ErrorPath)
+        && !no_behavior.multi_line_def_header_line
+        && exception_variants.is_empty()
+    {
+        super::exception_variant::stale_raised_type_pins(
+            line_text,
+            old_line_text,
+            owner_source,
+            &related_candidates,
+            &focus,
+        )
+    } else {
+        Vec::new()
+    };
     let mut message_pin_downgraded = false;
     // Table-driven expected values that never vary the changed returned
     // operand cannot discriminate `return default` -> `return None` (#6651).
@@ -1119,16 +1246,29 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     let mut table_downgraded = false;
     // An `approx` band that provably admits both the old and the new result
     // lets a strong assertion pass either way (#9546, RIPR-SPEC-0238 rule 21).
+    // The reading succeeds only on a `return` line or a straight-line body
+    // assignment (#13723), whatever its probe family, and the static-limit
+    // pass lifts the band limit on the same reading, so the gap applies to
+    // every family: gating it on `ReturnValue` credited an absorbed edit to
+    // an assignment as exposed.
     let band_gap = (static_limit.is_none()
-        && matches!(family, ProbeFamily::ReturnValue)
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && guarded_arm_gap.is_none()
         && unvaried_table.is_none()
         && !no_behavior.multi_line_def_header_line)
         .then(|| {
-            match python_band_reading(old_line_text, line_text, owner, &related_candidates, &focus)
-            {
+            match python_band_reading(
+                old_line_text,
+                line_text,
+                owner,
+                PythonBandSource {
+                    text: owner_source.unwrap_or(""),
+                    sole_line_replacement: no_behavior.sole_line_replacement,
+                },
+                &related_candidates,
+                &focus,
+            ) {
                 PythonBandReading::Read(evidence)
                     if evidence.verdict == PythonBandVerdict::Absorbs =>
                 {
@@ -1212,6 +1352,22 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             vec![format!(
                 "No Python test references {}; add a pytest or unittest test that calls the changed owner.",
                 owner.missing_test_reference()
+            )],
+        )
+    } else if !has_oracle_eligible_relation
+        && super::callee_patch::owner_patched_by_every_test(owner, &related_candidates)
+    {
+        // Every related test replaces the changed function itself, so none
+        // runs the changed code: the tests reach its callers and reveal
+        // nothing about the edit (#13632).
+        (
+            ExposureClass::ReachableUnrevealed,
+            StageState::Weak,
+            StageState::No,
+            StageState::No,
+            vec![format!(
+                "Every related Python test replaces `{}` with a stand-in (patch or monkeypatch), so none of them runs the changed code; add a test that calls `{}` without patching it and asserts its result.",
+                owner.name, owner.name
             )],
         )
     } else if let Some(reading) = module_read {
@@ -1980,6 +2136,11 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         },
         alignment_prep,
     );
+    evidence.extend(
+        stale_raised_type_pins
+            .iter()
+            .map(crate::analysis::stale_raised_type_pin::StaleRaisedTypePin::evidence_line),
+    );
     for candidate in related_candidates {
         let test = candidate.test;
         evidence.push(format!(
@@ -2091,8 +2252,15 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             .find(|helper| std::ptr::eq(helper.candidate.test, test))
         {
             evidence.push(format!(
-                "helper_owner_call: {} calls {} ({})",
-                helper.caller, owner.name, test.name
+                "{}: {} calls {} ({})",
+                if helper.cross_module {
+                    "cross_module_caller_call"
+                } else {
+                    "helper_owner_call"
+                },
+                helper.caller,
+                owner.name,
+                test.name
             ));
         }
         let selection = candidate
@@ -2109,9 +2277,14 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             .iter()
             .find(|credit| std::ptr::eq(credit.test, test))
         {
+            let (rejected, accepted) = if credit.pins_old {
+                (&credit.new_type, &credit.old_type)
+            } else {
+                (&credit.old_type, &credit.new_type)
+            };
             evidence.push(format!(
                 "exception_variant_read: `{}` rejects `{}` and accepts `{}` at the changed raise ({})",
-                credit.assertion.text, credit.old_type, credit.new_type, test.name
+                credit.assertion.text, rejected, accepted, test.name
             ));
             evidence.push(format!(
                 "test_oracle: exact_error_variant strong ({})",

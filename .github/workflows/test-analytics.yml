@@ -2,14 +2,6 @@ name: Test Analytics
 
 on:
   workflow_dispatch:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
-  # Advisory lane: a daily run on main instead of every push (a merge lands
-  # every few minutes and this lane takes 30+ minutes). Use workflow_dispatch
-  # for an on-demand run.
-  schedule:
-    - cron: "43 3 * * *"
-
 permissions:
   contents: read
 
@@ -23,9 +15,9 @@ concurrency:
 
 jobs:
   # #12916: this lane used to re-run the whole unsharded suite in one 40-minute
-  # job, duplicating the four required hash partitions. It now runs the same
-  # four `--partition hash:N/4` partitions as `rust-test-shards.yml` (same `ci`
-  # profile), keeping only its own selection difference: `--all-features`,
+  # job, repeating the required test selection. It now runs four
+  # `--partition hash:N/4` partitions with the same `ci` profile as the required
+  # route, keeping its own selection difference: `--all-features`,
   # which is the one place the `lang-perl` tests execute. No single job runs
   # the whole suite. This lane is advisory analytics: the required shards in
   # the routed Rust lane remain the blocking test enforcement, and nothing

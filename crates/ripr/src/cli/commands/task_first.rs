@@ -243,10 +243,10 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
                 index += 1;
                 let value = expect_value(args, index, "--base")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "repair requires a non-empty --base; pass a git ref right after --base"
-                            .to_string(),
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--base",
+                        "repair requires a non-empty --base; pass a git ref right after --base",
+                    ));
                 }
                 base = Some(value.to_string());
             }
@@ -316,7 +316,10 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
                 index += 1;
                 let value = expect_value(args, index, "--attempt")?;
                 if value.trim().is_empty() {
-                    return Err("continue --attempt requires a non-empty ID; pass a value right after --attempt".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--attempt",
+                        "continue --attempt requires a non-empty ID; pass a value right after --attempt",
+                    ));
                 }
                 attempt_id = Some(value.to_string());
             }
@@ -359,7 +362,10 @@ pub(super) fn parse_status_args(args: &[String]) -> Result<StatusFacadeCommand, 
                 index += 1;
                 let value = expect_value(args, index, "--attempt")?;
                 if value.trim().is_empty() {
-                    return Err("status --attempt requires a non-empty ID; pass a value right after --attempt".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--attempt",
+                        "status --attempt requires a non-empty ID; pass a value right after --attempt",
+                    ));
                 }
                 attempt_id = Some(value.to_string());
             }
@@ -644,6 +650,7 @@ fn facade_before_options(
         store: None,
         json,
         quiet,
+        facade_start: true,
     }
 }
 
@@ -687,6 +694,7 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                 store: None,
                 json: options.json,
                 quiet: options.quiet,
+                facade_start: false,
             },
             None,
         ),

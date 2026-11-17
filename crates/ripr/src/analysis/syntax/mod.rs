@@ -27,6 +27,7 @@ pub(crate) use owner_pin::COMPARISON_NESTED_MACROS;
 pub(crate) use owner_pin::cfg_if_module_name;
 pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
+pub(crate) use owner_pin::module_declaration_unestablished_gate;
 pub(crate) use owner_pin::unestablished_cfg_gates_of_fn;
 pub(crate) use owner_pin::{
     AssertionContextRefusal, HelperLoan, MacroBindingCandidates, MacroBindingKind,
@@ -35,7 +36,7 @@ pub(crate) use owner_pin::{
     direct_literal_call_column, empty_local_macro_invocation_ranges,
     empty_macro_binding_ambiguities, err_return_guard_key, literal_root_macro_exports,
     local_empty_macro_names, macro_binding_scan, macro_call_is_statement, node_has_macro_escape,
-    owner_pin_assertions, owner_pin_matches_assertions, owner_reference_count,
+    owner_pin_assertions, owner_pin_assertions_with_default_features, owner_reference_count,
     qualified_matches_paths, returns_leave_the_function, skipping_table_column,
     source_binds_value_name, source_declares_value_name, source_imported_claims_macros,
     standard_derive_names, supported_targeted_item_context, trusted_macro_binding_site_sets,
@@ -51,7 +52,9 @@ pub(crate) mod ra;
 pub use adapter::{
     LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange,
 };
-pub(crate) use local_assertion_macros::{LocalMacroCall, MacroArm, local_macro_calls};
+pub(crate) use local_assertion_macros::{
+    LocalMacroCall, MacroArm, local_macro_calls, local_macro_calls_many,
+};
 #[cfg(test)]
 pub(crate) use local_test_macros::expand_local_test_macros;
 pub(crate) use local_test_macros::{
@@ -67,22 +70,28 @@ pub(crate) use name_scope::{
     function_type_param_names, name_scope_for_file, name_scope_for_items, name_scopes_for_fn,
     use_item_bindings,
 };
+#[cfg(test)]
+pub(crate) use nesting::nesting_parse_calls;
 pub(crate) use nesting::{
     block_comment_only_lines, non_code_token_end, parse_clean_source_file,
     parse_clean_source_file_memoized, rust_nesting_refusal, string_literal_continuation_lines,
 };
 pub(crate) use parent_module_cfg_gate::owner_gated_by_parent_mod_declarations;
 pub(crate) use ra::drop_in_assertion_leaf;
-pub(crate) use ra::parser_oracles_for_function;
 #[cfg(test)]
 pub(crate) use ra::production_owner_module_path;
 pub(crate) use ra::rust_include_directives;
 pub(crate) use ra::{
-    GovernedCfgTestModule, InvokedCallbackParam, ModuleItemScopes, closure_argument_positions,
-    fn_name_binding_count, governed_cfg_test_modules, has_test_attribute,
-    inline_unit_module_layout, invoked_callback_params, macro_call_columns, module_item_scopes,
-    passes_call_making_closure, unconditionally_invoked_param_positions,
+    EnclosingScopeKind, ForwardedCallbackParam, GovernedCfgTestModule, InvokedCallbackParam,
+    ModuleItemScopes, call_making_closure_positions, closure_argument_positions,
+    closure_argument_positions_many, enclosing_scopes, fn_name_binding_count,
+    forwarded_callback_params, governed_cfg_test_modules, has_test_attribute,
+    inline_unit_module_layout, invoked_callback_params, invoked_callback_params_many,
+    macro_call_columns, module_item_scopes, module_path_targets, param_never_mentioned,
+    passes_call_making_closure, passes_call_making_closure_many,
+    unconditionally_invoked_param_positions,
 };
+pub(crate) use ra::{parser_oracles_for_function, parser_oracles_for_functions_many};
 pub(crate) use source_snapshot::{
     ItemNesting, RootShadow, SourceSnapshot, SourceSyntaxMemos, has_cfg_attr,
 };

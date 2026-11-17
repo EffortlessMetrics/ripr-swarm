@@ -24,7 +24,9 @@ use super::diagnostics::{
     workspace_diagnostics_with_config,
 };
 use super::gap_artifacts::{
-    GapArtifactIdentity, GapArtifactKind, GapArtifactRejection, ValidatedGapArtifact,
+    GapArtifactCorpusCurrentness, GapArtifactIdentity, GapArtifactRejection,
+    ValidatedActionableGapsArtifact, ValidatedGapArtifact, ValidatedGapArtifactCommon,
+    ValidatedGapDecisionLedgerArtifact,
 };
 use super::hover::{
     NoEvidenceState, classified_seam_hover_response, diagnostic_covers_position,
@@ -53,6 +55,7 @@ use super::{
 };
 use crate::analysis::cancellation::AnalysisCancellationToken;
 use crate::analysis::is_test_surface_path;
+use crate::analysis::parse_clean_source_file;
 use crate::analysis::repair_route::{
     cross_language_test_target_unresolved, repair_packet_eligibility,
 };
@@ -65,6 +68,7 @@ use crate::domain::{
     StageEvidence, StageState, StaticLimitKind, ValueContext, ValueFact,
 };
 use crate::output::agent_seam_packets::recommended_test_for;
+use ra_ap_syntax::AstNode;
 use serial_test::serial;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -75,15 +79,15 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tower_lsp_server::LanguageServer;
 use tower_lsp_server::ls_types::{
     CodeAction, CodeActionContext, CodeActionKind, CodeActionOrCommand, CodeActionParams,
-    CodeLensOptions, Diagnostic, DiagnosticSeverity, DidChangeConfigurationParams,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentDiagnosticParams, ExecuteCommandParams, FileChangeType,
-    FileEvent, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, MarkedString,
-    NumberOrString, PartialResultParams, Position, PositionEncodingKind, PreviousResultId, Range,
-    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TraceValue,
-    VersionedTextDocumentIdentifier, WindowClientCapabilities, WorkspaceDiagnosticParams,
-    WorkspaceFolder,
+    CodeLensOptions, Diagnostic, DiagnosticServerCapabilities, DiagnosticSeverity,
+    DidChangeConfigurationParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentDiagnosticParams,
+    ExecuteCommandParams, FileChangeType, FileEvent, HoverContents, HoverParams,
+    HoverProviderCapability, InitializeParams, MarkedString, NumberOrString, PartialResultParams,
+    Position, PositionEncodingKind, PreviousResultId, Range, TextDocumentContentChangeEvent,
+    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TraceValue, VersionedTextDocumentIdentifier,
+    WindowClientCapabilities, WorkspaceDiagnosticParams, WorkspaceFolder,
 };
 use tower_lsp_server::{LspService, Server};
 
@@ -92,6 +96,7 @@ mod bare_cr_origin_tests;
 mod consumed_source_tests;
 mod diagnostics_generation_tests;
 mod document_store_overflow_tests;
+mod owner_opt_out_tests;
 mod panic_containment_tests;
 mod progress_completion_tests;
 mod progress_create_liveness_tests;
@@ -580,6 +585,23 @@ fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
                     "globPattern": {"baseUri": root_uri.as_str(), "pattern": relative}
                 })
             })
+            // #14099: a change watcher for analyzed sources and a delete
+            // watcher for every path under the root (a folder deleted as one
+            // entry is reported as the folder) ride the same root-anchored
+            // registration.
+            .chain([
+                serde_json::json!({
+                    "globPattern": {
+                        "baseUri": root_uri.as_str(),
+                        "pattern": "**/*.{rs,py,pm,pl,t,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+                    },
+                    "kind": 2,
+                }),
+                serde_json::json!({
+                    "globPattern": {"baseUri": root_uri.as_str(), "pattern": "**/*"},
+                    "kind": 4,
+                }),
+            ])
             .collect::<Vec<_>>();
         if diagnostics["registerOptions"]["watchers"] != serde_json::json!(expected) {
             return Err(format!(
@@ -1160,6 +1182,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -2904,6 +2927,13 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
     assert!(markup.value.contains("PricingError::Boundary"));
     assert!(markup.value.contains("tests/pricing.rs:10"));
     assert!(markup.value.contains("suggested_assertion_unavailable"));
+    // #14464: the fix instruction is its own paragraph, not a lazy
+    // continuation of the last witness bullet.
+    assert!(
+        markup.value.contains("\n\n**Fix instruction:** "),
+        "fix instruction must follow a blank line: {}",
+        markup.value
+    );
 
     let context_packet = crate::output::json::render_context_packet(
         &finding,
@@ -3949,26 +3979,31 @@ fn refresh_completion_log_message_counts_gap_artifact_state() -> Result<(), Stri
         vec![diagnostic],
         Vec::new(),
     );
-    snapshot.gap_artifacts.push(ValidatedGapArtifact {
-        kind: GapArtifactKind::GapDecisionLedger,
-        corpus_currentness: None,
-        root: Some(".".to_string()),
-        identities: vec![GapArtifactIdentity {
-            canonical_gap_id: Some("gap:py:pricing".to_string()),
-            seam_id: None,
-            finding_id: None,
-        }],
-        language: Some(LanguageId::Python),
-        language_status: Some(LanguageStatus::Preview),
-        gap_state: Some("actionable".to_string()),
-        related_paths: vec!["tests/test_pricing.py".to_string()],
-        verify_commands: vec!["ripr agent verify --root . --json".to_string()],
-        receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
-        verify_command_specs: Vec::new(),
-        receipt_command_specs: Vec::new(),
-        static_limit_kinds: vec!["missing_import_graph".to_string()],
-        has_text_static_limit: false,
-    });
+    snapshot
+        .gap_artifacts
+        .push(ValidatedGapArtifact::GapDecisionLedger(
+            ValidatedGapDecisionLedgerArtifact {
+                common: ValidatedGapArtifactCommon {
+                    root: Some(".".to_string()),
+                    language: Some(LanguageId::Python),
+                    language_status: Some(LanguageStatus::Preview),
+                    gap_state: Some("actionable".to_string()),
+                    related_paths: vec!["tests/test_pricing.py".to_string()],
+                    static_limit_kinds: vec!["missing_import_graph".to_string()],
+                    has_text_static_limit: false,
+                },
+                corpus_currentness: GapArtifactCorpusCurrentness::PreviewOrMixedUnavailable,
+                identities: vec![GapArtifactIdentity {
+                    canonical_gap_id: Some("gap:py:pricing".to_string()),
+                    seam_id: None,
+                    finding_id: None,
+                }],
+                verify_commands: vec!["ripr agent verify --root . --json".to_string()],
+                receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
+                verify_command_specs: Vec::new(),
+                receipt_command_specs: Vec::new(),
+            },
+        ));
     snapshot
         .gap_artifact_rejections
         .push(GapArtifactRejection::WrongRoot(
@@ -4762,16 +4797,23 @@ fn gap_code_actions_project_python_pytest_skeleton_and_target_file() -> Result<(
 #[cfg(feature = "lang-python")]
 fn gap_code_actions_omit_partial_or_invalid_typed_specs() -> Result<(), String> {
     let mut missing_verify = validated_gap_artifact();
-    missing_verify.verify_command_specs.clear();
+    missing_verify
+        .verify_command_specs_mut()
+        .ok_or_else(|| "validated fixture omitted verify specs".to_string())?
+        .clear();
     assert_gap_action_specs_omitted(missing_verify, "missing verify")?;
 
     let mut missing_receipt = validated_gap_artifact();
-    missing_receipt.receipt_command_specs.clear();
+    missing_receipt
+        .receipt_command_specs_mut()
+        .ok_or_else(|| "validated fixture omitted receipt specs".to_string())?
+        .clear();
     assert_gap_action_specs_omitted(missing_receipt, "missing receipt")?;
 
     let mut malformed = validated_gap_artifact();
     malformed
-        .verify_command_specs
+        .verify_command_specs_mut()
+        .ok_or_else(|| "validated fixture omitted verify specs".to_string())?
         .first_mut()
         .ok_or_else(|| "validated fixture omitted verify spec".to_string())?
         .program
@@ -4780,7 +4822,8 @@ fn gap_code_actions_omit_partial_or_invalid_typed_specs() -> Result<(), String> 
 
     let mut role_mismatch = validated_gap_artifact();
     role_mismatch
-        .verify_command_specs
+        .verify_command_specs_mut()
+        .ok_or_else(|| "validated fixture omitted verify specs".to_string())?
         .first_mut()
         .ok_or_else(|| "validated fixture omitted verify spec".to_string())?
         .role = crate::domain::CommandRole::Receipt;
@@ -8534,12 +8577,29 @@ async fn run_push_pull_parity_leg(profile: PushPullParityProfile) -> Result<(), 
     let (pull_service, _pull_socket) =
         LspService::new(|client| Backend::new(client, pull_root.path().to_path_buf()));
     let pull_backend = pull_service.inner();
-    pull_backend
+    let pull_initialize = pull_backend
         .initialize(push_pull_parity_initialize_params(
             &pull_root, profile, true,
         )?)
         .await
         .map_err(|err| format!("{leg}: pull initialize failed: {err}"))?;
+    // #1630: workspace pull is offered only to the ripr editor client; a
+    // generic pull client gets document pull so a refresh re-pulls its
+    // open buffers.
+    let Some(DiagnosticServerCapabilities::Options(pull_options)) =
+        pull_initialize.capabilities.diagnostic_provider
+    else {
+        return Err(format!(
+            "{leg}: pull client got no static diagnostic provider"
+        ));
+    };
+    let expect_workspace_pull = !matches!(profile, PushPullParityProfile::Generic);
+    if pull_options.workspace_diagnostics != expect_workspace_pull {
+        return Err(format!(
+            "{leg}: workspaceDiagnostics was {}, expected {expect_workspace_pull}",
+            pull_options.workspace_diagnostics
+        ));
+    }
     let (pull_uri, line) = commit_push_pull_parity_fixture(pull_backend, &pull_root)?;
     let pull_report = pull_backend
         .diagnostic(DocumentDiagnosticParams {
@@ -9136,6 +9196,142 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
     assert_eq!(command, OPEN_RELATED_TEST_COMMAND);
     assert_eq!(args[0]["uri"], "file:///workspace/tests/high.rs");
     assert_eq!(args[0]["test_name"], "high_confidence_weak_assertion");
+    Ok(())
+}
+
+/// #5354: the seam "open best related test" action never opens a test linked
+/// only by proximity, even a strong one, over a test that calls the owner;
+/// with only proximity-linked tests it opens nothing.
+#[test]
+fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
+    use crate::analysis::test_grip_evidence::{
+        RelatedTestGrip, RelationConfidence, RelationReason,
+    };
+
+    let same_file_strong = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "same_file_strong_neighbour".to_string(),
+        file: PathBuf::from("tests/neighbour.rs"),
+        line: 4,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion on other code".to_string(),
+        relation_reason: RelationReason::SameTestFile,
+        relation_confidence: RelationConfidence::High,
+    });
+    let token_strong = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "token_substring_strong".to_string(),
+        file: PathBuf::from("tests/token.rs"),
+        line: 6,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion on other code".to_string(),
+        relation_reason: RelationReason::WeakTokenSubstring,
+        relation_confidence: RelationConfidence::High,
+    });
+    let calling_weak = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "calls_owner_weakly".to_string(),
+        file: PathBuf::from("tests/pricing.rs"),
+        line: 12,
+        test_target: None,
+        oracle_kind: OracleKind::RelationalCheck,
+        oracle_strength: OracleStrength::Weak,
+        evidence_summary: "weak oracle".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::Low,
+    });
+
+    let commands_for = |related: Vec<std::sync::Arc<RelatedTestGrip>>| {
+        let mut seam = sample_classified_seam();
+        seam.evidence.related_tests = related;
+        let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+            .ok_or_else(|| "expected seam diagnostic".to_string())?;
+        let uri = test_uri("file:///workspace/src/pricing.rs")?;
+        let mut snapshot = sample_analysis_snapshot(
+            PathBuf::from("/workspace"),
+            uri,
+            vec![diagnostic.clone()],
+            Vec::new(),
+        );
+        snapshot.classified_seams = vec![seam];
+        let actions = code_action_response(
+            &code_action_params(vec![diagnostic])?,
+            Some(&snapshot),
+            &vscode_client_features()?,
+        );
+        code_action_commands(&actions)
+    };
+
+    let commands = commands_for(vec![
+        same_file_strong.clone(),
+        token_strong.clone(),
+        calling_weak,
+    ])?;
+    let Some((_, command, args)) = commands
+        .iter()
+        .find(|(title, _, _)| title == "Write targeted test: open best related test")
+    else {
+        return Err(format!(
+            "expected open related test action, got {commands:?}"
+        ));
+    };
+    assert_eq!(command, OPEN_RELATED_TEST_COMMAND);
+    assert_eq!(args[0]["uri"], "file:///workspace/tests/pricing.rs");
+    assert_eq!(args[0]["test_name"], "calls_owner_weakly");
+
+    // A strong test that only carries the owner's name ranks after the weak
+    // test that calls the owner.
+    let name_strong = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "owner_named_strong".to_string(),
+        file: PathBuf::from("tests/named.rs"),
+        line: 2,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion on other code".to_string(),
+        relation_reason: RelationReason::OwnerNamedTest,
+        relation_confidence: RelationConfidence::High,
+    });
+    let calling = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "calls_owner_weakly".to_string(),
+        file: PathBuf::from("tests/pricing.rs"),
+        line: 12,
+        test_target: None,
+        oracle_kind: OracleKind::RelationalCheck,
+        oracle_strength: OracleStrength::Weak,
+        evidence_summary: "weak oracle".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::Low,
+    });
+    let named_first = commands_for(vec![name_strong.clone(), calling])?;
+    let Some((_, _, args)) = named_first
+        .iter()
+        .find(|(title, _, _)| title == "Write targeted test: open best related test")
+    else {
+        return Err(format!(
+            "expected open related test action, got {named_first:?}"
+        ));
+    };
+    assert_eq!(args[0]["test_name"], "calls_owner_weakly");
+    let named_only = commands_for(vec![name_strong])?;
+    let Some((_, _, args)) = named_only
+        .iter()
+        .find(|(title, _, _)| title == "Write targeted test: open best related test")
+    else {
+        return Err(format!(
+            "a name-matched test stays a fallback target, got {named_only:?}"
+        ));
+    };
+    assert_eq!(args[0]["test_name"], "owner_named_strong");
+
+    let proximity_only = commands_for(vec![same_file_strong, token_strong])?;
+    assert!(
+        !proximity_only
+            .iter()
+            .any(|(title, _, _)| title == "Write targeted test: open best related test"),
+        "a proximity-only related test must not be opened: {proximity_only:?}"
+    );
     Ok(())
 }
 
@@ -10798,6 +10994,7 @@ async fn did_open_matching_disk_bytes_with_stale_committed_snapshot_keeps_refres
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -16091,19 +16288,22 @@ fn gap_action_diagnostic() -> tower_lsp_server::ls_types::Diagnostic {
 }
 
 fn validated_gap_artifact() -> ValidatedGapArtifact {
-    ValidatedGapArtifact {
-        kind: GapArtifactKind::GapDecisionLedger,
-        corpus_currentness: None,
-        root: Some(".".to_string()),
+    ValidatedGapArtifact::GapDecisionLedger(ValidatedGapDecisionLedgerArtifact {
+        common: ValidatedGapArtifactCommon {
+            root: Some(".".to_string()),
+            language: Some(LanguageId::Python),
+            language_status: Some(LanguageStatus::Preview),
+            gap_state: Some("actionable".to_string()),
+            related_paths: vec!["tests/test_pricing.py".to_string()],
+            static_limit_kinds: vec!["missing_import_graph".to_string()],
+            has_text_static_limit: false,
+        },
+        corpus_currentness: GapArtifactCorpusCurrentness::PreviewOrMixedUnavailable,
         identities: vec![GapArtifactIdentity {
             canonical_gap_id: Some("gap:py:pricing".to_string()),
             seam_id: None,
             finding_id: None,
         }],
-        language: Some(LanguageId::Python),
-        language_status: Some(LanguageStatus::Preview),
-        gap_state: Some("actionable".to_string()),
-        related_paths: vec!["tests/test_pricing.py".to_string()],
         verify_commands: vec!["ripr agent verify --root . --json".to_string()],
         receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
         verify_command_specs: vec![crate::agent::command_specs::agent_verify_command_spec(
@@ -16118,9 +16318,7 @@ fn validated_gap_artifact() -> ValidatedGapArtifact {
             "seam-a",
             Some("receipt.json"),
         )],
-        static_limit_kinds: vec!["missing_import_graph".to_string()],
-        has_text_static_limit: false,
-    }
+    })
 }
 
 fn sample_analysis_snapshot(
@@ -16158,6 +16356,7 @@ fn sample_analysis_snapshot(
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -16547,10 +16746,13 @@ fn lsp_fixture_render(
         &fixture_root,
         &crate::config::RiprConfig::default(),
     )?;
+    // The owner's tail `if`/`else` branch values are `return_value` seams too
+    // (#14385); the fixture's golden pins the predicate-boundary seam.
+    seams.retain(|seam| seam.seam.kind().as_str() == "predicate_boundary");
     seams.sort_by(|left, right| left.seam.id().as_str().cmp(right.seam.id().as_str()));
     if seams.len() != 1 {
         return Err(format!(
-            "expected one {fixture} classified seam, got {}",
+            "expected one {fixture} predicate_boundary classified seam, got {}",
             seams.len()
         ));
     }
@@ -17450,6 +17652,33 @@ fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
     }
 }
 
+/// The TypeScript producer also serves JavaScript findings, so their step
+/// opens with "TypeScript preview advisory:"; the Problems row still says
+/// "preview" once, under the finding's own language (#14353).
+#[test]
+fn javascript_preview_diagnostic_strips_the_typescript_producer_prefix() {
+    let mut finding = sample_finding();
+    finding.language = Some(LanguageId::JavaScript);
+    finding.language_status = Some(LanguageStatus::Preview);
+    finding.recommended_next_step =
+        Some("TypeScript preview advisory: add or strengthen a focused assertion.".to_string());
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+
+    assert!(
+        diagnostic
+            .message
+            .starts_with("JavaScript preview (advisory): add or strengthen"),
+        "{}",
+        diagnostic.message
+    );
+    assert_eq!(
+        diagnostic.message.matches("preview").count(),
+        1,
+        "{}",
+        diagnostic.message
+    );
+}
+
 #[test]
 fn preview_finding_diagnostic_preserves_language_metadata() -> Result<(), String> {
     let mut finding = sample_finding();
@@ -17459,10 +17688,19 @@ fn preview_finding_diagnostic_preserves_language_metadata() -> Result<(), String
     finding.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
 
+    // "preview" is said once, with product casing (#14353).
     assert!(
         diagnostic
             .message
-            .contains("python preview evidence (syntax-first, advisory)")
+            .starts_with("Python preview (advisory): "),
+        "{}",
+        diagnostic.message
+    );
+    assert_eq!(
+        diagnostic.message.matches("preview").count(),
+        1,
+        "{}",
+        diagnostic.message
     );
     assert!(
         diagnostic
@@ -17992,18 +18230,28 @@ fn typescript_preview_finding_hover_shows_actionability_before_evidence() -> Res
             for needle in [
                 "Language: typescript",
                 "Status: preview",
-                "Repair instructions for an AI agent: not ready",
-                "State: unknown",
-                "Category: missing_context",
-                "Why not actionable: verify command and receipt command are not inferred for TypeScript preview",
-                "Repair route: add strict TypeScript repair-packet actionability proof",
-                "Missing fields: verify_command, receipt_command, must_not_change",
-                "Evidence needed: complete repair packet with verify and receipt commands",
-                "Authority: preview advisory only",
+                "Action: advisory only",
+                "Repair instructions for an AI agent: not ready \u{2014} verify command and receipt command are not inferred for TypeScript preview",
             ] {
                 assert!(
                     markup.value.contains(needle),
                     "missing {needle:?} in:\n{}",
+                    markup.value
+                );
+            }
+            // A not-ready packet's contract fields stay in diagnostic data,
+            // not in the hover a person reads.
+            for absent in [
+                "State: unknown",
+                "Category: missing_context",
+                "Repair route:",
+                "Missing fields:",
+                "Evidence needed:",
+                "Authority: preview advisory only",
+            ] {
+                assert!(
+                    !markup.value.contains(absent),
+                    "unexpected {absent:?} in:\n{}",
                     markup.value
                 );
             }
@@ -20219,26 +20467,29 @@ fn execute_command_collect_workspace_status_with_actionable_gap_and_rejection_re
         diagnostics
             .snapshot
             .gap_artifacts
-            .push(ValidatedGapArtifact {
-                kind: GapArtifactKind::ActionableGaps,
-                corpus_currentness: None,
-                root: Some(".".to_string()),
-                identities: vec![GapArtifactIdentity {
-                    canonical_gap_id: Some("gap:rust:pricing:threshold-boundary".to_string()),
-                    seam_id: None,
-                    finding_id: None,
-                }],
-                language: Some(LanguageId::Rust),
-                language_status: Some(LanguageStatus::Stable),
-                gap_state: Some("actionable".to_string()),
-                related_paths: vec!["src/pricing.rs".to_string()],
-                verify_commands: vec!["ripr agent verify --root . --json".to_string()],
-                receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
-                verify_command_specs: Vec::new(),
-                receipt_command_specs: Vec::new(),
-                static_limit_kinds: Vec::new(),
-                has_text_static_limit: false,
-            });
+            .push(ValidatedGapArtifact::ActionableGaps(
+                ValidatedActionableGapsArtifact {
+                    common: ValidatedGapArtifactCommon {
+                        root: Some(".".to_string()),
+                        language: Some(LanguageId::Rust),
+                        language_status: Some(LanguageStatus::Stable),
+                        gap_state: Some("actionable".to_string()),
+                        related_paths: vec!["src/pricing.rs".to_string()],
+                        static_limit_kinds: Vec::new(),
+                        has_text_static_limit: false,
+                    },
+                    corpus_currentness: GapArtifactCorpusCurrentness::CurrentRustWorkspace,
+                    identities: vec![GapArtifactIdentity {
+                        canonical_gap_id: Some("gap:rust:pricing:threshold-boundary".to_string()),
+                        seam_id: None,
+                        finding_id: None,
+                    }],
+                    verify_commands: vec!["ripr agent verify --root . --json".to_string()],
+                    receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
+                    verify_command_specs: Vec::new(),
+                    receipt_command_specs: Vec::new(),
+                },
+            ));
         diagnostics
             .snapshot
             .gap_artifact_rejections
@@ -23077,6 +23328,163 @@ fn explicit_refresh_returns_once_the_scheduler_accepts_a_queued_request() -> Res
     })
 }
 
+#[test]
+#[serial]
+fn framed_pull_client_queued_refresh_answers_without_answering_diagnostic_refresh()
+-> Result<(), String> {
+    // #14526: a queued `ripr.refresh` must answer once queued, not inline-await
+    // a pull-marker `workspace/diagnostic/refresh` that a silent client never
+    // answers (bounded only by the 500ms test client-request timeout here).
+    work_done_progress_runtime()?.block_on(async {
+        let root = unique_lsp_test_root("queued-pull-refresh")?;
+        fs::create_dir_all(root.path().join("src")).map_err(|err| err.to_string())?;
+        let lib_path = root.path().join("src/lib.rs");
+        fs::write(&lib_path, "pub fn gate() -> bool { true }\n").map_err(|err| err.to_string())?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let backend_root = root.path().to_path_buf();
+        let cell = std::sync::Arc::new(std::sync::Mutex::new(None::<std::sync::Arc<Backend>>));
+        let closure_cell = cell.clone();
+        let (service, socket) = LspService::new(move |client| {
+            let backend = std::sync::Arc::new(
+                Backend::new(client, backend_root.clone())
+                    .with_client_request_timeout(Duration::from_millis(500)),
+            );
+            if let Ok(mut slot) = closure_cell.lock() {
+                *slot = Some(backend.clone());
+            }
+            SharedBackend(backend)
+        });
+        let server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket).serve(service).await;
+        });
+        let root_uri = file_uri_for_path(root.path())?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "processId": null, "rootUri": root_uri.as_str(),
+                    // gitTimeoutMs 0 fails the one HEAD probe before spawning
+                    // git (host git spawns take ~2s here), so the measured
+                    // window isolates the queued branch, not git resolution.
+                    "initializationOptions": {"baseRef": "HEAD", "gitTimeoutMs": 0},
+                    "capabilities": {
+                        "textDocument": {"diagnostic": {"dynamicRegistration": false}},
+                        "workspace": {"diagnostics": {"refreshSupport": true}}
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_response(&mut client_read, 1).await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        let backend = cell
+            .lock()
+            .map_err(|err| err.to_string())?
+            .clone()
+            .ok_or("backend was never constructed")?;
+        // Serve the pending marker before any attempt: this records the
+        // save_or_refresh route as served, so a later running attempt changes
+        // the route to analysis_running. Without both guards below, the
+        // queued branch would send no refresh request and this test would
+        // pass vacuously on the old inline await.
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 2, "method": "textDocument/diagnostic",
+                "params": {"textDocument": {"uri": text_uri}}
+            }),
+        )
+        .await?;
+        let pull = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let message = read_lsp_message(&mut client_read).await?;
+                if message.get("method").is_none()
+                    && message.get("id").and_then(serde_json::Value::as_u64) == Some(2)
+                {
+                    return Ok::<_, String>(message);
+                }
+            }
+        })
+        .await
+        .map_err(|_err| "initial document pull never answered".to_string())??;
+        if backend.latest_analysis_snapshot().is_some() {
+            return Err("guard failed: a snapshot exists, so no refresh would be sent".to_string());
+        }
+        if pull["result"]["resultId"] != "ripr:analysis-pending:save_or_refresh" {
+            return Err(format!("guard failed: initial pull must serve save_or_refresh: {pull}"));
+        }
+        // Start an attempt and hold it running (scheduler-only, as in
+        // explicit_refresh_returns_once_the_scheduler_accepts_a_queued_request).
+        let first = work_done_progress_request(&backend, 1)?;
+        let first_request = started_request(&first)?;
+        backend.mark_attempt_running_for_test(&first_request);
+        if backend.analysis_attempt_state_for_test() != AnalysisAttemptState::Running {
+            return Err("guard failed: first attempt must be running".to_string());
+        }
+        // Queue a refresh while it runs; never answer workspace/diagnostic/refresh.
+        let started = std::time::Instant::now();
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 3, "method": "workspace/executeCommand",
+                "params": {"command": REFRESH_COMMAND, "arguments": []}
+            }),
+        )
+        .await?;
+        let mut saw_diagnostic_refresh = false;
+        let mut seen = Vec::new();
+        let response = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let message = read_lsp_message(&mut client_read).await?;
+                seen.push(format!(
+                    "{:?} method={:?} id={:?}",
+                    started.elapsed(),
+                    message.get("method"),
+                    message.get("id")
+                ));
+                if message.get("method").and_then(serde_json::Value::as_str)
+                    == Some("workspace/diagnostic/refresh")
+                {
+                    saw_diagnostic_refresh = true;
+                    continue;
+                }
+                if message.get("method").is_none()
+                    && message.get("id").and_then(serde_json::Value::as_u64) == Some(3)
+                {
+                    return Ok::<_, String>(message);
+                }
+            }
+        })
+        .await
+        .map_err(|_err| format!("queued executeCommand never answered; seen={seen:?}"))??;
+        let elapsed = started.elapsed();
+        if response.get("error").is_some() {
+            return Err(format!("queued executeCommand failed: {response}"));
+        }
+        if saw_diagnostic_refresh {
+            return Err("queued branch must not send workspace/diagnostic/refresh inline".to_string());
+        }
+        if elapsed >= Duration::from_millis(500) {
+            return Err(format!(
+                "queued executeCommand must answer promptly under the 500ms client-request seam, took {elapsed:?}; seen={seen:?}"
+            ));
+        }
+        if backend.refresh_scheduler_for_test().is_idle() {
+            return Err("queued refresh must remain queued while the first attempt runs".to_string());
+        }
+        server_task.abort();
+        Ok(())
+    })
+}
+
 /// Drive a real `ripr lsp` server over duplex IO through one explicit
 /// refresh and collect the work-done-progress traffic on the wire (#1971).
 /// Returns (workDoneProgress/create requests, $/progress notifications).
@@ -23631,6 +24039,7 @@ fn quarantine_workspace_diagnostics(
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -24502,6 +24911,8 @@ fn partition_partial_scope() -> crate::analysis::PartialDiffScope {
         stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
         next_file_changed_lines: Some(1),
         whole_diff_budgets: None,
+        over_limit_files: Vec::new(),
+        line_budget_limits: Vec::new(),
         partition_identity: "sha256:partition".to_string(),
     }
 }
@@ -24562,6 +24973,7 @@ fn partition_workspace_diagnostics(
         partial_scope,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -24922,6 +25334,7 @@ fn disabled_language_workspace_diagnostics(
         partial_scope,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter,
         language_view: Some(not_selected_language_view("python")),
         rust_diagnostic_origins: Default::default(),
@@ -25178,6 +25591,8 @@ async fn workspace_status_keeps_outside_partition_reason_when_both_apply() -> Re
         stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
         next_file_changed_lines: Some(1),
         whole_diff_budgets: None,
+        over_limit_files: Vec::new(),
+        line_budget_limits: Vec::new(),
         partition_identity: "sha256:partition".to_string(),
     };
     backend
@@ -25321,6 +25736,7 @@ async fn workspace_status_uncompiled_perl_recovery_does_not_claim_enablement() -
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: UnavailableAdapterCoverage::from_preview_advisories(&[
             crate::analysis::PreviewLanguageAdvisory {
                 language: "perl".to_string(),
@@ -27070,6 +27486,241 @@ fn framed_push_client_receives_analysis_pending_marker_before_first_snapshot() -
 
 #[test]
 #[serial]
+fn framed_push_client_pending_marker_names_the_running_first_analysis() -> Result<(), String> {
+    // #14447: the didOpen refresh is about to analyze, so the pre-snapshot
+    // marker must say analysis is in progress instead of asking the user to
+    // save or run `ripr.refresh` to start it, and still retract on commit.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-pending-running")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 1,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        let params = drain_until_publish(&mut client_read, &mut client_write, &text_uri).await?;
+        let published = params.first().ok_or_else(|| {
+            "push client received no publication for the opened document".to_string()
+        })?;
+        let marker = published["diagnostics"]
+            .as_array()
+            .and_then(|items| items.first())
+            .ok_or_else(|| format!("first publication carried no marker: {published}"))?;
+        if marker["code"]
+            != serde_json::json!(crate::lsp::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE)
+        {
+            return Err(format!(
+                "first publication must be the pending marker: {published}"
+            ));
+        }
+        if marker["data"]["recovery"] != "analysis_running" {
+            return Err(format!(
+                "an unblocked didOpen refresh must name the running analysis: {marker}"
+            ));
+        }
+        let message = marker["message"].as_str().unwrap_or_default();
+        if !message.contains("analysis is in progress") || message.contains("ripr.refresh") {
+            return Err(format!(
+                "the marker must not ask to start analysis that is already starting: {message}"
+            ));
+        }
+
+        let notifications = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+        let published = published_params_for_uri(&notifications, &text_uri);
+        let last = published.last().ok_or_else(|| {
+            format!("refresh published nothing for the tracked URI: {notifications:?}")
+        })?;
+        let still_pending = last["diagnostics"].as_array().is_some_and(|items| {
+            items.iter().any(|item| {
+                item["code"]
+                    == serde_json::json!(
+                        crate::lsp::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE
+                    )
+            })
+        });
+        if still_pending {
+            return Err(format!(
+                "the first commit must retract the pending marker: {last}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_first_analysis()
+-> Result<(), String> {
+    // #14447 review: "in progress" must not outlive the attempt. When the
+    // first analysis fails without a snapshot and nothing follows it, the
+    // push marker returns to the save/refresh route that starts analysis.
+    work_done_progress_runtime()?.block_on(async {
+        let root = unique_lsp_test_root("push-pending-reverts-after-failure")?;
+        let file = root.path().join("lib.rs");
+        std::fs::write(&file, "fn same() {}\n")
+            .map_err(|error| format!("write fixture: {error}"))?;
+        let uri = file_uri_for_path(&file)?.as_str().to_string();
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let backend_root = root.path().to_path_buf();
+        let (service, socket) =
+            LspService::new(move |client| Backend::new(client, backend_root.clone()));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": file_uri_for_path(root.path())?.as_str(),
+                    // An unresolvable base makes the attempt fail fast.
+                    "initializationOptions": {"baseRef": "ripr-lsp-pending-revert-missing-base"},
+                    "capabilities": {
+                        "textDocument": {"publishDiagnostics": {"versionSupport": true}}
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_response(&mut client_read, 1).await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {"textDocument": {
+                    "uri": uri, "languageId": "rust", "version": 1,
+                    "text": "fn same() {}\n"
+                }}
+            }),
+        )
+        .await?;
+        let recoveries = tokio::time::timeout(Duration::from_mins(1), async {
+            let mut recoveries = Vec::new();
+            loop {
+                let message = read_lsp_message(&mut client_read).await?;
+                if message["method"] != "textDocument/publishDiagnostics"
+                    || message["params"]["uri"] != uri.as_str()
+                {
+                    continue;
+                }
+                let recovery = message["params"]["diagnostics"]
+                    .as_array()
+                    .and_then(|items| items.first())
+                    .and_then(|marker| marker["data"]["recovery"].as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let done = recovery == "save_or_refresh";
+                recoveries.push(recovery);
+                if done {
+                    return Ok::<_, String>(recoveries);
+                }
+            }
+        })
+        .await
+        .map_err(|elapsed| {
+            format!("no save_or_refresh marker after the failed attempt: {elapsed}")
+        })??;
+        if recoveries.first().map(String::as_str) != Some("analysis_running") {
+            return Err(format!(
+                "the didOpen marker must name the running analysis first: {recoveries:?}"
+            ));
+        }
+        if recoveries.last().map(String::as_str) != Some("save_or_refresh") {
+            return Err(format!(
+                "a failed attempt must restore the start route: {recoveries:?}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(root);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
 fn framed_push_client_marker_follows_the_clean_tree_across_open_documents() -> Result<(), String> {
     // #13441: the empty-scope marker is served, not stored, so push clients
     // are re-served when the marker state flips: marker on every open
@@ -27421,6 +28072,7 @@ fn empty_scope_marker_count(params: &serde_json::Value) -> Option<usize> {
     scope_marker_count(params, "empty_scope")
 }
 
+#[cfg(unix)]
 fn incomplete_analysis_marker_count(params: &serde_json::Value) -> Option<usize> {
     scope_marker_count(params, "incomplete_analysis")
 }
@@ -28830,6 +29482,168 @@ fn framed_pull_only_client_receives_workspace_versions() -> Result<(), String> {
 
 #[test]
 #[serial]
+fn framed_generic_pull_client_repulls_its_open_document_after_a_save_refresh() -> Result<(), String>
+{
+    // #1630: a generic pull client (Neovim 0.12) is offered document pull
+    // only, gets `workspace/diagnostic/refresh` after a saved-workspace
+    // refresh, and a document re-pull then carries the new finding.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("generic-pull-refresh")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "diagnostic": {"dynamicRegistration": false}
+                        },
+                        "workspace": {"diagnostics": {"refreshSupport": true}},
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        let provider = &initialize["result"]["capabilities"]["diagnosticProvider"];
+        if provider["workspaceDiagnostics"] != serde_json::json!(false) {
+            return Err(format!(
+                "a generic pull client must be offered document pull only: {initialize}"
+            ));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 1,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+
+        let changed_text = saved_text.replace(">=", ">");
+        if changed_text == saved_text {
+            return Err(
+                "saved-workspace fixture no longer carries the equality boundary".to_string(),
+            );
+        }
+        std::fs::write(&lib_path, &changed_text)
+            .map_err(|err| format!("mirror save failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 2 },
+                    "contentChanges": [{ "text": changed_text }]
+                }
+            }),
+        )
+        .await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didSave",
+                "params": { "textDocument": { "uri": text_uri } }
+            }),
+        )
+        .await?;
+
+        // Answer requests until the refresh request after an analysis that
+        // found the changed boundary; the client then re-pulls its document.
+        let mut report = serde_json::Value::Null;
+        let mut next_id = 10_u64;
+        tokio::time::timeout(Duration::from_mins(1), async {
+            loop {
+                let message = read_lsp_message(&mut client_read).await?;
+                let Some(method) = message.get("method").and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
+                let Some(request_id) = message.get("id").cloned() else {
+                    continue;
+                };
+                write_lsp_message(
+                    &mut client_write,
+                    serde_json::json!({"jsonrpc": "2.0", "id": request_id, "result": null}),
+                )
+                .await?;
+                if method != "workspace/diagnostic/refresh" {
+                    continue;
+                }
+                next_id += 1;
+                report = framed_pull_document_report(
+                    &mut client_read,
+                    &mut client_write,
+                    next_id,
+                    &text_uri,
+                )
+                .await?;
+                let has_finding = report["items"].as_array().is_some_and(|items| {
+                    items.iter().any(|item| {
+                        item["code"]
+                            .as_str()
+                            .is_some_and(|code| !code.starts_with("ripr-diagnostic-"))
+                    })
+                });
+                if has_finding {
+                    return Ok::<(), String>(());
+                }
+            }
+        })
+        .await
+        .map_err(|_elapsed| {
+            format!("no refresh-driven document pull carried the saved change's finding: {report}")
+        })??;
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 3).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
 fn framed_plan_clear_carries_no_version() -> Result<(), String> {
     // #1747: a clear must apply unconditionally. A no-op `didChange`
     // advances the version with no quarantine edge and no refresh to
@@ -29557,13 +30371,690 @@ fn framed_lsp_trace_initialize_trace_param_enables_tracing() -> Result<(), Strin
 // degraded optional component must surface typed on every status surface.
 // ---------------------------------------------------------------------------
 
+/// Blanks `//` and `/* */` comments and the contents of string and raw-string
+/// literals, keeping delimiters and newlines. Prose that *names* `eprintln!`
+/// (the doc comment on #14476's `write_session_notice` does) must not read as
+/// a call, and a message that mentions the macro is not a stderr write.
+fn without_comments_and_literals(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut out = String::with_capacity(source.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'r' || (bytes[i] == b'b' && bytes.get(i + 1) == Some(&b'r')) {
+            let mut j = i;
+            if bytes[j] == b'b' {
+                j += 1;
+            }
+            let mut k = j + 1;
+            let mut hashes = 0;
+            while bytes.get(k) == Some(&b'#') {
+                hashes += 1;
+                k += 1;
+            }
+            if bytes.get(k) == Some(&b'"') {
+                let terminator = format!("\"{}", "#".repeat(hashes));
+                let start = k + 1;
+                let end = source[start..]
+                    .find(&terminator)
+                    .map_or(bytes.len(), |found| start + found + terminator.len());
+                out.push_str(&source[i..start]);
+                for inner in source[start..end].chars() {
+                    out.push(if inner == '\n' { '\n' } else { ' ' });
+                }
+                i = end;
+                continue;
+            }
+        }
+        if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'/') {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'*') {
+            let mut depth = 0_usize;
+            while i < bytes.len() {
+                if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'*') {
+                    depth += 1;
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/') {
+                    depth -= 1;
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                    continue;
+                }
+                if bytes[i] == b'\n' {
+                    out.push('\n');
+                }
+                i += 1;
+            }
+            continue;
+        }
+        let ch = source[i..].chars().next().unwrap_or(' ');
+        if ch == '\'' {
+            // A char literal is `'x'`, `'\n'`, `'\''`, `'"'` or `'\u{..}'`; a
+            // lifetime is `'a` with no closing quote. Only the literal form is
+            // blinded, and its interior must never be read as a string opener:
+            // `let quote = '"';` used to flip quote parity for the rest of the
+            // file and mask a real `eprintln!` (#14480).
+            let mut j = i + 1;
+            let mut closed = false;
+            if let Some(next) = source[j..].chars().next() {
+                if next == '\\' {
+                    j += 1;
+                    if let Some(escaped) = source[j..].chars().next() {
+                        j += escaped.len_utf8();
+                        if escaped == 'u'
+                            && source[j..].starts_with('{')
+                            && let Some(close) = source[j..].find('}')
+                        {
+                            j += close + 1;
+                        }
+                    }
+                } else {
+                    j += next.len_utf8();
+                }
+                if source[j..].starts_with('\'') {
+                    closed = true;
+                    j += 1;
+                }
+            }
+            if closed {
+                out.push('\'');
+                for inner in source[i + 1..j - 1].chars() {
+                    out.push(if inner == '\n' { '\n' } else { ' ' });
+                }
+                out.push('\'');
+                i = j;
+                continue;
+            }
+            out.push('\'');
+            i += 1;
+            continue;
+        }
+        if ch == '"' {
+            out.push('"');
+            i += 1;
+            while i < bytes.len() {
+                let inner = source[i..].chars().next().unwrap_or(' ');
+                i += inner.len_utf8();
+                if inner == '\\' {
+                    if let Some(escaped) = source[i..].chars().next() {
+                        out.push(if escaped == '\n' { '\n' } else { ' ' });
+                        i += escaped.len_utf8();
+                    }
+                } else if inner == '"' {
+                    out.push('"');
+                    break;
+                } else {
+                    out.push(if inner == '\n' { '\n' } else { ' ' });
+                }
+            }
+            continue;
+        }
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// Byte ranges of the items in `source` gated behind a test-only cfg, from the
+/// parser. Brace balancing cannot model char literals: `backend.rs`'s gated
+/// test module contains `.find('{')`, which left the module open to EOF and
+/// dropped 305 production lines (#14480). `None` means the file did not parse,
+/// and the caller must fail rather than scan a guess.
+fn cfg_test_item_ranges(source: &str) -> Option<Vec<(usize, usize)>> {
+    let parse = parse_clean_source_file(source)?;
+    let mut ranges = Vec::new();
+    for attr in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ra_ap_syntax::ast::Attr::cast)
+    {
+        if !crate::analysis::cfg_predicates::attribute_requires_test(
+            &attr.syntax().text().to_string(),
+        ) {
+            continue;
+        }
+        let Some(item) = attr.syntax().parent() else {
+            continue;
+        };
+        if !ra_ap_syntax::ast::Item::can_cast(item.kind()) {
+            continue;
+        }
+        let range = item.text_range();
+        ranges.push((usize::from(range.start()), usize::from(range.end())));
+    }
+    ranges.sort_unstable();
+    Some(ranges)
+}
+
+/// Whether `text` invokes `eprintln!` or `eprint!` in any macro delimiter form.
+fn mentions_stderr_macro(text: &str) -> bool {
+    for name in ["eprintln", "eprint"] {
+        let mut from = 0;
+        while let Some(found) = text[from..].find(name) {
+            let at = from + found;
+            from = at + name.len();
+            let before_is_ident = text[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+            if before_is_ident {
+                continue;
+            }
+            if text[from..].trim_start().starts_with('!') {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// The production portion of one LSP source file: the file with every item
+/// gated behind a test-only cfg removed, comments and literal contents
+/// blinded. Test modules print skip notices, so a whole-file scan would fail
+/// on them; the exclusion is per gated item, because everything after the
+/// first `#[cfg(test)]` marker is still production code that must be scanned
+/// (#14480).
+///
+/// The guard covers `eprintln!`/`eprint!` only: a raw
+/// `writeln!(std::io::stderr(), ...)` is deliberately out of scope because
+/// #14219/#14476 needs a stderr line at session end.
+///
+/// `None` means the file did not parse; the guard must fail closed rather than
+/// scan a guess.
+fn production_source(source: &str) -> Option<String> {
+    let ranges = cfg_test_item_ranges(source)?;
+    let mut gated = vec![false; source.len()];
+    for (start, end) in ranges {
+        for flag in &mut gated[start..end] {
+            *flag = true;
+        }
+    }
+    let mut masked = String::with_capacity(source.len());
+    for (offset, ch) in source.char_indices() {
+        if gated[offset] {
+            if ch == '\n' {
+                masked.push('\n');
+            }
+        } else {
+            masked.push(ch);
+        }
+    }
+    Some(without_comments_and_literals(&masked))
+}
+
+#[test]
+fn production_source_excludes_only_the_cfg_test_gated_items() -> Result<(), String> {
+    let source = "fn before() {}\n\n#[cfg(test)]\nmod tests {\n    fn noisy() {\n        eprintln!(\"skip notice\");\n    }\n}\n\nfn after() {}\n";
+    let production = production_source(source).ok_or("the fixture must parse")?;
+    assert!(production.contains("fn before()"), "{production}");
+    assert!(production.contains("fn after()"), "{production}");
+    assert!(!production.contains("eprintln"), "{production}");
+    assert!(!production.contains("mod tests"), "{production}");
+    Ok(())
+}
+
+#[test]
+fn production_source_excludes_a_one_line_test_module_declaration() -> Result<(), String> {
+    let source = "fn production() {}\n#[cfg(test)]\nmod fixture_tests;\nfn later() {}\n";
+    let production = production_source(source).ok_or("the fixture must parse")?;
+    assert!(production.contains("fn production()"), "{production}");
+    assert!(production.contains("fn later()"), "{production}");
+    assert!(!production.contains("mod fixture_tests"), "{production}");
+    Ok(())
+}
+
+#[test]
+fn production_source_excludes_a_gated_block_containing_a_raw_string() -> Result<(), String> {
+    // backend.rs gates a test module that holds a multi-line `r#"{...}"#`
+    // ledger; braces inside it must not end the module early.
+    let source = "fn before() {}\n#[cfg(test)]\nmod tests {\n    fn ledger() -> &'static str {\n        r#\"{ \"kind\": \"gap_decision_ledger\" }\"#\n    }\n    fn noisy() {\n        eprintln!(\"skip notice\");\n    }\n}\n\nfn after() {}\n";
+    let production = production_source(source).ok_or("the fixture must parse")?;
+    assert!(production.contains("fn before()"), "{production}");
+    assert!(production.contains("fn after()"), "{production}");
+    assert!(!production.contains("eprintln"), "{production}");
+    assert!(!production.contains("ledger"), "{production}");
+    Ok(())
+}
+
+#[test]
+fn production_source_excludes_a_gated_module_holding_a_char_literal_brace() -> Result<(), String> {
+    // The defect this round repairs: `backend.rs`'s gated test module contains
+    // `.find('{')`, and brace balancing read that as a real block opener, so
+    // the module never closed and 305 production lines were dropped.
+    let source = "fn before() {}\n#[cfg(test)]\nmod tests {\n    fn probe(text: &str) -> bool {\n        text.find('{').is_some()\n    }\n}\n\nfn after() {}\n";
+    let production = production_source(source).ok_or("the fixture must parse")?;
+    assert!(production.contains("fn after()"), "{production}");
+    assert!(!production.contains("fn probe"), "{production}");
+    Ok(())
+}
+
+#[test]
+fn production_source_excludes_all_test_and_keeps_not_test() -> Result<(), String> {
+    let source = "fn before() {}\n#[cfg(all(test, feature = \"slow\"))]\nmod slow_tests {\n    fn noisy() {\n        eprintln!(\"skip notice\");\n    }\n}\n#[cfg(not(test))]\nfn production_only() {}\n";
+    let production = production_source(source).ok_or("the fixture must parse")?;
+    assert!(!production.contains("slow_tests"), "{production}");
+    assert!(production.contains("fn production_only()"), "{production}");
+    Ok(())
+}
+
+#[test]
+fn production_source_handles_cfg_forms_and_doc_comments() -> Result<(), String> {
+    // The forms the brace scanner could not model: a trailing comment on the
+    // attribute, a doc comment between the attribute and its item, and a
+    // compound `cfg(all(test, ...))` gate.
+    let cases = [
+        (
+            "trailing comment",
+            "fn before() {}\n#[cfg(test)] // keep\nfn gated() {\n    eprintln!(\"x\");\n}\nfn after() {}\n",
+        ),
+        (
+            "doc comment between",
+            "fn before() {}\n#[cfg(test)]\n/// docs\nfn gated() {\n    eprintln!(\"x\");\n}\nfn after() {}\n",
+        ),
+        (
+            "cfg(all(test, unix))",
+            "fn before() {}\n#[cfg(all(test, unix))]\nfn gated() {\n    eprintln!(\"x\");\n}\nfn after() {}\n",
+        ),
+    ];
+    for (label, source) in cases {
+        let production = production_source(source).ok_or("the fixture must parse")?;
+        assert!(
+            !mentions_stderr_macro(&production),
+            "{label}: a gated stderr write must stay excluded: {production}"
+        );
+        assert!(
+            !production.contains("fn gated()"),
+            "{label}: the gated item must stay excluded: {production}"
+        );
+        assert!(
+            production.contains("fn after()"),
+            "{label}: production after the gated item must be scanned: {production}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn production_source_fails_closed_on_an_unparseable_file() {
+    assert!(production_source("fn broken( {").is_none());
+}
+
+#[test]
+fn production_source_blinds_comment_prose_that_names_eprintln() -> Result<(), String> {
+    // #14476's `write_session_notice` doc comment names `eprintln!` in prose;
+    // the widened scan must not read that as a call.
+    let source = "fn notice() {\n    /// `eprintln!` panics when stderr is closed\n    let _ = writeln!(out, \"x\");\n}\n";
+    let production = production_source(source).ok_or("the fixture must parse")?;
+    assert!(production.contains("fn notice()"), "{production}");
+    assert!(!production.contains("eprintln"), "{production}");
+    assert!(production.contains("writeln!"), "{production}");
+    Ok(())
+}
+
+#[test]
+fn production_source_still_sees_a_real_call_after_a_comment_or_url() -> Result<(), String> {
+    let source = "fn f() {\n    // not `eprintln!` here\n    let url = \"https://example.test/a\";\n    eprintln!(\"{url}\");\n}\n";
+    let production = production_source(source).ok_or("the fixture must parse")?;
+    assert!(production.contains("let url"), "{production}");
+    assert!(mentions_stderr_macro(&production), "{production}");
+    Ok(())
+}
+
+#[test]
+fn production_source_blinds_a_multi_line_block_comment() -> Result<(), String> {
+    let source =
+        "fn f() {\n    /*\n       eprintln!(\"only prose\");\n    */\n    let ok = 1;\n}\n";
+    let production = production_source(source).ok_or("the fixture must parse")?;
+    assert!(production.contains("let ok = 1"), "{production}");
+    assert!(!production.contains("eprintln"), "{production}");
+    Ok(())
+}
+
+#[test]
+fn production_source_blinds_a_message_that_names_the_macro() -> Result<(), String> {
+    let source = "fn f() {\n    let note = \"do not use eprintln! here\";\n    let _ = note;\n}\n";
+    let production = production_source(source).ok_or("the fixture must parse")?;
+    assert!(!mentions_stderr_macro(&production), "{production}");
+    Ok(())
+}
+
+/// Per-line "inside a test-gated item" flags, derived from the syntax tree by
+/// walking item nodes, independently of the attribute-parent walk the scanner
+/// uses. A line counts as gated only when the item's range covers all of its
+/// non-whitespace content.
+fn gated_line_flags(source: &str) -> Result<Vec<bool>, String> {
+    let parse = parse_clean_source_file(source)
+        .ok_or_else(|| "the source must parse for the coverage check".to_string())?;
+    let mut ranges = Vec::new();
+    for node in parse.tree().syntax().descendants() {
+        if !ra_ap_syntax::ast::Item::can_cast(node.kind()) {
+            continue;
+        }
+        let gated = node
+            .children()
+            .filter_map(ra_ap_syntax::ast::Attr::cast)
+            .any(|attr| {
+                crate::analysis::cfg_predicates::attribute_requires_test(
+                    &attr.syntax().text().to_string(),
+                )
+            });
+        if gated {
+            ranges.push(node.text_range());
+        }
+    }
+    let mut flags = vec![false; source.lines().count()];
+    let mut offset = 0;
+    for (index, line) in source.split_inclusive('\n').enumerate() {
+        let content_start = offset + (line.len() - line.trim_start().len());
+        let content_end = offset + line.trim_end().len();
+        offset += line.len();
+        flags[index] = ranges.iter().any(|range| {
+            usize::from(range.start()) <= content_start && content_end <= usize::from(range.end())
+        });
+    }
+    Ok(flags)
+}
+
+#[test]
+fn gated_line_flags_matches_a_hand_written_expectation() -> Result<(), String> {
+    // The coverage check compares the scanner against `gated_line_flags`, and
+    // both go through `attribute_requires_test`, so a classifier bug would be
+    // invisible to that comparison. This expectation is written by hand from the
+    // fixture below, so a change in the classifier's verdict shows up here.
+    let source = concat!(
+        "fn before() {}\n",                        // 1  production
+        "#[cfg(test)]\n",                          // 2  gated
+        "mod tests {\n",                           // 3  gated
+        "    fn noisy() {}\n",                     // 4  gated
+        "}\n",                                     // 5  gated
+        "#[cfg(not(test))]\n",                     // 6  production
+        "fn production_only() {}\n",               // 7  production
+        "#[cfg(all(test, feature = \"slow\"))]\n", // 8  gated
+        "mod slow_tests {\n",                      // 9  gated
+        "    fn slow() {}\n",                      // 10 gated
+        "}\n",                                     // 11 gated
+        "fn after() {}\n",                         // 12 production
+    );
+    let expected = [
+        false, true, true, true, true, false, false, true, true, true, true, false,
+    ];
+    let actual = gated_line_flags(source)?;
+    assert_eq!(
+        actual, expected,
+        "the gated-line classifier disagrees with the hand-written expectation"
+    );
+    Ok(())
+}
+
+/// Production line numbers whose RAW text invokes `eprintln!`/`eprint!` outside
+/// a comment line, derived from the parser's gated-item ranges and the raw
+/// source. This is deliberately blinder-free: the coverage check must not share
+/// `without_comments_and_literals`, or a blinder bug (a char literal flipping
+/// quote parity) would hide a real call from the proof as well as the guard
+/// (#14480).
+fn raw_production_stderr_lines(source: &str) -> Result<Vec<usize>, String> {
+    let gated = gated_line_flags(source)?;
+    let mut hits = Vec::new();
+    for (index, line) in source.lines().enumerate() {
+        if gated.get(index).copied().unwrap_or(false) {
+            continue;
+        }
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//")
+            || trimmed.starts_with("/*")
+            || trimmed.starts_with('*')
+            || trimmed.starts_with("*/")
+        {
+            continue;
+        }
+        if line.contains("eprintln!(") || line.contains("eprint!(") {
+            hits.push(index);
+        }
+    }
+    Ok(hits)
+}
+
+/// Assert that every raw production stderr call in `source` survives the scan,
+/// and return how many there were. The raw text is the oracle, so a blinder bug
+/// cannot make this check agree with the guard by construction.
+fn assert_scan_flags_raw_calls(name: &str, source: &str) -> Result<usize, String> {
+    let production = production_source(source)
+        .ok_or_else(|| format!("{name} did not parse, so the guard cannot verify it"))?;
+    let raw_hits = raw_production_stderr_lines(source)?;
+    let scanned: Vec<&str> = production.lines().collect();
+    for index in &raw_hits {
+        let line = scanned.get(*index).copied().unwrap_or("");
+        assert!(
+            mentions_stderr_macro(line),
+            "{name}:{}: a raw production stderr call was masked by the scan: {line:?}",
+            index + 1
+        );
+    }
+    Ok(raw_hits.len())
+}
+
+/// Insert `probe` immediately after the innermost item that contains `needle`.
+/// Used to place a stderr probe after a real char-literal site without editing
+/// the production file on disk.
+fn insert_probe_after_enclosing_item(source: &str, needle: &str, probe: &str) -> Option<String> {
+    let parse = parse_clean_source_file(source)?;
+    let offset = source.find(needle)?;
+    let item = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter(|node| ra_ap_syntax::ast::Item::can_cast(node.kind()))
+        .filter(|node| {
+            let range = node.text_range();
+            usize::from(range.start()) <= offset && offset < usize::from(range.end())
+        })
+        .last()?;
+    let end = usize::from(item.text_range().end());
+    let mut out = String::with_capacity(source.len() + probe.len() + 1);
+    out.push_str(&source[..end]);
+    out.push('\n');
+    out.push_str(probe);
+    out.push_str(&source[end..]);
+    Some(out)
+}
+
+const CHAR_PROBE: &str = "fn probe_14480_char() {\n    eprintln!(\"PROBE-14480-CHAR\");\n}\n";
+
+#[test]
+fn production_scan_covers_every_line_outside_cfg_test_items() -> Result<(), String> {
+    for (name, source) in lsp_sources() {
+        let production = production_source(source)
+            .ok_or_else(|| format!("{name} did not parse, so the guard cannot verify it"))?;
+        let blinded = without_comments_and_literals(source);
+        let gated = gated_line_flags(source)?;
+        let expected: Vec<&str> = blinded.lines().collect();
+        let scanned: Vec<&str> = production.lines().collect();
+        assert_eq!(
+            scanned.len(),
+            expected.len(),
+            "{name}: the scan must keep the file's line structure"
+        );
+        let mut last_gated = 0;
+        for (index, line) in expected.iter().enumerate() {
+            if gated[index] {
+                last_gated = index;
+                assert!(
+                    scanned[index].trim().is_empty(),
+                    "{name}:{}: a gated line must be blank, got {:?}",
+                    index + 1,
+                    scanned[index]
+                );
+            } else {
+                assert_eq!(
+                    scanned[index],
+                    *line,
+                    "{name}:{}: production line missing from the scan",
+                    index + 1
+                );
+            }
+        }
+        let first_gated = gated.iter().position(|flag| *flag).unwrap_or(0);
+        for (label, from) in [("first", first_gated), ("last", last_gated)] {
+            if !gated.iter().skip(from + 1).any(|flag| !*flag) {
+                continue;
+            }
+            assert!(
+                scanned
+                    .iter()
+                    .skip(from + 1)
+                    .any(|line| !line.trim().is_empty()),
+                "{name}: the scan must reach production past the {label} gated item"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn production_scan_flags_every_raw_stderr_call() -> Result<(), String> {
+    for (name, source) in lsp_sources() {
+        assert_scan_flags_raw_calls(name, source)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn production_scan_flags_a_call_after_a_char_literal() -> Result<(), String> {
+    // The fail-open this round repairs: `'"'` used to open a string, flip quote
+    // parity, and mask the real call that follows.
+    let source = "fn probe() {\n    let quote = '\"';\n    eprintln!(\"PROBE-14480-CHAR\");\n}\n";
+    let hits = assert_scan_flags_raw_calls("char-literal fixture", source)?;
+    assert!(hits > 0, "the fixture must contain a raw production call");
+    Ok(())
+}
+
+#[test]
+fn production_scan_flags_a_call_after_a_char_literal_immediately_before_it() -> Result<(), String> {
+    // Same line, so the blinder cannot recover by resetting at a newline: the
+    // `'"'` opens a string that swallows the call that follows it.
+    let source = "fn probe() {\n    let c = '\"'; eprintln!(\"PROBE-14480-CHAR\");\n}\n";
+    let hits = assert_scan_flags_raw_calls("char-literal-before-call fixture", source)?;
+    assert!(hits > 0, "the fixture must contain a raw production call");
+    Ok(())
+}
+
+#[test]
+fn production_scan_flags_a_call_after_the_gap_artifacts_char_literal() -> Result<(), String> {
+    // gap_artifacts.rs:1784 has `(None, '"' | '\'') => {`; a probe after that
+    // item must stay visible, because the char literal must not flip parity.
+    let source = include_str!("gap_artifacts.rs");
+    let mutated =
+        insert_probe_after_enclosing_item(source, r#"(None, '"' | '\'') => {"#, CHAR_PROBE)
+            .ok_or_else(|| {
+                "gap_artifacts.rs must parse and contain the char-literal arm".to_string()
+            })?;
+    let hits = assert_scan_flags_raw_calls("gap_artifacts.rs + probe", &mutated)?;
+    assert!(hits > 0, "the probe must be a raw production call");
+    Ok(())
+}
+
+#[test]
+fn production_scan_flags_a_call_after_the_component_outcome_char_literal() -> Result<(), String> {
+    // component_outcome.rs:353 has `&['`', '\'', '"', '[', '{']`; a probe after
+    // that const must stay visible for the same reason.
+    let source = include_str!("component_outcome.rs");
+    let mutated = insert_probe_after_enclosing_item(
+        source,
+        "PATH_TOKEN_LEADING_WRAPPERS: &[char]",
+        CHAR_PROBE,
+    )
+    .ok_or_else(|| "component_outcome.rs must parse and contain the wrapper slice".to_string())?;
+    let hits = assert_scan_flags_raw_calls("component_outcome.rs + probe", &mutated)?;
+    assert!(hits > 0, "the probe must be a raw production call");
+    Ok(())
+}
+
+#[test]
+fn production_scan_reaches_backend_production_after_the_gated_module() -> Result<(), String> {
+    // The flipping control for this round: on the brace-balancing scanner these
+    // three items were dropped because the gated module never closed.
+    let production = production_source(include_str!("backend.rs"))
+        .ok_or_else(|| "backend.rs must parse".to_string())?;
+    for item in [
+        "struct DiskContentStatKey",
+        "fn disk_content_stat_key",
+        "fn disk_instant_is_racy",
+    ] {
+        assert!(
+            production.contains(item),
+            "backend.rs production item {item} is missing from the scan"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn lsp_production_sources_have_no_stderr_degradation_fallback() -> Result<(), String> {
     // Source-level guard: the production portion of every LSP source file
-    // must be free of `eprintln!`. Degradation is reported through the typed
-    // component outcomes on the snapshot plus `window/logMessage`, never
+    // must be free of `eprintln!`/`eprint!`. Degradation is reported through the
+    // typed component outcomes on the snapshot plus `window/logMessage`, never
     // through hidden process stderr.
-    let sources: [(&str, &str); 21] = [
+    for (name, source) in lsp_sources() {
+        let Some(production) = production_source(source) else {
+            return Err(format!(
+                "lsp/{name} did not parse, so the stderr guard cannot verify it (#14480)"
+            ));
+        };
+        if mentions_stderr_macro(&production) {
+            return Err(format!(
+                "lsp/{name} writes to process stderr in production code; route degradation through the typed component outcomes (#1997)"
+            ));
+        }
+    }
+    // #14480: the scan must not stop at the first `#[cfg(test)]` marker. In
+    // lsp.rs every marker is a one-line `mod <name>;` declaration near the top,
+    // so a "split at the first marker" scan skipped `serve`, `serve_stdio` and
+    // `serve_streams` entirely.
+    let lsp = production_source(include_str!("../lsp.rs"))
+        .ok_or_else(|| "lsp.rs must parse".to_string())?;
+    assert!(
+        lsp.contains("async fn serve_stdio"),
+        "the production scan must reach serve_stdio"
+    );
+    // diagnostics.rs declares production code after its first `#[cfg(test)]`
+    // marker and gates later helpers individually; the production region must
+    // still be scanned, so the exclusion is per gated item and not "everything
+    // after the first marker".
+    let diagnostics = include_str!("diagnostics.rs");
+    let production =
+        production_source(diagnostics).ok_or_else(|| "diagnostics.rs must parse".to_string())?;
+    assert!(
+        production.contains("fn canonicalize_diagnostic_batches"),
+        "the production scan must reach diagnostics.rs code declared after its first #[cfg(test)] marker"
+    );
+    assert!(
+        !production.contains("fn finding_diagnostics_by_uri("),
+        "a #[cfg(test)]-gated helper must stay excluded"
+    );
+    // And a stderr write placed in that post-marker production function is
+    // caught, so the presence check above is not the only evidence.
+    let mutated = diagnostics.replacen(
+        "fn site_fingerprint(finding: &Finding) -> String {",
+        "fn site_fingerprint(finding: &Finding) -> String {\n    eprintln!(\"probe\");",
+        1,
+    );
+    let mutated_production = production_source(&mutated)
+        .ok_or_else(|| "the mutated diagnostics.rs must parse".to_string())?;
+    assert!(mentions_stderr_macro(&mutated_production));
+    Ok(())
+}
+
+/// Every LSP source file the stderr guard scans.
+fn lsp_sources() -> [(&'static str, &'static str); 21] {
+    [
         ("lsp.rs", include_str!("../lsp.rs")),
         ("actions.rs", include_str!("actions.rs")),
         ("agent_protocol.rs", include_str!("agent_protocol.rs")),
@@ -29588,22 +31079,7 @@ fn lsp_production_sources_have_no_stderr_degradation_fallback() -> Result<(), St
         ("state.rs", include_str!("state.rs")),
         ("transport_bounds.rs", include_str!("transport_bounds.rs")),
         ("uri.rs", include_str!("uri.rs")),
-    ];
-    for (name, source) in sources {
-        // Test-only code (everything from the first `#[cfg(test)]` onward)
-        // is excluded: test modules may print skip notices. No lsp source
-        // declares `#[cfg(test)]` items before its test module except
-        // diagnostics.rs test-only imports/helpers, which contain no
-        // stderr prints either; the whole-file check for those files would
-        // be equally clean, so the split is only a safety margin.
-        let production = source.split("#[cfg(test)]").next().unwrap_or(source);
-        if production.contains("eprintln") {
-            return Err(format!(
-                "lsp/{name} writes to process stderr in production code; route degradation through the typed component outcomes (#1997)"
-            ));
-        }
-    }
-    Ok(())
+    ]
 }
 
 /// Recursively copy a fixture workspace into a writable temp root.
@@ -32615,6 +34091,14 @@ impl LanguageServer for SharedBackend {
     ) -> tower_lsp_server::jsonrpc::Result<Option<serde_json::Value>> {
         self.0.execute_command(params).await
     }
+
+    async fn diagnostic(
+        &self,
+        params: DocumentDiagnosticParams,
+    ) -> tower_lsp_server::jsonrpc::Result<tower_lsp_server::ls_types::DocumentDiagnosticReportResult>
+    {
+        self.0.diagnostic(params).await
+    }
 }
 
 /// Drives `workspace/executeCommand ripr.showRelatedTest` over a real framed
@@ -34367,6 +35851,56 @@ fn file_mode_only_change_serves_the_incomplete_marker_through_the_real_producer(
         || super::diagnostics::empty_scope_marker_payload(&edited.snapshot).is_some()
     {
         return Err("a text edit must serve rows and no scope marker".to_string());
+    }
+    Ok(())
+}
+
+/// #14420: a head-only match arm's hover names the result the flow model
+/// read on its line, in the witness's changed expression and the line
+/// hover heading, while the diagnostic's own message and data keep the head.
+#[test]
+fn hover_names_a_head_only_arm_result() -> Result<(), String> {
+    let markup_text = |hover: tower_lsp_server::ls_types::Hover| match hover.contents {
+        HoverContents::Markup(markup) => Ok(markup.value),
+        _ => Err("expected markup hover".to_string()),
+    };
+    let mut finding = sample_finding();
+    finding.probe.family = ProbeFamily::MatchArm;
+    finding.probe.expression = "Size::Medium =>".to_string();
+    finding.flow_sinks = vec![crate::domain::FlowSinkFact {
+        kind: crate::domain::FlowSinkKind::MatchArm,
+        text: "450".to_string(),
+        line: finding.probe.location.line,
+        owner: None,
+    }];
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    let hover = markup_text(super::hover::finding_hover_response(&finding, &diagnostic))?;
+    if !hover.contains("- changed expression: `Size::Medium => 450`") {
+        return Err(format!("finding hover lost the arm result:\n{hover}"));
+    }
+    let line_hover = markup_text(super::hover::line_findings_hover_response(
+        &[&finding],
+        crate::config::LspDiagnosticProfile::Full,
+        &ClientFeatureProfile::unsupported(),
+    ))?;
+    if !line_hover.contains(" match_arm `Size::Medium => 450`") {
+        return Err(format!("line hover lost the arm result:\n{line_hover}"));
+    }
+    let data = diagnostic.data.as_ref().ok_or("diagnostic data missing")?;
+    if data.to_string().contains("=> 450") {
+        return Err(format!("diagnostic data must keep the head: {data}"));
+    }
+
+    // A sink read on another line is not this head's result.
+    let mut elsewhere = finding;
+    elsewhere.flow_sinks[0].line += 1;
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &elsewhere);
+    let hover = markup_text(super::hover::finding_hover_response(
+        &elsewhere,
+        &diagnostic,
+    ))?;
+    if !hover.contains("- changed expression: `Size::Medium =>`\n") {
+        return Err(format!("off-line sink was joined:\n{hover}"));
     }
     Ok(())
 }

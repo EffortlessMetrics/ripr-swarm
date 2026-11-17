@@ -276,3 +276,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_ignored_result (23)
+
+Reason:
+RIPR-SPEC-0122: Hidden rows sharing file, owner, class and reason merge into one row (#14299)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_ignored_result --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

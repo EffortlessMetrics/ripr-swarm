@@ -376,6 +376,7 @@ mod guard_activation;
 mod guard_atoms;
 mod guard_credit;
 mod helper_inline;
+mod import_adds_binding;
 mod import_identity;
 mod imported_call_operator;
 mod known_equality_helpers;
@@ -388,7 +389,9 @@ mod may_reach;
 mod message_pin;
 mod module_value;
 mod test_local_literal;
+mod type_checking_block;
 mod type_guard;
+mod verify_interpreter;
 mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_value_origins};
 #[cfg(test)]
@@ -400,6 +403,8 @@ mod discriminators;
 mod effect_alignment;
 #[cfg(test)]
 mod effect_order_tests;
+#[cfg(test)]
+mod exception_body_call_tests;
 mod exception_variant;
 #[cfg(test)]
 mod exception_variant_tests;
@@ -410,6 +415,7 @@ mod no_behavior;
 mod oracles;
 mod owner_exact;
 mod owners_tests;
+mod package_aliases;
 mod param_fixtures;
 mod parametrize;
 mod parse_budget;
@@ -489,6 +495,7 @@ use source_facts::{
 };
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
+mod callee_patch;
 mod collection_config;
 mod fixture_substitution;
 mod fixtures;
@@ -934,6 +941,11 @@ struct PythonAssertion {
     /// operands without `msg`, and an exception assertion's `with` item
     /// together with its body. `text` stays the reported oracle.
     gate_text: String,
+    /// Byte offset in `gate_text` where the exception body ends, before the
+    /// rule 14 comparison is appended (#14754 review). `None` for a
+    /// non-exception assertion or a cached fact written before this field.
+    #[serde(default)]
+    exception_body_end: Option<usize>,
     /// The call a callable-form exception assertion makes
     /// (`assertRaisesRegex(E, 'm', check, 20, n=3)` calls `check(20, n=3)`;
     /// RIPR-SPEC-0238 rule 13), with every argument it passes on.
@@ -1676,6 +1688,15 @@ impl PythonAdapter {
         }
         fixtures::attach_fixture_defs(&mut all_tests, &fixture_defs_by_file);
         helper_assertions::apply_helper_assertions(&mut all_tests, &helper_modules_by_file);
+        // `from . import X` where the test package's `__init__.py` binds `X`
+        // by import (#13927). After the helper substitution, which keeps its
+        // own stricter module-attribute rule (RIPR-SPEC-0238 rule 32), and
+        // before every reach and oracle reader of test imports.
+        package_aliases::apply_package_import_aliases(
+            &mut all_tests,
+            &workspace_read.sources,
+            |path| options.root.join(path).exists(),
+        );
         // A chain conftest that exists but was never read (capped, excluded or
         // unreadable) cannot be ruled out.
         let unreadable_conftest = |conftest: &Path| {
@@ -2152,6 +2173,25 @@ impl PythonAdapter {
             let old_string_line_ranges = old_source
                 .as_deref()
                 .and_then(no_behavior::multi_line_string_line_ranges);
+            // #14156: the body of `if TYPE_CHECKING:` never runs, on either
+            // side of the diff.
+            let typing_shadowed =
+                type_checking_block::workspace_may_shadow_typing(workspace_read.sources.keys());
+            let type_checking_ranges = workspace_read
+                .sources
+                .get(&changed.path)
+                .filter(|_| !typing_shadowed)
+                .map(|source| {
+                    type_checking_block::type_checking_only_line_ranges(&changed.path, source)
+                })
+                .unwrap_or_default();
+            let old_type_checking_ranges = old_source
+                .as_deref()
+                .filter(|_| !typing_shadowed)
+                .map(|source| {
+                    type_checking_block::type_checking_only_line_ranges(&changed.path, source)
+                })
+                .unwrap_or_default();
             let import_ranges = import_ranges_by_file
                 .get(&changed.path)
                 .map(Vec::as_slice)
@@ -2171,12 +2211,33 @@ impl PythonAdapter {
             let is_added_import = |added: &crate::analysis::diff::ChangedLine| {
                 line_is_in_ranges(added.line, import_ranges)
                     && counterparts.get(&added.line).is_none_or(|removed| {
-                        !line_is_in_ranges(removed.line, &old_import_ranges)
-                            && !is_python_import_line(&removed.text)
+                        (!line_is_in_ranges(removed.line, &old_import_ranges)
+                            && !is_python_import_line(&removed.text))
+                            // #14157: the old import line with more names
+                            // is an added import in place.
+                            || old_source.as_deref().is_some_and(|old_source| {
+                                import_adds_binding::import_line_only_adds_bindings(
+                                    &removed.text,
+                                    &added.text,
+                                    old_source,
+                                )
+                            })
                     })
             };
             let covered = python_quiet_lines_covered_by_run(&changed.added_lines, |added| {
                 line_is_in_ranges(added.line, new_docstring_ranges)
+                    // A block line counts as quiet only when the line it
+                    // replaced did not run either; runtime code moved into a
+                    // block goes to the classifier, which keeps its probe.
+                    || (line_is_in_ranges(added.line, &type_checking_ranges)
+                        && counterparts.get(&added.line).is_none_or(|removed| {
+                            line_is_in_ranges(removed.line, &old_type_checking_ranges)
+                                || line_is_in_ranges(removed.line, &old_docstring_ranges)
+                                || line_is_in_ranges(removed.line, &old_import_ranges)
+                                || is_python_import_line(&removed.text)
+                                || is_python_no_behavior_line(&removed.text)
+                                || is_python_structural_line(&removed.text)
+                        }))
                     || is_added_import(added)
                     || is_python_no_behavior_line(&added.text)
                     || is_python_structural_line(&added.text)
@@ -2235,6 +2296,13 @@ impl PythonAdapter {
                         }),
                     old_line_in_docstring: old_line.is_some_and(|removed| {
                         line_is_in_ranges(removed.line, &old_docstring_ranges)
+                    }),
+                    new_line_type_checking_only: line_is_in_ranges(
+                        added.line,
+                        &type_checking_ranges,
+                    ),
+                    old_line_type_checking_only: old_line.is_some_and(|removed| {
+                        line_is_in_ranges(removed.line, &old_type_checking_ranges)
                     }),
                     opens_owner_with_added_body: owner_for_changed_line(
                         &changed.path,
@@ -2310,6 +2378,7 @@ impl PythonAdapter {
                 &deleted_lines::OldSideRanges {
                     docstrings: &old_docstring_ranges,
                     imports: &old_import_ranges,
+                    type_checking_only: &old_type_checking_ranges,
                     source: old_source.as_deref(),
                 },
                 workspace_read
@@ -2346,6 +2415,9 @@ impl PythonAdapter {
             star_facts_by_file,
         );
         teardown::free_in_background(facts);
+        // #13801: the interpreter and confidence of the pytest verify route
+        // are decided once here, from static facts at the root.
+        verify_interpreter::PytestVerifyInterpreter::at(&options.root).apply(&mut findings);
         Ok(LanguageDiffResult {
             value_origins,
             findings,
@@ -2380,7 +2452,8 @@ impl PythonAdapter {
         working_set_limit: repo::RepoWorkingSetLimit,
     ) -> Result<LanguageRepoResult, String> {
         let input = repo::select_repo_input_with_limit(root, working_set_limit);
-        let evidence = repo::build_repo_evidence(&input, root);
+        let mut evidence = repo::build_repo_evidence(&input, root);
+        verify_interpreter::PytestVerifyInterpreter::at(root).apply(&mut evidence.findings);
         let partial_reason = repo::partial_disclosure(&evidence);
         let production_files = input.production_files.len();
         let skipped_files = evidence.counts.skipped;
@@ -2525,11 +2598,18 @@ mod module_field_tests;
 mod helper_assertions_tests;
 
 #[cfg(test)]
+mod swallowing_wrapper_tests;
+
+#[cfg(test)]
 mod helper_module_attribute_tests;
 
 #[cfg(test)]
 mod capability_disposition_tests;
 
+#[cfg(test)]
+mod approx_band_tests;
+#[cfg(test)]
+mod callee_patch_tests;
 #[cfg(test)]
 mod helper_inline_tests;
 #[cfg(test)]
@@ -2540,11 +2620,15 @@ mod cli_runner_tests;
 #[cfg(test)]
 mod cli_subcommand_tests;
 #[cfg(test)]
+mod cross_module_caller_tests;
+#[cfg(test)]
 mod dunder_helper_reach_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;
 #[cfg(test)]
 mod imported_literal_tests;
+#[cfg(test)]
+mod repo_module_identity_tests;
 #[cfg(test)]
 mod test_body_writer_tests;
 #[cfg(test)]
@@ -2580,6 +2664,8 @@ mod python_tests;
 #[cfg(test)]
 mod layout_tests;
 #[cfg(test)]
+mod package_alias_tests;
+#[cfg(test)]
 mod reexport_tests;
 
 #[cfg(test)]
@@ -2598,7 +2684,11 @@ pub(crate) use row_miss_tests::{python_direct_and_advisory_finding, python_miss_
 mod tests;
 
 #[cfg(test)]
+mod import_adds_binding_tests;
+#[cfg(test)]
 mod loop_walk_tests;
+#[cfg(test)]
+mod type_checking_block_tests;
 #[cfg(test)]
 mod unemitted_stage_unknown_tests;
 #[cfg(test)]

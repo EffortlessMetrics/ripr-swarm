@@ -49,8 +49,11 @@ Do not read protection or ruleset settings or credential values for routine
 PR progression. Inspect exact-head PR-visible checks, review and merge state;
 unknown checks are not passed. A settings-read 403 is not a blanket blocker or
 a reason to request broader access. An ordinary PR/check read failure is a
-separate evidence gap. After required proof and review, submit the normal
-expected-head squash merge and let GitHub enforce applicable requirements. Report
+separate evidence gap. After required proof and review, the native merge queue is
+the installed landing route for ordinary PRs; submit the direct expected-head
+squash only where the queue route is genuinely not in force or a refusal has been
+reconciled as a supported fallback, and never as a bypass, and let GitHub enforce
+applicable requirements. Report
 a rejection without guessing its cause; never bypass enforcement or change settings.
 
 1. Reuse the PR that already owns the claim. Search current source, all-state PRs, recently merged PRs, and the controlling issue immediately before publishing a new PR. Publish a new PR only when no equivalent candidate exists. Coordinate actual ownership and preserve unique work as described in `prepare-issue`.
@@ -82,9 +85,9 @@ a rejection without guessing its cause; never bypass enforcement or change setti
    - the ordinary squash result is the combined-tree subject.
 10. Do not update a behind-only branch. Unrelated movement on `main` is normal and does not require restacking, force-pushing, or rerunning unaffected proof. Reconcile only an actual conflict, explicit stack change, material prerequisite change, failed combined-tree proof, or exact-base policy that applies to this candidate.
 11. Before spending time on conflict repair, re-run the claim-identity search. When upstream or another PR already delivered the same claim, stop, compare for unique residuals, record the winning implementation, and close or disposition the duplicate rather than resolving a dead candidate.
-12. Select the applicable route in [merge flow](../../../docs/MERGE_FLOW.md). For the installed legacy label route, apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then inspect the existing request and run state for the exact head and subject, and follow the handoff before requesting qualification with `merge-ready`. A Ready toggle requests nothing; never reapply the label over a queued or running current-subject run. A push or material finding returns through that same Draft repair wave, not an immediate re-toggle. After verified queue activation, use the native-queue procedure instead of requesting legacy label qualification.
+12. Select the applicable route in [merge flow](../../../docs/MERGE_FLOW.md). Apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then inspect the existing request and run state for the exact head and subject, and follow the handoff before requesting qualification with `merge-ready`. Applying `merge-ready` requests the required PR qualification (`Ripr Rust Small Result`); it does not enqueue and is not a merge authorization. Never reapply the label over a queued or running current-subject run. A push or material finding returns through that same Draft repair wave, not an immediate re-toggle. After that qualification is green, inspect current required proof and findings, make the pre-enqueue judgment, and enqueue the exact head through the native merge queue.
 13. Do not infer review from an empty thread list, reviewer quota/unavailability, or green required checks. Do not infer a human approval requirement or exact cause from `mergeStateStatus: BLOCKED`; inspect available PR/check evidence and report what is known. Do not query settings for routine diagnosis.
-14. Follow [merge flow](../../../docs/MERGE_FLOW.md): the installed legacy label route remains operative until verified migration to native queue qualification of the actual composition. For the legacy route, inspect current required proof and findings, make the final integration judgment, and use protected expected-head squash; do not substitute generic auto-merge. Use the native-queue procedure only after verified activation. When GitHub owns the next transition, return an in-flight result instead of polling unchanged state. The parent goal may advance another independent claim while this PR waits.
+14. Follow [merge flow](../../../docs/MERGE_FLOW.md): applying `merge-ready` requests the required PR qualification (`Ripr Rust Small Result`); it does not enqueue and is not a landing authorization. After that qualification is green, inspect current required proof and findings, make the pre-enqueue judgment, and enqueue the exact head through the native merge queue; do not substitute generic auto-merge. Preserve required checks and approvals. When GitHub owns the next transition, return an in-flight result instead of polling unchanged state. The parent goal may advance another independent claim while this PR waits.
 15. Merge ordinary `ripr-swarm` development PRs with the repository's protected squash method. Exact history-preserving source-integration transactions are a separate controlled path and follow their governing issue instead of this rule.
 16. After merge, verify `main`, update issue acceptance, parent state, generated evidence, and any residual work. A merged PR means implementation landed; it does not by itself complete the parent issue, release phase, or high-level goal.
 17. After deliberate closure or supersession, record the winning candidate and preserved residual work.
@@ -132,15 +135,22 @@ passive waiting; genuine remote waits name their owner and decision-changing eve
 without an idle polling worker. Batch related findings into one repair wave, preserve
 unaffected review, and do not force branch churn or a global intake freeze. These
 instructions govern agent decisions; they do not install branch protection.
-Until verified migration, the `merge-ready` label (#4986) is the installed hosted
-qualification request; being Ready for
-review is not REVIEW_READY or permission to arm auto-merge.
+Applying `merge-ready` is the request for the required PR qualification
+(`Ripr Rust Small Result`); it does not enqueue and is not a landing
+authorization. Enqueue through the native merge queue after that qualification
+is green. Being Ready for review is not REVIEW_READY or permission to arm
+auto-merge.
 
 # Release-scope law
 
 For a pinned release, treat the reviewed immutable pin receipt as the sole membership authority: qualification, source preflight, and finalization consume its exact ref, ancestry, ordered SHA digest, PR dispositions, and manifests unchanged. Ordinary `main` or swarm movement never repins or changes membership; repin only after a release-invalidating exact-candidate qualification or source-preflight failure, with an explicit superseding receipt. Do not close, draft, lock, relabel, retarget, or otherwise mutate unrelated PRs to freeze scope; they remain open and may evolve, and post-pin merges do not retarget the release. Close only this selected PR for its own evidence-backed terminal disposition—never close-now/reopen-after-release.
 
 # Review law
+
+Review and focused checks run in the owning session. Do not start an Actions
+review by publishing, toggling Ready, adding labels or posting a tool mention.
+The retained legacy qualification request is a staged protected-route dependency,
+not routine development feedback; #4838 owns its final queue-only replacement.
 
 The owning session performs directed inline review in its main context through `review-pr`, changing perspective with explicit criteria, targeted checks and counterexamples. Subagents and advisory bot input (for example `ub-review`; see `docs/CI.md`) are optional extra evidence, not mandatory reviewer identities. Preserve actual required reviews and protections and valid historical review; refresh affected or newly requested dimensions only. The accountable root verifies and integrates the result.
 

@@ -1,4 +1,4 @@
-use super::{dedupe_key, existing_comments, is_code_span, publish_requests};
+use super::{compact_body, dedupe_key, existing_comments, is_code_span, publish_requests};
 use serde_json::json;
 
 #[test]
@@ -310,5 +310,27 @@ fn update_messages_and_notes_fold_line_breaks_in_the_key() {
             "Skipped a RIPR inline comment update without a numeric comment id: b ::warning::y"
                 .to_string()
         ]
+    );
+}
+
+/// #14303: the published lead of a card placed on another changed line names
+/// the gap's line too, since the full card that carries it is folded away.
+#[test]
+fn a_displaced_card_names_its_gap_line_in_the_visible_lead() {
+    let full = "### ripr gap: missing boundary assertion\n\nGap at line 5 of this function: `total_cents >= 5_000`. This comment sits on the nearest changed line.\n\nChanged behavior:\n`5_000`\n\nRepair:\nAdd one focused boundary assertion.\n\nVerify:\n`ripr agent verify`";
+    let body = compact_body(&json!({"body": full, "dedupe_key": "k"}));
+    assert!(
+        body.starts_with(
+            "**ripr: missing boundary assertion** — Add one focused boundary assertion.\n\nGap at line 5 of this function: `total_cents >= 5_000`. This comment sits on the nearest changed line.\n\nVerify: `ripr agent verify`\n\n<details>"
+        ),
+        "{body}"
+    );
+    let exact = compact_body(&json!({
+        "body": "### ripr gap: G\n\nChanged behavior:\n`x`\n\nRepair:\nR\n\nVerify:\n`v`",
+        "dedupe_key": "k"
+    }));
+    assert!(
+        exact.starts_with("**ripr: G** — R\n\nVerify: `v`\n\n<details>"),
+        "{exact}"
     );
 }

@@ -225,6 +225,86 @@ fn is_unsafe_obligation(probe: &Probe) -> bool {
             || probe.expression == crate::analysis::syntax::ra::UNCHECKED_ASSUMPTION_LABEL)
 }
 
+/// Typed spellings of the substring heuristics that mark related-test bodies or
+/// probe expressions as opaque before any value on them is read as an input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AssertKind {
+    FixtureMention,
+    BuilderMention,
+    ArbGeneratorMention,
+    AsyncKeyword,
+    SpawnKeyword,
+    AwaitKeyword,
+}
+
+impl AssertKind {
+    const TEST_BODY_SIGNALS: &'static [(Self, &'static str)] = &[
+        (Self::FixtureMention, "fixture"),
+        (Self::BuilderMention, "builder"),
+        (Self::ArbGeneratorMention, "arb_"),
+    ];
+    const EXPRESSION_SIGNALS: &'static [(Self, &'static str)] = &[
+        (Self::AsyncKeyword, "async"),
+        (Self::SpawnKeyword, "spawn"),
+        (Self::AwaitKeyword, "await"),
+    ];
+
+    fn matches_in_test_body(body: &str) -> bool {
+        Self::TEST_BODY_SIGNALS
+            .iter()
+            .any(|(_, needle)| body.contains(needle))
+    }
+
+    /// The expression signals match whole name segments (#14875): an
+    /// identifier is split at `_` and at lower-to-upper case steps, and a
+    /// segment must equal `async`, `await` or `spawn` (or be `asyncio`).
+    /// `async move`, `.await`, `spawn_blocking`, `async_trait`, `spawnSync`
+    /// and `asyncio.run` count; `respawn_limit`, `awaiting_ack`,
+    /// `asynchronous_mode` and a `"async"` string or comment do not.
+    fn matches_in_expression(expression: &str) -> bool {
+        let masked = crate::analysis::extract::mask_comments_and_strings(expression);
+        masked
+            .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .flat_map(name_segments)
+            .any(|segment| {
+                segment.eq_ignore_ascii_case("asyncio")
+                    || Self::EXPRESSION_SIGNALS
+                        .iter()
+                        .any(|(_, needle)| segment.eq_ignore_ascii_case(needle))
+            })
+    }
+}
+
+/// The `_`- and case-separated segments of one identifier:
+/// `spawn_blocking` is `spawn`, `blocking`; `readFileAsync` is `read`,
+/// `File`, `Async`.
+fn name_segments(token: &str) -> Vec<&str> {
+    let mut segments = Vec::new();
+    for part in token.split('_').filter(|part| !part.is_empty()) {
+        let chars: Vec<(usize, char)> = part.char_indices().collect();
+        let mut begin = 0;
+        for (at, &(index, ch)) in chars.iter().enumerate().skip(1) {
+            let Some(&(_, previous)) = chars.get(at - 1) else {
+                continue;
+            };
+            let next_lower = chars
+                .get(at + 1)
+                .is_some_and(|(_, next)| next.is_lowercase());
+            // `readFile` splits before `F`; `HTTPSpawn` splits before `S`.
+            let step = ch.is_uppercase()
+                && (previous.is_lowercase()
+                    || previous.is_ascii_digit()
+                    || (previous.is_uppercase() && next_lower));
+            if step {
+                segments.extend(part.get(begin..index));
+                begin = index;
+            }
+        }
+        segments.extend(part.get(begin..));
+    }
+    segments
+}
+
 pub(in crate::analysis) fn stop_reasons(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -237,19 +317,23 @@ pub(in crate::analysis) fn stop_reasons(
         } else {
             reasons.push(StopReason::NoChangedRustLine);
         }
+    } else if probe.family == ProbeFamily::StaticUnknown
+        && crate::analysis::probes::is_inline_const_assertion_line(&probe.expression)
+    {
+        // #14181: `const { assert!(N <= 249) };` inside a function is checked
+        // when the function is built; a violating edit fails to compile.
+        reasons.push(StopReason::CompileTimeInvariant);
     }
     if is_unsafe_obligation(probe) {
         reasons.push(StopReason::UnsafeObligation);
     }
-    if related_tests.iter().any(|test| {
-        test.body.contains("fixture") || test.body.contains("builder") || test.body.contains("arb_")
-    }) {
+    if related_tests
+        .iter()
+        .any(|test| AssertKind::matches_in_test_body(&test.body))
+    {
         reasons.push(StopReason::FixtureOpaque);
     }
-    if probe.expression.contains("async")
-        || probe.expression.contains("spawn")
-        || probe.expression.contains("await")
-    {
+    if AssertKind::matches_in_expression(&probe.expression) {
         reasons.push(StopReason::AsyncBoundaryOpaque);
     }
     if contains_macro_invocation(&probe.expression) {
@@ -572,7 +656,7 @@ fn uncertainty_next_step(
             added.push(action);
         }
     }
-    step.push_str(" Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.");
+    step.push_str(" Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.");
     step
 }
 
@@ -974,7 +1058,7 @@ mod tests {
                 "{step}"
             );
             assert!(
-                step.contains("original and changed") && step.contains("may remain unknown"),
+                step.contains("old and new code") && step.contains("may remain unknown"),
                 "{step}"
             );
             assert!(
@@ -1555,6 +1639,76 @@ mod tests {
             ProbeFamily::StaticUnknown,
             "unsafe block",
         )));
+    }
+
+    #[test]
+    fn assert_kind_matches_exactly_the_former_body_predicate() {
+        fn legacy_test_body(body: &str) -> bool {
+            body.contains("fixture") || body.contains("builder") || body.contains("arb_")
+        }
+        let bodies = [
+            "let input = load_fixture();",
+            "Request::builder().build()",
+            "let n = arb_u32();",
+            "plain test",
+            "async fn helper() {}",
+            "fixture_builder_arb_",
+        ];
+        for body in bodies {
+            assert_eq!(
+                super::AssertKind::matches_in_test_body(body),
+                legacy_test_body(body),
+                "body: {body}"
+            );
+        }
+    }
+
+    /// #14875: an expression marks a task boundary only through a whole
+    /// `async`/`await`/`spawn` name segment, never through a longer word,
+    /// a string or a comment that contains it.
+    #[test]
+    fn async_boundary_signals_match_whole_name_segments() {
+        for expression in [
+            "async fn run() {}",
+            "async move { work() }",
+            "task::spawn(future)",
+            "std::thread::spawn(|| work())",
+            "tokio::task::spawn_blocking(work)",
+            "spawn_local(fut)",
+            "value.await",
+            "load().await?",
+            "#[async_trait]",
+            "asyncio.run(main())",
+            "proc.spawnSync(cmd)",
+            "readFileAsync(path)",
+            "HTTPSpawn::new()",
+            "IOAsync",
+            "r#async",
+            "async spawn await",
+        ] {
+            assert!(
+                super::AssertKind::matches_in_expression(expression),
+                "expression: {expression}"
+            );
+        }
+        for expression in [
+            "plain expression",
+            "s.respawn_limit > n",
+            "self.asynchronous_mode",
+            "awaiting_ack == 0",
+            "spawned_count + 1",
+            "spawner.len()",
+            "respawnLimit > n",
+            "asynchronousMode",
+            "HTTPSpawner",
+            "log(\"async done\")",
+            "x > 1 // await later",
+        ] {
+            assert!(
+                !super::AssertKind::matches_in_expression(expression),
+                "expression: {expression}"
+            );
+        }
     }
 
     // #11547: a changed compile-time assertion names its own stop reason;

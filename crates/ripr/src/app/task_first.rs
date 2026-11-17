@@ -183,6 +183,7 @@ pub(crate) fn decide_repair_start(
         restart_route,
         check_case: None,
         check_repair_route: None,
+        check_scope_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),
@@ -337,7 +338,45 @@ fn repair_refusal(
     if let Some(reason) = policy.omission_reason_for_class(entry.class, Some(entry.seam.file())) {
         return Some((RefusalKind::Other, reason));
     }
+    // #14084: the before phase selects its seam through the agent brief, which
+    // withholds a gap-class seam whose evidence is unknown or opaque at a
+    // stage. The route readiness above does not read every stage, so without
+    // this the picker and `ripr check` offered a start the before phase then
+    // refused. The brief's own predicate decides; this only words it.
+    if super::agent_brief::agent_brief_withholds(entry, policy) {
+        return Some((RefusalKind::Other, evidence_limited_reason(entry)));
+    }
     proposal_start_refusal(entry, &eligibility.readiness)
+}
+
+/// The refusal for a gap-class seam the agent brief withholds because one of
+/// its evidence stages is unknown or opaque (#14084). It names the first such
+/// stage in plain words; wording only, the brief owns the decision.
+fn evidence_limited_reason(entry: &crate::analysis::ClassifiedSeam) -> String {
+    use crate::domain::StageState;
+    let evidence = &entry.evidence;
+    let unclear = [
+        (&evidence.reach, "whether a test runs this code"),
+        (
+            &evidence.activate,
+            "which test input makes this change take effect",
+        ),
+        (
+            &evidence.propagate,
+            "whether the changed value reaches a result a test can check",
+        ),
+        (&evidence.observe, "whether a test reads the changed result"),
+        (
+            &evidence.discriminate,
+            "whether an existing assertion would notice the change",
+        ),
+    ]
+    .into_iter()
+    .find(|(stage, _)| matches!(stage.state, StageState::Unknown | StageState::Opaque))
+    .map_or("what a test would have to check here", |(_, what)| what);
+    format!(
+        "ripr does not start an automatic repair here because it cannot tell from reading the code {unclear}; write the test by hand"
+    )
 }
 
 /// #12867 / #13203 A0: the start publishes an attempt and then renders the
@@ -521,7 +560,7 @@ fn route_not_ready_reason(
             ""
         };
         label.push_str(&format!(
-            ": write the boundary test by hand — `ripr agent stub{root_flag} --at {at} --kind predicate` writes a fill-in skeleton for the changed comparison{module_note}; the boundary input is prefilled when it derives, otherwise fill the todo!() values, then rerun `ripr repair`"
+            ": write the boundary test by hand, or run `ripr agent stub{root_flag} --at {at} --kind predicate` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
     // #10701: a changed return value or error with no test ripr can
@@ -1179,13 +1218,14 @@ pub(crate) fn resolve_repair_start(
     if let Some(note) = unscoped_diff_note(diff.as_deref(), base) {
         refusal_reasons.insert(0, note);
     }
-    // #12831: several eligible seams on the change. `ripr check` is the
-    // authority on the change, so its single recommended start wins; failing
-    // that, a seam whose check finding is already noticed, or which check
-    // cannot judge (and so offers no start for), is no start here either
-    // (#12849). Only a seam among the eligible ones is taken; no first or
-    // newest pick.
-    if candidates.len() > 1
+    // #12831: eligible seams on the change. `ripr check` is the authority on
+    // the change, so its single recommended start wins; failing that, a seam
+    // whose check finding is already noticed, or which check cannot judge
+    // (and so offers no start for), is no start here either (#12849). Only a
+    // seam among the eligible ones is taken; no first or newest pick. A lone
+    // eligible seam is held to the same rule (#14872): starting it while
+    // check reads its finding as noticed would contradict check.
+    if !candidates.is_empty()
         && matches!(scope, Some(ChangeScope::TouchesSeams(_)))
         && let Some(output) = check_run.get()
     {
@@ -1341,9 +1381,11 @@ impl<T, F: Fn() -> Option<T>> RunOnce<T, F> {
 }
 
 /// The seam of the one repair start the default `ripr check` prints for the
-/// change, when it is among the eligible `candidates` and needs no commit
-/// first. `None` when check names no start or another seam (fail-closed: the
-/// caller keeps its selection prompt).
+/// change, when it is among the eligible `candidates` and holds no inline
+/// test target in an uncommitted production file. `None` when check names no
+/// start or another seam (fail-closed: the caller keeps its selection prompt).
+/// A dirty production premise (#13636) does not withhold the pick: the before
+/// phase refuses that start itself and names the commit to make.
 fn check_recommended_start(
     root: &Path,
     config: &crate::config::RiprConfig,
@@ -2072,6 +2114,19 @@ pub(crate) fn resolve_repair_subject_in(
                 )
         })
         .collect();
+    // #14719: a producer gap id is content-derived, so a compound predicate's
+    // id (`a && s.len() > 1` names `s.len==1`) also names the inner
+    // comparison seam on the same line. When only producer-gap matches
+    // remain, the most-specific seam wins, as the repair-card join already
+    // does (#7179); any other collision stays ambiguous.
+    if matches.len() > 1
+        && matches
+            .iter()
+            .all(|entry| producer_gap_id_names_seam(item, entry))
+        && let Some(innermost) = unique_innermost_seam(&matches)
+    {
+        return outcome_for(innermost);
+    }
     match matches.len() {
         1 => outcome_for(matches[0]),
         0 => RepairSubjectOutcome::Unknown,
@@ -2086,6 +2141,21 @@ pub(crate) fn resolve_repair_subject_in(
                 .collect(),
         },
     }
+}
+
+/// The one seam every other candidate strictly encloses, if there is one
+/// (#7179 most-specific span selection). Identical or crossing spans have no
+/// unique innermost seam.
+fn unique_innermost_seam<'a>(
+    candidates: &[&'a crate::analysis::ClassifiedSeam],
+) -> Option<&'a crate::analysis::ClassifiedSeam> {
+    let mut innermost = candidates.iter().copied().filter(|entry| {
+        candidates.iter().all(|other| {
+            other.seam.id() == entry.seam.id() || other.seam.strictly_encloses(&entry.seam)
+        })
+    });
+    let found = innermost.next()?;
+    innermost.next().is_none().then_some(found)
 }
 
 /// Why one named seam may not start a repair attempt right now (#8766), as
@@ -2430,7 +2500,19 @@ fn start_refusal_with_next(reason: &str, next: &str) -> String {
 /// `ripr repair`, the agent card and the MCP admission so every surface names
 /// the same cause (#11397).
 pub(crate) fn held_inline_reason(file: &str) -> String {
-    format!("the inline test target `{file}` has uncommitted changes; commit or stash them first")
+    format!("{HELD_INLINE_OPENING}{file}{HELD_INLINE_CLOSING}")
+}
+
+const HELD_INLINE_OPENING: &str = "the inline test target `";
+const HELD_INLINE_CLOSING: &str = "` has uncommitted changes; commit or stash them first";
+
+impl RepairStartRefusal {
+    /// Whether the start is held only because its inline test target has
+    /// uncommitted changes ([`held_inline_reason`]). Undoing or committing
+    /// those changes lifts this hold, unlike a refusal about the gap itself.
+    pub(crate) fn held_by_uncommitted_target(&self) -> bool {
+        self.reason.starts_with(HELD_INLINE_OPENING) && self.reason.ends_with(HELD_INLINE_CLOSING)
+    }
 }
 
 /// What the human agent card says when the shared start gate holds a seam
@@ -2906,7 +2988,11 @@ pub(crate) fn check_repair_route(
         // no-card refusal adds nothing to its screen (its limitation
         // guidance is the whole story); only a finding that would otherwise
         // have been offered a start names it.
-        if static_limited && reason == NO_TEST_TARGET_REASON {
+        // #14084: the same holds for a seam the before phase withholds as
+        // evidence-limited; the finding's own limitation guidance covers it.
+        if static_limited
+            && (reason == NO_TEST_TARGET_REASON || reason == evidence_limited_reason(entry))
+        {
             return CheckRepairRoute::Silent;
         }
         // A bound seam carries a canonical gap id, which a strongly gripped
@@ -2949,11 +3035,59 @@ pub(crate) fn check_repair_route(
     // module and starts only from the committed file. Ask the edit cage's own
     // predicate so the check screen never offers a start the attempt refuses.
     let uncommitted_target = held_inline_target(root, &repair_packet_eligibility(entry).readiness);
+    // #13636: the before phase refuses a dirty production premise ("commit
+    // first ... Nothing was started"). Ask its own preflight so the screen
+    // names that commit before the start; an unreadable premise offers no
+    // start rather than one that may refuse.
+    let Ok(uncommitted_files) = seam_start_uncommitted_files(root) else {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::SeamRouteUnavailable {
+            reason: "could not validate the prerequisites for the repair start",
+        });
+    };
+    if let Some(reason) = seam_commit_step_refusal(output, &uncommitted_files) {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::SeamRouteUnavailable { reason });
+    }
     CheckRepairRoute::Route(crate::app::RepairRoute {
         finding_id: finding.id.clone(),
         seam_id: entry.seam.id().as_str().to_string(),
         uncommitted_target,
+        uncommitted_files,
     })
+}
+
+/// Why the seam route cannot print a commit step for `uncommitted_files`, in
+/// the gap-bound route's terms for the same state (#13636, #10698): a run that
+/// did not analyze those files must not vouch for them with a commit step.
+/// `None` when nothing is dirty or the run analyzed the working tree.
+fn seam_commit_step_refusal(
+    output: &super::CheckOutput,
+    uncommitted_files: &[String],
+) -> Option<&'static str> {
+    if uncommitted_files.is_empty() {
+        return None;
+    }
+    let Some(revisions) = output.analyzed_revisions.as_ref() else {
+        return Some("could not establish which revisions the check analyzed");
+    };
+    if !revisions.working_tree {
+        return Some(
+            "the committed-only check excluded dirty tracked files; commit or restore them before rerunning",
+        );
+    }
+    if output.unanalyzed_working_tree {
+        return Some("the working tree contains source or test changes that were not analyzed");
+    }
+    None
+}
+
+/// The dirty production files the seam start refuses today (#13636): every
+/// path the shared before-phase preflight reports, none dropped. The
+/// preflight already spells them relative to the analyzed `root` (paths
+/// outside it as `../...`, #13962), which is where the user runs the printed
+/// commit step. A non-empty list means the start refuses; an empty one means
+/// the preflight found no dirty premise.
+fn seam_start_uncommitted_files(root: &Path) -> Result<Vec<String>, String> {
+    crate::app::repair_attempt::seam_start_dirty_premise(root)
 }
 
 fn ineligible_repair_item(root: &Path, item: &str, seam_id: &str, reason: &str) -> String {
@@ -4985,8 +5119,69 @@ pub(crate) mod tests {
         )
     }
 
+    /// #13636: the seam route refuses a commit step in exactly the states the
+    /// gap-bound route refuses one: revisions unknown, a committed-only run,
+    /// or unanalyzed working-tree changes. Each branch is exercised alone.
+    #[test]
+    fn seam_commit_step_refuses_when_the_run_did_not_analyze_the_dirt() {
+        let revisions = |working_tree| crate::analysis::AnalyzedRevisions {
+            base_ref: "HEAD".to_string(),
+            base_commit: Some("a".repeat(40)),
+            merge_base_commit: None,
+            loaded_diff_origin: None,
+            head_commit: Some("b".repeat(40)),
+            working_tree,
+        };
+        let output = |analyzed_revisions, unanalyzed_working_tree| crate::app::CheckOutput {
+            value_origins: Default::default(),
+            harness_projections: Vec::new(),
+            owner_opt_outs: Vec::new(),
+            file_fact_cache: None,
+            schema_version: "0.2".to_string(),
+            tool: "ripr".to_string(),
+            mode: crate::app::Mode::Fast,
+            root: std::path::PathBuf::from("."),
+            base: None,
+            summary: crate::domain::Summary::default(),
+            findings: Vec::new(),
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree,
+            untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions,
+        };
+        let dirty = vec!["../src/lib.rs".to_string()];
+        let analyzed = output(Some(revisions(true)), false);
+        assert_eq!(seam_commit_step_refusal(&analyzed, &dirty), None);
+        assert_eq!(
+            seam_commit_step_refusal(&output(Some(revisions(false)), true), &[]),
+            None,
+            "nothing dirty means no commit step to withhold"
+        );
+        assert_eq!(
+            seam_commit_step_refusal(&output(None, false), &dirty),
+            Some("could not establish which revisions the check analyzed")
+        );
+        assert_eq!(
+            seam_commit_step_refusal(&output(Some(revisions(false)), false), &dirty),
+            Some(
+                "the committed-only check excluded dirty tracked files; commit or restore them before rerunning"
+            )
+        );
+        assert_eq!(
+            seam_commit_step_refusal(&output(Some(revisions(true)), true), &dirty),
+            Some("the working tree contains source or test changes that were not analyzed")
+        );
+    }
+
     /// #12831: check's pick narrows the choice only when it is an eligible
-    /// seam that needs no commit first.
+    /// seam with no held inline target.
     #[test]
     fn check_pick_narrows_only_when_eligible_and_committed() {
         use crate::app::{CheckRepairRoute, RepairRoute};
@@ -4996,6 +5191,7 @@ pub(crate) mod tests {
                 finding_id: "f".to_string(),
                 seam_id: seam.to_string(),
                 uncommitted_target: uncommitted.map(str::to_string),
+                uncommitted_files: Vec::new(),
             })
         };
         assert_eq!(
@@ -5360,6 +5556,67 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Only the uncommitted-target hold is one that undoing a change lifts.
+    #[test]
+    fn held_by_uncommitted_target_reads_only_the_held_inline_reason() {
+        let refusal = |reason: String| RepairStartRefusal {
+            reason,
+            related_test: None,
+            kind: RefusalKind::Other,
+        };
+        assert!(refusal(held_inline_reason("src/lib.rs")).held_by_uncommitted_target());
+        assert!(!refusal(GRIPPED_SPOT_REASON.to_string()).held_by_uncommitted_target());
+        assert!(!refusal(NO_TEST_TARGET_REASON.to_string()).held_by_uncommitted_target());
+    }
+
+    /// #14084: the gate words the first unknown or opaque stage of a seam the
+    /// agent brief withholds, and the brief's predicate (not this wording)
+    /// makes the decision.
+    #[test]
+    fn evidence_limited_reason_names_the_first_unclear_stage() {
+        use crate::analysis::seams::SeamGripClass;
+        use crate::domain::{Confidence, StageEvidence, StageState};
+        let config = crate::config::RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let unclear = |state| StageEvidence::new(state, Confidence::Low, "test stage");
+
+        let clear = gate_entry(
+            SeamGripClass::ReachableUnrevealed,
+            vec![weak_related_test()],
+        );
+        assert!(!crate::app::agent_brief::agent_brief_withholds(
+            &clear, policy
+        ));
+
+        let mut propagate = gate_entry(
+            SeamGripClass::ReachableUnrevealed,
+            vec![weak_related_test()],
+        );
+        propagate.evidence.propagate = unclear(StageState::Unknown);
+        assert!(crate::app::agent_brief::agent_brief_withholds(
+            &propagate, policy
+        ));
+        assert_eq!(
+            evidence_limited_reason(&propagate),
+            "ripr does not start an automatic repair here because it cannot tell from reading the code whether the changed value reaches a result a test can check; write the test by hand"
+        );
+
+        // The earliest unclear stage is the one named.
+        let mut observe = gate_entry(
+            SeamGripClass::ReachableUnrevealed,
+            vec![weak_related_test()],
+        );
+        observe.evidence.observe = unclear(StageState::Opaque);
+        observe.evidence.discriminate = unclear(StageState::Unknown);
+        assert!(
+            evidence_limited_reason(&observe).contains(
+                "it cannot tell from reading the code whether a test reads the changed result;"
+            ),
+            "{}",
+            evidence_limited_reason(&observe)
+        );
+    }
+
     /// An opaque seam is still refused (class and eligibility unchanged), but
     /// the refusal names the candidate test ripr found instead of ending at
     /// "no automatic repair for this kind of finding".
@@ -5463,6 +5720,16 @@ pub(crate) mod tests {
                 && refusal
                     .reason
                     .contains("new test proposal blocked: no governed inline cfg-test module"),
+            "{}",
+            refusal.reason
+        );
+        // #14308: the route names the stub once, in the same short shape as
+        // the return-value route.
+        let printed_root = shell_arg(&bound_root(&root.to_string_lossy()));
+        assert!(
+            refusal.reason.contains(&format!(
+                "or run `ripr agent stub --root {printed_root} --at src/pricing.rs:88 --kind predicate` for a fill-in skeleton"
+            )) && refusal.reason.ends_with("the stub adds one), then rerun `ripr repair`"),
             "{}",
             refusal.reason
         );
@@ -5981,9 +6248,7 @@ pub(crate) mod tests {
                 "ripr agent stub --root {printed_root} --at src/pricing.rs:88 --kind predicate"
             )) && refusal
                 .reason
-                .contains("writes a fill-in skeleton for the changed comparison")
-                && refusal.reason.contains("prefilled when it derives")
-                && refusal.reason.contains("then rerun `ripr repair`"),
+                .contains("--kind predicate` for a fill-in skeleton, then rerun `ripr repair`"),
             "{}",
             refusal.reason
         );

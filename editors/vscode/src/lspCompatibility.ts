@@ -1,5 +1,6 @@
 import * as cp from 'child_process';
 import * as crypto from 'crypto';
+import { hasUnsafeShellMetacharacter } from './packetJson.js';
 
 const DEFAULT_PROBE_TIMEOUT_MS = 5000;
 const MAX_MESSAGE_BYTES = 1024 * 1024;
@@ -266,14 +267,15 @@ export async function probeStandardLspCompatibility(
   command: string,
   useShell = false,
   timeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
-  onInitializeCapabilities?: (capabilities: Readonly<Record<string, unknown>>) => void
+  onInitializeCapabilities?: (capabilities: Readonly<Record<string, unknown>>) => void,
+  serverArgs: readonly string[] = ['lsp', '--stdio']
 ): Promise<LspCompatibilityResult> {
   return new Promise((resolve) => {
     let settled = false;
     let phase: 'initialize' | 'shutdown' | 'exit' = 'initialize';
     let evidence: Omit<LspCompatibilityEvidence, 'processResult'> | undefined;
     let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
-    const child = spawnProbeProcess(command, ['lsp', '--stdio'], useShell);
+    const child = spawnProbeProcess(command, serverArgs, useShell);
 
     const finish = (result: LspCompatibilityResult): void => {
       if (settled) {
@@ -636,13 +638,34 @@ export function terminateProbeProcessTree(child: cp.ChildProcess): void {
   child.kill('SIGKILL');
 }
 
+function windowsDoubleQuoted(argument: string): string {
+  // Native Windows argv uses a backslash to escape an embedded quote.
+  return '"' + argument.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"';
+}
+
+function windowsCmdDoubleQuoted(argument: string): string {
+  // cmd.exe instead doubles embedded quotes; a backslash-quote pair closes its
+  // quoted span and exposes following metacharacters as command syntax.
+  return '"' + argument.replace(/(\\*)"/g, '$1$1""').replace(/(\\+)$/, '$1$1') + '"';
+}
+
+/** Preserve configured argument boundaries in the shell probe and client launch. */
+export function windowsShellArguments(args: readonly string[]): string[] {
+  return args.map(argument => {
+    const needsQuoting = argument.length === 0
+      || /\s/.test(argument)
+      || hasUnsafeShellMetacharacter(argument, true)
+      || /[<>]/.test(argument);
+    return needsQuoting ? windowsCmdDoubleQuoted(argument) : argument;
+  });
+}
+
 // ProcessStartInfo.Arguments uses native Windows argv quoting when no shell
 // participates. Preserve every token, including empty strings and a trailing
 // backslash before the closing quote. Shell command strings keep their
 // separate existing path and are never encoded with this rule.
 export function windowsNativeArguments(args: readonly string[]): string {
-  return args.map(argument => '"' + argument.replace(/(\\*)"/g, '$1$1\\"')
-    .replace(/(\\+)$/, '$1$1') + '"').join(' ');
+  return args.map(windowsDoubleQuoted).join(' ');
 }
 
 export function spawnProbeProcess(
@@ -679,7 +702,7 @@ export function spawnProbeProcess(
         env: {
           ...(context.env ?? process.env),
           RIPR_PROBE_COMMAND: command,
-          RIPR_PROBE_ARGUMENTS: useShell ? args.join(' ') : windowsNativeArguments(args),
+          RIPR_PROBE_ARGUMENTS: useShell ? windowsShellArguments(args).join(' ') : windowsNativeArguments(args),
           RIPR_PROBE_EXIT_NONCE: exitNonce,
           RIPR_PROBE_DRAIN_OUTPUT: context.drainOutput ? '1' : '0',
           RIPR_PROBE_USE_SHELL: useShell ? '1' : '0'

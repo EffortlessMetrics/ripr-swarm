@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Merge-ready admission also accepts the source review attestation as one pull request description line, `Source review: REVIEW_READY <full head SHA>`, for same-repository pull requests from trusted accounts. GitHub throttles review creation per account, which left reviewed candidates unable to request qualification; the line binds to the exact head and every existing review refusal still applies (#4984).
