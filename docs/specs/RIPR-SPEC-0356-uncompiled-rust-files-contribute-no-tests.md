@@ -136,9 +136,14 @@ file are withheld, exactly as for an uncompiled file, when all of these hold:
    `path` attribute whose value is a metavariable or a non-`.rs` string
    (`#[path = "m.txt"]`); or `mod $name` anywhere; an ordinary
    `macro_rules!` (`($e:expr) => { $e * 2 }`) has none of those tokens and
-   is no doubt; when a source spells a mount operand with escapes; when
-   the file is a `mod.rs`; when cargo metadata lists the file itself as a
-   live or unmodeled target (`[[test]] path`, `build`, an example); or when
+   is no doubt; when a source spells a mount operand with escapes (an
+   `include!` operand or `path` value holding a backslash names no `.rs`
+   file the scan can match, however the tokens are spaced); when any file of
+   the holder's ancestry other than its skipped roots is a `mod.rs` or is
+   mounted from outside the ancestry, or any ancestry file, the holder
+   included, is listed by cargo metadata as a live or unmodeled target
+   (`[[test]] path`, `build`, an example), so a `[[test]]` rooted at an
+   intermediate module keeps the leaf's tests; or when
    the walk cannot finish (an unreadable file, more than 20,000 entries).
    So the verdict does not change with `--mode`.
 

@@ -21943,6 +21943,8 @@ tests = [
   "crates/ripr/tests/lib_test_false_credit.rs::an_include_of_a_non_rust_file_keeps_credit_in_every_mode",
   "crates/ripr/tests/lib_test_false_credit.rs::a_path_mount_of_a_non_rust_file_keeps_credit_in_every_mode",
   "crates/ripr/tests/lib_test_false_credit.rs::an_aliased_generated_include_keeps_credit_in_every_mode",
+  "crates/ripr/tests/lib_test_false_credit.rs::an_escaped_include_operand_keeps_credit_in_every_mode",
+  "crates/ripr/tests/lib_test_false_credit.rs::a_running_test_target_in_the_ancestry_keeps_credit_in_every_mode",
   "crates/ripr/tests/lib_test_false_credit.rs::a_macro_mount_after_a_url_string_keeps_credit_in_every_mode",
   "crates/ripr/src/analysis/facts/role_composition.rs::tests::mount_operand_doubt_needs_a_dynamic_mount_operand",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::crate_root_unit_test_skip_follows_metadata_test_flags",

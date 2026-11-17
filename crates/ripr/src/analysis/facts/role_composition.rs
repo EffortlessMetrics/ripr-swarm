@@ -308,7 +308,16 @@ fn files_in_skipped_unit_test_targets(
             chain.insert(&edge.child);
         }
         chain.insert(file);
-        if !scan.may_mount(file, &chain) && !inventory.crate_root_may_run(workspace_root, file) {
+        // Every file of the ancestry, not only the holder: an intermediate
+        // module that is itself a running target root (`[[test]] path =
+        // "src/container.rs"`) or that another source mounts compiles the
+        // holder into a target `cargo test` runs (#14962 review, Devin).
+        let ancestry_may_run = chain.iter().any(|member| {
+            inventory.crate_root_may_run(workspace_root, member)
+                || (!context.roots.iter().any(|root| root == member)
+                    && scan.may_mount(member, &chain))
+        });
+        if !ancestry_may_run {
             skipped.insert(file.clone());
         }
     }
@@ -335,8 +344,13 @@ fn may_build_mount_operands(source: &str) -> bool {
     let tokens = mount_tokens(source);
     let ident = |at: usize, name: &str| matches!(tokens.get(at), Some(MountToken::Ident(word)) if word == name);
     let punct = |at: usize, mark: char| matches!(tokens.get(at), Some(MountToken::Punct(found)) if *found == mark);
-    let names_rust_source =
-        |at: usize| matches!(tokens.get(at), Some(MountToken::Str(text)) if text.ends_with(".rs"));
+    // A literal with an escape (`"\u{73}hared.rs"`) decodes to a name the
+    // substring scan cannot match, so it names no source the scan can tie
+    // back (#14962 review, Devin).
+    let names_rust_source = |at: usize| {
+        matches!(tokens.get(at), Some(MountToken::Str(text))
+            if text.ends_with(".rs") && !text.contains('\\'))
+    };
     for at in 0..tokens.len() {
         if ident(at, "macro_rules") && punct(at + 1, '!') {
             if macro_body_may_mount(&tokens, at + 2, true) {
@@ -1855,6 +1869,9 @@ mod tests {
             "use std::include as inc;\ninc!(concat!(env!(\"OUT_DIR\"), \"/plain.rs\"));",
             "use core::include;",
             "pub use ::std::{include as inc};",
+            // An escaped literal decodes to a name no scan matches.
+            "include /* c */ !(\"../../a/src/\\u{73}hared.rs\");",
+            "#[path = \"../../a/src/\\x73hared.rs\"]\nmod m;",
         ] {
             assert!(may_build_mount_operands(doubt), "{doubt}");
         }

@@ -652,6 +652,49 @@ fn an_aliased_generated_include_keeps_credit_in_every_mode() -> Result<(), Strin
 }
 
 #[test]
+fn an_escaped_include_operand_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review (Devin): `\u{73}hared.rs` decodes to `shared.rs`, which
+    // no substring scan sees, and a comment splits `include` from `!`.
+    assert_b_mount_keeps_credit(
+        &[(
+            "b/src/lib.rs",
+            "include /* c */ !(\"../../a/src/\\u{73}hared.rs\");\n",
+        )],
+        "an escaped `include!` operand",
+    )
+}
+
+/// A `[[test]]` target rooted at `src/container.rs`, which the library also
+/// declares as a module.
+const CONTAINER_TEST_TARGET: &str =
+    "\n[[test]]\nname = \"container\"\npath = \"src/container.rs\"\n";
+
+#[test]
+fn a_running_test_target_in_the_ancestry_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review (Devin): the leaf's only ancestry ends at the skipped
+    // library, but its parent `src/container.rs` is also a `[[test]]` root,
+    // so `cargo test --test container` runs the leaf's test.
+    let leaf = lib_source(UNIT_TESTS);
+    let files = [
+        ("src/lib.rs", "pub mod container;\n"),
+        (
+            "src/container.rs",
+            "#[path = \"container/leaf.rs\"]\npub mod leaf;\n",
+        ),
+        ("src/container/leaf.rs", leaf.as_str()),
+    ];
+    let fixture = TempCrate::create_changing(
+        &format!("{LIB_TEST_FALSE}{CONTAINER_TEST_TARGET}"),
+        &files,
+        "src/container/leaf.rs",
+        1,
+    )?;
+    let control =
+        TempCrate::create_changing(CONTAINER_TEST_TARGET, &files, "src/container/leaf.rs", 1)?;
+    assert_exposed_like_control_in_every_mode(&fixture, &control, "a `[[test]]` parent module")
+}
+
+#[test]
 fn a_path_mount_of_a_non_rust_file_keeps_credit_in_every_mode() -> Result<(), String> {
     // #14962 review n5p: `#[path = "m.txt"]` mounts a file the scan does
     // not read.
