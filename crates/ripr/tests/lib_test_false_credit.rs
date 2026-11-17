@@ -722,3 +722,87 @@ fn a_macro_mount_after_a_url_string_keeps_credit_in_every_mode() -> Result<(), S
     let control = TempCrate::create_changing("", &files, "src/shared.rs", 1)?;
     assert_exposed_like_control_in_every_mode(&fixture, &control, "a macro mount after a URL")
 }
+
+/// Each mode reads the tests-on `control` `exposed` and `fixture` with no
+/// credited discriminator.
+fn assert_withheld_against_control_in_every_mode(
+    fixture: &TempCrate,
+    control: &TempCrate,
+    label: &str,
+) -> Result<(), String> {
+    for mode in MODES {
+        let tested = control.finding_in(mode.clone())?;
+        assert_eq!(
+            tested.class,
+            ExposureClass::Exposed,
+            "premise: tests-on {label} in {mode:?}: {tested:?}"
+        );
+        let skipped = fixture.finding_in(mode.clone())?;
+        assert!(
+            !credits_a_discriminator(&skipped.class),
+            "{label} in {mode:?}: {skipped:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_skipped_library_with_a_mod_rs_layout_is_withheld_in_every_mode() -> Result<(), String> {
+    // #14962 review round 8: an unmounted `src/foo/mod.rs`, as the holder's
+    // parent or as the holder itself, is keyed on `foo` and is no doubt.
+    let tests = lib_source(UNIT_TESTS);
+    let layouts: [(&[(&str, &str)], &str); 2] = [
+        (
+            &[
+                ("src/lib.rs", "pub mod foo;\n"),
+                ("src/foo/mod.rs", "pub mod bar;\n"),
+                ("src/foo/bar.rs", tests.as_str()),
+            ],
+            "src/foo/bar.rs",
+        ),
+        (
+            &[
+                ("src/lib.rs", "pub mod foo;\n"),
+                ("src/foo/mod.rs", tests.as_str()),
+            ],
+            "src/foo/mod.rs",
+        ),
+    ];
+    for (files, holder) in layouts {
+        let fixture = TempCrate::create_changing(LIB_TEST_FALSE, files, holder, 1)?;
+        let control = TempCrate::create_changing("", files, holder, 1)?;
+        assert_withheld_against_control_in_every_mode(&fixture, &control, holder)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_member_path_mount_of_a_skipped_mod_rs_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review round 8: `b` mounts `a/src/foo/mod.rs`, which declares
+    // the holder `bar`, so `cargo test -p b` runs its test.
+    let tests = lib_source(UNIT_TESTS);
+    let files = |member_a: &'static str| -> Vec<(&'static str, String)> {
+        vec![
+            ("a/Cargo.toml", member_a.to_string()),
+            ("a/src/lib.rs", "pub mod foo;\n".to_string()),
+            ("a/src/foo/mod.rs", "pub mod bar;\n".to_string()),
+            ("a/src/foo/bar.rs", tests.clone()),
+            ("b/Cargo.toml", MEMBER_B.to_string()),
+            (
+                "b/src/lib.rs",
+                "#[path = \"../../a/src/foo/mod.rs\"]\nmod foo;\n".to_string(),
+            ),
+        ]
+    };
+    let create = |member_a: &'static str| {
+        let owned = files(member_a);
+        let borrowed: Vec<(&str, &str)> = owned
+            .iter()
+            .map(|(path, text)| (*path, text.as_str()))
+            .collect();
+        TempCrate::create_in(WORKSPACE, &borrowed, "a/src/foo/bar.rs", 1)
+    };
+    let fixture = create(MEMBER_A)?;
+    let control = create(MEMBER_A_TESTED)?;
+    assert_exposed_like_control_in_every_mode(&fixture, &control, "a `#[path]` mount of `mod.rs`")
+}

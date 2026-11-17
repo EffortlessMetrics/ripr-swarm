@@ -139,8 +139,12 @@ file are withheld, exactly as for an uncompiled file, when all of these hold:
    is no doubt; when a source spells a mount operand with escapes (an
    `include!` operand or `path` value holding a backslash names no `.rs`
    file the scan can match, however the tokens are spaced); when any file of
-   the holder's ancestry other than its skipped roots is a `mod.rs` or is
-   mounted from outside the ancestry, or any ancestry file, the holder
+   the holder's ancestry other than its skipped roots is mounted from
+   outside the ancestry by the same name-or-stem test (a `.../<dir>/mod.rs`
+   is keyed on its directory: a `mod <dir>` declaration, or any spelling of
+   `mod.rs`, since a relative operand such as `"../mod.rs"` need not spell
+   `<dir>`; an unmounted `mod.rs` layout keeps the skip), or any ancestry
+   file, the holder
    included, is listed by cargo metadata as a live or unmodeled target
    (`[[test]] path`, `build`, an example), so a `[[test]]` rooted at an
    intermediate module keeps the leaf's tests; or when

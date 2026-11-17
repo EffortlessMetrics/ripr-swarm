@@ -732,21 +732,25 @@ impl WorkspaceMountScan {
     /// ancestry) may compile `file` into another target: it spells the file
     /// name anywhere (a `#[path]`, an `include!`, a manifest `path`, a build
     /// script that writes a mount) or declares a `mod` of the file's stem. A
-    /// `mod.rs` is named by its directory, which the text cannot tie to the
-    /// file, so it is always doubt. Names compare ASCII-case-insensitively.
+    /// `.../<dir>/mod.rs` is keyed on its directory (#14962 review): its stem
+    /// is `<dir>`, and any spelling of `mod.rs` outside the chain counts as
+    /// naming it, since a relative operand (`#[path = "../mod.rs"]`,
+    /// `"foo/./mod.rs"`) need not spell `<dir>`. Names compare
+    /// ASCII-case-insensitively.
     fn may_mount(&self, file: &Path, chain: &BTreeSet<&Path>) -> bool {
         let Some(name) = file.file_name().and_then(|name| name.to_str()) else {
             return true;
         };
-        if name == "mod.rs" {
+        let stem_source = if name == "mod.rs" {
+            file.parent().and_then(Path::file_name)
+        } else {
+            file.file_stem()
+        };
+        let Some(stem) = stem_source.and_then(|stem| stem.to_str()) else {
             return true;
-        }
+        };
         let name = name.to_ascii_lowercase();
-        let stem = file
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
+        let stem = stem.to_ascii_lowercase();
         self.sources.iter().any(|(path, text, declared)| {
             !path.as_deref().is_some_and(|path| chain.contains(path))
                 && (text.contains(name.as_str()) || declared.contains(&stem))
