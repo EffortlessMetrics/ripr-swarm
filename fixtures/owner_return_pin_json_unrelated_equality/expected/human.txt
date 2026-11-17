@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/owner_return_pin_json_unrelated_equality/input
 
-Summary: 3 changed behaviors checked: 0 appear noticed by tests, 3 partly noticed, 0 reached but not noticed, 0 no test path. 3 found, 0 suppressed by your settings (2 base-side evidence, not candidate edit targets)
+Summary: 3 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 3 reached but not noticed, 0 no test path. 3 found, 0 suppressed by your settings (2 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
@@ -11,14 +11,14 @@ Start here:
   State: a test gap to inspect or repair
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:5
-  Static exposure: weak (severity: warning, confidence 0.92)
-  Why weak: a related test reaches this change but does not observe the exact changed value
+  Static exposure: unrevealed (severity: warning, confidence 0.79)
+  Why unrevealed: a related test reaches this change, but no assertion observes the changed behavior
   Gap ID (for scripts): gap:rust:src/lib.rs:did_save_params:return_value:return_value:ok
   Changed behavior: Ok(())
-  Missing check: No strong assertion was detected
-  Related test: tests/save.rs:4 checks (assertion too weak to tell the old behavior from the new)
-  Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value
-  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
+  Missing check (1 of 3): No detected assertion observes the changed value, error, field, or effect
+  Related test: tests/save.rs:4 checks (asserts, but not on the changed value)
+  Next step: Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect
+  Evidence: reach yes · infection yes · propagation yes · observation no · assertion no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       assertion = a test assertion tells intended from wrong behavior
@@ -43,9 +43,8 @@ Write a test for it:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:5 (weak); kind: error_path; reason: No exact error variant discriminator was detected
-    - ./src/lib.rs:5 (weak); kind: return_value; reason: No strong assertion was detected
+    - ./src/lib.rs:5 (unrevealed); 2 changed behaviors in `did_save_params`; kinds: error_path, return_value; reason: No detected assertion observes the changed value, error, field, or effect
   Hidden classes:
-    weak = tests reach it but check it only loosely
+    unrevealed = tests reach it but nothing appears to notice a change
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

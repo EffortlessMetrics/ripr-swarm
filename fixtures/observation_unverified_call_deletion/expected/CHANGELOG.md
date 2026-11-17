@@ -551,3 +551,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — observation_unverified_call_deletion (34)
+
+Reason:
+RIPR-SPEC-0094: a literal-only assertion reads no value and supplies no oracle (#14968)
+
+Command:
+`cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -2768,6 +2768,8 @@ fn analyze_related_assertions(
         };
         // Refusing credit must not manufacture the singleton-test fallback
         // for an otherwise unrelated surviving oracle.
+        // A literal-only assertion refused below (#14968) still counts, so
+        // its refusal never manufactures the fallback for a sibling either.
         let assertion_count = test.assertions.len();
         let related_before = related.len();
         for assertion in assertions {
@@ -3037,6 +3039,13 @@ fn analyze_related_assertions(
                 || (is_effect_family(&probe.family)
                     && implicit_observer.is_some()
                     && effect_observer_confirms(assertion));
+            // #14968: an assertion over literals alone (`assert!(true)`,
+            // `assert!(false)`, `assert_eq!(1, 1)`) reads no value, so it
+            // observes nothing the owner does, whatever its test calls
+            // beside it. Fail closed for every family: it supplies no
+            // oracle and the test stays listed as not observing.
+            let matched = matched
+                && !crate::analysis::extract::assertion_compares_only_literals(&assertion.text);
             // RIPR-SPEC-0040 builder override (#6613): drop the field tokens
             // the test overwrote before this assertion reads them, and ask
             // again whether anything else confirms.
@@ -9218,8 +9227,10 @@ mod tests {
         );
         let other = test_with_assertions(
             "while_some_is_untested",
+            // A value read: a literal-only assertion would match nothing
+            // (#14968) and leave no oracle row to pack.
             vec![oracle(
-                "assert_eq!(1, 1);",
+                "assert_eq!(it.next(), None);",
                 OracleKind::Unknown,
                 OracleStrength::Unknown,
             )],

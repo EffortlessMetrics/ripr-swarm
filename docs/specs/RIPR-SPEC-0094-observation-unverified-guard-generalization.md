@@ -947,6 +947,45 @@ Proof: `a_bare_assert_on_the_kept_field_is_a_field_pin` in
 and `a_bare_assert_on_anything_else_stays_weak` in
 `crates/ripr/tests/predicate_record_field_masked.rs`.
 
+## A literal-only assertion observes nothing (#14968)
+
+An assertion whose compared operands hold only literals reads no runtime
+value, so it cannot observe anything the changed owner does:
+
+```rust
+assert!(true); let _ = f(5);         // read weakly_exposed, now reachable_unrevealed
+assert!(false); let _ = f(5);        // the same
+assert_eq!(2 + 2, 4); let _ = f(5);  // the same
+```
+
+Before this rule, the single-assertion fallback (and the family match)
+associated such an assertion with any probe its test reached, so a bare call
+beside it read `weakly_exposed` with `observation_unverified`.
+
+Rule, for every family. `assertion_compares_only_literals` reads the
+outermost known assertion macro (`assert!`, `assert_eq!`, `assert_ne!`, their
+`debug_` and `prop_` spellings, `ensure!`), never its message arguments. When
+every compared operand holds only numeric literals, `true`/`false`, string or
+character literals and operators, the assertion matches no probe. Its test
+stays listed with `assertion_not_observing`, and it supplies no oracle.
+
+Fail-closed toward the existing credit. Any identifier (a binding, a
+constant, a call, a nested macro), a byte or raw string prefix, an unknown
+macro or `assert_matches!` leaves the assertion as it was. A refused literal
+assertion still counts toward the single-assertion fallback, so its refusal
+never hands that fallback to a sibling assertion. It never removes credit
+another assertion in the test supplies (`assert!(true); assert_eq!(f(5), 7)`
+stays `exposed`).
+
+Known limit: an assertion on a test-local value that does not come from the
+owner (`let x = 3; assert!(x == 3); let _ = f(5);`) still reads
+`weakly_exposed`. Telling that apart from a value the owner wrote needs the
+test's data flow, not the assertion's text.
+
+Proof: `literal_only_assertions_are_recognized_and_reads_are_not` in
+`crates/ripr/src/analysis/extract/oracles/arguments.rs`, and
+`crates/ripr/tests/literal_only_assertion_credit.rs` through `check_workspace`.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/reveal.rs` unit tests for all new families.

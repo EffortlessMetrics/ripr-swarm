@@ -1,0 +1,8 @@
+# Registers the literal-only assertion refusal (#14968) under RIPR-SPEC-0094.
+[[extend]]
+id = "RIPR-SPEC-0094"
+tests = [
+  "crates/ripr/src/analysis/extract/oracles/arguments.rs::tests::literal_only_assertions_are_recognized_and_reads_are_not",
+  "crates/ripr/tests/literal_only_assertion_credit.rs::a_literal_only_assertion_beside_a_bare_call_gives_no_weak_credit",
+  "crates/ripr/tests/literal_only_assertion_credit.rs::assertions_that_read_the_owner_keep_their_class",
+]

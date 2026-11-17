@@ -180,7 +180,8 @@ fn rows() -> Vec<Row> {
             CLAIMS,
             "use claims::assert_ok;",
             "let v = assert_ok!(parse(5));\nlet _ = v;\nassert_eq!(1, 1);",
-            ("relational_check", "weak"),
+            // #14968: the literal-only `assert_eq!(1, 1)` supplies no oracle.
+            none,
             None,
         ),
         // Bounded numeric tolerance: equality and inequality directions.
