@@ -158,3 +158,14 @@ Each entry is a date-grouped bullet:
   `paths` are mentioned. Simplified to the fallback safe config (no
   named path statuses, no undocumented fields). **Status:** resolved in
   PR1 by using documented fields only.
+
+- **A docs-gate step cannot be observed on the PR that adds it** - adding the
+  markdown-contract tests to Ripr Docs Gate (#14989) left no way to watch the
+  new step run: Ripr Docs Gate is gated on `needs.admission.outputs.docs_only == 'true'`,
+  and a PR that edits `.github/workflows/routed-rust.yml` is classified
+  non-docs, so the job skips for `pull_request`, `merge_group` and every
+  label. The only observation is a throwaway docs-only commit stacked on the
+  candidate branch. A gate whose first execution is a production docs PR is
+  the wrong shape; either the gate should run on its own diff, or the PR should
+  carry the stacked observation by default. **Status:** observed by stacking a
+  throwaway docs-only commit on this branch.
