@@ -310,6 +310,11 @@ fn changed_self_field(
     {
         return None;
     }
+    // Exactly one write of `self.<field>` in the method, and no other store
+    // of `<field>` in the class but `self.<field> = ..` in `__init__` (which
+    // runs before a builder method): another method's `self.<field> = 0`,
+    // reachable as a bound method kept on the instance, or a
+    // `self.me.<field> = 0` could overwrite the changed write.
     let mut writes = 0usize;
     visit_exprs_in_statements(&method.body, &mut |expr| {
         if let Expr::Attribute(attribute) = expr
@@ -321,6 +326,39 @@ fn changed_self_field(
         }
     });
     if writes != 1 {
+        return None;
+    }
+    let mut stray_stores = 0usize;
+    for stmt in &class.body {
+        let Stmt::FunctionDef(function) = stmt else {
+            continue;
+        };
+        if function.name.as_str() == owner.name {
+            continue;
+        }
+        let in_init = function.name.as_str() == "__init__";
+        visit_exprs_in_statements(&function.body, &mut |expr| {
+            if let Expr::Attribute(attribute) = expr
+                && attribute.attr.as_str() == field
+                && attribute.ctx != ExprContext::Load
+                && !(in_init
+                    && matches!(attribute.value.as_ref(), Expr::Name(name) if name.id.as_str() == "self"))
+            {
+                stray_stores += 1;
+            }
+        });
+    }
+    // The owner method's own stores through another base (`self.me.<field>`).
+    visit_exprs_in_statements(&method.body, &mut |expr| {
+        if let Expr::Attribute(attribute) = expr
+            && attribute.attr.as_str() == field
+            && attribute.ctx != ExprContext::Load
+            && !matches!(attribute.value.as_ref(), Expr::Name(name) if name.id.as_str() == "self")
+        {
+            stray_stores += 1;
+        }
+    });
+    if stray_stores != 0 {
         return None;
     }
     // Nothing after the changed write may overwrite or derive from it: a
@@ -366,23 +404,60 @@ fn changed_self_field(
     if calls != 0 || self_names != self_bases {
         return None;
     }
-    // An alias of `self` made before the write (`s = self`) can overwrite
-    // the field afterwards through a store the write count does not see: no
-    // bare `self` anywhere in the method but its final `return self`.
-    let body_before_return = match method.body.split_last() {
-        Some((Stmt::Return(_), rest)) if owner.name != "__init__" => rest,
-        _ => method.body.as_slice(),
-    };
-    let (mut method_self_names, mut method_self_bases) = (0usize, 0usize);
-    visit_exprs_in_statements(body_before_return, &mut |expr| match expr {
-        Expr::Name(name) if name.id.as_str() == "self" => method_self_names += 1,
-        Expr::Attribute(attribute) if matches!(attribute.value.as_ref(), Expr::Name(name) if name.id.as_str() == "self") =>
+    // An alias of `self` (`s = self`, `self.me = self`, a module global set
+    // in `__init__`) can overwrite the field through a store the checks above
+    // do not tie to the instance: no bare `self` anywhere in the class but a
+    // method's final `return self`.
+    let (mut class_self_names, mut class_self_bases) = (0usize, 0usize);
+    for stmt in &class.body {
+        let Stmt::FunctionDef(function) = stmt else {
+            continue;
+        };
+        let body = match function.body.split_last() {
+            Some((Stmt::Return(ret), rest)) if matches!(ret.value.as_deref(), Some(Expr::Name(name)) if name.id.as_str() == "self") => {
+                rest
+            }
+            _ => function.body.as_slice(),
+        };
+        visit_exprs_in_statements(body, &mut |expr| match expr {
+            Expr::Name(name) if name.id.as_str() == "self" => class_self_names += 1,
+            Expr::Attribute(attribute) if matches!(attribute.value.as_ref(), Expr::Name(name) if name.id.as_str() == "self") =>
+            {
+                class_self_bases += 1;
+            }
+            _ => {}
+        });
+    }
+    if class_self_names != class_self_bases {
+        return None;
+    }
+    // A method kept as a bound method (`self.on_done = self._clear`,
+    // `self.again = self.__init__`) runs later without the test calling it
+    // on the binding: every load of a method name in the class is a callee.
+    let method_names: Vec<&str> = class
+        .body
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::FunctionDef(function) => Some(function.name.as_str()),
+            _ => None,
+        })
+        .chain(["__init__"])
+        .collect();
+    let (mut method_loads, mut method_calls) = (0usize, 0usize);
+    visit_exprs_in_statements(&class.body, &mut |expr| match expr {
+        Expr::Attribute(attribute)
+            if attribute.ctx == ExprContext::Load
+                && method_names.contains(&attribute.attr.as_str()) =>
         {
-            method_self_bases += 1;
+            method_loads += 1;
+        }
+        Expr::Call(call) if matches!(call.func.as_ref(), Expr::Attribute(attribute) if method_names.contains(&attribute.attr.as_str())) =>
+        {
+            method_calls += 1;
         }
         _ => {}
     });
-    if method_self_names != method_self_bases {
+    if method_loads != method_calls {
         return None;
     }
     let mut field_reads = 0usize;

@@ -469,6 +469,34 @@ fn single_guard_variants_carry_no_fact() -> Result<(), String> {
             "        self.timeout_value = t",
             "\n    def describe(self):\n        return 'property'\n",
         ),
+        (
+            "another method stores the field",
+            "",
+            "        self.timeout_value = t * 2",
+            "        self.timeout_value = t",
+            "\n    def _clear(self):\n        self.timeout_value = 0\n",
+        ),
+        (
+            "the field is stored through another base",
+            "",
+            "        self.timeout_value = t * 2",
+            "        self.timeout_value = t",
+            "\n    def zero(self):\n        self.me.timeout_value = 0\n",
+        ),
+        (
+            "another method keeps a bound method on the instance",
+            "",
+            "        self.timeout_value = t * 2",
+            "        self.timeout_value = t",
+            "\n    def hook(self):\n        self.again = self.__init__\n",
+        ),
+        (
+            "another method aliases self",
+            "",
+            "        self.timeout_value = t * 2",
+            "        self.timeout_value = t",
+            "\n    def link(self):\n        self.me = self\n",
+        ),
     ] {
         let after = if pre.is_empty() {
             ""

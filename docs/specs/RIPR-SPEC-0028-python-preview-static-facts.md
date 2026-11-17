@@ -1434,8 +1434,12 @@ read-out: the boolean the classifier uses is derived from the surfaced
   descriptor; no `case` line; no class-level binding of the field; no other
   write of the field in the method; only plain assignments after the changed
   line besides the final `return self`, with no call and no bare `self`; no
-  bare `self` anywhere in the method but that final return (an earlier
-  `s = self` alias can overwrite the field); and no
+  bare `self` anywhere in the class but a method's final `return self` (an
+  `s = self` or `self.me = self` alias can overwrite the field); no other store
+  of `.<field>` in the class but `self.<field> = ...` in `__init__`, which runs
+  first (another method's write, kept as a bound method, can overwrite it); no
+  method name loaded in the class except as a call's callee (a bound method
+  kept on the instance runs later); and no
   read of `.<field>` anywhere in the class, which could derive an attribute the
   test reads) stays `orthogonal`, but its `weakly_exposed` finding carries the
   evidence line `python_owner_result_field_unread: <binding>.<field> (<test>)`
