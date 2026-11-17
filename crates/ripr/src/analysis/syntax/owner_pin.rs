@@ -4406,6 +4406,26 @@ pub(crate) fn unestablished_cfg_gates_of_fn(
     name: &str,
     line: usize,
 ) -> Option<BTreeSet<String>> {
+    // Classification asks this of the test's and the owner's file for every
+    // gated refusal, each time re-parsing the whole file (#13754). The answer
+    // is a pure function of the text, the name and the line, so a run scope
+    // computes each query once.
+    super::run_memo::memoize_with(
+        super::run_memo::Product::CfgGatesOfFn,
+        line,
+        name,
+        source,
+        || unestablished_cfg_gates_of_fn_uncached(source, name, line),
+    )
+}
+
+fn unestablished_cfg_gates_of_fn_uncached(
+    source: &str,
+    name: &str,
+    line: usize,
+) -> Option<BTreeSet<String>> {
+    #[cfg(test)]
+    CFG_GATES_OF_FN_PARSES.with(|count| count.set(count.get() + 1));
     let parse = parse_clean_source_file(source)?;
     let lines = LineIndex::new(source);
     let mut found = parse
@@ -4439,6 +4459,60 @@ pub(crate) fn unestablished_cfg_gates_of_fn(
         }
     }
     Some(gates)
+}
+
+#[cfg(test)]
+thread_local! {
+    static CFG_GATES_OF_FN_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+mod cfg_gates_memo_tests {
+    use super::*;
+
+    fn take_parses() -> usize {
+        CFG_GATES_OF_FN_PARSES.with(|count| count.replace(0))
+    }
+
+    /// #13754: a run scope answers a repeated query from the memo, keyed by
+    /// the text, the name and the line, with the uncached answer.
+    #[test]
+    fn a_run_scope_answers_repeated_cfg_gate_queries_once() {
+        let source = "#[cfg(feature = \"x\")]\nmod gated {\n    #[cfg(feature = \"y\")]\n    fn inner() {}\n}\nfn plain() {}\n";
+        let queries = [("inner", 4), ("plain", 6), ("inner", 6)];
+        let expected: Vec<_> = queries
+            .iter()
+            .map(|(name, line)| unestablished_cfg_gates_of_fn_uncached(source, name, *line))
+            .collect();
+        // Premises: a gated fn, an ungated fn and a miss each answer differently.
+        assert_eq!(
+            expected[0],
+            Some(BTreeSet::from([
+                "#[cfg(feature=\"x\")]".to_string(),
+                "#[cfg(feature=\"y\")]".to_string(),
+            ]))
+        );
+        assert_eq!(expected[1], Some(BTreeSet::new()));
+        assert_eq!(expected[2], None);
+        let _ = take_parses();
+        for _ in 0..3 {
+            for ((name, line), want) in queries.iter().zip(&expected) {
+                assert_eq!(&unestablished_cfg_gates_of_fn(source, name, *line), want);
+            }
+        }
+        assert_eq!(take_parses(), 9, "without a scope every query parses");
+        let _scope = super::super::run_memo::enter();
+        for _ in 0..3 {
+            for ((name, line), want) in queries.iter().zip(&expected) {
+                assert_eq!(&unestablished_cfg_gates_of_fn(source, name, *line), want);
+            }
+        }
+        assert_eq!(
+            take_parses(),
+            3,
+            "inside a scope each distinct query parses once"
+        );
+    }
 }
 
 /// How the out-of-line `mod name;` declared on `line` of `source` is gated
