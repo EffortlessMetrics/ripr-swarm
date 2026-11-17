@@ -9869,8 +9869,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "|| [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\"",
         ),
         (
-            "more than one queued PR",
-            "[ \"$parents\" = \"1\" ] && [ \"$parent\" = \"$GROUP_BASE_SHA\" ] && [[ \"$subject\" == *\"(#${pr})\" ]]",
+            "single-parent linear chain",
+            "[ -n \"${p1:-}\" ] && [ -z \"${p2_extra:-}\" ] && [ \"$p1\" = \"$expected_parent\" ]",
         ),
         (
             "bind the queue ref sha",
@@ -9878,11 +9878,23 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         ),
         (
             "PR ref to still name the live head",
-            "[ \"$fetched\" = \"$head\" ]",
+            "[ \"$fetched\" = \"$c_head\" ]",
+        ),
+        (
+            "constituent from its own changed paths",
+            "if classify_constituent_docs \"$c_files\"",
+        ),
+        (
+            "tip with its own docs-only classification",
+            "docs-only: ${{ steps.entry.outputs.tip_docs_only || needs.detect-docs-only.outputs.docs_only || 'false' }}",
+        ),
+        (
+            "constituents with their own docs-only classifications",
+            "while IFS=$'\\t' read -r c_pr c_head c_docs_only; do",
         ),
         (
             "tree to the live head merged onto the group base",
-            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${GROUP_HEAD_SHA}^{tree}\")\" ]",
+            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${c_sha}^{tree}\")\" ]",
         ),
         (
             "same-head succession read as the last live eligibility check",
@@ -19689,7 +19701,7 @@ jobs:
 RIPR is advisory static evidence. It does not edit source, generate tests, or run mutation testing.
 
 ### Start here
-- Open `start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
+- Open `ripr/reports/start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
 - {GENERATED_CI_FIRST_ACTION_REPAIR}
 - {GENERATED_CI_FIRST_PR_REPAIR}
 - {GENERATED_CI_FRONT_PANEL_REPAIR}
@@ -19749,6 +19761,30 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
         mutated.errors
     );
     assert!(!mutated.start_here);
+
+    // A heading alone cannot rescue a stale or wrong artifact destination.
+    for path in [
+        "start-here.md",
+        "target/ripr/reports/start-here.md",
+        "ripr/review/start-here.md",
+    ] {
+        let wrong_path = dogfood_generated_ci_cockpit_run_from_surfaces(
+            "wrong-start-here-artifact-path",
+            command,
+            10,
+            workflow,
+            &summary.replace("ripr/reports/start-here.md", path),
+        );
+        assert!(!wrong_path.start_here, "accepted {path}");
+        assert!(
+            wrong_path
+                .errors
+                .iter()
+                .any(|error| error.contains("Start here")),
+            "missing path error for {path}: {:?}",
+            wrong_path.errors
+        );
+    }
 
     // Dropping the gate boundary wording must fail the scenario (#12261).
     let no_gate = dogfood_generated_ci_cockpit_run_from_surfaces(

@@ -205,6 +205,56 @@ An explicit policy retains its loader and typed refusal contract from
 RIPR-SPEC-0241. Implicit SARIF/badge and repository consumers do not receive
 a false skipped-policy note and keep their existing policy authority.
 
+### Owner-scoped selector and review-comments policy (#13895)
+
+One suppression decision reaches both `ripr check` and the CI path
+(`review-comments` into `gate evaluate`), and it survives edits to the
+suppressed expression.
+
+**Function selector.** A `kind = "exposure_gap"` entry may select by owning
+function instead of `finding_id`: `path` is the exact root-relative file
+(no glob) and `function` is the owner name exactly as the finding's owner
+symbol carries it after the file, for example `retry_allowed`,
+`impl Retry::allowed` or `inner::helper`. It is a separate field from `owner`,
+which stays the human or team that owns the exception. An exposure-gap entry
+needs `finding_id`, a `path` glob, or `path` + `function`; `function` without
+`path`, with `finding_id`, with a glob `path`, or on a `test_efficiency` entry
+is rejected, as is a duplicate `(path, function)` and any unknown field. A
+`finding_id` hashes the parsed expression, so editing a suppressed function
+changes it; the function selector ignores `finding_id` and keeps matching. It
+is exact and fails closed: another file, another function in the same file, a
+missing owner, or an owner the producer disambiguated with a `#L<line>` suffix
+(duplicate owners) never matches. Expired entries still do not apply.
+
+**Review-comments.** `ripr review-comments --suppression-policy PATH` loads
+the same file with the same loader as `ripr check` (relative paths resolve
+against `--root`; a missing or malformed file is an error; not combinable with
+`--gap-ledger`) and applies the same matcher to the selected seams. Matching
+seams leave `comments` and `summary_only` and appear in the existing
+`suppressed` array with reason `suppressed_by_policy` and a message naming the
+policy entry; `gate evaluate` already reads that array as non-blocking.
+`finding_id` selectors join seams through the producer-id join the repair
+paths use and apply only when the id names exactly one seam of the whole
+diff-scoped inventory, judged over every seam the streamed analysis observed
+and not over the selected or capped subset; an id shared with an unselected
+sibling, an id carrying a collision ordinal (`.N`), or an id whose inventory is
+unavailable is reported and not applied. `path` globs match the seam file. A
+`static_class` entry never applies to a review seam (different vocabulary) and
+is reported as not applied rather than skipped silently. A `function` entry
+covers every seam of that function, including seams added later, so give it an
+`expires` date. Expired and ambiguous selectors are reported as warnings.
+Known fail-closed limitation: suppression runs after the brief cap, so
+policy-suppressed seams still occupy cap slots and can push an unsuppressed
+seam out of the rendered set; the cap omission stays disclosed. The default `.ripr/suppressions.toml` remains opt-in (#7998): without
+the flag it is disclosed on stderr, never applied.
+
+**Check output.** `review-comments --check-output` honors findings that
+document marks `suppressed: true`: each finding id joins its seam under the
+same uniqueness rule. The check run's `suppressed_by` selector is not widened
+to its owner function, so a finding the run left unsuppressed stays blocking.
+With both inputs the union applies. Static evidence only: a
+suppression is an accepted exception, not a claim that a test would notice.
+
 ## Required Evidence
 
 Repository configuration evidence should cover:
@@ -521,8 +571,10 @@ without pytest gives no activation advice, and an unreadable venv layout is
 reported as not verified, never as a pass.
 ```
 
-The virtualenv is read statically and never executed. Choosing the venv
-interpreter for the printed verify command itself is #13801.
+The virtualenv is read statically and never executed. The printed verify
+command itself names the project venv interpreter when one exists
+(RIPR-SPEC-0028, #13801); doctor still probes only PATH `python`, so it never
+executes an interpreter from the checkout.
 
 ### Doctor exit codes distinguish findings, usage errors, and clean runs (#5102)
 
@@ -626,7 +678,11 @@ then the cargo_toml check passes and names the nested manifest (Cargo.toml
 found at rust/Cargo.toml via workspace root rust/);
 and a root with Rust sources but no Cargo.toml, or an empty root under the
 Rust-only default, still fails cargo_toml;
-and doctor's selected --root is not rebound to the nested workspace.
+and doctor's selected --root is not rebound to the nested workspace;
+and the bounded nested walk visits each level's entries in name order, so in a
+tree with more directories than its cap, which manifests it sees (and so which
+it names) depends on directory names, not on filesystem listing order
+(#14230).
 
 Given a git root with a TypeScript marker (`package.json` or `tsconfig.json`)
 and a nested Cargo workspace (`rust/Cargo.toml`) and no Cargo.toml or `.rs`
@@ -848,6 +904,7 @@ Current tests:
 - `crates/ripr/src/output/doctor.rs::tests::ancestor_package_from_src_passes_cargo_toml`
 - `crates/ripr/src/output/doctor.rs::tests::cargo_toml_walk_does_not_cross_the_git_top_level`
 - `crates/ripr/src/output/doctor.rs::tests::nested_cargo_toml_walk_does_not_follow_directory_symlinks`
+- `crates/ripr/src/output/doctor.rs::tests::nested_cargo_toml_walk_under_the_cap_is_name_ordered`
 - `crates/ripr/tests/cli_smoke.rs::doctor_git_root_with_nested_workspace_passes_cargo_toml`
 - `crates/ripr/src/output/doctor.rs::tests::polyglot_git_root_with_typescript_and_nested_workspace_keeps_cargo_toml_required`
 - `crates/ripr/src/output/doctor.rs::tests::nested_workspace_does_not_override_rust_disabled_in_languages`

@@ -46,7 +46,7 @@ Hidden:
     - ./src/lib.rs:3 (weak, base-side); kind: match_arm; reason: No strong assertion was detected
     - ./src/lib.rs:3 (weak, lower-priority candidate); kind: predicate; reason: Missing check value: p == 0
     - ./src/lib.rs:3 (weak, lower-priority candidate); kind: return_value; reason: No assertion was tied to the changed value
-    - ./src/lib.rs:3 (weak, base-side); kind: return_value; reason: No assertion was tied to the changed value
+    - ./src/lib.rs:3 (weak, base-side); kind: return_value; reason: same as above
     - ./src/lib.rs:4 (weak, lower-priority candidate); kind: error_path; reason: No exact error variant discriminator was detected
     - ./src/lib.rs:4 (weak, lower-priority candidate); kind: match_arm; reason: No strong assertion was detected
   Hidden classes:

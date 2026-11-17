@@ -642,6 +642,24 @@ Two pattern terms are used below.
    whole function exactly as before: unidentified, never a "has no
    assertion" gap (#9478).
 
+   Row cells are also the function's inputs (#6641). Each row runs the
+   body with its cells bound to the parameters positionally, so activation
+   reads a `test_case` row's literal cells as it reads an rstest `#[case]`
+   row: `#[test_case(10, 90)]`, `#[test_case(10 => 90)]` and
+   `#[test_case(10, 90 ; "ten")]` each pass `10` to `q`. The cells are the
+   text before the one top-level `=>` or the `;` that starts the name;
+   strings and brackets do not split. A row binds nothing when its cell
+   count differs from the parameter count, its expectation or name marks it
+   ignored (`ignore`, `inconclusive`), or its expectation is anything but
+   one plain literal (`panics` passes exactly when the body fails; `matches`,
+   `with`, `using` and `it` hand the result to other code). A
+   `#[should_panic]` or `#[ignore]` function, a function that also carries
+   rstest rows and a parameter the body rebinds bind nothing. The synthesized
+   comparison writes a cell as `(10)`, and boundary pairing reads a
+   parenthesized whole literal as that literal. The RIPR-SPEC-0197
+   execution admission accepts a plain `; "name"` suffix, since it only
+   names the generated test.
+
 10. **A verified claims payload equality is an exact `assert_eq!` (#12304).**
     `assert_ok_eq!(owner(..), literal)` and `assert_some_eq!(owner(..),
     literal)` from the `claims` crate compare the call's `Ok`/`Some` payload
@@ -1020,6 +1038,18 @@ rejected alternative. Any can be reversed later without touching the rest.
     (`assert_some_eq!` on an `Ok` tail): `unknown` / none.
 44. `assert_some_eq!(pick(5), 10)` beside a `Some(..)` tail change reads as
     example 41; beside a `None` exit change it stays `unknown` / none.
+45. `fn price(q: u32) -> u32 { if q > 10 { .. } else { .. } }` changed from
+    `q >= 10`, with `#[test_case(10, 90)] fn prices(q: u32, expected: u32)
+    { assert_eq!(price(q), expected); }`, the arrow row
+    `#[test_case(10 => 90)] fn prices(q: u32) -> u32 { price(q) }` or the
+    named row `#[test_case(10, 90 ; "ten")]`: the row input is at the
+    changed boundary and the finding reads `exposed`.
+46. The same functions with rows only off the boundary (`3`, `20`): the
+    boundary input is missing and the finding does not read `exposed`.
+47. The same boundary row as `=> panics`, `=> ignore 90`, a name containing
+    `ignore`, one cell for two parameters, a `#[should_panic]` function, or
+    a body that rebinds `q`: nothing is bound and the finding does not read
+    `exposed`.
 
 ## Test Mapping
 
@@ -1145,6 +1175,9 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Existing: `crates/ripr/tests/test_case_arrow_expected_value.rs` (rule 9,
   examples 38 to 40, with the corpus case
   `lib-test-case-arrow-expected-value`).
+- `crates/ripr/tests/test_case_row_boundary_inputs.rs` (rule 9 row inputs,
+  examples 45 to 47) and the `test_case_*` unit tests in
+  `crates/ripr/src/analysis/value_resolution/tests.rs`.
 
 ## Implementation Mapping
 
@@ -1168,6 +1201,10 @@ rejected alternative. Any can be reversed later without touching the rest.
   synthesis (`arrow_row_oracles`, `arrow_row_is_read`), used by
   `syntax/ra.rs`, `facts/parameterized_tests.rs` and the RIPR-SPEC-0197
   admission in `syntax/owner_pin.rs` (`test_case_runs_body`).
+- `crates/ripr/src/analysis/value_resolution.rs`: rule 9's row inputs
+  (`extract_rstest_case_params`, `test_case_row_inputs`), read by activation
+  through `test_case_bound_literals`; `classify/boundary_pairing.rs`
+  (`pairing_argument_values`) reads the parenthesized cell.
 
 ## Metrics
 

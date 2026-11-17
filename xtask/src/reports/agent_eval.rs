@@ -30,6 +30,7 @@
 //! verdict moved as expected, not that a test catches a runtime fault.
 
 mod scenarios;
+mod trial;
 
 use crate::normalize_path;
 use crate::run::{ByteCaptureBudget, capture_bytes_in_dir_with_input_env_budget};
@@ -41,7 +42,7 @@ use std::time::Duration;
 
 const SCHEMA_VERSION: &str = "ripr-agent-eval-v1";
 const BASELINE_PATH: &str = "benchmarks/agent_eval/baseline.json";
-const USAGE: &str = "usage: cargo xtask agent-eval [--ripr <binary>] [--scenario <id>]... [--compare <baseline.json>] [--write-baseline] [--skip-cargo]";
+const USAGE: &str = "usage: cargo xtask agent-eval [--ripr <binary>] [--scenario <id>]... [--compare <baseline.json>] [--write-baseline] [--skip-cargo] | agent-eval trial-setup <dir> | agent-eval trial-score <dir>";
 /// A route regresses when its tokens grow by more than `then / 10` (10%)
 /// plus `REGRESSION_SLACK_TOKENS` over the baseline.
 const REGRESSION_DIVISOR: u64 = 10;
@@ -403,22 +404,79 @@ fn validate_baseline(baseline: &Value) -> Result<(), String> {
     let valid = baseline["scenarios"]
         .as_array()
         .is_some_and(|rows| !rows.is_empty() && rows.iter().all(scenario_ok));
-    if baseline["schema_version"] == SCHEMA_VERSION && valid {
-        Ok(())
-    } else {
-        Err(format!(
+    if baseline["schema_version"] != SCHEMA_VERSION || !valid {
+        return Err(format!(
             "is not a complete {SCHEMA_VERSION} baseline; rerun with --write-baseline"
-        ))
+        ));
     }
+    // A baseline recorded from a noisy run would loosen every later compare.
+    for row in baseline["scenarios"].as_array().into_iter().flatten() {
+        if let Some(detail) = find_runs_disagree(row) {
+            let id = row["id"].as_str().unwrap_or_default();
+            return Err(format!(
+                "recorded {id}: {detail}; rerun with --write-baseline"
+            ));
+        }
+    }
+    Ok(())
 }
 
-/// The `init --agents` loop: FIND, then follow each printed `next=` command
-/// (explain, then the context it points at), as the block tells an agent to.
+/// Whether the `init --agents` DETAIL step applies to a printed `next=`
+/// command: it is skipped when the gap row it selects (its last argument is
+/// the row's `id=`) has code in `missing=`. A row with
+/// `missing=-`, a sentence (see `reads_as_sentence`), or no matching row is followed.
+fn needs_detail(report: &str, args: &[String]) -> bool {
+    let Some(selector) = args.last() else {
+        return true;
+    };
+    let suffix = format!("|id={selector}");
+    // Fields escape a literal `|` as `\|`; keep those inside the field.
+    let missing = report
+        .lines()
+        .find(|line| line.ends_with(&suffix))
+        .map(|row| row.replace("\\|", "\u{1f}"))
+        .and_then(|row| {
+            row.split('|')
+                .find_map(|field| field.strip_prefix("missing="))
+                .map(|field| field.replace('\u{1f}', "|"))
+        });
+    missing.is_none_or(|value| {
+        value == "-"
+            || value.ends_with('…')
+            || value.ends_with(" more)")
+            || reads_as_sentence(&value)
+    })
+}
+
+/// A `missing=` entry written as prose ("No strong discriminator was
+/// detected", "Check unconfirmed: ...", "non-zero discount") rather than code
+/// (`total == 100`, `Size::Medium`, `verbose: flag == "-v"`): two adjacent
+/// words made only of letters and hyphens. Code rarely has two bare words in
+/// a row, and a misread costs only an extra DETAIL step.
+fn reads_as_sentence(value: &str) -> bool {
+    let bare = |word: &str| !word.is_empty() && word.chars().all(|c| c.is_alphabetic() || c == '-');
+    // A guard-domain value is the condition after `if` (`if x > 5`).
+    let value = value.strip_prefix("if ").unwrap_or(value);
+    let tokens: Vec<&str> = value.split_whitespace().collect();
+    // The first word takes no `:` (`verbose: flag` is a field init) and is
+    // longer than one letter (`x as u32` is a cast) unless it is `a` or `I`;
+    // the second may end a clause (`Check unconfirmed:`).
+    tokens.windows(2).any(|pair| {
+        let first = pair[0];
+        let first_ok = first.chars().count() > 1 || first == "a" || first == "A" || first == "I";
+        bare(first) && first_ok && bare(pair[1].trim_end_matches([':', ',']))
+    })
+}
+
+/// The `init --agents` loop: FIND, then DETAIL for each printed `next=`
+/// command whose gap row does not already name the exact check (explain, then
+/// the context it points at), as the block tells an agent to.
 fn route_cli_agent_loop(ripr: &Path, workspace: &Workspace) -> Result<Vec<Step>, String> {
     let find = capture(ripr, &find_args(), &workspace.root, None, &[])?;
     let mut steps = vec![raw_step("find", &find, workspace)];
     let mut queue: Vec<(String, Vec<String>)> = printed_next_commands(&find.stdout)
         .into_iter()
+        .filter(|args| needs_detail(&find.stdout, args))
         .map(|args| ("detail".to_string(), args))
         .collect();
     while let Some((label, args)) = queue.first().cloned() {
@@ -760,7 +818,7 @@ fn verify_complete(agent_report: &str) -> bool {
 
 /// What one `cargo test` run established.
 #[derive(Debug, PartialEq)]
-enum Suite {
+pub(super) enum Suite {
     Pass,
     /// The tests compiled, ran, and at least one failed.
     TestFailed,
@@ -775,7 +833,7 @@ enum Suite {
 /// Classify a finished `cargo test` run. Only a run that compiled and
 /// reported a failing test counts as a failure; a revert that stops the
 /// crate compiling must not credit the agent's tests.
-fn classify_suite(exit: Option<i32>, output: &str) -> Suite {
+pub(super) fn classify_suite(exit: Option<i32>, output: &str) -> Suite {
     let compile_error = output.contains("could not compile") || output.contains("error[E");
     match exit {
         Some(0) if !compile_error => Suite::Pass,
@@ -1174,16 +1232,51 @@ fn render_json(value: &Value, depth: usize) -> Result<String, String> {
 
 /// Every scenario whose cargo key checks could not run.
 fn instrument_failures(report: &Value) -> Vec<String> {
-    report["scenarios"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|scenario| {
-            let reason = scenario["loop"]["cargo_not_established"].as_str()?;
-            let id = scenario["id"].as_str().unwrap_or_default();
-            Some(format!("{id}: cargo key check not established: {reason}"))
-        })
-        .collect()
+    let mut failures = Vec::new();
+    for scenario in report["scenarios"].as_array().into_iter().flatten() {
+        let id = scenario["id"].as_str().unwrap_or_default();
+        if let Some(reason) = scenario["loop"]["cargo_not_established"].as_str() {
+            failures.push(format!("{id}: cargo key check not established: {reason}"));
+        }
+        failures.extend(find_runs_disagree(scenario).map(|detail| format!("{id}: {detail}")));
+    }
+    failures
+}
+
+/// `cli-agent-loop` opens with the same FIND command that `cli-agent-find`
+/// runs, on an identical fresh workspace, so the two captures must match in
+/// exit, bytes and tokens (all the record keeps). When they differ, the run
+/// measured host noise (a stray stderr note, an unnormalized path), not
+/// ripr's output, and must not become a baseline.
+fn find_runs_disagree(scenario: &Value) -> Option<String> {
+    let first_step = |route: &str| {
+        scenario["routes"]
+            .as_array()?
+            .iter()
+            .find(|row| row["route"] == route)?["steps"]
+            .get(0)
+    };
+    let (looped, found) = (first_step("cli-agent-loop")?, first_step("cli-agent-find")?);
+    if looped["exit"] == found["exit"]
+        && looped["bytes"].as_u64() == found["bytes"].as_u64()
+        && looped["tokens"].as_u64() == found["tokens"].as_u64()
+    {
+        return None;
+    }
+    let count = |value: &Value| value.as_u64().map_or("?".to_string(), |n| n.to_string());
+    let show = |step: &Value| {
+        format!(
+            "exit {}, {} bytes/{} tokens",
+            step["exit"],
+            count(&step["bytes"]),
+            count(&step["tokens"])
+        )
+    };
+    Some(format!(
+        "identical FIND runs disagree (cli-agent-loop {}, cli-agent-find {}); the run measured host noise",
+        show(looped),
+        show(found)
+    ))
 }
 
 fn flag(value: &Value) -> &'static str {
@@ -1279,10 +1372,50 @@ fn render_markdown(report: &Value, comparison: Option<&(Vec<String>, Vec<String>
     out
 }
 
+fn trial_dir(args: &[String]) -> Result<PathBuf, String> {
+    match args {
+        // Absolute, so cargo runs in each trial repository resolve it the same
+        // way whatever directory they start in.
+        [_, dir] => {
+            std::path::absolute(dir).map_err(|err| format!("cannot resolve trial dir {dir}: {err}"))
+        }
+        _ => Err(format!("{} needs exactly one <dir>\n{USAGE}", args[0])),
+    }
+}
+
+fn write_trial_score(dir: &Path) -> Result<(), String> {
+    let score = trial::trial_score(dir)?;
+    let report_dir = crate::reports_dir();
+    let path = report_dir.join("agent-eval-trial-score.json");
+    let pretty = serde_json::to_string_pretty(&score)
+        .map_err(|err| format!("failed to render trial score: {err}"))?;
+    write_file(&path, &format!("{pretty}\n"))?;
+    println!("{pretty}");
+    println!(
+        "agent-eval trial-score: {}/{} keyed gaps caught; wrote {}",
+        score["caught"],
+        score["keyed_gaps"],
+        normalize_path(&path)
+    );
+    if score["complete"] == true {
+        Ok(())
+    } else {
+        Err(format!(
+            "agent-eval trial-score: incomplete, scored as zero caught: {}",
+            score["problems"]
+        ))
+    }
+}
+
 pub(crate) fn agent_eval(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!("{USAGE}");
         return Ok(());
+    }
+    match args.first().map(String::as_str) {
+        Some("trial-setup") => return trial::trial_setup(&trial_dir(args)?),
+        Some("trial-score") => return write_trial_score(&trial_dir(args)?),
+        _ => {}
     }
     let options = parse_options(args)?;
     let ripr = match &options.ripr {
@@ -1394,6 +1527,59 @@ mod tests {
                 strings(&["context", "--at", "probe:a"]),
             ]
         );
+    }
+
+    #[test]
+    fn detail_is_skipped_only_when_the_row_names_the_exact_check() {
+        let report = "weakly_exposed|src/lib.rs:2|t >= 100|missing=t == 100|test=t1|id=probe:a\n\
+weakly_exposed|src/lib.rs:6|d * 3|missing=No strong discriminator was detected|test=t2|id=probe:b\n\
+reachable_unrevealed|src/lib.rs:9|x|missing=-|test=-|id=probe:c\n\
+weakly_exposed|src/lib.rs:10|v|missing=No a \\|\\| b|test=t1|id=probe:d\n\
+weakly_exposed|src/lib.rs:11|v|missing=v: a == x \\|\\| b words here|test=t1|id=probe:e\n\
+weakly_exposed|src/lib.rs:12|v|missing=Err(TooLong) (+1 more)|test=t1|id=probe:f\n\
+weakly_exposed|src/lib.rs:13|v|missing=x == 1…|test=t1|id=probe:g\n";
+        let explain = |id: &str| strings(&["explain", "--format", "agent", id]);
+        assert!(!needs_detail(report, &explain("probe:a")));
+        assert!(needs_detail(report, &explain("probe:b")));
+        assert!(needs_detail(report, &explain("probe:c")));
+        assert!(needs_detail(report, &explain("probe:d")));
+        // The escaped `\|` keeps the field whole: "b words here" is prose.
+        assert!(needs_detail(report, &explain("probe:e")));
+        assert!(needs_detail(report, &explain("probe:f")));
+        assert!(needs_detail(report, &explain("probe:g")));
+        assert!(needs_detail(report, &explain("probe:unknown")));
+        assert!(needs_detail(report, &[]));
+        for prose in [
+            "No strong discriminator was detected",
+            "Check unconfirmed: no supported assertion pairs the input",
+            "Discriminator unconfirmed: pin `x` for an input where it differs",
+            "Typed static limitation (wrapper_error_binding_unresolved)",
+            "Syntax-first analysis cannot classify this change",
+            "non-zero discount",
+            "exact discount payload",
+            "call `f` without x",
+            "a discount",
+            "I think",
+        ] {
+            assert!(reads_as_sentence(prose), "{prose}");
+        }
+        for code in [
+            "total == 100",
+            "Size::Medium",
+            "FREE_SHIPPING_CENTS",
+            "Err(TooLong)",
+            "days * 3",
+            "Point { x: 1 }",
+            r#"verbose: flag == "-v" || flag == "--verbose""#,
+            "x as u32",
+            "if x > 5",
+            "if enabled",
+            "a == b",
+            "a + b",
+            "-",
+        ] {
+            assert!(!reads_as_sentence(code), "{code}");
+        }
     }
 
     #[test]
@@ -1580,6 +1766,42 @@ verify=refused|outcome=complete_with_findings\n";
                 scenario.id
             );
         }
+    }
+
+    #[test]
+    fn disagreeing_identical_find_runs_are_an_instrument_failure() {
+        let route = |name: &str, bytes: u64, tokens: u64| {
+            json!({"route": name, "answer_reached": true, "failed_steps": 0, "total_tokens": tokens,
+                "tokens_to_answer": tokens, "steps": [{"step": "find", "exit": 0, "bytes": bytes, "tokens": tokens}]})
+        };
+        let checks = json!({"missed_gaps": 0, "extra_gaps": 0, "silent_on_control": null, "weak_test_still_flagged": true,
+            "reference_test_closes_loop": true, "reference_key_valid": true, "weak_key_valid": null});
+        let run = |loop_bytes: u64, loop_tokens: u64| {
+            json!({"schema_version": SCHEMA_VERSION, "scenarios": [{"id": "s", "loop": checks.clone(), "routes": [
+                route("cli-agent-loop", loop_bytes, loop_tokens), route("cli-agent-find", 232, 75)]}]})
+        };
+        let agreeing = run(232, 75);
+        assert!(instrument_failures(&agreeing).is_empty());
+        assert_eq!(validate_baseline(&agreeing), Ok(()));
+        let noisy = run(776, 243);
+        let expected = "s: identical FIND runs disagree (cli-agent-loop exit 0, 776 bytes/243 tokens, cli-agent-find exit 0, 232 bytes/75 tokens); the run measured host noise";
+        assert_eq!(instrument_failures(&noisy), vec![expected.to_string()]);
+        assert!(
+            validate_baseline(&noisy)
+                .is_err_and(|error| error.contains(expected.trim_start_matches("s: ")))
+        );
+        // Same size is all the record keeps; a byte or a token difference alone fails.
+        assert_eq!(instrument_failures(&run(233, 75)).len(), 1);
+        assert_eq!(instrument_failures(&run(232, 76)).len(), 1);
+        let mut exited = agreeing.clone();
+        exited["scenarios"][0]["routes"][0]["steps"][0]["exit"] = json!(2);
+        assert_eq!(instrument_failures(&exited).len(), 1);
+        // A report without one of the two routes has nothing to compare.
+        let mut lone = noisy.clone();
+        if let Some(routes) = lone["scenarios"][0]["routes"].as_array_mut() {
+            routes.truncate(1);
+        }
+        assert!(instrument_failures(&lone).is_empty());
     }
 
     #[test]

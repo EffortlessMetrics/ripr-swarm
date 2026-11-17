@@ -643,11 +643,6 @@ fn read_baseline(
 }
 
 fn candidates_from_pr_guidance(value: &Value) -> Vec<GateCandidate> {
-    let nearby_test_changed = value
-        .pointer("/summary/unchanged_tests")
-        .and_then(Value::as_bool)
-        .map(|unchanged| !unchanged)
-        .unwrap_or(false);
     let mut candidates = Vec::new();
     for source in ["comments", "summary_only"] {
         for item in value
@@ -656,12 +651,7 @@ fn candidates_from_pr_guidance(value: &Value) -> Vec<GateCandidate> {
             .into_iter()
             .flatten()
         {
-            candidates.push(candidate_from_guidance_item(
-                source,
-                item,
-                nearby_test_changed,
-                false,
-            ));
+            candidates.push(candidate_from_guidance_item(source, item, false));
         }
     }
     for item in value
@@ -670,12 +660,7 @@ fn candidates_from_pr_guidance(value: &Value) -> Vec<GateCandidate> {
         .into_iter()
         .flatten()
     {
-        candidates.push(candidate_from_guidance_item(
-            "suppressed",
-            item,
-            nearby_test_changed,
-            true,
-        ));
+        candidates.push(candidate_from_guidance_item("suppressed", item, true));
     }
     candidates
 }
@@ -684,12 +669,23 @@ fn candidates_from_gap_ledger(records: &[GapRecord]) -> Vec<GateCandidate> {
     records.iter().map(candidate_from_gap_record).collect()
 }
 
-fn candidate_from_guidance_item(
-    source: &str,
-    item: &Value,
-    nearby_test_changed: bool,
-    suppressed: bool,
-) -> GateCandidate {
+/// Whether the producer named a changed test that reaches this card's owner
+/// (#13893). Only this per-card evidence keeps a candidate advisory: the
+/// PR-wide `summary.unchanged_tests` flag says some test changed somewhere,
+/// not that the change touches this gap, and a card without the field (an
+/// older producer) gets no waiver.
+fn guidance_item_has_changed_reaching_test(item: &Value) -> bool {
+    item.get("changed_reaching_tests")
+        .and_then(Value::as_array)
+        .is_some_and(|tests| {
+            tests
+                .iter()
+                .any(|test| test.as_str().is_some_and(|name| !name.trim().is_empty()))
+        })
+}
+
+fn candidate_from_guidance_item(source: &str, item: &Value, suppressed: bool) -> GateCandidate {
+    let nearby_test_changed = guidance_item_has_changed_reaching_test(item);
     let route_facts = normalize_route_source(GateRouteSource::ReviewCard(item));
     let source_id = item
         .get("id")
@@ -700,11 +696,15 @@ fn candidate_from_guidance_item(
         .to_string();
     let placement = GatePlacement {
         path: string_field(item.pointer("/placement/path"))
-            .or_else(|| string_field(item.pointer("/seam/file"))),
+            .or_else(|| string_field(item.pointer("/seam/file")))
+            // Flat suppressed entries (withheld changed gaps #13892, summary-cap
+            // and nearby-test entries) carry a flat file/line.
+            .or_else(|| string_field(item.get("file"))),
         line: item
             .pointer("/placement/line")
             .and_then(Value::as_u64)
-            .or_else(|| item.pointer("/seam/line").and_then(Value::as_u64)),
+            .or_else(|| item.pointer("/seam/line").and_then(Value::as_u64))
+            .or_else(|| item.get("line").and_then(Value::as_u64)),
     };
     let recommended_file = item
         .pointer("/suggested_test/recommended_file")
@@ -1288,6 +1288,11 @@ fn gate_reason(
     context: GateReasonContext<'_>,
     configured_acknowledgement_labels: &[String],
 ) -> String {
+    if candidate.suppression_reason.as_deref() == Some("static_limitation") {
+        return "changed gap withheld from repair guidance as `static_limitation`; \
+                preserved as advisory, not resolved"
+            .to_string();
+    }
     if candidate.suppressed || candidate.configured_off {
         return format!(
             "configured-hidden or suppressed candidate preserved as `{}`",
@@ -1351,7 +1356,7 @@ fn gate_reason(
             return format!("static limitation keeps this candidate advisory: {why}");
         }
         if candidate.nearby_test_changed {
-            return "nearby focused test changed in this PR, so the candidate stays advisory"
+            return "a test changed in this PR reaches this owner, so the candidate stays advisory"
                 .to_string();
         }
         if !has_concrete_guidance(candidate) {
@@ -1552,8 +1557,9 @@ fn parser_declined_scope_warning(scope: &Value) -> Option<String> {
 
 /// The gate warning for an analysis scope that discloses reviewed-scope seams
 /// withheld as static limitations (`static_limited_omitted_seams`, present
-/// only when nonzero): ripr could not judge them, so they are not gate
-/// candidates and their absence is not a clean result. A value that is not a
+/// only when nonzero): ripr could not judge them, so they are not blocking
+/// candidates (the changed-scope gap seams among them are evaluated as
+/// `suppressed`, #13892) and their absence is not a clean result. A value that is not a
 /// non-negative integer warns too.
 fn static_limited_scope_warning(scope: &Value) -> Option<String> {
     let value = scope.get("static_limited_omitted_seams")?;
@@ -1562,7 +1568,8 @@ fn static_limited_scope_warning(scope: &Value) -> Option<String> {
         Some(count) => format!(
             "analysis_scope lists static_limited_omitted_seams: {count} seam(s) in the reviewed \
              scope were withheld because their static evidence is opaque or unknown at a \
-             stage; they are not gate candidates, so the absence of a gate candidate for \
+             stage; they are not blocking candidates (changed-scope gap seams among them are \
+             listed as suppressed decisions), so the absence of a blocking candidate for \
              them is not evidence that the changes are tested; run `ripr check` on the same diff to \
              inspect them"
         ),

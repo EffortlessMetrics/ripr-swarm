@@ -505,7 +505,11 @@ fn static_limited_seams_never_read_as_gate_pass() -> Result<(), String> {
     );
 
     let gate = read(&root, "limited-gate.json")?;
-    assert_eq!(gate["summary"]["evaluated"], 0, "{gate}");
+    // #13892: each withheld changed-scope gap is listed as a suppressed
+    // decision, never as a blocking or advisory candidate.
+    assert_eq!(gate["summary"]["evaluated"], withheld, "{gate}");
+    assert_eq!(gate["summary"]["suppressed"], withheld, "{gate}");
+    assert_eq!(gate["summary"]["blocking"], 0, "{gate}");
     assert_eq!(gate["status"], "advisory", "{gate}");
     assert_eq!(
         gate["analysis_scope"]["static_limited_omitted_seams"], withheld,

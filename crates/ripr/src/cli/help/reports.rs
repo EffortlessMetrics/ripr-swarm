@@ -81,8 +81,10 @@ GITHUB_REPOSITORY, GITHUB_ACTOR) from its environment. RIPR_PILOT_TIMEOUT_MS
 and automatic extension, and an invalid value is refused. Each step prints as
 a log group; an advisory step's failure is logged and the packet continues,
 while a failed diff capture, gate evaluation, or (in a blocking gate mode)
-PR guidance or SARIF render makes the command exit nonzero after the rest of
-the packet is written. It reads no token and posts no PR comments.
+PR guidance or SARIF render makes the command exit 2 after the rest of the
+packet is written. A gate that blocked, with no other required failure, exits
+3 instead, as `ripr gate evaluate` does. It reads no token and posts no PR
+comments.
 
 The CI summary prints the generated workflow's step summary as Markdown on
 stdout, from the artifacts earlier steps wrote. It reads only; it never runs

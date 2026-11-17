@@ -2194,8 +2194,10 @@ impl OwnerPinSyntax {
             }
             let before = masked[..at].trim_end();
             let start = before
-                .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-                .map_or(0, |last| last + 1);
+                .char_indices()
+                .rev()
+                .find(|&(_, ch)| !(ch.is_ascii_alphanumeric() || ch == '_' || !ch.is_ascii()))
+                .map_or(0, |(last, ch)| last + ch.len_utf8());
             let name = &before[start..];
             // A `!` with no identifier before it negates a parenthesized
             // expression; it is not a macro invocation.
@@ -5151,6 +5153,19 @@ enum ReturnPathGate {
     /// `Result`/`Option`). The pinned value must be a literal of that type,
     /// in the same wrapper, naming the field with an independent value.
     WholeValueField(WholeValueField),
+    /// #14387: the changed line is `return <value>;` inside one guard
+    /// `if COND { return ..; }` of an owner the closed integer subset reads
+    /// in both versions (`owner_value::ClosedChange`). The pinned call must
+    /// pass literal arguments on which the two versions provably return
+    /// different values, and the pinned value must be one of the two, so the
+    /// exact pin fails on one version. Any shape the subset cannot evaluate
+    /// refuses.
+    ClosedGuardReturn {
+        change: super::owner_value::ClosedChange,
+        /// The changed line's old text as the gate rebuilt it, which the
+        /// diff's own old line must match.
+        old_line: String,
+    },
 }
 
 /// The owner-side facts [`ReturnPathGate::WholeValueField`] checks a test's
@@ -5425,6 +5440,21 @@ impl OwnerReturnPin {
         self.returns_bool && matches!(self.path, ReturnPathGate::Any)
     }
 
+    /// #14387: whether a guard-return pin's rebuilt old line is the diff's own
+    /// old text for the owner's only changed line (`sole_change`). Every
+    /// other gate does not read it and answers `true`.
+    pub(in crate::analysis) fn closed_guard_old_line_matches(
+        &self,
+        sole_change: Option<&str>,
+    ) -> bool {
+        match &self.path {
+            ReturnPathGate::ClosedGuardReturn { old_line, .. } => {
+                sole_change.is_some_and(|old| old.trim() == old_line.trim())
+            }
+            _ => true,
+        }
+    }
+
     /// The owner-side gates: `None` when the probe is not a return value
     /// (or a changed `return Err(..)`, filed as `error_path`),
     /// the owner's declaration or return paths are not established, or
@@ -5524,6 +5554,17 @@ impl OwnerReturnPin {
                                         )?,
                                     })
                                 })
+                        })
+                        // #14387: a changed early `return` inside a guard of
+                        // an owner the closed subset reads in both versions.
+                        .or_else(|| {
+                            closed_guard_return(
+                                &owner.body,
+                                name,
+                                changed_line,
+                                &probe.expression,
+                                probe.before.as_deref(),
+                            )
                         })?
                 }
             }
@@ -5570,6 +5611,11 @@ impl OwnerReturnPin {
                 .get(&owner.file)
                 .is_none_or(|facts| source_binds_value_name(&facts.source, name))
         }) {
+            return None;
+        }
+        if matches!(path, ReturnPathGate::ClosedGuardReturn { .. })
+            && !owner_file_keeps_integer_names(owner, index)
+        {
             return None;
         }
         let call = pin_call(owner, index)?;
@@ -7028,6 +7074,21 @@ impl OwnerReturnPin {
                 .map(str::to_string)
                 .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
             && closed.provably_unpinned(&self.name, call.trim_end_matches(".unwrap()"), expected)
+        {
+            return false;
+        }
+        // #14387: a guard-return pin holds only where the two versions
+        // provably return different values for this call's literal arguments
+        // and the pin names one of them.
+        if let ReturnPathGate::ClosedGuardReturn { change: closed, .. } = &self.path
+            && !(helper.is_none()
+                && substituted.is_none()
+                && !unwrapped
+                && matches!(self.call, PinCall::Bare)
+                && call_text
+                    .map(str::to_string)
+                    .or_else(|| owner_call_in(&assertion.text, &self.name, false))
+                    .is_some_and(|call| closed.pin_discriminates(&self.name, &call, expected)))
         {
             return false;
         }
@@ -8523,6 +8584,9 @@ impl ReturnPathGate {
             Self::Adaptor {
                 requires_ok: true, ..
             } => &["Ok", "Err"],
+            // The closed subset reads `Ok(..)`, `Some(..)` and `None` by
+            // spelling (#14786 review).
+            Self::ClosedGuardReturn { .. } => &["Ok", "Err", "Some", "None"],
             _ => &[],
         }
     }
@@ -8553,6 +8617,9 @@ impl ReturnPathGate {
             }
             Self::CloneReceiver => false,
             Self::WholeValueField(gate) => gate.admits(expected),
+            // Read per call in `admits_candidate`, where the call's literal
+            // arguments are known.
+            Self::ClosedGuardReturn { .. } => true,
         }
     }
 }
@@ -9386,6 +9453,34 @@ fn constructor_call_span(text: &str, head: &str) -> Option<usize> {
     let masked = mask_comments_and_strings(text);
     let closing = matching_close(&masked, head.len(), b'(', b')')?;
     text[closing + 1..].trim().is_empty().then_some(closing)
+}
+
+/// #14387: [`ReturnPathGate::ClosedGuardReturn`] when the changed line is
+/// the whole statement `return <value>;`, the changed expression `return
+/// <value>` before and after, so the change moves only that guard's returned
+/// value, and the closed integer subset reads the owner in both versions. The
+/// guard condition and every other exit are then the same in both, and the
+/// pin's literal arguments decide per call which exit runs.
+fn closed_guard_return(
+    body: &str,
+    name: &str,
+    changed_line: usize,
+    expression: &str,
+    before: Option<&str>,
+) -> Option<ReturnPathGate> {
+    let (expression, before) = (expression.trim(), before?.trim());
+    let returned = |text: &str| {
+        text.strip_prefix("return ")
+            .is_some_and(|value| !value.trim().is_empty() && !value.contains([';', '{', '}']))
+    };
+    let after = body.lines().nth(changed_line)?;
+    let statement = format!("{expression};");
+    if !(returned(expression) && returned(before) && after.trim() == statement) {
+        return None;
+    }
+    let old_line = after.replacen(&statement, &format!("{before};"), 1);
+    let change = super::owner_value::ClosedChange::read(body, name, changed_line, &old_line)?;
+    Some(ReturnPathGate::ClosedGuardReturn { change, old_line })
 }
 
 /// Whether the owner's return value can only have come through the changed
@@ -14654,29 +14749,57 @@ fn returns_primitive_scalar(owner: &FunctionSummary, index: &RustIndex) -> bool 
     if !SCALARS.contains(&returned.as_str()) {
         return false;
     }
+    index
+        .files()
+        .get(&owner.file)
+        .is_some_and(|facts| !source_binds_type_name(&facts.source, &returned))
+}
+
+/// Whether `source` declares a type named `name` (`type u32 = u8;`,
+/// `struct u32`) or imports one under that name (`use a::Gauge as u32;`,
+/// `use a::{u32};`).
+fn source_binds_type_name(source: &str, name: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    let declared = whole_word_offsets(&masked, name).into_iter().any(|offset| {
+        // #7835 review: `type r#u32` declares the same name.
+        let before = masked[..offset]
+            .strip_suffix("r#")
+            .unwrap_or(&masked[..offset]);
+        let before = before.trim_end();
+        ["struct", "enum", "union", "type", "trait"]
+            .iter()
+            .any(|keyword| before.ends_with(keyword))
+    });
+    let imported = whole_word_offsets(&masked, "use")
+        .into_iter()
+        .any(|offset| {
+            let rest = &masked[offset..];
+            let end = rest.find(';').unwrap_or(rest.len());
+            contains_as_whole_word(&rest[..end], name)
+        });
+    declared || imported
+}
+
+/// #14387 (#14786 review): the closed subset checks arithmetic in the
+/// built-in range of each integer type it reads by spelling, so a guard-return
+/// credit needs the owner's file to leave every integer type name unbound
+/// (`type u32 = u8;` would narrow it) and to glob-import nothing beyond its
+/// parent module (`use crate::narrow::*;` could bind one).
+fn owner_file_keeps_integer_names(owner: &FunctionSummary, index: &RustIndex) -> bool {
     index.files().get(&owner.file).is_some_and(|facts| {
         let masked = mask_comments_and_strings(&facts.source);
-        let declared = whole_word_offsets(&masked, &returned)
-            .into_iter()
-            .any(|offset| {
-                // #7835 review: `type r#u32` declares the same name.
-                let before = masked[..offset]
-                    .strip_suffix("r#")
-                    .unwrap_or(&masked[..offset]);
-                let before = before.trim_end();
-                ["struct", "enum", "union", "type", "trait"]
-                    .iter()
-                    .any(|keyword| before.ends_with(keyword))
-            });
-        // `use a::Gauge as u32;` or `use a::{u32};` binds the name.
-        let imported = whole_word_offsets(&masked, "use")
+        let foreign_glob = whole_word_offsets(&masked, "use")
             .into_iter()
             .any(|offset| {
                 let rest = &masked[offset..];
                 let end = rest.find(';').unwrap_or(rest.len());
-                contains_as_whole_word(&rest[..end], &returned)
+                let item: String = rest[..end].split_whitespace().collect();
+                item.contains('*') && item != "usesuper::*"
             });
-        !declared && !imported
+        !foreign_glob
+            && !INTEGER_TYPES
+                .iter()
+                .any(|name| source_binds_type_name(&facts.source, name))
     })
 }
 
@@ -15246,58 +15369,79 @@ fn initializer_calls_owner(initializer: &str, name: &str, call: &PinCall) -> boo
 /// masked initializer: one parse per file per index. Items a macro call
 /// declares (`thread_local!`, `lazy_static!`) and items of a file that does
 /// not parse cleanly are read from their text.
+///
+/// The per-file parses are independent, so they go through [`map_scans`]:
+/// off the pool (the single-seam review stage of a cold `ripr check`) they
+/// fan out instead of parsing the whole corpus on one thread, and on a pool
+/// worker they stay in line under the #8756 memo-lock guard. Results are
+/// folded in index file order, so the table is the same either way.
 fn workspace_constant_table(index: &RustIndex) -> ConstantTable {
+    let files: Vec<(&PathBuf, &str)> = index
+        .files()
+        .iter()
+        .map(|(path, facts)| (path, facts.data().source.as_ref()))
+        .collect();
+    let per_file = map_scans(&files, |(_, source)| file_constants(source));
     let mut table = ConstantTable::new();
-    for (path, facts) in index.files().iter() {
-        let source = &facts.source;
-        if !source.contains("const") && !source.contains("static") {
-            continue;
-        }
-        let mut add = |name: &str, initializer: String, declared: Option<String>| {
-            let name = name.strip_prefix("r#").unwrap_or(name);
+    for ((path, _), constants) in files.iter().zip(per_file) {
+        for (name, initializer, declared) in constants {
             table
-                .entry(name.to_string())
+                .entry(name)
                 .or_default()
-                .push((path.clone(), initializer, declared));
-        };
-        let Some(parsed) = parse_clean_source_file(source) else {
-            for (name, initializer) in text_declared_constants(&mask_comments_and_strings(source)) {
-                let declared = declared_type(&initializer).map(str::to_string);
-                add(&name, initializer, declared);
-            }
-            continue;
-        };
-        for node in parsed.tree().syntax().descendants() {
-            let item = if let Some(item) = ast::Const::cast(node.clone()) {
-                item.name()
-                    .zip(item.body())
-                    .map(|(name, body)| (name, body, item.ty()))
-            } else if let Some(item) = ast::Static::cast(node.clone()) {
-                item.name()
-                    .zip(item.body())
-                    .map(|(name, body)| (name, body, item.ty()))
-            } else {
-                if let Some(macro_call) = ast::MacroCall::cast(node)
-                    && let Some(tokens) = macro_call.token_tree()
-                {
-                    let text = mask_comments_and_strings(&tokens.syntax().to_string());
-                    for (name, initializer) in text_declared_constants(&text) {
-                        let declared = declared_type(&initializer).map(str::to_string);
-                        add(&name, initializer, declared);
-                    }
-                }
-                None
-            };
-            if let Some((item_name, body, ty)) = item {
-                add(
-                    item_name.text(),
-                    mask_comments_and_strings(&body.syntax().to_string()),
-                    ty.map(|ty| mask_comments_and_strings(&ty.syntax().to_string())),
-                );
-            }
+                .push(((*path).clone(), initializer, declared));
         }
     }
     table
+}
+
+/// One file's `const`/`static` items for [`workspace_constant_table`], in
+/// source order: `(name, masked initializer, declared type)`.
+fn file_constants(source: &str) -> Vec<(String, String, Option<String>)> {
+    let mut found = Vec::new();
+    if !source.contains("const") && !source.contains("static") {
+        return found;
+    }
+    let mut add = |name: &str, initializer: String, declared: Option<String>| {
+        let name = name.strip_prefix("r#").unwrap_or(name);
+        found.push((name.to_string(), initializer, declared));
+    };
+    let Some(parsed) = parse_clean_source_file(source) else {
+        for (name, initializer) in text_declared_constants(&mask_comments_and_strings(source)) {
+            let declared = declared_type(&initializer).map(str::to_string);
+            add(&name, initializer, declared);
+        }
+        return found;
+    };
+    for node in parsed.tree().syntax().descendants() {
+        let item = if let Some(item) = ast::Const::cast(node.clone()) {
+            item.name()
+                .zip(item.body())
+                .map(|(name, body)| (name, body, item.ty()))
+        } else if let Some(item) = ast::Static::cast(node.clone()) {
+            item.name()
+                .zip(item.body())
+                .map(|(name, body)| (name, body, item.ty()))
+        } else {
+            if let Some(macro_call) = ast::MacroCall::cast(node)
+                && let Some(tokens) = macro_call.token_tree()
+            {
+                let text = mask_comments_and_strings(&tokens.syntax().to_string());
+                for (name, initializer) in text_declared_constants(&text) {
+                    let declared = declared_type(&initializer).map(str::to_string);
+                    add(&name, initializer, declared);
+                }
+            }
+            None
+        };
+        if let Some((item_name, body, ty)) = item {
+            add(
+                item_name.text(),
+                mask_comments_and_strings(&body.syntax().to_string()),
+                ty.map(|ty| mask_comments_and_strings(&ty.syntax().to_string())),
+            );
+        }
+    }
+    found
 }
 
 /// `const NAME: T = init;` and `static [ref] [mut] NAME: T = init;` read
@@ -16052,8 +16196,10 @@ fn index_operand(before: &str) -> bool {
                 // A keyword before `[` (`match [e, o] = p`, `return [e, o] = p`)
                 // starts an array pattern or value, not an index.
                 let word_start = head
-                    .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                    .map_or(0, |at| at + 1);
+                    .char_indices()
+                    .rev()
+                    .find(|&(_, c)| !(c.is_ascii_alphanumeric() || c == '_' || !c.is_ascii()))
+                    .map_or(0, |(at, c)| at + c.len_utf8());
                 // A label (`break 'a [e, o] = p`, `continue 'a [..]`) is not an
                 // indexed place either.
                 if head[..word_start].ends_with('\'')
@@ -17063,8 +17209,14 @@ pub(super) fn unit_struct_value(
             let before = masked[..offset].trim_end();
             let after = masked[offset + name.len()..].trim_start();
             let word_start = before
-                .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-                .map_or(0, |position| position + 1);
+                .char_indices()
+                .rev()
+                .find(|&(_, character)| {
+                    !(character.is_ascii_alphanumeric()
+                        || character == '_'
+                        || !character.is_ascii())
+                })
+                .map_or(0, |(position, character)| position + character.len_utf8());
             let word = &before[word_start..];
             let item_end = after.starts_with('{') || starts_with_word(after, "where");
             let inert = match word {

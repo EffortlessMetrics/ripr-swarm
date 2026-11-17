@@ -3929,23 +3929,41 @@ fn a_test_case_table_with_literal_rows_runs_the_body_once_per_row() {
             "#[test_case(4, 12)]\n#[serial_test::serial]",
         ),
         ("extern crate test_case;", "#[test_case::test_case(4, 12)]"),
+        // A `; "name"` suffix only names the generated test.
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12 ; \"four\")]",
+        ),
     ] {
         let tests = case_test(prelude, attributes, params, "weighs");
         assert_eq!(test_case_admitted(&tests).len(), 1, "{tests}");
     }
     for (prelude, attributes, parameters, name) in [
         // The `=> expected` form generates its own comparison; `matches`,
-        // `with`, descriptions and the other `test_case` attributes change
-        // what runs.
+        // `with` and the other `test_case` attributes change what runs.
         (
             "use test_case::test_case;",
             "#[test_case(4 => 12)]",
             params,
             "weighs",
         ),
+        // A name that could mark the generated test ignored, or a suffix
+        // that is not one string literal.
         (
             "use test_case::test_case;",
-            "#[test_case(4, 12 ; \"four\")]",
+            "#[test_case(4, 12 ; \"ignore four\")]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12 ; \"inconclusive\")]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12 ; four)]",
             params,
             "weighs",
         ),
@@ -6362,9 +6380,38 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         None
     );
 
+    // The body may invoke a trusted name or the wrapper itself: each
+    // resolves as the same call passed in the arguments would. httparse's
+    // `req!` forwards to its own second arm and asserts with `assert_eq!`.
+    assert_eq!(
+        refusal(&format!(
+            "{}{call}",
+            definition.replace("check(1);", "check(1); assert!(true);")
+        )),
+        None
+    );
+    let recursive = "macro_rules! case {\n    ($name:ident, |$v:ident| $body:block) => {\n        case! { $name, 1, |$v| $body }\n    };\n    ($name:ident, $want:expr, |$v:ident| $body:block) => {\n        #[test]\n        fn $name() { assert_eq!(1, $want); let check = |$v: u32| $body; check(1); }\n    };\n}\n";
+    assert_eq!(refusal(&format!("{recursive}{call}")), None);
+    // The body may call a trusted name that nothing rebinds.
+    let forwards = "macro_rules! case { ($n:ident) => { vec!($n); }; }\ncase!(assert_eq);\n";
+    assert_eq!(refusal(forwards), None);
+    // A macro called inside a function body between them defines nothing
+    // outside that body, so ordinary tests may sit between calls.
+    assert_eq!(
+        refusal(&format!(
+            "{definition}#[test]\nfn plain() {{ assert_eq!(1, 1); generate!(); }}\nfn build() -> Vec<u32> {{ vec![1] }}\n{call}"
+        )),
+        None
+    );
+
     // Each way the wrapper may still bind a name keeps the argument
     // ambiguous.
-    let bang = definition.replace("check(1);", "check(1); assert!(true);");
+    let bang = definition.replace("check(1);", "check(1); generate!();");
+    // A fragment named like a trusted macro still expands to any name.
+    let fragment_bang = definition
+        .replace("($name:ident,", "($name:ident, $assert_eq:ident,")
+        .replace("check(1);", "check(1); $assert_eq!();");
+    let path_bang = definition.replace("check(1);", "check(1); std::assert!(true);");
     let defines = definition.replace("#[test]", "macro_rules! inner { () => {} }\n#[test]");
     let imports = definition.replace("#[test]", "use other::*;\n#[test]");
     let attributed = format!("#[allow(unused)]\n{definition}");
@@ -6384,6 +6431,13 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         format!("{definition}crate::case!(one, |v| {{ assert_eq!(v, 1); }});\n"),
         // The definition invokes a macro or holds a binding word.
         format!("{bang}{call}"),
+        format!("{fragment_bang}case!(one, generate, |v| {{ assert_eq!(v, 1); }});\n"),
+        format!("{path_bang}{call}"),
+        // A body call of a trusted name that this file rebinds receives the
+        // arguments through a fragment, so its own scan never sees them:
+        // an imported `vec!` may define `assert_eq` from `$n`.
+        format!("use ext::vec;\n{forwards}"),
+        format!("{forwards}use ext::vec;\n"),
         format!("{defines}{call}"),
         format!("{imports}{call}"),
         // An attribute on the definition may change it.
@@ -6412,8 +6466,13 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         // A macro expanded between the definition and the call may emit a
         // shadowing `macro_rules! case`.
         format!("{definition}generate!();\n{call}"),
-        // Even a trusted name may be a local macro that emits one.
-        format!("{definition}fn build() -> Vec<u32> {{ vec![1] }}\n{call}"),
+        // Even a trusted name may be a local macro that emits one, and an
+        // `impl` block is no block expression: it does not confine one.
+        format!("{definition}vec! {{ 1 }}\n{call}"),
+        format!("{definition}impl S {{ generate!(); }}\n{call}"),
+        // A block confines what it defines only from calls outside it: a
+        // call later in the same block may see a shadowing `case`.
+        format!("{definition}fn setup() {{ generate!(); {call}}}\n"),
         // A module between them may carry a shadowing definition, even
         // without an outer attribute (`#![macro_use]` in its own file).
         format!("{definition}#[macro_use]\nmod shadow;\n{call}"),
@@ -14328,6 +14387,81 @@ fn the_workspace_macro_scan_runs_in_line_on_a_pool_worker_and_fans_out_elsewhere
     Ok(())
 }
 
+/// The workspace constant table parses every file that names `const` or
+/// `static`. Off the pool (the cold single-seam review stage) that per-file
+/// work fans out over rayon instead of running the whole corpus on one
+/// thread; on a pool worker it stays in line under the #8756 memo-lock guard.
+/// Either way the table is folded in index file order, so a name declared in
+/// several files lists them in the same order, and files without either
+/// keyword are skipped before any parse.
+#[test]
+fn the_workspace_constant_table_fans_out_off_the_pool_with_the_same_table() -> Result<(), String> {
+    let index = index(&[
+        (
+            "src/a.rs",
+            "pub const LIMIT: u32 = 3;\npub static NAME: &str = \"a\";\n",
+        ),
+        (
+            "src/b.rs",
+            "pub const LIMIT: u64 = 4;\nthread_local! { static T: u8 = 1; }\n",
+        ),
+        ("src/c.rs", "pub fn plain() -> u32 { 1 }\n"),
+        (
+            "src/d.rs",
+            "pub const fn broken( -> u32 { const LIMIT: u8 = 5; }\n",
+        ),
+    ]);
+    let table_and_decision = || {
+        LAST_SCAN_FAN_OUT.with(|last| last.set(None));
+        let table = workspace_constant_table(&index);
+        (table, LAST_SCAN_FAN_OUT.with(std::cell::Cell::get))
+    };
+
+    let (off_pool, decision) = table_and_decision();
+    assert_eq!(
+        decision,
+        Some(true),
+        "the per-file constant scan from a thread outside the pool must fan out"
+    );
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let (on_pool, decision) = pool.install(table_and_decision);
+    assert_eq!(
+        decision,
+        Some(false),
+        "the per-file constant scan on a pool worker must run in line"
+    );
+    assert_eq!(off_pool, on_pool, "fan-out must not change the table");
+
+    let files_of = |name: &str| -> Vec<PathBuf> {
+        off_pool
+            .get(name)
+            .map(|rows| rows.iter().map(|(path, _, _)| path.clone()).collect())
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        files_of("LIMIT"),
+        vec![
+            PathBuf::from("src/a.rs"),
+            PathBuf::from("src/b.rs"),
+            PathBuf::from("src/d.rs"),
+        ],
+        "rows keep index file order, including the text-read unparsed file"
+    );
+    assert_eq!(files_of("NAME"), vec![PathBuf::from("src/a.rs")]);
+    assert_eq!(files_of("T"), vec![PathBuf::from("src/b.rs")]);
+    assert!(
+        off_pool
+            .values()
+            .flatten()
+            .all(|(path, _, _)| path != Path::new("src/c.rs")),
+        "a file without const or static contributes nothing"
+    );
+    Ok(())
+}
+
 /// #9211: the first workspace macro-site lookup on a classify worker ran the
 /// whole-corpus scan in line while holding the memo lock, so every sibling
 /// worker slept on it. Priming pays the scan once, fanned out over the pool
@@ -14610,6 +14744,17 @@ fn rename_memo_keys_that_collide_still_answer_per_file() {
         assert!(file_renames_to(&other, "Fxo"));
         assert!(!file_renames_to(&renames, "Fxo"));
     }
+}
+
+/// #14089: the word before `[` was measured with an ASCII-only predicate, so
+/// a non-ASCII identifier char was the char found and the slice started one
+/// byte later, inside it. The identifier now stays whole.
+#[test]
+fn index_operand_reads_a_non_ascii_indexed_place() {
+    assert!(index_operand("größe["));
+    assert!(index_operand("values["));
+    assert!(!index_operand("return ["));
+    assert!(!index_operand("grö ["));
 }
 
 /// #13703: a file read proves the roots of only the rooted spellings the

@@ -51,6 +51,7 @@ mod publish_rehearsal;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
 mod current_state;
+mod dx_trend;
 mod exact_candidate_harness;
 #[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
 mod gap_source_subject_shared;
@@ -22862,6 +22863,17 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     ) || (path.starts_with("packaging/npm/launcher/test/") && path.ends_with(".test.cjs"))
     {
         return Some("npm launcher runtime and focused launcher contract tests");
+    }
+    if matches!(
+        path,
+        "packaging/npm/qualification/bin/journey.cjs"
+            | "packaging/npm/qualification/lib/journey.cjs"
+            | "packaging/npm/qualification/lib/registry.cjs"
+            | "packaging/npm/qualification/test/journey.test.cjs"
+    ) {
+        return Some(
+            "The npm install-to-use journey must drive real npm and Node package resolution on consumer runners that have no Rust toolchain; its controls run through the Rust-owned npm_consumer integration target (#4627, #4632).",
+        );
     }
     if path == "editors/vscode/test/developerSetup.cjs" {
         return Some(

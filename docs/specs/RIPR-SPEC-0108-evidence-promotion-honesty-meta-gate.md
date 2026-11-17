@@ -149,7 +149,13 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      that subject with the current binary (`ripr check --mode draft --format
      repo-exposure-json`) and fails when the committed report differs in the
      judged fields: the seam set, each seam's `grip_class` and stage states, and
-     each related test's `oracle_strength` and `relation_reason`. Producer
+     each related test's `oracle_strength` and `relation_reason`. A seam's
+     per-stage `evidence_path` summaries are judged too, but only for a capture
+     recorded at the analyzer's current `CACHE_SCHEMA_VERSION`: a pinned capture
+     is not parsed for them, so its pin keeps its tolerance whole. A present but
+     malformed `evidence_path` (a non-object value, a non-object stage entry, or
+     a non-string `state`, `confidence` or `summary`) is a violation rather than
+     an empty read that compares equal on both sides. Producer
      version, timestamps and the root are not judged. A repo-seam case without a
      regenerable subject fails (#12144).
      Every committed report under `reports/` that carries
@@ -555,7 +561,7 @@ gate-specific artifacts.
 | ts_missing_import_graph_limit | typescript | typescript_static_limit_taxonomy | unresolved_import_missing_import_graph_named_limitation (also `must_emit_limitation: missing_import_graph`, `maximum_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, no verify/receipt commands, and no repair packet) |
 | ts_hoc_wrapped_owner | typescript | typescript_adversarial_hoc_wrapped_owner | higher_order_wrapper_obscures_owner_identity (also `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, no verify/receipt commands, and no repair packet) |
 | ts_token_substring | typescript | typescript_adversarial_token_substring | token_substring_coincidence (also `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, no verify/receipt commands, and no repair packet) |
-| ts_render_reaches_unobserved_sink | typescript | typescript_adversarial_render_unobserved_sink | render_test_reaches_not_observes_changed_sink (also `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, no verify/receipt commands, and no repair packet) |
+| ts_render_reaches_unobserved_sink | typescript | typescript_adversarial_render_unobserved_sink | render_test_reaches_not_observes_changed_sink (also `expected_class=static_unknown`, `maximum_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, no verify/receipt commands, and no repair packet) |
 | ts_owner_identity_after_insertion | typescript | typescript_adversarial_owner_identity_after_insertion | stale_line_owner_identity_after_insertion (also `maximum_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, no verify/receipt commands, and no repair packet) |
 | perl_same_sub_other_package | perl | reports/perl_same_sub_other_package.json | same_sub_name_other_package_package_reference_downgrade (also `expected_oracle=exact_value/strong`, `expected_class=reachable_unrevealed`, `must_not_report_clean`, `must_disclose_scope`, no verify/receipt commands, and no repair packet) |
 | perl_import_alias_defining_package | perl | reports/perl_import_alias_defining_package.json | imported_alias_defining_package_mismatch_package_reference_downgrade (also `expected_oracle=exact_value/strong`, `expected_class=reachable_unrevealed`, `must_not_report_clean`, `must_disclose_scope`, no verify/receipt commands, and no repair packet) |
@@ -618,7 +624,7 @@ TypeScript/JavaScript families and their charter coverage:
 | decorator wrapper obscuring the owner | `ts_decorator_indirection_limit` | `must_emit_limitation: decorator_indirection`, not promoted |
 | higher-order wrapper obscuring the owner | `ts_hoc_wrapped_owner` | `weakly_exposed` (wrapper boundary stays opaque) |
 | token substring collision | `ts_token_substring` | `weakly_exposed` (call-boundary match, heuristic-only link) |
-| component/render test reaches but does not observe the changed sink | `ts_render_reaches_unobserved_sink` | `weakly_exposed` (heuristic link cannot borrow the strong assertion) |
+| component/render test reaches but does not observe the changed sink | `ts_render_reaches_unobserved_sink` | `static_unknown`, `maximum_class=weakly_exposed` (reach through a same-module caller cannot borrow the strong assertion) |
 | stale line/owner identity after an insertion | `ts_owner_identity_after_insertion` | `maximum_class=weakly_exposed` (post-insertion owner identity; sibling oracle not borrowed) |
 | dynamic dispatch / unresolved import | `ts_dynamic_dispatch_limit`, `ts_missing_import_graph_limit` | named limitations, not promoted |
 

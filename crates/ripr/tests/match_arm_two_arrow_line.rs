@@ -328,3 +328,25 @@ fn a_string_arrow_in_the_scrutinee_is_not_a_match_arm_gap() -> Result<(), String
     assert_eq!(families, vec![ProbeFamily::StaticUnknown], "{header:?}");
     Ok(())
 }
+
+/// #14722 review: a comparison repeated on the new line (`(a > b, a > b)`
+/// from `(a > b, a >= b)`) is not all unchanged when the old line held it
+/// once, so a predicate finding stays beside the header's.
+#[test]
+fn a_repeated_comparison_held_once_on_the_old_line_keeps_a_finding() -> Result<(), String> {
+    let output = check_scrutinee_crate(
+        "pub fn pick(a: i32, b: i32) -> u8 {\n    match (a > b, a > b) {\n        (true, true) => 1,\n        _ => 0,\n    }\n}\n",
+        "use match_scrutinee_only::pick;\n\n#[test]\nfn greater_picks_one() {\n    assert_eq!(pick(2, 1), 1);\n}\n",
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,6 +1,6 @@\n pub fn pick(a: i32, b: i32) -> u8 {\n-    match (a > b, a >= b) {\n+    match (a > b, a > b) {\n         (true, true) => 1,\n         _ => 0,\n     }\n }\n",
+    )?;
+    let header = findings_on_line(&output, 2);
+    let families = header
+        .iter()
+        .map(|finding| finding.probe.family.as_str().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        families.iter().any(|family| family == "predicate"),
+        "{header:?}"
+    );
+    Ok(())
+}
