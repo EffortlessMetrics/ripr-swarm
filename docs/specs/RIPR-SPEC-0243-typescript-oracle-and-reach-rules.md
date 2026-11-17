@@ -991,7 +991,11 @@ Candidates come from the first non-empty tier:
    A call-built constant owner (`ModuleFunction`) reads every entry as a
    closure entry, a bare call of it (`Rule(s)`) included, because what runs is
    the callback it was built from. An owner with more than 32 closure entries
-   (`MAX_CLOSURE_ENTRIES_PER_OWNER`) keeps none of them. A reference that
+   (`MAX_CLOSURE_ENTRIES_PER_OWNER`) keeps none of them and reads as it did
+   before closure reach (possibly `no_static_path`); the cap is not yet
+   disclosed. A reassignment is a bare identifier target (`x = ...`, `x++`,
+   `[x] = ...`, `({ x } = ...)`); a member write (`obj.x = ...`) rebinds
+   nothing. A reference that
    invokes nothing (`typeof helper === "function"`, an identity comparison)
    still adds an edge; that can only turn a `no_static_path` into
    `static_unknown`, never credit a test. When some related tests reach the

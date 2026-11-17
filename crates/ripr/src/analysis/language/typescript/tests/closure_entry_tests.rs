@@ -432,3 +432,37 @@ fn a_cross_module_closure_chain_takes_the_closure_bound() -> Result<(), String> 
     assert_closure_related("cross-closure-bound", &finding);
     Ok(())
 }
+
+#[test]
+fn member_writes_do_not_count_as_rebinding() {
+    // `cache.reviver = ...` mutates `cache`, it does not rebind `reviver`;
+    // `({ reviver } = other)` does.
+    let member = REVIVER.to_string()
+        + "const cache: any = {};\nexport function remember(): void {\n  cache.reviver = 1;\n  cache[reviver.name] = 2;\n}\n";
+    assert_eq!(
+        closure_entry_names(&member, "reviver"),
+        ["parse", "remember"]
+    );
+    let destructured = REVIVER.replace("function reviver", "let reviver = function")
+        + "export function reset(other: any): void {\n  ({ reviver } = other);\n}\n";
+    assert!(entries(&destructured, "reviver").is_empty());
+}
+
+#[test]
+fn an_owner_past_the_closure_entry_cap_keeps_none() {
+    let exports = |count: usize| {
+        let mut source =
+            String::from("function reviver(key: string, value: any): any {\n  return value;\n}\n");
+        for index in 0..count {
+            source.push_str(&format!(
+                "export function parse{index}(text: string): any {{\n  return JSON.parse(text, reviver);\n}}\n"
+            ));
+        }
+        source
+    };
+    assert_eq!(
+        closure_entry_names(&exports(MAX_CLOSURE_ENTRIES_PER_OWNER), "reviver").len(),
+        MAX_CLOSURE_ENTRIES_PER_OWNER
+    );
+    assert!(entries(&exports(MAX_CLOSURE_ENTRIES_PER_OWNER + 1), "reviver").is_empty());
+}

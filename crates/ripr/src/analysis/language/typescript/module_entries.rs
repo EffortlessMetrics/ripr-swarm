@@ -32,7 +32,8 @@
 
 use super::*;
 use oxc_ast::ast::{
-    AssignmentTarget, BindingIdentifier, IdentifierReference, TSType, UpdateExpression,
+    AssignmentTargetPropertyIdentifier, BindingIdentifier, IdentifierReference,
+    SimpleAssignmentTarget, TSType,
 };
 use oxc_ast_visit::{Visit, walk};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -319,7 +320,8 @@ pub(crate) fn module_entries_and_outbound<'a>(
         // A densely connected module (a combinator grammar with many
         // exports) could give an owner a closure entry per export, and every
         // related test rechecks them all. Past the cap the owner keeps only
-        // its call entries, which is today's reading (fail closed).
+        // its call entries: the reading before closure reach, which may be
+        // `no_static_path` though the analysis saw the reach.
         if owner_entries.iter().filter(|entry| entry.closure).count()
             > MAX_CLOSURE_ENTRIES_PER_OWNER
         {
@@ -677,19 +679,23 @@ fn reassigned_names<'a>(statements: &'a [Statement<'a>]) -> std::collections::Ha
     struct Reassigned<'a> {
         names: std::collections::HashSet<&'a str>,
     }
+    // Only a bare identifier target rebinds a name: `obj.prop = 1` and
+    // `obj[key]++` mutate `obj` and read `key`, they rebind neither.
     impl<'a> Visit<'a> for Reassigned<'a> {
-        fn visit_assignment_target(&mut self, it: &AssignmentTarget<'a>) {
-            let mut inner = References::default();
-            inner.visit_assignment_target(it);
-            self.names.extend(inner.referenced);
-            walk::walk_assignment_target(self, it);
+        fn visit_simple_assignment_target(&mut self, it: &SimpleAssignmentTarget<'a>) {
+            if let SimpleAssignmentTarget::AssignmentTargetIdentifier(id) = it {
+                self.names.insert(id.name.as_str());
+            }
+            walk::walk_simple_assignment_target(self, it);
         }
 
-        fn visit_update_expression(&mut self, it: &UpdateExpression<'a>) {
-            let mut inner = References::default();
-            inner.visit_simple_assignment_target(&it.argument);
-            self.names.extend(inner.referenced);
-            walk::walk_update_expression(self, it);
+        fn visit_assignment_target_property_identifier(
+            &mut self,
+            it: &AssignmentTargetPropertyIdentifier<'a>,
+        ) {
+            // `({ name } = value)` rebinds `name`.
+            self.names.insert(it.binding.name.as_str());
+            walk::walk_assignment_target_property_identifier(self, it);
         }
     }
     let mut visitor = Reassigned::default();
