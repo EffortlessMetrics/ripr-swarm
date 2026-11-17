@@ -1034,17 +1034,25 @@ pub(crate) fn inline_const_assertion_lines(source: &str) -> std::collections::BT
             Some(after_semicolon) => close_line_end - after_semicolon.len(),
             None => close + 1,
         };
-        let flatten = |text: &str| text.replace(['\n', '\r'], " ");
+        // Read unflattened: joining lines would let a `//` comment swallow a
+        // trailing literal (`// note` / `"small"`) that makes the block a value.
         let Some(text) = source.get(start..end) else {
             continue;
         };
-        if !is_inline_const_assertion(&flatten(text), &flatten(&masked[start..end])) {
+        if !is_inline_const_assertion(text, &masked[start..end]) {
             continue;
         }
         let (first, last) = (line_of(start), line_of(close));
         let (open_line_start, _) = line_bounds(start);
-        let alone_at_open = masked[open_line_start..start].trim().is_empty();
-        let alone_at_close = masked[end..close_line_end].trim().is_empty();
+        // Read on the source, not the mask: a literal on the boundary line
+        // (`}; "new"`) is code the mask would blank. Only a comment may follow.
+        let alone_at_open = source
+            .get(open_line_start..start)
+            .is_some_and(|prefix| prefix.trim().is_empty());
+        let alone_at_close = source.get(end..close_line_end).is_some_and(|tail| {
+            let tail = tail.trim();
+            tail.is_empty() || tail.starts_with("//")
+        });
         for line in first..=last {
             let shared = (line == first && !alone_at_open) || (line == last && !alone_at_close);
             if !shared {
@@ -1221,6 +1229,26 @@ mod tests {
             ),
             [2, 3, 4, 5]
         );
+        // A trailing line comment does not share the closing line.
+        assert_eq!(
+            lines("fn f() {\n    const {\n        assert!(N < 2);\n    }; // why\n}\n"),
+            [2, 3, 4]
+        );
+        // A literal on the closing line is code: `}; "new"` keeps its reading.
+        assert_eq!(
+            lines(
+                "fn f() -> &'static str {\n    const {\n        assert!(N < 2);\n    }; \"new\"\n}\n"
+            ),
+            [2, 3]
+        );
+        assert_eq!(
+            lines("fn f() -> char {\n    const {\n        assert!(N < 2);\n    }; 'x'\n}\n"),
+            [2, 3]
+        );
+        assert_eq!(
+            lines("fn f() -> char {\n    const { assert!(N < 2) }; 'x'\n}\n"),
+            Vec::<usize>::new()
+        );
         // A statement sharing the opening or closing line keeps its reading.
         assert_eq!(
             lines("fn f() {\n    g(); const {\n        assert!(N < 2);\n    }; h();\n}\n"),
@@ -1231,6 +1259,9 @@ mod tests {
             "fn f() {\n    let x = const {\n        N <= 249\n    };\n}\n",
             "fn f() {\n    const {\n        assert!(N <= 249);\n        N\n    };\n}\n",
             "fn f() {\n    const {\n        assert!(N <= 249);\n        \"small\"\n    };\n}\n",
+            // A line comment before the yielded literal must not hide it.
+            "fn f() {\n    const {\n        // validate\n        assert!(N <= 249);\n        \"small\"\n    };\n}\n",
+            "fn f() {\n    const {\n        // validate\n        assert!(N <= 249);\n        'x'\n    };\n}\n",
             // Not an assertion macro, a `const` item, or `const` in a name.
             "fn f() {\n    const {\n        check!(N <= 249);\n    };\n}\n",
             "const X: () = assert!(N <= 249);\n",
