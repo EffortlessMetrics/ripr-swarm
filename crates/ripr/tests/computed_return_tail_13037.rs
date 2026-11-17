@@ -230,3 +230,100 @@ fn a_wrapped_or_computed_operand_is_not_a_bare_pin() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn a_wrapping_local_a_static_or_a_shadowing_closure_is_not_credited() -> Result<(), String> {
+    // #14950 review: `n + 100` wraps a `u8` local to 44 with overflow checks
+    // off, so the call takes the `else` branch. A fold held only to the
+    // parameters' `u32` width would compute 300 and credit this pin of the
+    // other branch's value.
+    let narrow_local = AFTER
+        .replace(
+            "    let base = if weight_g <= 500 { 400 } else { 900 };",
+            "    let base = if weight_g <= 500 { 400 } else { 900 }; let n: u8 = 200; let total = n + 100;",
+        )
+        .replace("    if express {", "    if total > 250 {");
+    assert_eq!(
+        class_of(
+            &narrow_local,
+            "assert_eq!(shipping_cost(100, 10, true), 400);"
+        )
+        .map(|class| class == ExposureClass::Exposed),
+        Ok(false),
+        "narrow local"
+    );
+    // A `static` can be reassigned before the owner reads it.
+    let static_threshold = AFTER.replace(
+        "pub const FREE_OVER_CENTS: u32 = 5_000;",
+        "pub static FREE_OVER_CENTS: u32 = 5_000;",
+    );
+    assert_ne!(
+        class_of(
+            &static_threshold,
+            "assert_eq!(shipping_cost(600, 9000, true), 1800);"
+        )?,
+        ExposureClass::Exposed,
+        "static threshold"
+    );
+    // #14950 review: the asserted call reaches a closure that shadows the
+    // owner, not the owner.
+    let shadowed = "let _ = shipping_cost(100, 10, false);\n        let shipping_cost = |_: u32, _: u32, _: bool| 800u32;\n        assert_eq!(shipping_cost(100, 10, true), 800);";
+    assert_ne!(
+        class_of(AFTER, shadowed)?,
+        ExposureClass::Exposed,
+        "shadowed"
+    );
+    // Control: the same constant read as a `const` is still credited.
+    assert_eq!(
+        class_of(AFTER, "assert_eq!(shipping_cost(600, 9000, true), 1800);")?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn an_expected_value_the_test_computes_by_calling_code_is_not_credited() -> Result<(), String> {
+    // #14950 review: the expected side calls a helper that calls the owner,
+    // so a changed `base * 2` moves both sides of the assertion together.
+    let helper = AFTER.to_string()
+        + "\npub fn express_cost(weight_g: u32) -> u32 {\n    shipping_cost(weight_g, 10, true)\n}\n";
+    for body in [
+        "let expected = express_cost(100);\n        assert_eq!(shipping_cost(100, 10, true), expected);",
+        "assert_eq!(shipping_cost(100, 10, true), express_cost(100));",
+    ] {
+        assert_ne!(class_of(&helper, body)?, ExposureClass::Exposed, "{body}");
+    }
+    // Control: an expected value the test fixes through a `let` literal.
+    assert_eq!(
+        class_of(
+            &helper,
+            "let expected = 800;\n        assert_eq!(shipping_cost(100, 10, true), expected);"
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_release_elided_assertion_or_a_glob_import_is_not_credited() -> Result<(), String> {
+    // `debug_assert_eq!` is compiled out of a release test run.
+    assert_ne!(
+        class_of(
+            AFTER,
+            "debug_assert_eq!(shipping_cost(100, 10, true), 800);"
+        )?,
+        ExposureClass::Exposed,
+        "debug assertion"
+    );
+    // A top-level glob import may bring another binding of the name.
+    let glob = AFTER.replace(
+        "pub const FREE_OVER_CENTS: u32 = 5_000;",
+        "pub const FREE_OVER_CENTS: u32 = 5_000; use limits::*;",
+    ) + "\nmod limits {\n    pub const FREE_OVER_CENTS: u32 = 1;\n}\n";
+    assert_ne!(
+        class_of(&glob, "assert_eq!(shipping_cost(600, 9000, true), 1800);")?,
+        ExposureClass::Exposed,
+        "glob import"
+    );
+    Ok(())
+}

@@ -218,9 +218,17 @@ An exact pin now also confirms observation when
 strict where the gate above keeps today's credit: every unreadable shape
 answers no credit.
 
-- The assertion is an equality (`assert_eq!`, not `assert_ne!`) and exactly
-  one compared operand is a bare owner call (no wrapper, no local argument)
-  whose arguments are integer literals or `true`/`false`.
+- The assertion is an equality (`assert_eq!`, not `assert_ne!`, and not a
+  `debug_` form a release test run compiles out) and exactly one compared
+  operand is a bare owner call (no wrapper, no local argument) whose
+  arguments are `true`/`false` or integer expressions that fold with no
+  bindings (`100`, `50 + 50`).
+- The other compared operand is a value the test fixes itself: `true`,
+  `false` or an integer expression that folds with no bindings, read through
+  a `let` when it names one. An expected value computed by calling code
+  (`let expected = helper(..)`) may call the owner and move with it.
+- The test body does not shadow the owner's name (`let shipping_cost =
+  |..| 800;`), so the asserted call is the owner.
 - The owner's name is unique in a complete workspace index (so the bare
   call cannot reach a same-named free function, test stub or associated
   function), and its plain, non-`mut` parameters are typed `bool` or a
@@ -233,11 +241,16 @@ answers no credit.
   binds `NAME` for later conditions, or an `if COND { .. }` without `else`
   whose condition folds false.
 - Every condition on the path folds, reading the parameters, those bindings
-  and constants declared once at the top level of the owner's file with a
-  literal initializer and named in no `use`, and selects the seam's branch.
-  Every integer the fold produces must fit the narrowest integer parameter
-  type, since with overflow checks off the runtime wraps where the fold
-  would not.
+  and, for a top-level owner, `const` items declared once at the top level
+  of the owner's file with a literal initializer and a known integer type,
+  named in no `use`, in a file with no top-level glob `use`. A `static` can
+  change before the owner reads it, so it does not resolve. The fold
+  selects the seam's branch.
+- Every integer the fold produces must fit `i32` (an unconstrained
+  literal's type), every integer width the owner names (parameters, return
+  type, annotations, literal suffixes) and each read constant's declared
+  width, since with overflow checks off the runtime wraps where the fold
+  would not. An owner naming `usize`, `isize`, `u128` or `i128` is not read.
 
 The admission is the bool field pin's: the test is not `should_panic`, the
 assertion macros are the standard ones, and no `use` rebinds the owner's
@@ -257,6 +270,11 @@ Acceptance:
    attributed statement, a same-named function elsewhere, a rebound
    parameter, a computed operand (`f(..) / 2`) or a local argument: not
    `exposed`.
+6. A narrow local that wraps (`let n: u8 = 200; let total = n + 100;`), a
+   `static` threshold, a closure that shadows the owner in the test, and an
+   expected value computed by a helper that calls the owner: not `exposed`.
+   `debug_assert_eq!` and a top-level glob import are refused here too, as a
+   second guard behind refusals that already hold upstream.
 
 Fixtures `fixtures/rust_computed_return_tail_reached` (promoted) and
 `fixtures/rust_computed_return_tail_other_branch` (not promoted) pin both
@@ -290,6 +308,9 @@ sides in the evidence-promotion honesty corpus.
 - `crates/ripr/tests/computed_return_tail_13037.rs::shapes_the_fold_cannot_read_keep_todays_reading`
 - `crates/ripr/tests/computed_return_tail_13037.rs::a_constant_declared_only_inside_the_test_module_does_not_resolve`
 - `crates/ripr/tests/computed_return_tail_13037.rs::a_wrapped_or_computed_operand_is_not_a_bare_pin`
+- `crates/ripr/tests/computed_return_tail_13037.rs::a_wrapping_local_a_static_or_a_shadowing_closure_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_13037.rs::an_expected_value_the_test_computes_by_calling_code_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_13037.rs::a_release_elided_assertion_or_a_glob_import_is_not_credited`
 
 ## Implementation Mapping
 

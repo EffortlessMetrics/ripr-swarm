@@ -1262,8 +1262,19 @@ impl ClassifiedProbeEvidence {
                         &assertion.text,
                         test,
                         &|name| {
+                            // Only a top-level owner reads the file's
+                            // top-level constants by bare name; a nested
+                            // module resolves the name through its own
+                            // imports (#14950 review).
                             owner_constants
                                 .as_deref()
+                                .filter(|source| {
+                                    owner
+                                        .start_line
+                                        .checked_sub(1)
+                                        .and_then(|index| source.lines().nth(index))
+                                        .is_some_and(|line| !line.starts_with(char::is_whitespace))
+                                })
                                 .and_then(|source| top_level_constant(source, name))
                         },
                     )
@@ -3122,17 +3133,25 @@ pub(in crate::analysis) fn assertion_text_with_local_initializers(
     text
 }
 
-/// #13037: the initializer text of `name` when the file declares it exactly
-/// once, as a top-level (unindented) literal constant the owner reads by its
+/// #13037: the initializer text and declared type of `name` when the file
+/// declares it exactly once, as a top-level (unindented) `const` the owner reads by its
 /// bare name, and imports no other binding of that name. A declaration nested
 /// in a `mod`, `impl` or fn, or a `use` naming it, could be a different
 /// binding from the one the owner sees, so it does not resolve.
-fn top_level_constant(source: &str, name: &str) -> Option<String> {
+fn top_level_constant(source: &str, name: &str) -> Option<(String, String)> {
     let value = crate::analysis::value_resolution::named_constant(source, name)
         .value()?
         .to_string();
     let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    // A glob import can bring a different binding of the name into the
+    // owner's scope without naming it (#14950 review).
+    if masked.lines().any(|line| {
+        (line.starts_with("use ") || line.starts_with("pub use ")) && line.contains('*')
+    }) {
+        return None;
+    }
     let mut top_level = 0usize;
+    let mut declared_type = None;
     for line in masked.lines() {
         let words: Vec<&str> = line
             .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
@@ -3154,13 +3173,17 @@ fn top_level_constant(source: &str, name: &str) -> Option<String> {
                 .any(|pair| pair[0] == *keyword && pair[1] == name)
         });
         if declares {
-            if line.starts_with(char::is_whitespace) {
+            // A `static` (possibly `mut`) can change before the owner reads
+            // it, so only a `const` resolves.
+            if line.starts_with(char::is_whitespace) || words.contains(&"static") {
                 return None;
             }
             top_level += 1;
+            let after_name = line.split_once(&format!("{name}:"))?.1;
+            declared_type = Some(after_name.split_once('=')?.0.trim().to_string());
         }
     }
-    (top_level == 1).then_some(value)
+    (top_level == 1).then_some((value, declared_type?))
 }
 
 #[cfg(test)]

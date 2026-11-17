@@ -2763,14 +2763,18 @@ fn single_compared_owner_call(
 ///   `NAME` for later conditions;
 /// - every condition on the path folds, reading parameters, those bindings
 ///   and same-file integer constants (`constant` gives a declaration's
-///   initializer text), and selects the seam's branch.
+///   initializer text and its declared type), and selects the seam's branch;
+/// - every folded integer fits every integer width the owner names (its
+///   parameters, return type, annotations and literal suffixes), each read
+///   constant's declared width, and `i32` (an unconstrained literal's type):
+///   with overflow checks off the runtime wraps where the fold would not.
 pub(in crate::analysis) fn return_seam_tail_reached_by_call(
     owner: &FunctionSummary,
     seam_expression: &str,
     seam_line: usize,
     oracle_text: &str,
     test: &TestSummary,
-    constant: &dyn Fn(&str) -> Option<String>,
+    constant: &dyn Fn(&str) -> Option<(String, String)>,
 ) -> bool {
     tail_reach(
         owner,
@@ -2789,13 +2793,31 @@ fn tail_reach(
     seam_line: usize,
     oracle_text: &str,
     test: &TestSummary,
-    constant: &dyn Fn(&str) -> Option<String>,
+    constant: &dyn Fn(&str) -> Option<(String, String)>,
 ) -> Option<bool> {
-    // Only an equality pins the value; `assert_ne!` excludes one value.
-    if equality_assertion_shape(oracle_text)?.0 {
+    // Only an equality pins the value; `assert_ne!` excludes one value, and a
+    // `debug_assert_eq!` is compiled out of a release test run.
+    if equality_assertion_shape(oracle_text)?.0
+        || oracle_text
+            .trim_start()
+            .trim_start_matches("::")
+            .starts_with("debug_")
+    {
         return None;
     }
     let call_arguments = single_compared_owner_call(owner, oracle_text, test, false)?;
+    // The expected side must be a value the test fixes itself: an expected
+    // value computed by calling code (`let expected = helper(..)`, where the
+    // helper may call the owner) moves with the mutant (#14950 review).
+    for operand in assertion_operands(oracle_text, test.body.as_str()) {
+        let text = operand.text.trim();
+        if owner_call_arguments(text, &owner.name).is_none()
+            && !matches!(text, "true" | "false")
+            && fold_expression(text, &BTreeMap::new()).is_none()
+        {
+            return None;
+        }
+    }
     let parse = parse_clean_source_file(owner.body.as_str())?;
     let function = parse
         .tree()
@@ -2830,8 +2852,9 @@ fn tail_reach(
         return None;
     }
     let block = function.body()?;
-    // A `#[cfg]` (or any attribute) can drop or swap a statement the fold
-    // would read, so an attributed body is not read.
+    // A `#[cfg]` (or any attribute) in the body can drop or swap a statement
+    // the fold would read, so an attributed body is not read. (A cfg twin of
+    // the owner itself fails `callee_is_unique` upstream.)
     if block.syntax().text().to_string().contains("#[")
         || parameter_is_rebound_or_mutated(&block, &names)
     {
@@ -2839,9 +2862,10 @@ fn tail_reach(
     }
     let mut ints = BTreeMap::new();
     let mut bools = BTreeMap::new();
-    // Every intermediate value must fit the narrowest integer parameter type:
-    // with overflow checks off the runtime wraps where the fold would not.
-    let mut range: Option<(i128, i128)> = None;
+    // Every intermediate value must fit the narrowest integer width the
+    // owner names anywhere, and `i32`: with overflow checks off the runtime
+    // wraps where the fold would not (#14950 review).
+    let range = named_integer_range(&function.syntax().text().to_string())?;
     for ((name, ty), argument) in names.into_iter().zip(&types).zip(&call_arguments) {
         match (ty.trim(), argument.trim()) {
             ("bool", "true") => {
@@ -2856,16 +2880,12 @@ fn tail_reach(
                 if !(low..=high).contains(&value) {
                     return None;
                 }
-                range = Some(match range {
-                    Some((lo, hi)) => (lo.max(low), hi.min(high)),
-                    None => (low, high),
-                });
                 ints.insert(name, value);
             }
         }
     }
     let fold = |text: &str, ints: &BTreeMap<String, i128>, bools: &BTreeMap<String, bool>| {
-        fold_typed(text, ints, bools, constant, range)
+        fold_typed(text, ints, bools, constant, Some(range))
     };
     // The seam is the tail of one branch of the `if` chain that is itself the
     // body's tail expression.
@@ -2970,11 +2990,11 @@ fn fold_typed(
     text: &str,
     ints: &BTreeMap<String, i128>,
     bools: &BTreeMap<String, bool>,
-    constant: &dyn Fn(&str) -> Option<String>,
+    constant: &dyn Fn(&str) -> Option<(String, String)>,
     range: Option<(i128, i128)>,
 ) -> Option<Value> {
     let mut environment = ints.clone();
-    bind_constants(text, ints, bools, constant, &mut environment)?;
+    let range = bind_constants(text, ints, bools, constant, &mut environment, range)?;
     let masked = crate::analysis::extract::mask_comments_and_strings(text);
     let tokens = tokenize(&masked)?;
     let mut parser = Parser {
@@ -2990,14 +3010,16 @@ fn fold_typed(
 }
 
 /// Bind each unbound SCREAMING_CASE identifier in `text` to its constant
-/// value. `None` when one does not resolve.
+/// value, narrowing `range` to each constant's declared width. `None` when
+/// one does not resolve or its type is not a known integer width.
 fn bind_constants(
     text: &str,
     ints: &BTreeMap<String, i128>,
     bools: &BTreeMap<String, bool>,
-    constant: &dyn Fn(&str) -> Option<String>,
+    constant: &dyn Fn(&str) -> Option<(String, String)>,
     environment: &mut BTreeMap<String, i128>,
-) -> Option<()> {
+    mut range: Option<(i128, i128)>,
+) -> Option<Option<(i128, i128)>> {
     let masked = crate::analysis::extract::mask_comments_and_strings(text);
     for word in masked.split(|ch: char| !(ch.is_alphanumeric() || ch == '_')) {
         let screaming = word
@@ -3008,11 +3030,40 @@ fn bind_constants(
                 .chars()
                 .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_');
         if screaming && !ints.contains_key(word) && !bools.contains_key(word) {
-            let value = fold_expression(&constant(word)?, &BTreeMap::new())?;
+            let (initializer, ty) = constant(word)?;
+            let (low, high) = declared_integer_range(&ty)?;
+            let value = fold_expression(&initializer, &BTreeMap::new())?;
+            if !(low..=high).contains(&value) {
+                return None;
+            }
+            range = range.map(|(lo, hi)| (lo.max(low), hi.min(high)));
             environment.insert(word.to_string(), value);
         }
     }
-    Some(())
+    Some(range)
+}
+
+/// The intersection of `i32` (an unconstrained integer literal's type) with
+/// every integer width `function_text` names, as a type or a literal suffix.
+/// `None` when it names a width the fold cannot bound (`usize`, `isize`,
+/// `u128`, `i128`).
+fn named_integer_range(function_text: &str) -> Option<(i128, i128)> {
+    const WIDTHS: [&str; 12] = [
+        "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+    ];
+    let masked = crate::analysis::extract::mask_comments_and_strings(function_text);
+    let mut range = (i128::from(i32::MIN), i128::from(i32::MAX));
+    for word in masked.split(|ch: char| !(ch.is_alphanumeric() || ch == '_')) {
+        for width in WIDTHS {
+            let names_width = word == width
+                || (word.starts_with(|ch: char| ch.is_ascii_digit()) && word.ends_with(width));
+            if names_width {
+                let (low, high) = declared_integer_range(width)?;
+                range = (range.0.max(low), range.1.min(high));
+            }
+        }
+    }
+    Some(range)
 }
 
 /// Whether the owner body rebinds or mutates one of `names` anywhere, which

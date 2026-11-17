@@ -3236,7 +3236,8 @@ fn analyze_related_assertions(
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
                                         || wrapper_pinned
-                                        || (!import_defeats_owner
+                                        || (!match_context.owner_shadowed
+                                            && !import_defeats_owner
                                             && !cross_package_defeats_owner
                                             && (return_admission.reached_tail_pin)(
                                                 test, assertion,
