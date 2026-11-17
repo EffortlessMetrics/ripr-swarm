@@ -329,10 +329,12 @@ fn module_chain_names(file: &Path) -> BTreeSet<String> {
 ///
 /// File-to-module mapping is approximated by name: a declaration counts for
 /// an owner when its name equals a component of the owner file's path. That
-/// over-approximates the declaration chain, so it can only gate or refuse
-/// more owners, never fewer. A `#[path]` declaration breaks the name
-/// mapping, so its presence gates every owner and a change to one refuses
-/// every owner.
+/// over-approximates the declaration chain, so among `mod` declarations it
+/// can only gate or refuse more owners, never fewer. A `#[path]` declaration
+/// breaks the name mapping, so its presence gates every owner and a change
+/// to one refuses every owner. Gates that live outside a `mod` declaration
+/// (a `cfg` on `include!`, on a `pub use` re-export, or a `mod` emitted by
+/// `macro_rules!`) are not read here; see #14952.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ModuleDeclarations {
     /// Names of declarations with a `cfg`/`cfg_attr` on themselves, an
