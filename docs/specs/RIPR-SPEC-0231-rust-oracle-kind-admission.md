@@ -587,7 +587,17 @@ Two pattern terms are used below.
      region stops early at an item declaration or attribute at statement
      start, because a nested `fn` stays callable from earlier code; a
      divergence nested in a condition, a match arm or a closure ends only
-     its own block.
+     its own block;
+   - the statements after a statement that always diverges on a constant
+     (#14968), up to the same end: a `let PATTERN = VALUE else { .. };`
+     whose pattern is exactly one `Some(..)`, `None`, `Ok(..)` or `Err(..)`
+     variant and whose value is a literal of another variant
+     (`let Some(x) = None::<i32> else { return; };`), or a statement that
+     starts with a literal `Err(..)?` or `None?` (each optionally with a
+     turbofish). A value that can match, an or-pattern, a computed value,
+     `Ok(..)?` and `Some(..)?` stay reached. RIPR-SPEC-0197 execution
+     admission reads no exit there either, so every oracle after one is
+     dropped.
 
    One oracle stays for the authority that already decides it: a strong
    `assert_eq!` or `assert!` in a literal-false block, an uncalled closure

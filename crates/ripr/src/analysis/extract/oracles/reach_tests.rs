@@ -165,6 +165,52 @@ fn spec_0231_rule_8_code_after_divergence_is_unreached() {
 }
 
 #[test]
+fn spec_0231_rule_8_constant_diverging_statements_end_the_block() {
+    // #14968: a `let`-`else` whose one-variant pattern cannot match its
+    // literal value always runs its diverging `else`, and a literal
+    // `Err(..)?` or `None?` always returns early.
+    for head in [
+        "let Some(_x) = None else { return; };",
+        "let Some(_x) = None::<i32> else { return; };",
+        "let Ok(_x) = Err::<i32, i32>(1) else { return; };",
+        "let Err(_e) = Ok::<i32, ()>(1) else { panic!(\"ok\") };",
+        "let None = Some(1) else { return };",
+        "Err::<(), i32>(1)?;",
+        "Err(\"stop\")?;",
+        "None::<i32>?;",
+    ] {
+        let bodies = [
+            format!("fn t() {{\n    {head}\n    check(300).unwrap_err();\n}}"),
+            format!("fn t() {{\n    {head}\n    assert_eq!(score(2), 4);\n}}"),
+        ];
+        let bodies: Vec<&str> = bodies.iter().map(String::as_str).collect();
+        assert_not_credited(&bodies, "300", head);
+        assert_not_credited(&bodies, "score(2)", head);
+        assert_eq!(
+            unreached(bodies[0]),
+            vec![(3, Unreached::Unrefused)],
+            "{head}: only the following statement is unreached"
+        );
+    }
+    // Controls: a value that can match, a pattern that is not one variant, a
+    // computed value, an `Ok(..)?`, and an `Err` that is not `?`-propagated.
+    assert_credited(
+        &[
+            "fn t() {\n    let Some(_x) = Some(1) else { return; };\n    check(300).unwrap_err();\n}",
+            "fn t() {\n    let Some(_x) = maybe() else { return; };\n    check(300).unwrap_err();\n}",
+            "fn t() {\n    let Some(_) | None = None::<i32> else { return; };\n    check(300).unwrap_err();\n}",
+            "fn t() {\n    let Ok(_x) = Ok::<i32, i32>(1) else { return; };\n    check(300).unwrap_err();\n}",
+            "fn t() {\n    let _x = None::<i32>;\n    check(300).unwrap_err();\n}",
+            "fn t() {\n    Ok::<(), i32>(())?;\n    check(300).unwrap_err();\n}",
+            "fn t() {\n    let _e = Err::<(), i32>(1);\n    check(300).unwrap_err();\n}",
+            "fn t() {\n    Some(1)?;\n    check(300).unwrap_err();\n}",
+        ],
+        "check(300)",
+        "statement that may complete",
+    );
+}
+
+#[test]
 fn spec_0231_rule_8_leaves_admission_governed_assertions_to_their_refusal() {
     // A strong `assert_eq!` (or strong `assert!`) in a literal-false block, an
     // uncalled closure or after a `return` stays: RIPR-SPEC-0197 refuses

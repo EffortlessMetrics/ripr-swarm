@@ -896,6 +896,7 @@ pub(in crate::analysis) fn every_owner_call_separates(
         }
         let unreached = crate::analysis::extract::lines_touching_unreached(body)?;
         let deferred = deferred_lines(test)?;
+        let unevaluated = unevaluated_spans(test, &masked)?;
         let mut separating = 0usize;
         for (start, _) in masked.match_indices(owner.name.as_str()) {
             let end = start + owner.name.len();
@@ -908,7 +909,10 @@ pub(in crate::analysis) fn every_owner_call_separates(
                 .bytes()
                 .filter(|byte| *byte == b'\n')
                 .count();
-            if unreached.contains(&line) || deferred.contains(&line) {
+            if unreached.contains(&line)
+                || deferred.contains(&line)
+                || unevaluated.iter().any(|span| span.contains(&start))
+            {
                 return None;
             }
             // A method receiver or a qualified path names another entity.
@@ -1373,6 +1377,130 @@ fn deferred_lines(test: &TestSummary) -> Option<std::collections::BTreeSet<usize
         }
     }
     Some(lines)
+}
+
+/// #14968: byte spans of `test.body` where an owner call may not run or is
+/// not a call at all, so it does not show the input reached the owner:
+///
+/// - the right operand of `&&` or `||`, unless the left operand is the
+///   literal that always evaluates it (`true &&`, `false ||`);
+/// - the input of a macro other than `vec!`, the `assert*` /
+///   `debug_assert*` family and the `format!` / `print!` / `write!` family
+///   (`stringify!(f(5))` is token text);
+/// - the whole input of one of those evaluating macros when its token text
+///   holds anything the parser does not read inside a macro input and that
+///   may skip a call: `&&`, `|` (`||`, a closure), `?`, a nested macro, or a
+///   control-flow or `async` keyword. This refuses some calls that do run
+///   (`assert!(true && f(5) == 5)`); refusing keeps the reading fail-closed.
+///
+/// `masked` is `test.body` with comments and strings masked, byte for byte.
+/// `None` when the body does not parse.
+fn unevaluated_spans(test: &TestSummary, masked: &str) -> Option<Vec<std::ops::Range<usize>>> {
+    let parse = crate::analysis::syntax::parse_clean_source_file_memoized(test.body.as_str())?;
+    let span =
+        |range: ra_ap_syntax::TextRange| usize::from(range.start())..usize::from(range.end());
+    let mut spans = Vec::new();
+    for node in parse.tree().syntax().descendants() {
+        if let Some(binary) = ast::BinExpr::cast(node.clone()) {
+            let guaranteed = match binary.op_kind() {
+                Some(ast::BinaryOp::LogicOp(op)) => match binary.lhs() {
+                    Some(ast::Expr::Literal(literal)) => matches!(
+                        (op, literal.kind()),
+                        (ast::LogicOp::And, ast::LiteralKind::Bool(true))
+                            | (ast::LogicOp::Or, ast::LiteralKind::Bool(false))
+                    ),
+                    _ => false,
+                },
+                _ => continue,
+            };
+            if !guaranteed && let Some(rhs) = binary.rhs() {
+                spans.push(span(rhs.syntax().text_range()));
+            }
+            continue;
+        }
+        let Some(call) = ast::MacroCall::cast(node) else {
+            continue;
+        };
+        let Some(input) = call.token_tree() else {
+            continue;
+        };
+        let name = call
+            .path()
+            .and_then(|path| path.segment())
+            .and_then(|segment| segment.name_ref())
+            .map(|name| name.text().to_string())
+            .unwrap_or_default();
+        let range = span(input.syntax().text_range());
+        let text = masked.get(range.clone())?;
+        if !is_evaluating_macro(&name) || macro_input_may_skip(text) {
+            spans.push(range);
+        }
+    }
+    Some(spans)
+}
+
+/// A macro that evaluates each argument expression once, in order.
+fn is_evaluating_macro(name: &str) -> bool {
+    matches!(
+        name,
+        "vec"
+            | "assert"
+            | "assert_eq"
+            | "assert_ne"
+            | "debug_assert"
+            | "debug_assert_eq"
+            | "debug_assert_ne"
+            | "format"
+            | "format_args"
+            | "print"
+            | "println"
+            | "eprint"
+            | "eprintln"
+            | "write"
+            | "writeln"
+    )
+}
+
+/// Whether masked macro input text holds a token that may skip or defer a
+/// call: `&&`, `|`, `?`, a nested `name!` macro, or a control-flow, closure
+/// or `async` keyword.
+fn macro_input_may_skip(text: &str) -> bool {
+    if text.contains("&&") || text.contains(['|', '?']) {
+        return true;
+    }
+    let bytes = text.as_bytes();
+    let mut at = 0usize;
+    while at < bytes.len() {
+        if !is_ident_byte(bytes[at]) || (at > 0 && is_ident_byte(bytes[at - 1])) {
+            at += 1;
+            continue;
+        }
+        let mut end = at;
+        while bytes.get(end).copied().is_some_and(is_ident_byte) {
+            end += 1;
+        }
+        let word = &text[at..end];
+        let next = text[end..].trim_start();
+        if matches!(
+            word,
+            "if" | "match"
+                | "loop"
+                | "while"
+                | "for"
+                | "async"
+                | "return"
+                | "break"
+                | "continue"
+                | "move"
+                | "fn"
+                | "let"
+        ) || (next.starts_with('!') && !next.starts_with("!="))
+        {
+            return true;
+        }
+        at = end;
+    }
+    false
 }
 
 /// Whether the test body itself declares a same-name `fn` item: by definition
