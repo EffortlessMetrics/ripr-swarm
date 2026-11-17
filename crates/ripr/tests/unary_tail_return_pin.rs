@@ -251,6 +251,7 @@ fn a_deferred_operand_macro_text_or_call_after_divergence_is_not_reachable_unrev
         "assert!(true, \"{}\", f(5));",
         "assert_eq!(1, 1, \"{}\", f(5));",
         "let Some(_x) = Some(1) else { let _ = f(5); return; };",
+        "let Some(_v) = Some(1) else { assert_eq!(f(5), 5); return; };",
         "assert!(g() && f(5) == 5);",
         "assert_eq!(o.map(|_| f(5)), None);",
         "assert_eq!(g()?, f(5));",

@@ -1337,7 +1337,8 @@ pub(super) fn bare_owner_call_is_shadowed(
 /// #14538: zero-based line offsets of `test.body` inside code that may run
 /// zero times or not at all: a nested `fn` or `macro_rules!`, a closure, an
 /// `async` block, an `if` or `match`, a `for`, `while` or `loop` body, the
-/// lines of a `let`-`else` block after its first, or a `#[cfg]`-gated
+/// lines of a `let`-`else` block (its first line only when a statement starts
+/// there), or a `#[cfg]`-gated
 /// statement (`for _ in 0..0 { .. }`, an unpolled
 /// `async { .. }`, an uncalled `fn check() { .. }`). An assertion there does
 /// not show that its input ran, so it supplies no separating input. `None`
@@ -1382,9 +1383,20 @@ fn deferred_lines(test: &TestSummary) -> Option<std::collections::BTreeSet<usize
         // deferred here; `unevaluated_spans` refuses the block by byte span.
         if let Some(block) = ast::LetElse::cast(node).and_then(|let_else| let_else.block_expr()) {
             let range = block.syntax().text_range();
-            lines.extend(
-                line_of(usize::from(range.start())) + 1..=line_of(usize::from(range.end())),
-            );
+            let first = line_of(usize::from(range.start()));
+            // A statement that starts on the `else {` line (a one-line block)
+            // shares that line with the initializer; refuse it too.
+            let shares_first_line = block.stmt_list().is_some_and(|list| {
+                list.statements()
+                    .map(|stmt| stmt.syntax().text_range().start())
+                    .chain(
+                        list.tail_expr()
+                            .map(|tail| tail.syntax().text_range().start()),
+                    )
+                    .any(|start| line_of(usize::from(start)) == first)
+            });
+            let from = if shares_first_line { first } else { first + 1 };
+            lines.extend(from..=line_of(usize::from(range.end())));
         }
     }
     Some(lines)
