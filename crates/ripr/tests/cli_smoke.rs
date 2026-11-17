@@ -10538,7 +10538,7 @@ fn agent_repair_before_requires_effective_cargo_build_directory_ignore()
         if document["status"] != "refused"
             || error["code"] != "build_output_not_ignored"
             || error["disposition"] != "not_started"
-            || error["next"] != serde_json::Value::Null
+            || error.get("next") != Some(&serde_json::Value::Null)
             || error["message"].as_str().is_none_or(|message| {
                 message.contains("refusal code=") || !message.contains("Nothing was started.")
             })

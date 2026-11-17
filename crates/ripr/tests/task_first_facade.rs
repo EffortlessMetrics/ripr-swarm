@@ -7420,11 +7420,14 @@ fn typed_facade_refusals_under_json_write_code_and_disposition() -> Result<(), S
             "{document:#}"
         );
         assert_eq!(
-            document["error"]["next"],
-            serde_json::Value::Null,
-            "{document:#}"
+            document["error"].get("next"),
+            Some(&serde_json::Value::Null),
+            "next must be present and null: {document:#}"
         );
-        let message = document["error"]["message"].as_str().unwrap_or_default();
+        let message = document["error"]["message"]
+            .as_str()
+            .filter(|message| !message.trim().is_empty())
+            .ok_or_else(|| format!("message must be a nonempty string: {document:#}"))?;
         assert!(!message.contains("refusal code="), "{message}");
         let stderr = stderr_text(&json);
         assert!(

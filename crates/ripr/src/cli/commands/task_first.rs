@@ -427,11 +427,7 @@ pub(in crate::cli) fn status(args: &[String]) -> Result<(), CommandError> {
 /// stdout, with the code and its disposition as fields (#14931); the
 /// boundary writes it only when this decision is the error that escaped.
 fn typed_decision(code: RepairRefusalCode, message: String) -> CommandError {
-    crate::cli::usage_refusal::note_typed_refusal(
-        code.as_str(),
-        code.disposition().as_str(),
-        message.trim_end(),
-    );
+    crate::cli::usage_refusal::note_typed_refusal(code, message.trim_end());
     CommandError::Decision(code.message_with_stderr_line(&message))
 }
 

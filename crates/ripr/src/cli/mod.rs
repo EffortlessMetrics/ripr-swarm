@@ -257,11 +257,7 @@ pub(in crate::cli) fn drive_before_phase_deferring_stdout(
             if let Some((code, prose)) =
                 crate::app::task_first::RepairRefusalCode::split_stderr_line(&message)
             {
-                crate::cli::usage_refusal::note_typed_refusal(
-                    code.as_str(),
-                    code.disposition().as_str(),
-                    prose,
-                );
+                crate::cli::usage_refusal::note_typed_refusal(code, prose);
             }
             CommandError::Decision(message)
         }

@@ -281,8 +281,10 @@ reached the caller.
   visible); several eligible seams, or a start the selector will not
   bind, so no item is selected (the canonical next-action block and a
   retry command); and a card render that fails after the before phase
-  already published an attempt (#7032). In every case stdout stays
-  empty and stderr names the cause. The post-publication card path is a
+  already published an attempt (#7032). In every case stderr names the
+  cause. Stdout stays empty, except that under `--json` each typed
+  refusal above (not the card failure) also writes its `cli_refusal`
+  document (#14931). The post-publication card path is a
   deliberate asymmetry with `ripr agent card`: even an operational card
   failure is remapped to exit `3` because the attempt exists, and
   recovery inspects or continues that same attempt
