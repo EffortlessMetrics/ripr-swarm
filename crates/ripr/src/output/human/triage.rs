@@ -386,7 +386,7 @@ pub(crate) fn render_human_triage(
             // that block, not a policy it never loaded.
             out.push_str(match (output.suppression.is_some(), output.owner_opt_outs.is_empty()) {
                 (false, false) => {
-                    "  Safe next action: all findings are withheld because the changed function carries #[mutants::skip]; review the owner opt-out block before treating this run as actionable\n"
+                    "  Safe next action: all findings are withheld because the changed function or an enclosing scope carries #[mutants::skip]; review the owner opt-out block before treating this run as actionable\n"
                 }
                 (true, false) => {
                     "  Safe next action: all findings are suppressed by policy or withheld by #[mutants::skip]; review the suppression and owner opt-out blocks before treating this run as actionable\n"
@@ -658,7 +658,20 @@ pub(crate) fn render_human_triage(
                 Some(PrintedRepairRoute::Seam(route)) => {
                     repair_printed = true;
                     let command = navigation.repair_command(&route.seam_id);
-                    if let Some(file) = route.uncommitted_target.as_deref() {
+                    if let Some(commit) = navigation.repair_prerequisite(route) {
+                        // #13636: `ripr repair` refuses while tracked
+                        // production files differ from HEAD; name the
+                        // commit first, in the gap-bound route's words.
+                        out.push_str(&format!(
+                            "  Commit your production change first (the repair start refuses to begin while it is uncommitted):\n  {commit}\n  Then start the repair:\n"
+                        ));
+                        super::push_labeled_commands(
+                            out,
+                            "  ",
+                            super::SPOT_ID_COMMAND_LABEL,
+                            std::slice::from_ref(&command),
+                        );
+                    } else if let Some(file) = route.uncommitted_target.as_deref() {
                         // `ripr repair` would refuse this start: its
                         // inline test module target begins from the
                         // committed file. State the requirement instead
@@ -1093,8 +1106,9 @@ const GROUPED_LINE_RUNS_LISTED: usize = 3;
 /// The lines a grouped `Hidden:` row names: each run of consecutive lines as
 /// `a` or `a-b`, comma-separated, so lines 3 and 5 read `3, 5` rather than a
 /// `3-5` range that implies line 4. Beyond [`GROUPED_LINE_RUNS_LISTED`] runs
-/// the row keeps the span and says how many lines it covers:
-/// `1078-1241 (12 lines)`.
+/// the row keeps the span and counts the distinct lines inside it, not the
+/// span length:
+/// `1078-1241 (5 distinct lines)`.
 fn grouped_line_text(lines: impl Iterator<Item = usize>) -> String {
     let distinct: std::collections::BTreeSet<usize> = lines.collect();
     let mut runs: Vec<(usize, usize)> = Vec::new();
@@ -1115,7 +1129,7 @@ fn grouped_line_text(lines: impl Iterator<Item = usize>) -> String {
         return runs.iter().map(run_text).collect::<Vec<_>>().join(", ");
     }
     match (distinct.first(), distinct.last()) {
-        (Some(first), Some(last)) => format!("{first}-{last} ({} lines)", distinct.len()),
+        (Some(first), Some(last)) => format!("{first}-{last} ({} distinct lines)", distinct.len()),
         _ => String::new(),
     }
 }
@@ -1341,7 +1355,7 @@ fn repair_already_noticed(navigation: &crate::app::FindingNavigation) -> bool {
 /// True when the repair advisory on screen (if any) says there is no repair
 /// start for this finding. Refusals that name a route or a recovery
 /// (`SeveralBindingSeams`, `Ineligible`, `SeamLimit`, `ClassificationFailed`,
-/// `GapRouteUnavailable`, `ConfigUnreadable`, and `NoBindingSeam` with seams
+/// `GapRouteUnavailable`, `SeamRouteUnavailable`, `ConfigUnreadable`, and `NoBindingSeam` with seams
 /// in the file, which points at `ripr pilot`) must not sit beside "ripr has no
 /// repair route".
 fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
@@ -1353,6 +1367,7 @@ fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
                 | RepairRouteRefusal::SeamLimit
                 | RepairRouteRefusal::ClassificationFailed
                 | RepairRouteRefusal::GapRouteUnavailable { .. }
+                | RepairRouteRefusal::SeamRouteUnavailable { .. }
                 | RepairRouteRefusal::ConfigUnreadable
         )
     ) && !matches!(
@@ -2438,7 +2453,12 @@ fn has_ranked_repair_route(finding: &Finding) -> bool {
         // static-limited finding never prints a repair route
         // (`printed_repair_route`), so its advisory next step must not lift
         // it to the routed tier over a gap whose route does print.
-        return !is_static_limited(finding) && has_repair_route(finding);
+        // #14919: an unreferenced owner is a gap but prints no repair route
+        // either (the app's repair gate still refuses it), so it ranks by
+        // class among the gaps, behind every gap whose route prints.
+        return !is_static_limited(finding)
+            && !finding.is_unreferenced_no_static_path()
+            && has_repair_route(finding);
     }
     finding.language == Some(LanguageId::Python) && python_repair_card(finding).is_some()
 }
@@ -2535,17 +2555,23 @@ pub(crate) fn finding_routes_json(
         }
         Some(PrintedRepairRoute::Seam(route)) => {
             repair.insert("seam_id".to_string(), route.seam_id.clone().into());
-            match &route.uncommitted_target {
-                None => {
-                    repair.insert("status".to_string(), "ready".into());
-                    repair.insert(
-                        "command".to_string(),
-                        navigation.repair_command(&route.seam_id).into(),
-                    );
-                }
-                Some(file) => {
-                    repair.insert("status".to_string(), "blocked_uncommitted".into());
+            if route.uncommitted_target.is_none() && route.uncommitted_files.is_empty() {
+                repair.insert("status".to_string(), "ready".into());
+                repair.insert(
+                    "command".to_string(),
+                    navigation.repair_command(&route.seam_id).into(),
+                );
+            } else {
+                repair.insert("status".to_string(), "blocked_uncommitted".into());
+                if let Some(file) = &route.uncommitted_target {
                     repair.insert("uncommitted_file".to_string(), file.clone().into());
+                }
+                // #13636: the dirty production premise the start refuses.
+                if !route.uncommitted_files.is_empty() {
+                    repair.insert(
+                        "uncommitted_files".to_string(),
+                        route.uncommitted_files.clone().into(),
+                    );
                 }
             }
         }
@@ -2558,6 +2584,12 @@ pub(crate) fn finding_routes_json(
 }
 
 pub(super) fn is_static_limited(finding: &Finding) -> bool {
+    // #14919: a changed owner nothing in the workspace names (RIPR-SPEC-0219)
+    // is a test-side gap on every check surface, not a static limit; the
+    // domain predicate is the one authority, shared with the agent format.
+    if finding.is_unreferenced_no_static_path() {
+        return false;
+    }
     // The producer's named limitation remains authoritative even when its
     // conservative class is reachable_unrevealed or weakly_exposed.
     finding.static_limit_kind.is_some()
@@ -2689,8 +2721,11 @@ mod tests {
             (vec![7, 7], "7"),
             (vec![10, 11, 12, 15], "10-12, 15"),
             (vec![1, 3, 5], "1, 3, 5"),
-            (vec![1, 3, 5, 7], "1-7 (4 lines)"),
-            (vec![1078, 1079, 1100, 1200, 1241], "1078-1241 (5 lines)"),
+            (vec![1, 3, 5, 7], "1-7 (4 distinct lines)"),
+            (
+                vec![1078, 1079, 1100, 1200, 1241],
+                "1078-1241 (5 distinct lines)",
+            ),
         ] {
             assert_eq!(
                 grouped_line_text(lines.clone().into_iter()),
@@ -4190,6 +4225,8 @@ mod tests {
             finding_id: "finding:withheld".to_string(),
             owner: "shipping_cents".to_string(),
             reason: crate::analysis::owner_opt_out::OwnerOptOutReason::MutantsSkip,
+            scope: crate::analysis::owner_opt_out::OwnerOptOutScope::Fn,
+            scope_label: String::new(),
         }];
         assert_eq!(
             start_here_lines(&output),
@@ -5067,5 +5104,93 @@ mod tests {
             generic_action.contains("static evidence names no concrete missing check"),
             "{generic_action}"
         );
+    }
+
+    fn unreferenced_owner_finding(id: &str) -> Finding {
+        let mut finding = finding_at(id, "src/lib.rs", ExposureClass::NoStaticPath);
+        finding.ripr.reach = StageEvidence::new(
+            StageState::No,
+            Confidence::Medium,
+            format!(
+                "No related test reaches levy {}",
+                crate::domain::UNREFERENCED_IN_WORKSPACE
+            ),
+        );
+        finding
+    }
+
+    /// #14919: an owner nothing in the workspace names is a test gap on the
+    /// human and JSON surfaces too, so `Start here` and the canonical next
+    /// action pick it over a genuine static limit, as `--format agent` does.
+    #[test]
+    fn unreferenced_owner_is_a_top_gap_not_a_static_limit() {
+        let unreferenced = unreferenced_owner_finding("finding:unreferenced");
+        assert!(unreferenced.is_unreferenced_no_static_path());
+        assert!(!is_static_limited(&unreferenced));
+        let limited = finding_at(
+            "finding:limited",
+            "src/lib.rs",
+            ExposureClass::StaticUnknown,
+        );
+        assert!(is_static_limited(&limited));
+        let output = test_output(vec![limited, unreferenced]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(triage.state, HumanTriageState::TopGap);
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unreferenced")
+        );
+        assert_eq!(
+            check_case_for_triage(&triage, &output),
+            NextActionCheckCase::TopGap
+        );
+    }
+
+    /// #14919 review: an unreferenced owner prints no repair route, so its
+    /// advisory next step must not lift it over a gap whose route prints.
+    #[test]
+    fn unreferenced_owner_ranks_behind_a_routed_gap() {
+        let mut unreferenced = unreferenced_owner_finding("finding:unreferenced");
+        unreferenced.recommended_next_step = Some("add a test that calls levy".to_string());
+        unreferenced.confidence = 0.9;
+        let mut routed = finding_at(
+            "finding:routed",
+            "src/lib.rs",
+            ExposureClass::ReachableUnrevealed,
+        );
+        routed.recommended_next_step = Some("assert the exact result".to_string());
+        routed.confidence = 0.3;
+        assert!(!has_ranked_repair_route(&unreferenced));
+        assert!(has_ranked_repair_route(&routed));
+        let output = test_output(vec![unreferenced, routed]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:routed")
+        );
+    }
+
+    /// Fail-closed: without every part of the producer's unreferenced proof
+    /// a no-static-path finding stays a static limit on the human surface.
+    #[test]
+    fn ambiguous_no_static_path_stays_static_limited() {
+        let mut no_marker = unreferenced_owner_finding("finding:no-marker");
+        no_marker.ripr.reach.summary = "No related test reaches levy".to_string();
+        let mut named_limit = unreferenced_owner_finding("finding:named-limit");
+        named_limit.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustAssertionContextUnresolved);
+        let mut unknown_reach = unreferenced_owner_finding("finding:unknown-reach");
+        unknown_reach.ripr.reach.state = StageState::Unknown;
+        let mut base_side = unreferenced_owner_finding("finding:base-side");
+        base_side.source_currentness = SourceCurrentness::BaseDeleted;
+        for finding in [no_marker, named_limit, unknown_reach, base_side] {
+            assert!(!finding.is_unreferenced_no_static_path(), "{}", finding.id);
+            assert!(is_static_limited(&finding), "{}", finding.id);
+        }
+        let mut lone = unreferenced_owner_finding("finding:lone");
+        lone.ripr.reach.summary = "No related test reaches levy".to_string();
+        let only_limited = test_output(vec![lone]);
+        let triage = select_human_triage(&only_limited, &RiprConfig::default());
+        assert_eq!(triage.state, HumanTriageState::StaticLimited);
     }
 }

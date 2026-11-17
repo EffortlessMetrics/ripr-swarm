@@ -208,6 +208,330 @@
   ],
   "cases": [
     {
+      "id": "python_route_response_json_patch",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_json_patch",
+      "vector": "route_response_replaced_json_method_does_not_read_the_handler",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
+      "id": "python_route_response_equivalent_number",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_equivalent_number",
+      "vector": "route_response_json_equivalent_value_is_not_a_changed_key",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
+      "id": "python_route_response_float_floor_division",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_float_floor_division",
+      "vector": "route_response_float_floor_division_is_not_a_changed_key",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
+      "id": "python_route_response_list_subscript",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_list_subscript",
+      "vector": "route_response_list_subscript_is_not_a_changed_key",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
+      "id": "python_route_response_adjacent_list_tokens",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_adjacent_list_tokens",
+      "vector": "route_response_adjacent_list_tokens_are_not_a_changed_key",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
+      "id": "python_route_response_duplicate_old_key",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_duplicate_old_key",
+      "vector": "route_response_removed_duplicate_key_is_not_a_changed_key",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
+      "id": "python_route_response_unpacked_options",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_unpacked_options",
+      "vector": "route_response_unpacked_application_options_are_not_established",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
+      "id": "python_route_response_parenthesized_alias",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_parenthesized_alias",
+      "vector": "route_response_parenthesized_route_alias_is_a_rival",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
+      "id": "python_route_response_compact_loop",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_compact_loop",
+      "vector": "route_response_compact_loop_rebinding_is_not_the_route_call",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
+      "id": "python_route_response_replaced_content",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_replaced_content",
+      "vector": "route_response_replaced_content_is_not_the_handler_body",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
+      "id": "python_route_response_docs_route",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_docs_route",
+      "vector": "route_response_framework_docs_route_is_not_the_handler",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
+      "id": "python_route_response_sibling",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_sibling",
+      "vector": "route_response_sibling_field_does_not_pin_changed_key",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
       "id": "python_package_alias_attribute_write",
       "language": "python",
       "tier": "pure",
@@ -14271,6 +14595,31 @@
       ]
     },
     {
+      "id": "ts_field_construction_multi_value_change_untouched_field",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_multi_value_field_change_sibling",
+      "vector": "multi_value_change_read_of_untouched_field_does_not_pin_the_change",
+      "control": "must_stay_weakly_exposed",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_one_hop_field_projection",
       "language": "rust",
       "tier": "pure",
@@ -19560,6 +19909,30 @@
       "source_fixture": "fixtures/rust_guard_return_changed_guard",
       "vector": "guard_return_closed_pin_cannot_credit_when_the_guard_condition_also_changed",
       "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_stub_todo_expected_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_stub_todo_expected_value",
+      "vector": "an_unfilled_stub_expected_value_pins_nothing",
+      "probe_family": "predicate",
       "assertions": [
         {
           "type": "must_not_report_clean"

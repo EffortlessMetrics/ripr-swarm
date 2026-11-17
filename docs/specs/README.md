@@ -23,7 +23,7 @@ and `check-doc-index` read both places. Rows below predate that convention.
 | --- | --- | --- |
 | [RIPR-SPEC-0001](RIPR-SPEC-0001-static-exposure-loop.md) | accepted | Static exposure loop |
 | [RIPR-SPEC-0002](RIPR-SPEC-0002-fixture-laboratory.md) | accepted | Fixture laboratory |
-| [RIPR-SPEC-0003](RIPR-SPEC-0003-agent-context.md) | planned | Agent context packet |
+| [RIPR-SPEC-0003](RIPR-SPEC-0003-agent-context.md) | accepted | Agent context packet |
 | [RIPR-SPEC-0004](RIPR-SPEC-0004-test-efficiency.md) | planned | Test efficiency and vacuity signals |
 | [RIPR-SPEC-0005](RIPR-SPEC-0005-repo-seam-inventory.md) | proposed | Repo seam inventory and test grip |
 | [RIPR-SPEC-0006](RIPR-SPEC-0006-mutation-calibration.md) | proposed | Mutation calibration reports |
@@ -342,3 +342,4 @@ and `check-doc-index` read both places. Rows below predate that convention.
 | [RIPR-SPEC-0437](RIPR-SPEC-0437-managed-server-archive-inspection.md) | accepted | The VS Code managed server download lists every archive member before extraction and refuses the archive on unsafe names, symlink/hard-link/reparse members, member-count overflow, or a malformed directory, for both the tar and zip paths (#13640, #13904) |
 | [RIPR-SPEC-0438](RIPR-SPEC-0438-long-flag-equals-value.md) | accepted | Every command accepts `--name=value` as `--name value` through one argv owner; documented switches, global switches, value-position tokens, top-level flags before the command and tokens after `--` stay as typed (#14292) |
 | [RIPR-SPEC-0440](RIPR-SPEC-0440-output-never-replaces-own-input.md) | accepted | Artifact-report commands refuse, before writing, an output path that names the same file as one of their own inputs (by filesystem identity, including symlinks and directory members), keeping the documented in-place and dry-run flows (#14312) |
+| [RIPR-SPEC-0450](RIPR-SPEC-0450-owner-opt-out-enclosing-scopes.md) | accepted | A finding whose owner sits inside a `#[mutants::skip]` fn, impl, trait, inline module or `#![mutants::skip]` file is withheld and disclosed with that scope, as cargo-mutants skips it; parser-backed and fail closed, and `ripr explain` names the withholding (#14135, #14133) |

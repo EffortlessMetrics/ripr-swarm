@@ -15,7 +15,8 @@ pub(crate) use super::extract::{
     extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
     extract_literals, extract_return_facts, guarded_result_match_scan_with_shadow_authority,
     has_oracle_text_shape, is_inequality_assertion, is_inline_unwrap_err_error_assertion,
-    is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
+    is_unwrap_err_bound_error_assertion, placeholder_bound_variables, unwrap_err_bound_variables,
+    without_unfilled_expected, without_unfilled_expected_parts,
 };
 use super::facts::ModulePathTarget;
 pub(crate) use super::facts::SecondaryPassGuard;

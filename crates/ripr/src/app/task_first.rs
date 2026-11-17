@@ -1381,9 +1381,11 @@ impl<T, F: Fn() -> Option<T>> RunOnce<T, F> {
 }
 
 /// The seam of the one repair start the default `ripr check` prints for the
-/// change, when it is among the eligible `candidates` and needs no commit
-/// first. `None` when check names no start or another seam (fail-closed: the
-/// caller keeps its selection prompt).
+/// change, when it is among the eligible `candidates` and holds no inline
+/// test target in an uncommitted production file. `None` when check names no
+/// start or another seam (fail-closed: the caller keeps its selection prompt).
+/// A dirty production premise (#13636) does not withhold the pick: the before
+/// phase refuses that start itself and names the commit to make.
 fn check_recommended_start(
     root: &Path,
     config: &crate::config::RiprConfig,
@@ -3033,11 +3035,59 @@ pub(crate) fn check_repair_route(
     // module and starts only from the committed file. Ask the edit cage's own
     // predicate so the check screen never offers a start the attempt refuses.
     let uncommitted_target = held_inline_target(root, &repair_packet_eligibility(entry).readiness);
+    // #13636: the before phase refuses a dirty production premise ("commit
+    // first ... Nothing was started"). Ask its own preflight so the screen
+    // names that commit before the start; an unreadable premise offers no
+    // start rather than one that may refuse.
+    let Ok(uncommitted_files) = seam_start_uncommitted_files(root) else {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::SeamRouteUnavailable {
+            reason: "could not validate the prerequisites for the repair start",
+        });
+    };
+    if let Some(reason) = seam_commit_step_refusal(output, &uncommitted_files) {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::SeamRouteUnavailable { reason });
+    }
     CheckRepairRoute::Route(crate::app::RepairRoute {
         finding_id: finding.id.clone(),
         seam_id: entry.seam.id().as_str().to_string(),
         uncommitted_target,
+        uncommitted_files,
     })
+}
+
+/// Why the seam route cannot print a commit step for `uncommitted_files`, in
+/// the gap-bound route's terms for the same state (#13636, #10698): a run that
+/// did not analyze those files must not vouch for them with a commit step.
+/// `None` when nothing is dirty or the run analyzed the working tree.
+fn seam_commit_step_refusal(
+    output: &super::CheckOutput,
+    uncommitted_files: &[String],
+) -> Option<&'static str> {
+    if uncommitted_files.is_empty() {
+        return None;
+    }
+    let Some(revisions) = output.analyzed_revisions.as_ref() else {
+        return Some("could not establish which revisions the check analyzed");
+    };
+    if !revisions.working_tree {
+        return Some(
+            "the committed-only check excluded dirty tracked files; commit or restore them before rerunning",
+        );
+    }
+    if output.unanalyzed_working_tree {
+        return Some("the working tree contains source or test changes that were not analyzed");
+    }
+    None
+}
+
+/// The dirty production files the seam start refuses today (#13636): every
+/// path the shared before-phase preflight reports, none dropped. The
+/// preflight already spells them relative to the analyzed `root` (paths
+/// outside it as `../...`, #13962), which is where the user runs the printed
+/// commit step. A non-empty list means the start refuses; an empty one means
+/// the preflight found no dirty premise.
+fn seam_start_uncommitted_files(root: &Path) -> Result<Vec<String>, String> {
+    crate::app::repair_attempt::seam_start_dirty_premise(root)
 }
 
 fn ineligible_repair_item(root: &Path, item: &str, seam_id: &str, reason: &str) -> String {
@@ -3744,6 +3794,47 @@ impl RepairRefusalCode {
     pub(crate) fn message_with_stderr_line(self, message: &str) -> String {
         format!("{}\n{}", message.trim_end(), self.stderr_line())
     }
+
+    /// The inverse of [`Self::message_with_stderr_line`]: the code and the
+    /// plain-words prose of a message whose last line is this code's machine
+    /// line. A message routed through a layer that carries only the rendered
+    /// text (the before phase's start refusal) keeps its typed code this
+    /// way (#14931). `None` when the last line is not a known code's line.
+    pub(crate) fn split_stderr_line(message: &str) -> Option<(Self, &str)> {
+        let (prose, line) = message.trim_end().rsplit_once('\n')?;
+        let name = line
+            .strip_prefix("ripr: refusal code=")?
+            .split_once(" disposition=")?
+            .0;
+        let code = Self::from_code_name(name)?;
+        (line == code.stderr_line()).then_some((code, prose.trim_end()))
+    }
+
+    fn from_code_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "item_names_no_seam" => Self::ItemNamesNoSeam,
+            "item_names_several_seams" => Self::ItemNamesSeveralSeams,
+            "seam_not_repair_eligible" => Self::SeamNotRepairEligible,
+            "no_eligible_seam" => Self::NoEligibleSeam,
+            "several_eligible_seams" => Self::SeveralEligibleSeams,
+            "repair_needs_item" => Self::RepairNeedsItem,
+            "start_refused_uncommitted_target" => Self::StartRefusedUncommittedTarget,
+            "build_output_not_ignored" => Self::BuildOutputNotIgnored,
+            "no_test_route" => Self::NoTestRoute,
+            "awaiting_edit" => Self::AwaitingEdit,
+            "retry_budget_exhausted" => Self::RetryBudgetExhausted,
+            "no_current_attempt" => Self::NoCurrentAttempt,
+            "attempt_baseline_blocked" => Self::AttemptBaselineBlocked,
+            "unanchored_root" => Self::UnanchoredRoot,
+            "ambiguous_attempts" => Self::AmbiguousAttempts,
+            "attempt_ended_without_receipt" => Self::AttemptEndedWithoutReceipt,
+            "attempt_completion_unconfirmed" => Self::AttemptCompletionUnconfirmed,
+            "edit_cage_violation" => Self::EditCageViolation,
+            "attempt_stale" => Self::AttemptStale,
+            "attempt_incomparable" => Self::AttemptIncomparable,
+            _ => return None,
+        })
+    }
 }
 
 /// Bound full status reconstruction after a complete eligibility inventory.
@@ -4122,6 +4213,74 @@ pub(crate) mod tests {
             ),
         );
         assert_eq!(code, None);
+    }
+
+    /// #14931: the before phase's start refusal reaches the façade as
+    /// rendered text; its typed code is recovered only from an exact line.
+    #[test]
+    fn split_stderr_line_inverts_message_with_stderr_line_for_every_code() {
+        for code in RepairRefusalCode::ALL {
+            let message = code.message_with_stderr_line("Plain words.\nnext: do it\n");
+            assert_eq!(
+                RepairRefusalCode::split_stderr_line(&message),
+                Some((code, "Plain words.\nnext: do it")),
+                "{message}"
+            );
+        }
+        for message in [
+            "no code line",
+            "prose\nripr: refusal code=not_a_code disposition=terminal",
+            // A known code with the wrong disposition is not its line.
+            "prose\nripr: refusal code=awaiting_edit disposition=terminal",
+            "ripr: refusal code=awaiting_edit disposition=retryable",
+        ] {
+            assert_eq!(
+                RepairRefusalCode::split_stderr_line(message),
+                None,
+                "{message}"
+            );
+        }
+    }
+
+    /// #14931: the `cli_refusal` schema's closed `code` and `disposition`
+    /// enums carry every repair/continue code and disposition, so the JSON
+    /// document a typed refusal writes under `--json` validates.
+    #[test]
+    fn cli_refusal_schema_names_every_refusal_code_and_disposition() -> Result<(), String> {
+        let text = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../schemas/ripr/cli-refusal.schema.json"),
+        )
+        .map_err(|error| format!("read cli-refusal schema: {error}"))?;
+        let schema: serde_json::Value =
+            serde_json::from_str(&text).map_err(|error| format!("parse schema: {error}"))?;
+        let error = &schema["properties"]["error"]["properties"];
+        let enum_of = |key: &str| -> Vec<String> {
+            error[key]["enum"]
+                .as_array()
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(|value| value.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let codes = enum_of("code");
+        let dispositions = enum_of("disposition");
+        for code in RepairRefusalCode::ALL {
+            if !codes.iter().any(|known| known == code.as_str()) {
+                return Err(format!("schema code enum misses {}", code.as_str()));
+            }
+            let disposition = code.disposition().as_str();
+            if !dispositions.iter().any(|known| known == disposition) {
+                return Err(format!("schema disposition enum misses {disposition}"));
+            }
+        }
+        if dispositions.len() != 4 {
+            return Err(format!("unexpected dispositions {dispositions:?}"));
+        }
+        Ok(())
     }
 
     /// #11597: the refusal-code vocabulary is closed and snake_case, every
@@ -5069,8 +5228,69 @@ pub(crate) mod tests {
         )
     }
 
+    /// #13636: the seam route refuses a commit step in exactly the states the
+    /// gap-bound route refuses one: revisions unknown, a committed-only run,
+    /// or unanalyzed working-tree changes. Each branch is exercised alone.
+    #[test]
+    fn seam_commit_step_refuses_when_the_run_did_not_analyze_the_dirt() {
+        let revisions = |working_tree| crate::analysis::AnalyzedRevisions {
+            base_ref: "HEAD".to_string(),
+            base_commit: Some("a".repeat(40)),
+            merge_base_commit: None,
+            loaded_diff_origin: None,
+            head_commit: Some("b".repeat(40)),
+            working_tree,
+        };
+        let output = |analyzed_revisions, unanalyzed_working_tree| crate::app::CheckOutput {
+            value_origins: Default::default(),
+            harness_projections: Vec::new(),
+            owner_opt_outs: Vec::new(),
+            file_fact_cache: None,
+            schema_version: "0.2".to_string(),
+            tool: "ripr".to_string(),
+            mode: crate::app::Mode::Fast,
+            root: std::path::PathBuf::from("."),
+            base: None,
+            summary: crate::domain::Summary::default(),
+            findings: Vec::new(),
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree,
+            untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions,
+        };
+        let dirty = vec!["../src/lib.rs".to_string()];
+        let analyzed = output(Some(revisions(true)), false);
+        assert_eq!(seam_commit_step_refusal(&analyzed, &dirty), None);
+        assert_eq!(
+            seam_commit_step_refusal(&output(Some(revisions(false)), true), &[]),
+            None,
+            "nothing dirty means no commit step to withhold"
+        );
+        assert_eq!(
+            seam_commit_step_refusal(&output(None, false), &dirty),
+            Some("could not establish which revisions the check analyzed")
+        );
+        assert_eq!(
+            seam_commit_step_refusal(&output(Some(revisions(false)), false), &dirty),
+            Some(
+                "the committed-only check excluded dirty tracked files; commit or restore them before rerunning"
+            )
+        );
+        assert_eq!(
+            seam_commit_step_refusal(&output(Some(revisions(true)), true), &dirty),
+            Some("the working tree contains source or test changes that were not analyzed")
+        );
+    }
+
     /// #12831: check's pick narrows the choice only when it is an eligible
-    /// seam that needs no commit first.
+    /// seam with no held inline target.
     #[test]
     fn check_pick_narrows_only_when_eligible_and_committed() {
         use crate::app::{CheckRepairRoute, RepairRoute};
@@ -5080,6 +5300,7 @@ pub(crate) mod tests {
                 finding_id: "f".to_string(),
                 seam_id: seam.to_string(),
                 uncommitted_target: uncommitted.map(str::to_string),
+                uncommitted_files: Vec::new(),
             })
         };
         assert_eq!(

@@ -988,7 +988,7 @@ fn owner_opt_out_summary_note(output: &CheckOutput, plain: bool) -> String {
     };
     if plain {
         return format!(
-            ", {} skipped because the changed function carries #[mutants::skip]",
+            ", {} skipped because the changed function or an enclosing scope carries #[mutants::skip]",
             output.owner_opt_outs.len()
         );
     }
@@ -1010,7 +1010,7 @@ fn render_owner_opt_out_block(out: &mut String, output: &CheckOutput) {
         return;
     };
     out.push_str(&format!(
-        "Withheld by owner opt-out ({}): {} finding(s); the changed owner carries `#[mutants::skip]`, so ripr does not list it as a gap. Remove the attribute to see these findings.\n",
+        "Withheld by owner opt-out ({}): {} finding(s); the changed owner or a scope enclosing it carries `#[mutants::skip]`, so ripr does not list it as a gap. Remove the attribute to see these findings.\n",
         first.reason.as_str(),
         output.owner_opt_outs.len()
     ));
@@ -1021,16 +1021,58 @@ fn render_owner_opt_out_block(out: &mut String, output: &CheckOutput) {
             .find(|finding| finding.id == opt_out.finding_id)
         {
             out.push_str(&format!(
-                "  - {}:{} {} (owner: {}, reason: {})\n",
+                "  - {}:{} {} (owner: {}, scope: {}, reason: {})\n",
                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
                 finding.class.as_str(),
                 opt_out.owner,
+                owner_opt_out_scope_phrase(opt_out),
                 opt_out.reason.as_str()
             ));
         }
     }
     out.push('\n');
+}
+
+/// The `ripr explain` statement for a finding the check run withheld by an
+/// owner opt-out (#13910), followed by a blank line. The caller passes the
+/// run's own [`CheckOutput::owner_opt_outs`] entry, so explain states the
+/// same decision `check` made rather than deriving its own.
+pub(crate) fn render_owner_opt_out_explain_line(
+    opt_out: &crate::analysis::owner_opt_out::OwnerOptOut,
+) -> String {
+    terminal_safe(format!("{}\n\n", owner_opt_out_explain_text(opt_out)))
+}
+
+/// `fn`, `fn outer`, `impl Cart`, `module a`, `file`: an opt-out's scope as
+/// one phrase.
+fn owner_opt_out_scope_phrase(opt_out: &crate::analysis::owner_opt_out::OwnerOptOut) -> String {
+    if opt_out.scope_label.is_empty() {
+        opt_out.scope.as_str().to_string()
+    } else {
+        format!("{} {}", opt_out.scope.as_str(), opt_out.scope_label)
+    }
+}
+
+/// The one-line statement `ripr explain` prints for a withheld finding.
+fn owner_opt_out_explain_text(opt_out: &crate::analysis::owner_opt_out::OwnerOptOut) -> String {
+    use crate::analysis::owner_opt_out::OwnerOptOutScope;
+    let marked = "marked #[mutants::skip]";
+    let reason = opt_out.reason.as_str();
+    let owner = &opt_out.owner;
+    match opt_out.scope {
+        OwnerOptOutScope::Fn if opt_out.scope_label.is_empty() => {
+            format!("Withheld: owner `{owner}` is {marked} ({reason})")
+        }
+        OwnerOptOutScope::File => {
+            format!("Withheld: owner `{owner}` is in a file {marked} ({reason})")
+        }
+        scope => format!(
+            "Withheld: owner `{owner}` is inside {} `{}` {marked} ({reason})",
+            scope.as_str(),
+            opt_out.scope_label
+        ),
+    }
 }
 
 /// Emit the `--suppression-policy` application block (#1441): which policy
@@ -3407,6 +3449,7 @@ mod tests {
                     finding_id: finding_id.clone(),
                     seam_id: "67fc764ba37d77bd".to_string(),
                     uncommitted_target: None,
+                    uncommitted_files: Vec::new(),
                 }),
             ),
         );
@@ -3468,6 +3511,7 @@ mod tests {
                     finding_id: "probe:other".to_string(),
                     seam_id: "67fc764ba37d77bd".to_string(),
                     uncommitted_target: None,
+                    uncommitted_files: Vec::new(),
                 }),
             ),
         );
@@ -3497,6 +3541,7 @@ mod tests {
                     finding_id: finding_id.clone(),
                     seam_id: "67fc764ba37d77bd".to_string(),
                     uncommitted_target: Some("src/lib.rs".to_string()),
+                    uncommitted_files: Vec::new(),
                 }),
             ),
         );

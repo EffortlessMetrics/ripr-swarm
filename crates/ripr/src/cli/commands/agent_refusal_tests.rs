@@ -265,7 +265,7 @@ fn repair_after_no_movement_lines_advise_retry_until_the_budget_is_spent() -> Re
 #[test]
 fn before_phase_dirty_premise_refusal_names_paths_and_commit_first_recovery() {
     let violations = vec!["src/a.rs".to_string(), "src/b.rs".to_string()];
-    let message = before_phase_dirty_premise_refusal(
+    let message = crate::app::repair_attempt::seam_dirty_premise_refusal(
         "seam:sample",
         Path::new("some-checkout"),
         None,
@@ -292,7 +292,7 @@ fn before_phase_dirty_premise_refusal_names_paths_and_commit_first_recovery() {
 #[test]
 fn before_phase_dirty_premise_refusal_names_the_facade_rerun_for_a_facade_start() {
     let violations = vec!["src/lib.rs".to_string()];
-    let message = before_phase_dirty_premise_refusal(
+    let message = crate::app::repair_attempt::seam_dirty_premise_refusal(
         "6c0f2a8a6134d929",
         Path::new("some-checkout"),
         None,
@@ -308,7 +308,7 @@ fn before_phase_dirty_premise_refusal_names_the_facade_rerun_for_a_facade_start(
     assert!(!message.contains("ripr agent repair"), "{message}");
     assert!(!message.contains("--phase before"), "{message}");
 
-    let stored = before_phase_dirty_premise_refusal(
+    let stored = crate::app::repair_attempt::seam_dirty_premise_refusal(
         "6c0f2a8a6134d929",
         Path::new("some-checkout"),
         Some(Path::new("attempts")),
