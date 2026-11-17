@@ -279,9 +279,11 @@ Acceptance:
    `debug_assert_eq!` and a top-level glob import are refused here too, as a
    second guard behind refusals that already hold upstream.
 
-Fixtures `fixtures/rust_computed_return_tail_reached` (promoted) and
-`fixtures/rust_computed_return_tail_other_branch` (not promoted) pin both
-sides in the evidence-promotion honesty corpus.
+Fixtures `fixtures/rust_computed_return_tail_reached` (promoted),
+`fixtures/rust_computed_return_tail_other_branch` (not promoted) and
+`fixtures/rust_computed_return_tail_wrapping_local` (not promoted: a `u8`
+local wraps, so the call takes the other branch) pin both sides in the
+evidence-promotion honesty corpus.
 
 ## Test Mapping
 

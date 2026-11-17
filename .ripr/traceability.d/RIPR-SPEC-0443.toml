@@ -37,6 +37,7 @@ fixtures = [
   "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/branch-local-else-only",
   "fixtures/rust_computed_return_tail_reached",
   "fixtures/rust_computed_return_tail_other_branch",
+  "fixtures/rust_computed_return_tail_wrapping_local",
 ]
 code = [
   "crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs",
