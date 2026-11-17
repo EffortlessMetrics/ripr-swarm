@@ -602,9 +602,23 @@ mod tests {
 
     fn required_workflow_runner_violations(workflow: &str) -> Vec<String> {
         let lines = workflow_command_lines(workflow);
+        // #13485: `cargo xtask ci-policy` executes every precommit policy
+        // leaf exactly once, so its leaves count as workflow-executed
+        // without duplicate leaf steps.
+        let ci_policy_owned: Vec<String> = if lines.contains(&"cargo xtask ci-policy") {
+            crate::PRECOMMIT_GATE_COMMANDS
+                .iter()
+                .map(|leaf| format!("cargo xtask {leaf}"))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let executed = |command: &str| {
+            lines.contains(&command) || ci_policy_owned.iter().any(|owned| owned == command)
+        };
         let mut violations = Vec::new();
         for gate in product_gate_definitions() {
-            if !lines.contains(&gate.command) {
+            if !executed(gate.command) {
                 violations.push(format!(
                     "{} command `{}` is not executed by the required workflow",
                     gate.id.as_str(),
