@@ -324,6 +324,21 @@ impl ClassifiedProbeEvidence {
         ) {
             flow_sinks = vec![sink];
         }
+        // #14815: the owner's whole tail is the changed `a`/`-a`/`!a`, so the
+        // change reaches the owner's return. The tail text carries no cue the
+        // text reader takes as a return, so its sink is otherwise unknown.
+        if let Some(change) = context.unary_tail.as_ref()
+            && flow_sinks
+                .iter()
+                .all(|sink| sink.kind == FlowSinkKind::Unknown)
+        {
+            flow_sinks = vec![FlowSinkFact {
+                kind: FlowSinkKind::ReturnValue,
+                text: change.tail.clone(),
+                line: change.line,
+                owner: context.owner_fn.map(|owner| owner.id.clone()),
+            }];
+        }
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
                 context.index.files().get(&owner.file).and_then(|file| {
@@ -604,6 +619,7 @@ impl ClassifiedProbeEvidence {
                 owner: context.owner_fn,
                 literal_length_boundary: gathered.literal_length_boundary.as_ref(),
                 slice_counter_boundary: gathered.slice_counter_boundary.as_ref(),
+                unary_tail: context.unary_tail.as_ref(),
             },
             owner_has_other_callers,
             assertion_macros_rebound,
