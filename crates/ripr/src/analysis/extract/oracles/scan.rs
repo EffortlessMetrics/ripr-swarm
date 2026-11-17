@@ -6591,6 +6591,20 @@ fn t() {
                 "a filled value keeps its relational reading: {kept:?}"
             ));
         }
+        // A placeholder the assertion never reads lowers nothing.
+        let unrelated = only_fact(
+            "
+fn t() {
+    let later: i32 = todo!(\"x\");
+    assert!(price(100) == 90);
+}
+",
+        )?;
+        if unrelated.kind != OracleKind::RelationalCheck {
+            return Err(format!(
+                "an unread placeholder keeps the relational reading: {unrelated:?}"
+            ));
+        }
         Ok(())
     }
 

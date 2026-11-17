@@ -710,15 +710,17 @@ Two pattern terms are used below.
       same name to anything else drops the name, so an ambiguous body
       keeps today's reading;
     - the reading this replaces is strong (`exact_value`,
-      `whole_object_equality`, `exact_error_variant` or `snapshot`),
-      medium, or weak (#14882).
+      `whole_object_equality`, `exact_error_variant` or `snapshot`), or
+      a medium or weak one (#14882).
 
     A weak `relational_check` is lowered too (#14882): the owner return pin
     raises `assert!(price(amount, threshold) == expected)` to strong relative
     to the probe, as it does the terminal guard
     `if price(amount, threshold) != expected { return Err(..) }`, whose
-    assertion twin (#3284) takes this rule on both extraction paths. A smoke
-    or none reading claims no comparison and keeps its kind. The rule only removes credit,
+    assertion twin (#3284) takes this rule on the lexical and parser
+    extraction paths. Harness inline trials do not apply it yet. A smoke
+    or none reading claims no comparison and keeps its kind. The rule
+    only removes credit,
     so it creates no path to `exposed`. A filled initializer
     (`let expected: i32 = 9_990;`), a computed one
     (`let expected = price(amount, threshold);`) and an assertion that
