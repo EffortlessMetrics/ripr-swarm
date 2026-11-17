@@ -174,7 +174,10 @@ fn factory_const_is_reached_only_as_a_closure() {
         .map(|candidate| candidate.module_entries)
         .unwrap_or_default();
     assert_eq!(
-        entries.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(),
+        entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
         ["f"]
     );
     assert!(entries.iter().all(|entry| entry.closure), "{entries:?}");
