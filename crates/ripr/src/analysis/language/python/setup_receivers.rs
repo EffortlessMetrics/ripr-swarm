@@ -11,6 +11,9 @@ use rustpython_parser::ast::{Expr, Ranged, Stmt};
 
 /// The hooks unittest runs for a `TestCase`.
 const UNITTEST_HOOKS: [&str; 2] = ["setUp", "setUpClass"];
+/// The coroutine hook unittest awaits after `setUp` for an
+/// `IsolatedAsyncioTestCase`; a plain `TestCase` never runs it.
+const ASYNC_CASE_HOOK: &str = "asyncSetUp";
 /// The xunit hooks pytest runs for a plain `Test*` class; it never runs
 /// `setUp` there.
 const PYTEST_HOOKS: [&str; 2] = ["setup_method", "setup_class"];
@@ -27,12 +30,14 @@ pub(super) struct SetupReceiver {
 /// A `subclassed` class (another class in the module lists it as a base) reads
 /// none: a subclass can replace the hook the test runs under. Only the hooks
 /// the collecting framework runs are read (`unittest` for a `TestCase`, xunit
-/// for a plain pytest class).
+/// for a plain pytest class, plus `asyncSetUp` for a class that names
+/// `IsolatedAsyncioTestCase` directly).
 pub(super) fn setup_receivers(
     source: &str,
     class_body: &[Stmt],
     subclassed: bool,
     unittest: bool,
+    async_case: bool,
 ) -> Vec<SetupReceiver> {
     let hooks = if unittest {
         UNITTEST_HOOKS
@@ -55,19 +60,24 @@ pub(super) fn setup_receivers(
     }
     let mut found = Vec::new();
     for stmt in class_body {
-        let Stmt::FunctionDef(function) = stmt else {
-            continue;
+        let (name, body, range) = match stmt {
+            Stmt::FunctionDef(function) if hooks.contains(&function.name.as_str()) => {
+                (function.name.as_str(), &function.body, function.range)
+            }
+            Stmt::AsyncFunctionDef(function)
+                if unittest && async_case && function.name.as_str() == ASYNC_CASE_HOOK =>
+            {
+                (function.name.as_str(), &function.body, function.range)
+            }
+            _ => continue,
         };
-        if !hooks.contains(&function.name.as_str()) {
-            continue;
-        }
-        let hook_receiver = if matches!(function.name.as_str(), "setUpClass" | "setup_class") {
+        let hook_receiver = if matches!(name, "setUpClass" | "setup_class") {
             "cls"
         } else {
             "self"
         };
-        let hook_text = text_for_range(source, function.range);
-        for inner in &function.body {
+        let hook_text = text_for_range(source, range);
+        for inner in body {
             let Stmt::Assign(assign) = inner else {
                 continue;
             };

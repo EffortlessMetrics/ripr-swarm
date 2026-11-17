@@ -646,6 +646,29 @@ repair and installed daily-use acceptance remain open under #6643 and its
 supporting issues. The original-workspace native witness and this static
 source-profile acceptance remain separate evidence planes.
 
+### Returned QuickCheck property is not an absent assertion (#6643)
+
+A `#[quickcheck]` or `#[quickcheck_macros::quickcheck]` function whose
+written return type is `bool` or `TestResult` fails through the value it
+returns; the harness checks it. With no assertion macro in its body, its
+related-test row used to read `has no assertion`, and the finding told the
+reader to add an assertion the property already has. Such a row now reads
+`assertion_admission_unproven`. The finding gains an evidence line that starts
+with "QuickCheck property returns its check:", names the property, and says
+ripr does not read its returned check. When every
+oracle-crediting related test is such a property (or a #9981 forwarded
+callback limit), the observe and discriminate summaries use the refused-context
+wording (`rust_assertion_context_unestablished`) instead of the no-assertion
+wording, which also replaces the add-an-assertion next step.
+
+This grants no oracle, strength or class: the returned expression stays
+unread, so the class is decided exactly as before. A property with no return
+value, a plain `#[test]`, and an attribute that merely ends in `quickcheck`
+(`#[my::quickcheck]`) keep their previous reading. A same-named local
+`quickcheck` attribute is not distinguished; that can only withdraw an absence
+claim, never add credit. Reading the returned relation as evidence remains the
+open model/relational acceptance of #6643.
+
 ## Wire Format
 
 | Field | Value when fires | Value when not fires |
@@ -842,6 +865,8 @@ source-profile acceptance remain separate evidence planes.
 - `fixtures/rust_macro_reach_limitation/expected/check.json`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::mixed_macro_limit_preserves_confirmed_discrimination_and_examined_misses`
 - `crates/ripr/src/analysis/language/rust/mod.rs::tests::mixed_macro_witness_survives_dependent_scope_narrowing`
+- `crates/ripr/tests/quickcheck_returned_property.rs` (returned QuickCheck
+  property, #6643)
 - `crates/ripr/tests/mixed_macro_reach.rs::weak_direct_oracle_preserves_the_macro_witness_in_ready_and_draft`
 - `crates/ripr/tests/mixed_macro_reach.rs::strong_direct_oracle_remains_credited_beside_the_macro`
 - `crates/ripr/tests/mixed_macro_reach.rs::weak_direct_without_a_test_macro_route_keeps_the_gap`
@@ -864,6 +889,7 @@ source-profile acceptance remain separate evidence planes.
 | Pass-through item macro expansion | `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs` |
 | Macro definition extents | `crates/ripr/src/analysis/probes/macro_definition.rs` |
 | Generated test assertion admission | `crates/ripr/src/analysis/classify/owner_pin.rs` |
+| Returned QuickCheck property miss | `crates/ripr/src/analysis/classify/refusal_miss.rs` (`is_returned_quickcheck_property`) |
 | Classifier export | `crates/ripr/src/analysis/classify/mod.rs` |
 | Diff/repo-mode wiring | `crates/ripr/src/analysis/language/rust/mod.rs` |
 | Human witness and limitation-detail projection | `crates/ripr/src/output/human/sections.rs` |

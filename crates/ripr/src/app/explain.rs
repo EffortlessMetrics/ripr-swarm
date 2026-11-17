@@ -596,6 +596,24 @@ fn location_miss_cause_text(selector: &str, output: &CheckOutput) -> Option<Loca
         });
     }
 
+    // #14676: a finding file that matches only ignoring ASCII case is the
+    // file the user meant. The #14416 hint names its correct spelling and
+    // lines; a disk probe here would answer differently by filesystem (on a
+    // case-insensitive one the wrong-case path "exists" with "no finding"),
+    // contradicting that hint, so the cause defers before probing. The hint
+    // speaks only for a path-shaped selector, so a bare `MAKEFILE:3` keeps
+    // its cause rather than getting neither sentence.
+    if wanted_file.contains(['/', '.'])
+        && output.findings.iter().any(|finding| {
+            super::selector::locator_paths_match_ignoring_ascii_case(
+                &crate::analysis::stable_path_text(&finding.probe.location.file),
+                selector_file,
+            )
+        })
+    {
+        return None;
+    }
+
     // Only a plain relative path is probed on disk, so a selector can never
     // be used to ask whether something outside the analyzed root exists.
     // Selection also accepts a path suffix (`lib.rs` for `src/lib.rs`), which
@@ -1160,6 +1178,89 @@ mod tests {
             &cause,
             "; src/lib.rs:3 holds several findings, so select one there by its probe id",
         )
+    }
+
+    /// #14676: a selector whose path names a finding file in the wrong
+    /// ASCII case gets no disk-probe cause. On a case-insensitive filesystem
+    /// that probe would call the file present with "no finding", against the
+    /// #14416 hint naming its findings; the deferral happens before the
+    /// probe, so this Linux test pins the same outcome every filesystem gets.
+    #[test]
+    fn wrong_case_selector_defers_the_cause_to_the_case_hint() -> Result<(), String> {
+        let output = fixture_check_output("collection_argument_plain")?;
+        if !output
+            .findings
+            .iter()
+            .any(|finding| finding.probe.location.file.ends_with("src/lib.rs"))
+        {
+            return Err("fixture must hold a finding in src/lib.rs".to_string());
+        }
+        for selector in ["SRC/Lib.rs:9", "Lib.rs:9"] {
+            if let Some(cause) = location_miss_cause(selector, &output) {
+                return Err(format!(
+                    "{selector}: a wrong-case finding file gets no probe cause: {}",
+                    cause.text
+                ));
+            }
+            let hint = super::super::selector::location_miss_hint(
+                &output.findings,
+                &output.root,
+                selector,
+                super::super::selector::ScopeCompleteness::Complete,
+            )
+            .ok_or_else(|| format!("{selector}: the case hint must speak"))?;
+            require_contains(&hint, "Paths match case-sensitively.")?;
+            require_contains(&hint, "Findings in src/lib.rs are on line 3")?;
+        }
+        // Control: a path matching no finding file in any case keeps its cause.
+        let cause = location_miss_cause("src/other.rs:9", &output)
+            .map(|cause| cause.text)
+            .ok_or("an unrelated path keeps its cause")?;
+        require_contains(&cause, "is not the path of a file from the analyzed root")?;
+
+        // The assembled fresh-run miss the CLI prints: the case hint alone,
+        // with no probe clause from either filesystem outcome.
+        let message = match explain_fixture("collection_argument_plain", "SRC/Lib.rs:9") {
+            Ok(rendered) => return Err(format!("SRC/Lib.rs:9 must miss: {rendered}")),
+            Err(message) => message,
+        };
+        for wanted in [
+            "no finding matched \"SRC/Lib.rs:9\"",
+            "Paths match case-sensitively.",
+            "Findings in src/lib.rs are on line 3",
+        ] {
+            if !message.contains(wanted) {
+                return Err(format!("assembled miss lacks {wanted:?}: {message}"));
+            }
+        }
+        for unwanted in [
+            "exists, but this run has no finding",
+            "is not the path of a file from the analyzed root",
+        ] {
+            if message.contains(unwanted) {
+                return Err(format!("assembled miss carries {unwanted:?}: {message}"));
+            }
+        }
+
+        // A bare wrong-case name matching an extensionless finding file gets
+        // no hint (the hint needs a path shape), so the cause must stay.
+        let mut output = output;
+        let mut makefile = output.findings[0].clone();
+        makefile.probe.location.file = output.root.join("Makefile");
+        output.findings.push(makefile);
+        let hint = super::super::selector::location_miss_hint(
+            &output.findings,
+            &output.root,
+            "MAKEFILE:3",
+            super::super::selector::ScopeCompleteness::Complete,
+        );
+        if hint.is_some() {
+            return Err(format!("a bare name gets no hint: {hint:?}"));
+        }
+        if location_miss_cause("MAKEFILE:3", &output).is_none() {
+            return Err("MAKEFILE:3 gets no hint, so it must keep a cause".to_string());
+        }
+        Ok(())
     }
 
     /// #14511: the cause defers a `file:line:column` selector to the hint

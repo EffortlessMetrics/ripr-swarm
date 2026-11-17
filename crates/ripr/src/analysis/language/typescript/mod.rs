@@ -46,6 +46,8 @@ pub(crate) use relation_index::RelationIndex;
 pub(crate) use std::path::{Path, PathBuf};
 
 mod actionability;
+#[cfg(test)]
+mod actionability_proptest_tests;
 mod admission;
 #[cfg(test)]
 mod admission_tests;
@@ -65,6 +67,7 @@ mod boundary_label_tests;
 mod boundary_selection;
 mod bounded_read;
 mod bun_bridge;
+mod call_lexer;
 mod call_removal_guard;
 #[cfg(test)]
 mod call_removal_tests;
@@ -234,6 +237,7 @@ pub(crate) use boundary_selection::{
 };
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
+pub(crate) use call_lexer::inside_block_comment;
 pub(crate) use class_entries::*;
 pub(crate) use classifier::*;
 pub(crate) use close_to_guard::*;

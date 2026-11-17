@@ -32,6 +32,9 @@ Linked issues:
   messages; rule 2)
 - #7586 (a mock passed for a called parameter, and the wrapped-argument
   gate; rule 17, example 9)
+- #14803 (async test styles: `IsolatedAsyncioTestCase`, `asyncSetUp`,
+  awaited result locals and `pytest_asyncio` literal fixtures; L8 and
+  sink alignment)
 
 Linked PRs:
 
@@ -610,9 +613,15 @@ This order is the existing behavior and is normative:
   of a method owner's class (#9619, `py-fixtures-deposit`). The fixture
   is a single argument-free fixture decorator (`@pytest.fixture`,
   `@fixture`, an imported alias or `@pytest_asyncio.fixture`: function
-  scope, no `params=`, no `autouse=`) on a synchronous def with no
+  scope, no `params=`, no `autouse=`) on a def with no
   parameters whose body is an optional docstring and
-  `return C(<literals>)`. `C` is the owner's class imported under its own
+  `return C(<literals>)`. A coroutine def counts only under
+  `@pytest_asyncio.fixture` (with a plain `import pytest_asyncio` as the
+  file's only binding of that name) or a `fixture` alias imported from
+  `pytest_asyncio` and not rebound before the def: that plugin awaits it
+  and hands the test its returned value, while plain `pytest.fixture`
+  hands a strict-mode test the un-awaited coroutine (#14803).
+  `C` is the owner's class imported under its own
   name from the owner's module, and the fixture's file binds neither the
   fixture name nor `C` a second time. The test takes the fixture as a
   parameter without a default, does not rebind it, and carries no
@@ -745,7 +754,8 @@ This order is the existing behavior and is normative:
 The credit branches are, in order: `direct` by owner identity token;
 `direct` by a method call on a bound receiver; `alias`; `direct` through a
 module-qualified call or a result local that is an asserted operand
-(RIPR-SPEC-0028, #4567); `changed_sink_token` from the changed-line token
+(RIPR-SPEC-0028, #4567; for a coroutine owner the local may bind
+`await f(..)`, which hands back the value its body returned, #14803); `changed_sink_token` from the changed-line token
 delta; `direct` through the channel a changed write reaches (rule 17);
 else `orthogonal`. A free-function owner's identity, delta-token and
 effect-channel credit need module identity. An empty owner or changed-sink token
@@ -758,6 +768,14 @@ in the assertion's `with` body or rule 13 callable instead of an asserted
 operand, so `levels.parse("")` and an imported `parse("")` under the same
 `pytest.raises(ValueError, match=...)` read alike (#14090). A body holding a
 `lambda` or a nested `def`/`class` is not read, since the call may be deferred.
+For a free-function owner, the owner-name, import-alias and changed-sink-token
+branches likewise read only that body (or rule 13 callable): a name or token
+spelled only in the item's `match=`, before the `with`, in the rule 14
+comparison after it, or inside a body string or comment does not credit the
+changed raise (#14267). Text this reader hides is only text: the replacement
+field of an f-string is code, so the body reader sees a call spelled in
+`f"{levels.parse('')}"`, and a `def ` or `class ` spelled inside a body string
+defines nothing and defers no call (#14267 review).
 With no crediting branch, a strong oracle
 is `orthogonal`; without an admitted strong oracle alignment stays `unknown`.
 This reverses the legacy no-token observing exception (#7526), which could
@@ -1423,6 +1441,61 @@ mutant calibrates the rule; ripr reports only the static shape.
     `py-trap-wrapped-swallow`, `py-trap-wrapped-partial`,
     `py-trap-wrapped-conditional` and `py-trap-wrapped-finally` stay
     non-credited, #9619).
+
+    Amended (2026-11-16, #13723): a wrapper that provably swallows the
+    helper's failure makes that call hold no assertion. Wherever admission
+    meets the call `wrapper(lambda: helper(args))`, it skips the wrapper and
+    helper and walks only `args`. Using the call's result needs an `assert`
+    or `raise`, which are assertion-like themselves. A test with nothing
+    else assertion-like then completes as `extraction_complete_no_assertion`
+    (a gap, not a limit). `helper` must be a def of the test module whose
+    body, after a docstring, is only `assert` statements over its
+    parameters, literals and plain operators, with plain positional
+    parameters and no defaults or decorators. On plain operand values (the
+    operator assumption every operator-based read in this spec makes; see
+    the residual below) it then raises only `AssertionError`, or an error
+    from an operator such as a `TypeError` after a type change. It calls
+    nothing itself, so on plain operands it cannot reach a pytest outcome
+    such as `fail` or `skip`,
+    which derive from `BaseException` and escape `except Exception`. A
+    wrapper that re-raises an operator's or the owner's `ValueError` or
+    `TypeError` still lets a crash fail the test, which, as everywhere in
+    this spec, is not a discriminating assertion. `wrapper` has the same
+    parameter and `try` body requirements as above, with no `else`.
+    Every handler, whichever exception reaches it, only re-raises bare,
+    passes, returns nothing or a literal, or re-raises behind the
+    `isinstance` guard below; a handler that asserts on an owner's
+    exception is a check. It must swallow in one of two ways. In the first,
+    a `finally` whose only statement is `return` of nothing or a literal
+    discards the exception. In
+    the second, there is no `finally`, and the first handler that catches
+    `AssertionError` ends without raising. That handler is bare, or names
+    `Exception`, `BaseException` or `AssertionError`, and it follows only
+    handlers for builtin classes unrelated to `AssertionError`, such as
+    `ValueError`, `KeyError` or `TypeError`. It ends with `pass`, `return` of
+    nothing or a literal, or `if isinstance(<its bound name>, <unrelated
+    builtins>): raise` with no `else`. Class names are bare names; a project
+    exception class is not read. The wrapper's parameter and handler `as`
+    names may not spell any of these classes or `isinstance`. Neither may
+    the module bind, delete, declare `global`, capture in a `match`, patch
+    or write through a dynamic namespace writer (`setattr`, `sys.modules`,
+    `globals`, ...) any of these names; nor mention `builtins`,
+    `__builtins__`, `__globals__`, `f_globals`, `f_locals` or `f_builtins`,
+    have a star import or a walrus. The wrapper and helper
+    must each be the module's only binding of their name, not imported, and
+    mentioned only as their def and plain calls; the test scope must not
+    shadow either. Re-raising `AssertionError` before a swallowing
+    `Exception` handler, a handler that calls anything, a helper that calls
+    `pytest.fail` or a function, and a lambda with a parameter all keep the
+    call assertion-like. Residual, shared with every operator-based read in
+    this spec: RIPR does not type the helper's operands, so an owner result
+    whose own `__eq__` (or other operator dunder) raises a pytest outcome or
+    an `AssertionError` subclass that an earlier handler, or the swallowing
+    handler's `isinstance` guard, re-raises is not seen. The `finally`
+    return form swallows both. Rule 23's inline swallowed `try` shares the
+    same residual. Four trap rows move from `limited` to `gap`:
+    `py-trap-wrapped-swallow`, `py-trap-wrapped-partial`,
+    `py-trap-wrapped-conditional` and `py-trap-wrapped-finally`.
 
 28. **numpy.testing and assertpy equality helpers are the equality they
     run.** `numpy.testing.assert_array_equal(a, b)`,
@@ -2265,6 +2338,13 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `given_a_reraising_wrapper_when_the_call_is_not_a_bare_helper_lambda_then_nothing_resolves`,
   `given_a_wrapper_name_the_test_rebinds_or_imports_when_called_then_nothing_resolves`,
   `given_a_reraising_wrapper_around_an_unresolvable_helper_when_called_then_nothing_resolves`.
+- Existing: `crates/ripr/src/analysis/language/python/swallowing_wrapper_tests.rs`
+  (rule 27, amended)
+  `given_a_swallowing_wrapper_around_an_assert_only_helper_then_no_assertion_can_fail`,
+  `given_a_wrapper_that_lets_the_assertion_escape_then_admission_stays_unresolved`,
+  `given_a_helper_that_can_escape_an_exception_handler_then_admission_stays_unresolved`,
+  `given_a_rebound_or_unproven_name_then_the_swallowing_read_is_refused`,
+  `given_a_swallowed_helper_beside_a_real_assertion_then_the_assertion_is_recognized`.
 - Existing: corpus rows `py-trap-wrapped-swallow`, `py-trap-wrapped-partial`,
   `py-trap-wrapped-conditional` and `py-trap-wrapped-finally` (`cargo xtask
   verdict-corpus check --language python`): rule 27's runtime-verified
@@ -2391,6 +2471,13 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `crates/ripr/src/analysis/language/python/literal_fixture_tests.rs`
   pins the inlined control, the conftest and same-module fixture, and
   every negative shape and interference route of example 41.
+- Async test styles (#14803):
+  `crates/ripr/src/app/tests/python_test_style_matrix.rs` pins the
+  `pytest_asyncio` literal fixture, the awaited result local, the
+  `IsolatedAsyncioTestCase` and `asyncSetUp` rows (weak, strong before and
+  strong after the diff) and their negatives: a plain `pytest.fixture`
+  coroutine, an alias that becomes `pytest_asyncio`'s only after the def,
+  and `asyncSetUp` on a plain `TestCase`.
 - L8's literal-params fixture and the parametrize-mark scope (#9619):
   `crates/ripr/src/analysis/language/python/param_fixture_tests.rs` pins
   the decorated control, the conftest, same-module and single-name forms,
@@ -2453,7 +2540,9 @@ strong assertions is retained.
   `doctest_eval.rs`: rule 26, collection detection, example reading and the
   evaluator gate.
 - `crates/ripr/src/analysis/language/python/helper_assertions.rs`: rule 27,
-  the re-raising wrapper read beside the single-assert helper read.
+  the re-raising wrapper read beside the single-assert helper read, and
+  the swallowing wrapper and assert-only helper read (amended); `admission.rs`
+  applies the swallowing read in its body scan.
 - `crates/ripr/src/analysis/language/python/oracles.rs`: assertion table,
   rules 1 to 3, 12, 14 and 15, and each assertion's gate text (rules 4
   and 13).

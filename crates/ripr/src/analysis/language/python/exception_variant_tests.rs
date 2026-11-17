@@ -514,6 +514,395 @@ fn specific_exception_variant_requires_verified_module_import() -> Check {
     Ok(())
 }
 
+// #13622: an old-type exact assertion after a raised-type replacement is
+// recorded as advisory evidence, never as a class change.
+const STALE_PREFIX: &str = "stale_raised_type_pin: ";
+
+fn stale_pins(finding: &Finding) -> Vec<&String> {
+    finding
+        .evidence
+        .iter()
+        .filter(|line| line.starts_with(STALE_PREFIX))
+        .collect()
+}
+
+fn builtin_finding(old: &str, new: &str, body: &str) -> Result<Finding, String> {
+    let source = format!(
+        "def parse(s):\n    if len(s) > 10:\n        raise {new}(\"m\")\n    return len(s)\n"
+    );
+    let tests = format!("import pytest\nfrom fx.core import parse\n\ndef test_variant():\n{body}");
+    classify_with_context(
+        &source,
+        &tests,
+        Some(&format!("        raise {old}(\"m\")")),
+        &format!("        raise {new}(\"m\")"),
+        true,
+    )
+}
+
+const RAISES_BODY: &str =
+    "    with pytest.raises({T}, match=\"m\"):\n        parse('abcdefghijklmnop')\n";
+
+#[test]
+fn stale_builtin_raised_type_is_advisory_evidence_and_keeps_the_class() -> Check {
+    // The issue's shape: ValueError("m") -> TypeError("m") under
+    // `pytest.raises(ValueError, match="m")`.
+    let stale = builtin_finding(
+        "ValueError",
+        "TypeError",
+        &RAISES_BODY.replace("{T}", "ValueError"),
+    )?;
+    let pins = stale_pins(&stale);
+    let expected = "stale_raised_type_pin: `pytest.raises(ValueError, match=\"m\")` pins the old raised type `ValueError`; the changed raise now raises `TypeError` (test_variant)";
+    if pins != vec![expected] {
+        return Err(format!(
+            "expected exactly `{expected}`: {pins:?}\n{stale:?}"
+        ));
+    }
+    // RIPR-SPEC-0238 example 14: the class is not touched by the advisory.
+    let baseline = builtin_finding(
+        "ValueError",
+        "KeyError",
+        &RAISES_BODY.replace("{T}", "ValueError"),
+    )?;
+    if stale.class != baseline.class || stale.class != ExposureClass::Exposed {
+        return Err(format!(
+            "the advisory must not change the class: {:?} vs {:?}",
+            stale.class, baseline.class
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn new_type_or_subclass_assertions_record_no_stale_pin() -> Check {
+    let cases = [
+        // `pytest.raises(New)` names the new type.
+        ("ValueError", "TypeError", RAISES_BODY.replace("{T}", "TypeError")),
+        // `excinfo.type is New` mentions the new type.
+        (
+            "ValueError",
+            "TypeError",
+            "    with pytest.raises(TypeError) as excinfo:\n        parse('abcdefghijklmnop')\n    assert excinfo.type is TypeError\n".to_string(),
+        ),
+        // KeyError is a builtin subclass of LookupError.
+        ("LookupError", "KeyError", RAISES_BODY.replace("{T}", "LookupError")),
+        // Another expected class fails open.
+        ("ValueError", "TypeError", RAISES_BODY.replace("{T}", "Exception")),
+        // An alias of the new class never resolves, so it fails open.
+        ("IOError", "OSError", RAISES_BODY.replace("{T}", "IOError")),
+    ];
+    for (old, new, body) in cases {
+        let finding = builtin_finding(old, new, &body)?;
+        if !stale_pins(&finding).is_empty() {
+            return Err(format!(
+                "{old} -> {new} with {body:?} recorded a stale pin: {finding:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn user_class_subclass_records_no_stale_pin() -> Check {
+    let source = |base: &str| {
+        format!(
+            "class EmptyError(Exception): pass\nclass TooLongError({base}): pass\n\ndef parse(s):\n    if len(s) > 10:\n        raise TooLongError(\"too long\")\n    return len(s)\n"
+        )
+    };
+    let tests = format!(
+        "{IMPORTS}\ndef test_variant():\n    with pytest.raises(EmptyError, match=\"too long\"):\n        parse('abcdefghijklmnop')\n"
+    );
+    let old = "        raise EmptyError(\"too long\")";
+    let new = "        raise TooLongError(\"too long\")";
+    // Unrelated sibling classes: the old-type assertion is stale.
+    let sibling = classify(&source("Exception"), &tests, old, new)?;
+    if stale_pins(&sibling).len() != 1 {
+        return Err(format!(
+            "sibling classes must record one stale pin: {sibling:?}"
+        ));
+    }
+    // `TooLongError(EmptyError)`: `pytest.raises(EmptyError)` still passes.
+    let subclass = classify(&source("EmptyError"), &tests, old, new)?;
+    if !stale_pins(&subclass).is_empty() {
+        return Err(format!("a subclass must record no stale pin: {subclass:?}"));
+    }
+    // An imported base cannot be resolved, so it fails open.
+    let imported = classify(
+        &format!("from elsewhere import Base\n{}", source("Base")),
+        &tests,
+        old,
+        new,
+    )?;
+    if !stale_pins(&imported).is_empty() {
+        return Err(format!("an unresolved base must fail open: {imported:?}"));
+    }
+    Ok(())
+}
+
+// #13622 review: shapes whose raised class may not be the constructor's, or
+// whose expected name the test module rebinds, record no stale pin.
+#[test]
+fn unreadable_raise_or_class_shapes_record_no_stale_pin() -> Check {
+    let raises = RAISES_BODY.replace("{T}", "ValueError");
+    // An f-string over a plain name still names its class.
+    let named = |old_args: &str, new_args: &str| {
+        let source = format!(
+            "def parse(s):\n    if len(s) > 10:\n        raise TypeError({new_args})\n    return len(s)\n"
+        );
+        let tests =
+            format!("import pytest\nfrom fx.core import parse\n\ndef test_variant():\n{raises}");
+        classify_with_context(
+            &source,
+            &tests,
+            Some(&format!("        raise ValueError({old_args})")),
+            &format!("        raise TypeError({new_args})"),
+            true,
+        )
+    };
+    let fstring = named("f\"m {s}\"", "f\"m {s}\"")?;
+    if stale_pins(&fstring).len() != 1 {
+        return Err(format!("an f-string over a name must pin: {fstring:?}"));
+    }
+    // An argument that can itself raise first (`1 / 0`, a call) fails open.
+    for args in ["f\"m {1 / 0}\"", "str(s)", "\"m\", code=1", "**s"] {
+        let finding = named(args, args)?;
+        if !stale_pins(&finding).is_empty() {
+            return Err(format!("`{args}` must fail open: {finding:?}"));
+        }
+    }
+    // A cause is evaluated first and fails open.
+    let caused = classify_with_context(
+        "def parse(s):\n    if len(s) > 10:\n        raise TypeError(\"m\") from s\n    return len(s)\n",
+        &format!("import pytest\nfrom fx.core import parse\n\ndef test_variant():\n{raises}"),
+        Some("        raise ValueError(\"m\") from s"),
+        "        raise TypeError(\"m\") from s",
+        true,
+    )?;
+    if !stale_pins(&caused).is_empty() {
+        return Err(format!("a raise with a cause must fail open: {caused:?}"));
+    }
+    // `OSError(errno, ...)` constructs the errno's subclass and fails open.
+    let errno = classify_with_context(
+        "def parse(s):\n    if len(s) > 10:\n        raise OSError(2, \"m\")\n    return len(s)\n",
+        "import pytest\nfrom fx.core import parse\n\ndef test_variant():\n    with pytest.raises(FileNotFoundError, match=\"m\"):\n        parse('abcdefghijklmnop')\n",
+        Some("        raise FileNotFoundError(2, \"m\")"),
+        "        raise OSError(2, \"m\")",
+        true,
+    )?;
+    if !stale_pins(&errno).is_empty() {
+        return Err(format!("an OSError raise must fail open: {errno:?}"));
+    }
+    // A constructor that validates its arguments (`UnicodeDecodeError` takes
+    // five) may raise `TypeError` itself, and a production-local rebinding
+    // (`TypeError = ValueError`) changes the class raised; both fail open.
+    let typed_raises = RAISES_BODY.replace("{T}", "TypeError");
+    for (source, old, new) in [
+        (
+            "def parse(s):\n    if len(s) > 10:\n        raise UnicodeDecodeError(\"m\")\n    return len(s)\n",
+            "        raise TypeError(\"m\")",
+            "        raise UnicodeDecodeError(\"m\")",
+        ),
+        (
+            "def parse(s):\n    ValueError = TypeError\n    if len(s) > 10:\n        raise ValueError(\"m\")\n    return len(s)\n",
+            "        raise TypeError(\"m\")",
+            "        raise ValueError(\"m\")",
+        ),
+    ] {
+        let tests = format!(
+            "import pytest\nfrom fx.core import parse\n\ndef test_variant():\n{typed_raises}"
+        );
+        let finding = classify_with_context(source, &tests, Some(old), new, true)?;
+        if !stale_pins(&finding).is_empty() {
+            return Err(format!("{new:?} must fail open: {finding:?}"));
+        }
+    }
+    // A test module that assigns the expected name fails open.
+    let assigned = classify_with_context(
+        "def parse(s):\n    if len(s) > 10:\n        raise TypeError(\"m\")\n    return len(s)\n",
+        &format!(
+            "import pytest\nfrom fx.core import parse\n\nValueError = Exception\n\ndef test_variant():\n{raises}"
+        ),
+        Some("        raise ValueError(\"m\")"),
+        "        raise TypeError(\"m\")",
+        true,
+    )?;
+    if !stale_pins(&assigned).is_empty() {
+        return Err(format!(
+            "an assigned expected name must fail open: {assigned:?}"
+        ));
+    }
+    // A test module that rebinds the builtin name fails open.
+    let rebound = classify_with_context(
+        "def parse(s):\n    if len(s) > 10:\n        raise TypeError(\"m\")\n    return len(s)\n",
+        &format!(
+            "import pytest\nfrom builtins import TypeError as ValueError\nfrom fx.core import parse\n\ndef test_variant():\n{raises}"
+        ),
+        Some("        raise ValueError(\"m\")"),
+        "        raise TypeError(\"m\")",
+        true,
+    )?;
+    if !stale_pins(&rebound).is_empty() {
+        return Err(format!(
+            "a rebound expected name must fail open: {rebound:?}"
+        ));
+    }
+    // A class overriding `__new__`, or with several bases, fails open.
+    let tests = format!(
+        "{IMPORTS}\ndef test_variant():\n    with pytest.raises(EmptyError, match=\"too long\"):\n        parse('abcdefghijklmnop')\n"
+    );
+    for class in [
+        "class TooLongError(Exception):\n    def __new__(cls, message):\n        return EmptyError(message)\n",
+        "class Mixin(Exception): pass\nclass TooLongError(Mixin, Exception): pass\n",
+        "class TooLongError(Exception):\n    if True:\n        def __new__(cls, message):\n            return EmptyError(message)\n",
+        "class TooLongError(Exception):\n    __new__ = staticmethod(lambda cls, message: EmptyError(message))\n",
+        "def redirect(cls):\n    return EmptyError\n\n@redirect\nclass TooLongError(Exception): pass\n",
+        "class TooLongError(Exception):\n    def __init__(self, message):\n        raise EmptyError(message)\n",
+        "class Base(Exception):\n    def __init__(self, message):\n        raise EmptyError(message)\nclass TooLongError(Base): pass\n",
+    ] {
+        let source = format!(
+            "class EmptyError(Exception): pass\n{class}\ndef parse(s):\n    if len(s) > 10:\n        raise TooLongError(\"too long\")\n    return len(s)\n"
+        );
+        let finding = classify(
+            &source,
+            &tests,
+            "        raise EmptyError(\"too long\")",
+            "        raise TooLongError(\"too long\")",
+        )?;
+        if !stale_pins(&finding).is_empty() {
+            return Err(format!("{class:?} must fail open: {finding:?}"));
+        }
+    }
+    Ok(())
+}
+
+// #13753: bare raises, the `expected_exception=` keyword and a tuple of the
+// old class are read; dotted names and any other member are not.
+fn shaped_finding(old_raise: &str, new_raise: &str, expected: &str) -> Result<Finding, String> {
+    let source =
+        format!("def parse(s):\n    if len(s) > 10:\n        {new_raise}\n    return len(s)\n");
+    let body = format!(
+        "    with pytest.raises({expected}, match=\"m\"):\n        parse('abcdefghijklmnop')\n"
+    );
+    let tests = format!("import pytest\nfrom fx.core import parse\n\ndef test_variant():\n{body}");
+    classify_with_context(
+        &source,
+        &tests,
+        Some(&format!("        {old_raise}")),
+        &format!("        {new_raise}"),
+        true,
+    )
+}
+
+#[test]
+fn keyword_and_tuple_old_class_expectations_record_one_stale_pin() -> Check {
+    for expected in [
+        "expected_exception=ValueError",
+        "(ValueError, ValueError)",
+        "expected_exception=(ValueError, ValueError)",
+    ] {
+        let finding = shaped_finding(
+            "raise ValueError(\"m\")",
+            "raise TypeError(\"m\")",
+            expected,
+        )?;
+        if stale_pins(&finding).len() != 1 {
+            return Err(format!("{expected} must pin once: {finding:?}"));
+        }
+        if finding.class != ExposureClass::Exposed {
+            return Err(format!("{expected} changed the class: {finding:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn keyword_and_tuple_expectations_that_can_see_the_new_type_record_no_pin() -> Check {
+    for expected in [
+        // The new type is asserted, alone or in a tuple.
+        "expected_exception=TypeError",
+        "(ValueError, TypeError)",
+        "expected_exception=(TypeError, ValueError)",
+        // Another member than the old class, even a broad one.
+        "(ValueError, Exception)",
+        "Exception",
+        "expected_exception=Exception",
+        // A dotted spelling is not the old class.
+        "builtins.ValueError",
+        "(ValueError, builtins.ValueError)",
+        "expected_exception=builtins.ValueError",
+        // Positional and keyword together, an empty tuple and a starred member.
+        "ValueError, expected_exception=ValueError",
+        "()",
+        "(*errors,)",
+    ] {
+        let finding = shaped_finding(
+            "raise ValueError(\"m\")",
+            "raise TypeError(\"m\")",
+            expected,
+        )?;
+        if !stale_pins(&finding).is_empty() {
+            return Err(format!("{expected} must record no pin: {finding:?}"));
+        }
+    }
+    // The new class a subclass of the old one: the tuple still passes.
+    let subclass = shaped_finding(
+        "raise LookupError(\"m\")",
+        "raise KeyError(\"m\")",
+        "(LookupError, LookupError)",
+    )?;
+    if !stale_pins(&subclass).is_empty() {
+        return Err(format!("a subclass raise must record no pin: {subclass:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn bare_raises_of_resolvable_classes_record_a_pin() -> Check {
+    let bare = shaped_finding("raise ValueError", "raise TypeError", "ValueError")?;
+    if stale_pins(&bare).len() != 1 {
+        return Err(format!("a bare raise must pin once: {bare:?}"));
+    }
+    // A bare raise of a subclass, of a constructor-checked class, and of a
+    // name that is not a resolvable class record nothing.
+    for (old, new, expected) in [
+        ("raise LookupError", "raise KeyError", "LookupError"),
+        ("raise TypeError", "raise OSError", "TypeError"),
+        ("raise ValueError", "raise error", "ValueError"),
+        ("raise ValueError", "raise TypeError", "TypeError"),
+    ] {
+        let finding = shaped_finding(old, new, expected)?;
+        if !stale_pins(&finding).is_empty() {
+            return Err(format!("{old} -> {new} must record no pin: {finding:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn dotted_raises_record_no_pin() -> Check {
+    // `mod.Exc` could alias an ancestor of the other class, so it is not read,
+    // whether the dotted name is the old or the new raise and however the
+    // test spells it.
+    for (old, new, expected) in [
+        ("raise mod.Exc(\"m\")", "raise TypeError(\"m\")", "mod.Exc"),
+        ("raise mod.Exc", "raise TypeError", "mod.Exc"),
+        (
+            "raise ValueError(\"m\")",
+            "raise mod.Exc(\"m\")",
+            "ValueError",
+        ),
+        ("raise ValueError", "raise mod.Exc", "ValueError"),
+        ("raise mod.Old(\"m\")", "raise mod.New(\"m\")", "mod.Old"),
+    ] {
+        let finding = shaped_finding(old, new, expected)?;
+        if !stale_pins(&finding).is_empty() {
+            return Err(format!("{old} -> {new} must record no pin: {finding:?}"));
+        }
+    }
+    Ok(())
+}
+
 // Builtin exception classes (#13869): the hierarchy is fixed, so a class-only
 // context naming one of two disjoint builtins discriminates the swap.
 const BUILTIN_SOURCE: &str = "def checked(total):\n    if total < 0:\n        raise ValueError(\"negative\")\n    return total\n";

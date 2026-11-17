@@ -167,10 +167,10 @@ fn baseline_diff(args: &[String]) -> Result<(), String> {
 fn baseline_update(args: &[String]) -> Result<(), String> {
     let options = parse_baseline_update_options(args)?;
     if !options.remove_resolved && !options.migrate_legacy_identities {
-        return Err(
-            "baseline update requires --remove-resolved or --migrate-legacy-identities; adopting new debt is not supported; pass `--remove-resolved` or `--migrate-legacy-identities`"
-                .to_string(),
-        );
+        return Err(crate::cli::usage_refusal::missing_required(
+            "--remove-resolved",
+            "baseline update requires --remove-resolved or --migrate-legacy-identities; adopting new debt is not supported; pass `--remove-resolved` or `--migrate-legacy-identities`",
+        ));
     }
     let baseline_path = output::baseline_update::display_path(&options.baseline);
     let current_path = output::baseline_update::display_path(&options.current);
@@ -303,8 +303,10 @@ impl BaselineCreateParseState {
 
     fn into_options(self) -> Result<BaselineCreateOptions, String> {
         let from = self.from.ok_or_else(|| {
-            "baseline create requires --from <gate-decision.json> or --from-check <check.json>"
-                .to_string()
+            crate::cli::usage_refusal::missing_required(
+                "--from",
+                "baseline create requires --from <gate-decision.json> or --from-check <check.json>",
+            )
         })?;
         let from_flag = if self.from_check {
             "--from-check"
@@ -360,11 +362,16 @@ fn parse_baseline_diff_options(args: &[String]) -> Result<BaselineDiffOptions, S
     }
 
     let baseline = baseline.ok_or_else(|| {
-        "baseline diff requires --baseline <path>; add `--baseline <path>` to the command"
-            .to_string()
+        crate::cli::usage_refusal::missing_required(
+            "--baseline",
+            "baseline diff requires --baseline <path>; add `--baseline <path>` to the command",
+        )
     })?;
     let current = current.ok_or_else(|| {
-        "baseline diff requires --current <path>; add `--current <path>` to the command".to_string()
+        crate::cli::usage_refusal::missing_required(
+            "--current",
+            "baseline diff requires --current <path>; add `--current <path>` to the command",
+        )
     })?;
     super::refuse_output_naming_input(
         "baseline diff",
@@ -426,12 +433,16 @@ fn parse_baseline_update_options(args: &[String]) -> Result<BaselineUpdateOption
     }
 
     let baseline = baseline.ok_or_else(|| {
-        "baseline update requires --baseline <path>; add `--baseline <path>` to the command"
-            .to_string()
+        crate::cli::usage_refusal::missing_required(
+            "--baseline",
+            "baseline update requires --baseline <path>; add `--baseline <path>` to the command",
+        )
     })?;
     let current = current.ok_or_else(|| {
-        "baseline update requires --current <path>; add `--current <path>` to the command"
-            .to_string()
+        crate::cli::usage_refusal::missing_required(
+            "--current",
+            "baseline update requires --current <path>; add `--current <path>` to the command",
+        )
     })?;
     // `--out` naming `--baseline` is the documented in-place update (the
     // default when `--out` is omitted); only `--current` is protected, and

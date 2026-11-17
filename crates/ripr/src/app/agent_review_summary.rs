@@ -313,6 +313,119 @@ mod tests {
         Ok(())
     }
 
+    /// Rewrites the complete-artifact receipt's recorded `status` line.
+    fn rewrite_receipt_status(root: &Path, replacement: &str) -> Result<(), String> {
+        let path = root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT);
+        let text =
+            std::fs::read_to_string(&path).map_err(|err| format!("read receipt fixture: {err}"))?;
+        let advisory = "  \"status\": \"advisory\",\n";
+        if text.matches(advisory).count() != 1 {
+            return Err("receipt fixture must record exactly one advisory status line".to_string());
+        }
+        write_file(&path, &text.replace(advisory, replacement))
+    }
+
+    /// The receipt owner issues `advisory` only over a complete, valid
+    /// producer analysis outcome. A receipt that records any other status (or
+    /// none) still names a movement, but that movement is not review
+    /// evidence: the packet must not read `ready` even when every other
+    /// artifact, including a later complete analysis outcome, is in place.
+    #[test]
+    fn non_advisory_receipt_keeps_the_review_packet_incomplete() -> Result<(), String> {
+        let cases = [
+            (
+                "invalid",
+                "  \"status\": \"invalid\",\n",
+                "the agent receipt status is invalid, not advisory",
+            ),
+            (
+                "incomplete",
+                "  \"status\": \"incomplete\",\n",
+                "the agent receipt status is incomplete, not advisory",
+            ),
+            (
+                "no-status",
+                "",
+                "the agent receipt does not record an advisory status",
+            ),
+            (
+                "unknown-status",
+                "  \"status\": \"ready\\n# Injected heading\",\n",
+                "the agent receipt does not record an advisory status",
+            ),
+        ];
+        for (label, replacement, reason) in cases {
+            let root = unique_agent_review_summary_test_dir(&format!("non-advisory-{label}"))?;
+            write_complete_artifacts(&root)?;
+
+            // Control: the same artifact tree with the advisory receipt is ready.
+            let control = build_agent_review_summary_report(&root, Path::new("."));
+            assert_eq!(control.status, "ready", "{label} control");
+
+            rewrite_receipt_status(&root, replacement)?;
+            let report = build_agent_review_summary_report(&root, Path::new("."));
+            let value: Value = serde_json::from_str(&render_agent_review_summary_json(&report)?)
+                .map_err(|err| format!("parse review summary JSON: {err}"))?;
+            let markdown = render_agent_review_summary_markdown(&report);
+
+            assert_eq!(value["status"], "incomplete", "{label}");
+            // The movement is still copied from the receipt, with its artifact.
+            assert_eq!(value["static_movement"]["state"], "improved", "{label}");
+            assert_eq!(
+                value["static_movement"]["evidence_artifact"], WORKFLOW_AGENT_RECEIPT_ARTIFACT,
+                "{label}"
+            );
+            assert_eq!(
+                value["reviewer_summary"]["headline"],
+                format!("Review packet is incomplete for seam-a: {reason}."),
+                "{label}"
+            );
+            assert_eq!(
+                value["reviewer_summary"]["what_changed"],
+                format!(
+                    "The recorded static movement is not review evidence: {reason}. Reissue the receipt over a complete analysis outcome."
+                ),
+                "{label}"
+            );
+            assert!(
+                markdown.contains(&format!(
+                    "Receipt: {reason}; the movement above is not review evidence.\n"
+                )),
+                "{label}: {markdown}"
+            );
+            assert!(
+                !markdown.contains("Review packet is ready"),
+                "{label}: {markdown}"
+            );
+            // The reason is a fixed phrase; receipt text is never echoed into it.
+            assert!(
+                !markdown.contains("Injected heading"),
+                "{label}: {markdown}"
+            );
+
+            std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        }
+        Ok(())
+    }
+
+    /// An advisory receipt renders no receipt-status caveat.
+    #[test]
+    fn advisory_receipt_renders_no_receipt_status_caveat() -> Result<(), String> {
+        let root = unique_agent_review_summary_test_dir("advisory-no-caveat")?;
+        write_complete_artifacts(&root)?;
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let markdown = render_agent_review_summary_markdown(&report);
+        assert_eq!(report.status, "ready");
+        assert!(
+            markdown.contains("Review packet is ready for seam seam-a."),
+            "{markdown}"
+        );
+        assert!(!markdown.contains("not review evidence"), "{markdown}");
+        assert!(!markdown.contains("\nReceipt:"), "{markdown}");
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
     #[test]
     fn agent_review_summary_reports_missing_receipt_with_next_command() -> Result<(), String> {
         let root = unique_agent_review_summary_test_dir("missing-receipt")?;
@@ -940,9 +1053,12 @@ mod tests {
     fn agent_review_summary_handles_receipt_without_next_action() -> Result<(), String> {
         let root = unique_agent_review_summary_test_dir("no-next-action")?;
         write_complete_artifacts(&root)?;
+        // The receipt is advisory, as an issued receipt always is: this test
+        // is about the absent `next_action`, not about receipt status
+        // (#14245 pins what a receipt with no advisory status reads as).
         write_file(
             &root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT),
-            r#"{"seam":{"seam_id":"seam-without-next","change":"unchanged"}}"#,
+            r#"{"status":"advisory","seam":{"seam_id":"seam-without-next","change":"unchanged"}}"#,
         )?;
 
         let report = build_agent_review_summary_report(&root, Path::new("."));

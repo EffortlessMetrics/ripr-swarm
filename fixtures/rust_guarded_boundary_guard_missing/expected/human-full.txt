@@ -24,7 +24,7 @@ Change type
   family: predicate
   delta:  control (changes which code path runs)
   owner:  src/lib.rs::shipping_cost
-  gap id (for scripts): gap:rust:src/lib.rs:shipping_cost:predicate_boundary:predicate:order_cents==free_over_cents!express
+  gap id (for scripts): gap:rust:src/lib.rs:shipping_cost:predicate_boundary:predicate:order_cents==free_over_cents
 
 Static exposure
   infection_unknown (warning, confidence 0.66)

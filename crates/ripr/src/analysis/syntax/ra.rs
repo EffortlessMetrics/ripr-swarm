@@ -13,8 +13,9 @@ mod probe_shapes;
 mod property_macros;
 pub(crate) use closure_callbacks::{
     ForwardedCallbackParam, InvokedCallbackParam, call_making_closure_positions,
-    closure_argument_positions, forwarded_callback_params, invoked_callback_params,
-    macro_call_columns, param_never_mentioned, passes_call_making_closure,
+    closure_argument_positions, closure_argument_positions_many, forwarded_callback_params,
+    invoked_callback_params, invoked_callback_params_many, macro_call_columns,
+    param_never_mentioned, passes_call_making_closure, passes_call_making_closure_many,
     unconditionally_invoked_param_positions,
 };
 pub(crate) use owner_scopes::{EnclosingScopeKind, enclosing_scopes};
@@ -338,6 +339,27 @@ pub(crate) fn parser_oracles_for_function(
         function_start_line,
         function_text,
         || parser_oracles_for_function_uncached(function_text, function_start_line),
+    )
+}
+
+/// [`parser_oracles_for_function`] for many `(function_text, start_line)`
+/// queries under the same memo key, the scope's misses computed on the rayon
+/// pool (#12947).
+pub(crate) fn parser_oracles_for_functions_many(
+    functions: &[(&str, usize)],
+) -> Vec<Option<Vec<OracleFact>>> {
+    let queries = functions
+        .iter()
+        .map(|(source, start_line)| super::run_memo::MemoQuery {
+            discriminator: *start_line,
+            extra: "",
+            source,
+        })
+        .collect::<Vec<_>>();
+    super::run_memo::memoize_many_with(
+        super::run_memo::Product::FunctionOracles,
+        &queries,
+        |query| parser_oracles_for_function_uncached(query.source, query.discriminator),
     )
 }
 
@@ -998,6 +1020,7 @@ fn summarize_file_with_collectors(
             && a.kind == b.kind
             && a.text == b.text
     });
+    retain_probe_shapes_outside_test_bodies(&mut file_probe_shapes, &functions);
 
     let mut item_scopes = collect_scopes(&source, &line_index);
     let keep: std::collections::BTreeSet<&str> = functions
@@ -2158,6 +2181,61 @@ fn push_probe_shape(
     let link_start = (u32::from(start) as usize).saturating_add(leading);
     let text = SourceText::shared_or_owned(source, link_start, &snippet);
     push_probe_shape_with_text(shapes, line_index, kind, start, end, text, None);
+}
+
+/// Drop probe shapes that sit strictly inside a plain `#[test]` function body
+/// and inside no other function (#13703). Tests are the instrument, not the
+/// surface under test: diff probes treat those lines as test evidence, and
+/// repo probes, seam inventory and constant readers skip evidence-role
+/// owners, so the shapes only cost memory and cache bytes.
+///
+/// The rule stays narrow so the parser-time decision cannot disagree with
+/// the roles consumers read after test-style normalization:
+/// - only a bare `#[test]` attribute qualifies (argument-bearing harness
+///   attributes are re-read by normalization and may resolve differently);
+/// - a shape on the test's opening line stays (shared-line rule, #9076);
+/// - a shape inside any other function, such as a nested helper (#9177),
+///   stays whatever that function's role;
+/// - `error_path` shapes always stay, because error-path twin pairing reads
+///   them across the whole file by byte order.
+fn retain_probe_shapes_outside_test_bodies(
+    shapes: &mut Vec<ProbeShapeFact>,
+    functions: &[FunctionFact],
+) {
+    let is_plain_test = |function: &&FunctionFact| {
+        function.source_role == FunctionSourceRole::TestAttribute
+            && function.attrs.iter().any(|attr| {
+                attr.chars()
+                    .filter(|ch| !ch.is_whitespace())
+                    .eq("#[test]".chars())
+            })
+    };
+    let test_bodies: Vec<(usize, usize)> = functions
+        .iter()
+        .filter(is_plain_test)
+        .map(|function| (function.start_line, function.end_line))
+        .collect();
+    if test_bodies.is_empty() {
+        return;
+    }
+    let other_functions: Vec<(usize, usize)> = functions
+        .iter()
+        .filter(|function| !is_plain_test(function))
+        .map(|function| (function.start_line, function.end_line))
+        .collect();
+    shapes.retain(|shape| {
+        if shape.kind == ProbeShapeKind::ErrorPath {
+            return true;
+        }
+        let (start, end) = (shape.start_line(), shape.end_line());
+        let inside_test_body = test_bodies
+            .iter()
+            .any(|&(fn_start, fn_end)| fn_start < start && end <= fn_end);
+        !inside_test_body
+            || other_functions
+                .iter()
+                .any(|&(fn_start, fn_end)| fn_start <= start && end <= fn_end)
+    });
 }
 
 fn push_probe_shape_with_text(
@@ -3547,6 +3625,81 @@ fn function_span(function: &FunctionFact) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_body_probe_shapes_are_not_stored_but_production_and_nested_shapes_are()
+    -> Result<(), String> {
+        let source = "\
+pub fn price(amount: i32) -> i32 {
+    if amount > 10 { return amount - 1; }
+    amount
+}
+
+#[test]
+fn prices_discount() {
+    if price(11) > 9 { panic!(\"x\"); }
+    fn helper(v: i32) -> bool {
+        v > 3
+    }
+    assert!(helper(price(4)));
+}
+
+#[tokio::test]
+async fn async_price() {
+    if price(12) > 9 { panic!(\"y\"); }
+}
+
+#[test]
+fn early_error() -> Result<(), String> {
+    if price(1) > 0 { return Err(String::new()); }
+    Ok(())
+}
+";
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        let lines: Vec<usize> = facts
+            .probe_shapes
+            .iter()
+            .map(ProbeShapeFact::start_line)
+            .collect();
+        // Production body shapes stay.
+        assert!(
+            lines.contains(&2),
+            "production predicate missing: {lines:?}"
+        );
+        // The nested production-role helper inside the test keeps its shape.
+        assert!(
+            lines.contains(&10),
+            "nested helper shape missing: {lines:?}"
+        );
+        // Shapes on the test's own body lines (predicate, call deletion,
+        // assertion) are dropped.
+        assert!(
+            !lines.iter().any(|line| matches!(line, 8 | 12)),
+            "test-body shapes were stored: {lines:?}"
+        );
+        // Only a bare `#[test]` qualifies: the tokio test's body keeps its
+        // predicate, because normalization re-reads harness attributes.
+        assert!(lines.contains(&17), "tokio test shape missing: {lines:?}");
+        // Error-path shapes stay even inside a plain test (twin pairing reads
+        // them file-wide); the plain test's predicate on that line is gone.
+        let line_22: Vec<&str> = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.start_line() == 22)
+            .map(|shape| shape.kind.as_str())
+            .collect();
+        assert!(
+            line_22.contains(&"error_path"),
+            "error path dropped: {line_22:?}"
+        );
+        assert!(
+            !line_22.contains(&"predicate"),
+            "test predicate kept: {line_22:?}"
+        );
+        // The test functions are still indexed as tests.
+        assert_eq!(facts.tests.len(), 3);
+        Ok(())
+    }
     use std::error::Error;
     use std::fs;
     use std::path::{Path, PathBuf};

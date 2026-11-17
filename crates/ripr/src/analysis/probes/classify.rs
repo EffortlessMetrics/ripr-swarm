@@ -233,11 +233,24 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             })
     };
     let mut selected = Vec::<(ParserProbeShape<'a>, Option<(u8, bool, usize)>)>::new();
+    // #14192: parsed at most once per changed line, and only when a
+    // multi-line returned-value shape spans it.
+    let mut parsed: Option<Option<ra_ap_syntax::Parse<ast::SourceFile>>> = None;
     for shape in &facts.probe_shapes {
         if shape.start_line() > line || line > shape.end_line() {
             continue;
         }
         let family = family_for_probe_shape(shape.kind);
+        if matches!(family, ProbeFamily::ReturnValue | ProbeFamily::ErrorPath)
+            && shape.start_line() < line
+            && line < shape.end_line()
+            && parsed
+                .get_or_insert_with(|| last_file_parse(&facts.source))
+                .as_ref()
+                .is_some_and(|parse| line_is_nested_statement(&facts.source, parse, shape, line))
+        {
+            continue;
+        }
         let unsafe_boundary = shape.kind == ProbeShapeKind::UnsafeBoundary;
         if unsafe_boundary && !unsafe_boundary_owns_changed_line(facts, shape, line) {
             continue;
@@ -302,6 +315,129 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             .then(left.text.cmp(right.text))
     });
     selected.into_iter().map(|(shape, _)| shape).collect()
+}
+
+thread_local! {
+    /// #14192: the last whole-file parse [`line_is_nested_statement`] read.
+    /// A diff visits one file's changed lines in a row, and a large file is
+    /// past the shared memo's size cap, so one entry keyed by the full text
+    /// saves a parse per changed line.
+    static LAST_FILE_PARSE: std::cell::RefCell<Option<(String, Option<ra_ap_syntax::Parse<ast::SourceFile>>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn last_file_parse(source: &str) -> Option<ra_ap_syntax::Parse<ast::SourceFile>> {
+    LAST_FILE_PARSE.with(|last| {
+        let mut last = last.borrow_mut();
+        if let Some((text, parse)) = last.as_ref()
+            && text == source
+        {
+            return parse.clone();
+        }
+        let parse = parse_clean_source_file(source);
+        *last = Some((source.to_string(), parse.clone()));
+        parse
+    })
+}
+
+/// #14192: whether the changed `line` lies wholly inside a statement (`let`,
+/// expression statement or item) of a block nested in the returned
+/// expression `shape` spans: `let doubled = item * 2;` inside
+/// `with(|| { .. })`, `Box::pin(async move { .. })` or an `async { .. }` tail.
+/// Such a line is a statement of its own block, not part of the returned
+/// value, so the outer `return_value` / `error_path` shape does not apply to
+/// it; a `return` on it keeps its own narrower shape. A nested block's tail
+/// expression, a method-chain link and an argument line are not statements
+/// and keep the outer shape. Any shape or line the parse cannot place keeps
+/// today's selection.
+fn line_is_nested_statement(
+    source: &str,
+    parse: &ra_ap_syntax::Parse<ast::SourceFile>,
+    shape: &ProbeShapeFact,
+    line: usize,
+) -> bool {
+    let Some(line_range) = source_line_byte_range(source, line) else {
+        return false;
+    };
+    let Some(text) = source.get(line_range.clone()) else {
+        return false;
+    };
+    let leading = text.len() - text.trim_start().len();
+    let trailing = text.len() - text.trim_end().len();
+    if text.trim().is_empty() {
+        return false;
+    }
+    let (Ok(content_start), Ok(content_end)) = (
+        u32::try_from(line_range.start + leading),
+        u32::try_from(line_range.end - trailing),
+    ) else {
+        return false;
+    };
+    let shape_range = ra_ap_syntax::TextRange::new(shape.start_byte.into(), shape.end_byte.into());
+    let content = ra_ap_syntax::TextRange::new(content_start.into(), content_end.into());
+    if shape_range.is_empty() || !shape_range.contains_range(content) {
+        return false;
+    }
+    let root = parse.tree();
+    if shape_range.end() > root.syntax().text_range().end() {
+        return false;
+    }
+    let ra_ap_syntax::NodeOrToken::Node(outer) = root.syntax().covering_element(shape_range) else {
+        return false;
+    };
+    if outer.text_range() != shape_range {
+        return false;
+    }
+    // A trailing `// comment` sits outside the statement's range, so the line
+    // content ends at its last non-trivia token (#14917 review).
+    let mut content_end = content.end();
+    while content_end > content.start() {
+        let Some(token) = root
+            .syntax()
+            .token_at_offset(content_end)
+            .left_biased()
+            .filter(|token| token.kind().is_trivia())
+        else {
+            break;
+        };
+        content_end = token.text_range().start().max(content.start());
+    }
+    let content = ra_ap_syntax::TextRange::new(content.start(), content_end);
+    if content.is_empty() {
+        return false;
+    }
+    let start = match root.syntax().covering_element(content) {
+        ra_ap_syntax::NodeOrToken::Node(node) => node,
+        ra_ap_syntax::NodeOrToken::Token(token) => match token.parent() {
+            Some(parent) => parent,
+            None => return false,
+        },
+    };
+    // The innermost statement of a block that holds the whole line, walking up
+    // from the line rather than down the whole shape (#14917 review).
+    let Some(statement) = start.ancestors().find(|node| {
+        ast::Stmt::can_cast(node.kind())
+            && node
+                .parent()
+                .is_some_and(|parent| ast::StmtList::can_cast(parent.kind()))
+            && node.text_range().contains_range(content)
+    }) else {
+        return false;
+    };
+    if !shape_range.contains_range(statement.text_range()) || statement == outer {
+        return false;
+    }
+    // Only a closure or `async` body between the statement and the shape runs
+    // as its own unit; a statement of a plain, `if`, `match` or `loop` block
+    // still runs in the owner's own body and feeds its value (#14917 review).
+    statement
+        .ancestors()
+        .skip(1)
+        .take_while(|node| outer.text_range().contains_range(node.text_range()))
+        .any(|node| {
+            ast::ClosureExpr::can_cast(node.kind())
+                || ast::BlockExpr::cast(node).is_some_and(|block| block.async_token().is_some())
+        })
 }
 
 /// A line-only diff cannot identify which bytes changed when code outside an
@@ -463,18 +599,97 @@ fn is_token_run(haystack: &str, masked: &[u8], start: usize, needle: &str) -> bo
     open_start && open_end
 }
 
-/// Whether `needle` occurs in `haystack` as a token run (see
-/// [`is_token_run`]): `total > limit` is not found inside the old
-/// `subtotal > limit`, and text inside a string or comment does not count.
-pub(super) fn contains_token_run(haystack: &str, needle: &str) -> bool {
+/// How often `needle` occurs in `haystack` as a code token run that no
+/// neighbouring operand syntax extends (#14722): `total > limit` is not
+/// found in `subtotal > limit`, `total > limit.max`, `total > limit[0]`,
+/// `total > limit + 1` or `x.total > limit`, but is found in
+/// `let over = total > limit;`. A shape the diff producer cannot cut is
+/// unchanged only when the old line holds it at least this often.
+pub(super) fn operand_bounded_token_run_count(haystack: &str, needle: &str) -> usize {
     if needle.is_empty() {
-        return false;
+        return 0;
     }
     let masked = mask_comments_and_strings(haystack);
-    let masked = masked.as_bytes();
     haystack
         .match_indices(needle)
-        .any(|(start, _)| is_token_run(haystack, masked, start, needle))
+        .filter(|(start, _)| {
+            // Neighbours are read on the masked line, so a comment beside
+            // the comparison (`a > b // note`) is not read as an operator.
+            let next = masked
+                .get(start + needle.len()..)
+                .unwrap_or_default()
+                .trim_start();
+            let previous = masked.get(..*start).unwrap_or_default().trim_end();
+            is_token_run(haystack, masked.as_bytes(), *start, needle)
+                && !extends_rightward(next)
+                && !extends_leftward(previous)
+        })
+        .count()
+}
+
+/// Whether `next` (the text after a match, leading space trimmed) continues
+/// the right operand: a member, call, index, `?`, an arithmetic or bit
+/// operator (`|` and `&` but not `||`/`&&`, which end the operand), a shift,
+/// a macro `!`, a path, or an `as` cast.
+fn extends_rightward(next: &str) -> bool {
+    let doubled = |op: &str| next.starts_with(op);
+    if next.starts_with([
+        '.', '(', '[', '?', '+', '-', '*', '/', '%', ':', '^', '<', '>', '!',
+    ]) {
+        return true;
+    }
+    if (next.starts_with('|') && !doubled("||")) || (next.starts_with('&') && !doubled("&&")) {
+        return true;
+    }
+    next.strip_prefix("as")
+        .is_some_and(|rest| !rest.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_'))
+}
+
+/// Whether `previous` (the text before a match, trailing space trimmed)
+/// continues the left operand: a member or path, an arithmetic or bit
+/// operator (`|` and `&` but not `||`/`&&`), a unary `!`, or a shift.
+/// A struct field `:`, a match arrow `=>`, a return arrow `->`, a range
+/// `..` and closure parameters `|x|` end the operand instead.
+fn extends_leftward(previous: &str) -> bool {
+    if previous.ends_with("..") {
+        return false;
+    }
+    if previous.ends_with(['.', '+', '-', '*', '/', '%', '!', '^']) {
+        return true;
+    }
+    let single = |op: char, doubled: &str| previous.ends_with(op) && !previous.ends_with(doubled);
+    (single('|', "||") && !closes_closure_parameters(previous))
+        || single('&', "&&")
+        || previous.ends_with("::")
+        || previous.ends_with(">>")
+        || previous.ends_with("<<")
+}
+
+/// Whether `previous` ends with a closure parameter list (`|x|`,
+/// `move |a, b: u8|`, `|x: &Vec<u8>|`) rather than a bit-or operand: the
+/// opening `|` follows an expression start (`(`, `,`, `=`, `=>`, `{`, `;`,
+/// `[`, the line start, `move`, `return` or another closure's parameters),
+/// not a left operand as in `m | n | a > b`. A binary `|` always has a left
+/// operand, so the parameter text itself needs no check.
+fn closes_closure_parameters(previous: &str) -> bool {
+    let Some(head) = previous.strip_suffix('|') else {
+        return false;
+    };
+    let Some(open) = head.rfind('|') else {
+        return false;
+    };
+    let before = head.get(..open).unwrap_or_default().trim_end();
+    let ends_with_word = |word: &str| {
+        before
+            .strip_suffix(word)
+            .is_some_and(|rest| !rest.ends_with(|ch: char| ch.is_alphanumeric() || ch == '_'))
+    };
+    before.is_empty()
+        || before.ends_with(['(', ',', '=', '{', ';', '['])
+        || before.ends_with("=>")
+        || ends_with_word("move")
+        || ends_with_word("return")
+        || closes_closure_parameters(before)
 }
 
 /// A record field must be a whole syntactic unit, not the head or tail of a
@@ -2288,5 +2503,83 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    /// #14722 review: an operator that continues an operand hides the
+    /// comparison, and one that ends it (`&&`, `||`, a field `:`, `=>`,
+    /// `->`, a range, closure parameters, a comment) does not.
+    #[test]
+    fn operand_bounded_count_reads_operand_boundaries() {
+        let count = |haystack: &str| operand_bounded_token_run_count(haystack, "a > b");
+        for extended in [
+            "(a > b as u8, c)",
+            "(a > b | m, c)",
+            "(a > b & m, c)",
+            "(a > b ^ m, c)",
+            "(a > b << 1, c)",
+            "(a > b >> 1, c)",
+            "(a > b!(x), c)",
+            "(a > b::C, c)",
+            "(m | a > b, c)",
+            "(m & a > b, c)",
+            "(m >> a > b, c)",
+            "(m::a > b, c)",
+            "(!a > b, c)",
+            "(a > b.c, c)",
+            "(a > b(c), c)",
+            "(a > b[0], c)",
+            "(a > b?, c)",
+            "(a > b + 1, c)",
+            "(a > b - 1, c)",
+            "(a > b * 2, c)",
+            "(a > b / 2, c)",
+            "(a > b % 2, c)",
+            "(a > b < c, c)",
+            "(m.a > b, c)",
+            "(m + a > b, c)",
+            "(m - a > b, c)",
+            "(m * a > b, c)",
+            "(m / a > b, c)",
+            "(m % a > b, c)",
+            "(m ^ a > b, c)",
+            "(m << a > b, c)",
+            "(m | n | a > b, c)",
+            "(f(x) | a > b, c)",
+            "(m, n | k | a > b)",
+            "x = m | n | a > b;",
+            "{ m | n | a > b }",
+            "(remove |x| a > b, c)",
+            "(x || y | a > b, c)",
+        ] {
+            assert_eq!(count(extended), 0, "{extended}");
+        }
+        for bounded in [
+            "(x && a > b, c)",
+            "(x || a > b, c)",
+            "(a > b && x, c)",
+            "(a > b || x, c)",
+            "(S { ok: a > b }, c)",
+            "x => a > b,",
+            "fn f() -> bool { a > b }",
+            "(a > b assert, c)",
+            "(v.any(|x| a > b), c)",
+            "(move |x, y: u8| a > b, c)",
+            "let f = |x| a > b;",
+            "|x| a > b",
+            "(c, |x| a > b)",
+            "{ |x| a > b }",
+            "(v.any(|x: &Vec<u8>| a > b), c)",
+            "(v.any(|[x, _]: [u8; 2]| a > b), c)",
+            "(v.any(|x: &'a T| a > b), c)",
+            "x => |x| a > b,",
+            "return |x| a > b;",
+            "(|x| |y| a > b, c)",
+            "(x && a > b, c) // note",
+            "x && a > b // a / b",
+            "(/* why */ a > b, c)",
+            "(..a > b, c)",
+        ] {
+            assert_eq!(count(bounded), 1, "{bounded}");
+        }
     }
 }

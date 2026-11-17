@@ -976,3 +976,60 @@ fn committed_corpus_tests_do_not_pin_spec_example_counts() -> Result<(), String>
     }
     Ok(())
 }
+
+#[test]
+fn abstaining_reject_examples_open_with_reject_and_pin_an_unresolved_outcome() {
+    let spec = "## Behavior\n\n1. Reject: not an example; it stays unresolved.\n\n## Acceptance Examples\n\n1. Accept: a resolved row stays unresolved elsewhere.\n2. Reject: a computed argument keeps the operand unknown.\n3. A plain item that does not resolve and rejects nothing by keyword.\n6. Rejects is a different word, and it does not resolve.\n7. Reject (#1): a parenthesized reject that does not resolve.\n8. Reject: the relation through a comment-only use.\n9. Reject: the real edit whose only row binds a string, so the verdict\n   stays `infection_unknown` (`case-name`).\n10. Reject: a route-only item.\n\n    A later paragraph says it stays unresolved.\n\n```text\n4. Reject: inside a fence does not resolve\n```\n\n- example `shadowed-name`: Reject: a shadowed binding; the earlier stop is kept.\n- example `route-name`: Reject: a shadowed binding.\n- example `kept-name`: Accept: the plain binding.\n\n## Test Mapping\n\n5. Reject: not an example; it does not resolve\n";
+    // A Reject item counts only when its text, continuation lines included,
+    // pins the outcome; a route-only Reject (8, 10, `route-name`) is left out,
+    // and a blank line ends an item's text (10).
+    assert_eq!(
+        abstaining_reject_examples(spec),
+        [
+            ExampleKey::Number(2),
+            ExampleKey::Number(7),
+            ExampleKey::Number(9),
+            ExampleKey::Slug("shadowed-name".to_string())
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+    );
+    // The key parser is shared, so the keys stay exactly the acceptance items.
+    assert_eq!(
+        acceptance_items(spec),
+        vec![
+            ExampleKey::Number(1),
+            ExampleKey::Number(2),
+            ExampleKey::Number(3),
+            ExampleKey::Number(6),
+            ExampleKey::Number(7),
+            ExampleKey::Number(8),
+            ExampleKey::Number(9),
+            ExampleKey::Number(10),
+            ExampleKey::Slug("shadowed-name".to_string()),
+            ExampleKey::Slug("route-name".to_string()),
+            ExampleKey::Slug("kept-name".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn reject_example_ids_read_the_owning_repository_specs_and_none_for_a_tempdir() -> Result<(), String>
+{
+    let ids = abstaining_reject_example_ids_for_corpus(&repo_path(CORPUS_DIR))?;
+    // RIPR-SPEC-0163 example 3 reads "Reject: a computed argument ... keeps
+    // the operand unknown", example 1 reads "Accept: ...", and RIPR-SPEC-0157
+    // example 8 only forbids a route ("the relation through a comment/string-
+    // only use"), so a test may still catch the change another way.
+    assert!(ids.contains("RIPR-SPEC-0163#3"), "{ids:?}");
+    assert!(!ids.contains("RIPR-SPEC-0163#1"), "{ids:?}");
+    assert!(!ids.contains("RIPR-SPEC-0157#8"), "{ids:?}");
+    // The phrase sits on a continuation line of RIPR-SPEC-0158 example 12.
+    assert!(ids.contains("RIPR-SPEC-0158#12"), "{ids:?}");
+    let dir = std::env::temp_dir().join(format!("ripr-reject-ids-{}", std::process::id()));
+    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let none = abstaining_reject_example_ids_for_corpus(&dir);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(none?, BTreeSet::new());
+    Ok(())
+}

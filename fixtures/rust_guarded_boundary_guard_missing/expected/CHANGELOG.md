@@ -22,3 +22,16 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_guarded_boundary_guard_missing (3)
+
+Reason:
+RIPR-SPEC-0158: a single-comparison compound predicate's gap id names its one comparison (#14719); the bool guard no longer joins the discriminator
+
+Command:
+`cargo xtask goldens bless rust_guarded_boundary_guard_missing --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

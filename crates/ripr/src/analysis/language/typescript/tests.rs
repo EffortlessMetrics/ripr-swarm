@@ -21720,6 +21720,7 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
 mod async_matcher_completion_tests;
 mod ava_throws_message_tests;
 mod boolean_pin_tests;
+mod call_lexer_tests;
 mod catch_arm_tests;
 mod changed_field_tests;
 mod class_barrel_reexport_tests;
@@ -21743,6 +21744,7 @@ mod error_payload_tests;
 mod floating_promise_tests;
 mod function_reference_callback_tests;
 mod gap_reach_config_tests;
+mod getter_matcher_key_tests;
 mod guard_entry_tests;
 mod infection_tests;
 mod instance_class_tests;

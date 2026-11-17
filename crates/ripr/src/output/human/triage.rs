@@ -815,7 +815,10 @@ pub(crate) fn render_human_triage(
         // Identical consecutive rows (same location, class, kind and reason)
         // collapse to one row with a repeat count so a diff with many
         // equivalent base-side findings stays scannable.
-        let mut previous: Option<(String, usize)> = None;
+        let mut previous: Option<(String, usize, String)> = None;
+        // #14308 item 3: a long reason the row above already printed is
+        // written once; later rows say `same as above`.
+        let mut last_reason: Option<String> = None;
         for row_members in hidden_rows(&triage.omitted) {
             // #14299: one row stands for every omitted finding that shares
             // file, owner, class, currentness and reason. Members that also
@@ -827,11 +830,12 @@ pub(crate) fn render_human_triage(
             let Some(finding) = members.first().copied() else {
                 continue;
             };
+            let reason = hidden_finding_reason(finding);
             if let Some(row) = grouped_hidden_row(&output.root, &members, label_currentness) {
-                if let Some((prev, count)) = previous.take() {
-                    push_hidden_row(out, &prev, count);
+                if let Some((prev, count, prev_reason)) = previous.take() {
+                    push_hidden_row(out, &prev, count, &prev_reason, &mut last_reason);
                 }
-                out.push_str(&row);
+                push_hidden_row(out, &row, 1, &reason, &mut last_reason);
                 continue;
             }
             let repeat = members.len();
@@ -848,7 +852,7 @@ pub(crate) fn render_human_triage(
                 finding.class.plain_label_with_stage(),
                 currentness,
                 super::evidence_lines::plain_probe_family(&finding.probe.family),
-                hidden_finding_reason(finding)
+                reason
             ));
             if offers_test_stub(finding)
                 && let Some(FindingDrillIn::Commands(navigation)) = drill_in
@@ -874,17 +878,17 @@ pub(crate) fn render_human_triage(
                 }
             }
             match previous.as_mut() {
-                Some((prev, count)) if *prev == row => *count += repeat,
+                Some((prev, count, _)) if *prev == row => *count += repeat,
                 _ => {
-                    if let Some((prev, count)) = previous.take() {
-                        push_hidden_row(out, &prev, count);
+                    if let Some((prev, count, prev_reason)) = previous.take() {
+                        push_hidden_row(out, &prev, count, &prev_reason, &mut last_reason);
                     }
-                    previous = Some((row, repeat));
+                    previous = Some((row, repeat, reason));
                 }
             }
         }
-        if let Some((prev, count)) = previous.take() {
-            push_hidden_row(out, &prev, count);
+        if let Some((prev, count, prev_reason)) = previous.take() {
+            push_hidden_row(out, &prev, count, &prev_reason, &mut last_reason);
         }
         if let Some(command) = stub_template {
             out.push_str("  Write a test for a listed row, replacing TEST_ID with its Test id:\n");
@@ -1053,11 +1057,7 @@ fn grouped_hidden_row(
     if members.len() < 2 || (first_line == last_line && kinds.len() == 1) {
         return None;
     }
-    let lines = if first_line == last_line {
-        first_line.to_string()
-    } else {
-        format!("{first_line}-{last_line}")
-    };
+    let lines = grouped_line_text(members.iter().map(|f| f.probe.location.line));
     let currentness = if label_currentness {
         format!(", {}", hidden_bullet_currentness(first))
     } else {
@@ -1084,6 +1084,40 @@ fn grouped_hidden_row(
         kinds.join(", "),
         hidden_finding_reason(first)
     ))
+}
+
+/// Most separate line runs a grouped row lists before it falls back to the
+/// span and a line count (#14682).
+const GROUPED_LINE_RUNS_LISTED: usize = 3;
+
+/// The lines a grouped `Hidden:` row names: each run of consecutive lines as
+/// `a` or `a-b`, comma-separated, so lines 3 and 5 read `3, 5` rather than a
+/// `3-5` range that implies line 4. Beyond [`GROUPED_LINE_RUNS_LISTED`] runs
+/// the row keeps the span and says how many lines it covers:
+/// `1078-1241 (12 lines)`.
+fn grouped_line_text(lines: impl Iterator<Item = usize>) -> String {
+    let distinct: std::collections::BTreeSet<usize> = lines.collect();
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for line in &distinct {
+        match runs.last_mut() {
+            Some((_, end)) if end.checked_add(1) == Some(*line) => *end = *line,
+            _ => runs.push((*line, *line)),
+        }
+    }
+    let run_text = |(start, end): &(usize, usize)| {
+        if start == end {
+            start.to_string()
+        } else {
+            format!("{start}-{end}")
+        }
+    };
+    if runs.len() <= GROUPED_LINE_RUNS_LISTED {
+        return runs.iter().map(run_text).collect::<Vec<_>>().join(", ");
+    }
+    match (distinct.first(), distinct.last()) {
+        (Some(first), Some(last)) => format!("{first}-{last} ({} lines)", distinct.len()),
+        _ => String::new(),
+    }
 }
 
 /// Class counts of the omitted findings outside the listed window, in the
@@ -2272,6 +2306,11 @@ fn decisive_shadows_unknown(decisive: &Finding, unknown: &Finding) -> bool {
         && (covers_same_changed_behavior(decisive, unknown) || has_no_distinct_change(unknown))
 }
 
+/// `repair_rank` for a non-preview static-limited finding: behind every
+/// routed or unrouted gap (`reachable_unrevealed` 2, `weakly_exposed` 3) and
+/// level with the unknown classes, ahead of `exposed`.
+const STATIC_LIMITED_REPAIR_TIER: u8 = 5;
+
 fn triage_rank<'a>(
     finding: &'a Finding,
     root: &std::path::Path,
@@ -2300,9 +2339,16 @@ fn triage_rank<'a>(
         ExposureClass::Exposed => 9,
     };
     let preview_rank = u8::from(is_preview_limited(finding));
-    let repair_rank = if finding.class != ExposureClass::Exposed && has_ranked_repair_route(finding)
-    {
+    let repair_rank = if finding.class == ExposureClass::Exposed {
+        class_rank
+    } else if has_ranked_repair_route(finding) {
         0
+    } else if !is_preview_limited(finding) && is_static_limited(finding) {
+        // #14266 item 2: static-limited findings share one tier behind every
+        // gap, so the evidence keys below (gap identity, related test,
+        // missing evidence, confidence) order them among themselves, as they
+        // did while their advisory next step counted as a route.
+        STATIC_LIMITED_REPAIR_TIER
     } else {
         class_rank
     };
@@ -2378,7 +2424,11 @@ fn has_linked_oracle_test(finding: &Finding) -> bool {
 /// unchanged; only the selection order moves.
 fn has_ranked_repair_route(finding: &Finding) -> bool {
     if !is_preview_limited(finding) {
-        return has_repair_route(finding);
+        // #14266 item 2: rank by the route the screen can print. A
+        // static-limited finding never prints a repair route
+        // (`printed_repair_route`), so its advisory next step must not lift
+        // it to the routed tier over a gap whose route does print.
+        return !is_static_limited(finding) && has_repair_route(finding);
     }
     finding.language == Some(LanguageId::Python) && python_repair_card(finding).is_some()
 }
@@ -2579,9 +2629,32 @@ pub(super) fn is_preview_limited(finding: &Finding) -> bool {
         .is_some_and(|status| status.as_str() == "preview")
 }
 
+/// #14308 item 3: reasons at most this long print on every row, because
+/// `same as above` would save little and the row reads better whole.
+const HIDDEN_REASON_REPEAT_MIN_BYTES: usize = 40;
+
 /// Append a hidden-finding block, annotating its first line with a repeat
-/// count when identical consecutive rows were collapsed.
-fn push_hidden_row(out: &mut String, row: &str, count: usize) {
+/// count when identical consecutive rows were collapsed. A reason longer than
+/// [`HIDDEN_REASON_REPEAT_MIN_BYTES`] that the row printed just above already
+/// stated prints as `same as above`.
+fn push_hidden_row(
+    out: &mut String,
+    row: &str,
+    count: usize,
+    reason: &str,
+    last_reason: &mut Option<String>,
+) {
+    let stated = format!("; reason: {reason}\n");
+    let shown = if reason.len() > HIDDEN_REASON_REPEAT_MIN_BYTES
+        && last_reason.as_deref() == Some(reason)
+        && row.contains(&stated)
+    {
+        row.replacen(&stated, "; reason: same as above\n", 1)
+    } else {
+        row.to_string()
+    };
+    *last_reason = Some(reason.to_string());
+    let row = shown.as_str();
     if count <= 1 {
         out.push_str(row);
         return;
@@ -2594,6 +2667,28 @@ fn push_hidden_row(out: &mut String, row: &str, count: usize) {
 
 #[cfg(test)]
 mod tests {
+
+    /// #14682: a grouped row names the lines its members are on. Gaps show,
+    /// runs collapse, and beyond three runs the span carries a line count.
+    #[test]
+    fn grouped_line_text_names_runs_not_a_covering_range() {
+        for (lines, expected) in [
+            (vec![3, 5], "3, 5"),
+            (vec![5, 3, 5], "3, 5"),
+            (vec![10, 11, 12], "10-12"),
+            (vec![7, 7], "7"),
+            (vec![10, 11, 12, 15], "10-12, 15"),
+            (vec![1, 3, 5], "1, 3, 5"),
+            (vec![1, 3, 5, 7], "1-7 (4 lines)"),
+            (vec![1078, 1079, 1100, 1200, 1241], "1078-1241 (5 lines)"),
+        ] {
+            assert_eq!(
+                grouped_line_text(lines.clone().into_iter()),
+                expected,
+                "{lines:?}"
+            );
+        }
+    }
 
     #[test]
     fn hidden_finding_reason_words_a_match_arm_limit_like_hover_and_mcp() -> Result<(), String> {
@@ -4096,25 +4191,63 @@ mod tests {
     }
 
     /// #14266: two candidates equal on every evidence key through
-    /// confidence order by exposure class, not by file path. The unknown
-    /// sorts first by path and is listed first, so neither path order nor
-    /// insertion order can masquerade as ranking.
+    /// confidence order by exposure class, not by file path. The weaker
+    /// class sorts first by path and is listed first, so neither path order
+    /// nor insertion order can masquerade as ranking.
     #[test]
     fn start_here_breaks_an_evidence_tie_by_class_before_path() {
-        let mut unknown = finding_at(
-            "finding:unknown",
+        let mut weak = finding_at(
+            "finding:weak",
             "src/a_analysis.rs",
-            ExposureClass::PropagationUnknown,
+            ExposureClass::WeaklyExposed,
         );
         let mut gap = finding_at(
             "finding:unrevealed",
             "src/z_provider.rs",
             ExposureClass::ReachableUnrevealed,
         );
-        for finding in [&mut unknown, &mut gap] {
+        for finding in [&mut weak, &mut gap] {
             finding.recommended_next_step = Some("inspect the related test".to_string());
             finding.confidence = 0.66;
         }
+        let output = test_output(vec![weak.clone(), gap.clone()]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unrevealed")
+        );
+
+        // Discriminating control: a higher-confidence weak gap still leads,
+        // so class only breaks a tie and does not override earlier keys.
+        weak.confidence = 0.9;
+        let output = test_output(vec![gap, weak]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:weak")
+        );
+    }
+
+    /// #14266 item 2: an advisory next step on a static-limited finding is
+    /// not a repair route (the screen never prints one for it), so it does
+    /// not lift the unknown over a gap that has no route either. The unknown
+    /// sorts first by path, is listed first and has the higher confidence.
+    #[test]
+    fn start_here_does_not_rank_an_unprintable_route_as_a_repair_route() {
+        let mut unknown = finding_at(
+            "finding:unknown",
+            "src/a_analysis.rs",
+            ExposureClass::PropagationUnknown,
+        );
+        unknown.recommended_next_step =
+            Some("The indexed related tests do not establish a call".to_string());
+        unknown.confidence = 0.9;
+        let mut gap = finding_at(
+            "finding:unrevealed",
+            "src/z_provider.rs",
+            ExposureClass::ReachableUnrevealed,
+        );
+        gap.confidence = 0.5;
         let output = test_output(vec![unknown.clone(), gap.clone()]);
         let triage = select_human_triage(&output, &RiprConfig::default());
         assert_eq!(
@@ -4122,14 +4255,20 @@ mod tests {
             Some("finding:unrevealed")
         );
 
-        // Discriminating control: a higher-confidence unknown still leads,
-        // so class only breaks a tie and does not override earlier keys.
-        unknown.confidence = 0.9;
-        let output = test_output(vec![gap, unknown]);
+        // Discriminating control: a next step on a finding that is not
+        // static-limited still counts as a route and still leads.
+        let mut routed = finding_at(
+            "finding:routed-weak",
+            "src/a_analysis.rs",
+            ExposureClass::WeaklyExposed,
+        );
+        routed.recommended_next_step = Some("strengthen the assertion".to_string());
+        routed.confidence = 0.9;
+        let output = test_output(vec![routed, gap]);
         let triage = select_human_triage(&output, &RiprConfig::default());
         assert_eq!(
             triage.selected.map(|finding| finding.id.as_str()),
-            Some("finding:unknown")
+            Some("finding:routed-weak")
         );
     }
 
@@ -4249,6 +4388,54 @@ mod tests {
         assert_eq!(
             selected(vec![predicate, literal]),
             Some("finding:literal".to_string())
+        );
+    }
+
+    /// #14266 item 2: static-limited findings share one tier, so the
+    /// evidence keys still order them among themselves. A `no_static_path`
+    /// finding sorts first by path, is listed first and has the better class
+    /// rank, but the unknown carries a gap identity and wins on that key.
+    #[test]
+    fn start_here_orders_static_limited_findings_by_evidence_not_class() {
+        let mut no_path = finding_at(
+            "finding:no-path",
+            "src/a_display.rs",
+            ExposureClass::NoStaticPath,
+        );
+        no_path.recommended_next_step = Some("Tests cannot close this limitation".to_string());
+        let mut unknown = finding_at(
+            "finding:unknown-with-gap",
+            "src/z_impls.rs",
+            ExposureClass::InfectionUnknown,
+        );
+        unknown.recommended_next_step = Some("Open the related test".to_string());
+        unknown.canonical_gap = Some(FindingCanonicalGap {
+            id: "gap:rust:src/z_impls.rs:cmp:return_value".to_string(),
+            language: "rust".to_string(),
+            file: "src/z_impls.rs".to_string(),
+            owner: "cmp".to_string(),
+            behavior_kind: "return_value".to_string(),
+            probe_kind: "return_value".to_string(),
+            normalized_discriminator: "let_some_rhs".to_string(),
+        });
+        for finding in [&mut no_path, &mut unknown] {
+            finding.confidence = 0.45;
+        }
+        let output = test_output(vec![no_path.clone(), unknown.clone()]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unknown-with-gap")
+        );
+
+        // Control: with equal evidence the class tie-break still puts the
+        // no-path finding first, so the tier does not reverse class order.
+        unknown.canonical_gap = None;
+        let output = test_output(vec![unknown, no_path]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:no-path")
         );
     }
 

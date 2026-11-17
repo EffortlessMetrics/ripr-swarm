@@ -147,7 +147,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         from_artifact.is_some(),
     )?;
     if selector.is_none() && !worktree && !committed {
-        return Err(super::missing_selector_error(
+        return Err(missing_context_selector(
             "missing --at or --finding selector",
             "ripr check --json",
         ));
@@ -253,7 +253,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         )
     };
     let Some(selector) = selector else {
-        return Err(super::missing_selector_error(
+        return Err(missing_context_selector(
             "missing --at or --finding selector",
             &app::finding_navigation_with_worktree(&input, None, explicit.mode, worktree)
                 .list_command(),
@@ -363,6 +363,14 @@ fn positional_selector_hint(arg: &str) -> String {
         &crate::cli::suggest::help_pointer("context"),
     );
     message
+}
+
+/// #14877: `context` names its selector with `--at` (or `--finding`), so a
+/// missing selector is the required flag left out. `explain` shares the
+/// wording but takes a positional selector, so the typing lives here.
+fn missing_context_selector(what: &str, listing: &str) -> String {
+    let message = super::missing_selector_error(what, listing);
+    crate::cli::usage_refusal::missing_required("--at", &message)
 }
 
 #[cfg(test)]
