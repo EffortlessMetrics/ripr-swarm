@@ -4960,9 +4960,11 @@ fn owner_named_outside_related_tests(
 /// `fn` (no `#[test]`, `#[no_mangle]`, `#[export_name]`, `#[cfg]` or harness
 /// attribute) outside any trait and outside an attributed `impl`, not
 /// `main`, whose name appears nowhere in the workspace but its own header
-/// (no call, `use`, comment or string names it). A trait method runs from calls that never
-/// name it, and an attribute may register it with a harness or a linker, so
-/// any of those keeps the function reachable.
+/// (no call, `use`, comment or string names it), and whose body declares no
+/// item and invokes no unread macro. A trait method runs from calls that
+/// never name it, an attribute may register a function with a harness or a
+/// linker, and a nested `impl` runs without its parent, so any of those
+/// keeps the function reachable.
 fn never_runs(index: &crate::analysis::rust_index::RustIndex, function: &FunctionSummary) -> bool {
     use crate::analysis::facts::{FunctionContainer, FunctionSourceRole};
     function.source_role == FunctionSourceRole::Production
@@ -4978,6 +4980,9 @@ fn never_runs(index: &crate::analysis::rust_index::RustIndex, function: &Functio
         // (`impl From<Forward> for u32` reached by `.into()`), an exported
         // `macro_rules!`, an attributed `#[no_mangle]` or `extern` fn.
         && !declares_free_standing_item(&function.body)
+        // A macro it invokes may expand to such an item (`reg!(price_cents)`
+        // emitting an `impl Drop`), which no file read here shows.
+        && !invokes_unread_macro(&function.body)
         // Every whole-word spelling of the name, in code, comments and
         // strings alike, must be its own `fn` header: a string can name it
         // to a derive (`#[serde(default = "medium_price")]`) that runs it.
@@ -4991,12 +4996,14 @@ fn never_runs(index: &crate::analysis::rust_index::RustIndex, function: &Functio
 
 /// Whether `body` holds an item that runs or is visible without the
 /// enclosing function running: any `impl`, `macro_rules!`, `extern` or
-/// attribute. Comments and strings are masked; an `impl Trait` return type
-/// also refuses, which only keeps the function counted as reachable.
+/// attribute. Comments and strings are masked. Any `#` refuses, since an
+/// attribute may put whitespace or a comment between `#` and `[`
+/// (`# [unsafe(export_name = "cb")]`); an `impl Trait` return type or a raw
+/// identifier also refuses, which only keeps the function counted as
+/// reachable.
 fn declares_free_standing_item(body: &str) -> bool {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
-    masked.contains("#[")
-        || masked.contains("#!")
+    masked.contains('#')
         || ["impl", "macro_rules", "extern"]
             .iter()
             .any(|word| whole_word_count(&masked, word) > 0)

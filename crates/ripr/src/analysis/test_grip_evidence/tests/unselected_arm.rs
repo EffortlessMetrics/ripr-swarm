@@ -265,6 +265,32 @@ Size::Medium => 450,\n        Size::Large => 500,\n    }\n}\n\n\
 pub mod a {\n    pub fn medium_price() -> u32 {\n        crate::price_cents(crate::Size::Medium)\n    }\n}\n\n\
 pub mod b {\n    pub fn medium_price() -> u32 {\n        crate::price_cents(crate::Size::Medium)\n    }\n}\n";
 
+/// An uncalled function whose macro call expands to a live `impl Drop` that
+/// runs the owner with `Size::Medium`.
+const MACRO_IMPL_IN_UNCALLED_FUNCTION: &str = "pub enum Size {\n    Small,\n    Medium,\n    Large,\n}\n\n\
+pub fn price_cents(size: Size) -> u32 {\n    match size {\n        Size::Small => 300,\n        \
+Size::Medium => 450,\n        Size::Large => 500,\n    }\n}\n\n\
+pub struct Big;\n\n\
+macro_rules! reg {\n    ($f:ident) => {\n        impl Drop for Big {\n            \
+fn drop(&mut self) {\n                $f(Size::Medium);\n            }\n        }\n    };\n}\n\n\
+fn unused() {\n    reg!(price_cents);\n}\n";
+
+/// #15006 review: a nested fn exported under a link name runs from
+/// `Size::Small`'s extern call, though its uncalled parent never runs.
+/// `opener` spells the attribute's `#[`, which may hold whitespace or a
+/// comment.
+fn spaced_export(opener: &str) -> String {
+    format!(
+        "pub enum Size {{\n    Small,\n    Medium,\n    Large,\n}}\n\n\
+unsafe extern \"Rust\" {{\n    #[link_name = \"review_price_callback\"]\n    fn invoke_callback() -> u32;\n}}\n\n\
+pub fn price_cents(size: Size) -> u32 {{\n    match size {{\n        \
+Size::Small => unsafe {{ invoke_callback() }},\n        Size::Medium => 450,\n        \
+Size::Large => 500,\n    }}\n}}\n\n\
+fn unused_outer() {{\n    {opener}unsafe(export_name = \"review_price_callback\")]\n    \
+pub fn hidden_price() -> u32 {{\n        price_cents(Size::Medium)\n    }}\n}}\n"
+    )
+}
+
 #[test]
 fn a_string_named_or_live_caller_keeps_the_arm_unnamed() -> Result<(), String> {
     let test_body = "    assert_eq!(price_cents(Size::Small), 300);\n    assert_eq!(price_cents(Size::Large), 500);";
@@ -276,6 +302,22 @@ fn a_string_named_or_live_caller_keeps_the_arm_unnamed() -> Result<(), String> {
         ),
         ("exported wrapper", EXPORTED_WRAPPER),
         ("same-named wrappers", SAME_NAMED_WRAPPERS),
+        (
+            "macro-emitted impl in an uncalled function",
+            MACRO_IMPL_IN_UNCALLED_FUNCTION,
+        ),
+        (
+            "spaced export attribute in an uncalled function",
+            spaced_export("# [").as_str(),
+        ),
+        (
+            "comment-split export attribute in an uncalled function",
+            spaced_export("# /* */ [").as_str(),
+        ),
+        (
+            "contiguous export attribute in an uncalled function",
+            spaced_export("#[").as_str(),
+        ),
     ] {
         let (full, compact, class) = arm_evidence_in(source, test_body, "Size::Medium")?;
         assert_ne!(class[0], SeamGripClass::WeaklyGripped, "{label}: {full:?}");
