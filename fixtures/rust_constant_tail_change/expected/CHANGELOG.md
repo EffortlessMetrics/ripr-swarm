@@ -11,3 +11,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_constant_tail_change (2)
+
+Reason:
+RIPR-SPEC-0197: adopt the #14780 unknown-class next-step hedge wording; classification, evidence and oracle fields unchanged
+
+Command:
+`cargo xtask goldens bless rust_constant_tail_change --reason "..."`
+
+Updated:
+- `expected/check.json`
