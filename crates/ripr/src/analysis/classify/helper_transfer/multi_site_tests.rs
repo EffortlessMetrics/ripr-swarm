@@ -67,6 +67,16 @@ fn direct_call_count_reads_whole_word_calls() {
         direct_call_count("number::<u8>(a) + number(b)", "number"),
         2
     );
+    // A range end is a call; a method receiver, a string and a comment are not.
+    assert_eq!(
+        direct_call_count("for i in 0..number(a) { x = number(b) }", "number"),
+        2
+    );
+    assert_eq!(direct_call_count("s.number(a) + number(b)", "number"), 1);
+    assert_eq!(
+        direct_call_count("number(a); let t = \"number(b)\"; // number(c)", "number"),
+        1
+    );
 }
 
 #[test]

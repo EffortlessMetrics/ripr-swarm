@@ -1130,10 +1130,12 @@ fn direct_call_count(text: &str, callee_name: &str) -> usize {
     text.match_indices(callee_name)
         .filter(|(start, _)| {
             let end = start + callee_name.len();
-            let word_start = *start == 0
-                || !(bytes[start - 1].is_ascii_alphanumeric()
-                    || bytes[start - 1] == b'_'
-                    || bytes[start - 1] == b'.');
+            // A single `.` marks a method receiver; a range `..` does not.
+            let method_dot =
+                *start > 0 && bytes[start - 1] == b'.' && (*start < 2 || bytes[start - 2] != b'.');
+            let word_start = !method_dot
+                && (*start == 0
+                    || !(bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_'));
             let after = text[end..].trim_start();
             word_start && (after.starts_with('(') || after.starts_with("::<"))
         })
