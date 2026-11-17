@@ -1106,7 +1106,7 @@ fn find_related_tests_with_candidates<'a>(
                 // Every hop from the helper up through the fmt caller must be
                 // a direct call: a macro hop carries reach only, and a hop
                 // below the fmt one is on the path the test's formatting runs.
-                .filter(|(at, _)| chain.hops[..=*at].iter().all(|hop| !hop.reach_only()))
+                .filter(|(at, _)| chain.hops[..=*at].iter().all(|hop| !hop.through_macro))
                 // Only a chain that reaches a `Display`/`Debug` `fmt` caller
                 // is judged: the cheap owner check runs before the dead-code
                 // reading, which re-parses each caller body.
@@ -1158,7 +1158,7 @@ fn find_related_tests_with_candidates<'a>(
                 .enumerate()
                 .filter(|(at, _)| {
                     let prefix = &chain.hops[..=*at];
-                    prefix.iter().all(|hop| !hop.reach_only())
+                    prefix.iter().all(|hop| !hop.through_macro)
                         && prefix.iter().any(|hop| hop.module_qualified)
                 })
                 .map(|(_, hop)| &hop.caller)

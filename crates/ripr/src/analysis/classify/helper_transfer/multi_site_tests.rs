@@ -147,3 +147,21 @@ fn a_multi_site_caller_above_a_wrapper_keeps_the_wrapper_chain() -> Result<(), S
     assert!(chain_forwards_owner_result("is_bulk", &chain));
     Ok(())
 }
+
+#[test]
+fn a_caller_that_shadows_the_helper_name_keeps_the_multi_site_stop() -> Result<(), String> {
+    // `parse` calls a local closure named `number`, never the helper.
+    let chain = chain_with(
+        "pub fn parse() -> bool {\n    let number = |_: &str| true;\n    let a = number(\"1\");\n    a && number(\"2\")\n}\n",
+    )?;
+    assert!(chain.hops.iter().all(|hop| !hop.multi_site), "{chain:?}");
+    // Control: the same body without the closure resolves the hop.
+    let chain = chain_with(
+        "pub fn parse() -> bool {\n    let a = number(\"1\").is_ok();\n    a && number(\"2\").is_ok()\n}\n",
+    )?;
+    assert!(
+        chain.hops.first().is_some_and(|hop| hop.multi_site),
+        "{chain:?}"
+    );
+    Ok(())
+}

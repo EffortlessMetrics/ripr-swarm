@@ -1123,12 +1123,17 @@ pub(crate) fn resolve_chain(
 /// whole-word name followed by `(` or a turbofish `::<` (#14918). Over-counting (a nested
 /// `f(f(x))`) only makes the hop reach-only, which binds less.
 fn direct_call_count(text: &str, callee_name: &str) -> usize {
+    // Call-shaped text in a string or comment is not a call.
+    let text = crate::analysis::language::mask_rust_comments_and_strings(text);
+    let text = text.as_str();
     let bytes = text.as_bytes();
     text.match_indices(callee_name)
         .filter(|(start, _)| {
             let end = start + callee_name.len();
             let word_start = *start == 0
-                || !(bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_');
+                || !(bytes[start - 1].is_ascii_alphanumeric()
+                    || bytes[start - 1] == b'_'
+                    || bytes[start - 1] == b'.');
             let after = text[end..].trim_start();
             word_start && (after.starts_with('(') || after.starts_with("::<"))
         })
@@ -1288,9 +1293,13 @@ fn chain_through_caller(
     // Only the hop directly above the owner may be multi-site: higher up, a
     // reach-only hop would make every whole-chain binding and pinning gate
     // refuse the single-site hops below it, which bind on their own.
+    // A caller that rebinds the helper's name (a closure, a nested item or a
+    // `use`) may call that binding instead; multi-site reach needs the bare
+    // name to mean the helper.
     if multi_site
         && (caller.source_role != crate::analysis::facts::FunctionSourceRole::Production
-            || !visited.is_empty())
+            || !visited.is_empty()
+            || caller_body_rebinds_free_callee_name(&caller.body, callee_name))
     {
         return stopped(format!(
             "helper `{callee_name}` is called more than once in `{}`; multi-site binding is not transferred at this bound",
@@ -1427,7 +1436,9 @@ pub(crate) fn test_calls_method_entry(
             && !entry.source_role.is_evidence_role()
             && chain.hops[..=at]
                 .iter()
-                .all(|below| !below.reach_only() && !below.module_qualified)
+                // #14918: a multi-site hop is a real call, so it carries this
+                // reach; only an unexpanded macro hop is refused here.
+                .all(|below| !below.through_macro && !below.module_qualified)
             && super::activation::signature_parameter_texts(entry)
                 .first()
                 .is_some_and(|first| matches!(first.trim(), "self" | "&self" | "&mut self"))
