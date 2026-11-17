@@ -52,7 +52,7 @@
           "enum": ["retryable", "terminal", "needs_selection", "not_started"]
         },
         "choices": {
-          "description": "Present only on a typed selection refusal (`several_eligible_seams`, `ambiguous_attempts`, #14980): the commands its stderr listing prints, composed from typed seam or attempt ids, never lifted from prose. `items` may be fewer than `total` when the listing is bounded.",
+          "description": "Present only on a typed selection refusal (`several_eligible_seams`, `ambiguous_attempts`, #14980): one runnable command per listed seam or attempt, composed from its typed id and the bound root (a seam choice is the command stderr prints; an attempt choice fills that id into the stderr retry line), never lifted from prose. `items` may be fewer than `total` when the listing is bounded.",
           "type": "object",
           "additionalProperties": false,
           "required": ["total", "items"],

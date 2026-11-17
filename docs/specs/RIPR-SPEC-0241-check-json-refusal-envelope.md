@@ -541,9 +541,10 @@ unchanged, and the plain spelling keeps stdout empty.
 
 A `several_eligible_seams` or `ambiguous_attempts` document adds
 `error.choices = { total, items: [{ label, command, powershell_command? }] }`.
-Each `command` is the one the refusal prints on stderr, composed by the
-selection owner from a typed seam id or attempt id and the bound root; none
-is lifted from prose, and `next` stays null. `powershell_command` appears
+Each `command` is composed by the selection owner from a typed seam id or
+attempt id and the bound root: a seam choice is exactly the command stderr
+prints, and an attempt choice is the stderr retry line with that listed id
+filled in. None is lifted from prose, and `next` stays null. `powershell_command` appears
 only when PowerShell needs a different line and an honest translation
 exists. `total` is the full count; a bounded listing has fewer `items`.
 Every other refusal omits `choices`.

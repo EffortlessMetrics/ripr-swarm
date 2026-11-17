@@ -45,7 +45,8 @@ pub(crate) struct RefusalNext {
     pub(crate) command: String,
 }
 
-/// One command a selection refusal offers, as its owner printed it on stderr.
+/// One command a selection refusal offers, composed by its owner from the
+/// typed id it listed on stderr.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RefusalChoice {
     /// What picking this choice selects, in plain words.

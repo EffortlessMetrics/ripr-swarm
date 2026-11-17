@@ -2001,9 +2001,11 @@ never lifts one into a runnable field. The step is in `message`. A
 selection refusal also carries `choices` (#14980): `several_eligible_seams`
 lists one `ripr repair <seam> --root <root>` per eligible seam, and
 `ambiguous_attempts` one `ripr continue --attempt <id> --root <root>` per
-current attempt. Each item has a plain-words `label`, the `command` exactly
-as stderr prints it, and a `powershell_command` only when PowerShell needs a
-different line; `total` counts every choice when the listing is bounded.
+current attempt. Each item has a plain-words `label`, a runnable `command`
+(for seams, exactly the command stderr prints; for attempts, the stderr retry
+line with that listed attempt's id filled in), and a `powershell_command`
+only when PowerShell needs a different line and an honest translation exists;
+`total` counts every choice when the listing is bounded.
 These commands are composed from typed seam and attempt ids, never lifted
 from prose. `repair_needs_item` (its canonical next-action block) and
 `attempt_baseline_blocked` (the attempt status) still print that context on

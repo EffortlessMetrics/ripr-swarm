@@ -432,7 +432,8 @@ fn typed_decision(code: RepairRefusalCode, message: String) -> CommandError {
 }
 
 /// [`typed_decision`] for a selection refusal: the document also carries the
-/// choice commands the caller just printed on stderr (#14980).
+/// choice commands the caller composed from the typed ids it just listed on
+/// stderr (#14980).
 fn typed_choice_decision(
     code: RepairRefusalCode,
     message: String,

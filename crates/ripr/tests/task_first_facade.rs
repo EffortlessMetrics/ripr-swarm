@@ -3956,14 +3956,29 @@ fn continue_two_attempts_requires_explicit_selection() -> Result<(), String> {
         .ok_or_else(|| format!("ambiguity lacks choices: {document:#}"))?;
     assert_eq!(document["error"]["choices"]["total"], 2, "{document:#}");
     assert_eq!(items.len(), 2, "{document:#}");
+    assert_eq!(
+        document["error"]["disposition"], "needs_selection",
+        "{document:#}"
+    );
+    assert_eq!(
+        document["error"].get("next"),
+        Some(&serde_json::Value::Null),
+        "{document:#}"
+    );
+    // The root each choice binds is the one the stderr retry line prints.
+    const RETRY: &str = "ripr continue --attempt <attempt-id> --root ";
+    let json_stderr = stderr_text(&continued_json);
+    let root_token = json_stderr
+        .lines()
+        .find_map(|line| line.split_once(RETRY).map(|(_, root)| root.trim_end()))
+        .ok_or_else(|| format!("stderr must print the retry line:\n{json_stderr}"))?;
     for id in &ids {
+        let expected = format!("ripr continue --attempt {id} --root {root_token}");
         assert!(
-            items.iter().any(|item| {
-                item["command"].as_str().is_some_and(|command| {
-                    command.starts_with(&format!("ripr continue --attempt {id} --root "))
-                })
-            }),
-            "a choice must continue {id}: {document:#}"
+            items
+                .iter()
+                .any(|item| item["command"] == expected.as_str()),
+            "a choice must be exactly `{expected}`: {document:#}"
         );
     }
     for id in &ids {
