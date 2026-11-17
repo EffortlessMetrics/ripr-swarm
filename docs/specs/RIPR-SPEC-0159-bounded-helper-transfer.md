@@ -54,6 +54,15 @@ can only hint that a caller "may lead here" without changing anything.
   argument is a literal or the caller's own parameter (resolved
   through that caller's rows), at most **3 hops**, **acyclic**, with a
   single caller and a single call site per hop.
+- Multi-site reach (#14918): a caller that calls the helper at more than one
+  direct site (separate lines, or two calls on one line such as
+  `Ok((number(a)?, number(b)?))`) still resolves the hop, marked
+  `multi_site`. Reach transfers, since a test that runs the caller runs the
+  helper, but the hop is reach-only like a local-macro argument hop: no
+  site's arguments stand for the others, so it binds no input rows, forwards
+  no result, and admits no wrapper or entry pin. The finding's class then
+  comes from the ordinary stages (a computed-argument chain reads
+  `infection_unknown`), never from a single site's values.
 - On resolution, a test that calls any resolved hop's caller relates
   to the helper-owned probe (`RelationReason::HelperOwnerCall`): the
   reach, observation, and oracle stages see the same related tests a

@@ -20,11 +20,14 @@
 //!   argument is a literal or the caller's own parameter (resolved
 //!   through the caller's rows);
 //! - chains of at most [`MAX_HELPER_HOPS`] hops, acyclic, with a
-//!   single caller and a single call site per hop.
+//!   single caller and a single call site per hop;
+//! - reach only through a caller that calls the helper at several direct
+//!   sites (#14918, [`HelperHop::multi_site`]): no rows bind and no result
+//!   forwards across such a hop.
 //!
 //! Everything else stops at a named edge: recursion, an ambiguous or
 //! unknown callee, a computed (non-literal, non-parameter) argument,
-//! multi-caller or multi-site binding, and hop exhaustion. Call reach
+//! multi-caller binding, and hop exhaustion. Call reach
 //! alone never establishes propagation or discrimination — the oracle
 //! still has to observe the sink through the ordinary evidence stages.
 
@@ -42,6 +45,8 @@ mod field_projection;
 mod method_hop_tests;
 #[cfg(test)]
 mod multi_caller_tests;
+#[cfg(test)]
+mod multi_site_tests;
 mod receiver_value;
 pub(in crate::analysis::classify) use receiver_value::{
     is_receiver_cell, project_receiver_field, receiver_cell_value,
@@ -181,6 +186,16 @@ impl HopReceiver {
     }
 }
 
+impl HelperHop {
+    /// Whether this hop carries reach only (#6614 macro argument, #14918
+    /// multi-site call): it binds no argument rows and forwards no result.
+    /// Every argument-binding and result-forwarding consumer refuses such a
+    /// hop; reach consumers accept it.
+    pub(crate) fn reach_only(&self) -> bool {
+        self.through_macro || self.multi_site
+    }
+}
+
 /// One hop of a resolved helper chain: the caller, the call site, and
 /// the positional argument texts at that site.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -200,6 +215,13 @@ pub(crate) struct HelperHop {
     /// forwards the callee's result, binds no argument rows, and has no
     /// `arguments`.
     pub(crate) through_macro: bool,
+    /// The caller calls the callee at more than one direct site (#14918):
+    /// `parse` builds `number(parts[0])?`, `number(parts[1])?` and
+    /// `number(parts[2])?`. A test that reaches the caller reaches the callee
+    /// as surely as through a single site, but no one site's arguments stand
+    /// for the others, so the hop carries reach only: it binds no argument
+    /// rows (`arguments` is empty) and never forwards the callee's result.
+    pub(crate) multi_site: bool,
     /// Bound by the own-module qualified-call route (#8999). Its receiver
     /// entry needs the stricter identity rules, and the hop establishes only
     /// reach, never result forwarding. Preserve this provenance through chains.
@@ -1083,6 +1105,7 @@ pub(crate) fn resolve_chain(
             arguments: Vec::new(),
             receiver: None,
             through_macro: true,
+            multi_site: false,
             module_qualified: false,
             crate_qualifier: None,
             transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
@@ -1094,6 +1117,21 @@ pub(crate) fn resolve_chain(
         return resolve_multi_caller(callee_name, &callers, index, workspace_complete, visited);
     }
     chain_through_caller(callers[0], callee_name, index, workspace_complete, visited)
+}
+
+/// How many direct calls of `callee_name` one recorded call text holds: a
+/// whole-word name followed by `(` (#14918). Over-counting (a nested
+/// `f(f(x))`) only makes the hop reach-only, which binds less.
+fn direct_call_count(text: &str, callee_name: &str) -> usize {
+    let bytes = text.as_bytes();
+    text.match_indices(callee_name)
+        .filter(|(start, _)| {
+            let end = start + callee_name.len();
+            let word_start = *start == 0
+                || !(bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_');
+            word_start && text[end..].trim_start().starts_with('(')
+        })
+        .count()
 }
 
 /// The most callers [`resolve_multi_caller`] binds one by one (#9329). A
@@ -1233,20 +1271,34 @@ fn chain_through_caller(
             caller.name
         ));
     }
-    if sites.len() > 1 {
+    // #14918: several direct sites in the one caller still carry reach (a
+    // test that runs the caller runs the callee). No site's arguments stand
+    // for the others, so the hop is reach only and binds no rows.
+    // A line holding two calls (`Ok((number(a)?, number(b)?))`) is one
+    // recorded site; counting each direct call keeps it from binding only
+    // the first call's arguments.
+    let multi_site = sites.len() > 1
+        || sites
+            .first()
+            .is_some_and(|(text, _)| direct_call_count(text, callee_name) > 1);
+    // Only a production caller carries multi-site reach: a test or test
+    // helper that calls the owner several times already relates to it
+    // directly, and a hop through it would displace that direct evidence.
+    if multi_site && caller.source_role != crate::analysis::facts::FunctionSourceRole::Production {
         return stopped(format!(
-            "helper `{callee_name}` is called {} times in `{}`; multi-site binding is not transferred at this bound",
-            sites.len(),
+            "helper `{callee_name}` is called more than once in `{}`; multi-site binding is not transferred at this bound",
             caller.name
         ));
     }
     let (call_text, arguments) = sites[0].clone();
+    let arguments = if multi_site { Vec::new() } else { arguments };
     let hop = HelperHop {
         caller: caller.clone(),
         call_text,
         arguments,
         receiver: None,
         through_macro: false,
+        multi_site,
         module_qualified: false,
         crate_qualifier: None,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
@@ -1368,7 +1420,7 @@ pub(crate) fn test_calls_method_entry(
             && !entry.source_role.is_evidence_role()
             && chain.hops[..=at]
                 .iter()
-                .all(|below| !below.through_macro && !below.module_qualified)
+                .all(|below| !below.reach_only() && !below.module_qualified)
             && super::activation::signature_parameter_texts(entry)
                 .first()
                 .is_some_and(|first| matches!(first.trim(), "self" | "&self" | "&mut self"))
@@ -1616,6 +1668,7 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
             binding: ReceiverBinding::Parameter,
         }),
         through_macro: false,
+        multi_site: false,
         module_qualified: false,
         crate_qualifier: None,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
@@ -2859,7 +2912,7 @@ fn hops_carry_owner_string_data(owner_name: &str, hops: &[HelperHop], index: &Ru
                     None => return false,
                 },
             };
-            !hop.through_macro
+            !hop.reach_only()
                 && !hop.module_qualified
                 && hop.receiver.is_none()
                 && !hop.transparent_macros_rebound
@@ -3146,7 +3199,7 @@ pub(crate) fn chain_passes_effect_target_to_observed_hops(
         || hops.is_empty()
         || hops
             .iter()
-            .any(|hop| hop.through_macro || hop.module_qualified || hop.receiver.is_some())
+            .any(|hop| hop.reach_only() || hop.module_qualified || hop.receiver.is_some())
     {
         return false;
     }
@@ -3199,7 +3252,7 @@ pub(crate) fn asserting_method_entry<'a>(
     let (top, below) = hops.split_last()?;
     let method = below.last()?.caller.name.as_str();
     let receiver = top.receiver.as_ref()?.parameter()?;
-    if top.through_macro
+    if top.reach_only()
         || top.caller.source_role != FunctionSourceRole::CfgTestModule
         || !hops_forward_owner_result(owner_name, below)
         || !hops_call_the_indexed_callees(owner_name, below, index)
@@ -3335,7 +3388,7 @@ fn hops_forward_owner_result_with(
             // #8999: a module-qualified hop has no result-forwarding proof.
             // #9329: a method hop never forwards: its caller makes a
             // receiver call whose result no tail-forwarding rule reads.
-            if hop.through_macro
+            if hop.reach_only()
                 || (hop.module_qualified && hop.crate_qualifier.is_none())
                 || hop.receiver.is_some()
             {
@@ -5309,6 +5362,7 @@ mod tests {
                 arguments: Vec::new(),
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
@@ -5341,6 +5395,7 @@ mod tests {
                 arguments: Vec::new(),
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
@@ -5889,6 +5944,7 @@ mod tests {
             arguments: Vec::new(),
             receiver: None,
             through_macro: false,
+            multi_site: false,
             module_qualified: false,
             crate_qualifier: None,
             transparent_macros_rebound: false,
@@ -5975,6 +6031,7 @@ mod tests {
                     arguments: Vec::new(),
                     receiver: None,
                     through_macro: false,
+                    multi_site: false,
                     module_qualified: false,
                     crate_qualifier: None,
                     transparent_macros_rebound: false,
