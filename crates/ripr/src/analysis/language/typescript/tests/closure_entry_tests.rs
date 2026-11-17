@@ -4,7 +4,7 @@
 //! the value is invoked (`const Rule = match(re, (s) => upper(s))`), or the
 //! combinator that built it. The bare-call graph has no edge for any of
 //! these, so the tests that run them read `no_static_path` (pathe's glob
-//! matcher alone: 250 Stryker-killed mutants).
+//! matcher alone: 250 mutants Stryker caught).
 //!
 //! A closure edge records reach only. When, or whether, the value runs is
 //! not modeled, so the finding reads `static_unknown` whatever the oracle,
