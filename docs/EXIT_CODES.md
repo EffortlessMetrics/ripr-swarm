@@ -9,13 +9,19 @@ ripr uses three ordinary command exit codes, plus standalone Unix check interrup
 | `3`  | ripr declined: the command ran and reached a blocking result, or a request it will not run (the output says why). |
 | `130` | Supported standalone Unix `check` analysis was interrupted. |
 
+A command family run without a subcommand (for example `ripr cache`,
+`ripr agent` or `ripr reports`) is its own catalogued command: it prints that
+family's surface on stdout and exits `0`, as bare `ripr` and `ripr help` do.
+A script that builds the subcommand from a variable should check the variable
+is set; an empty one runs the surface listing, not an action.
+
 `ripr check` is advisory: it exits `0` whether or not it found gaps, including
 `exposed` and `weakly_exposed` findings. A non-zero exit from `check` means the
 analysis did not complete, not that it disapproved of your diff. The blocking
 decision belongs to `ripr gate evaluate`, which exits `3` when the gate blocks
 after writing its report. `ripr gate check --base REV` runs `review-comments`
 and then the same evaluation, with the same exit codes. If `review-comments`
-cannot complete, gate check exits `2` (config_error); it never passes. Do not build a CI gate on `check`'s exit code; read
+cannot complete, gate check exits `2` (config_error); it never passes. In `calibrated-gate` mode a changed file the parser could not read also blocks (exit `3`), since no seam was judged for it; the other modes report it as an `advisory` warning (#14485). Do not build a CI gate on `check`'s exit code; read
 its output, or run the gate.
 
 ## Why codes 2 and 3?
@@ -122,27 +128,32 @@ reached the caller.
   `message: "refused: <identity>"`, repair route in the first warning,
   `analysis_outcome: null`; no `run_status` field), and
   `repo-exposure-json` and `agent-seam-packets-json` render their format's
-  refused envelope (zeroed counts, `run_status: "refused"`). Machine formats without an
-  honest refusal shape yet — `repo-sarif`, `badge-shields`, `badge-plus-*`,
-  `repo-badge-*`, `repo-seams-*`, `repo-exposure-md`, and
-  `repo-exposure-summary-json` — write
-  nothing to stdout and put the prose diagnostic on stderr for now; that
-  gap is a named limitation, not a clean result. These machine formats keep
-  stdout empty. Usage-class errors include argv errors and
+  refused envelope (zeroed counts, `run_status: "refused"`), and `agent`
+  renders its refused `stop=` / `next=` / `verify=refused` record (#14452;
+  a timed run's bounded retry rides `next=`). Every other machine format
+  (`json-terse`, `check-findings-json`, `repo-sarif`, the Shields and
+  `badge-plus-*` / `repo-badge-*` badges, `repo-seams-json`,
+  `repo-exposure-summary-json`) prints its own refusal document too (#14499);
+  docs/OUTPUT_SCHEMA.md lists each shape. The prose formats (`human`,
+  `human-full`, `repo-seams-md`, `repo-exposure-md`) keep stdout empty and
+  the diagnostic on stderr. Usage-class errors include argv errors and
   `context`/`explain` selector misses or ambiguity; their guidance and retry
   listing stay on stderr (RIPR-SPEC-0003). Under an explicit JSON request
   (`--json` or a JSON `--format`) these covered classes also write a minimal
   `cli_refusal` document to stdout (#11584, #6834 decision): an unknown
   command, an unknown flag or stray positional, an unrecognized value
   rejected by the CLI's shared unknown-value builder, `explain --format
-  json`, and a `context` selector miss or ambiguity. The document carries
+  json`, a value flag missing its value or given an empty one (#11979,
+  #14859), a required flag left out (#14877), a malformed number caught by the CLI's shared numeric readers
+  (#11979), and a `context` selector
+  miss or ambiguity. The document carries
   `schema_version`, `tool`, `status: "refused"` and
   `error {code, message, token?, next}`. Exit code and stderr are
   unchanged, and without a JSON request stdout stays empty. Other argv
-  errors keep empty stdout even under a JSON request: a flag missing its
-  value, a malformed value (for example a non-numeric number), conflicting
-  flags, and a value rejected outside the shared builder (for example a
-  gate mode); see `docs/OUTPUT_SCHEMA.md`.
+  errors keep empty stdout even under a JSON request: required-flag
+  refusals not yet typed (including those #14076 is rewording), a value
+  rejected by a command's own parser rather than the shared readers, conflicting flags, and a value rejected outside the shared builder
+  (for example a gate mode); see `docs/OUTPUT_SCHEMA.md`.
   Fresh selector misses also retain producer-owned language limitations for
   that run, with the configured-off or unavailable-binary recovery. These
   describe analysis scope rather than prove why the selector missed;
@@ -163,7 +174,9 @@ reached the caller.
   does not start. This is distinct from a completed `config_error` decision
   (also exit `2`), which still writes the report before returning.
 - **Unusable report input**: `ripr reports gap-ledger` with a source that
-  is readable but not valid JSON or not that source kind's shape, and
+  is readable but not valid JSON, not that source kind's shape, or a
+  producer refusal (`downstream_consumable: false`, nothing analyzed;
+  #14434); and
   `ripr policy readiness` with a supplied input that is missing, unreadable,
   not a JSON object, or empty, a baseline delta, waiver aging, suppression
   health or previous readiness input whose `kind` names another report, or a
@@ -185,7 +198,8 @@ reached the caller.
 
 - **Gate failure**: `ripr gate evaluate` or `ripr gate check` evaluated
   successfully and blocked the PR; the full report was still written to
-  `--out`.
+  `--out`. `ripr reports ci-packet` passes that exit through when the gate
+  blocked and no other required step failed.
 - **Doctor findings**: `ripr doctor` completed its diagnosis and at least
   one check failed; the full report was already written (human screen or
   `--json` document) and stderr names `doctor found issues` (#5102). A
@@ -394,10 +408,14 @@ ledgers, start-here, the report index, and the changed-line annotations,
 each as a log group named after the step it replaced ([docs/CI.md](CI.md)
 keeps the full recipe). Advisory steps log a failure and continue. The diff
 capture and the gate evaluation are required, so a failed diff capture,
-gate evaluation, or blocking-mode producer makes the command exit nonzero
-after the rest of the packet is written: the step fails instead of passing
-on an incomplete analysis, and the later `always()` steps still upload the
-artifacts and the step summary.
+gate evaluation, or blocking-mode producer makes the command exit `2` after
+the rest of the packet is written: the step fails instead of passing on an
+incomplete analysis, and the later `always()` steps still upload the
+artifacts and the step summary. A gate that evaluated and blocked, with no
+other required step failing, makes the packet exit `3`, the same decision
+exit `ripr gate evaluate` uses, so a blocked pull request is not reported as
+a could-not-complete failure. Any other required failure keeps the packet at
+`2` even when the gate also blocked.
 
 The exit code reaches the merge gate through `RIPR_GATE_MODE`, not through
 a check step. The generated job carries

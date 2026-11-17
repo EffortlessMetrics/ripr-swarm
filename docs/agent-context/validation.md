@@ -105,11 +105,12 @@ claim. For `check-fast`, independently verify the diff selector and base before
 using it as evidence. An empty or failed selector is not proof that nothing
 needs testing.
 
-In a container with about 15 GB of memory and 4 cores, run it as
-`CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 cargo xtask precommit`. Measured on
-2026-11-11 for a change that selects whole-workspace Clippy: exit 0 in about
-19 minutes with a 12.8 GB peak. With the default job count the same run was
-stopped by the memory limit during Clippy (#13705).
+On a host with less than 24 GiB of memory and more than one CPU, local
+`precommit` runs its Clippy and `covered_by` Cargo children with
+`CARGO_BUILD_JOBS=1` and says so; set `CARGO_BUILD_JOBS` yourself to override.
+In a 4-core, 15 GB container, whole-workspace Clippy was stopped by the memory
+limit at the default job count and once at two jobs (#13705).
+`CARGO_INCREMENTAL=0` keeps `target/` from filling a small disk.
 
 ### Local mirror of the required hosted gate
 

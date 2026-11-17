@@ -12,8 +12,8 @@ use crate::domain::ProbeFamily;
 use crate::domain::{
     CanonicalNextActionV1, ExposureClass, Finding, LanguageId, NextActionAlternative,
     NextActionCheckCase, NextActionCurrentness, NextActionDiffSource, NextActionInput,
-    NextActionProducer, NextActionStop, StaticLimitKind, current_command_platform,
-    select_canonical_next_action,
+    NextActionProducer, NextActionStop, RelationConfidence, StaticLimitKind,
+    current_command_platform, select_canonical_next_action,
 };
 use crate::output::count_noun::count_noun;
 use crate::output::path::display_path;
@@ -543,7 +543,7 @@ pub(crate) fn render_human_triage(
                     out.push_str(&format!(
                         "  Safe next action: ripr cannot see the untracked file(s) ({listing}); run `git add -N <paths>` (intent-to-add) then `ripr check --worktree`, or pass `--diff PATH`\n"
                     ));
-                } else if head_has_parent(&output.root) {
+                } else if last_commit_retry_applies(output) {
                     out.push_str(&format!(
                         "  Safe next action: you are on `{base}`, which is the comparison base, so there is no diff; to check the last commit run `ripr check --base HEAD~1` (or edit a tracked source file, or switch to a feature branch)\n"
                     ));
@@ -815,8 +815,30 @@ pub(crate) fn render_human_triage(
         // Identical consecutive rows (same location, class, kind and reason)
         // collapse to one row with a repeat count so a diff with many
         // equivalent base-side findings stays scannable.
-        let mut previous: Option<(String, usize)> = None;
-        for finding in &listed {
+        let mut previous: Option<(String, usize, String)> = None;
+        // #14308 item 3: a long reason the row above already printed is
+        // written once; later rows say `same as above`.
+        let mut last_reason: Option<String> = None;
+        for row_members in hidden_rows(&triage.omitted) {
+            // #14299: one row stands for every omitted finding that shares
+            // file, owner, class, currentness and reason. Members that also
+            // share line and kind keep the legacy row and its repeat count.
+            let members: Vec<&Finding> = row_members
+                .iter()
+                .filter_map(|index| triage.omitted.get(*index).copied())
+                .collect();
+            let Some(finding) = members.first().copied() else {
+                continue;
+            };
+            let reason = hidden_finding_reason(finding);
+            if let Some(row) = grouped_hidden_row(&output.root, &members, label_currentness) {
+                if let Some((prev, count, prev_reason)) = previous.take() {
+                    push_hidden_row(out, &prev, count, &prev_reason, &mut last_reason);
+                }
+                push_hidden_row(out, &row, 1, &reason, &mut last_reason);
+                continue;
+            }
+            let repeat = members.len();
             let currentness = if label_currentness {
                 format!(", {}", hidden_bullet_currentness(finding))
             } else {
@@ -830,7 +852,7 @@ pub(crate) fn render_human_triage(
                 finding.class.plain_label_with_stage(),
                 currentness,
                 super::evidence_lines::plain_probe_family(&finding.probe.family),
-                hidden_finding_reason(finding)
+                reason
             ));
             if offers_test_stub(finding)
                 && let Some(FindingDrillIn::Commands(navigation)) = drill_in
@@ -856,17 +878,17 @@ pub(crate) fn render_human_triage(
                 }
             }
             match previous.as_mut() {
-                Some((prev, count)) if *prev == row => *count += 1,
+                Some((prev, count, _)) if *prev == row => *count += repeat,
                 _ => {
-                    if let Some((prev, count)) = previous.take() {
-                        push_hidden_row(out, &prev, count);
+                    if let Some((prev, count, prev_reason)) = previous.take() {
+                        push_hidden_row(out, &prev, count, &prev_reason, &mut last_reason);
                     }
-                    previous = Some((row, 1));
+                    previous = Some((row, repeat, reason));
                 }
             }
         }
-        if let Some((prev, count)) = previous.take() {
-            push_hidden_row(out, &prev, count);
+        if let Some((prev, count, prev_reason)) = previous.take() {
+            push_hidden_row(out, &prev, count, &prev_reason, &mut last_reason);
         }
         if let Some(command) = stub_template {
             out.push_str("  Write a test for a listed row, replacing TEST_ID with its Test id:\n");
@@ -909,16 +931,12 @@ pub(crate) fn render_human_triage(
 
 /// #4320: the `Hidden:` list names omitted findings so the reader can confirm
 /// coverage without a rerun, but the default surface stays bounded: beyond
-/// this window the list discloses the remainder instead of printing every
-/// identity.
+/// this many rows the list discloses the remainder instead of printing every
+/// identity. A row may stand for several findings (#14299).
 const HIDDEN_FINDINGS_LISTED: usize = 20;
 
-/// The omitted findings the `Hidden:` list names. Within the window every
-/// omitted finding is listed in the report's file and line order. Beyond it,
-/// the window keeps the findings the check-JSON findings budget would keep
-/// (candidate-current gap classes first, `exposed` and non-candidate evidence
-/// last), still printed in file and line order, so a large diff does not spend
-/// the list on the alphabetically first files while later gaps go unnamed.
+/// The omitted findings the `Hidden:` list's rows stand for, in report order.
+/// See [`hidden_rows`] for grouping and the row window (#14233, #14299).
 fn hidden_window<'a>(omitted: &[&'a Finding]) -> Vec<&'a Finding> {
     hidden_window_indices(omitted)
         .into_iter()
@@ -926,17 +944,150 @@ fn hidden_window<'a>(omitted: &[&'a Finding]) -> Vec<&'a Finding> {
         .collect()
 }
 
-/// Positions in `omitted` of the rows `hidden_window` names, ascending.
+/// Positions in `omitted` of the findings the listed rows stand for, ascending.
 fn hidden_window_indices(omitted: &[&Finding]) -> Vec<usize> {
-    if omitted.len() <= HIDDEN_FINDINGS_LISTED {
-        return (0..omitted.len()).collect();
+    let mut kept: Vec<usize> = hidden_rows(omitted).into_iter().flatten().collect();
+    kept.sort_unstable();
+    kept
+}
+
+/// #14299: the rows the `Hidden:` list prints, each a list of positions in
+/// `omitted` (ascending). Findings that share file, owner, class,
+/// currentness label and reason form one row, so a diff that changes one
+/// function does not spend the window on one line per probe. Findings that
+/// offer a per-finding test stub stay one row each, since each row carries
+/// its own `Test id`. The window bounds rows, not findings: beyond
+/// [`HIDDEN_FINDINGS_LISTED`] rows it keeps the rows whose best member ranks
+/// highest in the shared check-JSON priority order (#14235), printed in the
+/// order of each row's first member.
+fn hidden_rows(omitted: &[&Finding]) -> Vec<Vec<usize>> {
+    let mut rows: Vec<Vec<usize>> = Vec::new();
+    let mut row_of_key: std::collections::BTreeMap<HiddenRowKey, usize> =
+        std::collections::BTreeMap::new();
+    for (index, finding) in omitted.iter().enumerate() {
+        // An owner-less finding has no function to group by: unrelated
+        // probes across a file would read as one contiguous region.
+        if offers_test_stub(finding) || finding.probe.owner.is_none() {
+            rows.push(vec![index]);
+            continue;
+        }
+        let key = hidden_row_key(finding);
+        match row_of_key.get(&key) {
+            Some(&row) => {
+                if let Some(members) = rows.get_mut(row) {
+                    members.push(index);
+                }
+            }
+            None => {
+                row_of_key.insert(key, rows.len());
+                rows.push(vec![index]);
+            }
+        }
     }
-    let mut kept: Vec<usize> = crate::output::json::findings_priority::priority_order(omitted)
+    if rows.len() <= HIDDEN_FINDINGS_LISTED {
+        return rows;
+    }
+    let mut rank = vec![usize::MAX; omitted.len()];
+    for (position, index) in crate::output::json::findings_priority::priority_order(omitted)
+        .into_iter()
+        .enumerate()
+    {
+        if let Some(slot) = rank.get_mut(index) {
+            *slot = position;
+        }
+    }
+    let best_rank = |members: &Vec<usize>| {
+        members
+            .iter()
+            .filter_map(|index| rank.get(*index).copied())
+            .min()
+            .unwrap_or(usize::MAX)
+    };
+    let mut by_priority: Vec<usize> = (0..rows.len()).collect();
+    by_priority.sort_by_key(|row| rows.get(*row).map_or(usize::MAX, best_rank));
+    let mut kept: Vec<usize> = by_priority
         .into_iter()
         .take(HIDDEN_FINDINGS_LISTED)
         .collect();
     kept.sort_unstable();
-    kept
+    kept.into_iter()
+        .filter_map(|row| rows.get(row).cloned())
+        .collect()
+}
+
+/// What a grouped `Hidden:` row has in common: file, owner, class,
+/// currentness label and the reason text the row prints.
+type HiddenRowKey = (
+    std::path::PathBuf,
+    Option<String>,
+    &'static str,
+    &'static str,
+    String,
+);
+
+fn hidden_row_key(finding: &Finding) -> HiddenRowKey {
+    (
+        finding.probe.location.file.clone(),
+        finding.probe.owner.as_ref().map(|owner| owner.0.clone()),
+        finding.class.as_str(),
+        hidden_bullet_currentness(finding),
+        hidden_finding_reason(finding),
+    )
+}
+
+/// #14299: the one row for a group whose members differ by line or kind:
+/// the line span, the count, the owner and the kinds. `None` when the group
+/// is a single finding or its members share line and kind, which keep the
+/// legacy row (with a repeat count for identical members).
+fn grouped_hidden_row(
+    root: &std::path::Path,
+    members: &[&Finding],
+    label_currentness: bool,
+) -> Option<String> {
+    let first = members.first()?;
+    let mut kinds: Vec<&'static str> = Vec::new();
+    for finding in members {
+        let kind = super::evidence_lines::plain_probe_family(&finding.probe.family);
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+    }
+    let first_line = members.iter().map(|f| f.probe.location.line).min()?;
+    let last_line = members.iter().map(|f| f.probe.location.line).max()?;
+    if members.len() < 2 || (first_line == last_line && kinds.len() == 1) {
+        return None;
+    }
+    let lines = if first_line == last_line {
+        first_line.to_string()
+    } else {
+        format!("{first_line}-{last_line}")
+    };
+    let currentness = if label_currentness {
+        format!(", {}", hidden_bullet_currentness(first))
+    } else {
+        String::new()
+    };
+    let owner = first
+        .probe
+        .owner
+        .as_ref()
+        .and_then(|owner| owner.0.rsplit("::").next())
+        .filter(|name| !name.is_empty())
+        .map(|name| format!(" in `{name}`"))
+        .unwrap_or_default();
+    let label = if kinds.len() == 1 { "kind" } else { "kinds" };
+    Some(format!(
+        "    - {}:{} ({}{}); {} changed behaviors{}; {}: {}; reason: {}\n",
+        crate::analysis::finding_location_text(root, &first.probe.location.file),
+        lines,
+        first.class.plain_label_with_stage(),
+        currentness,
+        members.len(),
+        owner,
+        label,
+        kinds.join(", "),
+        hidden_finding_reason(first)
+    ))
 }
 
 /// Class counts of the omitted findings outside the listed window, in the
@@ -981,8 +1132,13 @@ fn offers_test_stub(finding: &Finding) -> bool {
 }
 
 pub(super) fn hidden_stub_route_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'a Finding> {
-    hidden_window(&triage.omitted)
-        .into_iter()
+    // Hidden routing consumes the omitted set in report order, independently of
+    // the priority-ranked Hidden: display window (#14687).
+    triage
+        .omitted
+        .iter()
+        .copied()
+        .take(HIDDEN_FINDINGS_LISTED)
         .filter(|finding| offers_test_stub(finding))
         .collect()
 }
@@ -1311,7 +1467,21 @@ pub(crate) fn canonical_next_action_for_triage(
         (None, _) => String::new(),
     };
     let mut alternatives: Vec<NextActionAlternative> = Vec::new();
-    for omitted in triage.omitted.iter().take(2).filter(|_| !routes_withheld) {
+    // #14266: the two alternates are the best-ranked omitted findings under
+    // the shared render priority (`findings_priority::priority_order`, the
+    // same order the `Hidden:` window uses), not the first two in report
+    // order, so an `exposed` row early in the file list never displaces a
+    // gap. Equal keys keep report order. Withheld routes skip the ranking.
+    let ranked_alternates = (!routes_withheld)
+        .then(|| {
+            crate::output::json::findings_priority::priority_order(&triage.omitted)
+                .into_iter()
+                .filter_map(|index| triage.omitted.get(index))
+                .take(2)
+        })
+        .into_iter()
+        .flatten();
+    for omitted in ranked_alternates {
         let route = match drill_in {
             Some(FindingDrillIn::Commands(navigation)) => navigation.explain_command(&omitted.id),
             None => omitted.id.clone(),
@@ -1391,12 +1561,53 @@ pub(crate) fn canonical_next_action_for_triage(
         } else {
             None
         },
+        check_scope_route: (check_case_for_triage(triage, output)
+            == NextActionCheckCase::ScopeMissing
+            && last_commit_retry_applies(output))
+        .then(|| last_commit_retry_command(output, None)),
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives,
         limitations,
     };
     select_canonical_next_action(&input)
+}
+
+/// #14423: the one owner of the "check the last commit" retry for an empty
+/// `scope_missing` range that is the base branch compared with itself. True
+/// when the committed-history read compared HEAD's own branch as the base
+/// (`<branch>`, or `origin/<branch>` in a clone, under the same git-identity
+/// rule the bare human check's rescope uses), no untracked or ignored source
+/// file explains the empty range, and `HEAD~1` resolves. The human `Safe next
+/// action`, the agent `stop=` line and the JSON
+/// `canonical_next_action.stop.scope_route` all read this decision.
+pub(crate) fn last_commit_retry_applies(output: &CheckOutput) -> bool {
+    let Some(base) = output.base.as_deref() else {
+        return false;
+    };
+    if crate::output::analyzed_revisions::is_working_tree_read(output)
+        || (output.unanalyzed_working_tree
+            && !output.untracked_working_tree_source_paths.is_empty())
+        || !output.ignored_working_tree_source_paths.is_empty()
+    {
+        return false;
+    }
+    crate::analysis::base_is_checked_out_head_with_parent(&output.root, base, None)
+}
+
+/// The `ripr check` rerun for [`last_commit_retry_applies`], rooted like the
+/// restart route, with ` --format <format>` appended when one is given.
+pub(crate) fn last_commit_retry_command(output: &CheckOutput, format: Option<&str>) -> String {
+    let mut command = format!(
+        "ripr check --root {} --base HEAD~1",
+        shell_arg(&crate::agent::loop_commands::root_display(
+            &output.root.display().to_string()
+        ))
+    );
+    if let Some(format) = format {
+        command.push_str(&format!(" --format {format}"));
+    }
+    command
 }
 
 /// True when `HEAD~1` resolves, so `--base HEAD~1` names a real range.
@@ -2065,12 +2276,29 @@ fn decisive_shadows_unknown(decisive: &Finding, unknown: &Finding) -> bool {
         && (covers_same_changed_behavior(decisive, unknown) || has_no_distinct_change(unknown))
 }
 
+/// `repair_rank` for a non-preview static-limited finding: behind every
+/// routed or unrouted gap (`reachable_unrevealed` 2, `weakly_exposed` 3) and
+/// level with the unknown classes, ahead of `exposed`.
+const STATIC_LIMITED_REPAIR_TIER: u8 = 5;
+
 fn triage_rank<'a>(
     finding: &'a Finding,
     root: &std::path::Path,
     context: &SourceRoleContext,
     decisive_findings: &[&Finding],
-) -> (u8, u8, u8, u8, u8, u8, u8, i32, &'a std::path::Path, usize) {
+) -> (
+    u8,
+    u8,
+    u8,
+    u8,
+    u8,
+    u8,
+    u8,
+    i32,
+    u8,
+    &'a std::path::Path,
+    usize,
+) {
     let class_rank = match finding.class {
         ExposureClass::ReachableUnrevealed => 2,
         ExposureClass::WeaklyExposed => 3,
@@ -2081,9 +2309,16 @@ fn triage_rank<'a>(
         ExposureClass::Exposed => 9,
     };
     let preview_rank = u8::from(is_preview_limited(finding));
-    let repair_rank = if finding.class != ExposureClass::Exposed && has_ranked_repair_route(finding)
-    {
+    let repair_rank = if finding.class == ExposureClass::Exposed {
+        class_rank
+    } else if has_ranked_repair_route(finding) {
         0
+    } else if !is_preview_limited(finding) && is_static_limited(finding) {
+        // #14266 item 2: static-limited findings share one tier behind every
+        // gap, so the evidence keys below (gap identity, related test,
+        // missing evidence, confidence) order them among themselves, as they
+        // did while their advisory next step counted as a route.
+        STATIC_LIMITED_REPAIR_TIER
     } else {
         class_rank
     };
@@ -2117,12 +2352,38 @@ fn triage_rank<'a>(
         preview_rank,
         repair_rank,
         u8::from(finding.canonical_gap.is_none()),
-        u8::from(finding.oracle_related_tests().next().is_none()),
+        u8::from(!has_linked_oracle_test(finding)),
         u8::from(finding.missing.is_empty()),
         -(finding.confidence * 100.0) as i32,
+        // #14266: a repair route zeroes `repair_rank` for every routed
+        // finding, and every stable finding with a next step counts as
+        // routed, so without this key two otherwise equal candidates were
+        // ordered by file path: an unknown in `analysis/` led a
+        // `reachable_unrevealed` gap in `provider_contract/`. The class
+        // order breaks that tie before the path does.
+        class_rank,
         finding.probe.location.file.as_path(),
         finding.probe.location.line,
     )
+}
+
+/// Whether `finding` has a decision-set related test linked by more than a
+/// shared name token or fixture-helper affinity. A `Low` relation confidence
+/// (`weak_token_substring`, `fixture_owner_affinity`) is advisory only
+/// (`RelationReason::WeakTokenSubstring`), so such a row does not lift a
+/// finding over a higher-confidence one in the Start here order: on semver
+/// `ce1fef1` a format-string literal linked to `test_digit_after_wildcard`
+/// by a shared word led the new `self.0 == '\0'` predicate (#14734).
+/// `Opaque` ranks below `Low`, so it does not count either; no producer
+/// writes it today, but a stored artifact may carry it.
+/// A row from an older artifact (no relation confidence) keeps counting.
+fn has_linked_oracle_test(finding: &Finding) -> bool {
+    finding.oracle_related_tests().any(|test| {
+        !matches!(
+            test.relation_confidence,
+            Some(RelationConfidence::Low | RelationConfidence::Opaque)
+        )
+    })
 }
 
 /// A stable finding ranks by its repair route; a preview finding only by the
@@ -2133,7 +2394,11 @@ fn triage_rank<'a>(
 /// unchanged; only the selection order moves.
 fn has_ranked_repair_route(finding: &Finding) -> bool {
     if !is_preview_limited(finding) {
-        return has_repair_route(finding);
+        // #14266 item 2: rank by the route the screen can print. A
+        // static-limited finding never prints a repair route
+        // (`printed_repair_route`), so its advisory next step must not lift
+        // it to the routed tier over a gap whose route does print.
+        return !is_static_limited(finding) && has_repair_route(finding);
     }
     finding.language == Some(LanguageId::Python) && python_repair_card(finding).is_some()
 }
@@ -2307,8 +2572,14 @@ pub(super) fn limit_leaves_weak_assertion_open(finding: &Finding) -> bool {
 /// `owner_named_test`, `import_path_affinity`, `fixture_owner_affinity`,
 /// `seam_callee_call` and `assertion_target_affinity` still count as bound to
 /// the owner here. This is a reasoned choice, not measured against a corpus.
+///
+/// Among the bound weak rows, the first of the best shared
+/// [`crate::domain::RelatedTest::observation_tier`] is named (#14483), so a
+/// listed-first row with no call path never names the test to open while a
+/// weak row that reaches the change is listed. Whether a row exists is
+/// unchanged.
 pub(super) fn weak_assertion_row(finding: &Finding) -> Option<&crate::domain::RelatedTest> {
-    finding.related_tests.iter().find(|test| {
+    let bound_weak = finding.related_tests.iter().filter(|test| {
         test.is_contributing()
             && !test
                 .relation_reason
@@ -2317,7 +2588,9 @@ pub(super) fn weak_assertion_row(finding: &Finding) -> Option<&crate::domain::Re
                 test.oracle_strength,
                 crate::domain::OracleStrength::Weak | crate::domain::OracleStrength::Smoke
             )
-    })
+    });
+    // `min_by_key` keeps the first of equal keys.
+    bound_weak.min_by_key(|test| std::cmp::Reverse(test.observation_tier()))
 }
 
 pub(super) fn is_preview_limited(finding: &Finding) -> bool {
@@ -2326,9 +2599,32 @@ pub(super) fn is_preview_limited(finding: &Finding) -> bool {
         .is_some_and(|status| status.as_str() == "preview")
 }
 
+/// #14308 item 3: reasons at most this long print on every row, because
+/// `same as above` would save little and the row reads better whole.
+const HIDDEN_REASON_REPEAT_MIN_BYTES: usize = 40;
+
 /// Append a hidden-finding block, annotating its first line with a repeat
-/// count when identical consecutive rows were collapsed.
-fn push_hidden_row(out: &mut String, row: &str, count: usize) {
+/// count when identical consecutive rows were collapsed. A reason longer than
+/// [`HIDDEN_REASON_REPEAT_MIN_BYTES`] that the row printed just above already
+/// stated prints as `same as above`.
+fn push_hidden_row(
+    out: &mut String,
+    row: &str,
+    count: usize,
+    reason: &str,
+    last_reason: &mut Option<String>,
+) {
+    let stated = format!("; reason: {reason}\n");
+    let shown = if reason.len() > HIDDEN_REASON_REPEAT_MIN_BYTES
+        && last_reason.as_deref() == Some(reason)
+        && row.contains(&stated)
+    {
+        row.replacen(&stated, "; reason: same as above\n", 1)
+    } else {
+        row.to_string()
+    };
+    *last_reason = Some(reason.to_string());
+    let row = shown.as_str();
     if count <= 1 {
         out.push_str(row);
         return;
@@ -2823,15 +3119,23 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         // #14233: the one candidate-current row sorts last in report order,
-        // and the window keeps it ahead of the non-candidate rows.
-        assert_eq!(
-            candidates(&rows),
-            vec!["hidden:20"],
-            "the window keeps the candidate-current row"
+        // and the display window keeps it ahead of the non-candidate rows.
+        assert!(
+            hidden_window(&rows.iter().collect::<Vec<_>>())
+                .iter()
+                .any(|finding| finding.id == "hidden:20"),
+            "the displayed Hidden: window keeps the candidate-current row"
         );
-        // Eligibility is still decided inside the displayed window: with 21
-        // candidate-current rows, the one that ranks last (no recommended next
-        // step) falls outside the window and offers no stub route.
+        // #14687: stub selection is decoupled from that priority window and
+        // reads the first 20 rows in report order instead.
+        assert!(
+            candidates(&rows).is_empty(),
+            "the candidate-current row at index 20 is outside the first 20 rows"
+        );
+        // Eligibility is separately filtered inside the first 20 report-order
+        // rows: with 21 candidate-current rows, the one that ranks last (no
+        // recommended next step) still offers a stub route despite being
+        // excluded from the displayed Hidden: window.
         let mut all_current = rows.clone();
         for (index, row) in all_current.iter_mut().enumerate() {
             row.source_currentness = SourceCurrentness::CandidateCurrent;
@@ -2842,8 +3146,8 @@ mod tests {
         let windowed = candidates(&all_current);
         assert_eq!(windowed.len(), 20, "{windowed:?}");
         assert!(
-            !windowed.contains(&"hidden:7".to_string()),
-            "take the displayed window before eligibility filtering: {windowed:?}"
+            windowed.contains(&"hidden:7".to_string()),
+            "stub eligibility filters within the first 20 rows, independently of the display window: {windowed:?}"
         );
         rows[20].source_currentness = SourceCurrentness::BaseDeleted;
         assert!(candidates(&rows).is_empty());
@@ -2990,6 +3294,54 @@ mod tests {
                 }
             }
             other => return Err(format!("top gap stop is wrong: {other:?}")),
+        }
+        Ok(())
+    }
+
+    /// #14266: the considered-finding alternates are chosen by the shared
+    /// render priority, not report order. Report order puts two `exposed`
+    /// findings first; the gap after them must lead the alternates, and the
+    /// control with every row `exposed` keeps report order.
+    #[test]
+    fn check_adapter_alternates_follow_the_shared_priority_not_report_order() -> Result<(), String>
+    {
+        let top = test_finding("finding:top");
+        let mut noticed_a = test_finding("finding:noticed-a");
+        noticed_a.class = ExposureClass::Exposed;
+        let mut noticed_b = test_finding("finding:noticed-b");
+        noticed_b.class = ExposureClass::Exposed;
+        let mut gap = test_finding("finding:gap");
+        gap.class = ExposureClass::ReachableUnrevealed;
+        let output = test_output(vec![top.clone()]);
+        let alternate_ids = |omitted: Vec<&Finding>| -> Result<Vec<String>, String> {
+            let triage = HumanTriage {
+                state: HumanTriageState::TopGap,
+                selected: Some(&top),
+                omitted,
+            };
+            let action = canonical_next_action_for_triage(
+                &triage,
+                &output,
+                None,
+                CheckDiffProvenance::CommittedHistory,
+            )?;
+            Ok(action
+                .alternatives()
+                .iter()
+                .map(|alternative| alternative.route.clone())
+                .collect())
+        };
+        let ranked = alternate_ids(vec![&noticed_a, &noticed_b, &gap])?;
+        if ranked != ["finding:gap", "finding:noticed-a"] {
+            return Err(format!("alternates must lead with the gap, got {ranked:?}"));
+        }
+        let mut late = test_finding("finding:late");
+        late.class = ExposureClass::Exposed;
+        let control = alternate_ids(vec![&noticed_a, &noticed_b, &late])?;
+        if control != ["finding:noticed-a", "finding:noticed-b"] {
+            return Err(format!(
+                "equal priority must keep report order, got {control:?}"
+            ));
         }
         Ok(())
     }
@@ -3782,6 +4134,255 @@ mod tests {
             (NARROW_STATE.to_string(), NARROW_ACTION.to_string())
         );
         Ok(())
+    }
+
+    /// #14266: two candidates equal on every evidence key through
+    /// confidence order by exposure class, not by file path. The weaker
+    /// class sorts first by path and is listed first, so neither path order
+    /// nor insertion order can masquerade as ranking.
+    #[test]
+    fn start_here_breaks_an_evidence_tie_by_class_before_path() {
+        let mut weak = finding_at(
+            "finding:weak",
+            "src/a_analysis.rs",
+            ExposureClass::WeaklyExposed,
+        );
+        let mut gap = finding_at(
+            "finding:unrevealed",
+            "src/z_provider.rs",
+            ExposureClass::ReachableUnrevealed,
+        );
+        for finding in [&mut weak, &mut gap] {
+            finding.recommended_next_step = Some("inspect the related test".to_string());
+            finding.confidence = 0.66;
+        }
+        let output = test_output(vec![weak.clone(), gap.clone()]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unrevealed")
+        );
+
+        // Discriminating control: a higher-confidence weak gap still leads,
+        // so class only breaks a tie and does not override earlier keys.
+        weak.confidence = 0.9;
+        let output = test_output(vec![gap, weak]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:weak")
+        );
+    }
+
+    /// #14266 item 2: an advisory next step on a static-limited finding is
+    /// not a repair route (the screen never prints one for it), so it does
+    /// not lift the unknown over a gap that has no route either. The unknown
+    /// sorts first by path, is listed first and has the higher confidence.
+    #[test]
+    fn start_here_does_not_rank_an_unprintable_route_as_a_repair_route() {
+        let mut unknown = finding_at(
+            "finding:unknown",
+            "src/a_analysis.rs",
+            ExposureClass::PropagationUnknown,
+        );
+        unknown.recommended_next_step =
+            Some("The indexed related tests do not establish a call".to_string());
+        unknown.confidence = 0.9;
+        let mut gap = finding_at(
+            "finding:unrevealed",
+            "src/z_provider.rs",
+            ExposureClass::ReachableUnrevealed,
+        );
+        gap.confidence = 0.5;
+        let output = test_output(vec![unknown.clone(), gap.clone()]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unrevealed")
+        );
+
+        // Discriminating control: a next step on a finding that is not
+        // static-limited still counts as a route and still leads.
+        let mut routed = finding_at(
+            "finding:routed-weak",
+            "src/a_analysis.rs",
+            ExposureClass::WeaklyExposed,
+        );
+        routed.recommended_next_step = Some("strengthen the assertion".to_string());
+        routed.confidence = 0.9;
+        let output = test_output(vec![routed, gap]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:routed-weak")
+        );
+    }
+
+    /// A related test with the given relation, in the decision set.
+    fn related_by(
+        name: &str,
+        reason: crate::domain::RelationReason,
+        confidence: Option<crate::domain::RelationConfidence>,
+    ) -> crate::domain::RelatedTest {
+        crate::domain::RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("tests/version.rs"),
+            line: 10,
+            oracle: None,
+            oracle_kind: crate::domain::OracleKind::Unknown,
+            oracle_strength: crate::domain::OracleStrength::Unknown,
+            relation_reason: Some(reason),
+            relation_confidence: confidence,
+            miss: Some(crate::domain::RelatedTestMiss::NoCallPath),
+            role: crate::domain::RelatedTestRole::Contributing,
+            miss_support: None,
+        }
+    }
+
+    /// #14734 (semver `ce1fef1`): a related test linked only by a shared
+    /// name token is advisory, so it does not lift a lower-confidence
+    /// unknown over the diff's higher-confidence one. The weakly linked
+    /// finding is listed first so insertion order cannot pass for ranking.
+    #[test]
+    fn start_here_does_not_rank_a_name_token_link_as_a_related_test() {
+        use crate::domain::{RelationConfidence, RelationReason};
+        let mut literal = finding_at(
+            "finding:literal",
+            "src/error.rs",
+            ExposureClass::StaticUnknown,
+        );
+        literal.confidence = 0.3;
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::WeakTokenSubstring,
+            Some(RelationConfidence::Low),
+        )];
+        let mut predicate = finding_at(
+            "finding:predicate",
+            "src/error.rs",
+            ExposureClass::InfectionUnknown,
+        );
+        predicate.confidence = 0.43;
+        for finding in [&mut literal, &mut predicate] {
+            finding.recommended_next_step = Some("inspect the change".to_string());
+        }
+        let selected = |findings: Vec<Finding>| {
+            let output = test_output(findings);
+            select_human_triage(&output, &RiprConfig::default())
+                .selected
+                .map(|finding| finding.id.clone())
+        };
+        assert_eq!(
+            selected(vec![literal.clone(), predicate.clone()]),
+            Some("finding:predicate".to_string())
+        );
+
+        // Fixture-helper affinity is the other `Low` relation and is advisory
+        // too.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::FixtureOwnerAffinity,
+            Some(RelationConfidence::Low),
+        )];
+        assert_eq!(
+            selected(vec![literal.clone(), predicate.clone()]),
+            Some("finding:predicate".to_string())
+        );
+
+        // `Opaque` ranks below `Low`, so a stored row carrying it does not
+        // count either.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::SameTestFile,
+            Some(RelationConfidence::Opaque),
+        )];
+        assert_eq!(
+            selected(vec![literal.clone(), predicate.clone()]),
+            Some("finding:predicate".to_string())
+        );
+
+        // A `Medium` relation (same test file) still counts as a related test.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::SameTestFile,
+            Some(RelationConfidence::Medium),
+        )];
+        assert_eq!(
+            selected(vec![predicate.clone(), literal.clone()]),
+            Some("finding:literal".to_string())
+        );
+
+        // Discriminating control: a test the analyzer links through a call
+        // keeps its lead over a higher-confidence finding with no test.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::HelperOwnerCall,
+            Some(RelationConfidence::High),
+        )];
+        assert_eq!(
+            selected(vec![predicate.clone(), literal.clone()]),
+            Some("finding:literal".to_string())
+        );
+
+        // A row from an older artifact carries no relation confidence and
+        // still counts, as before.
+        literal.related_tests = vec![related_by(
+            "test_digit_after_wildcard",
+            RelationReason::WeakTokenSubstring,
+            None,
+        )];
+        assert_eq!(
+            selected(vec![predicate, literal]),
+            Some("finding:literal".to_string())
+        );
+    }
+
+    /// #14266 item 2: static-limited findings share one tier, so the
+    /// evidence keys still order them among themselves. A `no_static_path`
+    /// finding sorts first by path, is listed first and has the better class
+    /// rank, but the unknown carries a gap identity and wins on that key.
+    #[test]
+    fn start_here_orders_static_limited_findings_by_evidence_not_class() {
+        let mut no_path = finding_at(
+            "finding:no-path",
+            "src/a_display.rs",
+            ExposureClass::NoStaticPath,
+        );
+        no_path.recommended_next_step = Some("Tests cannot close this limitation".to_string());
+        let mut unknown = finding_at(
+            "finding:unknown-with-gap",
+            "src/z_impls.rs",
+            ExposureClass::InfectionUnknown,
+        );
+        unknown.recommended_next_step = Some("Open the related test".to_string());
+        unknown.canonical_gap = Some(FindingCanonicalGap {
+            id: "gap:rust:src/z_impls.rs:cmp:return_value".to_string(),
+            language: "rust".to_string(),
+            file: "src/z_impls.rs".to_string(),
+            owner: "cmp".to_string(),
+            behavior_kind: "return_value".to_string(),
+            probe_kind: "return_value".to_string(),
+            normalized_discriminator: "let_some_rhs".to_string(),
+        });
+        for finding in [&mut no_path, &mut unknown] {
+            finding.confidence = 0.45;
+        }
+        let output = test_output(vec![no_path.clone(), unknown.clone()]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unknown-with-gap")
+        );
+
+        // Control: with equal evidence the class tie-break still puts the
+        // no-path finding first, so the tier does not reverse class order.
+        unknown.canonical_gap = None;
+        let output = test_output(vec![unknown, no_path]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:no-path")
+        );
     }
 
     /// #9346: the same preference covers a weak production gap.

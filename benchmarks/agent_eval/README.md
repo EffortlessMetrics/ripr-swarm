@@ -41,19 +41,20 @@ no timings, paths or dates; only `ripr_version` changes between builds.
 
 | route | what the agent runs |
 |---|---|
-| `cli-agent-loop` | `check --quiet --format agent`, then every printed `next=` command in turn (explain, then context), as the `init --agents` block instructs |
+| `cli-agent-loop` | `check --quiet --format agent`, then, for each printed `next=` whose gap row's `missing=` is `-` or a sentence rather than code, that command and the ones it prints (explain, then context), as the `init --agents` block instructs |
 | `cli-agent-find` | the same first step only |
 | `cli-human` | `check` with the default human output |
 | `cli-json-terse` | `check --format json-terse` |
 | `agent-brief` | `agent brief --json` |
 | `mcp` | `initialize`, `tools/list`, `ripr_workspace_status`, `ripr_refresh`, `ripr_list_gaps`, then `ripr_get_gap` for each listed item that is not `exposed` |
+| `mcp-brief` | the `mcp` flow with `RIPR_MCP_TEXT_CONTENT=brief`, the opt-in text companion for hosts that read `structuredContent` (#14327) |
 
 Every route passes `--base main` (or `{"base": "main"}`) and runs in a fresh
 copy of the scenario repository, so first-run state cannot leak between routes.
 
 ## Definitions
 
-- **bytes**: a CLI step's stdout plus stderr; for MCP, the response line.
+- **bytes**: a CLI step's stdout plus stderr, or for MCP the response line, after the scratch root is replaced by `<root>`.
 - **tokens**: an estimate, not a billing count. Each run of ASCII letters,
   digits and `_` costs ceil(len/4), other non-whitespace characters cost 1.
   For MCP only what a host shows the model counts: the tool list, each call's
@@ -76,6 +77,11 @@ copy of the scenario repository, so first-run state cannot leak between routes.
 - A cargo key check that cannot build or report a test result is an
   instrument failure: shown as `not established`, never NO. It fails every
   run mode and blocks `--write-baseline`.
+- `cli-agent-loop` opens with the same FIND command that `cli-agent-find`
+  runs, on an identical fresh workspace. When the two captures differ in
+  exit, bytes or tokens, the run measured host noise (a stray stderr note, an
+  unnormalized path), not ripr: that is an instrument failure too, and
+  `--compare` refuses a baseline that recorded one.
 - A silent control counts only when `check --format agent` exited 0, its
   header says `gaps=0` and it printed no `stop=`. The weak and reference
   checks also need exit 0. `--write-baseline` refuses `--compare`.
@@ -98,15 +104,28 @@ controls. Keep each crate dependency-free so the eval stays offline.
 
 Route totals are the `routes` rows at the top of `baseline.json`. What they show:
 
-- The first agent-format step already carries every answer. The DETAIL steps
-  the loop then prescribes (explain, then context) cost 4.9 times as much and
-  add no keyed fact.
+- The first agent-format step already carries every answer. The `init --agents`
+  DETAIL step is skipped when `missing=` is code (`total == 100`), so the loop
+  follows explain and context only for rows whose `missing=` is `-` or a
+  sentence ("No strong discriminator ..."). Before that rule the loop read
+  8,731 estimated tokens over the six scenarios; with it, 2,619 on the same
+  base, for the same answers. `baseline.json` records the current figure. A
+  row with `(+N more)` or a clipped `…` value is followed too.
+- `struct_field` reads `reference_test_closes_loop: false` since #14565 stopped
+  crediting the sibling field's assertion; the intended bool-field assertion
+  alone does not yet earn credit (#14701).
 - `cli-human` shows one finding and hides the rest, so on the two-gap scenario
   the second gap stays hidden.
 - MCP costs about 35 times the agent CLI to reach the same answer. The tool
   list alone is about 4,300 estimated tokens per session.
-- Loop: after the reference test, two of the five gap scenarios
-  (`changed_constant_return`, `struct_field`) still end with
-  `verify=refused`, so an agent following the block cannot finish.
-- `error_variant` gets two identical gap rows for its one changed line
-  (`extra_gaps: 1`), so the header asks for two tests where one is needed.
+- `mcp-brief` (#14327) reaches every answer for 35,267 tokens, against
+  51,875 on `mcp`. The eight `ripr_get_gap` reads drop from 12,294 to 3,083
+  (measured when the route landed), so the fixed `tools/list` cost now
+  dominates.
+- Loop: after the reference test, one of the five gap scenarios
+  (`struct_field`, above) still ends with `verify=refused`, so an agent
+  following the block cannot finish there. `changed_constant_return` closed
+  once #14380 (#14325) landed.
+- `error_variant` once got two identical gap rows for its one changed line;
+  #14453 folded them, so it now reads `extra_gaps: 0`. `struct_field` has one
+  extra gap row (`extra_gaps: 1`).

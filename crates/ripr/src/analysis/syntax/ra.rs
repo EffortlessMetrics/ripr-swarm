@@ -11,8 +11,10 @@ mod module_scope_walk_tests;
 mod probe_shapes;
 mod property_macros;
 pub(crate) use closure_callbacks::{
-    InvokedCallbackParam, closure_argument_positions, invoked_callback_params, macro_call_columns,
-    passes_call_making_closure, unconditionally_invoked_param_positions,
+    ForwardedCallbackParam, InvokedCallbackParam, call_making_closure_positions,
+    closure_argument_positions, forwarded_callback_params, invoked_callback_params,
+    macro_call_columns, param_never_mentioned, passes_call_making_closure,
+    unconditionally_invoked_param_positions,
 };
 use probe_shapes::extract_parser_probe_shapes;
 #[cfg(test)]
@@ -40,6 +42,7 @@ use super::{
     NameScope, RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange, UseBinding,
     name_scope::path_segments, name_scope_for_items, parse_clean_source_file, rust_nesting_refusal,
 };
+use crate::analysis::facts::probe_shape_position;
 use crate::analysis::rust_index::{
     FunctionFact, LazyDecls, OracleFact, ProbeShapeFact, ProbeShapeKind, SharedFactSlice,
     SourceText, TestFact, classify_assertion_with, err_return_guard_oracles, extract_call_facts,
@@ -993,6 +996,7 @@ fn summarize_file_with_collectors(
             && a.kind == b.kind
             && a.text == b.text
     });
+    retain_probe_shapes_outside_test_bodies(&mut file_probe_shapes, &functions);
 
     let mut item_scopes = collect_scopes(&source, &line_index);
     let keep: std::collections::BTreeSet<&str> = functions
@@ -1542,7 +1546,7 @@ fn disambiguate_duplicate_symbol_ids(functions: &mut [FunctionFact]) {
 
 /// Whether a function carries a test-framework attribute (`#[test]`,
 /// `#[tokio::test]`, `#[async_std::test]`, `#[actix_rt::test]`,
-/// `#[actix_web::test]`, `#[rstest]`). Parser-backed, so
+/// `#[actix_web::test]`, `#[test_log::test]`, `#[rstest]`). Parser-backed, so
 /// commented-out or string-embedded lookalikes never count.
 pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
     function.attrs().any(|attr| {
@@ -1554,7 +1558,8 @@ pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
                 || names_exact_harness_path(&path, "tokio::test")
                 || names_exact_harness_path(&path, "async_std::test")
                 || names_exact_harness_path(&path, "actix_rt::test")
-                || names_exact_harness_path(&path, "actix_web::test"))
+                || names_exact_harness_path(&path, "actix_web::test")
+                || names_exact_harness_path(&path, "test_log::test"))
         {
             return true;
         }
@@ -2154,6 +2159,61 @@ fn push_probe_shape(
     push_probe_shape_with_text(shapes, line_index, kind, start, end, text, None);
 }
 
+/// Drop probe shapes that sit strictly inside a plain `#[test]` function body
+/// and inside no other function (#13703). Tests are the instrument, not the
+/// surface under test: diff probes treat those lines as test evidence, and
+/// repo probes, seam inventory and constant readers skip evidence-role
+/// owners, so the shapes only cost memory and cache bytes.
+///
+/// The rule stays narrow so the parser-time decision cannot disagree with
+/// the roles consumers read after test-style normalization:
+/// - only a bare `#[test]` attribute qualifies (argument-bearing harness
+///   attributes are re-read by normalization and may resolve differently);
+/// - a shape on the test's opening line stays (shared-line rule, #9076);
+/// - a shape inside any other function, such as a nested helper (#9177),
+///   stays whatever that function's role;
+/// - `error_path` shapes always stay, because error-path twin pairing reads
+///   them across the whole file by byte order.
+fn retain_probe_shapes_outside_test_bodies(
+    shapes: &mut Vec<ProbeShapeFact>,
+    functions: &[FunctionFact],
+) {
+    let is_plain_test = |function: &&FunctionFact| {
+        function.source_role == FunctionSourceRole::TestAttribute
+            && function.attrs.iter().any(|attr| {
+                attr.chars()
+                    .filter(|ch| !ch.is_whitespace())
+                    .eq("#[test]".chars())
+            })
+    };
+    let test_bodies: Vec<(usize, usize)> = functions
+        .iter()
+        .filter(is_plain_test)
+        .map(|function| (function.start_line, function.end_line))
+        .collect();
+    if test_bodies.is_empty() {
+        return;
+    }
+    let other_functions: Vec<(usize, usize)> = functions
+        .iter()
+        .filter(|function| !is_plain_test(function))
+        .map(|function| (function.start_line, function.end_line))
+        .collect();
+    shapes.retain(|shape| {
+        if shape.kind == ProbeShapeKind::ErrorPath {
+            return true;
+        }
+        let (start, end) = (shape.start_line(), shape.end_line());
+        let inside_test_body = test_bodies
+            .iter()
+            .any(|&(fn_start, fn_end)| fn_start < start && end <= fn_end);
+        !inside_test_body
+            || other_functions
+                .iter()
+                .any(|&(fn_start, fn_end)| fn_start <= start && end <= fn_end)
+    });
+}
+
 fn push_probe_shape_with_text(
     shapes: &mut Vec<ProbeShapeFact>,
     line_index: &LineIndex,
@@ -2167,14 +2227,15 @@ fn push_probe_shape_with_text(
         return;
     }
     shapes.push(ProbeShapeFact {
-        start_line: line_index.line(start),
-        end_line: line_index.line_for_range_end(end),
-        start_byte: u32::from(start) as usize,
-        end_byte: u32::from(end) as usize,
+        start_line: probe_shape_position(line_index.line(start)),
+        end_line: probe_shape_position(line_index.line_for_range_end(end)),
+        start_byte: u32::from(start),
+        end_byte: u32::from(end),
         kind,
         text,
         value_consumed: false,
-        source_lines,
+        source_lines: source_lines
+            .map(|(first, last)| (probe_shape_position(first), probe_shape_position(last))),
     });
 }
 
@@ -3540,6 +3601,81 @@ fn function_span(function: &FunctionFact) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_body_probe_shapes_are_not_stored_but_production_and_nested_shapes_are()
+    -> Result<(), String> {
+        let source = "\
+pub fn price(amount: i32) -> i32 {
+    if amount > 10 { return amount - 1; }
+    amount
+}
+
+#[test]
+fn prices_discount() {
+    if price(11) > 9 { panic!(\"x\"); }
+    fn helper(v: i32) -> bool {
+        v > 3
+    }
+    assert!(helper(price(4)));
+}
+
+#[tokio::test]
+async fn async_price() {
+    if price(12) > 9 { panic!(\"y\"); }
+}
+
+#[test]
+fn early_error() -> Result<(), String> {
+    if price(1) > 0 { return Err(String::new()); }
+    Ok(())
+}
+";
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        let lines: Vec<usize> = facts
+            .probe_shapes
+            .iter()
+            .map(ProbeShapeFact::start_line)
+            .collect();
+        // Production body shapes stay.
+        assert!(
+            lines.contains(&2),
+            "production predicate missing: {lines:?}"
+        );
+        // The nested production-role helper inside the test keeps its shape.
+        assert!(
+            lines.contains(&10),
+            "nested helper shape missing: {lines:?}"
+        );
+        // Shapes on the test's own body lines (predicate, call deletion,
+        // assertion) are dropped.
+        assert!(
+            !lines.iter().any(|line| matches!(line, 8 | 12)),
+            "test-body shapes were stored: {lines:?}"
+        );
+        // Only a bare `#[test]` qualifies: the tokio test's body keeps its
+        // predicate, because normalization re-reads harness attributes.
+        assert!(lines.contains(&17), "tokio test shape missing: {lines:?}");
+        // Error-path shapes stay even inside a plain test (twin pairing reads
+        // them file-wide); the plain test's predicate on that line is gone.
+        let line_22: Vec<&str> = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.start_line() == 22)
+            .map(|shape| shape.kind.as_str())
+            .collect();
+        assert!(
+            line_22.contains(&"error_path"),
+            "error path dropped: {line_22:?}"
+        );
+        assert!(
+            !line_22.contains(&"predicate"),
+            "test predicate kept: {line_22:?}"
+        );
+        // The test functions are still indexed as tests.
+        assert_eq!(facts.tests.len(), 3);
+        Ok(())
+    }
     use std::error::Error;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -4251,11 +4387,13 @@ static SHADOW: () = {
             .map(|offset| decoy.saturating_add(1).saturating_add(offset))
             .ok_or("producer missing")?;
         assert!(
-            predicates.iter().any(|shape| shape.start_byte == producer),
+            predicates
+                .iter()
+                .any(|shape| shape.start_byte() == producer),
             "if-condition start_byte missing: decoy={decoy} producer={producer} shapes={predicates:?}"
         );
         assert!(
-            predicates.iter().all(|shape| shape.start_byte != decoy),
+            predicates.iter().all(|shape| shape.start_byte() != decoy),
             "string decoy was credited as a predicate origin: {predicates:?}"
         );
         Ok(())
@@ -4282,7 +4420,9 @@ static SHADOW: () = {
             .find("montant_é > discount_threshold")
             .ok_or("predicate missing")?;
         assert!(
-            predicates.iter().any(|shape| shape.start_byte == producer),
+            predicates
+                .iter()
+                .any(|shape| shape.start_byte() == producer),
             "producer={producer} shapes={predicates:?}"
         );
         Ok(())
@@ -4360,6 +4500,152 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
 
         if return_shapes != ["Ok(Some(value))"] {
             return Err(format!("unexpected return probe shapes: {return_shapes:?}").into());
+        }
+        Ok(())
+    }
+
+    /// #14385: a tail `if`/`else` returns each branch block's tail value, so
+    /// each one on its own line is a `return_value` shape; a value on its
+    /// `if`'s condition line, a statement `if`, a tail `if` without `else`, and
+    /// a nested `match` value get none.
+    #[test]
+    fn tail_if_branch_values_are_return_value_shapes() -> Result<(), Box<dyn Error>> {
+        let text = r#"
+pub fn discount(total: u32) -> u32 {
+    if total >= 100 {
+        total / 10
+    } else if total >= 50 {
+        total / 20
+    } else {
+        0
+    }
+}
+
+pub fn inline(total: u32) -> u32 {
+    if total >= 100 { total / 10 } else { 0 }
+}
+
+pub fn nested(total: u32, vip: bool) -> u32 {
+    if vip {
+        if total > 10 { 3 } else { 2 }
+    } else {
+        match total { 0 => 0, _ => 1 }
+    }
+}
+
+pub fn statement(total: u32) -> u32 {
+    if total > 1 {
+        log(total / 2)
+    }
+    7
+}
+
+pub fn no_else(total: u32) {
+    if total > 1 {
+        log(total / 3)
+    }
+}
+
+pub fn split_condition(total: u32, vip: bool) -> u32 {
+    if vip
+        && total > 1 { 4 } else { 5 }
+}
+
+pub fn newline_keyword(total: u32, vip: bool) -> u32 {
+    if vip {
+        if
+            total > 10 { 3 } else { 2 }
+    } else {
+        match
+            total { 0 => 0, _ => 1 }
+    }
+}
+
+pub fn fallible(total: u32) -> Result<u32, Error> {
+    if total > 1 {
+        Ok(total)
+    } else {
+        Err(Error::Small)
+    }
+}
+
+pub fn early(total: u32) -> u32 {
+    if total > 1 {
+        total
+    } else {
+        return 5
+    }
+}
+
+pub fn wide(input: &str, depth: usize) -> bool {
+    if depth == 0 {
+        input.len() > 3
+    } else {
+        depth > 1 && input.is_empty()
+    }
+}
+
+pub fn wrapped(input: &str, depth: usize) -> bool {
+    if depth == 0 {
+        (input.len() > 3)
+    } else {
+        !(depth > 1)
+    }
+}
+"#;
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), text)?;
+        let all_return_shapes = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::ReturnValue)
+            .map(|shape| (shape.start_line, shape.text.as_str()))
+            .collect::<Vec<_>>();
+        // `early`: a `return` branch tail already has its return-expression
+        // shape, so the branch walk adds no second one over the same line.
+        let early = all_return_shapes
+            .iter()
+            .filter(|(line, _)| (60..66).contains(line))
+            .map(|(line, _)| *line)
+            .collect::<Vec<_>>();
+        if early != [62, 64] {
+            return Err(format!("unexpected early-return shapes: {all_return_shapes:?}").into());
+        }
+        // `wide`, `wrapped`: a comparison or boolean branch value, bare,
+        // parenthesized or negated, is the predicate probe's subject, so it
+        // gets no second return-value row.
+        if all_return_shapes.iter().any(|(line, _)| *line >= 66) {
+            return Err(format!(
+                "predicate branch value got a return shape: {all_return_shapes:?}"
+            )
+            .into());
+        }
+        let return_shapes = all_return_shapes
+            .into_iter()
+            .filter(|(line, _)| *line < 60)
+            .collect::<Vec<_>>();
+        // `newline_keyword`: a nested `if`/`match` branch tail whose keyword
+        // ends its line is still control flow, so it gets no shape (Devin
+        // review on #14392); its inner values sit on condition lines.
+        let expected = [
+            (4, "total / 10"),
+            (6, "total / 20"),
+            (8, "0"),
+            (28, "7"),
+            (54, "Ok(total)"),
+            (56, "Err(Error::Small)"),
+        ];
+        if return_shapes != expected {
+            return Err(format!("unexpected return probe shapes: {return_shapes:?}").into());
+        }
+        // An own-line error branch value also carries its error-path shape.
+        let error_shapes = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::ErrorPath)
+            .map(|shape| (shape.start_line, shape.text.as_str()))
+            .collect::<Vec<_>>();
+        if error_shapes != [(56, "Err(Error::Small)")] {
+            return Err(format!("unexpected error probe shapes: {error_shapes:?}").into());
         }
         Ok(())
     }

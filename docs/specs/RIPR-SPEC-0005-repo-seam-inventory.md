@@ -94,7 +94,10 @@ One exception is bounded to the owner's own crate (#14036): in an integration
 test that is a test-crate root of the root package, `krate::Type::ctor(..)`
 reads as the owner's type only when `krate` is the root package's library
 identifier, the changed owner is a method of a top-level `impl` of a library file (a
-function-local or inline-module namesake type is not), a constructor of that type is indexed, and
+function-local or inline-module namesake type is not), a constructor of that type is indexed,
+exactly one type of that name is indexed in the workspace (#14083: with `mod a; mod b; pub use b::Rng;`
+the path names `b::Rng`, so a changed `a::Rng` method gets no direct call; two same-named types
+fail closed to a name-only relation even when the path is the owner's), and
 neither the file nor the test body declares, imports, renames or globs `krate`.
 A foreign crate, a shadowing module, a renamed crate and a test module child
 keep the refusal above.

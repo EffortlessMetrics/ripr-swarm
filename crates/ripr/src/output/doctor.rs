@@ -1498,6 +1498,7 @@ pub(crate) fn canonical_next_action_for_doctor(
         restart_route: "ripr doctor".to_string(),
         check_case: None,
         check_repair_route: None,
+        check_scope_route: None,
         doctor_recovery: Some(recovery),
         pilot_delegation: None,
         alternatives: Vec::new(),
@@ -1842,7 +1843,14 @@ fn collect_nested_cargo_tomls(
             let Ok(entries) = std::fs::read_dir(&dir) else {
                 continue;
             };
-            for entry in entries.flatten() {
+            // `read_dir` order is filesystem-defined (hash order on ext4,
+            // creation order on tmpfs). Sort each level by name so which
+            // directories fit under the cap, and so which manifests are
+            // seen, is a function of the tree, not of how it was written
+            // (#14230).
+            let mut entries: Vec<std::fs::DirEntry> = entries.flatten().collect();
+            entries.sort_by_cached_key(std::fs::DirEntry::file_name);
+            for entry in entries {
                 let path = entry.path();
                 let Ok(file_type) = entry.file_type() else {
                     continue;
@@ -2127,6 +2135,91 @@ pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
         .current_dir(std::env::temp_dir())
         .env("YARN_IGNORE_PATH", "1");
     doctor_tool_check_with_command(tool, command, DOCTOR_TOOL_TIMEOUT, None).into_public()
+}
+
+/// Argv (after the program) of the pytest importability probe. The probe
+/// runs from a private empty directory with `PYTHONSAFEPATH=1`, so neither the
+/// cwd nor a script directory reaches `sys.path`; user-site installs
+/// (`pip install --user`) stay visible, as they are for the verify command
+/// (#13617). `-P` is not used because it is rejected before Python 3.11.
+/// `PYTHONPATH` is removed so a checkout listed there cannot supply a
+/// `pytest.py` that doctor would execute; a pytest reachable only through
+/// `PYTHONPATH` is then reported as missing (advisory, exit code unchanged).
+///
+/// The probe only imports pytest; it never starts pytest itself. Running
+/// `python -m pytest --version` would let pytest search the ancestors of the
+/// probe directory for an ini file (for example a `/tmp/pytest.ini` planted by
+/// another local user), adopt that directory as rootdir and load its
+/// `conftest.py` or `-p` plugins. A bare import executes no project or temp
+/// directory code. The harness appends `--version`, which becomes an ignored
+/// `sys.argv[1]` of the `-c` script.
+const DOCTOR_PYTEST_PROBE_ARGS: [&str; 2] = [
+    "-c",
+    "import sys, pytest; sys.stdout.write('pytest ' + pytest.__version__)",
+];
+
+/// The probe command: PATH `python` importing pytest in `dir` with safe-path
+/// env and no `PYTHONPATH`.
+fn doctor_pytest_probe_command(dir: &Path) -> std::process::Command {
+    let mut command = doctor_tool_command("python");
+    command
+        .args(DOCTOR_PYTEST_PROBE_ARGS)
+        .env("PYTHONSAFEPATH", "1")
+        .env_remove("PYTHONPATH")
+        .current_dir(dir);
+    command
+}
+
+/// Create a fresh, unpredictable, owner-only directory with an exclusive
+/// `create_dir` (never `create_dir_all`), retrying on collision, so a
+/// pre-planted directory or symlink cannot supply a `conftest.py`.
+fn create_private_probe_dir() -> std::io::Result<std::path::PathBuf> {
+    use std::hash::{BuildHasher, Hasher};
+    let mut last = std::io::Error::other("no private probe directory");
+    for attempt in 0..16u32 {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u32(attempt);
+        hasher.write_u32(std::process::id());
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        hasher.write_u128(nanos);
+        let dir = std::env::temp_dir().join(format!("ripr-doctor-pytest-{:016x}", hasher.finish()));
+        let builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        let builder = {
+            let mut builder = builder;
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            builder
+        };
+        match builder.create(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => last = error,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last)
+}
+
+/// Probe `python -m pytest --version` on the PATH `python`: the command the
+/// printed verify command runs (#13617), not a standalone `pytest` binary.
+pub(crate) fn doctor_python_pytest_check_isolated() -> (DoctorStatus, String) {
+    let Ok(dir) = create_private_probe_dir() else {
+        return (
+            DoctorStatus::Fail,
+            "python -m pytest could not be probed: no private probe directory".to_string(),
+        );
+    };
+    let command = doctor_pytest_probe_command(&dir);
+    let (status, evidence) =
+        doctor_tool_check_with_command("python -m pytest", command, DOCTOR_TOOL_TIMEOUT, None)
+            .into_public();
+    let _removed = std::fs::remove_dir(&dir);
+    match (status, evidence.is_empty()) {
+        (DoctorStatus::Pass, true) => (status, "pytest importable by `python -m pytest`".into()),
+        _ => (status, evidence),
+    }
 }
 
 fn doctor_tool_command(tool: impl AsRef<OsStr>) -> std::process::Command {
@@ -2670,6 +2763,46 @@ pub(crate) fn doctor_report_result(report: &DoctorReport) -> Result<(), String> 
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn pytest_probe_command_imports_pytest_with_safe_path_in_private_dir() -> std::io::Result<()> {
+        let dir = create_private_probe_dir()?;
+        let other = create_private_probe_dir()?;
+        assert_ne!(dir, other, "probe dirs must be unpredictable and distinct");
+        let command = doctor_pytest_probe_command(&dir);
+        let args: Vec<_> = command.get_args().collect();
+        // Import-only: never `-m pytest`, which would read ancestor ini files
+        // and conftest.py from the temp directory tree.
+        assert_eq!(args.first().copied(), Some(OsStr::new("-c")));
+        assert!(!args.iter().any(|arg| *arg == OsStr::new("-m")), "{args:?}");
+        assert!(
+            args.get(1)
+                .and_then(|script| script.to_str())
+                .is_some_and(|script| script.contains("import sys, pytest")),
+            "{args:?}"
+        );
+        assert!(
+            command
+                .get_envs()
+                .any(|(k, v)| k == "PYTHONSAFEPATH" && v == Some(OsStr::new("1")))
+        );
+        assert!(
+            command
+                .get_envs()
+                .any(|(k, v)| k == "PYTHONPATH" && v.is_none()),
+            "PYTHONPATH is removed so a checkout on it cannot supply pytest.py"
+        );
+        assert_eq!(command.get_current_dir(), Some(dir.as_path()));
+        assert!(
+            std::fs::read_dir(&dir)?.next().is_none(),
+            "probe dir is empty"
+        );
+        // Exclusive create: an existing directory is refused, not reused.
+        assert!(std::fs::DirBuilder::new().create(&dir).is_err());
+        std::fs::remove_dir(&dir)?;
+        std::fs::remove_dir(&other)?;
+        Ok(())
+    }
 
     static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -4984,6 +5117,45 @@ mod tests {
         {
             return Err(format!(
                 "a directory symlink must not satisfy cargo_toml: {cargo_toml:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Over the directory cap, which manifests the nested walk sees must
+    /// depend on names, not on `read_dir` order (#14230). The tree has more
+    /// sibling directories than the cap and is written in reverse name
+    /// order, so a walk in listing order would reach `d599` before `d000`
+    /// on a creation-ordered filesystem.
+    #[test]
+    fn nested_cargo_toml_walk_under_the_cap_is_name_ordered() -> Result<(), String> {
+        let root = doctor_scope_root("scope-nested-cap-order", &[])?;
+        let siblings = NESTED_CARGO_TOML_MAX_DIRS + 88;
+        let built = (0..siblings).rev().try_for_each(|index| {
+            let dir = root.join(format!("d{index:03}"));
+            std::fs::create_dir(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
+            if index == 0 || index == siblings - 1 {
+                std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"p\"\n")
+                    .map_err(|err| format!("write manifest: {err}"))?;
+            }
+            Ok::<(), String>(())
+        });
+        let mut workspaces = Vec::new();
+        let mut packages = Vec::new();
+        if built.is_ok() {
+            collect_nested_cargo_tomls(&root, &mut workspaces, &mut packages);
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        built?;
+        let seen: Vec<String> = packages
+            .iter()
+            .filter_map(|path| path.strip_prefix(&root).ok())
+            .map(|path| path.display().to_string().replace('\\', "/"))
+            .collect();
+        if !workspaces.is_empty() || seen != ["d000/Cargo.toml"] {
+            return Err(format!(
+                "the capped walk must visit the first {} directories by name; saw packages {seen:?}, workspaces {workspaces:?}",
+                NESTED_CARGO_TOML_MAX_DIRS - 1
             ));
         }
         Ok(())

@@ -17,7 +17,7 @@ testing, edit source files, configure CI policy, or make gate decisions.
 "#;
 pub(super) const REVIEW_COMMENTS_HELP: &str = r#"Write advisory PR test guidance on changed lines (does not post to GitHub).
 
-Usage: ripr review-comments [--root PATH] --base SHA --head SHA [--gap-ledger PATH | --check-output PATH] [--out PATH] [--timeout-ms MS]
+Usage: ripr review-comments [--root PATH] --base SHA --head SHA [--gap-ledger PATH | --check-output PATH] [--suppression-policy PATH] [--out PATH] [--timeout-ms MS]
 
 Options:
   --root PATH    Workspace root. Defaults to current directory.
@@ -30,7 +30,17 @@ Options:
   --check-output PATH
                  Optional producer-generated `ripr check --json` artifact.
                  Its typed analysis outcome is projected without rerunning the
-                 producer; incomplete input remains incomplete guidance.
+                 producer; incomplete input remains incomplete guidance. Findings
+                 that artifact marks `suppressed` stay in the `suppressed` array
+                 (not `comments`), so `gate evaluate` does not block on them.
+  --suppression-policy PATH
+                 Explicit opt-in suppression policy (same file and semantics as
+                 `ripr check --suppression-policy`, root-relative when not
+                 absolute; a missing or malformed file is an error). Matching
+                 seams move to the `suppressed` array with reason
+                 `suppressed_by_policy`, which `gate evaluate` treats as
+                 non-blocking. Not combinable with `--gap-ledger`. The default
+                 `.ripr/suppressions.toml` is never applied implicitly.
   --out PATH     JSON output path. Defaults to target/ripr/review/comments.json.
   --timeout-ms MS
                  Cooperative analysis budget (default 120000ms), checked at
@@ -80,6 +90,7 @@ Check options:
   --base REV                          Required. Base revision of the change, for example origin/main.
   --head REV                          Head revision. Defaults to HEAD.
   --timeout-ms N                      Passed to review-comments.
+  --suppression-policy PATH           Passed to review-comments; suppressed seams are non-blocking.
   --guidance-out PATH                 Guidance JSON path. Defaults to target/ripr/review/comments.json.
                                       Any existing file there (and its .md) is removed before the
                                       run, and again if review-comments fails.
@@ -310,22 +321,31 @@ Suppression health options:
 The policy readiness report is read-only advisory governance over explicit
 existing artifacts. It recommends advisory-only, visible-only, acknowledgeable,
 baseline-check, or calibrated-gate posture without executing a gate. Preview
-language evidence stays visible and advisory by default. The policy operations
-report composes existing policy artifacts into current ceiling, next safe
-action, safe/not-safe promotion modes, blockers, and input health without
-promoting anything. The policy history report shows whether readiness, waivers,
-suppressions, baseline debt, calibration, and preview boundaries are improving
-or decaying without appending history unless `--out-jsonl` is supplied. The
-policy promotion packet reads policy operations plus optional policy history
-and writes manual-review promotion evidence without changing config. The preview
-promotion packet writes default blocked evidence accounting for TypeScript and
-Python preview classes while
-keeping preview evidence visible, advisory, non-gating, outside RIPR Zero, and
-outside calibrated confidence until a later explicit policy is reviewed. The
-waiver-aging report keeps repeated waivers visible as repair or policy-review
-signals. The suppression-health report flags durable exception metadata gaps
-while keeping suppressed findings visible. These commands do not run analysis,
-mutate baselines or suppressions, post comments, edit source, generate tests,
-run mutation testing, change gate policy, promote preview evidence, or make CI
-blocking.
+language evidence stays visible and advisory by default.
+
+The policy operations report composes existing policy artifacts into current
+ceiling, next safe action, safe/not-safe promotion modes, blockers, and input
+health without promoting anything.
+
+The policy history report shows whether readiness, waivers, suppressions,
+baseline debt, calibration, and preview boundaries are improving or decaying
+without appending history unless `--out-jsonl` is supplied.
+
+The policy promotion packet reads policy operations plus optional policy
+history and writes manual-review promotion evidence without changing config.
+
+The preview promotion packet writes default blocked evidence accounting for
+TypeScript and Python preview classes while keeping preview evidence visible,
+advisory, non-gating, outside RIPR Zero, and outside calibrated confidence
+until a later explicit policy is reviewed.
+
+The waiver-aging report keeps repeated waivers visible as repair or
+policy-review signals.
+
+The suppression-health report flags durable exception metadata gaps while
+keeping suppressed findings visible.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
 "#;

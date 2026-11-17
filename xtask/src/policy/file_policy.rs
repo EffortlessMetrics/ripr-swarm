@@ -504,6 +504,12 @@ fn validate_test_covered_by_recorded(
     let host = FilePolicyHost::current()?;
     let (commands, resolved) = partition_resolved_in_source(commands, host, in_source);
     let commands = commands.as_slice();
+    // Only local `precommit` passes a resolver; it also caps build jobs on a
+    // memory-constrained host. Hosted and standalone runs are left alone.
+    let envs = match in_source {
+        Some(_) => crate::cargo_job_cap::local_precommit_envs(),
+        None => &[],
+    };
     // Cargo serializes builds on the target-dir lock, so the per-selector
     // preparations below compile one package at a time. One combined build
     // per package set lets Cargo schedule each set's targets together; it
@@ -515,7 +521,7 @@ fn validate_test_covered_by_recorded(
                 capture_output_with_timeout(
                     "cargo",
                     &args,
-                    &[],
+                    envs,
                     TEST_COVERED_BY_BUILD_TIMEOUT,
                     "test-valued covered_by combined build",
                 )
@@ -529,7 +535,7 @@ fn validate_test_covered_by_recorded(
                 capture_output_with_timeout(
                     "cargo",
                     &spawn.args,
-                    &[],
+                    envs,
                     spawn.timeout,
                     spawn.description,
                 )

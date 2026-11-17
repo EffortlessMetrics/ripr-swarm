@@ -134,6 +134,187 @@ fn review(login: &str, state: &str, head: &str, at: &str, body: &str) -> serde_j
 }
 
 #[test]
+fn issue_14578_positive_carriers_cannot_bypass_unresolved_negatives() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let other = "b".repeat(40);
+    let make = |login, state, subject: &str, second, body| {
+        let mut value = review(
+            login,
+            state,
+            subject,
+            &format!("2026-11-13T12:00:{second:02}Z"),
+            body,
+        );
+        value["id"] = serde_json::json!(second);
+        value
+    };
+    let approved = make("a", "APPROVED", &head, 1, "");
+    let negative = make("a", "COMMENTED", &head, 2, "REPAIR_REQUIRED");
+    let reply = make("a", "COMMENTED", &head, 3, "");
+    let chatter = make("a", "COMMENTED", &head, 4, "Thanks, will look.");
+    let other_ready = make("b", "COMMENTED", &head, 5, "SOURCE_REVIEW_READY");
+    let ready = make("a", "COMMENTED", &head, 6, "SOURCE_REVIEW_READY");
+    let reapproved = make("a", "APPROVED", &head, 6, "");
+    let other_negative = make("b", "COMMENTED", &head, 2, "REPAIR_REQUIRED");
+    let mut untrusted = reapproved.clone();
+    untrusted["author_association"] = serde_json::json!("CONTRIBUTOR");
+    let mut untrusted_negative = other_negative.clone();
+    untrusted_negative["author_association"] = serde_json::json!("NONE");
+    let mut no_time = negative.clone();
+    no_time["submitted_at"] = serde_json::Value::Null;
+    let cases = [
+        ("native approval alone", vec![approved.clone()], true),
+        (
+            "untrusted objection adds no authority",
+            vec![approved.clone(), untrusted_negative],
+            true,
+        ),
+        (
+            "same reviewer retracts approval",
+            vec![approved.clone(), negative.clone()],
+            false,
+        ),
+        (
+            "another reviewer objects",
+            vec![approved.clone(), other_negative.clone()],
+            false,
+        ),
+        (
+            "empty reply does not clear objection",
+            vec![negative.clone(), reply.clone(), other_ready.clone()],
+            false,
+        ),
+        (
+            "neutral prose does not clear objection",
+            vec![negative.clone(), chatter.clone(), other_ready.clone()],
+            false,
+        ),
+        (
+            "same reviewer explicitly ready",
+            vec![negative.clone(), reply.clone(), ready.clone()],
+            true,
+        ),
+        (
+            "same reviewer explicitly approves",
+            vec![negative.clone(), reply.clone(), reapproved.clone()],
+            true,
+        ),
+        (
+            "reapproval cannot clear another reviewer",
+            vec![negative.clone(), reapproved.clone(), other_negative.clone()],
+            false,
+        ),
+        (
+            "old-head reapproval cannot clear objection",
+            vec![
+                negative.clone(),
+                make("a", "APPROVED", &other, 6, ""),
+                other_ready.clone(),
+            ],
+            false,
+        ),
+        (
+            "untrusted reapproval cannot clear objection",
+            vec![negative.clone(), untrusted, other_ready.clone()],
+            false,
+        ),
+        (
+            "dismissal is not reapproval",
+            vec![
+                negative.clone(),
+                reapproved.clone(),
+                make("a", "DISMISSED", &head, 7, ""),
+                other_ready.clone(),
+            ],
+            false,
+        ),
+        (
+            "changes requested remains independent",
+            vec![make("a", "CHANGES_REQUESTED", &head, 1, ""), ready.clone()],
+            false,
+        ),
+        (
+            "native dismissal resolves native request",
+            vec![
+                make("a", "CHANGES_REQUESTED", &head, 1, ""),
+                make("a", "DISMISSED", &head, 2, ""),
+                other_ready.clone(),
+            ],
+            true,
+        ),
+        (
+            "native reapproval resolves native request",
+            vec![
+                make("a", "CHANGES_REQUESTED", &head, 1, ""),
+                reapproved.clone(),
+            ],
+            true,
+        ),
+        (
+            "old-head comment does not veto current head",
+            vec![
+                make("a", "COMMENTED", &other, 2, "REPAIR_REQUIRED"),
+                other_ready.clone(),
+            ],
+            true,
+        ),
+        (
+            "missing timestamp refuses",
+            vec![approved.clone(), no_time],
+            false,
+        ),
+    ];
+    let pull = pull_object(
+        "MEMBER",
+        "o/r",
+        &head,
+        &format!("Source review: REVIEW_READY {head}"),
+    );
+    for (index, (name, rows, admit)) in cases.into_iter().enumerate() {
+        // Pagination/order must not decide precedence. All outcomes exercise the
+        // production CLI, both with and without the description carrier.
+        for reversed in [false, true] {
+            let mut ordered = rows.clone();
+            if reversed {
+                ordered.reverse();
+            }
+            let reviews = serde_json::json!(ordered);
+            expect_outcome(&check_reviews(&reviews, &head)?, admit, name)?;
+            expect_outcome(
+                &check_reviews_with_pull(
+                    &reviews,
+                    &pull,
+                    &head,
+                    &format!("14578-{index}-{reversed}"),
+                )?,
+                admit,
+                name,
+            )?;
+        }
+    }
+    // Equal timestamp reviews are ordered by native ID, not page/input order.
+    let mut tied_negative = negative.clone();
+    tied_negative["submitted_at"] = approved["submitted_at"].clone();
+    let mut tied_approval = reapproved.clone();
+    tied_approval["submitted_at"] = approved["submitted_at"].clone();
+    for rows in [
+        vec![approved.clone(), tied_negative.clone()],
+        vec![tied_negative.clone(), approved],
+    ] {
+        expect_outcome(
+            &check_reviews(&serde_json::json!(rows), &head)?,
+            false,
+            "higher-ID negative wins tie",
+        )?;
+    }
+    expect_outcome(
+        &check_reviews(&serde_json::json!([tied_approval, tied_negative]), &head)?,
+        true,
+        "higher-ID reapproval wins tie",
+    )
+}
+
+#[test]
 fn review_disposition_self_test_passes() -> Result<(), String> {
     let output = Command::new("python3")
         .arg("-I")
@@ -566,9 +747,9 @@ fn full_real_review_bodies_admit_or_refuse_as_recorded() -> Result<(), String> {
         )]);
         expect_outcome(&check_reviews(&reviews, &head)?, admit, &name)?;
     }
-    if ready != 11 || refused != 7 {
+    if ready != 13 || refused != 8 {
         return Err(format!(
-            "expected 11 ready and 7 refuse fixtures, saw {ready}/{refused}"
+            "expected 13 ready and 8 refuse fixtures, saw {ready}/{refused}"
         ));
     }
     Ok(())
@@ -666,6 +847,74 @@ fn wrong_head_changes_requested_and_identity_controls() -> Result<(), String> {
             "untrusted approval",
             serde_json::json!([untrusted_approval]),
             false,
+        ),
+    ];
+    for (name, reviews, expected) in controls {
+        expect_outcome(&check_reviews(&reviews, &head)?, expected, name)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn clearing_comment_binds_the_admitted_head_and_trust() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let other = "b".repeat(40);
+    let mut negative = review(
+        "a",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:01Z",
+        "REPAIR_REQUIRED",
+    );
+    negative["id"] = serde_json::json!(1);
+    let mut wrong_head_ready = review(
+        "a",
+        "COMMENTED",
+        &other,
+        "2026-10-15T01:00:02Z",
+        "SOURCE_REVIEW_READY",
+    );
+    wrong_head_ready["id"] = serde_json::json!(2);
+    let mut untrusted_ready = review(
+        "a",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:02Z",
+        "SOURCE_REVIEW_READY",
+    );
+    untrusted_ready["id"] = serde_json::json!(2);
+    untrusted_ready["author_association"] = serde_json::json!("NONE");
+    let mut trusted_ready = review(
+        "a",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:02Z",
+        "SOURCE_REVIEW_READY",
+    );
+    trusted_ready["id"] = serde_json::json!(2);
+    let mut later_marker = review(
+        "b",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:03Z",
+        "SOURCE_REVIEW_READY",
+    );
+    later_marker["id"] = serde_json::json!(3);
+    let controls = [
+        (
+            "clearing comment on an earlier head",
+            serde_json::json!([negative.clone(), wrong_head_ready, later_marker.clone()]),
+            false,
+        ),
+        (
+            "clearing comment from an untrusted association",
+            serde_json::json!([negative.clone(), untrusted_ready, later_marker.clone()]),
+            false,
+        ),
+        (
+            "clearing comment on the admitted head",
+            serde_json::json!([negative, trusted_ready, later_marker]),
+            true,
         ),
     ];
     for (name, reviews, expected) in controls {
@@ -917,6 +1166,63 @@ fn pull_description_carrier_binds_the_exact_head_and_adds_no_authority() -> Resu
             name,
         )?;
     }
+    // #11566: a competing field inside the description itself refuses whatever list
+    // markup leads it, with no reviews at all; prose and a clean line still admit.
+    for (index, (name, extra, admit)) in [
+        (
+            "numbered competing field",
+            "1. disposition: REPAIR_REQUIRED",
+            false,
+        ),
+        (
+            "paren-numbered competing field",
+            "1) disposition: REPAIR_REQUIRED",
+            false,
+        ),
+        (
+            "task-list competing field",
+            "- [ ] disposition: REPAIR_REQUIRED",
+            false,
+        ),
+        (
+            "bulleted competing field",
+            "- disposition: REPAIR_REQUIRED",
+            false,
+        ),
+        ("final field", "Final disposition: REPAIR_REQUIRED", false),
+        (
+            "current field",
+            "Current disposition: REVIEW_INCOMPLETE",
+            false,
+        ),
+        ("table field", "| Disposition | REPAIR_REQUIRED |", false),
+        (
+            "first-cell state",
+            "| REPAIR_REQUIRED | fix oracle |",
+            false,
+        ),
+        ("sole-cell state", "| REPAIR_REQUIRED |", false),
+        ("ordinary table", "| fmt | pass |", true),
+        (
+            "numbered prose",
+            "1. Recorded the earlier disposition in the issue.",
+            true,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        expect_outcome(
+            &check_reviews_with_pull(
+                &none,
+                &pull_object("OWNER", "o/r", &head, &format!("{line}\n{extra}")),
+                &head,
+                &format!("list-{index}"),
+            )?,
+            admit,
+            name,
+        )?;
+    }
     // An older-head ready review plus an unfilled description admits nothing.
     expect_outcome(
         &check_reviews_with_pull(
@@ -1005,4 +1311,516 @@ fn pull_description_carrier_binds_the_exact_head_and_adds_no_authority() -> Resu
         false,
         "negative then neutral reply without a description line",
     )
+}
+
+/// #14592: the review convention's verdict line. A ready marker followed by
+/// `VERDICT: BLOCK <sha>` refuses through the real CLI, whether the body is the
+/// full recorded review of #13896 or the two-line minimum; `VERDICT: APPROVE`
+/// after the same marker still admits.
+#[test]
+fn a_blocking_verdict_line_after_a_ready_marker_refuses() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let at = "2026-10-15T01:00:01Z";
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/review_verdicts/refuse-pr13896-5892179853.md");
+    let recorded =
+        std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if !recorded.starts_with("SOURCE_REVIEW_READY\nVERDICT: BLOCK ") {
+        return Err("fixture setup: recorded body lost its marker and verdict lines".into());
+    }
+    let cases = [
+        (
+            recorded.as_str(),
+            false,
+            "recorded #13896 review 5892179853",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: BLOCK 1cc13d3d",
+            false,
+            "bare BLOCK",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: BLOCKED 1cc13d3d",
+            false,
+            "bare BLOCKED",
+        ),
+        (
+            "REVIEW_READY\n\n**Verdict:** block",
+            false,
+            "emphasised verdict",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: APPROVE / BLOCK",
+            false,
+            "compound verdict",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: BLOCKING",
+            false,
+            "BLOCKING verdict",
+        ),
+        (
+            "SOURCE_REVIEW_READY\n1. Verdict: BLOCK",
+            false,
+            "numbered-list verdict",
+        ),
+        (
+            "SOURCE_REVIEW_READY\n_Verdict:_ BLOCK",
+            false,
+            "underscore-emphasis verdict",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: approve, no block remains.",
+            true,
+            "negated block in an approving verdict",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: no block remains. That is false.",
+            false,
+            "refuted negated block",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: no; BLOCK",
+            false,
+            "negator in a separate clause",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: approve, no  blocking findings.",
+            true,
+            "negated block with extra spacing",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe earlier verdict: BLOCK was cleared.",
+            true,
+            "recalled verdict in prose",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d",
+            true,
+            "approve verdict",
+        ),
+        (
+            "REVIEW_READY\nVerdict: no blocking findings on this head.",
+            true,
+            "no blocking findings",
+        ),
+    ];
+    for (body, admit, what) in cases {
+        let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, what)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_labelled_field_whose_value_is_a_state_token_refuses() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let at = "2026-10-15T01:00:01Z";
+    let cases = [
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: REPAIR_REQUIRED 1cc13d3d",
+            false,
+            "verdict field REPAIR_REQUIRED",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: CHANGES_REQUESTED 1cc13d3d",
+            false,
+            "verdict field CHANGES_REQUESTED",
+        ),
+        (
+            "REVIEW_READY\nStatus: REPAIR_REQUIRED",
+            false,
+            "status field REPAIR_REQUIRED",
+        ),
+        (
+            "REVIEW_READY\n- **Verdict:** `CHANGES_REQUESTED`",
+            false,
+            "emphasised verdict field",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d",
+            true,
+            "approve control",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nStatus (round 2): REPAIR_REQUIRED",
+            false,
+            "punctuated status label",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nStatus -> REPAIR_REQUIRED",
+            false,
+            "arrow separator",
+        ),
+        (
+            "REVIEW_READY\n- **Status:** REVIEW_READY",
+            true,
+            "positive value under a label",
+        ),
+    ];
+    for (body, admit, what) in cases {
+        let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, what)?;
+    }
+    Ok(())
+}
+
+/// #8157: a standalone automated VERDICT review states a disposition instead
+/// of superseding an earlier marker from the same login as neutral chatter
+/// (observed on #14652 and #13898). Only an exact column-zero first line
+/// counts: `VERDICT: APPROVE <full head>` attests, `VERDICT: BLOCK` /
+/// `VERDICT: BLOCKED <sha>` refuses, and every other VERDICT prose is neutral.
+#[test]
+fn verdict_first_line_carries_or_refuses_the_attestation() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let other = "b".repeat(40);
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/review_bodies");
+    let approve_body = std::fs::read_to_string(dir.join("ready-verdict-approve-pr14652.md"))
+        .map_err(|e| format!("approve fixture: {e}"))?;
+    let block_body = std::fs::read_to_string(dir.join("refuse-verdict-block-pr14652.md"))
+        .map_err(|e| format!("block fixture: {e}"))?;
+    if !approve_body.starts_with(&format!("VERDICT: APPROVE {head}"))
+        || !block_body.starts_with(&format!("VERDICT: BLOCK {head}"))
+    {
+        return Err("fixture setup: verdict fixtures lost their first lines".into());
+    }
+    let at = |second: u8| format!("2026-10-15T03:00:0{second}Z");
+    let mut untrusted_approve = review("author", "COMMENTED", &head, &at(1), &approve_body);
+    untrusted_approve["author_association"] = serde_json::json!("NONE");
+    let mut untrusted_block = review("other", "COMMENTED", &head, &at(2), &block_body);
+    untrusted_block["author_association"] = serde_json::json!("NONE");
+    untrusted_block["id"] = serde_json::json!(2);
+    let mut other_block = review("other", "COMMENTED", &head, &at(2), &block_body);
+    other_block["id"] = serde_json::json!(2);
+    let cases: [(&str, serde_json::Value, bool); 13] = [
+        (
+            "marker then verdict approve, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), &approve_body),
+            ]),
+            true,
+        ),
+        (
+            "marker then verdict block, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), &block_body),
+            ]),
+            false,
+        ),
+        (
+            "verdict approve then marker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), &approve_body),
+                review("author", "COMMENTED", &head, &at(2), "SOURCE_REVIEW_READY"),
+            ]),
+            true,
+        ),
+        (
+            "standalone verdict approve",
+            serde_json::json!([review("author", "COMMENTED", &head, &at(1), &approve_body)]),
+            true,
+        ),
+        (
+            "standalone verdict block",
+            serde_json::json!([review("author", "COMMENTED", &head, &at(1), &block_body)]),
+            false,
+        ),
+        (
+            "verdict block from another trusted reviewer",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                other_block,
+            ]),
+            false,
+        ),
+        (
+            "verdict approve naming another head",
+            serde_json::json!([review(
+                "author",
+                "COMMENTED",
+                &head,
+                &at(1),
+                &format!("VERDICT: APPROVE {other}")
+            )]),
+            false,
+        ),
+        (
+            "verdict approve posted on another head",
+            serde_json::json!([review("author", "COMMENTED", &other, &at(1), &approve_body)]),
+            false,
+        ),
+        (
+            "untrusted verdict approve",
+            serde_json::json!([untrusted_approve]),
+            false,
+        ),
+        (
+            "untrusted verdict block adds no veto",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                untrusted_block,
+            ]),
+            true,
+        ),
+        (
+            "observed verdict approve tail after marker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("VERDICT: APPROVE {head} \u{2014} no blocking findings on this head.")
+                ),
+            ]),
+            true,
+        ),
+        (
+            "observed verdict block tail after marker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("VERDICT: BLOCK {head} \u{2014} one finding remains open")
+                ),
+            ]),
+            false,
+        ),
+        (
+            "abbreviated verdict approve attests nothing",
+            serde_json::json!([review(
+                "author",
+                "COMMENTED",
+                &head,
+                &at(1),
+                "VERDICT: APPROVE aaaaaaaaaaaa"
+            )]),
+            false,
+        ),
+    ];
+    for (name, reviews, admit) in cases {
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, name)?;
+    }
+    Ok(())
+}
+
+/// #14728: a later neutral, empty or prose review from the same login does not
+/// erase that login's marker, and a mis-formatted positive marker is neutral
+/// rather than a veto.
+#[test]
+fn issue_14728_stated_marker_selection_and_neutral_tail() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let at = |second: u8| format!("2026-10-15T04:00:0{second}Z");
+    let sha = "1cc13d3de7941b83f2488853e120fbdfd3d9cee5";
+    let cases: Vec<(&str, serde_json::Value, bool)> = vec![
+        (
+            "marker then neutral reply, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), "Thanks, will look."),
+            ]),
+            true,
+        ),
+        (
+            "marker then empty body, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), ""),
+            ]),
+            true,
+        ),
+        (
+            "marker then prose follow-up, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("Exact-head review (head {head})")
+                ),
+            ]),
+            true,
+        ),
+        (
+            "marker then stated negative, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), "REPAIR_REQUIRED"),
+            ]),
+            false,
+        ),
+        (
+            "marker then plain-English blocker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), "do not merge"),
+            ]),
+            false,
+        ),
+        (
+            "marker then prose blocker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), "The build is red."),
+            ]),
+            false,
+        ),
+        (
+            "marker then unknown objection, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    "I don't think this is right."
+                ),
+            ]),
+            false,
+        ),
+        (
+            "marker then recognised chatter, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    "No code change needed."
+                ),
+            ]),
+            true,
+        ),
+        (
+            "marker then a mis-formatted marker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("REVIEW_READY {head}")
+                ),
+            ]),
+            true,
+        ),
+        (
+            "marker then plain prose, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), "LGTM"),
+            ]),
+            false,
+        ),
+        (
+            "a blocker statement vetoes another login's later ready",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REPAIR_REQUIRED"),
+                review("author", "COMMENTED", &head, &at(2), "The build is red."),
+                review("other", "COMMENTED", &head, &at(3), "SOURCE_REVIEW_READY"),
+            ]),
+            false,
+        ),
+        (
+            "a blocker alone does not veto another login's marker",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "The build is red."),
+                review("other", "COMMENTED", &head, &at(2), "SOURCE_REVIEW_READY"),
+            ]),
+            true,
+        ),
+        (
+            "marker then hedged approve, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("VERDICT: APPROVE {head} \u{2014} pending the fix")
+                ),
+            ]),
+            false,
+        ),
+        (
+            "marker then deferred approve, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("VERDICT: APPROVE {head} \u{2014} after the rebase")
+                ),
+            ]),
+            false,
+        ),
+        (
+            "an emoji tail is negative and vetoes another login",
+            serde_json::json!([
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(1),
+                    &format!("REVIEW_READY {head} \u{274c}")
+                ),
+                review("other", "COMMENTED", &head, &at(2), "SOURCE_REVIEW_READY"),
+            ]),
+            false,
+        ),
+        (
+            "mis-formatted positive marker alone attests nothing",
+            serde_json::json!([review(
+                "author",
+                "COMMENTED",
+                &head,
+                &at(1),
+                &format!("REVIEW_READY {sha}")
+            )]),
+            false,
+        ),
+        (
+            "mis-formatted positive marker does not veto another login's marker",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "other",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("REVIEW_READY {sha}")
+                ),
+            ]),
+            true,
+        ),
+        (
+            "a contradicting tail still refuses",
+            serde_json::json!([review(
+                "author",
+                "COMMENTED",
+                &head,
+                &at(1),
+                "REVIEW_READY: no"
+            )]),
+            false,
+        ),
+    ];
+    for (name, reviews, admit) in cases {
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, name)?;
+    }
+    Ok(())
 }

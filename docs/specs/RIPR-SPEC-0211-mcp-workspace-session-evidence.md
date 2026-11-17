@@ -118,20 +118,45 @@ official SDK transport:
   its `attempt` block (a completed document, `isError` false per the #5254
   commit contract).
   A sequential repeated signal before attempt settlement restores native
-  termination as the escape; process exit itself stays transport-owned
-  (stdin EOF). One atomic terminal exchange consumes the attempt's signal:
-  a signal observed during final projection converts an otherwise successful
-  result to the typed cancellation, and a signal after that boundary belongs
-  to the next attempt. Configuration refusals also settle the pending signal.
+  termination as the escape. One atomic terminal exchange consumes the
+  attempt's signal: a signal observed during final projection converts an
+  otherwise successful result to the typed cancellation. Configuration
+  refusals also settle the pending signal.
+- A signal with no attempt to consume it stops the server (#14102, Unix).
+  A signal interrupts what the server is doing: a running refresh when there
+  is one, otherwise the server itself. The stdio transport observes a
+  still-pending SIGINT or SIGTERM at its idle point (no request admitted,
+  every earlier reply flushed), before or after `initialize`, and ends the
+  session as it does on stdin EOF: exit 0, no extra stdout frame, nothing on
+  stderr. A signal that lands while a non-refresh request is admitted is
+  honoured after that reply is flushed. A signal a refresh attempt consumed
+  never ends the session, and no later refresh inherits an idle signal as a
+  cancellation. The exit consumes the signal, so a later session in the same
+  process starts clear. Without this rule one `kill`, one supervisor SIGTERM (the npm
+  launcher forwards exactly one, RIPR-SPEC-0212) or one Ctrl-C at a terminal
+  left the server running until stdin closed.
   Repeated native death can bypass cooperative cleanup and leave active children;
   it is an escape, not a cleanup guarantee. Process-group containment covers
   descendants that remain in the owned group, not deliberate group/session escape.
   Later refreshes remain usable. Installation is serialized and idempotent.
   Only MCP attempt tokens opt into Unix process groups; captured analysis
   workers retain that choice and other callers preserve their prepared groups.
-  Cleanup observes leader exit without reaping, signals the owned group, then
-  reaps and disarms further group signals. This also settles pipe holders when
-  a primary exits early. Targets lacking the safe non-reaping observation
+  Cleanup observes leader exit without reaping and signals the owned group
+  at most once while that leader still pins its identity. On Linux, successful
+  `try_wait`, `wait` and explicit `terminate_tree` additionally require every
+  observed member to be single-threaded and terminal (Z/X), with the retained
+  leader still present in the expected group, before reaping. This applies to
+  natural primary exit as well as explicit termination (#14503). The first
+  successful group signal starts one five-second settlement window; pending
+  polls and later explicit cleanup do not renew it. Missing or malformed
+  membership, observation failure or deadline exhaustion remains a cleanup
+  error on subsequent wait/termination observations, not a successful exit.
+  Explicit failure
+  fallback may kill/reap the direct child within its separate bounded budget
+  but reports incomplete tree cleanup and never signals the group after reap.
+  The pre-signal running-child lifetime remains caller-bounded, OS reads are
+  not a hard real-time guarantee, and `Drop` remains best-effort cleanup.
+  This also settles pipe holders when a primary exits early. Targets lacking the safe non-reaping observation
   refuse contained spawn before creating a child. On non-Unix targets the
   install is a no-op: containment there is the job-object ownership in
   `process_owner`, whose std API cannot express kill-on-job-close, so an
@@ -151,8 +176,10 @@ official SDK transport:
   discovery, configuration presence, trust, authority — all unchanged from
   #3088) plus a `ripr-mcp-session-v1` session block: current desired input
   (workspace diff against the resolved default branch or the explicit
-  refresh `base` with `base_revision` when present, draft mode, built-in
-  defaults), current attempt state (`no_snapshot`, `in_flight`,
+  refresh `base` with `base_revision` when present, the analysis mode from
+  `ripr.toml` `[analysis] mode` (`draft` when unset), and the workspace's own
+  configuration, whose `[analysis]` table the refresh applies through the same
+  owner `ripr check` uses), current attempt state (`no_snapshot`, `in_flight`,
   `completed`, `failed`), last completed snapshot identity,
   last-known-good, freshness relative to the last completed refresh
   (`current_at_last_refresh`, or `stale_after_failed_attempt` once a later
@@ -419,6 +446,19 @@ official SDK transport:
   no match, and an unknown `file`, produce an empty disclosed page.
   `selected` remains the stored-selection count; `filtered` is the narrowed
   count. `filters` echoes all four dimensions, with null for omitted values.
+  With no `class` filter the list leaves out `exposed` items the shared seam
+  gate refused as `seam_already_gripped` (#14327): existing tests already
+  check the seam, so listing them invites per-item evidence reads that change
+  nothing. Only that positive cause omits. An `exposed` item that is
+  repair-ready, or unready for any other cause (a truncated seam inventory,
+  withheld worktree evidence, an ambiguous or unfound seam, a finding-level
+  gate), stays listed, because missing or limited evidence never becomes a
+  no-action conclusion. `filtered` counts after that exclusion (it is the set
+  the page walks), the additive `exposed_omitted` count and `exposed_route`
+  string disclose what was left out (both absent when zero or when `class`
+  was named), and `total`, `eligible`, `selected` and `outcome` still describe
+  the whole snapshot. Any explicit `class`, including `exposed`, behaves as
+  a plain exact-class filter, and `filters.class` still echoes null by default.
   Summaries carry `repair_packet_ready` and `repair_ineligibility` (null when
   ready; otherwise the typed first failing gate), matching `ripr_get_gap`.
   `continuation.next_page.arguments` pins the snapshot, filters, and explicit
@@ -472,7 +512,16 @@ official SDK transport:
   the gap-list `outcome`, which projects its kind, analysis status, clean value, and
   limitation count and up to five names. Missing values are marked absent.
   The opt-in `brief` gap list additionally carries its snapshot identity,
-  filtered count, page offset, and any next omission offset. These projections
+  filtered count, page offset, and any next omission offset. The opt-in
+  `brief` `ripr_get_gap` (#14327) projects one item's class, location, owner,
+  changed expression (plus `arm_result` when present), up to three missing
+  discriminators with their reasons (else the producer's `missing` prose),
+  up to three related tests, readiness, static limitation, source currentness
+  and the recommended next step, one line each. It discloses how many list
+  entries stay structured-only, separately from related-test matches the
+  producer counted but did not retain, marks absent values `?` or `none listed`
+  (an explicit `null` reads `none`), never clips identities, and falls back
+  to the digest when the document has no `item` object. These projections
   do not replace the full continuation arguments or evidence. The
   digest is a projection of the document and adds no fact. If a compact
   companion would make the admitted envelope exceed its cap, retain that JSON
@@ -576,6 +625,26 @@ official SDK transport:
   configuration loading, no model provider, and no repair-ready claim
   anywhere. MCP does not call the LSP server, parse LSP diagnostics, or
   read VS Code artifacts as authority.
+
+### Owner opt-out withholding (#14138)
+
+- A finding `ripr check` withholds because its changed owner carries
+  `#[mutants::skip]` is not a canonical item. Snapshot binding filters on the
+  shared `CheckOutput::withheld_finding_ids()` owner; no attribute is read
+  under `mcp/`, and the adapter stays read-only (ADR 0022).
+- The gap list and the snapshot resource carry the additive
+  `owner_opt_outs: {"withheld": N, "reason": "owner_mutants_skip"}`; the
+  refresh `snapshot` summary and the status `last_completed_snapshot` carry
+  the same object. When no item is left it adds `"all_withheld": true` and the
+  outcome or summary carries `clean: false`. Absent when nothing is withheld.
+  Each advertised output schema declares it as an optional closed object.
+- The `brief` text of a gap list names the withheld count and reason, and
+  says an all-withheld list is not clean.
+- `ripr_get_gap`, `ripr_get_top_limitation`, `ripr_get_repair_card`,
+  `ripr_prepare_repair` and their resources refuse a withheld canonical or
+  finding id with the typed `owner_opt_out` failure (`data.reason`
+  `owner_mutants_skip`); no document and no transaction. The withheld set
+  rides the snapshot identity.
 
 ### Unknown-resource recovery (#7767)
 
@@ -699,6 +768,10 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   `config_identity`, `built_in_defaults` when none resolves,
   `detected_not_loaded` when the file cannot be read or parsed), and an
   unparseable config fails the attempt closed with `config_invalid`.
+  The git invocations of a refresh's check are bounded by
+  `RIPR_GIT_TIMEOUT` from the server environment when set, else the
+  `ripr check` default, through the CLI's parser (#14386); an invalid value
+  fails the attempt closed with `config_invalid` naming the variable.
 - No support-tier promotion.
 - No durable snapshot persistence; the session is in-memory and a server
   restart drops it (a fresh `ripr_refresh` rebuilds it).
@@ -737,13 +810,29 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
    status URI and every template in both prose and structured arrays. A
    recognized snapshot read before refresh still reports `no_snapshot`,
    and the same connection can subsequently read the valid status resource.
+7. Over a workspace with one changed `#[mutants::skip]` function and one
+   changed plain function, `ripr_list_gaps` serves only the plain function and
+   discloses `owner_opt_outs` with the withheld count and `owner_mutants_skip`;
+   the withheld set equals `ripr check`'s for the same input, and a card,
+   limitation, gap or repair start for the withheld id refuses with
+   `owner_opt_out`. The plain function's documents are unchanged, and a
+   snapshot whose every finding is withheld says so instead of reading clean
+   (#14138).
 
 ## Test Mapping
 
+- `crates/ripr/src/mcp/owner_opt_out_tests.rs::gap_list_serves_only_the_plain_function_and_discloses_the_opt_out` — real Git fixture: the withheld set equals `CheckOutput::withheld_finding_ids()` for the same input, the list, snapshot index, refresh and status disclose the count and reason, and every single-item read refuses the withheld id with `owner_opt_out` (#14138).
+- `crates/ripr/src/mcp/owner_opt_out_tests.rs::plain_function_gap_and_card_are_unchanged_by_a_sibling_opt_out` — negative: the plain function's gap, limitation and card outcome match a same-length control with no opt-out (#14138).
+- `crates/ripr/src/mcp/owner_opt_out_tests.rs::all_withheld_snapshot_reports_that_state_not_a_clean_empty_list` — negative: an all-withheld snapshot says `all_withheld` and `clean: false` on the list, snapshot resource, refresh and status (#14138).
+- `crates/ripr/src/mcp/owner_opt_out_tests.rs::owner_opt_out_results_validate_against_the_advertised_output_schemas` — mixed and all-withheld list, refresh, status and `owner_opt_out` refusals validate against the full advertised output schemas; malformed or undeclared disclosures fail the same oracle (#14138).
+- `crates/ripr/src/mcp/owner_opt_out_tests.rs::brief_gap_list_text_names_the_owner_opt_out` — the brief gap-list text names the withheld count and reason, says all-withheld is not clean, and adds nothing without an opt-out (#14138).
 - `crates/ripr/src/mcp/workspace.rs::tests::independent_continuations_cover_both_axes_without_replay` — pinned filtered walks cover the stored selected and omitted identities once, avoid other-axis replay, and reject a stale snapshot.
 - `crates/ripr/src/mcp/workspace.rs::tests::independent_omission_route_uses_filtered_end_and_respects_envelope` — a strict filtered subset binds the opposite-axis end and checks the envelope boundary.
 - `crates/ripr/tests/mcp_stdio.rs::independent_gap_pages_walk_both_axes_over_stdio` — a refreshed real workspace follows both opt-in routes in full, summary and brief modes, preserves structured output, and checks default and explicit-false compatibility.
 - `crates/ripr/src/mcp/protocol.rs::tests::compact_text_distinguishes_empty_outcomes_and_paging` — complete and no-scope empty results remain distinct in both compact modes, and brief reports snapshot and independent omission paging.
+- `crates/ripr/src/mcp/protocol.rs::tests::brief_gap_text_carries_the_test_author_facts_and_drops_bulk_evidence` — a brief `ripr_get_gap` text is exactly the owner, location, changed expression, missing discriminator, related-test, readiness and next-step lines, stays under a third of the JSON copy, leaves `structuredContent` whole, and joins an `arm_result` when present (#14327).
+- `crates/ripr/src/mcp/protocol.rs::tests::brief_gap_text_marks_absent_facts_bounds_lists_and_cannot_forge_lines` — absent facts read `?`/`none listed` and never become `repair_ready=true` or a `next:` line; long lists list three and disclose the rest; hostile strings cannot add lines; a gap document without an `item` object keeps the digest.
+- `crates/ripr/tests/mcp_stdio.rs::brief_get_gap_text_projects_the_served_document_over_stdio` — over real stdio, a `brief` session serves the same `ripr_get_gap` `structuredContent` as the default and its text names that document's class, location, owner and canonical id in under half the JSON copy's bytes.
 
 
 - `crates/ripr/src/mcp/workspace.rs::tests::omission_disclosure_pages_independently_of_items`
@@ -792,6 +881,10 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
 - `crates/ripr/src/mcp/workspace.rs::tests::gap_list_summaries_project_readiness_matching_get_gap`
   + `gap_list_filters_narrow_each_dimension_then_combine_before_paging`
   — direct stored-fact narrowing/readiness and continuation controls.
+- `crates/ripr/src/mcp/workspace.rs::tests::default_gap_list_omits_exposed_and_discloses_the_count`
+  — default list leaves out already-gripped `exposed` items and counts them
+  in `exposed_omitted`; a truncation-refused `exposed` item and a
+  repair-ready one stay listed; `class: "exposed"` lists them all.
 - `crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_filters_at_the_dispatch_edge`
   — argument admission before refresh; this is not successful narrowing proof.
 - `crates/ripr/tests/mcp_stdio.rs::list_gaps_rejects_unknown_class_tokens_with_the_vocabulary`
@@ -833,6 +926,10 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   refresh/list/get_gap with the `loaded` posture, a config-less rust
   workspace keeps the defaults posture, and an unparseable `ripr.toml`
   fails the refresh closed with `config_invalid`.
+- `crates/ripr/tests/mcp_workspace_config.rs::refresh_honors_ripr_git_timeout_from_the_server_environment`
+  — #14386: an invalid server `RIPR_GIT_TIMEOUT` fails the refresh with
+  `config_invalid` naming the variable and a restart recovery; `0` keeps
+  the analysis.
 - `crates/ripr/src/mcp/gaps.rs::tests` — canonical item projection and the
   readiness block this slice pinned (the readiness evaluation itself is
   owned with RIPR-SPEC-0214).
@@ -851,15 +948,45 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
 - `crates/ripr/tests/mcp_interrupts.rs::cooperative_interrupt_lifecycle`
   (Linux) — real stdio and gated git children cover SIGINT, SIGTERM,
   early-primary pipe holders, typed failure, last-good retention, same-session
-  recovery and an independently owned surviving sentinel. Identity-pinned
+  recovery, the clean idle-signal exit with stdin held open (SIGTERM after
+  settled refreshes, SIGINT before any refresh; #14102) and an independently
+  owned surviving sentinel. Identity-pinned
   process handles and adopted descendant wait statuses distinguish product
   settlement from harness cleanup.
+- `crates/ripr/src/mcp/transport_tests.rs::pending_signal_ends_an_idle_session_while_input_stays_open`,
+  `::signal_pending_before_initialize_ends_the_handshake_cleanly`,
+  `::signal_raised_during_a_request_ends_the_session_after_its_reply` and
+  `::consumed_signal_wake_keeps_the_session_serving` — the #14102 idle rule
+  on the in-memory transport: both observation paths (the wake of a blocked
+  read and the flag check at the idle point) and the consumed-signal negative.
 - `crates/ripr/src/cli/interrupt.rs::tests` — isolated native signal controls,
   concurrent installation, repeated mixed/TERM escape, terminal signal epochs
   and bounded adverse harness controls.
 - `crates/ripr/src/process_owner.rs::tests` — non-reaping cleanup ordering,
   successful output/status, refusal after custody loss, repeated cleanup and
   preservation of caller process groups.
+- `crates/ripr/src/process_owner.rs::tests::linux_group_observer_requires_terminal_single_thread_members`
+  + `linux_group_observer_accepts_non_utf8_comm_and_refuses_missing_leader`
+  — terminal-state/thread-count and byte-safe membership refusal.
+- `crates/ripr/src/process_owner.rs::tests::linux_stat_unavailable_group_is_pending_even_for_terminal_state`
+  + `linux_stat_unknown_group_does_not_accept_other_malformed_groups`
+  — the kernel's teardown `pgid=-1` sentinel is unknown membership, not a
+  quiescent or unrelated process. Observation stays pending under the original
+  settlement deadline; malformed group tokens still refuse. The owned leader
+  must still have a positively observed matching group. This fixture does not
+  claim the missing raw stat bytes from a particular hosted failure.
+- `crates/ripr/src/process_owner.rs::tests::linux_settlement_deadline_survives_polls_and_explicit_cleanup`
+  + `linux_try_wait_refuses_expired_nonterminal_settlement`
+  + `linux_wait_refuses_expired_settlement_before_reaping`
+  + `linux_pending_settlement_can_complete_within_original_deadline`
+  — a real unreaped leader with a modeled nonterminal observation exercises
+  the public owner paths: one signal-bound deadline, no renewal through
+  pending polls or explicit cleanup, persistent error before reap, bounded
+  fallback and successful settlement before expiry. These controls do not
+  reproduce a kernel D-state or establish a hard wall-clock bound.
+- `crates/ripr/tests/installed_python_typescript_journeys.rs::python_runtime_deadline_reaps_primary_and_stops_descendant`
+  — unchanged installed-runtime immediate-return oracle for primary reap and
+  descendant stopped state; stopped is not equivalent to descendant reap.
 - `crates/ripr/tests/mcp_stdio.rs::catalog_list_cursors_fail_closed_over_stdio`
   — a `cursor` on `tools/list`, `prompts/list`, `resources/list`, or
   `resources/templates/list` is a `-32602` whose message explains the list
