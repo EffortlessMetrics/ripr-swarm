@@ -203,9 +203,11 @@ running test; no named stop reason is added on this issue.
 - Undiscovered and example targets (#14972): `#[test]` in `src/main.rs`
   under `autobins = false`, in `src/lib.rs` under `autolib = false`, and in
   `examples/demo.rs` (default `test = false`) does not credit a
-  discriminator in any `--mode`, while the autodiscovered controls, the same
-  root declared explicitly under `auto* = false`, and `[[example]] test =
-  true` read `exposed` in every mode.
+  discriminator in any `--mode`. The autodiscovered controls and the same
+  root declared explicitly under `auto* = false` read `exposed` in every
+  mode. `[[example]] test = true` reads `exposed` in every mode except
+  `instant`, which does not index `examples/` and reads `no_static_path` on
+  base too.
 
 ## Known Limits
 
@@ -240,7 +242,10 @@ running test; no named stop reason is added on this issue.
 
 - Undiscovered and example targets (#14972): a file in another package
   compiled only through `#[path]` by a skipped target is still judged by its
-  own package's premise (the #14962 limit). A bench root is not modelled.
+  own package's premise (the #14962 limit). Within one package, a `src/`
+  module mounted only by an untested example through `#[path]` also keeps
+  its credit, because the holder's package sets no skip premise. A bench
+  root is not modelled.
   `autolib` needs Cargo 1.83 or later; an older Cargo ignores the key and
   lists the library, which keeps the credit.
 
