@@ -1,5 +1,6 @@
 mod adapter;
 mod bolero;
+pub(crate) mod constant_items;
 mod constant_return;
 pub(crate) mod external_docs;
 pub(crate) mod fn_signature;

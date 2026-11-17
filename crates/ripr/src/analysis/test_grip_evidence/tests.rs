@@ -4862,6 +4862,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
             item_scopes: None,
             macro_candidates: None,
             external_docs: None,
+            constant_syntax: None,
         },
     );
     let seam = RepoSeam::new(
